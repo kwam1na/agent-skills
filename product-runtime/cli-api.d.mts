@@ -453,7 +453,7 @@ declare function readScopedCheckObservations(input: {
 }): Promise<ScopedCheckObservations>;
 
 declare const phases: readonly ["snapshot-setup", "pre-command-verification", "command", "post-command-verification", "output-capture", "complete"];
-declare const failureCodes: readonly ["check_snapshot_interrupted", "check_snapshot_timeout", "check_snapshot_unavailable", "check_snapshot_escape", "check_snapshot_drift", "check_snapshot_cleanup_failed", "check_dependency_source_overlap", "check_dependency_failed", "check_command_failed", "check_output_missing", "check_attempt_superseded", "check_artifact_unavailable", "check_evidence_rejected"];
+declare const failureCodes: readonly ["check_snapshot_interrupted", "check_snapshot_timeout", "check_snapshot_unavailable", "check_snapshot_escape", "check_snapshot_drift", "check_snapshot_cleanup_failed", "check_dependency_source_overlap", "check_dependency_failed", "check_command_failed", "check_output_missing", "check_attempt_superseded", "check_artifact_unavailable", "check_evidence_rejected", "check_cancelled"];
 declare const executionCodes: readonly ["ENOENT", "EACCES", "EPERM", "ABORT_ERR", "ERR_CHILD_PROCESS_STDIO_MAXBUFFER", "SIGKILL", "SIGTERM", "execution_failed"];
 type ScopedDiagnosticPhase = typeof phases[number];
 type ScopedDiagnosticFailureCode = typeof failureCodes[number];
@@ -470,6 +470,24 @@ interface ScopedDependencyDiagnostic {
     readonly executionErrorCode?: ScopedDiagnosticExecutionCode;
     readonly command: ScopedDiagnosticCommand;
 }
+declare const setupPhases: readonly ["materialization", "baseline-inventory", "dependencies", "post-dependency-inventory", "warm-base-wait", "clone", "pre-command-verification"];
+/** How this attempt got the tree its command ran in, and what that cost up to the command.
+ * `executed`: this attempt ran the setup (a tree it built, or the warm base it then cloned);
+ * `reused`: the setup had already run (a clone of a warm base another check built, or the
+ * worker's tree retained from its previous check). `clone` names the copy-on-write method, or says
+ * why each worker built its own tree: cloning is unavailable here, or the setup wrote its own path
+ * into the tree (`path-bound`), or there is one worker (`not-used`). */
+interface ScopedSetupDiagnostic {
+    readonly action: "executed" | "reused";
+    readonly snapshot: "built" | "cloned" | "retained";
+    readonly clone: "clonefile" | "reflink" | "unavailable" | "path-bound" | "not-used";
+    /** `index`: Git's index and untracked listing; `inventory`: every immutable byte hashed. */
+    readonly verification: "index" | "inventory";
+    readonly phases: readonly {
+        readonly phase: typeof setupPhases[number];
+        readonly durationMs: number;
+    }[];
+}
 interface RecordedScopedAttemptDiagnostic {
     readonly availability: "available";
     readonly phase: ScopedDiagnosticPhase;
@@ -482,6 +500,8 @@ interface RecordedScopedAttemptDiagnostic {
     readonly command: ScopedDiagnosticCommand;
     /** Present only when this attempt actually ran dependency setup; never borrowed from a reused snapshot. */
     readonly dependency?: ScopedDependencyDiagnostic;
+    /** Present once this attempt began getting its tree, so a failed setup keeps its phases; absent on attempts recorded before setup was measured. */
+    readonly setup?: ScopedSetupDiagnostic;
 }
 type ScopedAttemptDiagnostic = RecordedScopedAttemptDiagnostic | {
     readonly availability: "unavailable";

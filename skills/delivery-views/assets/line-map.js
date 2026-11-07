@@ -1463,6 +1463,9 @@
     // Nothing is still being checked or waiting once the delivery has closed; the piece simply didn't land.
     var unlanded = unlandedAtClose(doc, piece);
     var timing = unlanded ? null : stageTime(doc, item);
+    // Planned work the tracker has started, building with no assignment recorded, started when its ticket did, and a
+    // tracker snapshot carries no start time, so the card names the stage alone rather than call its time unknown.
+    if (timing && !timing.at && piece.planned && item.stage === "building" && item.trackerStarted === true) { timing = null; }
     var stage = el("span", "d-stage");
     var icon = unlanded ? null : stageIcon(item);
     if (icon) { stage.appendChild(icon); }

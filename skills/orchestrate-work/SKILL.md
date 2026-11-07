@@ -36,7 +36,7 @@ A repository declares its delivery posture in one file, `.agents/delivery-postur
 and the tip of the delivery's own base is the only place it counts. With `focused`
 declared in `.agents/delivery-posture.json` at the tip of the delivery's base, the
 close-out runs no `fullHealth`, and a failed run at that head holds nothing. Nothing
-runs in its place. The journal, the close-out summary and the plan chapter say the run was skipped under the posture,
+runs in its place, and no `fullHealth` runs after a merge either. The journal, the close-out summary and the plan chapter say the run was skipped under the posture,
 naming its source and reason, so a skip never reads as a pass. `gate`, no file, or a
 file that is malformed or can't be read runs `fullHealth` and holds the close on it.
 `orchestration-binding/1` doesn't change: `fullHealth` stays required, so restoring
@@ -282,8 +282,11 @@ python3 -B <skill>/scripts/merge_queue.py [--repo <checkout top level>] --state 
   stats say the checks were selected by the lead, with the lead's reason. A
   hand-off at a new head voids the selection. A batch uses the union of its
   members' selections only when every member has one, and the provider
-  otherwise. A selection is the lead's judgment; the close-out `fullHealth` run
-  is its backstop, unless the base declares the `focused` posture.
+  otherwise. A selection is the lead's judgment; the post-merge `fullHealth` run
+  is its backstop, unless the base declares the `focused` posture. Under
+  `selection.refusalStops`, a provider that exits non-zero stops the candidate
+  with `provider_refused` and runs no check, until the lead's selection is checked
+  in its place.
 - `merge <candidate>` merges the checked head through the binding's `ready`
   and `merge` commands and confirms the new base.
 - `run <candidate>...` does sync, check and merge in order for each candidate,

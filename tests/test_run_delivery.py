@@ -434,6 +434,20 @@ def stop_supervisors(root: Path) -> None:
         if held or any(in_group(child) for child in recorded.get("children") or []):
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(pid, signal.SIGKILL)
+    # A post-merge fullHealth run leads a session of its own, so it outlives its supervisor: stop it while it holds its
+    # lock, and only then.
+    for lock in root.rglob("*.full-health.lock"):
+        with open(lock, "a+") as probe:
+            try:
+                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(probe, fcntl.LOCK_UN)
+                continue
+            except BlockingIOError:
+                pass
+        pid = json.loads(lock.read_text() or "{}").get("pid")
+        if isinstance(pid, int) and pid > 1:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(pid, signal.SIGKILL)
 
 
 def group_alive(group: int) -> bool:
@@ -6132,6 +6146,12 @@ class DeliveryPostureReaderTests(unittest.TestCase):
         self.assertIn("Unless the delivery's base declares the `focused` posture at its tip, run the binding's "
                       "`fullHealth` once, on the final base", guide)
         self.assertIn("runs `fullHealth` once per base head, unless the base declares the `focused` posture", guide)
+        # Under gate the post-merge tier runs after each merge; close-out starts a run only where none has happened.
+        self.assertIn("`fullHealth` is the post-merge tier, and under `gate` it doesn't wait for the close: after each "
+                      "merge or batch, the supervisor runs it at the new base head", guide)
+        self.assertIn("the supervisor runs `fullHealth` at the final head only when no run at that head has happened, as "
+                      "in a delivery that merged nothing", guide)
+        self.assertIn("Nothing runs in its place, and no `fullHealth` runs after a merge either", skill)
         self.assertIn("remains the backstop for anything a selection missed, unless the base declares the `focused` posture", guide)
         self.assertIn("say the run was skipped under the posture, naming its source and reason", guide)
 

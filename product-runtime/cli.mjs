@@ -232,17 +232,20 @@ import path12 from "node:path";
 
 // packages/cli/src/check-snapshot.ts
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, realpath, rename, rm } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path3 from "node:path";
-import { createExecPort } from "./kernel.mjs";
+import { candidateTreeSourceReader, capturePhysicalSource, createExecPort, isPhysicalSourceDefinition, physicalSourceOutputOverlap } from "./kernel.mjs";
 
 // packages/cli/src/snapshot-inventory-worker.ts
 var snapshotInventoryWorker = String.raw`
 import { lstat, readFile, readdir, readlink, realpath } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-const { root, outputs, excludeDependencies, forbidGit, includeSource } = JSON.parse(process.env.DELIVERY_SNAPSHOT_REQUEST);
+const { root, outputs, excludeDependencies, forbidGit, includeSource, absentInputs = [], selfReferences = [] } = JSON.parse(process.env.DELIVERY_SNAPSHOT_REQUEST);
+// A setup that writes this tree's own absolute path into a file binds the tree to where it is.
+const references = selfReferences.map(reference => Buffer.from(reference));
+let selfReferenced = false;
 const entries = [];
 const sourceEntries = [];
 const record = (relative, tuple) => {
@@ -254,31 +257,162 @@ const inside = target => {
   return relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative);
 };
 const escape = () => { throw { code: 'check_snapshot_escape' }; };
-const walk = async (relative, mutable = false) => {
-  if (relative === '.git' || (excludeDependencies && relative.split('/').includes('node_modules'))) return;
-  // Mutable paths are excluded from the digest, never from the link/type walk.
-  // Carry the exclusion through directories, including an exact output path.
-  mutable ||= outputs.some(o => o.endsWith('/') ? relative === o.slice(0, -1) || relative.startsWith(o) : relative === o);
-  const absolute = path.join(root, relative), stat = await lstat(absolute);
-  if (stat.isSymbolicLink()) {
-    const target = await readlink(absolute);
-    if (path.isAbsolute(target) || !inside(path.resolve(path.dirname(absolute), target))) escape();
-    try { if (!inside(await realpath(absolute))) escape(); }
-    catch (error) { if (error.code !== 'ENOENT') throw error; }
-    if (!mutable) record(relative, [relative, 'link', target]);
-  } else if (stat.isDirectory()) {
-    for (const name of (await readdir(absolute)).sort()) await walk(relative ? relative + '/' + name : name, mutable);
-  } else if (stat.isFile()) {
-    if (!mutable) record(relative, [relative, stat.mode & 0o111, createHash('sha256').update(await readFile(absolute)).digest('hex')]);
-  } else escape();
+// Eight workers bound filesystem operations, not just initial directory reads.
+// Outstanding includes running directories: an empty queue is not completion
+// while one of them may still discover children. Every started visit settles
+// before an error is reported and the owner may clean up the private tree.
+const drainQueue = async (queue, visit) => {
+  let cursor = 0, outstanding = queue.length, failed = false, failure;
+  const waiting = [];
+  const wake = () => { for (const resume of waiting.splice(0)) resume(); };
+  const worker = async () => {
+    while (true) {
+      while (!failed && cursor === queue.length && outstanding > 0) await new Promise(resolve => waiting.push(resolve));
+      if (failed || outstanding === 0) return;
+      const slot = queue[cursor++];
+      try {
+        const children = await visit(slot);
+        if (!failed && children?.length) {
+          outstanding += children.length;
+          for (const child of children) queue.push(child);
+        }
+      } catch (error) { if (!failed) { failed = true; failure = error; } }
+      finally { outstanding--; wake(); }
+    }
+  };
+  await Promise.all(Array.from({ length: 8 }, worker));
+  if (failed) throw failure;
+};
+const boundedMap = async (values, visit) => {
+  const slots = values.map(value => ({ value }));
+  await drainQueue([...slots], async slot => { slot.result = await visit(slot.value); });
+  return slots.map(slot => slot.result);
+};
+
+// Existing directory coordinates come only from the actual walk, with exact
+// bigint filesystem identity. Requested spelling and realpath are not canonical.
+const directories = new Map();
+const identity = stat => stat.dev.toString() + ':' + stat.ino.toString();
+const resolveMissing = async target => {
+  if (!inside(target)) escape();
+  let resolved = root, key = root, links = 0;
+  const pending = path.relative(root, target).split(path.sep);
+  while (pending.length) {
+    const segment = pending.shift();
+    if (!segment || segment === '.') continue;
+    if (segment === '..') { resolved = path.dirname(resolved); key = path.dirname(key); }
+    else {
+      const next = path.join(resolved, segment);
+      const info = await lstat(next, { bigint: true }).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+      if (info?.isSymbolicLink()) {
+        if (++links > 32) escape();
+        const link = await readlink(next);
+        if (path.isAbsolute(link)) escape();
+        pending.unshift(...link.split(path.sep));
+      } else if (info?.isDirectory()) {
+        resolved = directories.get(identity(info));
+        if (resolved === undefined) escape();
+        key = resolved;
+      } else {
+        resolved = next;
+        // No object exists to establish Unicode equivalence. The finite port
+        // explicitly refuses non-ASCII missing suffixes rather than guessing a
+        // filesystem folding table. Existing distinct directories stay distinct.
+        if (info === null && /[^\x00-\x7f]/.test(segment)) throw { code: 'check_snapshot_drift' };
+        key = info === null ? path.join(key, segment.toLowerCase()) : resolved;
+      }
+    }
+    if (!inside(resolved)) escape();
+  }
+  return { absolute: resolved, key };
+};
+// Retain the already-walked links so output authority can follow directory
+// referents without recursively following links or weakening inventory digests.
+const aliases = [];
+let protectedNames;
+const protectOutputAlias = resolved => {
+  const name = path.relative(root, resolved.key);
+  for (const a of protectedNames) {
+    if (name === '' || name === a || name.startsWith(a + '/') || a.startsWith(name + '/')) throw { code: 'check_snapshot_drift' };
+  }
+};
+const protectOutputReachability = async () => {
+  protectedNames = await boundedMap(absentInputs, async absent => path.relative(root, (await resolveMissing(path.join(root, absent))).key));
+  const reachable = [];
+  for (const output of outputs) reachable.push(await resolveMissing(path.join(root, output.replace(/\/$/, ''))));
+  for (const target of reachable) protectOutputAlias(target);
+  // Each collected link is expanded at most once. Its fully resolved target
+  // is writable whenever its lexical location is below an output referent.
+  const pending = new Set(aliases);
+  for (let index = 0; index < reachable.length; index++) {
+    const directory = reachable[index].absolute;
+    for (const alias of pending) {
+      const relative = path.relative(directory, alias.absolute);
+      if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) continue;
+      pending.delete(alias);
+      const resolved = await resolveMissing(alias.absolute);
+      protectOutputAlias(resolved);
+      reachable.push(resolved);
+    }
+  }
+};
+const walk = async () => {
+  const tree = { relative: '', mutable: false };
+  await drainQueue([tree], async slot => {
+    const { relative } = slot;
+    if (relative === '.git' || (excludeDependencies && relative.split('/').includes('node_modules'))) return;
+    // Mutable paths are excluded from the digest, never from the link/type walk.
+    // Carry the exclusion through directories, including an exact output path.
+    const mutable = slot.mutable || outputs.some(o => o.endsWith('/') ? relative === o.slice(0, -1) || relative.startsWith(o) : relative === o);
+    const absolute = path.join(root, relative), stat = await lstat(absolute, { bigint: true });
+    if (stat.isSymbolicLink()) {
+      const target = await readlink(absolute);
+      if (path.isAbsolute(target) || !inside(path.resolve(path.dirname(absolute), target))) escape();
+      try { if (!inside(await realpath(absolute))) escape(); }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+      if (absentInputs.length) slot.alias = { absolute };
+      if (!mutable) slot.tuple = [relative, 'link', target];
+    } else if (stat.isDirectory()) {
+      slot.directory = { identity: identity(stat), absolute };
+      slot.children = (await readdir(absolute)).sort().map(name => ({ relative: relative ? relative + '/' + name : name, mutable }));
+      return slot.children;
+    } else if (stat.isFile()) {
+      if (!mutable) {
+        const bytes = await readFile(absolute);
+        if (!selfReferenced && references.some(reference => bytes.includes(reference))) selfReferenced = true;
+        slot.tuple = [relative, Number(stat.mode & 0o111n), createHash('sha256').update(bytes).digest('hex')];
+      }
+    } else escape();
+  });
+  // Completion order grants no directory authority and cannot change digest
+  // bytes. Flatten exact sorted-child DFS, including a/child before a.c;
+  // globally sorting relative paths would silently change the old identity.
+  const ordered = [tree];
+  while (ordered.length) {
+    const slot = ordered.pop();
+    if (slot.directory) directories.set(slot.directory.identity, slot.directory.absolute);
+    if (slot.alias) aliases.push(slot.alias);
+    if (slot.tuple) record(slot.relative, slot.tuple);
+    if (slot.children) for (let index = slot.children.length - 1; index >= 0; index--) ordered.push(slot.children[index]);
+  }
 };
 try {
+  for (const absent of absentInputs) {
+    let relative = '';
+    for (const part of absent.split('/')) {
+      relative = relative ? relative + '/' + part : part;
+      const info = await lstat(path.join(root, relative)).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+      if (info === null) break;
+      if (info.isSymbolicLink() || relative === absent || !info.isDirectory()) throw { code: 'check_snapshot_drift' };
+    }
+  }
   if (forbidGit && await lstat(path.join(root, '.git')).then(() => true, error => { if (error.code === 'ENOENT') return false; throw error; })) throw { code: 'check_snapshot_drift' };
-  await walk('');
+  await walk();
+  if (absentInputs.length) await protectOutputReachability();
   // Tuples contain only arrays, strings and permission integers: JSON.stringify
   // has exactly the same bytes as canonical JSON for this restricted shape.
   const digest = tuples => createHash('sha256').update(JSON.stringify(tuples)).digest('hex');
-  process.stdout.write(JSON.stringify({ digest: digest(entries), ...(includeSource ? { sourceDigest: digest(sourceEntries) } : {}) }));
+  process.stdout.write(JSON.stringify({ digest: digest(entries), ...(includeSource ? { sourceDigest: digest(sourceEntries) } : {}), ...(references.length ? { selfReferenced } : {}) }));
 } catch (error) {
   process.stdout.write(JSON.stringify({ code: ['check_snapshot_escape', 'check_snapshot_drift'].includes(error.code) ? error.code : 'check_snapshot_unavailable' }));
   process.exitCode = 1;
@@ -294,11 +428,73 @@ var CheckSnapshotError = class extends Error {
     this.code = code;
   }
 };
+var nulSeparated = (text2) => text2.split("\0").filter(Boolean);
+function withinOutputs(entry, outputs) {
+  return outputs.some((output) => {
+    const root = output.replace(/\/$/, "");
+    return entry === root || entry.startsWith(`${root}/`);
+  });
+}
+function phaseMeter(onPhase) {
+  return async (phase, operation) => {
+    const started = performance.now();
+    try {
+      return await operation();
+    } finally {
+      try {
+        onPhase?.(phase, performance.now() - started);
+      } catch {
+      }
+    }
+  };
+}
+async function removeTrees(directories) {
+  const removed = await Promise.allSettled(directories.map((dir) => rm(dir, { recursive: true, force: true })));
+  if (removed.some((result) => result.status === "rejected")) throw new CheckSnapshotError("check_snapshot_cleanup_failed", "Cannot remove the owned execution snapshot after retaining evidence.");
+}
+async function cloneTree(method, source, destination, deadline, signal) {
+  const [command, args] = method === "clonefile" ? ["/usr/bin/perl", ["-e", "syscall(462, -2, $ARGV[0], -2, $ARGV[1], 0) == 0 or exit 1", source, destination]] : ["cp", ["-a", "--reflink=always", "--", source, destination]];
+  const result = await snapshotProcess(command, [...args], path3.dirname(destination), { PATH: "/usr/bin:/bin" }, deadline, signal);
+  if (result.code !== 0) throw new CheckSnapshotError("check_snapshot_unavailable", "The warm snapshot could not be cloned.");
+}
+var cloneProbe;
+function snapshotCloneMethod() {
+  return cloneProbe ??= (async () => {
+    const method = process.platform === "darwin" ? "clonefile" : process.platform === "linux" ? "reflink" : void 0;
+    if (!method) return void 0;
+    const probe = await mkdtemp(path3.join(tmpdir(), "delivery-clone-probe-"));
+    try {
+      await mkdir(path3.join(probe, "source"));
+      await writeFile(path3.join(probe, "source", "probe"), "probe");
+      await cloneTree(method, path3.join(probe, "source"), path3.join(probe, "clone"), performance.now() + 3e4);
+      return method;
+    } catch {
+      return void 0;
+    } finally {
+      await rm(probe, { recursive: true, force: true }).catch(() => void 0);
+    }
+  })();
+}
+async function cloneSnapshot(tree, method, signal, onPhase, open3) {
+  return phaseMeter(onPhase)("clone", async () => {
+    const parent = await realpath(await mkdtemp(path3.join(tmpdir(), "delivery-check-clone-")));
+    const cloned = { rootDir: path3.join(parent, "tree"), ...tree.privateControl ? { privateControl: path3.join(parent, "control") } : {}, owned: [parent] };
+    try {
+      const deadline = performance.now() + SNAPSHOT_TIMEOUT_MS;
+      await cloneTree(method, tree.rootDir, cloned.rootDir, deadline, signal);
+      if (tree.privateControl) await cloneTree(method, tree.privateControl, cloned.privateControl, deadline, signal);
+    } catch (error) {
+      await rm(parent, { recursive: true, force: true }).catch(() => void 0);
+      throw error instanceof CheckSnapshotError ? error : new CheckSnapshotError("check_snapshot_unavailable", "The warm snapshot could not be cloned.");
+    }
+    return open3(cloned, onPhase);
+  });
+}
 function inside(root, target) {
   const relative = path3.relative(root, target);
   return relative !== ".." && !relative.startsWith(`..${path3.sep}`) && !path3.isAbsolute(relative);
 }
-async function snapshotProcess(command, args, cwd, env, deadline, signal) {
+async function snapshotProcess(command, args, cwd, env, deadline, signal, limit = 64 * 1024) {
   if (signal?.aborted) throw new CheckSnapshotError("check_snapshot_interrupted", "Snapshot verification was interrupted.");
   const remaining = deadline - performance.now();
   if (remaining <= 0) throw new CheckSnapshotError("check_snapshot_timeout", "Snapshot verification exceeded its deadline.");
@@ -315,7 +511,7 @@ async function snapshotProcess(command, args, cwd, env, deadline, signal) {
     if (signal?.aborted) abort();
     child.stdout.on("data", (bytes) => {
       size += bytes.length;
-      if (size > 64 * 1024) stop("check_snapshot_unavailable", "Snapshot verifier output exceeded its limit.");
+      if (size > limit) stop("check_snapshot_unavailable", "Snapshot verifier output exceeded its limit.");
       else stdout += bytes.toString();
     });
     child.stderr.on("data", () => {
@@ -332,15 +528,15 @@ async function snapshotProcess(command, args, cwd, env, deadline, signal) {
     });
   });
 }
-async function snapshotInventory(root, outputs, excludeDependencies = false, deadline = performance.now() + SNAPSHOT_TIMEOUT_MS, signal, forbidGit = false) {
-  return (await snapshotDigests(root, outputs, excludeDependencies, deadline, signal, forbidGit)).digest;
+async function snapshotInventory(root, outputs, excludeDependencies = false, deadline = performance.now() + SNAPSHOT_TIMEOUT_MS, signal, forbidGit = false, absentInputs = []) {
+  return (await snapshotDigests(root, outputs, excludeDependencies, deadline, signal, forbidGit, false, absentInputs)).digest;
 }
-async function snapshotDigests(root, outputs, excludeDependencies, deadline, signal, forbidGit = false, includeSource = false) {
+async function snapshotDigests(root, outputs, excludeDependencies, deadline, signal, forbidGit = false, includeSource = false, absentInputs = [], selfReferences2 = []) {
   const result = await snapshotProcess(
     process.execPath,
     ["--input-type=module", "--eval", snapshotInventoryWorker],
     root,
-    { PATH: process.env["PATH"] ?? "/usr/bin:/bin", DELIVERY_SNAPSHOT_REQUEST: JSON.stringify({ root, outputs, excludeDependencies, forbidGit, includeSource }) },
+    { PATH: process.env["PATH"] ?? "/usr/bin:/bin", DELIVERY_SNAPSHOT_REQUEST: JSON.stringify({ root, outputs, excludeDependencies, forbidGit, includeSource, absentInputs, selfReferences: selfReferences2 }) },
     deadline,
     signal
   );
@@ -351,26 +547,24 @@ async function snapshotDigests(root, outputs, excludeDependencies, deadline, sig
     throw new CheckSnapshotError("check_snapshot_unavailable", "Snapshot inventory returned no valid result.");
   }
   if (result.code !== 0 || !/^[a-f0-9]{64}$/.test(parsed.digest ?? "") || includeSource && !/^[a-f0-9]{64}$/.test(parsed.sourceDigest ?? "")) throw new CheckSnapshotError(["check_snapshot_escape", "check_snapshot_drift"].includes(parsed.code ?? "") ? parsed.code : "check_snapshot_unavailable", "Snapshot inventory could not verify private bytes and links.");
-  return { digest: parsed.digest, ...includeSource ? { sourceDigest: parsed.sourceDigest } : {} };
+  if (selfReferences2.length && typeof parsed.selfReferenced !== "boolean") throw new CheckSnapshotError("check_snapshot_unavailable", "Snapshot inventory returned no valid result.");
+  return { digest: parsed.digest, ...includeSource ? { sourceDigest: parsed.sourceDigest } : {}, selfReferenced: parsed.selfReferenced === true };
+}
+function selfReferences(...created) {
+  return [...new Set(created.flatMap((dir) => dir === void 0 ? [] : [dir, path3.join(tmpdir(), path3.basename(dir))]))];
 }
 function executionPath(root, value2) {
   return value2.split(path3.delimiter).filter((p) => p && path3.isAbsolute(p) && !inside(root, p) && !p.split(path3.sep).includes("node_modules")).join(path3.delimiter) || "/usr/bin:/bin";
 }
 async function createCheckSnapshot(input) {
+  if (input.physicalSource !== void 0) return createFiniteCheckSnapshot(input);
   const report2 = (phase, started) => {
     try {
       input.onPhase?.(phase, performance.now() - started);
     } catch {
     }
   };
-  const measured = async (phase, operation) => {
-    const started = performance.now();
-    try {
-      return await operation();
-    } finally {
-      report2(phase, started);
-    }
-  };
+  const measured = phaseMeter(input.onPhase);
   const materializationStarted = performance.now();
   const rootDir = await realpath(await mkdtemp(path3.join(tmpdir(), "delivery-check-")));
   const cleanEnv = { ...input.environment, PATH: executionPath(input.rootDir, input.environment["PATH"] ?? process.env["PATH"] ?? "/usr/bin:/bin"), GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_TERMINAL_PROMPT: "0", GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z", GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z" };
@@ -404,10 +598,7 @@ async function createCheckSnapshot(input) {
       input.signal?.removeEventListener("abort", abort);
     }
   };
-  const cleanup = async () => {
-    const removed = await Promise.allSettled([rootDir, ...privateControl ? [privateControl] : []].map((dir) => rm(dir, { recursive: true, force: true })));
-    if (removed.some((result) => result.status === "rejected")) throw new CheckSnapshotError("check_snapshot_cleanup_failed", "Cannot remove the owned execution snapshot after retaining evidence.");
-  };
+  const cleanup = () => removeTrees([rootDir, ...privateControl ? [privateControl] : []]);
   try {
     await git("init", "-q");
     await git("fetch", "--update-shallow", "--no-tags", "--no-write-fetch-head", input.rootDir, input.candidate.headSha, input.candidate.base.tipSha, input.candidate.treeSha);
@@ -429,16 +620,16 @@ async function createCheckSnapshot(input) {
       await rename(path3.join(rootDir, ".git"), gitDirectory);
     }
     const controlRoot = privateControl ?? path3.join(rootDir, ".git");
-    const inventory = (outputs, sourceOnly = false, deadline = performance.now() + SNAPSHOT_TIMEOUT_MS) => snapshotInventory(rootDir, outputs, sourceOnly, deadline, input.signal, input.gitContext === "none");
+    const inventory = (root, outputs, sourceOnly = false, deadline = performance.now() + SNAPSHOT_TIMEOUT_MS) => snapshotInventory(root, outputs, sourceOnly, deadline, input.signal, input.gitContext === "none");
     report2("materialization", materializationStarted);
-    const baseline = await measured("baseline-inventory", () => inventory(input.outputs, Boolean(input.dependencies)));
-    let dependencyDigest = baseline;
-    const environment = {
+    const baseline = await measured("baseline-inventory", () => inventory(rootDir, input.outputs, Boolean(input.dependencies)));
+    let dependencyDigest = baseline, clonable = true;
+    const environmentFor = (root, control) => ({
       ...input.environment,
-      PATH: `${path3.join(rootDir, "node_modules/.bin")}${path3.delimiter}${cleanEnv["PATH"]}`,
-      HOME: path3.join(controlRoot, "home"),
-      TMPDIR: path3.join(controlRoot, "tmp"),
-      GIT_CEILING_DIRECTORIES: path3.dirname(rootDir),
+      PATH: `${path3.join(root, "node_modules/.bin")}${path3.delimiter}${cleanEnv["PATH"]}`,
+      HOME: path3.join(control, "home"),
+      TMPDIR: path3.join(control, "tmp"),
+      GIT_CEILING_DIRECTORIES: path3.dirname(root),
       ...input.gitContext === "none" ? {} : {
         DELIVERY_CHECK_BASE_REF: baseRef,
         DELIVERY_CHECK_CANDIDATE_REF: candidateRef,
@@ -446,7 +637,8 @@ async function createCheckSnapshot(input) {
         DELIVERY_CHECK_ORIGIN_TREE: input.candidate.treeSha,
         DELIVERY_CHECK_MERGE_BASE: input.candidate.base.mergeBaseSha
       }
-    };
+    });
+    const environment = environmentFor(rootDir, controlRoot);
     await mkdir(environment["HOME"], { recursive: true });
     await mkdir(environment["TMPDIR"], { recursive: true });
     if (input.dependencies) {
@@ -454,31 +646,199 @@ async function createCheckSnapshot(input) {
       const result = await measured("dependencies", () => createExecPort().run({ command: input.dependencies.command[0], args: input.dependencies.command.slice(1), cwd: rootDir, env: environment, timeoutMs: input.dependencies.timeoutMs, maxBuffer: 1024 * 1024, ...input.signal ? { signal: input.signal } : {} }));
       input.onDependencyResult?.(result, Math.round(performance.now() - started));
       if (result.code !== 0 || input.signal?.aborted) throw new CheckSnapshotError("check_dependency_failed", "Private dependency installation did not complete successfully.");
-      const installed = await measured("post-dependency-inventory", () => snapshotDigests(rootDir, input.outputs, false, performance.now() + SNAPSHOT_TIMEOUT_MS, input.signal, input.gitContext === "none", true));
+      const installed = await measured("post-dependency-inventory", () => snapshotDigests(rootDir, input.outputs, false, performance.now() + SNAPSHOT_TIMEOUT_MS, input.signal, input.gitContext === "none", true, [], selfReferences(rootDir, privateControl)));
       if (baseline !== installed.sourceDigest) throw new CheckSnapshotError("check_snapshot_drift", "Dependency setup changed prepared source bytes.");
       dependencyDigest = installed.digest;
+      clonable = !installed.selfReferenced;
     }
-    const verify = async (options) => {
-      return measured("verification", async () => {
-        const timeoutMs = options?.timeoutMs ?? SNAPSHOT_TIMEOUT_MS;
+    const treeGit = (tree, deadline, accepted = [0], limit) => {
+      const gitDir = tree.privateControl ? path3.join(tree.privateControl, "repository") : path3.join(tree.rootDir, ".git");
+      return async (...args) => {
+        const result = await snapshotProcess("git", [`--git-dir=${gitDir}`, `--work-tree=${tree.rootDir}`, "-c", "core.fileMode=true", "-c", "core.sparseCheckout=false", "-c", "core.symlinks=true", "-c", "core.fsmonitor=false", ...args], tree.rootDir, cleanEnv, deadline, input.signal, limit);
+        if (!accepted.includes(result.code ?? -1)) throw new CheckSnapshotError("check_snapshot_unavailable", "Snapshot Git identity could not be read.");
+        return result.stdout;
+      };
+    };
+    const others = ["ls-files", "--others", "--directory", "--no-empty-directory", "-z"];
+    const setupEntries = new Set(nulSeparated(await treeGit({ rootDir, ...privateControl ? { privateControl } : {}, owned: [] }, performance.now() + SNAPSHOT_TIMEOUT_MS)(...others)));
+    const reusedVerification = "index";
+    const open3 = (tree, onPhase) => {
+      const control = tree.privateControl ?? path3.join(tree.rootDir, ".git");
+      const verify = async (options = {}) => phaseMeter(onPhase)("verification", async () => {
+        const timeoutMs = options.timeoutMs ?? SNAPSHOT_TIMEOUT_MS;
         if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > SNAPSHOT_TIMEOUT_MS) throw new CheckSnapshotError("check_snapshot_timeout", "Snapshot deadline must be positive and cannot exceed five minutes.");
         const deadline = performance.now() + timeoutMs;
-        const verifyGit = async (...args) => {
-          const result = await snapshotProcess("git", gitDirectory ? [`--git-dir=${gitDirectory}`, `--work-tree=${rootDir}`, ...args] : args, rootDir, cleanEnv, deadline, input.signal);
-          if (result.code !== 0) throw new CheckSnapshotError("check_snapshot_unavailable", "Snapshot Git identity could not be read.");
-          return result.stdout.trim();
-        };
-        const currentDigest = await inventory(options?.outputs ?? input.outputs, false, deadline);
-        const tree = await verifyGit("write-tree");
-        const identities = (await verifyGit("rev-parse", "HEAD", `${candidateRef}^{tree}`, baseRef)).split("\n");
-        if (tree !== input.candidate.treeSha || identities.length !== 3 || identities[0] !== candidateCommit || identities[1] !== input.candidate.treeSha || identities[2] !== input.candidate.base.tipSha || dependencyDigest !== currentDigest) throw new CheckSnapshotError("check_snapshot_drift", "Execution changed the private source, dependencies or pinned Git context.");
+        const verifyGit = treeGit(tree, deadline);
+        if (options.unchanged && reusedVerification === "index") {
+          const allowed = options.unchanged.allowed;
+          await treeGit(tree, deadline, [0, 1])("update-index", "-q", "--refresh");
+          if (nulSeparated(await treeGit(tree, deadline, [0], 128 * 1024 * 1024)("ls-files", "-v", "-z")).some((entry) => !entry.startsWith("H ")))
+            throw new CheckSnapshotError("check_snapshot_drift", "A reused snapshot's index hides a tracked path.");
+          if (input.gitContext === "none" && await lstat(path3.join(tree.rootDir, ".git")).then(() => true, (error) => error.code === "ENOENT" ? false : Promise.reject(new CheckSnapshotError("check_snapshot_unavailable", "Snapshot Git absence could not be read."))))
+            throw new CheckSnapshotError("check_snapshot_drift", "A file-only snapshot gained Git metadata.");
+          if (nulSeparated(await verifyGit("diff-files", "--name-only", "-z")).length) throw new CheckSnapshotError("check_snapshot_drift", "A reused snapshot changed tracked source.");
+          for (const entry of nulSeparated(await verifyGit(...others))) {
+            if (setupEntries.has(entry) || withinOutputs(entry, allowed)) continue;
+            if (!entry.endsWith("/") || !allowed.some((output) => output.startsWith(entry))) throw new CheckSnapshotError("check_snapshot_drift", "A reused snapshot gained an undeclared untracked path.");
+            if (nulSeparated(await verifyGit("ls-files", "--others", "-z", "--", `:(literal)${entry}`)).some((file) => !withinOutputs(file, allowed))) throw new CheckSnapshotError("check_snapshot_drift", "A reused snapshot gained an undeclared untracked path.");
+          }
+        } else {
+          if (await inventory(tree.rootDir, options.outputs ?? input.outputs, false, deadline) !== dependencyDigest) throw new CheckSnapshotError("check_snapshot_drift", "Execution changed the private source, dependencies or pinned Git context.");
+        }
+        const indexTree = (await verifyGit("write-tree")).trim();
+        const identities = (await verifyGit("rev-parse", "HEAD", `${candidateRef}^{tree}`, baseRef)).trim().split("\n");
+        if (indexTree !== input.candidate.treeSha || identities.length !== 3 || identities[0] !== candidateCommit || identities[1] !== input.candidate.treeSha || identities[2] !== input.candidate.base.tipSha) throw new CheckSnapshotError("check_snapshot_drift", "Execution changed the private source, dependencies or pinned Git context.");
       });
+      return {
+        rootDir: tree.rootDir,
+        commandRoot: path3.join(control, "commands"),
+        environment: environmentFor(tree.rootDir, control),
+        dependencyDigest,
+        clonable,
+        reusedVerification,
+        verify,
+        clone: (method, onClonePhase) => cloneSnapshot(tree, method, input.signal, onClonePhase, open3),
+        cleanup: () => removeTrees(tree.owned)
+      };
     };
-    return { rootDir, commandRoot: path3.join(controlRoot, "commands"), environment, dependencyDigest, verify, cleanup };
+    return open3({ rootDir, ...privateControl ? { privateControl } : {}, owned: [rootDir, ...privateControl ? [privateControl] : []] }, input.onPhase);
   } catch (error) {
     await cleanup();
     if (error instanceof CheckSnapshotError) throw error;
     throw new CheckSnapshotError("check_snapshot_unavailable", "The exact prepared Git tree could not be materialized privately.");
+  }
+}
+function finiteSourceReaderRunner(input) {
+  const deadline = performance.now() + SNAPSHOT_TIMEOUT_MS;
+  const transportLimit = 128 * 1024 * 1024;
+  let transportBytes = 0;
+  return async (command, options) => {
+    if (input.signal?.aborted) throw new CheckSnapshotError("check_snapshot_interrupted", "Finite source capture was cancelled.");
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) throw new CheckSnapshotError("check_snapshot_timeout", "Finite source capture exceeded its deadline.");
+    return await new Promise((resolve, reject) => {
+      const child = spawn(command[0], command.slice(1), {
+        cwd: options.cwd,
+        env: { PATH: executionPath(input.rootDir, input.environment["PATH"] ?? process.env["PATH"] ?? "/usr/bin:/bin"), GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" },
+        stdio: [options.stdin === void 0 ? "ignore" : "pipe", "pipe", "pipe"]
+      });
+      let failure2;
+      const chunks = [];
+      const stop = (code) => {
+        failure2 ??= new CheckSnapshotError(code, "Finite source reader did not complete safely.");
+        child.kill("SIGKILL");
+      };
+      const abort = () => stop("check_snapshot_interrupted"), timer = setTimeout(() => stop("check_snapshot_timeout"), remaining);
+      input.signal?.addEventListener("abort", abort, { once: true });
+      if (input.signal?.aborted) abort();
+      child.stdout.on("data", (chunk) => {
+        transportBytes += chunk.length;
+        if (transportBytes > transportLimit) stop("check_snapshot_unavailable");
+        else chunks.push(chunk);
+      });
+      child.stderr.on("data", () => {
+      });
+      child.once("error", () => {
+        failure2 ??= new CheckSnapshotError("check_snapshot_unavailable", "Finite source reader failed to start.");
+      });
+      child.stdin?.once("error", () => stop("check_snapshot_unavailable"));
+      child.stdin?.end(options.stdin);
+      child.once("close", (code) => {
+        clearTimeout(timer);
+        input.signal?.removeEventListener("abort", abort);
+        if (failure2) reject(failure2);
+        else {
+          const bytes = Buffer.concat(chunks);
+          resolve({ exitCode: code ?? -1, stdout: bytes.toString("utf8"), stderr: "", ...options.captureBytes ? { stdoutBase64: bytes.toString("base64") } : {} });
+        }
+      });
+    });
+  };
+}
+async function createFiniteCheckSnapshot(input) {
+  const materializationStarted = performance.now();
+  const source = input.physicalSource;
+  if (input.gitContext !== "none" || !isPhysicalSourceDefinition(source) || physicalSourceOutputOverlap(source, input.outputs))
+    throw new CheckSnapshotError("check_physical_source_invalid", "Finite source requires Git-none and absences disjoint from all mutable outputs.");
+  let captured;
+  try {
+    captured = await capturePhysicalSource(source, await candidateTreeSourceReader(input.rootDir, input.candidate.treeSha, finiteSourceReaderRunner(input)));
+  } catch (error) {
+    if (error instanceof CheckSnapshotError) throw error;
+    throw new CheckSnapshotError("check_physical_source_invalid", "Finite source inputs are missing, linked or unsupported in the candidate.");
+  }
+  const rootDir = await realpath(await mkdtemp(path3.join(tmpdir(), "delivery-check-")));
+  let control;
+  const cleanup = () => removeTrees([rootDir, ...control ? [control] : []]);
+  const measured = phaseMeter(input.onPhase);
+  const inventory = async (root, outputs, sourceOnly = false, deadline) => {
+    if (physicalSourceOutputOverlap(source, outputs)) throw new CheckSnapshotError("check_physical_source_invalid", "Mutable output overlaps a required absence.");
+    return snapshotInventory(root, outputs, sourceOnly, deadline, input.signal, true, source.absentInputs);
+  };
+  try {
+    control = await realpath(await mkdtemp(path3.join(tmpdir(), "delivery-check-control-")));
+    for (const file of captured.files) {
+      await mkdir(path3.dirname(path3.join(rootDir, file.file)), { recursive: true });
+      await writeFile(path3.join(rootDir, file.file), file.bytes, { flag: "wx" });
+      await chmod(path3.join(rootDir, file.file), file.mode === "100755" ? 493 : 420);
+    }
+    try {
+      input.onPhase?.("materialization", performance.now() - materializationStarted);
+    } catch {
+    }
+    const cleanPath = executionPath(input.rootDir, input.environment["PATH"] ?? process.env["PATH"] ?? "/usr/bin:/bin");
+    const environmentFor = (root, controlDir) => ({
+      ...input.environment,
+      PATH: `${path3.join(root, "node_modules/.bin")}${path3.delimiter}${cleanPath}`,
+      HOME: path3.join(controlDir, "home"),
+      TMPDIR: path3.join(controlDir, "tmp"),
+      GIT_CEILING_DIRECTORIES: path3.dirname(root)
+    });
+    const environment = environmentFor(rootDir, control);
+    await mkdir(environment.HOME, { recursive: true });
+    await mkdir(environment.TMPDIR, { recursive: true });
+    const baseline = await measured("baseline-inventory", () => inventory(rootDir, input.outputs, Boolean(input.dependencies)));
+    if (input.dependencies) {
+      const start = performance.now();
+      const result = await measured("dependencies", () => createExecPort().run({
+        command: input.dependencies.command[0],
+        args: input.dependencies.command.slice(1),
+        cwd: rootDir,
+        env: environment,
+        timeoutMs: input.dependencies.timeoutMs,
+        maxBuffer: 1024 * 1024,
+        ...input.signal ? { signal: input.signal } : {}
+      }));
+      input.onDependencyResult?.(result, Math.round(performance.now() - start));
+      if (result.code !== 0 || input.signal?.aborted) throw new CheckSnapshotError("check_dependency_failed", "Private finite dependency installation failed.");
+    }
+    const installed = input.dependencies ? await measured("post-dependency-inventory", () => snapshotDigests(rootDir, input.outputs, false, performance.now() + SNAPSHOT_TIMEOUT_MS, input.signal, true, true, source.absentInputs, selfReferences(rootDir, control))) : { digest: baseline, sourceDigest: baseline, selfReferenced: false };
+    if (baseline !== installed.sourceDigest) throw new CheckSnapshotError("check_snapshot_drift", "Dependency setup changed finite source bytes or modes.");
+    const open3 = (tree, onPhase) => {
+      const controlDir = tree.privateControl;
+      const verify = async (options = {}) => phaseMeter(onPhase)("verification", async () => {
+        const timeout = options.timeoutMs ?? SNAPSHOT_TIMEOUT_MS;
+        if (!Number.isFinite(timeout) || timeout <= 0 || timeout > SNAPSHOT_TIMEOUT_MS) throw new CheckSnapshotError("check_snapshot_timeout", "Invalid finite verification deadline.");
+        if (await inventory(tree.rootDir, options.outputs ?? input.outputs, false, performance.now() + timeout) !== installed.digest)
+          throw new CheckSnapshotError("check_snapshot_drift", "Finite source or installed dependencies changed.");
+      });
+      return {
+        rootDir: tree.rootDir,
+        commandRoot: path3.join(controlDir, "commands"),
+        environment: environmentFor(tree.rootDir, controlDir),
+        dependencyDigest: installed.digest,
+        clonable: !installed.selfReferenced,
+        reusedVerification: "inventory",
+        verify,
+        clone: (method, onClonePhase) => cloneSnapshot(tree, method, input.signal, onClonePhase, open3),
+        cleanup: () => removeTrees(tree.owned)
+      };
+    };
+    return open3({ rootDir, privateControl: control, owned: [rootDir, control] }, input.onPhase);
+  } catch (error) {
+    await cleanup();
+    if (error instanceof CheckSnapshotError) throw error;
+    throw new CheckSnapshotError("check_snapshot_unavailable", "Finite source could not be materialized or verified.");
   }
 }
 
@@ -940,7 +1300,7 @@ async function runConfiguredCommand(descriptor, args, runtime, observeSuccess, o
 
 // packages/cli/src/review-evidence.ts
 import { randomUUID as randomUUID3 } from "node:crypto";
-import { mkdir as mkdir2, writeFile } from "node:fs/promises";
+import { mkdir as mkdir2, writeFile as writeFile2 } from "node:fs/promises";
 import path6 from "node:path";
 import {
   resolveReviewCharters,
@@ -1054,7 +1414,7 @@ async function emitReviewEvidence(context, original, document) {
   for (const [name, value2] of [["review-context", original], ["review-outcome", document]]) {
     const bytes = `${JSON.stringify(value2, null, 2)}
 `;
-    await writeFile(path6.join(runRoot, `${name}.json`), bytes, "utf8");
+    await writeFile2(path6.join(runRoot, `${name}.json`), bytes, "utf8");
     artifacts.push({ path: `${name}.json`, sha256: sha256Hex2(bytes), role: name });
   }
   if (digestCanonical(reviewed.binding.candidate) !== digestCanonical(candidate)) {
@@ -1068,7 +1428,7 @@ async function emitReviewEvidence(context, original, document) {
       reviewRoundAdded: false
     }, null, 2)}
 `;
-    await writeFile(path6.join(runRoot, "review-context-projection.json"), bytes, "utf8");
+    await writeFile2(path6.join(runRoot, "review-context-projection.json"), bytes, "utf8");
     artifacts.push({ path: "review-context-projection.json", sha256: sha256Hex2(bytes), role: "review-context-projection" });
   }
   for (const reviewerId of lists.approved) {
@@ -1086,7 +1446,7 @@ async function emitReviewEvidence(context, original, document) {
     )}
 `;
     const relativePath = `reviewers/${reviewerId}.json`;
-    await writeFile(path6.join(runRoot, relativePath), stamp, "utf8");
+    await writeFile2(path6.join(runRoot, relativePath), stamp, "utf8");
     artifacts.push({ path: relativePath, sha256: sha256Hex2(stamp), role: "reviewer-approval" });
   }
   const manifest = {
@@ -1119,7 +1479,7 @@ async function emitReviewEvidence(context, original, document) {
     ]
   };
   const manifestPath = path6.join(runRoot, "manifest.json");
-  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}
+  await writeFile2(manifestPath, `${JSON.stringify(manifest, null, 2)}
 `, "utf8");
   return { manifestPath, runRoot };
 }
@@ -1129,11 +1489,14 @@ import { randomUUID as randomUUID5 } from "node:crypto";
 import { access, mkdir as mkdir4, readFile as readFile3, realpath as realpath2, rm as rm3, stat } from "node:fs/promises";
 import path8 from "node:path";
 import {
+  deliveryRecordPathFor as deliveryRecordPathFor2,
+  recordOutputProvider,
   computeDeliverableIdentity,
+  capturePhysicalSource as capturePhysicalSource2,
   captureCheckBindings,
   captureCheckOutputSnapshots,
   candidateTreeEvidenceReader,
-  candidateTreeSourceReader,
+  candidateTreeSourceReader as candidateTreeSourceReader2,
   createExecPort as createExecPort3,
   digestCanonical as digestCanonical5,
   resolveRecordStorage as resolveRecordStorage5,
@@ -1155,7 +1518,7 @@ import {
 
 // packages/cli/src/scoped-attempts.ts
 import { randomUUID as randomUUID4 } from "node:crypto";
-import { link, mkdir as mkdir3, readFile as readFile2, readdir, unlink, writeFile as writeFile2 } from "node:fs/promises";
+import { link, mkdir as mkdir3, readFile as readFile2, readdir, unlink, writeFile as writeFile3 } from "node:fs/promises";
 import path7 from "node:path";
 import { digestCanonical as digestCanonical2, validateResourceApplicabilityProjection } from "./kernel.mjs";
 var corrupt = () => new CheckSnapshotError("check_attempt_corrupt", "Scoped check attempt history is missing, corrupt or inconsistent.");
@@ -1223,7 +1586,7 @@ var AttemptStore = class {
   async publish(target, entry) {
     const temp = `${target}.${randomUUID4()}.tmp`;
     try {
-      await writeFile2(temp, JSON.stringify({ digest: digestCanonical2(entry), entry }), { flag: "wx", mode: 384 });
+      await writeFile3(temp, JSON.stringify({ digest: digestCanonical2(entry), entry }), { flag: "wx", mode: 384 });
       await link(temp, target);
     } finally {
       await unlink(temp).catch(() => void 0);
@@ -1451,7 +1814,7 @@ import { digestCanonical as digestCanonical4, resolveRecordStorage as resolveRec
 import { digestCanonical as digestCanonical3, resolveRecordStorage as resolveRecordStorage3 } from "./kernel.mjs";
 
 // packages/cli/src/scoped-diagnostics.ts
-var failureCodes = ["check_snapshot_interrupted", "check_snapshot_timeout", "check_snapshot_unavailable", "check_snapshot_escape", "check_snapshot_drift", "check_snapshot_cleanup_failed", "check_dependency_source_overlap", "check_dependency_failed", "check_command_failed", "check_output_missing", "check_attempt_superseded", "check_artifact_unavailable", "check_evidence_rejected"];
+var failureCodes = ["check_snapshot_interrupted", "check_snapshot_timeout", "check_snapshot_unavailable", "check_snapshot_escape", "check_snapshot_drift", "check_snapshot_cleanup_failed", "check_dependency_source_overlap", "check_dependency_failed", "check_command_failed", "check_output_missing", "check_attempt_superseded", "check_artifact_unavailable", "check_evidence_rejected", "check_cancelled"];
 var executionCodes = ["ENOENT", "EACCES", "EPERM", "ABORT_ERR", "ERR_CHILD_PROCESS_STDIO_MAXBUFFER", "SIGKILL", "SIGTERM", "execution_failed"];
 function scopedDiagnosticFailure(error, executionErrorCode) {
   if (!(error instanceof CheckSnapshotError) || !failureCodes.includes(error.code)) return { unavailable: "unclassified" };
@@ -1540,8 +1903,26 @@ async function executableIdentity(command, root, searchPath, cwd, read) {
   }
   throw new CheckSnapshotError("check_runtime_unavailable", "A declared execution tool cannot be resolved and bound.");
 }
-function setupKey(profile) {
-  return digestCanonical5({ dependencies: profile.dependencies ?? null, dependencyInputs: [...profile.dependencyInputs].sort(), gitContext: profile.gitContext ?? "full" });
+function setupKey(profile, physicalSource) {
+  return digestCanonical5({ dependencies: profile.dependencies ?? null, dependencyInputs: [...profile.dependencyInputs].sort(), gitContext: profile.gitContext ?? "full", ...physicalSource ? { physicalSource } : {} });
+}
+function scopedProviders(context) {
+  const providers = context.config.providers.filter((p) => p.check?.scope);
+  if (providers.length && context.config.scopedExecution?.version !== "scoped-execution/1") throw new CheckSnapshotError("scoped_executor_required", "Scoped checks require supported private execution profiles before preparation.");
+  return providers;
+}
+async function preparedSource(context, candidate) {
+  const read = await candidateTreeSourceReader2(context.rootDir, candidate.treeSha);
+  const listing = await runGitCommand(["git", "ls-tree", "-r", "--name-only", "-z", candidate.treeSha], { cwd: context.rootDir });
+  if (listing.exitCode !== 0) throw new CheckSnapshotError("check_snapshot_unavailable", "Cannot enumerate the prepared source tree.");
+  return { inventory: listing.stdout.split("\0").filter(Boolean), read };
+}
+function validateScopedProvider(context, provider, inventory) {
+  const scope = provider.check.scope, profile = context.config.scopedExecution.profiles.find((p) => p.id === scope.profile);
+  if (!profile) throw new CheckSnapshotError("scoped_executor_required", "A selected execution profile is unsupported.");
+  if (profile.mutableOutputs.some((o) => inventory.some((f) => f === o.replace(/\/$/, "") || f.startsWith(`${o.replace(/\/$/, "")}/`)))) throw new CheckSnapshotError("check_output_overlaps_source", "Mutable outputs overlap prepared source.");
+  if ((provider.check.outputs ?? []).some((o) => !profile.mutableOutputs.some((m) => m.endsWith("/") ? o.startsWith(m) : o === m))) throw new CheckSnapshotError("check_output_undeclared", "Every retained output must be declared mutable in its profile.");
+  return profile;
 }
 var shownArgument = (argument) => /^[\w@%+=:,./-]+$/.test(argument) ? argument : JSON.stringify(argument);
 function oneAtATime() {
@@ -1566,6 +1947,12 @@ var ScopedChecks = class _ScopedChecks {
   captureTail = Promise.resolve();
   capturePhaseOpen = true;
   cleanupStarted = false;
+  /** With more than one worker: one read-only warm base per setup key, which no command runs in. Each
+   * worker takes a copy-on-write clone of it; without cloning each worker builds its own, as before. */
+  bases = /* @__PURE__ */ new Map();
+  cloning;
+  /** Profiles whose checks a tree has run and verified since it was made: their outputs may be in it. */
+  ranOutputs = /* @__PURE__ */ new WeakMap();
   executionLocks = /* @__PURE__ */ new Map();
   executionTails = /* @__PURE__ */ new Map();
   retainedResourceBindings;
@@ -1591,17 +1978,48 @@ var ScopedChecks = class _ScopedChecks {
   get serial() {
     return { snapshots: this.workers[0], write: (text2) => this.context.write(text2) };
   }
+  /** Zero mechanical preparation validates the real narrow physical frame,
+   * but does not hash broad consumer inputs or observe execution tools. Gate
+   * creates its own fresh session; no deferred identity is retained here. */
+  static async validatePreparation(context, candidate) {
+    const providers = scopedProviders(context);
+    if (!providers.length) return;
+    const { inventory, read } = await preparedSource(context, candidate);
+    const output = deliveryRecordPathFor2(context.config, candidate.deliverable.digest);
+    const ordinaryInventory = inventory.filter((file) => file !== output), inventoryPaths = new Set(ordinaryInventory);
+    for (const provider of providers) {
+      const profile = validateScopedProvider(context, provider, inventory), scope = recordOutputProvider(provider, output).check.scope;
+      const ordinarySelected = /* @__PURE__ */ new Set([
+        ...scope.files,
+        ...scope.tests,
+        ...scope.memberships.flatMap((prefix) => ordinaryInventory.filter((file) => file.startsWith(prefix)))
+      ]);
+      const selected = /* @__PURE__ */ new Set([...ordinarySelected, ...profile.dependencyInputs]);
+      for (const file of selected) {
+        const metadata = await read.metadata(file);
+        if (metadata.mode === null) {
+          if (profile.dependencyInputs.includes(file)) throw new CheckSnapshotError("check_dependency_input_missing", `Required dependency input ${file} is missing from the prepared tree.`);
+          if (scope.tests.includes(file)) throw new Error("Required test is absent");
+        }
+        if (ordinarySelected.has(file) && metadata.mode !== null !== inventoryPaths.has(file))
+          throw new Error("Snapshot membership and metadata presence disagree");
+      }
+      if (provider.check.physicalSource) {
+        try {
+          await capturePhysicalSource2(provider.check.physicalSource, read);
+        } catch {
+          throw new CheckSnapshotError("check_physical_source_invalid", "Physical source bytes, modes or required absences are unavailable or unsafe.");
+        }
+      }
+    }
+  }
   static async create(context, candidate) {
-    const providers = context.config.providers.filter((p) => p.check?.scope);
+    const providers = scopedProviders(context);
     if (!providers.length) return void 0;
-    if (context.config.scopedExecution?.version !== "scoped-execution/1") throw new CheckSnapshotError("scoped_executor_required", "Scoped checks require supported private execution profiles before preparation.");
     const session = new _ScopedChecks(context, candidate);
     const storage = await resolveRecordStorage5(context.rootDir, { storageNamespace: context.config.storageNamespace, leaf: "scoped-attempts" });
-    const read = await candidateTreeSourceReader(context.rootDir, candidate.treeSha);
+    const { inventory, read } = await preparedSource(context, candidate);
     const readEvidence = await candidateTreeEvidenceReader(context.rootDir, candidate.treeSha);
-    const listing = await runGitCommand(["git", "ls-tree", "-r", "--name-only", "-z", candidate.treeSha], { cwd: context.rootDir });
-    if (listing.exitCode !== 0) throw new CheckSnapshotError("check_snapshot_unavailable", "Cannot enumerate the prepared source tree.");
-    const inventory = listing.stdout.split("\0").filter(Boolean);
     session.candidateSource = { inventory, read };
     const validationConfig = { ...context.config, computingIdentityVersion: "validation-tree/v1", reviewNeutral: context.config.recordNeutral };
     const validationTrees = /* @__PURE__ */ new Map();
@@ -1614,10 +2032,7 @@ var ScopedChecks = class _ScopedChecks {
       return digest;
     };
     for (const provider of providers) {
-      const scope = provider.check.scope, profile = context.config.scopedExecution.profiles.find((p) => p.id === scope.profile);
-      if (!profile) throw new CheckSnapshotError("scoped_executor_required", "A selected execution profile is unsupported.");
-      if (profile.mutableOutputs.some((o) => inventory.some((f) => f === o.replace(/\/$/, "") || f.startsWith(`${o.replace(/\/$/, "")}/`)))) throw new CheckSnapshotError("check_output_overlaps_source", "Mutable outputs overlap prepared source.");
-      if ((provider.check.outputs ?? []).some((o) => !profile.mutableOutputs.some((m) => m.endsWith("/") ? o.startsWith(m) : o === m))) throw new CheckSnapshotError("check_output_undeclared", "Every retained output must be declared mutable in its profile.");
+      const scope = provider.check.scope, profile = validateScopedProvider(context, provider, inventory);
       const searchPath = executionPath(context.rootDir, context.env["PATH"] ?? process.env["PATH"] ?? "/usr/bin:/bin");
       const tools = await Promise.all([[process.execPath, "."], [provider.check.command[0], scope.cwd], ...profile.dependencies ? [[profile.dependencies.command[0], "."]] : []].map(([c, cwd]) => executableIdentity(c, context.rootDir, searchPath, cwd, read)));
       const observation = {
@@ -1700,12 +2115,13 @@ var ScopedChecks = class _ScopedChecks {
     const cost = /* @__PURE__ */ new Map();
     for (const id of ids) {
       const last = (await this.stores.get(id).read()).filter((r) => r.attempt.status === "passed" || r.attempt.status === "failed").at(-1)?.payload;
-      cost.set(id, last?.durationMs === void 0 ? Infinity : last.durationMs - (last.diagnostic?.dependency?.durationMs ?? 0));
+      const waited = last?.diagnostic?.setup?.phases.filter((p) => p.phase === "warm-base-wait").reduce((sum, p) => sum + p.durationMs, 0) ?? 0;
+      cost.set(id, last?.durationMs === void 0 ? Infinity : last.durationMs - (last.diagnostic?.dependency?.durationMs ?? 0) - waited);
     }
     const [first, ...rest] = ids;
     if (first === void 0) return [];
     const byCost = [first, ...rest.sort((a, b) => cost.get(a) === cost.get(b) ? 0 : cost.get(a) < cost.get(b) ? -1 : 1)];
-    const keys = byCost.map((id) => setupKey(this.profileOf(id)));
+    const keys = byCost.map((id) => setupKey(this.profileOf(id), this.context.config.providers.find((p) => p.id === id)?.check?.physicalSource));
     return [...new Set(keys)].flatMap((key) => byCost.filter((_, index) => keys[index] === key));
   }
   /**
@@ -1749,16 +2165,37 @@ var ScopedChecks = class _ScopedChecks {
     await this.pool(ids.slice(0, 1), satisfy);
     await this.pool(ids.slice(1), satisfy);
   }
-  /** Runs the gate's requested checks on the pool. A check's own failure is returned in request order and stops nothing. */
+  /**
+   * Runs the gate's requested checks on the pool. A check's own failure is returned in request order. Without
+   * `scopedExecution.failFast` it stops nothing; with it, the first failure cancels every other check: one not
+   * yet started never starts and one running has its process group signalled, and both are recorded
+   * `interrupted` with `check_cancelled` and left out of the returned failures.
+   */
   async executeAll(requests) {
     const failures = /* @__PURE__ */ new Map();
+    const failFast = this.context.config.scopedExecution?.failFast === true;
+    const running = /* @__PURE__ */ new Map(), unstarted = [];
+    let firstFailure;
     const run = async (id, lane) => {
+      if (firstFailure !== void 0) {
+        unstarted.push(id);
+        return;
+      }
       const request = requests.find((r) => r.provider.id === id);
+      const cancel = failFast ? new AbortController() : void 0;
+      if (cancel) running.set(id, cancel);
       try {
-        await this.execute(request.provider, request.obligationIds, false, lane);
+        await this.execute(request.provider, request.obligationIds, false, lane, cancel && { signal: cancel.signal, after: () => firstFailure });
       } catch (error) {
         if (!(error instanceof CheckSnapshotError)) throw error;
+        if (error.code === "check_cancelled") return;
         failures.set(id, error);
+        if (failFast && firstFailure === void 0) {
+          firstFailure = id;
+          for (const [other, controller] of running) if (other !== id) controller.abort();
+        }
+      } finally {
+        running.delete(id);
       }
     };
     const resource = requests.find((r) => this.acceptsApplicability(r.provider, r.obligationIds));
@@ -1767,36 +2204,99 @@ var ScopedChecks = class _ScopedChecks {
       for (const id of serialIds) await run(id, this.serial);
       await this.pool(requests.map((r) => r.provider.id).filter((id) => !serialIds.includes(id)), run);
     } else await this.pool(requests.map((r) => r.provider.id), run);
+    if (firstFailure !== void 0) await this.cancelUnstarted(unstarted, firstFailure);
     return requests.flatMap((r) => failures.has(r.provider.id) ? [failures.get(r.provider.id)] : []);
+  }
+  /** Records each check a fail-fast gate never started as `interrupted`, with `check_cancelled` and no command. */
+  async cancelUnstarted(ids, after) {
+    for (const id of ids) {
+      const attempt = this.owned.get(id) ?? await this.allocate(id), store = this.stores.get(id);
+      await store.finish(attempt, "interrupted", {
+        outputs: [],
+        durationMs: 0,
+        diagnostic: { availability: "available", phase: "snapshot-setup", failure: { code: "check_cancelled" }, command: { unavailable: "not-started" } },
+        log: "check_cancelled"
+      });
+      this.context.write(`interrupted ${id}: check_cancelled before it started, after ${after} failed; attempt ${attempt.attemptId} retained at ${store.terminalPath(attempt)}`);
+    }
   }
   async submitMechanical() {
     for (const submit of this.submissions) await submit();
     this.submissions.length = 0;
   }
-  /** One acquisition path preserves setup sharing, output ownership and worker isolation. */
-  async acquireSnapshot(profile, lane, onDependencyResult) {
-    const key = setupKey(profile);
-    const sharedOutputs = [...new Set(this.context.config.scopedExecution.profiles.filter((p) => setupKey(p) === key && this.context.config.providers.some((q) => q.check?.scope?.profile === p.id)).flatMap((p) => p.mutableOutputs))];
-    let snapshot = lane.snapshots.get(key);
-    if (!snapshot) {
-      if (this.concurrency === 1) for (const [previousKey, previous] of lane.snapshots) {
-        await previous.cleanup();
-        lane.snapshots.delete(previousKey);
-      }
-      snapshot = await createCheckSnapshot({
-        rootDir: this.context.rootDir,
-        candidate: this.candidate,
-        outputs: sharedOutputs,
-        gitContext: profile.gitContext ?? "full",
-        environment: { PATH: this.context.env["PATH"] ?? process.env["PATH"] ?? "/usr/bin:/bin" },
-        ...profile.dependencies ? { dependencies: profile.dependencies } : {},
-        ...this.context.signal ? { signal: this.context.signal } : {},
-        onPhase: (phase, durationMs) => this.phaseWriters.get(lane.snapshots)?.(phase, durationMs),
-        ...onDependencyResult ? { onDependencyResult } : {}
-      });
+  /** One acquisition path preserves setup sharing, output ownership and worker isolation. A worker's tree
+   * for a setup key is built here, cloned from the warm base, or retained from its previous check.
+   * `onSetup` hears how the tree is being got before any setup runs, so a failed setup is attributed. */
+  async acquireSnapshot(profile, lane, onDependencyResult, physicalSource, onSetup = () => {
+  }) {
+    const key = setupKey(profile, physicalSource);
+    const sharedOutputs = [...new Set(this.context.config.scopedExecution.profiles.filter((p) => this.context.config.providers.some((q) => q.check?.scope?.profile === p.id && setupKey(p, q.check.physicalSource) === key)).flatMap((p) => p.mutableOutputs))];
+    const method = this.concurrency === 1 ? void 0 : await (this.cloning ??= snapshotCloneMethod());
+    const acquired = (snapshot, setup) => {
       lane.snapshots.set(key, snapshot);
+      onSetup(setup);
+      return { snapshot, sharedOutputs, setup };
+    };
+    const retained = lane.snapshots.get(key);
+    if (retained) return acquired(retained, { action: "reused", snapshot: "retained", clone: this.concurrency === 1 ? "not-used" : method ?? "unavailable" });
+    if (this.concurrency === 1) for (const [previousKey, previous] of lane.snapshots) {
+      await previous.cleanup();
+      lane.snapshots.delete(previousKey);
     }
-    return { snapshot, sharedOutputs };
+    const onPhase = (phase, durationMs) => {
+      const write = this.phaseWriters.get(lane.snapshots);
+      if (write) write(phase, durationMs);
+      else lane.write(`snapshot ${profile.id}: bootstrap ${phase} ${Math.round(durationMs)}ms`);
+    };
+    const build = (dependencyResult) => createCheckSnapshot({
+      rootDir: this.context.rootDir,
+      candidate: this.candidate,
+      outputs: sharedOutputs,
+      gitContext: profile.gitContext ?? "full",
+      environment: { PATH: this.context.env["PATH"] ?? process.env["PATH"] ?? "/usr/bin:/bin" },
+      ...physicalSource ? { physicalSource } : {},
+      ...profile.dependencies ? { dependencies: profile.dependencies } : {},
+      ...this.context.signal ? { signal: this.context.signal } : {},
+      onPhase,
+      ...dependencyResult ? { onDependencyResult: dependencyResult } : {}
+    });
+    let executed = false, clone = this.concurrency === 1 ? "not-used" : "unavailable";
+    if (method) {
+      let base = this.bases.get(key);
+      if (!base) {
+        executed = true;
+        base = build(onDependencyResult);
+        this.bases.set(key, base);
+        const failed = base;
+        failed.catch(() => {
+          if (this.bases.get(key) === failed) this.bases.delete(key);
+        });
+      }
+      onSetup({ action: executed ? "executed" : "reused", snapshot: "cloned", clone: method });
+      const waiting = performance.now();
+      let warm;
+      try {
+        warm = await base;
+      } catch (error) {
+        if (executed || !(error instanceof CheckSnapshotError) || this.context.signal?.aborted) throw error;
+        lane.write(`snapshot ${profile.id}: shared setup failed (${error.code}); setting up again`);
+      }
+      if (!executed) onPhase("warm-base-wait", performance.now() - waiting);
+      if (warm && !warm.clonable) {
+        clone = "path-bound";
+        lane.write(`snapshot ${profile.id}: setup wrote its own path into the tree; each worker builds its own`);
+        if (executed) return acquired(warm, { action: "executed", snapshot: "built", clone });
+      } else if (warm) {
+        try {
+          return acquired(await warm.clone(method, onPhase), { action: executed ? "executed" : "reused", snapshot: "cloned", clone: method });
+        } catch (error) {
+          if (!(error instanceof CheckSnapshotError) || this.context.signal?.aborted) throw error;
+          lane.write(`snapshot ${profile.id}: clone unavailable; ${error.code}`);
+        }
+      }
+    }
+    onSetup({ action: "executed", snapshot: "built", clone });
+    return acquired(await build(executed ? void 0 : onDependencyResult), { action: "executed", snapshot: "built", clone });
   }
   scheduleCapture(task, executionStage = false) {
     if (this.cleanupStarted || !this.capturePhaseOpen && !executionStage) return Promise.reject(new CheckSnapshotError("installed_data_capture_closed", "Resource capture must finish before execution or cleanup begins."));
@@ -1811,7 +2311,7 @@ var ScopedChecks = class _ScopedChecks {
       tree = (async () => {
         const listing = await runGitCommand(["git", "ls-tree", "-r", "--name-only", "-z", sha], { cwd: this.context.rootDir });
         if (listing.exitCode !== 0) throw new CheckSnapshotError("installed_data_source_unqualified", "Cannot enumerate installed resource source inputs.");
-        return { inventory: listing.stdout.split("\0").filter(Boolean), read: await candidateTreeSourceReader(this.context.rootDir, sha) };
+        return { inventory: listing.stdout.split("\0").filter(Boolean), read: await candidateTreeSourceReader2(this.context.rootDir, sha) };
       })();
       this.sourceTreeCache.set(sha, tree);
     }
@@ -1826,12 +2326,12 @@ var ScopedChecks = class _ScopedChecks {
     if (!provider?.check?.scope || !profile || !this.identities.has(providerId)) throw new CheckSnapshotError("scoped_executor_required", "Installed resources require an already configured scoped provider and profile.");
     const normalized = normalizeInstalledDataResourceRequests2(requests);
     try {
-      const { snapshot, sharedOutputs } = await this.acquireSnapshot(profile, lane);
+      const { snapshot, sharedOutputs } = await this.acquireSnapshot(profile, lane, void 0, provider.check.physicalSource);
       for (const output of sharedOutputs) await rm3(path8.join(snapshot.rootDir, output), { recursive: true, force: true });
       const capture2 = await captureOwnedInstalledDataResources(snapshot, normalized, context, this.context.signal ? { signal: this.context.signal } : {});
       return { capture: capture2, snapshot };
     } catch (error) {
-      const key = setupKey(profile), damaged = lane.snapshots.get(key);
+      const key = setupKey(profile, provider.check.physicalSource), damaged = lane.snapshots.get(key);
       await damaged?.cleanup();
       lane.snapshots.delete(key);
       throw error;
@@ -1904,7 +2404,7 @@ var ScopedChecks = class _ScopedChecks {
       const provider = this.context.config.providers.find((p) => p.id === id);
       bindings[id] = createResourceApplicabilityBinding({
         candidateDigest: digestCanonical5(scopedCandidate(this.candidate)),
-        definitionDigest: digestCanonical5(provider.check),
+        definitionDigest: digestCanonical5(recordOutputProvider(provider, deliveryRecordPathFor2(this.context.config, this.candidate.deliverable.digest)).check),
         declarationDigest: binding.declarationDigest,
         sourceApplicabilityDigest: binding.sourceApplicabilityDigest,
         capture: capture2,
@@ -1991,7 +2491,8 @@ var ScopedChecks = class _ScopedChecks {
     this.executionTails.set(lane.snapshots, running.catch(() => void 0));
     return running;
   }
-  execute(provider, obligationIds, deferSubmission = false, lane = this.serial) {
+  /** `cancel` is a fail-fast gate's: once it aborts, the check stops and is recorded `interrupted` with `check_cancelled`. */
+  execute(provider, obligationIds, deferSubmission = false, lane = this.serial, cancel) {
     this.capturePhaseOpen = false;
     return this.onWorker(lane, async () => {
       if (!deferSubmission && this.acceptsApplicability(provider, obligationIds)) {
@@ -2008,30 +2509,55 @@ var ScopedChecks = class _ScopedChecks {
           return;
         }
       }
-      await this.executeInLane(provider, obligationIds, deferSubmission, lane);
+      await this.executeInLane(provider, obligationIds, deferSubmission, lane, cancel);
     });
   }
-  async executeInLane(provider, obligationIds, deferSubmission, lane) {
+  async executeInLane(provider, obligationIds, deferSubmission, lane, cancel) {
     await this.closeCapturePhase();
+    const commandSignal = cancel ? AbortSignal.any([cancel.signal, ...this.context.signal ? [this.context.signal] : []]) : this.context.signal;
+    const cancelled = () => cancel?.signal.aborted === true && !this.context.signal?.aborted;
     const started = Date.now(), check = provider.check, profile = this.context.config.scopedExecution.profiles.find((p) => p.id === check.scope.profile);
     const attempt = this.owned.get(provider.id) ?? await this.allocate(provider.id);
-    this.phaseWriters.set(lane.snapshots, (phase, durationMs) => lane.write(`snapshot ${provider.id}: attempt ${attempt.attemptId}; ${phase} ${Math.round(durationMs)}ms`));
+    const phases = [];
+    let settingUp = true;
+    this.phaseWriters.set(lane.snapshots, (phase, durationMs) => {
+      if (settingUp) phases.push({ phase: phase === "verification" ? "pre-command-verification" : phase, durationMs: Math.round(durationMs) });
+      lane.write(`snapshot ${provider.id}: attempt ${attempt.attemptId}; ${phase} ${Math.round(durationMs)}ms`);
+    });
     let payload = { outputs: [] }, terminal = false;
     let diagnostic = { availability: "available", phase: "snapshot-setup", failure: { unavailable: "not-failed" }, command: { unavailable: "not-started" } };
     let executionErrorCode;
     const store = this.stores.get(provider.id);
     const secrets = check.scope.environment.filter((e) => e.kind === "credential").map((e) => this.context.env[e.name]).filter((v) => !!v);
     try {
-      const { snapshot, sharedOutputs } = await this.acquireSnapshot(
+      const verificationOf = (setup2) => setup2.snapshot === "built" || check.physicalSource ? "inventory" : "index";
+      const { snapshot, sharedOutputs, setup } = await this.acquireSnapshot(
         profile,
         lane,
         (result2, durationMs) => {
           diagnostic = { ...diagnostic, dependency: scopedDependencyDiagnostic(result2, durationMs, secrets) };
+        },
+        check.physicalSource,
+        (setup2) => {
+          diagnostic = { ...diagnostic, setup: { ...setup2, verification: verificationOf(setup2), phases } };
         }
       );
-      diagnostic = { ...diagnostic, phase: "pre-command-verification" };
-      for (const output of [...check.outputs ?? [], ...sharedOutputs.filter((o) => !profile.mutableOutputs.includes(o))]) await rm3(path8.join(snapshot.rootDir, output), { recursive: true, force: true });
-      await snapshot.verify({ outputs: profile.mutableOutputs });
+      const verification = setup.snapshot === "built" ? "inventory" : snapshot.reusedVerification;
+      diagnostic = { ...diagnostic, phase: "pre-command-verification", setup: { ...setup, verification, phases } };
+      const removed = [...check.outputs ?? [], ...sharedOutputs.filter((o) => !profile.mutableOutputs.includes(o))];
+      const remove = async () => {
+        for (const output of removed) await rm3(path8.join(snapshot.rootDir, output), { recursive: true, force: true });
+      };
+      if (verification === "index") {
+        await snapshot.verify({ outputs: profile.mutableOutputs, unchanged: { allowed: [...profile.mutableOutputs, ...this.ranOutputs.get(snapshot) ?? []] } });
+        await remove();
+      } else {
+        await remove();
+        await snapshot.verify({ outputs: profile.mutableOutputs });
+      }
+      settingUp = false;
+      lane.write(`setup ${provider.id}: attempt ${attempt.attemptId}; ${setup.action} on a ${setup.snapshot} tree (clone ${setup.clone}), ${verification} verification; ${Date.now() - started}ms`);
+      if (cancelled()) throw new CheckSnapshotError("check_cancelled", `Declared scoped check ${provider.id} was cancelled before its command, after ${cancel.after()} failed.`);
       const injected = Object.fromEntries(check.scope.environment.filter((e) => this.context.env[e.name] !== void 0).map((e) => [e.name, this.context.env[e.name]]));
       lane.write(`checking ${provider.id}: attempt ${attempt.attemptId}`);
       diagnostic = { ...diagnostic, phase: "command" };
@@ -2039,19 +2565,23 @@ var ScopedChecks = class _ScopedChecks {
       await mkdir4(commandHome, { recursive: true });
       await mkdir4(commandTemp, { recursive: true });
       diagnostic = { ...diagnostic, command: { unavailable: "not-completed" } };
-      const result = await createExecPort3().run({ command: check.command[0], args: check.command.slice(1), cwd: path8.join(snapshot.rootDir, check.scope.cwd), env: { ...snapshot.environment, ...injected, HOME: commandHome, TMPDIR: commandTemp }, timeoutMs: check.timeoutMs, maxBuffer: 1024 * 1024, ...this.context.signal ? { signal: this.context.signal } : {} });
+      const result = await createExecPort3().run({ command: check.command[0], args: check.command.slice(1), cwd: path8.join(snapshot.rootDir, check.scope.cwd), env: { ...snapshot.environment, ...injected, HOME: commandHome, TMPDIR: commandTemp }, timeoutMs: check.timeoutMs, maxBuffer: 1024 * 1024, ...commandSignal ? { signal: commandSignal } : {} });
       executionErrorCode = result.errorCode;
       diagnostic = { ...diagnostic, command: scopedCommandDiagnostic(result, secrets) };
       payload = { outputs: [], durationMs: Date.now() - started, log: redactScopedStreams(result, secrets).slice(-4e3), dependencyDigest: snapshot.dependencyDigest };
+      if (cancelled() && result.errorCode === "ABORT_ERR") throw new CheckSnapshotError("check_cancelled", `Declared scoped check ${provider.id} was cancelled, its process group signalled, after ${cancel.after()} failed.`);
       if (result.code !== 0 || this.context.signal?.aborted) throw new CheckSnapshotError("check_command_failed", `Declared scoped check ${provider.id} did not complete successfully (exit ${result.code}).`);
       diagnostic = { ...diagnostic, phase: "post-command-verification" };
       await snapshot.verify({ outputs: profile.mutableOutputs });
+      const ran = this.ranOutputs.get(snapshot) ?? /* @__PURE__ */ new Set();
+      for (const output of profile.mutableOutputs) ran.add(output);
+      this.ranOutputs.set(snapshot, ran);
       diagnostic = { ...diagnostic, phase: "output-capture" };
       const outputs = await captureCheckOutputSnapshots(snapshot.rootDir, check.outputs ?? []);
       if (!outputs || outputs.some((o) => secrets.some((secret) => Buffer.from(o.base64, "base64").includes(Buffer.from(secret))))) throw new CheckSnapshotError("check_output_missing", "A retained output is absent, corrupt, escaped or contains credential bytes.");
       payload = { ...payload, outputs, diagnostic: { ...diagnostic, phase: "complete" } };
       const installed = this.installed.get(provider.id);
-      if (installed?.snapshot === snapshot) payload = { ...payload, resourceApplicability: createResourceApplicabilityProjection({
+      if (installed?.snapshot === snapshot) payload = { ...payload, resourceScope: structuredClone(check.scope), resourceApplicability: createResourceApplicabilityProjection({
         origin: this.resourceOrigin({ attempt: { ...attempt, status: "passed" }, executionHeadSha: this.candidate.headSha }),
         consumerId: installed.binding.declaration.consumerId,
         declarationDigest: installed.binding.declarationDigest,
@@ -2089,7 +2619,7 @@ var ScopedChecks = class _ScopedChecks {
       else await submit();
       lane.write(`passed ${provider.id}: ${Date.now() - started}ms including snapshot setup; retained ${runId}`);
     } catch (error) {
-      const status = this.context.signal?.aborted ? "interrupted" : "failed";
+      const status = this.context.signal?.aborted || error instanceof CheckSnapshotError && error.code === "check_cancelled" ? "interrupted" : "failed";
       if (!terminal) await store.finish(attempt, status, {
         ...payload,
         durationMs: Date.now() - started,
@@ -2103,8 +2633,8 @@ ${error.code}`.slice(-4e3) } : {}
         `  command (cwd ${ran.cwd}): ${ran.argv.map(shownArgument).join(" ")}`,
         ..."unavailable" in ran.result ? [`  output ${ran.result.unavailable}`] : [`  exit ${ran.result.exitCode ?? "unavailable"}; output tail (last 40 lines):`, ...ran.result.outputTail.trimEnd().split("\n").slice(-40).map((line) => `    ${line}`)]
       ].join("\n"));
-      const damaged = lane.snapshots.get(setupKey(profile));
-      lane.snapshots.delete(setupKey(profile));
+      const damaged = lane.snapshots.get(setupKey(profile, check.physicalSource));
+      lane.snapshots.delete(setupKey(profile, check.physicalSource));
       await damaged?.cleanup();
       throw error;
     }
@@ -2117,6 +2647,9 @@ ${error.code}`.slice(-4e3) } : {}
       for (const snapshot of snapshots.values()) await snapshot.cleanup();
       snapshots.clear();
     }
+    const bases = [...this.bases.values()];
+    this.bases.clear();
+    for (const base of bases) await (await base.catch(() => void 0))?.cleanup();
   }
 };
 
@@ -2188,6 +2721,20 @@ ${result.stderr}`.slice(-4e3)}`);
   return outcome2.status === "accepted" ? [] : outcome2.blockers;
 }
 
+// packages/cli/src/scoped-budget.ts
+import { scopedBudgetOffenders } from "./kernel.mjs";
+function refuseOverBudget(config) {
+  const { overCap, overBudget, totalMs } = scopedBudgetOffenders(config);
+  if (overCap.length === 0 && overBudget.length === 0) return;
+  const { budgetMs, checkBudgetMs } = config.scopedExecution;
+  const timeout = (id) => config.providers.find((p) => p.id === id).check.timeoutMs;
+  const reasons = [
+    ...overCap.map((id) => `${id} declares timeoutMs ${timeout(id)} over checkBudgetMs ${checkBudgetMs}`),
+    ...overBudget.length ? [`${overBudget.join(", ")} ${overBudget.length === 1 ? "pushes" : "push"} the declared total to ${totalMs}ms over budgetMs ${budgetMs}`] : []
+  ];
+  throw new CheckSnapshotError("scoped_budget_exceeded", `The scoped check selection exceeds its declared budget, so no check ran: ${reasons.join("; ")}.`);
+}
+
 // packages/cli/src/commands/gate.ts
 import { computeDeliverableIdentity as computeDeliverableIdentity2, runAdmission } from "./kernel.mjs";
 
@@ -2248,7 +2795,9 @@ async function providerAdmission(context, options, session) {
   const attemptBlockers = [];
   let admission = await admit(input, admissionOptions);
   await session?.explainReuse((admission.decision?.resolutions ?? []).flatMap((r) => r.kind === "satisfied_evidence" ? [r.providerId] : []));
-  while (!admission.admitted && admission.decision !== void 0 && admission.candidate !== void 0) {
+  const failFast = context.config.scopedExecution?.failFast === true;
+  let failedFast = false;
+  while (!failedFast && !admission.admitted && admission.decision !== void 0 && admission.candidate !== void 0) {
     const requested = /* @__PURE__ */ new Map();
     for (const resolution of admission.decision.resolutions) {
       if (resolution.kind !== "blocked") continue;
@@ -2272,6 +2821,7 @@ async function providerAdmission(context, options, session) {
       for (const [id] of scoped) attempted.add(id);
       const failures = await session.executeAll(scoped.map(([id, request2]) => ({ provider: context.config.providers.find((p) => p.id === id), obligationIds: request2.obligationIds })));
       attemptBlockers.push(...failures.map(scopedCheckBlocker));
+      failedFast = failFast && failures.length > 0;
       admission = await admit({ ...input, ...liveResults.length === 0 ? {} : { liveResults } }, admissionOptions);
       continue;
     }
@@ -2287,6 +2837,10 @@ async function providerAdmission(context, options, session) {
         } catch (error) {
           if (!(error instanceof CheckSnapshotError)) throw error;
           attemptBlockers.push(scopedCheckBlocker(error));
+          if (failFast) {
+            failedFast = true;
+            await session.cancelUnstarted([...requested.keys()].filter((id) => !attempted.has(id) && context.config.providers.find((p) => p.id === id).check?.scope), providerId);
+          }
         }
       } else attemptBlockers.push(...await runDeclaredCheck(context, registration, request.obligationIds, admission.candidate, session ? { scopedPlan: await session.plan(), readOutput: session.readOutput, resourceBindings: await session.resourceBindings() } : {}));
       admission = await admit({ ...input, ...liveResults.length === 0 ? {} : { liveResults } }, admissionOptions);
@@ -2325,6 +2879,7 @@ async function providerAdmission(context, options, session) {
   return attemptBlockers.length === 0 || final.admitted ? { ...final, observedLiveResults: liveResults } : { ...final, observedLiveResults: liveResults, blockers: [...attemptBlockers, ...final.blockers] };
 }
 async function runProviderBackedAdmission(context, options) {
+  refuseOverBudget(context.config);
   let session;
   try {
     if (context.config.providers.some((p) => p.check?.scope)) {
@@ -2402,6 +2957,7 @@ Scoped mechanical checks run the first declared check first and the rest cheapes
       return { kind: "usage", message: USAGE2 };
     }
     if (context.config.providers.some((p) => p.check?.scope) && !context.config.scopedExecution) throw new CheckSnapshotError("scoped_executor_required", "Scoped execution profiles are required before preparation commands may run.");
+    refuseOverBudget(context.config);
     let scoped;
     const refreshRecordNeutral = context.args[0] === "--refresh-record-neutral";
     const wiring = await context.wire();
@@ -2513,8 +3069,12 @@ ${result.stderr}`.slice(-4e3)}`,
       if (context.config.scopedExecution) {
         capture2 = finalCapture;
         validationDigest = await computeDeliverableIdentity3({ rootDir: context.rootDir, treeSha: capture2.candidate.treeSha, config: { ...context.config, computingIdentityVersion: "validation-tree/v1", reviewNeutral: context.config.recordNeutral } });
-        scoped = await ScopedChecks.create(context, capture2.candidate);
-        await scoped?.satisfyMechanical();
+        if (context.config.scopedExecution.mechanicalProviders.length === 0) {
+          await ScopedChecks.validatePreparation(context, capture2.candidate);
+        } else {
+          scoped = await ScopedChecks.create(context, capture2.candidate);
+          await scoped?.satisfyMechanical();
+        }
       }
       const published = await publishPreparationReceipt(
         context.rootDir,
@@ -2553,7 +3113,7 @@ import {
   capturePortableVerificationInputs,
   verifyDeliveryRecord,
   deliveryRecordBytes,
-  deliveryRecordPathFor as deliveryRecordPathFor2,
+  deliveryRecordPathFor as deliveryRecordPathFor3,
   discoverRecords as discoverRecords2,
   readCompiledRepositoryPolicy
 } from "./kernel.mjs";
@@ -2563,7 +3123,7 @@ import path11 from "node:path";
 import { createHash, randomUUID as randomUUID7 } from "node:crypto";
 import { execFile as execFile2 } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
-import { chmod, lstat, mkdir as mkdir5, open, readFile as readFile4, readdir as readdir2, rename as rename2, unlink as unlink2 } from "node:fs/promises";
+import { chmod as chmod2, lstat as lstat2, mkdir as mkdir5, open, readFile as readFile4, readdir as readdir2, rename as rename2, unlink as unlink2 } from "node:fs/promises";
 import path10 from "node:path";
 import { promisify as promisify2 } from "node:util";
 import {
@@ -2614,7 +3174,7 @@ async function readLedgers(storageDir) {
   })) {
     if (!name.endsWith(".json")) continue;
     const ledgerPath = path10.join(storageDir, name);
-    const stats = await lstat(ledgerPath).catch(() => void 0);
+    const stats = await lstat2(ledgerPath).catch(() => void 0);
     if (stats === void 0 || !stats.isFile() || stats.isSymbolicLink() || (stats.mode & 63) !== 0) {
       return failure("retention_ledger_unsafe", `${ledgerPath} is not an owner-only regular file`);
     }
@@ -2642,7 +3202,7 @@ async function readLedgers(storageDir) {
 }
 async function writeLedger(ledgerPath, ledger) {
   await mkdir5(path10.dirname(ledgerPath), { recursive: true, mode: 448 });
-  await chmod(path10.dirname(ledgerPath), 448);
+  await chmod2(path10.dirname(ledgerPath), 448);
   const temporary = `${ledgerPath}.tmp-${randomUUID7()}`;
   const handle = await open(temporary, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL, 384);
   try {
@@ -2657,7 +3217,7 @@ async function writeLedger(ledgerPath, ledger) {
 }
 async function verifyWorkingRecord(rootDir, entry) {
   const absolute = path10.join(rootDir, entry.relativePath);
-  const stats = await lstat(absolute).catch((error) => error.code === "ENOENT" ? void 0 : Promise.reject(error));
+  const stats = await lstat2(absolute).catch((error) => error.code === "ENOENT" ? void 0 : Promise.reject(error));
   if (stats === void 0) return failure("retention_owned_record_changed", `${entry.relativePath} is missing`);
   if (!stats.isFile() || stats.isSymbolicLink()) return failure("retention_owned_record_unsafe", `${entry.relativePath} is not a regular file`);
   if (sha256Hex5(await readFile4(absolute)) !== entry.sha256) {
@@ -2723,7 +3283,7 @@ async function applyDeliveryRecordRetention(input) {
       }
       for (const pending of ledger.pendingPrune) {
         const absolute = path10.join(input.rootDir, pending.relativePath);
-        const present = await lstat(absolute).then(() => true, (error) => error.code === "ENOENT" ? false : Promise.reject(error));
+        const present = await lstat2(absolute).then(() => true, (error) => error.code === "ENOENT" ? false : Promise.reject(error));
         if (present) {
           const verified = await verifyWorkingRecord(input.rootDir, pending);
           if (!verified.ok) return verified;
@@ -2750,7 +3310,7 @@ async function applyDeliveryRecordRetention(input) {
           return failure("retention_ownership_ambiguous", `${currentReceipt.relativePath} belongs to retention scope ${other.scope}`);
         }
       }
-      const currentStats = await lstat(path10.join(input.rootDir, currentReceipt.relativePath)).catch((error) => error.code === "ENOENT" ? void 0 : Promise.reject(error));
+      const currentStats = await lstat2(path10.join(input.rootDir, currentReceipt.relativePath)).catch((error) => error.code === "ENOENT" ? void 0 : Promise.reject(error));
       if (currentIndex < 0 && currentStats !== void 0) {
         return failure("retention_path_unowned", `${currentReceipt.relativePath} existed before retention scope ${input.scope} owned it`);
       }
@@ -2902,7 +3462,7 @@ async function writeRecord(context, retention) {
     { ...verificationInputs, observedAt, liveResults: admission.observedLiveResults ?? [], executionContext: context.classifyContext() }
   );
   if (!checked.ok) return { kind: "blocked", blockers: [...checked.blockers] };
-  const relativePath = deliveryRecordPathFor2(context.config, decision.candidate.deliverable.digest);
+  const relativePath = deliveryRecordPathFor3(context.config, decision.candidate.deliverable.digest);
   const absolutePath = path11.join(context.rootDir, relativePath);
   const bytes = deliveryRecordBytes(built.record);
   if (retention === void 0) {
@@ -6560,7 +7120,7 @@ import path19 from "node:path";
 import {
   MAX_RUN_PROVIDER_ID,
   RUN_PROVIDER_ID,
-  deliveryRecordPathFor as deliveryRecordPathFor3,
+  deliveryRecordPathFor as deliveryRecordPathFor4,
   needsCommittedSymlinkTarget,
   parseCandidateTreeListing,
   parseDeliveryRecord as parseDeliveryRecord2,
@@ -6679,7 +7239,7 @@ var verifyCommand = {
       tipSha: capture2.candidate.base.tipSha,
       mergeBaseSha: capture2.candidate.base.mergeBaseSha
     };
-    const relativePath = deliveryRecordPathFor3(context.config, identity.deliverableDigest);
+    const relativePath = deliveryRecordPathFor4(context.config, identity.deliverableDigest);
     const absolutePath = path19.join(context.rootDir, relativePath);
     let text2;
     try {

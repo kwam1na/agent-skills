@@ -611,11 +611,11 @@ EMPTY_STATE = {
 }
 PINNED_EMPTY_VIEWS = {
     "delivery.md": "bf22eae1f7b5115650ba06265e138d9b9ed720f44158d1fc761ba4df356507c9",
-    "delivery.html": "4fa4847c194b084a1e8789d9e6ce791089652443916fea61d72f5fb4dd44aed3",
+    "delivery.html": "05e0ad6b0565bd5f207a65a9b84809726a51aa59fc3ddd1c32964402041435ca",
 }
 PINNED_VIEWS = {
     "delivery.md": "412c01eecfbdcfba6f1f5f650a0368c29c40e3e7cf3b0ef44d0687e68115d79c",
-    "delivery.html": "f5baf37476fd8034bc7718c08f0c235cd09cd34d82a9b2971373ba1344f7b223",
+    "delivery.html": "76bfc21b2340fade00efae257024da3fa953dabe53985c0de1cd36e1e9a71136",
 }
 
 
@@ -975,6 +975,18 @@ def selection_lines(document: dict) -> tuple[str, ...]:
     )
 
 
+def refusal_document() -> dict:
+    """The fixed state with one row the provider refused under selection.refusalStops."""
+    state = copy.deepcopy(FIXED_STATE)
+    state["queue"][1]["checkSelection"] = {"by": "provider", "outcome": "provider_refused",
+                                           "detail": "the base provider exited 3: over the budget: unit (400s)"}
+    return {"state": state, "journal": FIXED_JOURNAL}
+
+
+REFUSAL_LINE = ("the provider refused its checks, and it is held until the lead selects them · the base provider exited 3: "
+                "over the budget: unit (400s)")
+
+
 VISIBILITY_LINES = (
     "fmt: passed · took 30s",
     "unit: running · 1m 40s of an expected 10m 00s",
@@ -1055,6 +1067,11 @@ class CheckVisibilityViewTests(unittest.TestCase):
         self.assertNotIn("<b>", view)
         self.assertNotIn(LONG_TITLE, view)
         self.assertNotIn("suite: failed", view)
+
+    def test_the_markdown_view_says_the_provider_refused_and_never_that_it_selected(self) -> None:
+        view = render_state.render_markdown(refusal_document())
+        self.assertIn(render_state._markdown_text(REFUSAL_LINE), view)
+        self.assertNotIn(render_state._markdown_text("checks selected by the provider"), view)
 
     def test_a_document_without_estimates_or_timing_renders_as_before(self) -> None:
         document = {"state": FIXED_STATE, "journal": FIXED_JOURNAL}
@@ -2281,6 +2298,11 @@ setTimeout(async () => {
             with self.subTest(line=line):
                 self.assertIn(line, shown["text"])
         self.assertNotIn(f"lead selection for {document['state']['queue'][0]['head']}", shown["text"])
+
+    def test_the_page_says_the_provider_refused_as_the_markdown_does(self) -> None:
+        shown = self.run_page({}, refusal_document())
+        self.assertIn(REFUSAL_LINE, shown["text"])
+        self.assertNotIn("checks selected by the provider", shown["text"])
 
     def test_a_page_whose_clock_is_behind_the_record_counts_from_the_records_last_write(self) -> None:
         shown = self.run_page({"now": "2026-10-20T11:59:00Z"}, visibility_document())

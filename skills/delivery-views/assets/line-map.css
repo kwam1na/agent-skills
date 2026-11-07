@@ -241,7 +241,10 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .d-stage-time { color: var(--soft); }
 .d-stage-icon { position: relative; display: inline-block; vertical-align: -2px; margin-right: 6px; width: 14px; height: 14px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid var(--ink); }
 .d-stage-icon.is-planned { border-style: dotted; border-color: var(--edge); }
-.d-stage-icon.is-building, .d-stage-icon.is-review { background: radial-gradient(circle, var(--ink) 0 2.5px, transparent 3px); }
+/* In progress draws as the legend's still frame of the pulse: the ring, and the ripple partway out from it. The ripple
+   reaches 5px past the ring, so the mark keeps that much more room on each side. */
+.d-stage-icon.is-building, .d-stage-icon.is-review { margin: 0 11px 0 5px; }
+.d-stage-icon.is-building::after, .d-stage-icon.is-review::after { content: ""; position: absolute; inset: -5px; border-radius: 50%; border: 1.5px solid var(--ink); opacity: .3; }
 .d-stage-icon.is-pending { border-radius: 2px; transform: rotate(45deg) scale(.72); }
 .d-stage-icon.is-queued { background: linear-gradient(90deg, var(--ink) 50%, transparent 50%); }
 .d-stage-icon.is-syncing, .d-stage-icon.is-synced, .d-stage-icon.is-checking, .d-stage-icon.is-checked, .d-stage-icon.is-merging {

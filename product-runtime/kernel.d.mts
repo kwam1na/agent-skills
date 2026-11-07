@@ -612,8 +612,18 @@ interface ProviderRegistration {
         readonly outputs?: readonly string[];
         readonly scope?: ScopedCheckDefinition;
         readonly installedData?: InstalledDataConsumerDefinition;
+        readonly physicalSource?: PhysicalSourceDefinition;
     };
 }
+/** Explicit physical materialization authority, independent of reuse input scope. */
+interface PhysicalSourceDefinition {
+    readonly version: "physical-source/1";
+    readonly files: readonly string[];
+    readonly absentInputs: readonly string[];
+}
+declare function isPhysicalSourceDefinition(value: unknown): value is PhysicalSourceDefinition;
+/** Absence is protected even when a mutable output would otherwise hide bytes. */
+declare function physicalSourceOutputOverlap(source: PhysicalSourceDefinition, outputs: readonly string[]): boolean;
 /** Explicit opt-in. Lists are repository-relative; memberships are directory prefixes. */
 interface ScopedCheckDefinition {
     readonly version: "scoped-check/1";
@@ -658,7 +668,25 @@ interface ScopedExecutionDefinition {
     readonly repairCommands?: readonly PreparationCommand[];
     /** How many scoped checks may run at once, each in a snapshot its worker owns; unset means one. */
     readonly concurrency?: number;
+    /** In `gate`, the first failing scoped check cancels the rest: unstarted ones never start, running ones
+     * have their process group signalled, and both are recorded `interrupted`. Unset runs every check. */
+    readonly failFast?: boolean;
+    /** The most the scoped checks' summed `timeoutMs` may declare; a larger selection is refused. */
+    readonly budgetMs?: number;
+    /** The most any one scoped check's `timeoutMs` may declare; a larger check is refused. */
+    readonly checkBudgetMs?: number;
 }
+/**
+ * The scoped checks a selection's declared budget refuses, by provider id. `overCap` are the checks whose
+ * own `timeoutMs` exceeds `checkBudgetMs`. `overBudget` are the checks that push the declared total past
+ * `budgetMs`: walking the scoped checks in declaration order, each one at which the running total exceeds
+ * the budget. A selection at exactly either bound is within it; with neither bound set nothing is refused.
+ */
+declare function scopedBudgetOffenders(config: Pick<HarnessConfig, "providers" | "scopedExecution">): {
+    readonly overCap: readonly string[];
+    readonly overBudget: readonly string[];
+    readonly totalMs: number;
+};
 interface PreparationCommand {
     readonly id: string;
     /** Executed directly from the repository root, in declaration order. */
@@ -843,602 +871,6 @@ declare function validateHarnessConfig(input: unknown): HarnessConfigValidation;
  * result-unwrapping while losing none of the diagnostics.
  */
 declare function defineHarnessConfig(input: HarnessConfigInput): HarnessConfig;
-
-declare const DELIVERY_POSTURE_PATH = ".agents/delivery-posture.json";
-declare const DELIVERY_POSTURE_SCHEMA = "delivery-posture/1";
-declare const DELIVERY_POSTURE_FALLBACK_SOURCE = "fallback";
-/** The bound on each network call: the fetch and `ls-remote` alike. */
-declare const DELIVERY_POSTURE_NETWORK_TIMEOUT_MS = 15000;
-declare const DELIVERY_POSTURE_MAX_BYTES: number;
-type DeliveryPosture = "gate" | "focused";
-type DeliveryPostureCode = "posture_undeclared" | "posture_malformed" | "posture_unreadable";
-interface DeliveryPostureResult {
-    readonly posture: DeliveryPosture;
-    readonly reason: string;
-    /** The base as text, such as `origin/main`, or `fallback` where nothing was read. */
-    readonly source: string;
-    readonly baseTipSha: string | null;
-    readonly code: DeliveryPostureCode | null;
-}
-interface ResolveDeliveryPostureInput {
-    readonly rootDir: string;
-    /** The configured base. It is checked here, not trusted. */
-    readonly baseRef: string;
-    readonly networkTimeoutMs?: number;
-    readonly signal?: AbortSignal;
-}
-/**
- * Resolves the posture at the tip of the protected base. Every reader of the
- * file gives the same posture, code and source for the same bytes.
- */
-declare function resolveDeliveryPosture(input: ResolveDeliveryPostureInput): Promise<DeliveryPostureResult>;
-
-/**
- * The evidence record's shapes, with no filesystem in sight.
- *
- * `records.ts` opens files, runs git, and links directory entries. Pure modules
- * — the gate evaluator above all — need the *shapes* those operations move
- * around and must never acquire an edge to the operations themselves. That is
- * why the shapes live here: the purity sensor lets a pure module import a
- * `*.types.ts` file by name and nothing else from the fs-bearing side of the
- * kernel, so this seam is what keeps the evaluator honest.
- *
- * Nothing in this file may import anything. A type-only import would be safe
- * for the sensor and still wrong here: the point of the seam is that it has no
- * dependencies to reason about.
- */
-/**
- * The record schema version. Deliberately *not* a member of the identity tuple
- * below — identity is the spec's SUB-4 tuple, closed and enumerated — so a
- * future version bump must either keep the tuple meaning what it means today or
- * change the filename grammar. Every stored record carries the version so a
- * reader can reject one it does not understand instead of guessing.
- */
-declare const RECORD_SCHEMA_VERSION = 1;
-/** A waiver is either good for this invocation only, or bound to the candidate. */
-declare const WAIVER_SCOPES: readonly ["invocation", "durable"];
-type WaiverScope = (typeof WAIVER_SCOPES)[number];
-/**
- * What the record is bound to — the enumerated field set, no spreads.
- *
- * `workspaceId` appears here *and* on the record itself, and the redundancy is
- * intentional. The record's member says which workspace's store the file
- * belongs in; this one is part of the candidate the evidence was produced
- * against, and it travels into the gate's freshness comparison. They are
- * normally equal and the store does not require it: making them one field would
- * quietly turn a candidate that moved workspaces into a candidate that did not.
- */
-interface RecordCandidateBinding {
-    /** The raw prepared tree. Recorded strictly (SUB-1); ignored at gate time. */
-    readonly treeSha: string;
-    /** Digest of the deliverable under the configured neutral sets. */
-    readonly deliverableDigest: string;
-    /** The identity version that produced `deliverableDigest`. */
-    readonly identityToken: string;
-    readonly baseRef: string;
-    readonly baseTipSha: string;
-    readonly mergeBaseSha: string;
-    readonly workspaceId: string;
-}
-/**
- * Accepted evidence. The provider triple (`providerId`, `runId`,
- * `finalPassId`) is part of the identity; `manifestDigest` is not — it is what
- * the record *says*, and two records that disagree about it on one identity are
- * the conflict SUB-4 exists to reject.
- */
-/** Current native authority for an installed-data applicability claim. */
-interface ResourceApplicabilityBinding {
-    readonly version: "installed-data-binding/1";
-    readonly candidateDigest: string;
-    readonly definitionDigest: string;
-    readonly declarationDigest: string;
-    readonly sourceApplicabilityDigest: string;
-    readonly captureDigest: string;
-    readonly originDigest: string;
-}
-interface CheckBinding {
-    readonly definitionDigest: string;
-    readonly validationDigest: string;
-    readonly policyDigest: string;
-    readonly wiringFingerprint: string;
-    readonly outputsDigest: string;
-    /** Present only for opted-in scoped checks; all three fields travel together. */
-    readonly scopedInputDigest?: string;
-    readonly scopedAttemptDigest?: string;
-    readonly scopedProfileDigest?: string;
-}
-/** Allocated before execution by the executor's durable generation fence. */
-interface ScopedCheckAttempt {
-    readonly version: "scoped-attempt/1";
-    readonly providerId: string;
-    readonly attemptId: string;
-    readonly generation: number;
-    readonly inputDigest: string;
-    readonly profileDigest: string;
-    readonly status: "running" | "passed" | "failed" | "interrupted";
-    readonly origin: {
-        readonly candidate: RecordCandidateBinding;
-        readonly runId: string;
-    };
-}
-/** Current selection is separate from result identity and must be recomputed on base movement. */
-interface ScopedCheckPlan {
-    readonly version: "scoped-plan/1";
-    readonly candidate: RecordCandidateBinding;
-    readonly selectionDigest: string;
-    readonly checks: Readonly<Record<string, {
-        readonly inputDigest: string;
-        readonly profileDigest: string;
-        readonly reusable: boolean;
-        readonly attempts: readonly ScopedCheckAttempt[];
-    }>>;
-}
-interface EvidenceResolution {
-    readonly kind: "evidence";
-    readonly providerId: string;
-    readonly runId: string;
-    readonly finalPassId: string;
-    /** Stamped from the accepted manifest (SUB-4). */
-    readonly manifestDigest: string;
-    readonly checkBinding?: CheckBinding;
-    readonly resourceBinding?: ResourceApplicabilityBinding;
-    /** Accepted original evidence retained before its temporary run root disappears. */
-    readonly portable?: PortableEvidence;
-}
-interface PortableEvidenceContext {
-    readonly configurationDigest: string;
-    readonly preparationFingerprint: string;
-    readonly policyDigest: string | null;
-    readonly release: Readonly<Record<string, unknown>> | null;
-    readonly workflowGraphSha256: string | null;
-    readonly reviewerCharters: readonly {
-        readonly origin: "composition" | "repository";
-        readonly sourcePath: string;
-        readonly lensId: string;
-        readonly reviewerId: string;
-        readonly personaId: string;
-        readonly entryPath: string;
-        readonly digest: string;
-    }[];
-}
-interface PortableEvidence {
-    readonly version: "portable-evidence/1";
-    readonly manifest: unknown;
-    /** Safe manifest-relative path to canonical base64 of the original file bytes. */
-    readonly artifacts: Readonly<Record<string, string>>;
-    readonly context: PortableEvidenceContext;
-}
-/**
- * A waiver has no provider run: a human accepted a scoped exception. Its full
- * attribution participates in identity, so another approval can coexist while
- * a byte-identical approval remains idempotent. Nothing overwrites prior approval.
- */
-interface WaiverResolution {
-    readonly kind: "waiver";
-    readonly scope: WaiverScope;
-    readonly author: string;
-    readonly reason: string;
-    readonly findingCodes: readonly string[];
-    readonly policyDigest: string;
-}
-type RecordResolution = EvidenceResolution | WaiverResolution;
-interface EvidenceRecord {
-    readonly schemaVersion: typeof RECORD_SCHEMA_VERSION;
-    /** Digest of the identity tuple; also the last segment of the filename. */
-    readonly recordId: string;
-    /** The workspace whose private store owns this record. */
-    readonly workspaceId: string;
-    readonly gateId: string;
-    readonly obligationId: string;
-    readonly candidateBinding: RecordCandidateBinding;
-    readonly resolution: RecordResolution;
-}
-/**
- * What a caller supplies. The three members it cannot choose — the schema
- * version, the workspace, and the content-addressed id — are derived by the
- * store, which is the only party that knows where the file is going.
- *
- * There is no timestamp. A record is content-addressed and republishable; a
- * clock reading would make a byte-identical resubmission differ from the stored
- * copy and turn idempotency into a conflict. When the record was written is a
- * property of the file, not of the evidence.
- */
-type PublishRecordInput = Omit<EvidenceRecord, "schemaVersion" | "recordId" | "workspaceId">;
-/** The tuple a `recordId` is the digest of, in its evidence spelling. */
-interface EvidenceRecordIdentity {
-    readonly workspaceId: string;
-    readonly gateId: string;
-    readonly obligationId: string;
-    readonly candidateBinding: RecordCandidateBinding;
-    readonly providerId: string;
-    readonly runId: string;
-    readonly finalPassId: string;
-}
-/** The waiver spelling binds the attributed approval instead of a provider run. */
-interface WaiverRecordIdentity {
-    readonly workspaceId: string;
-    readonly gateId: string;
-    readonly obligationId: string;
-    readonly candidateBinding: RecordCandidateBinding;
-    readonly kind: "waiver";
-    readonly approval: WaiverResolution;
-}
-type RecordIdentity = EvidenceRecordIdentity | WaiverRecordIdentity;
-/**
- * Why a file in the store is not being served as a record. The classes are kept
- * distinct because they mean different things to an operator: a truncated write
- * is a crashed writer or a full disk, while an identity mismatch is a file
- * whose contents no longer agree with the id they are filed under — which is
- * either tampering or a store written by a different version of this code.
- */
-declare const RECORD_QUARANTINE_REASONS: readonly ["unreadable", "corrupt_json", "malformed_shape", "identity_mismatch"];
-type RecordQuarantineReason = (typeof RECORD_QUARANTINE_REASONS)[number];
-interface QuarantinedRecord {
-    readonly path: string;
-    readonly reason: RecordQuarantineReason;
-    /** Operator-facing detail. Never parsed; only displayed. */
-    readonly detail: string;
-}
-/**
- * A neighbour the store passed over. `in_progress` is a publisher's temporary
- * file — possibly one orphaned by a crash — and `foreign` is anything else
- * sharing the directory. Neither is a record and neither is a defect, but
- * reporting them keeps "the store ignored it" from being indistinguishable
- * from "the store never looked".
- */
-interface IgnoredStoreEntry {
-    readonly path: string;
-    readonly reason: "in_progress" | "foreign";
-}
-interface RecordDiscovery {
-    readonly storageDir: string;
-    readonly workspaceId: string;
-    readonly records: readonly EvidenceRecord[];
-    readonly quarantined: readonly QuarantinedRecord[];
-    readonly ignored: readonly IgnoredStoreEntry[];
-}
-/** Where a workspace's harness storage lives, and what that workspace is called. */
-interface WorkspaceStorage {
-    /** The namespace root — one per workspace, shared by every leaf. */
-    readonly storageRoot: string;
-    /** The leaf directory this resolution asked for. */
-    readonly storageDir: string;
-    readonly workspaceId: string;
-}
-type PublishStatus = "published" | "idempotent";
-interface PublishedRecord {
-    readonly status: PublishStatus;
-    readonly path: string;
-    readonly record: EvidenceRecord;
-    readonly workspaceId: string;
-}
-
-declare function recordIdentity(workspaceId: string, input: PublishRecordInput): RecordIdentity;
-/** `recordId` = lowercase-hex sha256 over the canonical identity tuple. */
-declare function computeRecordId(workspaceId: string, input: PublishRecordInput): string;
-
-/** The leaf this module owns. Preparation receipts reuse the resolver with their own. */
-declare const RECORDS_LEAF = "records";
-type GitRunner = (cwd: string, args: readonly string[]) => Promise<string>;
-interface RecordStorageOptions {
-    /** Repo-relative namespace under the git directory. Defaults to the config default. */
-    readonly storageNamespace?: string;
-    /** Leaf inside the namespace. Defaults to `records`. */
-    readonly leaf?: string;
-    /**
-     * An already-resolved namespace root. When present git is never consulted,
-     * which is what lets a caller (and this module's tests) address a store that
-     * is not inside a repository.
-     */
-    readonly storageRoot?: string;
-    readonly runGit?: GitRunner;
-}
-interface PublishOptions extends RecordStorageOptions {
-    /**
-     * Runs after the temporary is fsynced and before it is linked into place.
-     * The crash-window test kills the process here; production callers do not
-     * pass it. It exists because the window it names is the one interval in
-     * which a failure could plausibly corrupt the store, and a window nothing
-     * can enter is a window nothing can test.
-     */
-    readonly beforeLink?: () => void | Promise<void>;
-}
-interface RecordSelector extends RecordStorageOptions {
-    readonly gateId: string;
-    readonly obligationId: string;
-}
-/**
- * The one resolver. `workspaceId` is the digest of the **namespace root**, not
- * of the leaf, so records and preparation receipts — different directories —
- * agree on which workspace they belong to. Deriving it per leaf would give one
- * worktree two workspace identities and quietly break every cross-leaf
- * comparison built on it.
- */
-declare function resolveRecordStorage(rootDir: string, options?: RecordStorageOptions): Promise<WorkspaceStorage>;
-
-declare function recordFileName(gateId: string, obligationId: string, recordId: string): string;
-/**
- * Publishes one record, atomically, and reports whether it created the entry or
- * found its own content already there.
- *
- * The two success statuses are not interchangeable to a caller that cares: a
- * recorder writing one record per claim expects `published`, and an idempotent
- * re-run of a completed submission expects `idempotent`. Both mean the store
- * now holds exactly this record; neither means anything was overwritten,
- * because nothing here ever overwrites.
- */
-declare function publishRecord(rootDir: string, input: PublishRecordInput, options?: PublishOptions): Promise<PublishedRecord>;
-/**
- * Reads every record filed under one gate and obligation in this workspace.
- *
- * Discovery never throws on a bad file. A store with one unreadable record in
- * it still has to answer the question "what evidence exists for this
- * obligation", and the evaluator has to be able to tell "no evidence" from
- * "evidence I refuse to trust" — so unusable files come back as quarantine
- * entries carrying their class, and the caller decides what that means.
- */
-declare function discoverRecords(rootDir: string, selector: RecordSelector): Promise<RecordDiscovery>;
-
-/**
- * The manifest rejection-code registry — the vocabulary a submitted
- * `delivery-evidence/1` manifest can be rejected in.
- *
- * This is the spec's Appendix D registry restated as an exhaustive `Record`
- * witness: every code names the rules that produce it, so a code with no rule
- * and a rule with no code are both compile-time or test-time errors rather than
- * discoveries. Appendix D is the source; the tests beside this file check the
- * transcription in both directions.
- *
- * DISJOINT FROM THE GATE'S VOCABULARY. `blockers.ts` owns
- * `GATE_STRUCTURAL_FINDING_CODES` — what the *evaluator* concludes about
- * evidence it already has. These codes are what the *validator* concludes about
- * a submission it is being offered. The two vocabularies never mix, and nothing
- * here is a blocker code.
- *
- * WHERE THE LINE IS. Four codes are not this validator's to emit. The reason is
- * a scope boundary, not an inability: what they judge is the recorder's
- * surface — the run root it allocates (SUB-3), the record store it publishes
- * into (SUB-4), and the artifact bytes it reads through its fs port (ENV-10's
- * realpath clause, ENV-11). Byte-level artifact verification is the clearest
- * case: it is a filesystem operation over files at declared paths, and a digest
- * taken over whatever string map a caller assembled is a different operation
- * with a different meaning — running it here would report a verification that
- * never happened. The codes are registered anyway, because the registry is the
- * whole registry, and carry `emitter: "recorder"` so the split is a stated fact
- * with a test behind it. The conformance kit's five recorder-dependent vectors
- * are exactly the vectors whose expectations sit on that side of the line;
- * their coverage arrives with integration mode.
- */
-
-/**
- * The envelope spec this validator implements. Version strings are exact-match
- * domain-separation tokens (§10), single-sourced here so the docs, the kit
- * runner and the validator cannot drift apart.
- */
-declare const DELIVERY_EVIDENCE_1 = "delivery-evidence/1";
-/** The original payload spec. Its expansion-only deferral rule is immutable. */
-declare const REVIEW_GREEN_1 = "review.green/1";
-/** The payload spec that also admits tracked in-contract P2/P3 deferrals. */
-declare const REVIEW_GREEN_2 = "review.green/2";
-/** Envelope specs the validator implements, whatever a config accepts (GEN-2). */
-declare const SUPPORTED_ENVELOPE_SPECS: readonly string[];
-/** Payload specs the validator implements, whatever a config accepts (ENV-14). */
-declare const SUPPORTED_PAYLOAD_SPECS: readonly string[];
-/**
- * The one attestation level `delivery-evidence/1` fully specifies (§7). The
- * other two levels are defined but unimplementable until a signing profile
- * exists, so a validator that accepted them would be laundering level-`self`
- * evidence as something stronger (§11.4).
- */
-declare const CONFORMING_ATTESTATION_LEVEL = "self";
-/** Every rule id in spec §8 and §9.3, in spec order. */
-declare const MANIFEST_RULE_IDS: readonly ["GEN-1", "GEN-2", "GEN-3", "GEN-4", "GEN-5", "ENV-1", "ENV-2", "ENV-3", "ENV-4", "ENV-5", "ENV-6", "ENV-7", "ENV-8", "ENV-9", "ENV-10", "ENV-11", "ENV-12", "ENV-13", "ENV-14", "SUB-1", "SUB-2", "SUB-3", "SUB-4", "SUB-5", "RG-1", "RG-2", "RG-3", "RG-4", "RG-5", "RG-6", "RG-7", "RG-8", "RG-9", "RG-10"];
-type ManifestRuleId = (typeof MANIFEST_RULE_IDS)[number];
-/**
- * The rules that produce no code because they constrain the validator rather
- * than the manifest: atomicity (GEN-3), the time ban (GEN-5), and
- * all-violations reporting (SUB-5). They are observable in this
- * implementation — GEN-3 through the single all-or-nothing result, GEN-5
- * through the sensor's time ban and the digest test, SUB-5 through every
- * multi-code vector — but no manifest can violate them.
- */
-declare const META_RULE_IDS: readonly ManifestRuleId[];
-/** Appendix D, in registry order. */
-declare const MANIFEST_REJECTION_CODES: readonly ["unknown_member", "unsupported_envelope_spec", "malformed_field", "invalid_provider_id", "unregistered_provider", "invalid_run_id", "invalid_pass_id", "unsupported_vcs", "invalid_object_id", "unsupported_identity_version", "repository_required", "run_history_final_mismatch", "artifact_path_invalid", "artifact_path_duplicate", "artifact_outside_run_root", "artifact_digest_mismatch", "unsupported_attestation", "no_claims", "duplicate_claim", "obligation_not_configured", "unsupported_payload_spec", "candidate_mismatch", "candidate_unprepared", "manifest_outside_run_root", "record_conflict", "verdict_not_green", "not_finalized", "edited_after_final_pass", "reviewer_set_invalid", "reviewer_set_incomplete", "approval_missing", "approval_mismatch", "finding_invalid", "blocking_finding_present", "actionable_unresolved", "illegal_deferral", "telemetry_mismatch", "iteration_count_mismatch", "invalid_cost"];
-type ManifestRejectionCode = (typeof MANIFEST_REJECTION_CODES)[number];
-/**
- * `validator` — decidable from the manifest, the repository configuration, and
- * the candidate observation the caller supplies.
- *
- * `recorder` — owned by the recorder's surface: the run root it allocates, the
- * records it publishes, and the artifact bytes it reads and hashes through its
- * fs port. A pure validator can be handed values that resemble those things,
- * which is exactly why it must not answer in their name: a caller would then
- * hold a verification nobody performed.
- */
-type RejectionEmitter = "validator" | "recorder";
-interface ManifestRejectionCodeEntry {
-    readonly rules: NonEmptyTuple<ManifestRuleId>;
-    readonly emitter: RejectionEmitter;
-}
-/**
- * Exhaustive by construction: the key type is the code union, so a code added
- * to the list above without an entry here fails to compile.
- */
-declare const MANIFEST_REJECTION_REGISTRY: Readonly<Record<ManifestRejectionCode, ManifestRejectionCodeEntry>>;
-/** Codes this unit's validator can produce. */
-declare const VALIDATOR_EMITTED_CODES: readonly ManifestRejectionCode[];
-/** Codes only the recorder can reach, because only it observes the state they judge. */
-declare const RECORDER_EMITTED_CODES: readonly ManifestRejectionCode[];
-declare function isManifestRejectionCode(value: unknown): value is ManifestRejectionCode;
-/**
- * One violated rule. `pointer` is an RFC 6901 JSON pointer into the submitted
- * manifest, so a caller can show the offending member without the validator
- * formatting anything for a screen — that is the renderer's job, and the
- * messages here are constant strings that never interpolate provider-authored
- * text. A pointer can still carry a submitted member name (an unknown member is
- * named by the pointer to it), which is why display goes through the shared
- * renderer's neutralization (§11.2) like any other evidence text.
- */
-interface ManifestRejection {
-    readonly code: ManifestRejectionCode;
-    readonly rule: ManifestRuleId;
-    readonly pointer: string;
-    readonly message: string;
-}
-/**
- * Validation is atomic (GEN-3): one verdict for the whole submission, carrying
- * every violated rule (SUB-5). There is no partial acceptance and no
- * first-failure short circuit.
- */
-type ManifestValidation<T> = {
-    readonly ok: true;
-    readonly manifest: T;
-} | {
-    readonly ok: false;
-    readonly rejections: NonEmptyTuple<ManifestRejection>;
-};
-
-interface ManifestDeliverable {
-    readonly digest: string;
-    readonly identity: string;
-}
-interface ManifestBase {
-    readonly ref: string;
-    readonly tipSha: string;
-    readonly mergeBaseSha: string;
-}
-interface ManifestCandidate {
-    readonly vcs: "git";
-    readonly treeSha: string;
-    readonly headSha?: string;
-    readonly deliverable: ManifestDeliverable;
-    readonly base: ManifestBase;
-    readonly workspaceId: string;
-}
-interface ManifestProvider {
-    readonly id: string;
-    readonly version?: string;
-    readonly runId: string;
-    readonly finalPassId: string;
-}
-interface RunHistoryEntry {
-    readonly preparedTreeSha: string;
-    readonly evaluatedInPassId: string;
-}
-interface ManifestArtifact {
-    readonly path: string;
-    readonly sha256: string;
-    readonly role: string;
-}
-/**
- * An artifact entry that survived the shape rules, carrying the index it was
- * declared at so a payload rule can point back at the entry rather than at the
- * pool.
- */
-interface DeclaredArtifact extends ManifestArtifact {
-    readonly index: number;
-}
-interface ManifestAttestation {
-    readonly level: string;
-    readonly signatures: readonly unknown[];
-}
-interface ManifestClaim {
-    readonly obligation: string;
-    readonly payloadSpec: string;
-    readonly payload: Record<string, unknown>;
-}
-/** A manifest that passed §8 and §9.3 in full. */
-interface DeliveryEvidenceManifest {
-    readonly spec: string;
-    readonly provider: ManifestProvider;
-    readonly candidate: ManifestCandidate;
-    readonly repository?: string | null;
-    readonly runHistory: readonly RunHistoryEntry[];
-    readonly artifacts: readonly ManifestArtifact[];
-    readonly attestation: ManifestAttestation;
-    readonly recordedAt: string;
-    readonly claims: readonly ManifestClaim[];
-}
-interface ManifestValidationContext {
-    readonly resourceBindings?: Readonly<Record<string, ResourceApplicabilityBinding>>;
-    readonly checkBindings?: Readonly<Record<string, CheckBinding>>;
-    /** Repository gate configuration: accepted specs, identity versions, obligations, providers. */
-    readonly config: HarnessConfig;
-    /**
-     * What candidate capture reports at submission time (SUB-1). A value, not a
-     * repository: whoever captured it owns the git work, and this module compares.
-     */
-    readonly currentCandidate: unknown;
-    /** Whether the workspace is in a prepared state at submission time (SUB-2). */
-    readonly prepared: boolean;
-    /**
-     * Artifact file contents, keyed by the path the manifest declares. RG-4 reads
-     * approval stamps from here. An entry absent from this map is an artifact the
-     * caller could not produce bytes for, which no rule may treat as satisfied.
-     */
-    readonly artifactContents: ReadonlyMap<string, string>;
-}
-declare function validateManifest(submitted: unknown, context: ManifestValidationContext): ManifestValidation<DeliveryEvidenceManifest>;
-
-interface Collector {
-    /** Reports one violated rule. Never throws, never short-circuits. */
-    emit(code: ManifestRejectionCode, rule: ManifestRuleId, pointer: string, message: string): void;
-    /** Everything reported so far, in emission order. */
-    list(): readonly ManifestRejection[];
-}
-
-/**
- * The normative `review.green/1` payload validator (spec §9) and its version-2
- * deferral extension.
- *
- * The payload is a claim that an independent, complete code review of the final
- * candidate concluded green. The rules here never ask *how* the review was
- * conducted — reviewer selection, models and prompts belong to the provider
- * (§3, principle 5). They ask whether what is claimed is internally coherent and
- * bound to the candidate:
- *
- *   SELF-CONSISTENCY IS CHECKED, NOT TRUSTED (§3, principle 6). Every telemetry
- *   number the payload states is derivable from its own findings, so it is
- *   re-derived and compared rather than read. A count that contradicts the
- *   findings it counts is a rejection, not a display quirk.
- *
- *   APPROVALS RE-STATE THE BINDING (§9.2). Each selected reviewer is covered by
- *   exactly one approval stamp that repeats the provider triple, the workspace,
- *   and the whole candidate — so each stamp is independently interpretable in an
- *   audit, and a stamp from another run or another tree cannot be reused here.
- *
- *   GREEN IS AN ABSENCE OF OPEN WORK. A blocking finding, an actionable finding
- *   left unresolved or ignored, a deferral that skips the tracker or defers what
- *   may never be deferred — each contradicts the verdict, and RG-6 and RG-7 make
- *   the contradiction mechanical rather than editorial.
- *
- * PURITY. Approval stamps arrive as bytes the caller already read; this module
- * parses strings and touches no filesystem.
- */
-
-declare const FINDING_SEVERITIES: readonly string[];
-declare const FINDING_SCOPES: readonly string[];
-declare const FINDING_DISPOSITIONS: readonly string[];
-/** The artifact role §9.2 defines. */
-declare const REVIEWER_APPROVAL_ROLE = "reviewer-approval";
-interface ReviewGreenClaimInput {
-    readonly payload: Record<string, unknown>;
-    /** Pointer to the payload inside the manifest. */
-    readonly at: string;
-    /** The envelope's provider triple, as submitted. Approval stamps must repeat it. */
-    readonly provider: {
-        readonly id: unknown;
-        readonly runId: unknown;
-        readonly finalPassId: unknown;
-    };
-    /** The envelope's candidate, as submitted. Approval stamps must repeat it. */
-    readonly candidate: unknown;
-    readonly artifacts: readonly DeclaredArtifact[];
-    readonly artifactContents: ReadonlyMap<string, string>;
-    readonly runHistoryLength: number;
-}
-declare function validateReviewGreenClaim(input: ReviewGreenClaimInput, collector: Collector): void;
 
 /**
  * What a candidate *is*, and every decision that can be made about one without
@@ -1698,6 +1130,246 @@ declare function projectReviewActivation(entries: readonly CandidateDiffEntry[],
 declare function isObligationActive(activation: ObligationActivation, projection: ReviewActivationProjection, activationThreshold: number): boolean;
 
 /**
+ * The evidence record's shapes, with no filesystem in sight.
+ *
+ * `records.ts` opens files, runs git, and links directory entries. Pure modules
+ * — the gate evaluator above all — need the *shapes* those operations move
+ * around and must never acquire an edge to the operations themselves. That is
+ * why the shapes live here: the purity sensor lets a pure module import a
+ * `*.types.ts` file by name and nothing else from the fs-bearing side of the
+ * kernel, so this seam is what keeps the evaluator honest.
+ *
+ * Nothing in this file may import anything. A type-only import would be safe
+ * for the sensor and still wrong here: the point of the seam is that it has no
+ * dependencies to reason about.
+ */
+/**
+ * The record schema version. Deliberately *not* a member of the identity tuple
+ * below — identity is the spec's SUB-4 tuple, closed and enumerated — so a
+ * future version bump must either keep the tuple meaning what it means today or
+ * change the filename grammar. Every stored record carries the version so a
+ * reader can reject one it does not understand instead of guessing.
+ */
+declare const RECORD_SCHEMA_VERSION = 1;
+/** A waiver is either good for this invocation only, or bound to the candidate. */
+declare const WAIVER_SCOPES: readonly ["invocation", "durable"];
+type WaiverScope = (typeof WAIVER_SCOPES)[number];
+/**
+ * What the record is bound to — the enumerated field set, no spreads.
+ *
+ * `workspaceId` appears here *and* on the record itself, and the redundancy is
+ * intentional. The record's member says which workspace's store the file
+ * belongs in; this one is part of the candidate the evidence was produced
+ * against, and it travels into the gate's freshness comparison. They are
+ * normally equal and the store does not require it: making them one field would
+ * quietly turn a candidate that moved workspaces into a candidate that did not.
+ */
+interface RecordCandidateBinding {
+    /** The raw prepared tree. Recorded strictly (SUB-1); ignored at gate time. */
+    readonly treeSha: string;
+    /** Digest of the deliverable under the configured neutral sets. */
+    readonly deliverableDigest: string;
+    /** The identity version that produced `deliverableDigest`. */
+    readonly identityToken: string;
+    readonly baseRef: string;
+    readonly baseTipSha: string;
+    readonly mergeBaseSha: string;
+    readonly workspaceId: string;
+}
+/**
+ * Accepted evidence. The provider triple (`providerId`, `runId`,
+ * `finalPassId`) is part of the identity; `manifestDigest` is not — it is what
+ * the record *says*, and two records that disagree about it on one identity are
+ * the conflict SUB-4 exists to reject.
+ */
+/** Current native authority for an installed-data applicability claim. */
+interface ResourceApplicabilityBinding {
+    readonly version: "installed-data-binding/1";
+    readonly candidateDigest: string;
+    readonly definitionDigest: string;
+    readonly declarationDigest: string;
+    readonly sourceApplicabilityDigest: string;
+    readonly captureDigest: string;
+    readonly originDigest: string;
+}
+interface CheckBinding {
+    readonly definitionDigest: string;
+    readonly validationDigest: string;
+    readonly policyDigest: string;
+    readonly wiringFingerprint: string;
+    readonly outputsDigest: string;
+    /** Present only for opted-in scoped checks; all three fields travel together. */
+    readonly scopedInputDigest?: string;
+    readonly scopedAttemptDigest?: string;
+    readonly scopedProfileDigest?: string;
+}
+/** Allocated before execution by the executor's durable generation fence. */
+interface ScopedCheckAttempt {
+    readonly version: "scoped-attempt/1";
+    readonly providerId: string;
+    readonly attemptId: string;
+    readonly generation: number;
+    readonly inputDigest: string;
+    readonly profileDigest: string;
+    readonly status: "running" | "passed" | "failed" | "interrupted";
+    readonly origin: {
+        readonly candidate: RecordCandidateBinding;
+        readonly runId: string;
+    };
+}
+/** Current selection is separate from result identity and must be recomputed on base movement. */
+interface ScopedCheckPlan {
+    readonly version: "scoped-plan/1";
+    readonly candidate: RecordCandidateBinding;
+    readonly selectionDigest: string;
+    readonly checks: Readonly<Record<string, {
+        readonly inputDigest: string;
+        readonly profileDigest: string;
+        readonly reusable: boolean;
+        readonly attempts: readonly ScopedCheckAttempt[];
+    }>>;
+}
+interface EvidenceResolution {
+    readonly kind: "evidence";
+    readonly providerId: string;
+    readonly runId: string;
+    readonly finalPassId: string;
+    /** Stamped from the accepted manifest (SUB-4). */
+    readonly manifestDigest: string;
+    readonly checkBinding?: CheckBinding;
+    readonly resourceBinding?: ResourceApplicabilityBinding;
+    /** Accepted original evidence retained before its temporary run root disappears. */
+    readonly portable?: PortableEvidence;
+}
+interface PortableEvidenceContext {
+    readonly configurationDigest: string;
+    readonly preparationFingerprint: string;
+    readonly policyDigest: string | null;
+    readonly release: Readonly<Record<string, unknown>> | null;
+    readonly workflowGraphSha256: string | null;
+    readonly reviewerCharters: readonly {
+        readonly origin: "composition" | "repository";
+        readonly sourcePath: string;
+        readonly lensId: string;
+        readonly reviewerId: string;
+        readonly personaId: string;
+        readonly entryPath: string;
+        readonly digest: string;
+    }[];
+}
+interface PortableEvidence {
+    readonly version: "portable-evidence/1";
+    readonly manifest: unknown;
+    /** Safe manifest-relative path to canonical base64 of the original file bytes. */
+    readonly artifacts: Readonly<Record<string, string>>;
+    readonly context: PortableEvidenceContext;
+}
+/**
+ * A waiver has no provider run: a human accepted a scoped exception. Its full
+ * attribution participates in identity, so another approval can coexist while
+ * a byte-identical approval remains idempotent. Nothing overwrites prior approval.
+ */
+interface WaiverResolution {
+    readonly kind: "waiver";
+    readonly scope: WaiverScope;
+    readonly author: string;
+    readonly reason: string;
+    readonly findingCodes: readonly string[];
+    readonly policyDigest: string;
+}
+type RecordResolution = EvidenceResolution | WaiverResolution;
+interface EvidenceRecord {
+    readonly schemaVersion: typeof RECORD_SCHEMA_VERSION;
+    /** Digest of the identity tuple; also the last segment of the filename. */
+    readonly recordId: string;
+    /** The workspace whose private store owns this record. */
+    readonly workspaceId: string;
+    readonly gateId: string;
+    readonly obligationId: string;
+    readonly candidateBinding: RecordCandidateBinding;
+    readonly resolution: RecordResolution;
+}
+/**
+ * What a caller supplies. The three members it cannot choose — the schema
+ * version, the workspace, and the content-addressed id — are derived by the
+ * store, which is the only party that knows where the file is going.
+ *
+ * There is no timestamp. A record is content-addressed and republishable; a
+ * clock reading would make a byte-identical resubmission differ from the stored
+ * copy and turn idempotency into a conflict. When the record was written is a
+ * property of the file, not of the evidence.
+ */
+type PublishRecordInput = Omit<EvidenceRecord, "schemaVersion" | "recordId" | "workspaceId">;
+/** The tuple a `recordId` is the digest of, in its evidence spelling. */
+interface EvidenceRecordIdentity {
+    readonly workspaceId: string;
+    readonly gateId: string;
+    readonly obligationId: string;
+    readonly candidateBinding: RecordCandidateBinding;
+    readonly providerId: string;
+    readonly runId: string;
+    readonly finalPassId: string;
+}
+/** The waiver spelling binds the attributed approval instead of a provider run. */
+interface WaiverRecordIdentity {
+    readonly workspaceId: string;
+    readonly gateId: string;
+    readonly obligationId: string;
+    readonly candidateBinding: RecordCandidateBinding;
+    readonly kind: "waiver";
+    readonly approval: WaiverResolution;
+}
+type RecordIdentity = EvidenceRecordIdentity | WaiverRecordIdentity;
+/**
+ * Why a file in the store is not being served as a record. The classes are kept
+ * distinct because they mean different things to an operator: a truncated write
+ * is a crashed writer or a full disk, while an identity mismatch is a file
+ * whose contents no longer agree with the id they are filed under — which is
+ * either tampering or a store written by a different version of this code.
+ */
+declare const RECORD_QUARANTINE_REASONS: readonly ["unreadable", "corrupt_json", "malformed_shape", "identity_mismatch"];
+type RecordQuarantineReason = (typeof RECORD_QUARANTINE_REASONS)[number];
+interface QuarantinedRecord {
+    readonly path: string;
+    readonly reason: RecordQuarantineReason;
+    /** Operator-facing detail. Never parsed; only displayed. */
+    readonly detail: string;
+}
+/**
+ * A neighbour the store passed over. `in_progress` is a publisher's temporary
+ * file — possibly one orphaned by a crash — and `foreign` is anything else
+ * sharing the directory. Neither is a record and neither is a defect, but
+ * reporting them keeps "the store ignored it" from being indistinguishable
+ * from "the store never looked".
+ */
+interface IgnoredStoreEntry {
+    readonly path: string;
+    readonly reason: "in_progress" | "foreign";
+}
+interface RecordDiscovery {
+    readonly storageDir: string;
+    readonly workspaceId: string;
+    readonly records: readonly EvidenceRecord[];
+    readonly quarantined: readonly QuarantinedRecord[];
+    readonly ignored: readonly IgnoredStoreEntry[];
+}
+/** Where a workspace's harness storage lives, and what that workspace is called. */
+interface WorkspaceStorage {
+    /** The namespace root — one per workspace, shared by every leaf. */
+    readonly storageRoot: string;
+    /** The leaf directory this resolution asked for. */
+    readonly storageDir: string;
+    readonly workspaceId: string;
+}
+type PublishStatus = "published" | "idempotent";
+interface PublishedRecord {
+    readonly status: PublishStatus;
+    readonly path: string;
+    readonly record: EvidenceRecord;
+    readonly workspaceId: string;
+}
+
+/**
  * How many times a bracket may be retried before the repository is declared
  * ambiguous. Three is a bound, not a budget: it distinguishes a workspace that
  * settles — a save, a formatter, an editor writing a swap file — from one that
@@ -1762,1017 +1434,6 @@ interface CandidateActivationOptions {
  * review.
  */
 declare function evaluateCandidateActivation(options: CandidateActivationOptions): Promise<ReviewActivationProjection>;
-
-/**
- * The domain separator the digest opens with. It is a constant of the function
- * rather than of any one token: `identity\0<token>\0` says both what kind of
- * thing this hash is and which version of it, so a digest can never be confused
- * with some other sha256 over the same entries.
- */
-declare const IDENTITY_DOMAIN = "identity";
-/**
- * This module's own failure vocabulary. Neither code is a gate finding — the
- * gate's structural codes describe evidence, and these describe a repository
- * that could not be read at all — so neither belongs in the config's
- * waivable/non-waivable partition, exactly as the record store's codes do not.
- */
-declare const IDENTITY_FINDING_CODES: readonly ["deliverable_tree_unreadable", "deliverable_tree_unparsable"];
-type IdentityFindingCode = (typeof IDENTITY_FINDING_CODES)[number];
-/**
- * One record of a recursive tree listing, reduced to the three fields the
- * digest reads.
- *
- * The type column git prints between the mode and the object is deliberately
- * absent: it is derivable from the mode and carries no information the identity
- * needs, and hashing both would make a listing format change into an identity
- * change.
- */
-interface DeliverableTreeEntry {
-    readonly mode: string;
-    readonly objectSha: string;
-    readonly path: string;
-}
-/**
- * The pair the digest is a function of.
- *
- * These travel together rather than as a config because that is the honest
- * signature: change either one and the digest changes. A `HarnessConfig`
- * parameter would suggest the other twenty members mattered, and would make the
- * token/neutral-set relationship impossible to state — or to test — on its own.
- * The config's biconditional invariant is what stops one token from ever naming
- * two different pairs; this signature is what makes that invariant meaningful.
- */
-interface DeliverableIdentityDefinition {
-    readonly identityToken: string;
-    readonly reviewNeutral: readonly NeutralMatcher[];
-}
-interface DeliverableIdentityOptions {
-    /** Injected only by tests that need a git invocation to fail on demand. */
-    readonly run?: CandidateCommandRunner;
-}
-/** The two members of a config that decide what a digest is. */
-declare function identityDefinitionOf(config: HarnessConfig): DeliverableIdentityDefinition;
-/**
- * Whether a path is outside the reviewed deliverable — narration written after
- * the work, which a reviewer was never asked about.
- *
- * This is the only predicate that removes an entry from the digest below.
- */
-declare function isReviewNeutralPath(config: HarnessConfig, repoPath: string): boolean;
-/**
- * Whether a path may be written *after* a merge-grade gate without invalidating
- * the proof that gate produced.
- *
- * Deliberately narrower than review neutrality, and deliberately separate from
- * it. A report still needs its own validation even though a reviewer never
- * approved it; the delivery record describes the gate that has just finished
- * and is checked by the verification it belongs to. Collapsing the two would
- * either let a report through a gate it should face, or make the record's own
- * write invalidate the record. Nothing in this file's digest reads it.
- */
-declare function isRecordNeutralPath(config: HarnessConfig, repoPath: string): boolean;
-/**
- * A malformed record blocks rather than being skipped.
- *
- * Dropping one would produce a digest that is confidently wrong: a shorter
- * deliverable that hashes cleanly and matches nothing, with no signal that
- * anything was lost. A tree listing this module cannot read is a repository
- * question, and the honest answer is to say so.
- */
-declare function parseTreeEntries(output: string, config: HarnessConfig): DeliverableTreeEntry[];
-/**
- * The deliverable digest for a set of tree entries.
- *
- * Every field is NUL-separated and every record is NUL-terminated, so no
- * concatenation of a mode, an object and a path can be re-read as a different
- * triple — a path ending where another begins cannot forge a record.
- */
-declare function digestDeliverableEntries(entries: readonly DeliverableTreeEntry[], definition: DeliverableIdentityDefinition): string;
-/**
- * `--full-tree` so the answer does not depend on the directory the command was
- * run from, and `-r` so it is a flat list of blobs and gitlinks rather than a
- * walk this module would have to repeat.
- *
- * The listing is decoded as UTF-8, which is what Athena's implementation did.
- * A path whose bytes are not valid UTF-8 therefore digests the same lossy way
- * in both — a fidelity property, not a correctness one, and the reason it is
- * written down here rather than quietly improved.
- */
-declare function computeDeliverableIdentity(request: DeliverableIdentityRequest, options?: DeliverableIdentityOptions): Promise<string>;
-/**
- * The identity port candidate capture injects.
- *
- * It returns the digest alone. The token that names it is a config member, and
- * capture stamps it from the config it was handed, so a port and a config
- * cannot disagree about what a digest is called.
- */
-declare function withDeliverableIdentity(options?: DeliverableIdentityOptions): ComputeIdentity;
-
-/**
- * Stored on every receipt so a reader can refuse a shape it does not
- * understand rather than guess at one. An unrecognised version is `invalid`,
- * not `stale`: the receipt is not a receipt this harness can read at all, and
- * saying "your candidate moved" about it would send an operator to look at
- * their branch.
- */
-declare const PREPARATION_RECEIPT_SCHEMA_VERSION = 1;
-/** The leaf this module owns, beside the record store's under one root. */
-declare const PREPARATION_RECEIPT_LEAF = "preparation";
-/**
- * The harness's own version, as a fingerprint input.
- *
- * Declared here rather than read from a package manifest at run time. An
- * installed package's manifest is not reliably reachable from the module that
- * would want it, and reading one at import time is exactly the ambient-file
- * dependency the import boundary exists to keep out. The cost is that this
- * constant can drift from the manifest, so a test asserts the two agree — the
- * drift is caught mechanically instead of being trusted.
- *
- * THE RELEASE WORKFLOW MUST BUMP THIS IN LOCKSTEP WITH
- * `packages/kernel/package.json`. Publishing a version whose fingerprint input
- * still names the previous one would let a receipt survive the upgrade it is
- * supposed to be invalidated by; the manifest-equality test is what makes the
- * omission a red run rather than a silent one.
- */
-declare const HARNESS_VERSION = "0.7.8";
-/**
- * The five ways a receipt can fail to authorise the candidate in front of it,
- * in the order they are decided. The order is the contract, not an
- * implementation detail:
- *
- *   `missing`         — nothing to read. Every later question is unanswerable.
- *   `invalid`         — something is there and it is not a receipt this
- *                       harness wrote. Comparing its fields would be comparing
- *                       against arbitrary content.
- *   `wiring_mismatch` — the gate itself changed. The receipt was published by a
- *                       different harness or against different wiring, so what
- *                       it attests to is not what would be attested now.
- *   `base_changed`    — the base moved under the candidate. Reported ahead of
- *                       `stale` because the operator's action differs: the work
- *                       did not move, the ground under it did.
- *   `stale`           — the candidate moved.
- *
- * Each class is decided only once every earlier class has been ruled out, which
- * is what makes the ordering observable: a tree in two of these states reports
- * the earlier one, and the tests pin that pair by pair.
- */
-declare const PREPARATION_FAILURE_CLASSES: readonly ["missing", "invalid", "wiring_mismatch", "base_changed", "stale"];
-type PreparationFailureClass = (typeof PREPARATION_FAILURE_CLASSES)[number];
-/**
- * What preparation needs to know about a candidate: the binding evidence will
- * carry, plus the two fields that are not part of it.
- *
- * `headSha` is compared because a head move with an identical tree is still a
- * different candidate to have prepared — the same decision the recorder makes
- * at submission. `mode` is compared because a receipt published for a staged
- * index does not authorise the same tree reached from a clean worktree; the
- * trees are equal and the claims about them are not.
- *
- * A `CapturedCandidate` satisfies this structurally, so capture's own output
- * can be handed straight in.
- */
-type PreparationCandidate = CandidateBinding & {
-    readonly headSha: string;
-    readonly mode: CandidateMode;
-};
-/**
- * The stored receipt. Flat, mirroring the record store's binding spelling
- * rather than the capture's nested one, so the two stored forms under one root
- * read the same way.
- *
- * `workspaceId` is the store the receipt belongs to; `candidateWorkspaceId` is
- * the workspace the candidate was captured in. They are normally equal, and the
- * redundancy is the same one the record store keeps for the same reason: making
- * them one field would turn a candidate that moved workspaces into a candidate
- * that did not.
- */
-interface PreparationReceipt {
-    readonly schemaVersion: number;
-    readonly gateId: string;
-    readonly workspaceId: string;
-    readonly treeSha: string;
-    readonly headSha: string;
-    readonly mode: CandidateMode;
-    readonly deliverableDigest: string;
-    readonly identityToken: string;
-    readonly baseRef: string;
-    readonly baseTipSha: string;
-    readonly mergeBaseSha: string;
-    readonly candidateWorkspaceId: string;
-    readonly preparationFingerprint: string;
-    /** Present on command-driven receipts; identifies the latest preparation attempt. */
-    readonly attemptId?: string;
-    /** CLI mechanical success binding; absent on legacy receipts. */
-    readonly validationDigest?: string;
-    readonly policyDigest?: string;
-}
-interface PreparationOptions extends RecordStorageOptions {
-    /** Only prepare may refresh a receipt after strict validation-equivalent movement. */
-    readonly allowValidationEquivalent?: boolean;
-    /** Portable verification reads declared wiring from the verified candidate tree. */
-    readonly readWiring?: (repoPath: string) => Promise<Uint8Array>;
-    /** Overrides the declared harness version. Tests use it; callers do not. */
-    readonly harnessVersion?: string;
-}
-interface PreparationInput {
-    /** Supplied by CLI prepare after successful mechanics or proven receipt reuse. */
-    readonly validationDigest?: string;
-    readonly config: HarnessConfig;
-    readonly candidate: PreparationCandidate;
-    readonly attemptId?: string;
-}
-interface PublishedPreparationReceipt {
-    readonly path: string;
-    readonly receipt: PreparationReceipt;
-    readonly workspaceId: string;
-}
-type PreparationEvaluation = {
-    readonly prepared: true;
-    readonly receipt: PreparationReceipt;
-    readonly receiptPath: string;
-    readonly workspaceId: string;
-} | {
-    readonly prepared: false;
-    readonly failure: PreparationFailureClass;
-    readonly reason: string;
-    readonly receiptPath: string;
-    readonly workspaceId: string;
-    readonly blockers: NonEmptyTuple<Blocker>;
-};
-/**
- * One receipt per gate, named after it. The gate id is already part of the
- * record store's filename grammar and is validated at config load, so no
- * additional escaping is introduced here; a gate whose id would not make a
- * filename is a config the loader rejects.
- */
-declare function receiptFileName(gateId: string): string;
-/**
- * The record store's resolver, with this module's leaf.
- *
- * Everything that makes the store worktree-private — the `--git-path`
- * resolution, the containment check that refuses a namespace git would root in
- * the common directory, the physical-path normalisation the workspace id
- * depends on — is inherited rather than restated. There is deliberately no
- * second copy of that reasoning: a receipt that resolved its own directory
- * could disagree with the store about which worktree it is in, and the
- * disagreement would surface as evidence that looked fresh.
- */
-declare function resolveReceiptStorage(rootDir: string, options?: PreparationOptions): Promise<WorkspaceStorage>;
-/**
- * The digest of the harness version and the declared wiring bytes.
- *
- * SORTED AND DEDUPLICATED. The fingerprint is a statement about a *set* of
- * files, so two configs that declare the same paths in a different order — or
- * that name one twice — describe the same wiring and must agree. Order
- * sensitivity would make a cosmetic config edit read as a wiring change, which
- * is a real answer given for a non-reason.
- *
- * HASHED THROUGH THE CANONICALIZER, not through ad-hoc framing. Each path
- * contributes its own name and its own content digest, and the pairs are
- * digested as a canonical-JSON object. Framing raw file bytes with a NUL
- * separator instead is not injective: `path1\0abc\0path2\0def` reads two ways
- * the moment a wiring file contains a NUL of its own, so two different wirings
- * could produce one fingerprint. Pairing each digest with its declared path
- * also keeps two identical files distinguishable — moving a gate's wiring
- * between declared paths is a wiring change.
- *
- * NO VERSION MEMBER RIDES IN THE INPUT. A receipt this harness cannot read is
- * rejected at the `invalid` step, which is decided before any fingerprint is
- * compared, so a schema version inside the digest would be a second copy of a
- * check that has already run — with bump semantics nothing would define.
- *
- * A path that cannot be read as a file throws. See the module note — a hashed
- * absence would make deletion a stable input.
- */
-declare function computePreparationFingerprint(rootDir: string, config: HarnessConfig, options?: PreparationOptions): Promise<string>;
-/**
- * Replace the current attempt token before removing the previous receipt.
- * Publication and evaluation both check this token: an older command still
- * running cannot restore authority after a newer attempt starts or fails.
- */
-declare function invalidatePreparationReceipt(rootDir: string, config: HarnessConfig, options?: PreparationOptions): Promise<string>;
-/**
- * Revoke unsuccessful preparation without replacing a newer attempt. Open the existing
- * token before checking its value, then mutate that same inode: if ordinary
- * preparation replaces the pathname meanwhile, its new token is untouched.
- * The receipt remains on disk but cannot authorize against a revoked token.
- */
-declare function revokePreparationAttempt(rootDir: string, config: HarnessConfig, attemptId: string, options?: PreparationOptions): Promise<void>;
-/**
- * Publishes the current receipt, replacing whatever was there.
- *
- * The caller invalidates the previous receipt before starting checks. This
- * publication computes the fingerprint before writing, so unreadable wiring
- * cannot produce a new receipt.
- *
- * Write-temp-then-rename, not write-in-place: a reader that opened the receipt
- * while a second preparation was mid-write would otherwise see a truncated file
- * and call it `invalid`, which is a real class being reported for a race.
- */
-declare function publishPreparationReceipt(rootDir: string, input: PreparationInput, options?: PreparationOptions): Promise<PublishedPreparationReceipt>;
-/**
- * Decides the five classes, in the declared order, stopping at the first that
- * holds.
- *
- * The order is not a series of early returns that happen to be arranged this
- * way — each step is unanswerable until the one before it has passed. There is
- * nothing to parse until there is a file; nothing to compare until the parse
- * succeeded; and comparing candidate coordinates against a receipt published
- * under different wiring answers a question nobody asked, because the wiring
- * that produced those coordinates is not the wiring in front of us.
- *
- * Two comparisons deliberately do not use the drift classifier: `baseRef` and
- * `identityToken` are configuration disagreements rather than movement — the
- * classifier says so itself — but a receipt published against a different base
- * ref or a different identity function does not authorise this candidate
- * either. The ref lands in `base_changed` and the token in `stale`, next to the
- * digest it names the meaning of.
- */
-declare function evaluatePreparationReceipt(rootDir: string, input: PreparationInput, options?: PreparationOptions): Promise<PreparationEvaluation>;
-
-/**
- * Who is running the gate, and what that entitles them to.
- *
- * THE LADDER IS ASYMMETRIC ON PURPOSE. Four rungs, in strictly descending
- * order of what they may do:
- *
- *   ci     — repository-authorized automation. May carry a delegated
- *            obligation, because a declared policy says which job answers for
- *            it and the environment corroborates that the job is the one
- *            running. It may not waive: nobody is present to accept anything.
- *   agent  — a recognized coding agent. May satisfy an obligation with
- *            evidence, and may never waive one. An agent that could waive
- *            could waive its own review.
- *   human  — an interactive person, both streams on a terminal. The only rung
- *            the waiver door opens for, and only for the codes the config
- *            classifies as waivable.
- *   unknown— everything else. Satisfies nothing on its own.
- *
- * THE ENVIRONMENT IS A PARAMETER. This module never touches `process`. The
- * caller hands over a snapshot, which is what lets the whole gate be exercised
- * as a decision table and keeps the module inside the purity sensor's d1 class.
- *
- * A PARTIAL CI MATCH IS AN UNAUTHORIZED AUTOMATION, NEVER A DOWNGRADE. This is
- * the rule with the most ways to get subtly wrong, so it is stated once and
- * applied in every direction: if anything in the environment claims to be a
- * declared automation — the policy env key naming a policy, or any declared
- * policy's corroborating variable already standing at its declared value — then
- * the run must match one declared policy *completely* or it is
- * `unauthorized_automation`. It does not fall back to "an ordinary shell", and
- * a terminal does not rescue it. The failure mode being closed off is the one
- * where an automation with a half-configured environment quietly acquires the
- * rights of whichever rung it happens to land on next.
- *
- * A PTY NEVER PROMOTES AN AGENT. Agents attach terminals; the interactive check
- * runs strictly after the agent check, so no arrangement of streams turns a
- * recognized agent into a person.
- *
- * CI POLICY IS CONFIGURED. Athena's classifier hardcoded one workflow, one
- * job, one event name and one policy id. Every one of those is config data
- * here, and the returned CI context carries the matched policy's own values, so
- * a caller reads what authorized this run rather than what this module was
- * written believing. Supported coding-host signals form a non-configurable
- * denial floor for interactive human classification.
- */
-
-/** The four rungs. Ordered as the ladder is ordered. */
-declare const EXECUTION_CONTEXT_KINDS: readonly ["ci", "agent", "human", "unknown"];
-type ExecutionContextKind = (typeof EXECUTION_CONTEXT_KINDS)[number];
-/**
- * Why a run is anonymous. The two are kept apart because they mean opposite
- * things to an operator: one is an automation that failed to prove itself and
- * should be repaired, the other is an ordinary non-interactive shell and is
- * nobody's defect.
- */
-declare const UNKNOWN_CONTEXT_REASONS: readonly ["unauthorized_automation", "noninteractive_unrecognized"];
-type UnknownContextReason = (typeof UNKNOWN_CONTEXT_REASONS)[number];
-interface CiExecutionContext {
-    readonly kind: "ci";
-    /** The id of the policy that matched — the config's value, not a literal. */
-    readonly policyId: string;
-    /** The corroboration that matched, carried so a caller can show its work. */
-    readonly requiredEnv: readonly EnvironmentRequirement[];
-}
-interface AgentExecutionContext {
-    readonly kind: "agent";
-    /** The declared signal that identified the agent, as the config named it. */
-    readonly signal: string;
-}
-interface HumanExecutionContext {
-    readonly kind: "human";
-    /** Always true: a non-interactive human is indistinguishable from a script. */
-    readonly interactive: true;
-}
-interface UnknownExecutionContext {
-    readonly kind: "unknown";
-    readonly reason: UnknownContextReason;
-}
-type ExecutionContext = CiExecutionContext | AgentExecutionContext | HumanExecutionContext | UnknownExecutionContext;
-/** A read-only view of the environment, handed in rather than reached for. */
-type EnvSnapshot = Readonly<Record<string, string | undefined>>;
-interface ClassifyExecutionContextInput {
-    readonly config: HarnessConfig;
-    readonly env: EnvSnapshot;
-    readonly stdinIsTTY: boolean;
-    readonly stdoutIsTTY: boolean;
-}
-/**
- * Whether a declared signal variable is *asserting* something.
- *
- * The four denied spellings are the ones a shell produces when something is
- * switched off rather than absent — an unset variable, an empty one, and the
- * two falsey words CI systems write. Treating `AGENT=false` as "an agent is
- * present" would let a switched-off signal confer a rung.
- *
- * The type check is not redundant with the type. A snapshot is an ordinary
- * object, so a lookup of `__proto__`, `constructor` or `toString` answers with
- * something inherited rather than with `undefined` — and every one of those is
- * a legal environment-variable name a config may declare as a signal. Without
- * the check, an environment that sets nothing at all would confer the agent
- * rung, which is the rung that can never be waived out of.
- */
-declare function isEnvSignalPresent(value: string | undefined): boolean;
-declare function classifyExecutionContext({ config, env, stdinIsTTY, stdoutIsTTY }: ClassifyExecutionContextInput): ExecutionContext;
-
-/** Completion order never overrides allocation order; ambiguous generations fail closed. */
-declare function selectScopedCheckAttempt(providerId: string, inputDigest: string, profileDigest: string, attempts: readonly ScopedCheckAttempt[]): ScopedCheckAttempt | undefined;
-/**
- * The five kinds a config may permit, plus the one it cannot. Kept in this
- * order so the coherence check against `RESOLUTION_KINDS` reads as an equality
- * rather than as a set comparison.
- */
-declare const RESOLUTION_OUTCOMES: readonly ["satisfied_live_fact", "satisfied_evidence", "waived", "delegated", "not_applicable", "blocked"];
-type ResolutionOutcome = (typeof RESOLUTION_OUTCOMES)[number];
-/**
- * A provider's own account of what it found.
- *
- * Both fields are provider-authored, and the `code` is the one that lands
- * somewhere structural: it becomes a blocker code, which has a grammar, and it
- * is what an obligation's waivable / non-waivable partition is applied to. So
- * it is checked rather than trusted — only a code the *registered* provider
- * declares in its `findingCodes` is carried through as a code. Anything else,
- * including a well-formed code the config never declared and a summary with no
- * text in it, becomes a structural `live_provider_failed` blocker with the
- * reported text kept as detail. See `providerFinding` below for why.
- */
-interface LiveProviderFinding {
-    readonly code: string;
-    readonly summary: string;
-    readonly details?: string;
-}
-/**
- * A result the caller observed and is handing to the pure evaluator. Process
- * invocation belongs to a command boundary, so this remains the evaluator's
- * only road to `satisfied_live_fact`.
- */
-interface LiveProviderResult {
-    readonly providerId: string;
-    readonly runId: string;
-    readonly status: "green" | "failed";
-    readonly findings: readonly LiveProviderFinding[];
-}
-/**
- * A file the store refused to serve, attributed to an obligation by the caller.
- *
- * Attribution is the caller's job because it comes from the filename, and a
- * pure evaluator that parsed store filenames would be reimplementing the store.
- * What is *not* the caller's job is deciding whether it matters: an unreadable
- * file inside the evidence store is the store saying it cannot account for its
- * own contents, and that is a gate decision.
- */
-interface UnreadableRecordInput {
-    readonly gateId: string;
-    readonly obligationId: string;
-    /** False when the file could not be tied to the candidate under evaluation. */
-    readonly appliesToCandidate: boolean;
-    readonly quarantined: QuarantinedRecord;
-}
-/**
- * One thing found wrong, with the typed blocker that says it. The code and the
- * blocker are both carried because callers partition on the code (waivable or
- * not) and render the blocker — and neither is derivable from the other.
- */
-interface ObligationFinding {
-    readonly code: string;
-    readonly obligationId: string;
-    readonly providerId?: string;
-    readonly recordId?: string;
-    readonly blocker: Blocker;
-}
-interface ResolutionBase {
-    readonly gateId: string;
-    readonly obligationId: string;
-}
-interface SatisfiedLiveFactResolution extends ResolutionBase {
-    readonly kind: "satisfied_live_fact";
-    readonly providerId: string;
-    readonly runId: string;
-}
-interface SatisfiedEvidenceResolution extends ResolutionBase {
-    readonly kind: "satisfied_evidence";
-    readonly providerId: string;
-    readonly recordId: string;
-    /** Every provider record supporting an all-provider obligation. */
-    readonly supportingRecordIds?: readonly string[];
-    readonly runId: string;
-    readonly finalPassId: string;
-    readonly candidateBinding: RecordCandidateBinding;
-}
-interface WaivedResolution extends ResolutionBase {
-    readonly kind: "waived";
-    readonly waiverRecordId: string;
-    readonly scope: WaiverScope;
-    readonly waiver: WaiverResolution;
-    readonly candidateBinding: RecordCandidateBinding;
-}
-interface DelegatedResolution extends ResolutionBase {
-    readonly kind: "delegated";
-    readonly ciPolicyId: string;
-}
-interface NotApplicableResolution extends ResolutionBase {
-    readonly kind: "not_applicable";
-    /** The projection that failed to activate it, echoed so the answer is auditable. */
-    readonly activation: ReviewActivationProjection;
-}
-/**
- * A blocked resolution carries at least one blocker by construction. A block
- * with nothing to show for it is the failure mode where an operator is stopped
- * and told nothing, so the type makes it unconstructible.
- */
-interface BlockedResolution extends ResolutionBase {
-    readonly kind: "blocked";
-    /** Structured unresolved findings only for providers with opt-in CLI commands. */
-    readonly providerFindings?: NonEmptyTuple<ObligationFinding>;
-    readonly blockers: NonEmptyTuple<Blocker>;
-}
-type ObligationResolution = SatisfiedLiveFactResolution | SatisfiedEvidenceResolution | WaivedResolution | DelegatedResolution | NotApplicableResolution | BlockedResolution;
-interface EvaluateGateInput {
-    readonly resourceBindings?: Readonly<Record<string, ResourceApplicabilityBinding>>;
-    readonly checkBindings?: Readonly<Record<string, CheckBinding>>;
-    readonly config: HarnessConfig;
-    readonly candidate: CandidateBinding;
-    readonly projection: ReviewActivationProjection;
-    /**
-     * Supplied by the admission adapter, which obtains it from `context.ts` —
-     * this is a classification the harness computed, never a value that crossed a
-     * process boundary. A caller who could forge a `human` context here could
-     * already have called `classifyExecutionContext` with a snapshot of their
-     * choosing, so this member widens nothing: it is the same trust boundary,
-     * named in one place instead of two.
-     */
-    readonly context: ExecutionContext;
-    /** Well-formed records the store served, of both resolution kinds. */
-    readonly records: readonly EvidenceRecord[];
-    /** Files the store quarantined, attributed to an obligation by the caller. */
-    readonly unreadable?: readonly UnreadableRecordInput[];
-    readonly liveResults?: readonly LiveProviderResult[];
-    /**
-     * The ids of the invocation-scoped waivers *this* invocation granted.
-     *
-     * Records are content-addressed and durable, so an invocation-scoped waiver
-     * written during an earlier run is still on disk during this one. Athena
-     * distinguished the two with an `invocation:` id prefix, which a
-     * content-addressed id cannot carry, so the invocation's own grants are named
-     * explicitly instead. Absent means "this invocation granted none", which is
-     * the fail-closed reading: an unlisted invocation waiver is inert.
-     *
-     * SUPPLIER AND TRUST BOUNDARY. The admission adapter's second pass, and only
-     * it: these are the ids it minted a moment earlier when it published the
-     * waivers a human accepted. Nothing external reaches this member, and a
-     * forged entry buys very little — an id here does not create a waiver, it
-     * only stops one that is *already stored* from being treated as a leftover.
-     * That stored record still has to name this gate and this obligation, still
-     * has to pass the same freshness comparison as every other record, and still
-     * cannot cover a finding the config classifies non-waivable. The one thing an
-     * attacker gains is the ability to re-use a waiver they already held for this
-     * exact candidate — which is precisely what a `durable` waiver grants openly.
-     */
-    readonly invocationWaiverRecordIds?: readonly string[];
-}
-interface GateDecision {
-    readonly gateId: string;
-    readonly candidate: CandidateBinding;
-    readonly admitted: boolean;
-    readonly resolutions: readonly ObligationResolution[];
-    /** Findings that did not block. Kept so a passed gate is still auditable. */
-    readonly diagnostics: readonly ObligationFinding[];
-    readonly blockers: readonly Blocker[];
-}
-/**
- * Whether a record's candidate binding names the candidate now under
- * evaluation, under the gate-time reading of "the same candidate".
- *
- * `treeSha` is absent from the comparison and that absence is the whole point;
- * see the header. Both sides must name an identity token this config accepts
- * and the same one, and the digest must be non-empty — a record written before
- * the identity existed carries an empty digest, and comparing two empty strings
- * would make every such record match every candidate.
- */
-declare function isRecordFreshForCandidate(config: HarnessConfig, recorded: RecordCandidateBinding, candidate: CandidateBinding): boolean;
-/**
- * The last gate on the gate: a resolution an obligation's config does not
- * permit becomes a block, whatever produced it.
- *
- * This exists because every path above answers a different question — is there
- * evidence, did a provider pass, does a policy cover this — and none of them
- * has any reason to consult `allowedResolutionKinds`. Without this step, an
- * obligation that declares itself undelegatable is undelegatable only for as
- * long as nobody writes a delegation path that forgets to ask.
- */
-declare function enforceAllowedResolution(obligation: ObligationPolicy, resolution: ObligationResolution): ObligationResolution;
-declare function evaluateGate(input: EvaluateGateInput): GateDecision;
-
-/**
- * The filesystem port's shapes, with no filesystem in them.
- *
- * WHY A PORT AT ALL. Three kernel modules — the recorder here, the admission
- * adapter, and the delivery record — are forbidden from importing `node:fs`
- * directly (sensor rule d2). That is not a style preference. Every filesystem
- * question those modules ask is a question the spec has an opinion about: what
- * a run root *is*, whether a resolved path is inside one, what "the digest of
- * the file's bytes at submission" means when the path names a directory. Left
- * to each caller, those answers drift; behind one port they are written once
- * and tested once.
- *
- * WHY THE SHAPES LIVE HERE. Same seam as `candidate.types.ts` and
- * `records.types.ts`: a module may import these shapes without acquiring an
- * edge to the implementation that produces them. Nothing in this file imports
- * anything, and nothing in it performs an operation.
- *
- * WHAT AN OBSERVATION IS. `observeArtifact` returns a *classification*, never a
- * verdict. It says what it found — the path was refused before it was touched,
- * the file is not there, it resolved outside the root, it is not a file, it
- * could not be read, or here are its bytes and their digest. Which rejection
- * code each of those maps to is the recorder's decision, because it is the
- * recorder that owns ENV-10 and ENV-11. A port that returned codes would be
- * making spec decisions from inside the filesystem layer, and the two mappings
- * that matter — a missing file is a digest failure, a file resolving outside
- * the root is not — would then be invisible to the module that has to justify
- * them.
- */
-/** The provider coordinates a run root is derived from. */
-interface RunRootRequest {
-    /** `provider.id` from the manifest. Must be a single safe path component. */
-    readonly providerId: string;
-    /** `provider.runId` from the manifest. Must be a single safe path component. */
-    readonly runId: string;
-}
-/**
- * An allocated run root: the directory a provider writes its evidence into and
- * the only place a submission's files may live.
- *
- * `path` is always the *resolved* location. On macOS `os.tmpdir()` is a
- * symlinked `/var/...` alias of a real `/private/var/...` directory, so a run
- * root compared before resolution and a file compared after it would disagree
- * about containment for every artifact in the run — the alias, not an attack,
- * is what would fail the check.
- */
-interface RunRoot {
-    readonly providerId: string;
-    readonly runId: string;
-    /** The original physical pool, retained across later path changes. */
-    readonly resolvedBasePath: string;
-    /** Absolute, symlink-resolved. */
-    readonly path: string;
-}
-/**
- * Why a run root could not be derived.
- *
- * The first two are about the *shape* of a provider-supplied identifier, which
- * the port refuses to interpret as a path before any filesystem call happens:
- * `runId: "../run-a"` names another provider's directory, and `runId: "."`
- * names the pool itself. Both are also rejections the manifest validator makes
- * under ENV-1 and ENV-2, which matters to the caller: a refusal the validator
- * independently names can be skipped without losing a check.
- *
- * The last two are not. `provider_id_too_long` is a grammar-legal id — ENV-1
- * bounds the character set and not the length — that cannot be a path
- * component, and `run_root_outside_base` is the pool's own directory resolving
- * somewhere the harness did not put it. Nothing else in the system names
- * either, so a caller that treats them as "skip the run-root rules" accepts a
- * submission whose containment was never established.
- */
-declare const RUN_ROOT_REFUSAL_REASONS: readonly ["unsafe_provider_id", "unsafe_run_id", "provider_id_too_long", "run_root_outside_base"];
-type RunRootRefusalReason = (typeof RUN_ROOT_REFUSAL_REASONS)[number];
-type RunRootResolution = {
-    readonly ok: true;
-    readonly runRoot: RunRoot;
-} | {
-    readonly ok: false;
-    readonly reason: RunRootRefusalReason;
-};
-/**
- * What the port found at a declared artifact path.
- *
- *   `path_refused`      — the declared path was not a safe relative path; the
- *                         port never touched the filesystem with it.
- *   `missing`           — nothing resolves there.
- *   `outside_run_root`  — it resolves, and the resolution is not inside the
- *                         run root, or the root has left its original pool.
- *                         A symlink that resolves *inside* is not
- *                         this: containment is judged after resolution, so a
- *                         link within the run is an ordinary file.
- *   `not_a_file`        — a directory, or another non-regular entry. It has no
- *                         "bytes at submission" to digest.
- *   `unreadable`        — it is a file and reading it failed.
- *   `readable`          — bytes were read; `sha256` and `contents` are present.
- */
-declare const ARTIFACT_OBSERVATION_STATUSES: readonly ["path_refused", "missing", "outside_run_root", "not_a_file", "unreadable", "readable"];
-type ArtifactObservationStatus = (typeof ARTIFACT_OBSERVATION_STATUSES)[number];
-interface ArtifactObservation {
-    /** Exactly the path the manifest declared, unmodified. */
-    readonly declaredPath: string;
-    readonly status: ArtifactObservationStatus;
-    /** The symlink-resolved location, when there was one to resolve. */
-    readonly resolvedPath: string | null;
-    /** Lowercase-hex sha256 of the file's bytes. Present only when `readable`. */
-    readonly sha256: string | null;
-    /**
-     * The bytes decoded as UTF-8. Present only when `readable`. Payload rules
-     * read approval stamps from here; it is untrusted provider-authored text and
-     * is never interpolated into a rejection message.
-     */
-    readonly contents: string | null;
-    /** Exact bytes for portable retention, including non-UTF-8 artifacts. */
-    readonly base64?: string;
-    /** Operator-facing diagnostic for the failure statuses. Never parsed. */
-    readonly detail: string | null;
-}
-/** Options for the port's one write path. */
-interface WriteFileOptions {
-    /**
-     * Permission bits for the written file. The default suits a tracked,
-     * working-tree file — the delivery record — rather than the git-private
-     * store, which owns its own stricter modes.
-     */
-    readonly mode?: number;
-}
-/**
- * The filesystem operations the recorder, the admission adapter and the
- * delivery record are allowed to perform, and the complete list of them.
- *
- * Deliberately narrow. There is no `exists`, no `mkdir`, no `readdir`: every
- * member here exists because a spec rule or a product artifact needs it, and a
- * general-purpose filesystem facade behind a d2 rule would be the rule with
- * extra steps.
- */
-interface ArtifactsPort {
-    /**
-     * Derives the run root for a provider run and creates it. Allocation is the
-     * recorder's, never the provider's: a provider that could name its own root
-     * could name a directory whose contents it did not produce (SUB-3).
-     */
-    allocateRunRoot(request: RunRootRequest): Promise<RunRootResolution>;
-    /** The same derivation without creating anything. */
-    resolveRunRoot(request: RunRootRequest): Promise<RunRootResolution>;
-    /**
-     * Whether `target` resolves strictly inside `runRootPath` and that root is
-     * still inside the port's original resolved pool. Rechecked on every call;
-     * a path-based port cannot make resolution and use atomic.
-     */
-    isInsideRunRoot(runRootPath: string, target: string): Promise<boolean>;
-    /**
-     * Classifies an artifact. A RunRoot rechecks its original pool on every call;
-     * a string names a generic source directory (repository inputs or captured
-     * attachments), with containment only inside that directory.
-     */
-    observeArtifact(root: RunRoot | string, declaredPath: string): Promise<ArtifactObservation>;
-    /** Reads a UTF-8 text file — the submitted manifest. */
-    readTextFile(target: string): Promise<string>;
-    /** Writes a UTF-8 text file atomically, creating parent directories. */
-    writeTextFile(target: string, contents: string, options?: WriteFileOptions): Promise<void>;
-    /**
-     * Removes a file, treating an absent one as success.
-     *
-     * Its caller is a rejection undoing records it published before discovering a
-     * conflict on a later claim, so it must not fail the operation it is cleaning
-     * up after: it reports whether the file is gone rather than throwing.
-     */
-    removeFile(target: string): Promise<boolean>;
-}
-
-/**
- * The namespace run roots live under, inside the system temporary directory.
- * A constant rather than a config member — see the module note.
- */
-declare const RUN_ROOT_NAMESPACE = "delivery-harness";
-/** The leaf under the namespace, so a future sibling need not move this one. */
-declare const RUN_ROOT_LEAF = "runs";
-/**
- * Strict containment over already-resolved paths: `child` is inside `parent`
- * and is not `parent` itself. A string-prefix test would put `/tmp/run-a2`
- * inside `/tmp/run-a`, which is a different run's directory.
- */
-declare function isInsideResolved(parent: string, child: string): boolean;
-/**
- * Whether a manifest-declared artifact path may be joined to a run root at all:
- * relative, no traversal, no empty segment, no drive-absolute or UNC form.
- *
- * Character-for-character the validator's shape rule, and it has to stay that
- * way rather than merely being "at least as strict". A path this predicate
- * refused but the validator accepted would be an artifact the recorder never
- * digests and no rule ever rejects — a hole, not extra safety. The duplication
- * is deliberate all the same: the validator produces a verdict, this decides
- * whether a provider-supplied string reaches `path.join`, and that decision
- * must hold for a caller who never ran the validator. A test pins the two in
- * step over a shared table.
- *
- * A NUL is refused for a mechanical reason rather than a spec one: no supported
- * filesystem admits one in a path segment, and `realpath` rejects it with
- * `ERR_INVALID_ARG_VALUE` — which is neither of the two absences the resolver
- * reads as "nowhere", so it escapes a classifying function as a raw
- * `TypeError`. Both copies refuse it, so it is a rejection rather than a crash.
- */
-declare function isSafeRelativePath(value: string): boolean;
-interface ArtifactsPortOptions {
-    /**
-     * The directory run roots are created under. Defaults to the harness
-     * namespace inside the system temporary directory. Callers pass one to keep
-     * concurrent runs from sharing a provider's run id; it is not repository
-     * configuration.
-     */
-    readonly runRootBase?: string;
-}
-/** The default base: `<tmpdir>/delivery-harness/runs`, resolved. */
-declare function defaultRunRootBase(): Promise<string>;
-declare function createArtifactsPort(options?: ArtifactsPortOptions): ArtifactsPort;
-
-interface SubmissionInput {
-    /** The repository the evidence store and the receipt store belong to. */
-    readonly rootDir: string;
-    /** Where the submitted manifest file is. SUB-3 is about this path. */
-    readonly manifestPath: string;
-    readonly config: HarnessConfig;
-}
-interface ExpectedProviderAttempt {
-    /** Provider selected by the harness for this invocation. */
-    readonly providerId: string;
-    /** Request/run identity allocated by the harness for this invocation. */
-    readonly runId: string;
-    /** Run root allocated by the harness before the provider was started. */
-    readonly runRootPath: string;
-}
-interface SubmissionOptions extends RecordStorageOptions {
-    readonly resourceBindings?: Readonly<Record<string, ResourceApplicabilityBinding>>;
-    readonly scopedPlan?: ScopedCheckPlan;
-    readonly readOutput?: (repoPath: string, providerId: string) => Promise<Uint8Array>;
-    /**
-     * How the current candidate is observed (SUB-1). Injected rather than
-     * defaulted to the git capture: the recorder must not own a repository
-     * dependency, and a conformance run drives this whole path from declared
-     * values with no repository at all.
-     */
-    readonly captureCandidate: CaptureCandidate;
-    /** The filesystem port. Defaults to one rooted in the system temp directory. */
-    readonly artifacts?: ArtifactsPort;
-    /**
-     * Optional caller authority for provider-driven submissions. When present,
-     * the recorder binds the one manifest snapshot it reads to this invocation
-     * before any validation or publication. Ordinary submission paths omit it.
-     */
-    readonly expectedProviderAttempt?: ExpectedProviderAttempt;
-    /** Passed through to the receipt evaluation. Tests use it; callers do not. */
-    readonly harnessVersion?: string;
-}
-interface SubmissionRecord {
-    readonly obligationId: string;
-    readonly recordId: string;
-    readonly path: string;
-    /** `published` on first write, `idempotent` when this exact record was already stored. */
-    readonly status: PublishedRecord["status"];
-    readonly record: EvidenceRecord;
-}
-/**
- * Three outcomes, not two.
- *
- * `rejected` means the submission was judged and failed: every violated rule is
- * named, and the codes are the spec's. `blocked` means it could not be judged —
- * no receipt, an unreadable manifest, a store that will not answer — and there
- * is no spec code for that, because the spec's codes describe manifests. A
- * caller that collapsed the two would have to invent a rejection code for "the
- * harness could not look", which is exactly the fabrication a fail-closed
- * design is trying to avoid.
- *
- * Both failing shapes carry blockers, and blockers are what a surface renders.
- * No caller formats a rejection or a preparation reason itself.
- */
-type SubmissionOutcome = {
-    readonly status: "accepted";
-    readonly manifestDigest: string;
-    readonly records: NonEmptyTuple<SubmissionRecord>;
-} | {
-    readonly status: "rejected";
-    readonly rejections: NonEmptyTuple<ManifestRejection>;
-    readonly blockers: NonEmptyTuple<Blocker>;
-} | {
-    readonly status: "blocked";
-    readonly blockers: NonEmptyTuple<Blocker>;
-};
-/**
- * The fields SUB-1 compares, named rather than derived from whatever a capture
- * happens to carry.
- *
- * `headSha` is in the set and is compared strictly when the manifest declares
- * one: §5.3 calls it informational because evidence binds to *trees*, and that
- * note governs gate-time freshness, where a rebase preserving the tree
- * preserves the evidence. SUB-1 is the other end of the system — it says
- * "every field" and the recorded id is an audit anchor — so a head that moved
- * under an identical tree is rejected here and re-preparation is the remedy.
- *
- * `vcs` is constant under ENV-4 and compared anyway, because "every field"
- * means the enumeration, not the fields that could plausibly differ.
- */
-declare const SUBMISSION_CANDIDATE_FIELDS: readonly string[];
-interface CandidateComparison {
-    readonly matches: boolean;
-    /** Enumerated field paths that differ, in declaration order. */
-    readonly mismatchedFields: readonly string[];
-    /**
-     * The drift classes the difference falls into, for the fields that describe
-     * movement in the repository. A mismatch on `base.ref`, `deliverable.identity`
-     * or `vcs` produces no class by design — those are configuration
-     * disagreements, and telling an operator to re-prepare would be wrong advice.
-     */
-    readonly driftClasses: readonly CandidateDriftClass[];
-}
-/**
- * Compares a submitted candidate binding against the one just captured, on the
- * enumerated field set.
- *
- * The submitted side is read defensively — it is a manifest member, so it may
- * be any value at all — and a member that is absent or of the wrong type is a
- * mismatch rather than a skipped comparison. The single exception is `headSha`,
- * which the envelope makes optional: a manifest that declares none is compared
- * on the other eight.
- */
-declare function compareSubmissionCandidate(submitted: unknown, captured: CapturedCandidate): CandidateComparison;
-/**
- * Submits one manifest: §8.3 end to end.
- *
- * Every rule runs before anything is written. That is GEN-3 — validation is
- * atomic across claims, and a manifest with one good claim and one bad one
- * writes nothing at all — and it is also why SUB-5 aggregation is possible:
- * the recorder's own filesystem findings join the validator's list rather than
- * short-circuiting it.
- */
-declare function submitManifest(input: SubmissionInput, options: SubmissionOptions): Promise<SubmissionOutcome>;
-
-/** Live obligations must obtain approval during each invocation. */
-declare const INVOCATION_WAIVER_SCOPE: "invocation";
-/**
- * The interactive waiver prompt, injected. The adapter never detects a TTY and
- * never renders — the command surface wires an implementation over its own I/O,
- * and a run with none supplied simply cannot be offered a waiver.
- */
-type WaiverApproval = {
-    readonly author: string;
-    readonly reason: string;
-};
-type WaiverPrompt = (decision: GateDecision, obligationIds: readonly string[]) => Promise<false | WaiverApproval>;
-/** How the interactive waiver offer resolved, for a caller that reports it. */
-type WaiverPromptOutcome = "not_offered" | "accepted" | "declined" | "candidate_changed" | "scope_changed";
-interface AdmissionInput {
-    readonly rootDir: string;
-    readonly config: HarnessConfig;
-    /**
-     * The already-classified context. `context.ts` emits exactly the union the
-     * evaluator consumes, so there is nothing to translate — the same trust
-     * boundary the classifier established, named in one place.
-     */
-    readonly context: ExecutionContext;
-    /** Caller-supplied live-provider results — the v1 source of `satisfied_live_fact`. */
-    readonly liveResults?: readonly LiveProviderResult[];
-}
-interface AdmissionOptions extends RecordStorageOptions {
-    readonly resourceBindings?: Readonly<Record<string, ResourceApplicabilityBinding>>;
-    readonly scopedPlan?: ScopedCheckPlan;
-    readonly readOutput?: (repoPath: string, providerId: string) => Promise<Uint8Array>;
-    /** How the candidate is observed. Injected: the adapter owns no repository dependency. */
-    readonly captureCandidate: CaptureCandidate;
-    /** The reviewable-change projection for the captured candidate. Injected for the same reason. */
-    readonly projectActivation: (candidate: CapturedCandidate) => Promise<ReviewActivationProjection>;
-    /** Absent means "this run cannot ask a human", so no waiver is ever offered. */
-    readonly promptForWaiver?: WaiverPrompt;
-    readonly evaluatePreparation?: (rootDir: string, config: HarnessConfig, candidate: CapturedCandidate) => Promise<PreparationEvaluation>;
-    readonly discoverRecords?: (rootDir: string, gateId: string, obligationId: string) => Promise<RecordDiscovery>;
-    readonly publishWaiver?: (rootDir: string, binding: RecordCandidateBinding, obligationId: string, resolution: WaiverResolution) => Promise<PublishedRecord>;
-    /** Passed through to receipt evaluation. Tests use it; callers do not. */
-    readonly harnessVersion?: string;
-}
-interface AdmissionResult {
-    readonly admitted: boolean;
-    readonly blockers: readonly Blocker[];
-    /** The final pure evaluation. Absent only when capture, coherence, or the receipt stopped the run before the gate ran. */
-    readonly decision?: GateDecision;
-    readonly context?: ExecutionContext;
-    readonly candidate?: CandidateBinding;
-    readonly waiver: WaiverPromptOutcome;
-    /** The obligations one "yes" would cover (or did cover). Empty unless a waiver was offerable. */
-    readonly waivedObligationIds: readonly string[];
-    /** The waiver records written this run. Non-empty only on an accepted waiver. */
-    readonly waiverRecordIds: readonly string[];
-}
-declare function runAdmission(input: AdmissionInput, options: AdmissionOptions): Promise<AdmissionResult>;
 
 /**
  * The closed-grammar machinery the managed-delivery contract spine is written
@@ -3706,6 +2367,298 @@ declare function evaluateRunJournal(events: readonly RunEvent[], treeSha?: strin
 declare function explainRunJournal(events: readonly RunEvent[], treeSha?: string, mandatedLensIds?: readonly string[], reviewedTreeShas?: readonly string[]): RunJournalDiagnostics;
 
 /**
+ * Who is running the gate, and what that entitles them to.
+ *
+ * THE LADDER IS ASYMMETRIC ON PURPOSE. Four rungs, in strictly descending
+ * order of what they may do:
+ *
+ *   ci     — repository-authorized automation. May carry a delegated
+ *            obligation, because a declared policy says which job answers for
+ *            it and the environment corroborates that the job is the one
+ *            running. It may not waive: nobody is present to accept anything.
+ *   agent  — a recognized coding agent. May satisfy an obligation with
+ *            evidence, and may never waive one. An agent that could waive
+ *            could waive its own review.
+ *   human  — an interactive person, both streams on a terminal. The only rung
+ *            the waiver door opens for, and only for the codes the config
+ *            classifies as waivable.
+ *   unknown— everything else. Satisfies nothing on its own.
+ *
+ * THE ENVIRONMENT IS A PARAMETER. This module never touches `process`. The
+ * caller hands over a snapshot, which is what lets the whole gate be exercised
+ * as a decision table and keeps the module inside the purity sensor's d1 class.
+ *
+ * A PARTIAL CI MATCH IS AN UNAUTHORIZED AUTOMATION, NEVER A DOWNGRADE. This is
+ * the rule with the most ways to get subtly wrong, so it is stated once and
+ * applied in every direction: if anything in the environment claims to be a
+ * declared automation — the policy env key naming a policy, or any declared
+ * policy's corroborating variable already standing at its declared value — then
+ * the run must match one declared policy *completely* or it is
+ * `unauthorized_automation`. It does not fall back to "an ordinary shell", and
+ * a terminal does not rescue it. The failure mode being closed off is the one
+ * where an automation with a half-configured environment quietly acquires the
+ * rights of whichever rung it happens to land on next.
+ *
+ * A PTY NEVER PROMOTES AN AGENT. Agents attach terminals; the interactive check
+ * runs strictly after the agent check, so no arrangement of streams turns a
+ * recognized agent into a person.
+ *
+ * CI POLICY IS CONFIGURED. Athena's classifier hardcoded one workflow, one
+ * job, one event name and one policy id. Every one of those is config data
+ * here, and the returned CI context carries the matched policy's own values, so
+ * a caller reads what authorized this run rather than what this module was
+ * written believing. Supported coding-host signals form a non-configurable
+ * denial floor for interactive human classification.
+ */
+
+/** The four rungs. Ordered as the ladder is ordered. */
+declare const EXECUTION_CONTEXT_KINDS: readonly ["ci", "agent", "human", "unknown"];
+type ExecutionContextKind = (typeof EXECUTION_CONTEXT_KINDS)[number];
+/**
+ * Why a run is anonymous. The two are kept apart because they mean opposite
+ * things to an operator: one is an automation that failed to prove itself and
+ * should be repaired, the other is an ordinary non-interactive shell and is
+ * nobody's defect.
+ */
+declare const UNKNOWN_CONTEXT_REASONS: readonly ["unauthorized_automation", "noninteractive_unrecognized"];
+type UnknownContextReason = (typeof UNKNOWN_CONTEXT_REASONS)[number];
+interface CiExecutionContext {
+    readonly kind: "ci";
+    /** The id of the policy that matched — the config's value, not a literal. */
+    readonly policyId: string;
+    /** The corroboration that matched, carried so a caller can show its work. */
+    readonly requiredEnv: readonly EnvironmentRequirement[];
+}
+interface AgentExecutionContext {
+    readonly kind: "agent";
+    /** The declared signal that identified the agent, as the config named it. */
+    readonly signal: string;
+}
+interface HumanExecutionContext {
+    readonly kind: "human";
+    /** Always true: a non-interactive human is indistinguishable from a script. */
+    readonly interactive: true;
+}
+interface UnknownExecutionContext {
+    readonly kind: "unknown";
+    readonly reason: UnknownContextReason;
+}
+type ExecutionContext = CiExecutionContext | AgentExecutionContext | HumanExecutionContext | UnknownExecutionContext;
+/** A read-only view of the environment, handed in rather than reached for. */
+type EnvSnapshot = Readonly<Record<string, string | undefined>>;
+interface ClassifyExecutionContextInput {
+    readonly config: HarnessConfig;
+    readonly env: EnvSnapshot;
+    readonly stdinIsTTY: boolean;
+    readonly stdoutIsTTY: boolean;
+}
+/**
+ * Whether a declared signal variable is *asserting* something.
+ *
+ * The four denied spellings are the ones a shell produces when something is
+ * switched off rather than absent — an unset variable, an empty one, and the
+ * two falsey words CI systems write. Treating `AGENT=false` as "an agent is
+ * present" would let a switched-off signal confer a rung.
+ *
+ * The type check is not redundant with the type. A snapshot is an ordinary
+ * object, so a lookup of `__proto__`, `constructor` or `toString` answers with
+ * something inherited rather than with `undefined` — and every one of those is
+ * a legal environment-variable name a config may declare as a signal. Without
+ * the check, an environment that sets nothing at all would confer the agent
+ * rung, which is the rung that can never be waived out of.
+ */
+declare function isEnvSignalPresent(value: string | undefined): boolean;
+declare function classifyExecutionContext({ config, env, stdinIsTTY, stdoutIsTTY }: ClassifyExecutionContextInput): ExecutionContext;
+
+/** Completion order never overrides allocation order; ambiguous generations fail closed. */
+declare function selectScopedCheckAttempt(providerId: string, inputDigest: string, profileDigest: string, attempts: readonly ScopedCheckAttempt[]): ScopedCheckAttempt | undefined;
+/**
+ * The five kinds a config may permit, plus the one it cannot. Kept in this
+ * order so the coherence check against `RESOLUTION_KINDS` reads as an equality
+ * rather than as a set comparison.
+ */
+declare const RESOLUTION_OUTCOMES: readonly ["satisfied_live_fact", "satisfied_evidence", "waived", "delegated", "not_applicable", "blocked"];
+type ResolutionOutcome = (typeof RESOLUTION_OUTCOMES)[number];
+/**
+ * A provider's own account of what it found.
+ *
+ * Both fields are provider-authored, and the `code` is the one that lands
+ * somewhere structural: it becomes a blocker code, which has a grammar, and it
+ * is what an obligation's waivable / non-waivable partition is applied to. So
+ * it is checked rather than trusted — only a code the *registered* provider
+ * declares in its `findingCodes` is carried through as a code. Anything else,
+ * including a well-formed code the config never declared and a summary with no
+ * text in it, becomes a structural `live_provider_failed` blocker with the
+ * reported text kept as detail. See `providerFinding` below for why.
+ */
+interface LiveProviderFinding {
+    readonly code: string;
+    readonly summary: string;
+    readonly details?: string;
+}
+/**
+ * A result the caller observed and is handing to the pure evaluator. Process
+ * invocation belongs to a command boundary, so this remains the evaluator's
+ * only road to `satisfied_live_fact`.
+ */
+interface LiveProviderResult {
+    readonly providerId: string;
+    readonly runId: string;
+    readonly status: "green" | "failed";
+    readonly findings: readonly LiveProviderFinding[];
+}
+/**
+ * A file the store refused to serve, attributed to an obligation by the caller.
+ *
+ * Attribution is the caller's job because it comes from the filename, and a
+ * pure evaluator that parsed store filenames would be reimplementing the store.
+ * What is *not* the caller's job is deciding whether it matters: an unreadable
+ * file inside the evidence store is the store saying it cannot account for its
+ * own contents, and that is a gate decision.
+ */
+interface UnreadableRecordInput {
+    readonly gateId: string;
+    readonly obligationId: string;
+    /** False when the file could not be tied to the candidate under evaluation. */
+    readonly appliesToCandidate: boolean;
+    readonly quarantined: QuarantinedRecord;
+}
+/**
+ * One thing found wrong, with the typed blocker that says it. The code and the
+ * blocker are both carried because callers partition on the code (waivable or
+ * not) and render the blocker — and neither is derivable from the other.
+ */
+interface ObligationFinding {
+    readonly code: string;
+    readonly obligationId: string;
+    readonly providerId?: string;
+    readonly recordId?: string;
+    readonly blocker: Blocker;
+}
+interface ResolutionBase {
+    readonly gateId: string;
+    readonly obligationId: string;
+}
+interface SatisfiedLiveFactResolution extends ResolutionBase {
+    readonly kind: "satisfied_live_fact";
+    readonly providerId: string;
+    readonly runId: string;
+}
+interface SatisfiedEvidenceResolution extends ResolutionBase {
+    readonly kind: "satisfied_evidence";
+    readonly providerId: string;
+    readonly recordId: string;
+    /** Every provider record supporting an all-provider obligation. */
+    readonly supportingRecordIds?: readonly string[];
+    readonly runId: string;
+    readonly finalPassId: string;
+    readonly candidateBinding: RecordCandidateBinding;
+}
+interface WaivedResolution extends ResolutionBase {
+    readonly kind: "waived";
+    readonly waiverRecordId: string;
+    readonly scope: WaiverScope;
+    readonly waiver: WaiverResolution;
+    readonly candidateBinding: RecordCandidateBinding;
+}
+interface DelegatedResolution extends ResolutionBase {
+    readonly kind: "delegated";
+    readonly ciPolicyId: string;
+}
+interface NotApplicableResolution extends ResolutionBase {
+    readonly kind: "not_applicable";
+    /** The projection that failed to activate it, echoed so the answer is auditable. */
+    readonly activation: ReviewActivationProjection;
+}
+/**
+ * A blocked resolution carries at least one blocker by construction. A block
+ * with nothing to show for it is the failure mode where an operator is stopped
+ * and told nothing, so the type makes it unconstructible.
+ */
+interface BlockedResolution extends ResolutionBase {
+    readonly kind: "blocked";
+    /** Structured unresolved findings only for providers with opt-in CLI commands. */
+    readonly providerFindings?: NonEmptyTuple<ObligationFinding>;
+    readonly blockers: NonEmptyTuple<Blocker>;
+}
+type ObligationResolution = SatisfiedLiveFactResolution | SatisfiedEvidenceResolution | WaivedResolution | DelegatedResolution | NotApplicableResolution | BlockedResolution;
+interface EvaluateGateInput {
+    readonly resourceBindings?: Readonly<Record<string, ResourceApplicabilityBinding>>;
+    readonly checkBindings?: Readonly<Record<string, CheckBinding>>;
+    readonly config: HarnessConfig;
+    readonly candidate: CandidateBinding;
+    readonly projection: ReviewActivationProjection;
+    /**
+     * Supplied by the admission adapter, which obtains it from `context.ts` —
+     * this is a classification the harness computed, never a value that crossed a
+     * process boundary. A caller who could forge a `human` context here could
+     * already have called `classifyExecutionContext` with a snapshot of their
+     * choosing, so this member widens nothing: it is the same trust boundary,
+     * named in one place instead of two.
+     */
+    readonly context: ExecutionContext;
+    /** Well-formed records the store served, of both resolution kinds. */
+    readonly records: readonly EvidenceRecord[];
+    /** Files the store quarantined, attributed to an obligation by the caller. */
+    readonly unreadable?: readonly UnreadableRecordInput[];
+    readonly liveResults?: readonly LiveProviderResult[];
+    /**
+     * The ids of the invocation-scoped waivers *this* invocation granted.
+     *
+     * Records are content-addressed and durable, so an invocation-scoped waiver
+     * written during an earlier run is still on disk during this one. Athena
+     * distinguished the two with an `invocation:` id prefix, which a
+     * content-addressed id cannot carry, so the invocation's own grants are named
+     * explicitly instead. Absent means "this invocation granted none", which is
+     * the fail-closed reading: an unlisted invocation waiver is inert.
+     *
+     * SUPPLIER AND TRUST BOUNDARY. The admission adapter's second pass, and only
+     * it: these are the ids it minted a moment earlier when it published the
+     * waivers a human accepted. Nothing external reaches this member, and a
+     * forged entry buys very little — an id here does not create a waiver, it
+     * only stops one that is *already stored* from being treated as a leftover.
+     * That stored record still has to name this gate and this obligation, still
+     * has to pass the same freshness comparison as every other record, and still
+     * cannot cover a finding the config classifies non-waivable. The one thing an
+     * attacker gains is the ability to re-use a waiver they already held for this
+     * exact candidate — which is precisely what a `durable` waiver grants openly.
+     */
+    readonly invocationWaiverRecordIds?: readonly string[];
+}
+interface GateDecision {
+    readonly gateId: string;
+    readonly candidate: CandidateBinding;
+    readonly admitted: boolean;
+    readonly resolutions: readonly ObligationResolution[];
+    /** Findings that did not block. Kept so a passed gate is still auditable. */
+    readonly diagnostics: readonly ObligationFinding[];
+    readonly blockers: readonly Blocker[];
+}
+/**
+ * Whether a record's candidate binding names the candidate now under
+ * evaluation, under the gate-time reading of "the same candidate".
+ *
+ * `treeSha` is absent from the comparison and that absence is the whole point;
+ * see the header. Both sides must name an identity token this config accepts
+ * and the same one, and the digest must be non-empty — a record written before
+ * the identity existed carries an empty digest, and comparing two empty strings
+ * would make every such record match every candidate.
+ */
+declare function isRecordFreshForCandidate(config: HarnessConfig, recorded: RecordCandidateBinding, candidate: CandidateBinding): boolean;
+/**
+ * The last gate on the gate: a resolution an obligation's config does not
+ * permit becomes a block, whatever produced it.
+ *
+ * This exists because every path above answers a different question — is there
+ * evidence, did a provider pass, does a policy cover this — and none of them
+ * has any reason to consult `allowedResolutionKinds`. Without this step, an
+ * obligation that declares itself undelegatable is undelegatable only for as
+ * long as nobody writes a delegation path that forgets to ask.
+ */
+declare function enforceAllowedResolution(obligation: ObligationPolicy, resolution: ObligationResolution): ObligationResolution;
+declare function evaluateGate(input: EvaluateGateInput): GateDecision;
+
+/**
  * The tracked delivery record — `delivery-record/2` — and the pure verification
  * core the CLI `verify` command and the GitHub Action both call.
  *
@@ -4061,6 +3014,1168 @@ declare function parseCandidateTreeListing(nulSeparated: string): readonly Liste
  */
 declare function needsCommittedSymlinkTarget(entry: ListedTreeEntry): boolean;
 declare function verifyDeliveryRecord(config: HarnessConfig, record: DeliveryRecord, recomputedIdentity: RecomputedIdentity, base: VerificationBase, options?: VerifyDeliveryRecordOptions): DeliveryRecordCheck;
+
+declare class ReviewInputError extends Error {
+}
+type ReviewInputReader = (relativePath: string) => Promise<Uint8Array | null>;
+/** Reads the optional compiled owner policy without turning absence into a grant. */
+declare function readCompiledRepositoryPolicy(read: ReviewInputReader): Promise<CompiledPolicy | null>;
+/** One activated lens, resolved to the charter bytes the installation carries. */
+interface ResolvedCharter {
+    readonly origin: "composition" | "repository";
+    readonly sourcePath: string;
+    readonly lensId: string;
+    /** The reviewer id the evidence carries: the charter path's basename. */
+    readonly reviewerId: string;
+    readonly personaId: string;
+    /** The archive-relative path the charter's bytes were read from. */
+    readonly entryPath: string;
+    /** The digest of those bytes, equal to the one the compiled policy resolved. */
+    readonly digest: string;
+}
+/**
+ * The reviewers a review in `rootDir` must cover: the compiled policy's
+ * activated review lenses, each resolved to the charter the installed
+ * generation ships for it.
+ *
+ * Two resolutions rather than a list held here, because a list held here is
+ * exactly how an activated lens goes unrepresented in the evidence while
+ * everything stays green. The compiled snapshot decides WHICH lenses reviewed —
+ * the whole shipped set is seventeen charters and this repository activates two
+ * of them, so the archive alone would name fifteen reviewers that never ran.
+ * The archive decides WHAT each lens was told, and the snapshot's digest is
+ * checked against the bytes actually read, so a charter the installation does
+ * not carry, or one whose bytes have drifted from the policy the repository is
+ * judged under, refuses the emission instead of quietly reviewing under
+ * something else.
+ */
+declare function resolveReviewCharters(read: ReviewInputReader, config?: {
+    readonly additionalReviewLenses?: readonly {
+        readonly lensId: string;
+        readonly reviewerId: string;
+        readonly charterPath: string;
+    }[];
+}): Promise<ResolvedCharter[]>;
+/** One release identity for review, checks and portable verification. Absence is explicit. */
+declare function readWorkflowRelease(read: ReviewInputReader): Promise<Readonly<Record<string, unknown>> | null>;
+
+interface CandidateTreeInputMetadata {
+    readonly mode: string | null;
+    readonly links: readonly {
+        readonly path: string;
+        readonly target: string;
+    }[];
+}
+type CandidateTreeInputReader = ReviewInputReader & {
+    metadata(repoPath: string): Promise<CandidateTreeInputMetadata>;
+};
+declare function candidateTreeEvidenceReader(rootDir: string, treeSha: string, run?: CandidateCommandRunner): Promise<CandidateTreeInputReader>;
+/** Source inputs are hashed from Git, not transported as portable artifacts.
+ * Directory links contribute verified target-tree bytes and their link metadata. */
+declare function candidateTreeSourceReader(rootDir: string, treeSha: string, run?: CandidateCommandRunner): Promise<CandidateTreeInputReader>;
+declare function capturePortableVerificationInputs(rootDir: string, config: HarnessConfig, candidate: CapturedCandidate, record: DeliveryRecord, run?: CandidateCommandRunner): Promise<{
+    waiverCandidateMatches?: boolean | undefined;
+    compiledPolicy?: CompiledPolicy | undefined;
+    evidenceContext: PortableEvidenceContext;
+    checkBindings: Readonly<Record<string, CheckBinding>>;
+    resourceBindings: Record<string, ResourceApplicabilityBinding>;
+    projection: ReviewActivationProjection;
+}>;
+
+/** Exact immutable candidate materialization, shared by execution and portability. */
+
+declare function capturePhysicalSource(source: PhysicalSourceDefinition, read: CandidateTreeInputReader): Promise<{
+    files: {
+        file: string;
+        bytes: Uint8Array;
+        mode: string;
+        sha256: string;
+    }[];
+    identity: {
+        version: "physical-source/1";
+        files: {
+            file: string;
+            mode: string;
+            sha256: string;
+        }[];
+        absentInputs: string[];
+    };
+}>;
+
+declare const DELIVERY_POSTURE_PATH = ".agents/delivery-posture.json";
+declare const DELIVERY_POSTURE_SCHEMA = "delivery-posture/1";
+declare const DELIVERY_POSTURE_FALLBACK_SOURCE = "fallback";
+/** The bound on each network call: the fetch and `ls-remote` alike. */
+declare const DELIVERY_POSTURE_NETWORK_TIMEOUT_MS = 15000;
+declare const DELIVERY_POSTURE_MAX_BYTES: number;
+type DeliveryPosture = "gate" | "focused";
+type DeliveryPostureCode = "posture_undeclared" | "posture_malformed" | "posture_unreadable";
+interface DeliveryPostureResult {
+    readonly posture: DeliveryPosture;
+    readonly reason: string;
+    /** The base as text, such as `origin/main`, or `fallback` where nothing was read. */
+    readonly source: string;
+    readonly baseTipSha: string | null;
+    readonly code: DeliveryPostureCode | null;
+}
+interface ResolveDeliveryPostureInput {
+    readonly rootDir: string;
+    /** The configured base. It is checked here, not trusted. */
+    readonly baseRef: string;
+    readonly networkTimeoutMs?: number;
+    readonly signal?: AbortSignal;
+}
+/**
+ * Resolves the posture at the tip of the protected base. Every reader of the
+ * file gives the same posture, code and source for the same bytes.
+ */
+declare function resolveDeliveryPosture(input: ResolveDeliveryPostureInput): Promise<DeliveryPostureResult>;
+
+declare function recordIdentity(workspaceId: string, input: PublishRecordInput): RecordIdentity;
+/** `recordId` = lowercase-hex sha256 over the canonical identity tuple. */
+declare function computeRecordId(workspaceId: string, input: PublishRecordInput): string;
+
+/** The leaf this module owns. Preparation receipts reuse the resolver with their own. */
+declare const RECORDS_LEAF = "records";
+type GitRunner = (cwd: string, args: readonly string[]) => Promise<string>;
+interface RecordStorageOptions {
+    /** Repo-relative namespace under the git directory. Defaults to the config default. */
+    readonly storageNamespace?: string;
+    /** Leaf inside the namespace. Defaults to `records`. */
+    readonly leaf?: string;
+    /**
+     * An already-resolved namespace root. When present git is never consulted,
+     * which is what lets a caller (and this module's tests) address a store that
+     * is not inside a repository.
+     */
+    readonly storageRoot?: string;
+    readonly runGit?: GitRunner;
+}
+interface PublishOptions extends RecordStorageOptions {
+    /**
+     * Runs after the temporary is fsynced and before it is linked into place.
+     * The crash-window test kills the process here; production callers do not
+     * pass it. It exists because the window it names is the one interval in
+     * which a failure could plausibly corrupt the store, and a window nothing
+     * can enter is a window nothing can test.
+     */
+    readonly beforeLink?: () => void | Promise<void>;
+}
+interface RecordSelector extends RecordStorageOptions {
+    readonly gateId: string;
+    readonly obligationId: string;
+}
+/**
+ * The one resolver. `workspaceId` is the digest of the **namespace root**, not
+ * of the leaf, so records and preparation receipts — different directories —
+ * agree on which workspace they belong to. Deriving it per leaf would give one
+ * worktree two workspace identities and quietly break every cross-leaf
+ * comparison built on it.
+ */
+declare function resolveRecordStorage(rootDir: string, options?: RecordStorageOptions): Promise<WorkspaceStorage>;
+
+declare function recordFileName(gateId: string, obligationId: string, recordId: string): string;
+/**
+ * Publishes one record, atomically, and reports whether it created the entry or
+ * found its own content already there.
+ *
+ * The two success statuses are not interchangeable to a caller that cares: a
+ * recorder writing one record per claim expects `published`, and an idempotent
+ * re-run of a completed submission expects `idempotent`. Both mean the store
+ * now holds exactly this record; neither means anything was overwritten,
+ * because nothing here ever overwrites.
+ */
+declare function publishRecord(rootDir: string, input: PublishRecordInput, options?: PublishOptions): Promise<PublishedRecord>;
+/**
+ * Reads every record filed under one gate and obligation in this workspace.
+ *
+ * Discovery never throws on a bad file. A store with one unreadable record in
+ * it still has to answer the question "what evidence exists for this
+ * obligation", and the evaluator has to be able to tell "no evidence" from
+ * "evidence I refuse to trust" — so unusable files come back as quarantine
+ * entries carrying their class, and the caller decides what that means.
+ */
+declare function discoverRecords(rootDir: string, selector: RecordSelector): Promise<RecordDiscovery>;
+
+/**
+ * The manifest rejection-code registry — the vocabulary a submitted
+ * `delivery-evidence/1` manifest can be rejected in.
+ *
+ * This is the spec's Appendix D registry restated as an exhaustive `Record`
+ * witness: every code names the rules that produce it, so a code with no rule
+ * and a rule with no code are both compile-time or test-time errors rather than
+ * discoveries. Appendix D is the source; the tests beside this file check the
+ * transcription in both directions.
+ *
+ * DISJOINT FROM THE GATE'S VOCABULARY. `blockers.ts` owns
+ * `GATE_STRUCTURAL_FINDING_CODES` — what the *evaluator* concludes about
+ * evidence it already has. These codes are what the *validator* concludes about
+ * a submission it is being offered. The two vocabularies never mix, and nothing
+ * here is a blocker code.
+ *
+ * WHERE THE LINE IS. Four codes are not this validator's to emit. The reason is
+ * a scope boundary, not an inability: what they judge is the recorder's
+ * surface — the run root it allocates (SUB-3), the record store it publishes
+ * into (SUB-4), and the artifact bytes it reads through its fs port (ENV-10's
+ * realpath clause, ENV-11). Byte-level artifact verification is the clearest
+ * case: it is a filesystem operation over files at declared paths, and a digest
+ * taken over whatever string map a caller assembled is a different operation
+ * with a different meaning — running it here would report a verification that
+ * never happened. The codes are registered anyway, because the registry is the
+ * whole registry, and carry `emitter: "recorder"` so the split is a stated fact
+ * with a test behind it. The conformance kit's five recorder-dependent vectors
+ * are exactly the vectors whose expectations sit on that side of the line;
+ * their coverage arrives with integration mode.
+ */
+
+/**
+ * The envelope spec this validator implements. Version strings are exact-match
+ * domain-separation tokens (§10), single-sourced here so the docs, the kit
+ * runner and the validator cannot drift apart.
+ */
+declare const DELIVERY_EVIDENCE_1 = "delivery-evidence/1";
+/** The original payload spec. Its expansion-only deferral rule is immutable. */
+declare const REVIEW_GREEN_1 = "review.green/1";
+/** The payload spec that also admits tracked in-contract P2/P3 deferrals. */
+declare const REVIEW_GREEN_2 = "review.green/2";
+/** Envelope specs the validator implements, whatever a config accepts (GEN-2). */
+declare const SUPPORTED_ENVELOPE_SPECS: readonly string[];
+/** Payload specs the validator implements, whatever a config accepts (ENV-14). */
+declare const SUPPORTED_PAYLOAD_SPECS: readonly string[];
+/**
+ * The one attestation level `delivery-evidence/1` fully specifies (§7). The
+ * other two levels are defined but unimplementable until a signing profile
+ * exists, so a validator that accepted them would be laundering level-`self`
+ * evidence as something stronger (§11.4).
+ */
+declare const CONFORMING_ATTESTATION_LEVEL = "self";
+/** Every rule id in spec §8 and §9.3, in spec order. */
+declare const MANIFEST_RULE_IDS: readonly ["GEN-1", "GEN-2", "GEN-3", "GEN-4", "GEN-5", "ENV-1", "ENV-2", "ENV-3", "ENV-4", "ENV-5", "ENV-6", "ENV-7", "ENV-8", "ENV-9", "ENV-10", "ENV-11", "ENV-12", "ENV-13", "ENV-14", "SUB-1", "SUB-2", "SUB-3", "SUB-4", "SUB-5", "RG-1", "RG-2", "RG-3", "RG-4", "RG-5", "RG-6", "RG-7", "RG-8", "RG-9", "RG-10"];
+type ManifestRuleId = (typeof MANIFEST_RULE_IDS)[number];
+/**
+ * The rules that produce no code because they constrain the validator rather
+ * than the manifest: atomicity (GEN-3), the time ban (GEN-5), and
+ * all-violations reporting (SUB-5). They are observable in this
+ * implementation — GEN-3 through the single all-or-nothing result, GEN-5
+ * through the sensor's time ban and the digest test, SUB-5 through every
+ * multi-code vector — but no manifest can violate them.
+ */
+declare const META_RULE_IDS: readonly ManifestRuleId[];
+/** Appendix D, in registry order. */
+declare const MANIFEST_REJECTION_CODES: readonly ["unknown_member", "unsupported_envelope_spec", "malformed_field", "invalid_provider_id", "unregistered_provider", "invalid_run_id", "invalid_pass_id", "unsupported_vcs", "invalid_object_id", "unsupported_identity_version", "repository_required", "run_history_final_mismatch", "artifact_path_invalid", "artifact_path_duplicate", "artifact_outside_run_root", "artifact_digest_mismatch", "unsupported_attestation", "no_claims", "duplicate_claim", "obligation_not_configured", "unsupported_payload_spec", "candidate_mismatch", "candidate_unprepared", "manifest_outside_run_root", "record_conflict", "verdict_not_green", "not_finalized", "edited_after_final_pass", "reviewer_set_invalid", "reviewer_set_incomplete", "approval_missing", "approval_mismatch", "finding_invalid", "blocking_finding_present", "actionable_unresolved", "illegal_deferral", "telemetry_mismatch", "iteration_count_mismatch", "invalid_cost"];
+type ManifestRejectionCode = (typeof MANIFEST_REJECTION_CODES)[number];
+/**
+ * `validator` — decidable from the manifest, the repository configuration, and
+ * the candidate observation the caller supplies.
+ *
+ * `recorder` — owned by the recorder's surface: the run root it allocates, the
+ * records it publishes, and the artifact bytes it reads and hashes through its
+ * fs port. A pure validator can be handed values that resemble those things,
+ * which is exactly why it must not answer in their name: a caller would then
+ * hold a verification nobody performed.
+ */
+type RejectionEmitter = "validator" | "recorder";
+interface ManifestRejectionCodeEntry {
+    readonly rules: NonEmptyTuple<ManifestRuleId>;
+    readonly emitter: RejectionEmitter;
+}
+/**
+ * Exhaustive by construction: the key type is the code union, so a code added
+ * to the list above without an entry here fails to compile.
+ */
+declare const MANIFEST_REJECTION_REGISTRY: Readonly<Record<ManifestRejectionCode, ManifestRejectionCodeEntry>>;
+/** Codes this unit's validator can produce. */
+declare const VALIDATOR_EMITTED_CODES: readonly ManifestRejectionCode[];
+/** Codes only the recorder can reach, because only it observes the state they judge. */
+declare const RECORDER_EMITTED_CODES: readonly ManifestRejectionCode[];
+declare function isManifestRejectionCode(value: unknown): value is ManifestRejectionCode;
+/**
+ * One violated rule. `pointer` is an RFC 6901 JSON pointer into the submitted
+ * manifest, so a caller can show the offending member without the validator
+ * formatting anything for a screen — that is the renderer's job, and the
+ * messages here are constant strings that never interpolate provider-authored
+ * text. A pointer can still carry a submitted member name (an unknown member is
+ * named by the pointer to it), which is why display goes through the shared
+ * renderer's neutralization (§11.2) like any other evidence text.
+ */
+interface ManifestRejection {
+    readonly code: ManifestRejectionCode;
+    readonly rule: ManifestRuleId;
+    readonly pointer: string;
+    readonly message: string;
+}
+/**
+ * Validation is atomic (GEN-3): one verdict for the whole submission, carrying
+ * every violated rule (SUB-5). There is no partial acceptance and no
+ * first-failure short circuit.
+ */
+type ManifestValidation<T> = {
+    readonly ok: true;
+    readonly manifest: T;
+} | {
+    readonly ok: false;
+    readonly rejections: NonEmptyTuple<ManifestRejection>;
+};
+
+interface ManifestDeliverable {
+    readonly digest: string;
+    readonly identity: string;
+}
+interface ManifestBase {
+    readonly ref: string;
+    readonly tipSha: string;
+    readonly mergeBaseSha: string;
+}
+interface ManifestCandidate {
+    readonly vcs: "git";
+    readonly treeSha: string;
+    readonly headSha?: string;
+    readonly deliverable: ManifestDeliverable;
+    readonly base: ManifestBase;
+    readonly workspaceId: string;
+}
+interface ManifestProvider {
+    readonly id: string;
+    readonly version?: string;
+    readonly runId: string;
+    readonly finalPassId: string;
+}
+interface RunHistoryEntry {
+    readonly preparedTreeSha: string;
+    readonly evaluatedInPassId: string;
+}
+interface ManifestArtifact {
+    readonly path: string;
+    readonly sha256: string;
+    readonly role: string;
+}
+/**
+ * An artifact entry that survived the shape rules, carrying the index it was
+ * declared at so a payload rule can point back at the entry rather than at the
+ * pool.
+ */
+interface DeclaredArtifact extends ManifestArtifact {
+    readonly index: number;
+}
+interface ManifestAttestation {
+    readonly level: string;
+    readonly signatures: readonly unknown[];
+}
+interface ManifestClaim {
+    readonly obligation: string;
+    readonly payloadSpec: string;
+    readonly payload: Record<string, unknown>;
+}
+/** A manifest that passed §8 and §9.3 in full. */
+interface DeliveryEvidenceManifest {
+    readonly spec: string;
+    readonly provider: ManifestProvider;
+    readonly candidate: ManifestCandidate;
+    readonly repository?: string | null;
+    readonly runHistory: readonly RunHistoryEntry[];
+    readonly artifacts: readonly ManifestArtifact[];
+    readonly attestation: ManifestAttestation;
+    readonly recordedAt: string;
+    readonly claims: readonly ManifestClaim[];
+}
+interface ManifestValidationContext {
+    readonly resourceBindings?: Readonly<Record<string, ResourceApplicabilityBinding>>;
+    readonly checkBindings?: Readonly<Record<string, CheckBinding>>;
+    /** Repository gate configuration: accepted specs, identity versions, obligations, providers. */
+    readonly config: HarnessConfig;
+    /**
+     * What candidate capture reports at submission time (SUB-1). A value, not a
+     * repository: whoever captured it owns the git work, and this module compares.
+     */
+    readonly currentCandidate: unknown;
+    /** Whether the workspace is in a prepared state at submission time (SUB-2). */
+    readonly prepared: boolean;
+    /**
+     * Artifact file contents, keyed by the path the manifest declares. RG-4 reads
+     * approval stamps from here. An entry absent from this map is an artifact the
+     * caller could not produce bytes for, which no rule may treat as satisfied.
+     */
+    readonly artifactContents: ReadonlyMap<string, string>;
+}
+declare function validateManifest(submitted: unknown, context: ManifestValidationContext): ManifestValidation<DeliveryEvidenceManifest>;
+
+interface Collector {
+    /** Reports one violated rule. Never throws, never short-circuits. */
+    emit(code: ManifestRejectionCode, rule: ManifestRuleId, pointer: string, message: string): void;
+    /** Everything reported so far, in emission order. */
+    list(): readonly ManifestRejection[];
+}
+
+/**
+ * The normative `review.green/1` payload validator (spec §9) and its version-2
+ * deferral extension.
+ *
+ * The payload is a claim that an independent, complete code review of the final
+ * candidate concluded green. The rules here never ask *how* the review was
+ * conducted — reviewer selection, models and prompts belong to the provider
+ * (§3, principle 5). They ask whether what is claimed is internally coherent and
+ * bound to the candidate:
+ *
+ *   SELF-CONSISTENCY IS CHECKED, NOT TRUSTED (§3, principle 6). Every telemetry
+ *   number the payload states is derivable from its own findings, so it is
+ *   re-derived and compared rather than read. A count that contradicts the
+ *   findings it counts is a rejection, not a display quirk.
+ *
+ *   APPROVALS RE-STATE THE BINDING (§9.2). Each selected reviewer is covered by
+ *   exactly one approval stamp that repeats the provider triple, the workspace,
+ *   and the whole candidate — so each stamp is independently interpretable in an
+ *   audit, and a stamp from another run or another tree cannot be reused here.
+ *
+ *   GREEN IS AN ABSENCE OF OPEN WORK. A blocking finding, an actionable finding
+ *   left unresolved or ignored, a deferral that skips the tracker or defers what
+ *   may never be deferred — each contradicts the verdict, and RG-6 and RG-7 make
+ *   the contradiction mechanical rather than editorial.
+ *
+ * PURITY. Approval stamps arrive as bytes the caller already read; this module
+ * parses strings and touches no filesystem.
+ */
+
+declare const FINDING_SEVERITIES: readonly string[];
+declare const FINDING_SCOPES: readonly string[];
+declare const FINDING_DISPOSITIONS: readonly string[];
+/** The artifact role §9.2 defines. */
+declare const REVIEWER_APPROVAL_ROLE = "reviewer-approval";
+interface ReviewGreenClaimInput {
+    readonly payload: Record<string, unknown>;
+    /** Pointer to the payload inside the manifest. */
+    readonly at: string;
+    /** The envelope's provider triple, as submitted. Approval stamps must repeat it. */
+    readonly provider: {
+        readonly id: unknown;
+        readonly runId: unknown;
+        readonly finalPassId: unknown;
+    };
+    /** The envelope's candidate, as submitted. Approval stamps must repeat it. */
+    readonly candidate: unknown;
+    readonly artifacts: readonly DeclaredArtifact[];
+    readonly artifactContents: ReadonlyMap<string, string>;
+    readonly runHistoryLength: number;
+}
+declare function validateReviewGreenClaim(input: ReviewGreenClaimInput, collector: Collector): void;
+
+/**
+ * The domain separator the digest opens with. It is a constant of the function
+ * rather than of any one token: `identity\0<token>\0` says both what kind of
+ * thing this hash is and which version of it, so a digest can never be confused
+ * with some other sha256 over the same entries.
+ */
+declare const IDENTITY_DOMAIN = "identity";
+/**
+ * This module's own failure vocabulary. Neither code is a gate finding — the
+ * gate's structural codes describe evidence, and these describe a repository
+ * that could not be read at all — so neither belongs in the config's
+ * waivable/non-waivable partition, exactly as the record store's codes do not.
+ */
+declare const IDENTITY_FINDING_CODES: readonly ["deliverable_tree_unreadable", "deliverable_tree_unparsable"];
+type IdentityFindingCode = (typeof IDENTITY_FINDING_CODES)[number];
+/**
+ * One record of a recursive tree listing, reduced to the three fields the
+ * digest reads.
+ *
+ * The type column git prints between the mode and the object is deliberately
+ * absent: it is derivable from the mode and carries no information the identity
+ * needs, and hashing both would make a listing format change into an identity
+ * change.
+ */
+interface DeliverableTreeEntry {
+    readonly mode: string;
+    readonly objectSha: string;
+    readonly path: string;
+}
+/**
+ * The pair the digest is a function of.
+ *
+ * These travel together rather than as a config because that is the honest
+ * signature: change either one and the digest changes. A `HarnessConfig`
+ * parameter would suggest the other twenty members mattered, and would make the
+ * token/neutral-set relationship impossible to state — or to test — on its own.
+ * The config's biconditional invariant is what stops one token from ever naming
+ * two different pairs; this signature is what makes that invariant meaningful.
+ */
+interface DeliverableIdentityDefinition {
+    readonly identityToken: string;
+    readonly reviewNeutral: readonly NeutralMatcher[];
+}
+interface DeliverableIdentityOptions {
+    /** Injected only by tests that need a git invocation to fail on demand. */
+    readonly run?: CandidateCommandRunner;
+}
+/** The two members of a config that decide what a digest is. */
+declare function identityDefinitionOf(config: HarnessConfig): DeliverableIdentityDefinition;
+/**
+ * Whether a path is outside the reviewed deliverable — narration written after
+ * the work, which a reviewer was never asked about.
+ *
+ * This is the only predicate that removes an entry from the digest below.
+ */
+declare function isReviewNeutralPath(config: HarnessConfig, repoPath: string): boolean;
+/**
+ * Whether a path may be written *after* a merge-grade gate without invalidating
+ * the proof that gate produced.
+ *
+ * Deliberately narrower than review neutrality, and deliberately separate from
+ * it. A report still needs its own validation even though a reviewer never
+ * approved it; the delivery record describes the gate that has just finished
+ * and is checked by the verification it belongs to. Collapsing the two would
+ * either let a report through a gate it should face, or make the record's own
+ * write invalidate the record. Nothing in this file's digest reads it.
+ */
+declare function isRecordNeutralPath(config: HarnessConfig, repoPath: string): boolean;
+/**
+ * A malformed record blocks rather than being skipped.
+ *
+ * Dropping one would produce a digest that is confidently wrong: a shorter
+ * deliverable that hashes cleanly and matches nothing, with no signal that
+ * anything was lost. A tree listing this module cannot read is a repository
+ * question, and the honest answer is to say so.
+ */
+declare function parseTreeEntries(output: string, config: HarnessConfig): DeliverableTreeEntry[];
+/**
+ * The deliverable digest for a set of tree entries.
+ *
+ * Every field is NUL-separated and every record is NUL-terminated, so no
+ * concatenation of a mode, an object and a path can be re-read as a different
+ * triple — a path ending where another begins cannot forge a record.
+ */
+declare function digestDeliverableEntries(entries: readonly DeliverableTreeEntry[], definition: DeliverableIdentityDefinition): string;
+/**
+ * `--full-tree` so the answer does not depend on the directory the command was
+ * run from, and `-r` so it is a flat list of blobs and gitlinks rather than a
+ * walk this module would have to repeat.
+ *
+ * The listing is decoded as UTF-8, which is what Athena's implementation did.
+ * A path whose bytes are not valid UTF-8 therefore digests the same lossy way
+ * in both — a fidelity property, not a correctness one, and the reason it is
+ * written down here rather than quietly improved.
+ */
+declare function computeDeliverableIdentity(request: DeliverableIdentityRequest, options?: DeliverableIdentityOptions): Promise<string>;
+/**
+ * The identity port candidate capture injects.
+ *
+ * It returns the digest alone. The token that names it is a config member, and
+ * capture stamps it from the config it was handed, so a port and a config
+ * cannot disagree about what a digest is called.
+ */
+declare function withDeliverableIdentity(options?: DeliverableIdentityOptions): ComputeIdentity;
+
+/**
+ * Stored on every receipt so a reader can refuse a shape it does not
+ * understand rather than guess at one. An unrecognised version is `invalid`,
+ * not `stale`: the receipt is not a receipt this harness can read at all, and
+ * saying "your candidate moved" about it would send an operator to look at
+ * their branch.
+ */
+declare const PREPARATION_RECEIPT_SCHEMA_VERSION = 1;
+/** The leaf this module owns, beside the record store's under one root. */
+declare const PREPARATION_RECEIPT_LEAF = "preparation";
+/**
+ * The harness's own version, as a fingerprint input.
+ *
+ * Declared here rather than read from a package manifest at run time. An
+ * installed package's manifest is not reliably reachable from the module that
+ * would want it, and reading one at import time is exactly the ambient-file
+ * dependency the import boundary exists to keep out. The cost is that this
+ * constant can drift from the manifest, so a test asserts the two agree — the
+ * drift is caught mechanically instead of being trusted.
+ *
+ * THE RELEASE WORKFLOW MUST BUMP THIS IN LOCKSTEP WITH
+ * `packages/kernel/package.json`. Publishing a version whose fingerprint input
+ * still names the previous one would let a receipt survive the upgrade it is
+ * supposed to be invalidated by; the manifest-equality test is what makes the
+ * omission a red run rather than a silent one.
+ */
+declare const HARNESS_VERSION = "0.8.0";
+/**
+ * The five ways a receipt can fail to authorise the candidate in front of it,
+ * in the order they are decided. The order is the contract, not an
+ * implementation detail:
+ *
+ *   `missing`         — nothing to read. Every later question is unanswerable.
+ *   `invalid`         — something is there and it is not a receipt this
+ *                       harness wrote. Comparing its fields would be comparing
+ *                       against arbitrary content.
+ *   `wiring_mismatch` — the gate itself changed. The receipt was published by a
+ *                       different harness or against different wiring, so what
+ *                       it attests to is not what would be attested now.
+ *   `base_changed`    — the base moved under the candidate. Reported ahead of
+ *                       `stale` because the operator's action differs: the work
+ *                       did not move, the ground under it did.
+ *   `stale`           — the candidate moved.
+ *
+ * Each class is decided only once every earlier class has been ruled out, which
+ * is what makes the ordering observable: a tree in two of these states reports
+ * the earlier one, and the tests pin that pair by pair.
+ */
+declare const PREPARATION_FAILURE_CLASSES: readonly ["missing", "invalid", "wiring_mismatch", "base_changed", "stale"];
+type PreparationFailureClass = (typeof PREPARATION_FAILURE_CLASSES)[number];
+/**
+ * What preparation needs to know about a candidate: the binding evidence will
+ * carry, plus the two fields that are not part of it.
+ *
+ * `headSha` is compared because a head move with an identical tree is still a
+ * different candidate to have prepared — the same decision the recorder makes
+ * at submission. `mode` is compared because a receipt published for a staged
+ * index does not authorise the same tree reached from a clean worktree; the
+ * trees are equal and the claims about them are not.
+ *
+ * A `CapturedCandidate` satisfies this structurally, so capture's own output
+ * can be handed straight in.
+ */
+type PreparationCandidate = CandidateBinding & {
+    readonly headSha: string;
+    readonly mode: CandidateMode;
+};
+/**
+ * The stored receipt. Flat, mirroring the record store's binding spelling
+ * rather than the capture's nested one, so the two stored forms under one root
+ * read the same way.
+ *
+ * `workspaceId` is the store the receipt belongs to; `candidateWorkspaceId` is
+ * the workspace the candidate was captured in. They are normally equal, and the
+ * redundancy is the same one the record store keeps for the same reason: making
+ * them one field would turn a candidate that moved workspaces into a candidate
+ * that did not.
+ */
+interface PreparationReceipt {
+    readonly schemaVersion: number;
+    readonly gateId: string;
+    readonly workspaceId: string;
+    readonly treeSha: string;
+    readonly headSha: string;
+    readonly mode: CandidateMode;
+    readonly deliverableDigest: string;
+    readonly identityToken: string;
+    readonly baseRef: string;
+    readonly baseTipSha: string;
+    readonly mergeBaseSha: string;
+    readonly candidateWorkspaceId: string;
+    readonly preparationFingerprint: string;
+    /** Present on command-driven receipts; identifies the latest preparation attempt. */
+    readonly attemptId?: string;
+    /** CLI mechanical success binding; absent on legacy receipts. */
+    readonly validationDigest?: string;
+    readonly policyDigest?: string;
+}
+interface PreparationOptions extends RecordStorageOptions {
+    /** Only prepare may refresh a receipt after strict validation-equivalent movement. */
+    readonly allowValidationEquivalent?: boolean;
+    /** Portable verification reads declared wiring from the verified candidate tree. */
+    readonly readWiring?: (repoPath: string) => Promise<Uint8Array>;
+    /** Overrides the declared harness version. Tests use it; callers do not. */
+    readonly harnessVersion?: string;
+}
+interface PreparationInput {
+    /** Supplied by CLI prepare after successful mechanics or proven receipt reuse. */
+    readonly validationDigest?: string;
+    readonly config: HarnessConfig;
+    readonly candidate: PreparationCandidate;
+    readonly attemptId?: string;
+}
+interface PublishedPreparationReceipt {
+    readonly path: string;
+    readonly receipt: PreparationReceipt;
+    readonly workspaceId: string;
+}
+type PreparationEvaluation = {
+    readonly prepared: true;
+    readonly receipt: PreparationReceipt;
+    readonly receiptPath: string;
+    readonly workspaceId: string;
+} | {
+    readonly prepared: false;
+    readonly failure: PreparationFailureClass;
+    readonly reason: string;
+    readonly receiptPath: string;
+    readonly workspaceId: string;
+    readonly blockers: NonEmptyTuple<Blocker>;
+};
+/**
+ * One receipt per gate, named after it. The gate id is already part of the
+ * record store's filename grammar and is validated at config load, so no
+ * additional escaping is introduced here; a gate whose id would not make a
+ * filename is a config the loader rejects.
+ */
+declare function receiptFileName(gateId: string): string;
+/**
+ * The record store's resolver, with this module's leaf.
+ *
+ * Everything that makes the store worktree-private — the `--git-path`
+ * resolution, the containment check that refuses a namespace git would root in
+ * the common directory, the physical-path normalisation the workspace id
+ * depends on — is inherited rather than restated. There is deliberately no
+ * second copy of that reasoning: a receipt that resolved its own directory
+ * could disagree with the store about which worktree it is in, and the
+ * disagreement would surface as evidence that looked fresh.
+ */
+declare function resolveReceiptStorage(rootDir: string, options?: PreparationOptions): Promise<WorkspaceStorage>;
+/**
+ * The digest of the harness version and the declared wiring bytes.
+ *
+ * SORTED AND DEDUPLICATED. The fingerprint is a statement about a *set* of
+ * files, so two configs that declare the same paths in a different order — or
+ * that name one twice — describe the same wiring and must agree. Order
+ * sensitivity would make a cosmetic config edit read as a wiring change, which
+ * is a real answer given for a non-reason.
+ *
+ * HASHED THROUGH THE CANONICALIZER, not through ad-hoc framing. Each path
+ * contributes its own name and its own content digest, and the pairs are
+ * digested as a canonical-JSON object. Framing raw file bytes with a NUL
+ * separator instead is not injective: `path1\0abc\0path2\0def` reads two ways
+ * the moment a wiring file contains a NUL of its own, so two different wirings
+ * could produce one fingerprint. Pairing each digest with its declared path
+ * also keeps two identical files distinguishable — moving a gate's wiring
+ * between declared paths is a wiring change.
+ *
+ * NO VERSION MEMBER RIDES IN THE INPUT. A receipt this harness cannot read is
+ * rejected at the `invalid` step, which is decided before any fingerprint is
+ * compared, so a schema version inside the digest would be a second copy of a
+ * check that has already run — with bump semantics nothing would define.
+ *
+ * A path that cannot be read as a file throws. See the module note — a hashed
+ * absence would make deletion a stable input.
+ */
+declare function computePreparationFingerprint(rootDir: string, config: HarnessConfig, options?: PreparationOptions): Promise<string>;
+/**
+ * Replace the current attempt token before removing the previous receipt.
+ * Publication and evaluation both check this token: an older command still
+ * running cannot restore authority after a newer attempt starts or fails.
+ */
+declare function invalidatePreparationReceipt(rootDir: string, config: HarnessConfig, options?: PreparationOptions): Promise<string>;
+/**
+ * Revoke unsuccessful preparation without replacing a newer attempt. Open the existing
+ * token before checking its value, then mutate that same inode: if ordinary
+ * preparation replaces the pathname meanwhile, its new token is untouched.
+ * The receipt remains on disk but cannot authorize against a revoked token.
+ */
+declare function revokePreparationAttempt(rootDir: string, config: HarnessConfig, attemptId: string, options?: PreparationOptions): Promise<void>;
+/**
+ * Publishes the current receipt, replacing whatever was there.
+ *
+ * The caller invalidates the previous receipt before starting checks. This
+ * publication computes the fingerprint before writing, so unreadable wiring
+ * cannot produce a new receipt.
+ *
+ * Write-temp-then-rename, not write-in-place: a reader that opened the receipt
+ * while a second preparation was mid-write would otherwise see a truncated file
+ * and call it `invalid`, which is a real class being reported for a race.
+ */
+declare function publishPreparationReceipt(rootDir: string, input: PreparationInput, options?: PreparationOptions): Promise<PublishedPreparationReceipt>;
+/**
+ * Decides the five classes, in the declared order, stopping at the first that
+ * holds.
+ *
+ * The order is not a series of early returns that happen to be arranged this
+ * way — each step is unanswerable until the one before it has passed. There is
+ * nothing to parse until there is a file; nothing to compare until the parse
+ * succeeded; and comparing candidate coordinates against a receipt published
+ * under different wiring answers a question nobody asked, because the wiring
+ * that produced those coordinates is not the wiring in front of us.
+ *
+ * Two comparisons deliberately do not use the drift classifier: `baseRef` and
+ * `identityToken` are configuration disagreements rather than movement — the
+ * classifier says so itself — but a receipt published against a different base
+ * ref or a different identity function does not authorise this candidate
+ * either. The ref lands in `base_changed` and the token in `stale`, next to the
+ * digest it names the meaning of.
+ */
+declare function evaluatePreparationReceipt(rootDir: string, input: PreparationInput, options?: PreparationOptions): Promise<PreparationEvaluation>;
+
+/**
+ * The filesystem port's shapes, with no filesystem in them.
+ *
+ * WHY A PORT AT ALL. Three kernel modules — the recorder here, the admission
+ * adapter, and the delivery record — are forbidden from importing `node:fs`
+ * directly (sensor rule d2). That is not a style preference. Every filesystem
+ * question those modules ask is a question the spec has an opinion about: what
+ * a run root *is*, whether a resolved path is inside one, what "the digest of
+ * the file's bytes at submission" means when the path names a directory. Left
+ * to each caller, those answers drift; behind one port they are written once
+ * and tested once.
+ *
+ * WHY THE SHAPES LIVE HERE. Same seam as `candidate.types.ts` and
+ * `records.types.ts`: a module may import these shapes without acquiring an
+ * edge to the implementation that produces them. Nothing in this file imports
+ * anything, and nothing in it performs an operation.
+ *
+ * WHAT AN OBSERVATION IS. `observeArtifact` returns a *classification*, never a
+ * verdict. It says what it found — the path was refused before it was touched,
+ * the file is not there, it resolved outside the root, it is not a file, it
+ * could not be read, or here are its bytes and their digest. Which rejection
+ * code each of those maps to is the recorder's decision, because it is the
+ * recorder that owns ENV-10 and ENV-11. A port that returned codes would be
+ * making spec decisions from inside the filesystem layer, and the two mappings
+ * that matter — a missing file is a digest failure, a file resolving outside
+ * the root is not — would then be invisible to the module that has to justify
+ * them.
+ */
+/** The provider coordinates a run root is derived from. */
+interface RunRootRequest {
+    /** `provider.id` from the manifest. Must be a single safe path component. */
+    readonly providerId: string;
+    /** `provider.runId` from the manifest. Must be a single safe path component. */
+    readonly runId: string;
+}
+/**
+ * An allocated run root: the directory a provider writes its evidence into and
+ * the only place a submission's files may live.
+ *
+ * `path` is always the *resolved* location. On macOS `os.tmpdir()` is a
+ * symlinked `/var/...` alias of a real `/private/var/...` directory, so a run
+ * root compared before resolution and a file compared after it would disagree
+ * about containment for every artifact in the run — the alias, not an attack,
+ * is what would fail the check.
+ */
+interface RunRoot {
+    readonly providerId: string;
+    readonly runId: string;
+    /** The original physical pool, retained across later path changes. */
+    readonly resolvedBasePath: string;
+    /** Absolute, symlink-resolved. */
+    readonly path: string;
+}
+/**
+ * Why a run root could not be derived.
+ *
+ * The first two are about the *shape* of a provider-supplied identifier, which
+ * the port refuses to interpret as a path before any filesystem call happens:
+ * `runId: "../run-a"` names another provider's directory, and `runId: "."`
+ * names the pool itself. Both are also rejections the manifest validator makes
+ * under ENV-1 and ENV-2, which matters to the caller: a refusal the validator
+ * independently names can be skipped without losing a check.
+ *
+ * The last two are not. `provider_id_too_long` is a grammar-legal id — ENV-1
+ * bounds the character set and not the length — that cannot be a path
+ * component, and `run_root_outside_base` is the pool's own directory resolving
+ * somewhere the harness did not put it. Nothing else in the system names
+ * either, so a caller that treats them as "skip the run-root rules" accepts a
+ * submission whose containment was never established.
+ */
+declare const RUN_ROOT_REFUSAL_REASONS: readonly ["unsafe_provider_id", "unsafe_run_id", "provider_id_too_long", "run_root_outside_base"];
+type RunRootRefusalReason = (typeof RUN_ROOT_REFUSAL_REASONS)[number];
+type RunRootResolution = {
+    readonly ok: true;
+    readonly runRoot: RunRoot;
+} | {
+    readonly ok: false;
+    readonly reason: RunRootRefusalReason;
+};
+/**
+ * What the port found at a declared artifact path.
+ *
+ *   `path_refused`      — the declared path was not a safe relative path; the
+ *                         port never touched the filesystem with it.
+ *   `missing`           — nothing resolves there.
+ *   `outside_run_root`  — it resolves, and the resolution is not inside the
+ *                         run root, or the root has left its original pool.
+ *                         A symlink that resolves *inside* is not
+ *                         this: containment is judged after resolution, so a
+ *                         link within the run is an ordinary file.
+ *   `not_a_file`        — a directory, or another non-regular entry. It has no
+ *                         "bytes at submission" to digest.
+ *   `unreadable`        — it is a file and reading it failed.
+ *   `readable`          — bytes were read; `sha256` and `contents` are present.
+ */
+declare const ARTIFACT_OBSERVATION_STATUSES: readonly ["path_refused", "missing", "outside_run_root", "not_a_file", "unreadable", "readable"];
+type ArtifactObservationStatus = (typeof ARTIFACT_OBSERVATION_STATUSES)[number];
+interface ArtifactObservation {
+    /** Exactly the path the manifest declared, unmodified. */
+    readonly declaredPath: string;
+    readonly status: ArtifactObservationStatus;
+    /** The symlink-resolved location, when there was one to resolve. */
+    readonly resolvedPath: string | null;
+    /** Lowercase-hex sha256 of the file's bytes. Present only when `readable`. */
+    readonly sha256: string | null;
+    /**
+     * The bytes decoded as UTF-8. Present only when `readable`. Payload rules
+     * read approval stamps from here; it is untrusted provider-authored text and
+     * is never interpolated into a rejection message.
+     */
+    readonly contents: string | null;
+    /** Exact bytes for portable retention, including non-UTF-8 artifacts. */
+    readonly base64?: string;
+    /** Operator-facing diagnostic for the failure statuses. Never parsed. */
+    readonly detail: string | null;
+}
+/** Options for the port's one write path. */
+interface WriteFileOptions {
+    /**
+     * Permission bits for the written file. The default suits a tracked,
+     * working-tree file — the delivery record — rather than the git-private
+     * store, which owns its own stricter modes.
+     */
+    readonly mode?: number;
+}
+/**
+ * The filesystem operations the recorder, the admission adapter and the
+ * delivery record are allowed to perform, and the complete list of them.
+ *
+ * Deliberately narrow. There is no `exists`, no `mkdir`, no `readdir`: every
+ * member here exists because a spec rule or a product artifact needs it, and a
+ * general-purpose filesystem facade behind a d2 rule would be the rule with
+ * extra steps.
+ */
+interface ArtifactsPort {
+    /**
+     * Derives the run root for a provider run and creates it. Allocation is the
+     * recorder's, never the provider's: a provider that could name its own root
+     * could name a directory whose contents it did not produce (SUB-3).
+     */
+    allocateRunRoot(request: RunRootRequest): Promise<RunRootResolution>;
+    /** The same derivation without creating anything. */
+    resolveRunRoot(request: RunRootRequest): Promise<RunRootResolution>;
+    /**
+     * Whether `target` resolves strictly inside `runRootPath` and that root is
+     * still inside the port's original resolved pool. Rechecked on every call;
+     * a path-based port cannot make resolution and use atomic.
+     */
+    isInsideRunRoot(runRootPath: string, target: string): Promise<boolean>;
+    /**
+     * Classifies an artifact. A RunRoot rechecks its original pool on every call;
+     * a string names a generic source directory (repository inputs or captured
+     * attachments), with containment only inside that directory.
+     */
+    observeArtifact(root: RunRoot | string, declaredPath: string): Promise<ArtifactObservation>;
+    /** Reads a UTF-8 text file — the submitted manifest. */
+    readTextFile(target: string): Promise<string>;
+    /** Writes a UTF-8 text file atomically, creating parent directories. */
+    writeTextFile(target: string, contents: string, options?: WriteFileOptions): Promise<void>;
+    /**
+     * Removes a file, treating an absent one as success.
+     *
+     * Its caller is a rejection undoing records it published before discovering a
+     * conflict on a later claim, so it must not fail the operation it is cleaning
+     * up after: it reports whether the file is gone rather than throwing.
+     */
+    removeFile(target: string): Promise<boolean>;
+}
+
+/**
+ * The namespace run roots live under, inside the system temporary directory.
+ * A constant rather than a config member — see the module note.
+ */
+declare const RUN_ROOT_NAMESPACE = "delivery-harness";
+/** The leaf under the namespace, so a future sibling need not move this one. */
+declare const RUN_ROOT_LEAF = "runs";
+/**
+ * Strict containment over already-resolved paths: `child` is inside `parent`
+ * and is not `parent` itself. A string-prefix test would put `/tmp/run-a2`
+ * inside `/tmp/run-a`, which is a different run's directory.
+ */
+declare function isInsideResolved(parent: string, child: string): boolean;
+/**
+ * Whether a manifest-declared artifact path may be joined to a run root at all:
+ * relative, no traversal, no empty segment, no drive-absolute or UNC form.
+ *
+ * Character-for-character the validator's shape rule, and it has to stay that
+ * way rather than merely being "at least as strict". A path this predicate
+ * refused but the validator accepted would be an artifact the recorder never
+ * digests and no rule ever rejects — a hole, not extra safety. The duplication
+ * is deliberate all the same: the validator produces a verdict, this decides
+ * whether a provider-supplied string reaches `path.join`, and that decision
+ * must hold for a caller who never ran the validator. A test pins the two in
+ * step over a shared table.
+ *
+ * A NUL is refused for a mechanical reason rather than a spec one: no supported
+ * filesystem admits one in a path segment, and `realpath` rejects it with
+ * `ERR_INVALID_ARG_VALUE` — which is neither of the two absences the resolver
+ * reads as "nowhere", so it escapes a classifying function as a raw
+ * `TypeError`. Both copies refuse it, so it is a rejection rather than a crash.
+ */
+declare function isSafeRelativePath(value: string): boolean;
+interface ArtifactsPortOptions {
+    /**
+     * The directory run roots are created under. Defaults to the harness
+     * namespace inside the system temporary directory. Callers pass one to keep
+     * concurrent runs from sharing a provider's run id; it is not repository
+     * configuration.
+     */
+    readonly runRootBase?: string;
+}
+/** The default base: `<tmpdir>/delivery-harness/runs`, resolved. */
+declare function defaultRunRootBase(): Promise<string>;
+declare function createArtifactsPort(options?: ArtifactsPortOptions): ArtifactsPort;
+
+interface SubmissionInput {
+    /** The repository the evidence store and the receipt store belong to. */
+    readonly rootDir: string;
+    /** Where the submitted manifest file is. SUB-3 is about this path. */
+    readonly manifestPath: string;
+    readonly config: HarnessConfig;
+}
+interface ExpectedProviderAttempt {
+    /** Provider selected by the harness for this invocation. */
+    readonly providerId: string;
+    /** Request/run identity allocated by the harness for this invocation. */
+    readonly runId: string;
+    /** Run root allocated by the harness before the provider was started. */
+    readonly runRootPath: string;
+}
+interface SubmissionOptions extends RecordStorageOptions {
+    readonly resourceBindings?: Readonly<Record<string, ResourceApplicabilityBinding>>;
+    readonly scopedPlan?: ScopedCheckPlan;
+    readonly readOutput?: (repoPath: string, providerId: string) => Promise<Uint8Array>;
+    /**
+     * How the current candidate is observed (SUB-1). Injected rather than
+     * defaulted to the git capture: the recorder must not own a repository
+     * dependency, and a conformance run drives this whole path from declared
+     * values with no repository at all.
+     */
+    readonly captureCandidate: CaptureCandidate;
+    /** The filesystem port. Defaults to one rooted in the system temp directory. */
+    readonly artifacts?: ArtifactsPort;
+    /**
+     * Optional caller authority for provider-driven submissions. When present,
+     * the recorder binds the one manifest snapshot it reads to this invocation
+     * before any validation or publication. Ordinary submission paths omit it.
+     */
+    readonly expectedProviderAttempt?: ExpectedProviderAttempt;
+    /** Passed through to the receipt evaluation. Tests use it; callers do not. */
+    readonly harnessVersion?: string;
+}
+interface SubmissionRecord {
+    readonly obligationId: string;
+    readonly recordId: string;
+    readonly path: string;
+    /** `published` on first write, `idempotent` when this exact record was already stored. */
+    readonly status: PublishedRecord["status"];
+    readonly record: EvidenceRecord;
+}
+/**
+ * Three outcomes, not two.
+ *
+ * `rejected` means the submission was judged and failed: every violated rule is
+ * named, and the codes are the spec's. `blocked` means it could not be judged —
+ * no receipt, an unreadable manifest, a store that will not answer — and there
+ * is no spec code for that, because the spec's codes describe manifests. A
+ * caller that collapsed the two would have to invent a rejection code for "the
+ * harness could not look", which is exactly the fabrication a fail-closed
+ * design is trying to avoid.
+ *
+ * Both failing shapes carry blockers, and blockers are what a surface renders.
+ * No caller formats a rejection or a preparation reason itself.
+ */
+type SubmissionOutcome = {
+    readonly status: "accepted";
+    readonly manifestDigest: string;
+    readonly records: NonEmptyTuple<SubmissionRecord>;
+} | {
+    readonly status: "rejected";
+    readonly rejections: NonEmptyTuple<ManifestRejection>;
+    readonly blockers: NonEmptyTuple<Blocker>;
+} | {
+    readonly status: "blocked";
+    readonly blockers: NonEmptyTuple<Blocker>;
+};
+/**
+ * The fields SUB-1 compares, named rather than derived from whatever a capture
+ * happens to carry.
+ *
+ * `headSha` is in the set and is compared strictly when the manifest declares
+ * one: §5.3 calls it informational because evidence binds to *trees*, and that
+ * note governs gate-time freshness, where a rebase preserving the tree
+ * preserves the evidence. SUB-1 is the other end of the system — it says
+ * "every field" and the recorded id is an audit anchor — so a head that moved
+ * under an identical tree is rejected here and re-preparation is the remedy.
+ *
+ * `vcs` is constant under ENV-4 and compared anyway, because "every field"
+ * means the enumeration, not the fields that could plausibly differ.
+ */
+declare const SUBMISSION_CANDIDATE_FIELDS: readonly string[];
+interface CandidateComparison {
+    readonly matches: boolean;
+    /** Enumerated field paths that differ, in declaration order. */
+    readonly mismatchedFields: readonly string[];
+    /**
+     * The drift classes the difference falls into, for the fields that describe
+     * movement in the repository. A mismatch on `base.ref`, `deliverable.identity`
+     * or `vcs` produces no class by design — those are configuration
+     * disagreements, and telling an operator to re-prepare would be wrong advice.
+     */
+    readonly driftClasses: readonly CandidateDriftClass[];
+}
+/**
+ * Compares a submitted candidate binding against the one just captured, on the
+ * enumerated field set.
+ *
+ * The submitted side is read defensively — it is a manifest member, so it may
+ * be any value at all — and a member that is absent or of the wrong type is a
+ * mismatch rather than a skipped comparison. The single exception is `headSha`,
+ * which the envelope makes optional: a manifest that declares none is compared
+ * on the other eight.
+ */
+declare function compareSubmissionCandidate(submitted: unknown, captured: CapturedCandidate): CandidateComparison;
+/**
+ * Submits one manifest: §8.3 end to end.
+ *
+ * Every rule runs before anything is written. That is GEN-3 — validation is
+ * atomic across claims, and a manifest with one good claim and one bad one
+ * writes nothing at all — and it is also why SUB-5 aggregation is possible:
+ * the recorder's own filesystem findings join the validator's list rather than
+ * short-circuiting it.
+ */
+declare function submitManifest(input: SubmissionInput, options: SubmissionOptions): Promise<SubmissionOutcome>;
+
+/** Live obligations must obtain approval during each invocation. */
+declare const INVOCATION_WAIVER_SCOPE: "invocation";
+/**
+ * The interactive waiver prompt, injected. The adapter never detects a TTY and
+ * never renders — the command surface wires an implementation over its own I/O,
+ * and a run with none supplied simply cannot be offered a waiver.
+ */
+type WaiverApproval = {
+    readonly author: string;
+    readonly reason: string;
+};
+type WaiverPrompt = (decision: GateDecision, obligationIds: readonly string[]) => Promise<false | WaiverApproval>;
+/** How the interactive waiver offer resolved, for a caller that reports it. */
+type WaiverPromptOutcome = "not_offered" | "accepted" | "declined" | "candidate_changed" | "scope_changed";
+interface AdmissionInput {
+    readonly rootDir: string;
+    readonly config: HarnessConfig;
+    /**
+     * The already-classified context. `context.ts` emits exactly the union the
+     * evaluator consumes, so there is nothing to translate — the same trust
+     * boundary the classifier established, named in one place.
+     */
+    readonly context: ExecutionContext;
+    /** Caller-supplied live-provider results — the v1 source of `satisfied_live_fact`. */
+    readonly liveResults?: readonly LiveProviderResult[];
+}
+interface AdmissionOptions extends RecordStorageOptions {
+    readonly resourceBindings?: Readonly<Record<string, ResourceApplicabilityBinding>>;
+    readonly scopedPlan?: ScopedCheckPlan;
+    readonly readOutput?: (repoPath: string, providerId: string) => Promise<Uint8Array>;
+    /** How the candidate is observed. Injected: the adapter owns no repository dependency. */
+    readonly captureCandidate: CaptureCandidate;
+    /** The reviewable-change projection for the captured candidate. Injected for the same reason. */
+    readonly projectActivation: (candidate: CapturedCandidate) => Promise<ReviewActivationProjection>;
+    /** Absent means "this run cannot ask a human", so no waiver is ever offered. */
+    readonly promptForWaiver?: WaiverPrompt;
+    readonly evaluatePreparation?: (rootDir: string, config: HarnessConfig, candidate: CapturedCandidate) => Promise<PreparationEvaluation>;
+    readonly discoverRecords?: (rootDir: string, gateId: string, obligationId: string) => Promise<RecordDiscovery>;
+    readonly publishWaiver?: (rootDir: string, binding: RecordCandidateBinding, obligationId: string, resolution: WaiverResolution) => Promise<PublishedRecord>;
+    /** Passed through to receipt evaluation. Tests use it; callers do not. */
+    readonly harnessVersion?: string;
+}
+interface AdmissionResult {
+    readonly admitted: boolean;
+    readonly blockers: readonly Blocker[];
+    /** The final pure evaluation. Absent only when capture, coherence, or the receipt stopped the run before the gate ran. */
+    readonly decision?: GateDecision;
+    readonly context?: ExecutionContext;
+    readonly candidate?: CandidateBinding;
+    readonly waiver: WaiverPromptOutcome;
+    /** The obligations one "yes" would cover (or did cover). Empty unless a waiver was offerable. */
+    readonly waivedObligationIds: readonly string[];
+    /** The waiver records written this run. Non-empty only on an accepted waiver. */
+    readonly waiverRecordIds: readonly string[];
+}
+declare function runAdmission(input: AdmissionInput, options: AdmissionOptions): Promise<AdmissionResult>;
 
 /**
  * THE FROZEN VOCABULARY, verbatim from the plan's State and Authority Model
@@ -9197,73 +9312,6 @@ type MigrationConsumptionVerdict = {
 };
 declare function evaluateMigrationConsumption(assertion: Record<string, unknown>, context: MigrationConsumptionContext): MigrationConsumptionVerdict;
 
-declare class ReviewInputError extends Error {
-}
-type ReviewInputReader = (relativePath: string) => Promise<Uint8Array | null>;
-/** Reads the optional compiled owner policy without turning absence into a grant. */
-declare function readCompiledRepositoryPolicy(read: ReviewInputReader): Promise<CompiledPolicy | null>;
-/** One activated lens, resolved to the charter bytes the installation carries. */
-interface ResolvedCharter {
-    readonly origin: "composition" | "repository";
-    readonly sourcePath: string;
-    readonly lensId: string;
-    /** The reviewer id the evidence carries: the charter path's basename. */
-    readonly reviewerId: string;
-    readonly personaId: string;
-    /** The archive-relative path the charter's bytes were read from. */
-    readonly entryPath: string;
-    /** The digest of those bytes, equal to the one the compiled policy resolved. */
-    readonly digest: string;
-}
-/**
- * The reviewers a review in `rootDir` must cover: the compiled policy's
- * activated review lenses, each resolved to the charter the installed
- * generation ships for it.
- *
- * Two resolutions rather than a list held here, because a list held here is
- * exactly how an activated lens goes unrepresented in the evidence while
- * everything stays green. The compiled snapshot decides WHICH lenses reviewed —
- * the whole shipped set is seventeen charters and this repository activates two
- * of them, so the archive alone would name fifteen reviewers that never ran.
- * The archive decides WHAT each lens was told, and the snapshot's digest is
- * checked against the bytes actually read, so a charter the installation does
- * not carry, or one whose bytes have drifted from the policy the repository is
- * judged under, refuses the emission instead of quietly reviewing under
- * something else.
- */
-declare function resolveReviewCharters(read: ReviewInputReader, config?: {
-    readonly additionalReviewLenses?: readonly {
-        readonly lensId: string;
-        readonly reviewerId: string;
-        readonly charterPath: string;
-    }[];
-}): Promise<ResolvedCharter[]>;
-/** One release identity for review, checks and portable verification. Absence is explicit. */
-declare function readWorkflowRelease(read: ReviewInputReader): Promise<Readonly<Record<string, unknown>> | null>;
-
-interface CandidateTreeInputMetadata {
-    readonly mode: string | null;
-    readonly links: readonly {
-        readonly path: string;
-        readonly target: string;
-    }[];
-}
-type CandidateTreeInputReader = ReviewInputReader & {
-    metadata(repoPath: string): Promise<CandidateTreeInputMetadata>;
-};
-declare function candidateTreeEvidenceReader(rootDir: string, treeSha: string, run?: CandidateCommandRunner): Promise<CandidateTreeInputReader>;
-/** Source inputs are hashed from Git, not transported as portable artifacts.
- * Directory links contribute verified target-tree bytes and their link metadata. */
-declare function candidateTreeSourceReader(rootDir: string, treeSha: string, run?: CandidateCommandRunner): Promise<CandidateTreeInputReader>;
-declare function capturePortableVerificationInputs(rootDir: string, config: HarnessConfig, candidate: CapturedCandidate, record: DeliveryRecord, run?: CandidateCommandRunner): Promise<{
-    waiverCandidateMatches?: boolean | undefined;
-    compiledPolicy?: CompiledPolicy | undefined;
-    evidenceContext: PortableEvidenceContext;
-    checkBindings: Readonly<Record<string, CheckBinding>>;
-    resourceBindings: Record<string, ResourceApplicabilityBinding>;
-    projection: ReviewActivationProjection;
-}>;
-
 interface ScopedInputCapturePorts {
     /** Enumerate and read the same pinned snapshot, never the authoring checkout. */
     readonly listFiles: () => Promise<readonly string[]>;
@@ -9752,6 +9800,11 @@ declare function reconstructResourceApplicability(config: HarnessConfig, provide
     observation: ScopedRuntimeObservation;
 }>;
 
+/** The candidate-keyed delivery record is the native recorder's output.
+ * Other record-neutral files remain ordinary declared validation inputs. */
+
+declare function recordOutputProvider(provider: ProviderRegistration, output: string): ProviderRegistration;
+
 /**
  * Delivery harness kernel.
  *
@@ -9763,5 +9816,5 @@ declare function reconstructResourceApplicability(config: HarnessConfig, provide
  */
 declare const PACKAGE_NAME = "@agent-delivery-harness/kernel";
 
-export { ABSENT_BY_STATE, ACTION_APPROVALS, ACTION_APPROVAL_ORIGIN_PREFIX, ACTION_VERIFICATIONS, ACTIVATION_KINDS, ACTIVE_POINTER_SPEC, ADAPTER_CAPABILITY_SPEC, ADMISSION_DENIAL_CODES, APPROVAL_REQUEST_KINDS, APPROVAL_REQUIREMENTS, ARCHIVE_RELEASE_MANIFEST_ENTRY, ARTIFACT_OBSERVATION_STATUSES, ASSERTION_CLASSES, ASSERTION_PROVIDER_SPEC, ASSERTION_SOURCES, ATTESTATION_LABEL, ATTESTATION_LEVELS, AUTHORITY_REVOCATION_SPEC, BASE_MOVEMENT_POLICIES, BLOCKER_CONTRACT_VERSION, BLOCKER_SOURCE_KINDS, BlockedError, CANDIDATE_CAPTURE_CODES, CANDIDATE_DIFF_UNREADABLE, CANDIDATE_DRIFT_CLASSES, CANDIDATE_MODES, CANDIDATE_PATH_CLASSES, CANDIDATE_VCS, CAPABILITY_DESCRIPTOR_SPEC, CAPABILITY_KINDS, CLAUDE_SKILL_EXPOSURE_PREFIX, CODEX_APPLIED_MISMATCH_CODES, CODEX_APP_SERVER_HOST_ID, CODEX_CHARACTERIZED_HOST_VERSION, CODEX_DISABLED_FEATURE_KEYS, CODEX_ESCALATION_REFUSAL_CODES, CODEX_HOOK_EVENT, CODEX_HOOK_EVENT_NAME, CODEX_HOOK_EXECUTION_MODE, CODEX_HOOK_SUBCOMMAND, CODEX_HOST_TOOLS, CODEX_PINNED_HOST_VERSION, CODEX_THREAD_CONFIG_FILE, CODEX_UNENFORCEABLE_TOOL_SOURCES, COMPILED_POLICY_SPEC, COMPOSITION_MANIFEST_FILE, COMPOSITION_MANIFEST_SPEC, COMPOSITION_PROFILES, CONFIG_FINDING_CODES, CONFIRMATION_CLASSES, CONFIRMATION_DENIAL_CODES, CONFIRMATION_FIXTURE_PROFILE, CONFIRMATION_OPERATION_PREFIX, CONFORMING_ATTESTATION_LEVEL, CONSUMPTION_GATE_RECORD_BLOCKER_CODES, CONTROL_PLANE_CLAIMS, CONTROL_PLANE_CLAIM_KINDS, CONTROL_PLANE_CONFLICT_BLOCKER_CODE, CONTROL_PLANE_DISPOSITIONS, COORDINATION_MESSAGE_KINDS, COORDINATION_MESSAGE_SPEC, COORDINATION_PORT_UNBOUND_CODE, COORDINATION_PROTOCOL_VERSION, COORDINATION_REFUSALS, CRITERION_DISPOSITIONS, CanonicalizationError, DEFAULT_BASE_MOVEMENT_POLICY, DEFAULT_BASE_REF, DEFAULT_CAPTURE_ATTEMPTS, DEFAULT_OBSERVATION_LIFETIME_SECONDS, DEFAULT_RUN_FRESHNESS_WINDOW_MS, DEFAULT_STORAGE_NAMESPACE, DELIVERABLE_TREE_V1, DELIVERABLE_TREE_V1_NARRATION_SET, DELIVERY_BLOCKER_REMEDIATIONS, DELIVERY_EVIDENCE_1, DELIVERY_OWNED_TREE_PREFIXES, DELIVERY_POSTURE_FALLBACK_SOURCE, DELIVERY_POSTURE_MAX_BYTES, DELIVERY_POSTURE_NETWORK_TIMEOUT_MS, DELIVERY_POSTURE_PATH, DELIVERY_POSTURE_SCHEMA, DELIVERY_PROVIDER_RAILS_VERSION, DELIVERY_RECORD_DRIFT_CLASSES, DELIVERY_RECORD_VERSION, DELIVERY_STATES, DELIVERY_TRANSITION_TABLE, DESCENDANT_TEARDOWN_STATUSES, DISPOSABLE_OUTCOME_AUTHORITIES, DISPOSABLE_REVIEW_LENSES, DISPOSABLE_SENSOR_CAPABILITY, DISPOSABLE_STAGE_GRANT, DigestError, EVENT_VOCABULARY, EVIDENCE_KINDS, EXECUTION_CONTEXT_KINDS, EXECUTION_GRANT_SPEC, EXTERNAL_ACTIONS, EXTERNAL_ACTION_OUTCOMES, EXTERNAL_ACTION_RESULT_SPEC, EXTERNAL_VERIFICATIONS, FACADE_CAPABILITY_CLASSES, FACADE_OPERATIONS, FACADE_SURFACES, FINDING_DISPOSITIONS, FINDING_SCOPES, FINDING_SEVERITIES, FINISH_LINES, FINISH_LINE_ACTIONS, FINISH_LINE_RESULT_SPEC, FRESHNESS_KINDS, GATE_STRUCTURAL_FINDING_CODES, GRANT_ATTESTATION_SPEC, GRANT_PROFILES, HARNESS_VERSION, HOST_ACTIVITY_STATES, HOST_ADMISSION_SCENARIOS, HOST_BINDING_BLOCKER_CODES, HOST_CONFORMANCE_CASES, HOST_INTERCEPTION_SCENARIOS, IDENTITY_DOMAIN, IDENTITY_FINDING_CODES, INSTALLED_DATA_LIMITS, INSTALL_RECEIPT_SPEC, INTAKE_STATES, INTERNAL_ERROR_CODE, INVOCATION_FENCE_SPEC, INVOCATION_WAIVER_SCOPE, InstalledDataResourceError, InstalledDataSourceError, JOURNALS, JOURNAL_ENTRY_SPEC, MANAGED_DELIVERY_NAMESPACE, MANDATORY_LENS_CATEGORIES, MANIFEST_REJECTION_CODES, MANIFEST_REJECTION_REGISTRY, MANIFEST_RULE_IDS, MAX_BLOCKER_DETAIL_LENGTH, MAX_PORTABLE_ARTIFACTS, MAX_PORTABLE_ARTIFACT_BYTES, MAX_PORTABLE_EVIDENCE_BYTES, MAX_PORTABLE_RECORD_BYTES, MAX_RUN_LABEL, MAX_RUN_LENSES, MAX_RUN_PATH, MAX_RUN_PROVIDER_ID, MAX_RUN_URL, META_RULE_IDS, MINIMUM_NODE, MINIMUM_PYTHON, NON_WAIVABLE_INTEGRITY_CODES, OBSERVATION_ONLY_KINDS, OPERATION_CLAIM_SPEC, OPERATION_RESULT_SPEC, OPERATOR_CONFIRMATION_SPEC, OTHER_INSTALLATION_ARTIFACTS, OUTCOME_VERIFICATION_SPEC, PACKAGE_NAME, PACKED_HARNESS_PACKAGES, PATH_MATCHER_KINDS, PERSONA_MANIFEST_ENTRY, PERSONA_MANIFEST_SPEC, PINNED_AGENT_SKILLS, POLICY_CAPABILITY_KINDS, POLICY_COMPILE_CODES, POLICY_SNAPSHOT_SPEC, PORTABLE_INTAKE_GRANT, PORTABLE_MODEL_DRIVEN_STAGES, PORTABLE_PRIVILEGED_CREDENTIALS, PORTABLE_STAGE_GRANT, PREPARATION_FAILURE_CLASSES, PREPARATION_RECEIPT_LEAF, PREPARATION_RECEIPT_SCHEMA_VERSION, PRIVILEGED_ACTIONS, PRIVILEGED_CAPABILITY_KINDS, PRODUCT_COMPOSITION_PIN_SPEC, PRODUCT_TRUST_LABEL, PRODUCT_TRUST_STATE_SPEC, PROJECTION_CONSUMPTION_OBSERVATION_SPEC, PROJECTION_DIR, PROJECTION_RECEIPT_FILE, PROVIDER_POLICIES, PROVIDER_REVIEW_HANDOFF_SPEC, PROVIDER_REVIEW_RESULT_SPEC, ProcessLockRefused, READ_ONLY_CAPABILITY_KINDS, RECEIPTED_SKILLS_ROOT, RECHECKED_VALUES, RECONCILIATION_FINDINGS, RECORDER_EMITTED_CODES, RECORDS_LEAF, RECORD_QUARANTINE_REASONS, RECORD_SCHEMA_VERSION, REPOSITORY_POLICY_DOCUMENT_SPEC, RESOLUTION_KINDS, RESOLUTION_OUTCOMES, RESUME_ELIGIBILITIES, REVIEWER_APPROVAL_ROLE, REVIEWER_ATTEMPT_SPEC, REVIEWER_RESULTS, REVIEW_GREEN_1, REVIEW_GREEN_2, REVIEW_LENS_CATEGORIES, REVIEW_VERDICTS, RUN_ACTIVITY_STATES, RUN_ACTOR_ROLES, RUN_CANDIDATE_TREE_SHA, RUN_COMMAND_OUTCOMES, RUN_ENDED_RESULTS, RUN_EVENT_KINDS, RUN_EVENT_KINDS_V1, RUN_EVENT_PAYLOAD_GRAMMAR_SPEC, RUN_EVENT_SPEC, RUN_EVENT_SPEC_V2, RUN_FREE_TEXT_MEMBERS, RUN_GATE_REPORTED_OUTCOMES, RUN_JOURNAL_REQUIRED_ENTRIES, RUN_JOURNAL_ROUND_BINDINGS, RUN_JOURNAL_STATUSES, RUN_JOURNAL_VIOLATIONS, RUN_PROVIDER_ID, RUN_ROOT_LEAF, RUN_ROOT_NAMESPACE, RUN_ROOT_REFUSAL_REASONS, RUN_STORE_DIRECTORY, RUN_STORE_ID, RUN_TICKET, ReviewInputError, SCOPED_DELIVERY_CONTRACT_SPEC, SECRET_PATTERNS, SECURITY_BLOCKED_MIGRATION_ACTION, SENSITIVE_APPROVAL_ASSERTION_SPEC, SENSITIVE_MAINTENANCE_ACTIONS, SENSOR_OUTCOMES, SENSOR_RESULT_SPEC, SHADOW_MILESTONE_GATE_RECORD_SPEC, SHADOW_MILESTONE_GATE_RECORD_SPEC_SUFFIX, SIMULATED_MESSAGE_OPTION_NAMES, SPINE_GIT_OID, SPINE_ID, SPINE_INSTANT, SPINE_SHA256, SUBMISSION_CANDIDATE_FIELDS, SUBSTRATE_BLOCKER_CODES, SUPPORTED_CONTRACT_VERSIONS, SUPPORTED_ENVELOPE_SPECS, SUPPORTED_PAYLOAD_SPECS, SUPPORTED_PLATFORMS, SUSPENDED_DELIVERY_STATES, TERMINAL_DELIVERY_STATES, TERMINATION_PROVENANCE_KINDS, TERMINATION_PROVENANCE_OPERATION, TOOL_DENIAL_CODES, TRACKER_ABSENCE_FALLBACKS, TRACKER_POSTURES, UNBOUND_COORDINATION_PORT, UNBOUND_EXTERNAL_ACTION_PORT, UNKNOWN_CONTEXT_REASONS, V1_ATTESTATION_LEVEL, VALIDATOR_EMITTED_CODES, WAIVER_ACTIONS, WAIVER_APPROVAL_ORIGIN_PREFIX, WAIVER_SCOPES, WORKFLOW_CHECKPOINT_BINDINGS, WORKFLOW_GRAPH_ENTRY, WORKSPACE_DISPOSITIONS, actionChainDigest, adaptClaudeCodeReviewResult, admitCoordinationMessage, applySecretDiscipline, assertSha256Hex, assertionClassOf, assertionLaneAvailability, assertionProviderConfigPathFor, authorizeFinishLineAction, bindingOf, buildCompositionManifest, buildDeliveryRecord, candidateTreeEvidenceReader, candidateTreeSourceReader, canonicalBytes, canonicalize, captureCheckBindings, captureCheckOutputSnapshots, captureCheckOutputs, captureGitCandidate, captureInstalledDataBinding, captureInstalledDataResources, capturePortableEvidenceContext, capturePortableVerificationInputs, captureRunArtifact, captureScopedCheckInputs, checkActionAuthorization, checkBoundPolicy, checkClaimAuthorized, checkContractWithinPolicy, checkDeployPreconditions, checkFacadeSurfaceInvariants, checkMergeReadyAgainstOutcome, checkMutationLane, checkNoDowngrade, checkOutcomeCoversContract, checkPositiveCriterion, checkReviewFloor, claimContradictsLocalHistory, classifyActionOutcome, classifyCandidateDrift, classifyCandidatePath, classifyEventKind, classifyExecutionContext, claudeCodeBinding, codexAppServerBinding, codexEnabledToolsFor, codexEscalationTokens, codexHookDecision, codexHookTurn, codexHostTool, codexNamesDisabledSurface, codexPermissionProfileId, codexPermissionProfileOf, codexSubagentPosture, codexToolIsLocallyEnforceable, codexWrittenPaths, collectLiveProviderResults, compareSubmissionCandidate, compareUtf16CodeUnits, compileDisposableCompiledPolicy, compileDisposablePolicy, compileRepositoryPolicy, compiledAdopterPolicyBindingDigest, composeBlockerInventory, composeClaudeCodeSession, composeCodexAppServerThread, composeManagedStatus, composeOutcomeVerification, compositionManifestBytes, computeCheckWiringFingerprint, computeDeliverableIdentity, computePreparationFingerprint, computeRecordId, confirmationClassOf, conflictBlockerEpochOf, consumeProviderRailMessages, createArtifactsPort, createBlocker, createCandidateCapture, createCodexAppServerConformancePort, createCoordinationSimulator, createExecPort, createFakeHostConformancePort, createIntakeJournalStore, createInternalErrorBlocker, createJournalStore, createMaintenanceJournalStore, createManagedDeliveryFacade, createOsNativeAssertionSource, createProviderReviewHandoff, createQualificationFixtureAssertionSource, createResourceApplicabilityBinding, createResourceApplicabilityProjection, createRunStore, decideCodexHookInvocation, decideFinishLine, defaultRunRootBase, defineHarnessConfig, deleteDelivery, deliveryRecordBytes, deliveryRecordPathFor, deriveDeliveryRecordPath, deriveTelemetry, describeRunEventPayload, digestCanonical, digestDeliverableEntries, digestsEqual, discoverRecords, discriminateInstall, effectiveDeliveryAuthority, effectiveHostedChecksPolicy, emittableFindingCodes, enforceAllowedResolution, entryHref, evaluateActionApproval, evaluateCandidateActivation, evaluateCanonicalRecheck, evaluateCodexEscalation, evaluateConfirmationEcho, evaluateGate, evaluateHostAdmission, evaluateMigrationConsumption, evaluatePreparationReceipt, evaluateRunJournal, evaluateToolInvocation, evaluateWaiverConsumption, explainRunJournal, exportDelivery, facadeOperation, faithfullyAppliedCodexConfiguration, garbageCollectGenerations, generationDigestOf, gitNamespaceClearedEnvironment, gradeHostActivity, grantDigest, identityDefinitionOf, inspectInstallation, installComposition, invalidatePreparationReceipt, invokeExternalActionOnce, invokeProviderRail, invokedDirectly, isDeliveryOwnedTreeEntry, isDeliveryOwnedTreePath, isDeliveryRecordRunSpan, isDeliveryTransitionValid, isEnvSignalPresent, isHostedCheckExemption, isHostedCheckInstant, isHostedChecksPolicy, isInsideResolved, isInstalledDataConsumerDefinition, isIntakeTransitionValid, isManifestRejectionCode, isObligationActive, isRecordFreshForCandidate, isRecordNeutralPath, isResourceApplicabilityBinding, isReviewNeutralPath, isRunEventKind, isRunInstant, isSafeRelativePath, isScopedCheckDefinition, isSha256Hex, journalIntentPayload, journalResultPayload, listArchiveEntries, livePreflightProbes, loadAssertionProviderConfig, loadBundledWorkflowGraph, loadPinnedGeneration, localDigestTrustPredicate, localFactEpochOf, maintainTrustState, manifestDigest, matchResourceApplicabilityProjection, matchesNeutralSet, matchesPathMatcher, materializeProjection, mintGrantAttestation, needsCommittedSymlinkTarget, neutralizeForDisplay, normalizeInstalledDataResourceRequests, observeAuthorityEpoch, openProviderRailProcess, operationsOnSurface, packComposition, parseCandidateNumstat, parseCandidateTreeListing, parseCodexHookInput, parseDeliveryRecord, parseProjectionConsumptionObservation, parseProviderReviewResult, parseReviewOutcome, parseTreeEntries, parseTrustState, planExternalAction, portableArtifactContents, projectReviewActivation, projectRunActivities, projectShippedPersonas, projectionConsumptionObservationFile, publishPreparationReceipt, publishRecord, qualifyReviewAttempts, readArchiveEntry, readCompiledRepositoryPolicy, readConsumptionMarker, readRunArtifact, readWorkflowRelease, receiptFileName, receiptPathFor, reconcileBeforeRetry, reconcileRemoteClaim, reconciliationActions, reconstructResourceApplicability, recordFileName, recordIdentity, recoverInterruptedMaintenance, redactSecretText, reduceDeliveryJournal, reduceIntakeJournal, reduceToProviderId, registrationBinding, remediationFor, renderBlockers, renderCodexHookDecision, repairInstallation, replayLedgerOf, repositoryEvidenceReader, resolveActiveGeneration, resolveCommonDirectoryNamespace, resolveDeliveryPosture, resolveObservationLifetimeSeconds, resolveReceiptStorage, resolveRecordStorage, resolveReviewCharters, resolveRunStoreLocation, retainedCheckOutput, revalidateBeforeInvoke, reviewerLists, revokePreparationAttempt, rollbackComposition, runActionReconciliationError, runActivityTransitionError, runAdmission, runGitCommand, runGitDirect, runHostIntegrationConformance, runJournalCarries, runPrimaryTicket, sanitizedDetail, scopedCheckIdentity, selectDeliveryRecordForIdentity, selectScopedCheckAttempt, sensitiveGroupsFor, serializeBlockers, sha256Hex, submitManifest, trackerPostureOf, trustStorePathFor, updateComposition, validateAcceptedContract, validateAdapterCapability, validateAdapterSet, validateAuthorityRevocation, validateCapabilityDescriptor, validateCompositionManifest, validateCompositionPin, validateCoordinationMessage, validateExecutionGrant, validateExternalActionResult, validateFinishLineResult, validateGrantAttestation, validateHarnessConfig, validateInstalledDataResourceCapture, validateInvocationFence, validateJournalEntry, validateManifest, validateOperatorConfirmation, validateOutcomeVerification, validatePolicySnapshot, validateProductTrustState, validateRepositoryPolicyDocument, validateResourceApplicabilityBinding, validateResourceApplicabilityProjection, validateReviewGreenClaim, validateReviewedContext, validateReviewerAttempt, validateRunEvent, validateRunEventInput, validateSensitiveApprovalAssertion, validateSensorResult, verifyAppliedCodexThreadConfiguration, verifyCompiledPolicy, verifyDeliveryRecord, verifyGenerationClosure, verifyPortableEvidence, verifyProjection, withDeliverableIdentity, withProcessLock, workflowStageBindingFor, writeAssertionProviderConfig };
-export type { AcceptedContract, ActionAdapterBinding, ActionApprovalContext, ActionApprovalVerdict, ActionChainLink, ActionClassification, ActionEvidence, ActivationKind, AdapterCapability, AdditionalReviewLens, AdmissionDecision, AdmissionDenial, AdmissionDenialCode, AdmissionExpectation, AdmissionInput, AdmissionOptions, AdmissionResult, AdmittedInvocation, AgentExecutionContext, ArtifactObservation, ArtifactObservationStatus, ArtifactPresence, ArtifactsPort, ArtifactsPortOptions, AssertionAvailabilityProbe, AssertionClass, AssertionEvaluation, AssertionEvaluationRequest, AssertionProviderConfig, AssertionSource, AssertionSourceAvailability, AssertionSourcePort, AssertionSourceView, AttestationLevel, AuthorityGrantView, AuthorityRevocation, AvailablePersona, BaseMovementPolicy, BlockedResolution, Blocker, BlockerInput, BlockerInventoryEntry, BlockerSource, BlockerSourceKind, BoundActionIntent, BuildCompositionManifestInput, BuildDeliveryRecordInput, BuildDeliveryRecordResult, CandidateActivationOptions, CandidateBase, CandidateBinding, CandidateCapture, CandidateCaptureCode, CandidateCaptureOptions, CandidateCommandResult, CandidateCommandRunner, CandidateComparison, CandidateDeliverable, CandidateDiffEntry, CandidateDriftClass, CandidateMode, CandidatePathClass, CandidateStatusEntry, CandidateTreeEntry, CandidateVcs, CanonicalErrorCode, CaptureCandidate, CapturedCandidate, CheckActionAuthorizationInput, CheckBinding, CheckBindingOptions, CheckpointAdmissionExpectation, CheckpointOverride, CiExecutionContext, CiPolicy, ClaimAuthorityView, ClaimDisposition, ClaimReconciliation, ClassifyExecutionContextInput, ClaudeCodeReviewAdaptation, CodexAppServerConformancePortInput, CodexAppliedMismatch, CodexAppliedMismatchCode, CodexAppliedThreadConfiguration, CodexDisabledFeatureKey, CodexEscalationRefusalCode, CodexEscalationRequest, CodexHookInput, CodexHostTool, CodexPermissionProfile, CodexThreadStartRequest, CodexUnenforceableToolSource, CollectLiveProviderInput, CommandArguments, CompareCheck, CompileDisposablePolicyInput, CompileRepositoryPolicyInput, CompileRepositoryPolicyResult, CompiledAdopterPolicyBinding, CompiledCheckpointGrant, CompiledPolicy, ComposeCodexAppServerThreadResult, ComposeHostSessionInput, ComposeHostSessionResult, ComposedHostSession, CompositionInventoryEntry, CompositionProfile, ComputeIdentity, ConfigFindingCode, ConfirmationClass, ConfirmationDenial, ConfirmationDenialCode, ConfirmationEchoAttempt, ConfirmationEchoDecision, ConsumeProviderRailOptions, ConsumedWaiver, ConsumptionGateRecordBlockerCode, ConsumptionMarker, ControlPlaneClaim, CoordinationAdmission, CoordinationAdmissionView, CoordinationAuthentication, CoordinationDispatch, CoordinationMessage, CoordinationMessageKind, CoordinationPort, CoordinationRefusal, CoordinationRefusalCode, CoordinationReplayLedger, CoordinationSimulator, CoordinationSimulatorOptions, CreateFacadeInput, DeclaredArtifact, DelegatedResolution, DeleteDeliveryResult, DeliverableIdentityDefinition, DeliverableIdentityOptions, DeliverableIdentityRequest, DeliverableTreeEntry, DeliveryEvidenceManifest, DeliveryJournalState, DeliveryPosture, DeliveryPostureCode, DeliveryPostureResult, DeliveryRecord, DeliveryRecordAttestation, DeliveryRecordCheck, DeliveryRecordClaim, DeliveryRecordDriftClass, DeliveryRecordFile, DeliveryRecordHostedChecks, DeliveryRecordRunSpan, DeliveryRecordVerification, DeliveryState, DeliveryTransitionRow, DeniedInvocation, DeployPreconditionInput, DigestErrorCode, EffectiveDeliveryAuthorityInput, EligibleCheck, EmitProjectionConsumptionResult, EnvSnapshot, EnvironmentRequirement, EvaluateGateInput, EventClassification, EventKindEntry, EvidenceRecord, EvidenceRecordIdentity, EvidenceResolution, ExecInvocation, ExecOutcome, ExecPort, ExecutionContext, ExecutionContextKind, ExportDeliveryResult, ExternalAction, ExternalActionIntent, ExternalActionInvocation, ExternalActionPort, ExternalVerification, FacadeCapabilityClass, FacadeFailure, FacadeFenceRule, FacadeJournalRule, FacadeOperation, FacadeSurface, FacadeSurfaceFinding, FacadeSurfaceRule, FinishLineDecision, FinishLineInput, FinishLineRefusal, FinishLineResult, FreshnessKind, GarbageCollectInput, GateDecision, GateStructuralFindingCode, GitRunner, GradeHostActivityInput, GrantProfile, HarnessConfig, HarnessConfigInput, HarnessConfigValidation, HostActivity, HostActivityState, HostAdmissionScenario, HostBindingBlocker, HostBindingBlockerCode, HostBindingRefusalDetail, HostConformanceCase, HostConformanceResult, HostIntegrationPort, HostInterceptionScenario, HostObservationStamp, HostSessionGrant, HostedCheckExemption, HostedCheckExemptionScope, HostedChecksPolicy, HumanExecutionContext, IdentityFindingCode, IgnoredStoreEntry, InspectInstallationInput, InspectedGeneration, InstallCompositionInput, InstallCompositionResult, InstallDiscrimination, InstallReceipt, InstallationPresence, InstalledDataAttemptOrigin, InstalledDataConsumerDefinition, InstalledDataResourceCapture, InstalledDataResourceContext, InstalledDataResourcePorts, InstalledDataResourceRequest, InstalledDataSourceTree, IntakeAdmissionExpectation, IntakeJournalState, IntakeJournalStore, IntakeState, InvocationOutcome, Journal, JournalAppendResult, JournalReadResult, JournalStore, LaneAvailability, ListedDelivery, ListedTreeEntry, LiveProviderCollection, LiveProviderFinding, LiveProviderResult, LoadPinnedGenerationResult, LocalHistoryView, MaintainTrustStateInput, MaintenanceJournalStore, ManagedCheckpoint, ManagedDeliveryFacade, ManagedDeliveryStatus, ManagedHostBinding, ManagedInstallation, ManagedStatusInput, ManifestArtifact, ManifestAttestation, ManifestBase, ManifestCandidate, ManifestClaim, ManifestDeliverable, ManifestProvider, ManifestRejection, ManifestRejectionCode, ManifestRejectionCodeEntry, ManifestRuleId, ManifestValidation, ManifestValidationContext, MigrationConsumptionContext, MigrationConsumptionVerdict, MigrationPath, MigrationRefusal, MirrorRecordView, MirroredMessageView, MutationLaneResult, MutationVerification, NamespaceGitLaunch, NamespaceGitRunner, NamespaceResolution, NamespaceResolutionInput, NativeReviewConclusion, NeutralMatcher, NoDowngradeDecision, NonEmptyTuple, NormalizedAdmission, NormalizedInterception, NormalizedTeardown, NormalizedTermination, NotApplicableResolution, ObligationActivation, ObligationFinding, ObligationPolicy, ObligationResolution, ObserveAuthorityEpochResult, ObservedActionResult, ObservedActivityEntry, OpenProviderRailProcessInput, OtherInstallationArtifact, OutcomeCriterion, OutcomeVerification, PackCompositionInput, PackCompositionResult, ParseDeliveryRecordResult, ParseTrustStateResult, PathClassification, PathMatcher, PathMatcherKind, PlanExternalActionInput, PlanExternalActionVerdict, PolicyCapabilityKind, PolicyGrantView, PolicyRejection, PolicySnapshot, PolicyVerdict, PortableEvidence, PortableEvidenceContext, PositiveCriterionVerdict, PreflightProbes, PreparationCandidate, PreparationCommand, PreparationEvaluation, PreparationFailureClass, PreparationInput, PreparationOptions, PreparationReceipt, ProductTrustPort, ProductTrustState, ProductTrustView, ProjectShippedPersonasResult, ProjectionConsumptionObservation, ProjectionConsumptionRecord, ProjectionConsumptionUnobserved, ProviderPolicy, ProviderRailAttemptInput, ProviderRailAttemptOptions, ProviderRailBlocker, ProviderRailCancel, ProviderRailConsumption, ProviderRailEvent, ProviderRailEvidence, ProviderRailInvocationResult, ProviderRailMessage, ProviderRailNegotiate, ProviderRailNegotiation, ProviderRailProgress, ProviderRailRequest, ProviderRailSession, ProviderRailTerminal, ProviderRegistration, ProviderReviewCandidate, ProviderReviewCapability, ProviderReviewFinding, ProviderReviewHandoff, ProviderReviewHandoffReviewer, ProviderReviewParseResult, ProviderReviewResult, ProviderReviewTerminalState, ProviderReviewVerdict, PublishOptions, PublishRecordInput, PublishStatus, PublishedPreparationReceipt, PublishedRecord, QualifiedAttempts, QuarantinedRecord, ReadConsumptionMarkerResult, RecheckConsumption, RecheckFailure, RecheckResult, RecheckValues, RecheckedValue, RecomputedIdentity, ReconciliationAction, ReconciliationDisposition, ReconciliationFinding, RecordCandidateBinding, RecordDiscovery, RecordIdentity, RecordQuarantineReason, RecordResolution, RecordSelector, RecordStorageOptions, RecordedHostedCheckExemption, RecordedRegistrationBinding, RecordedReviewAttempt, RecordedSensorResult, ReduceDeliveryResult, ReduceIntakeResult, RegistrationBindingInput, RegistrationBindingResult, RegistrationBindingView, RegistrationMismatch, RejectionEmitter, Remediation, RemediationCatalog, RenderOptions, RenderedConfirmationChallenge, RepairInstallationInput, RepositoryPolicyDocument, ResolutionKind, ResolutionOutcome, ResolveActiveGenerationResult, ResolveDeliveryPostureInput, ResolvedCharter, ResolvedPersonaSource, ResourceApplicabilityBinding, ResourceApplicabilityProjection, RetentionContext, RetentionFailure, RetrySafety, RevalidationObservation, ReviewActivationProjection, ReviewGreenClaimInput, ReviewInputReader, ReviewOutcome, ReviewRejection, ReviewVerdict, ReviewerOutcome, ReviewerResult, RollbackCompositionInput, RunActivityObservation, RunActivityProjection, RunActivityState, RunActorRole, RunAllocateResult, RunAppendResult, RunArtifactMetadata, RunArtifactResult, RunAttemptObservation, RunCommandOutcome, RunCurrentResult, RunDiscardResult, RunEvent, RunEventActor, RunEventInput, RunEventKind, RunEventPayloadGrammar, RunEventPayloadMemberGrammar, RunEventRepo, RunEventValueGrammar, RunEventValueType, RunEventVersion, RunHistoryEntry, RunJournalDiagnostics, RunJournalEvaluation, RunJournalExplanation, RunJournalRequiredEntry, RunJournalRoundBinding, RunJournalRow, RunJournalStatus, RunJournalViolation, RunMatch, RunPreparationObservation, RunReadResult, RunReferencedObservation, RunRoot, RunRootRefusalReason, RunRootRequest, RunRootResolution, RunSetCurrentResult, RunStore, RunStoreLocation, RunStoreRejection, RunStoreRejectionCode, RunWaitObservation, SatisfiedEvidenceResolution, SatisfiedLiveFactResolution, ScopedCheckAttempt, ScopedCheckDefinition, ScopedCheckPlan, ScopedExecutionDefinition, ScopedExecutionProfile, ScopedInputCapture, ScopedInputCapturePorts, ScopedRuntimeObservation, SecretDisciplineResult, SecretPattern, SensitiveLaneInput, SensitiveMaintenanceAction, SensitivePathGroup, SerializedBlocker, SerializedBlockers, SerializedRemediation, ShippedPersonaRejection, ShippedPersonaRejectionCode, SimulatedExchange, SimulatedMessageOptions, SpineRejection, SpineRejectionCode, SpineVerdict, SubmissionInput, SubmissionOptions, SubmissionOutcome, SubmissionRecord, SubstrateBlocker, SubstrateBlockerCode, SubstrateFailure, SubstrateRejection, SubstrateRejectionCode, SubstrateVerdict, ToolDenial, ToolDenialCode, ToolInvocationDecision, ToolInvocationRequest, TrackerPosture, TrustCheckInput, TrustDecision, UnknownContextReason, UnknownExecutionContext, UnreadableRecordInput, UpdateCompositionInput, UpdateCompositionResult, ValidBlockerCode, ValueCheck, VerificationBase, VerifiedClosure, VerifyAppliedCodexThreadConfiguration, VerifyDeliveryRecordOptions, VerifyProjectionResult, WaivedResolution, WaiverAction, WaiverApproval, WaiverConsumptionContext, WaiverConsumptionVerdict, WaiverPrompt, WaiverPromptOutcome, WaiverProposal, WaiverRecordIdentity, WaiverRefusal, WaiverResolution, WaiverScope, WorkflowCheckpointBinding, WorkflowGraph, WorkflowStage, WorkspaceDisposition, WorkspaceStorage, WriteFileOptions };
+export { ABSENT_BY_STATE, ACTION_APPROVALS, ACTION_APPROVAL_ORIGIN_PREFIX, ACTION_VERIFICATIONS, ACTIVATION_KINDS, ACTIVE_POINTER_SPEC, ADAPTER_CAPABILITY_SPEC, ADMISSION_DENIAL_CODES, APPROVAL_REQUEST_KINDS, APPROVAL_REQUIREMENTS, ARCHIVE_RELEASE_MANIFEST_ENTRY, ARTIFACT_OBSERVATION_STATUSES, ASSERTION_CLASSES, ASSERTION_PROVIDER_SPEC, ASSERTION_SOURCES, ATTESTATION_LABEL, ATTESTATION_LEVELS, AUTHORITY_REVOCATION_SPEC, BASE_MOVEMENT_POLICIES, BLOCKER_CONTRACT_VERSION, BLOCKER_SOURCE_KINDS, BlockedError, CANDIDATE_CAPTURE_CODES, CANDIDATE_DIFF_UNREADABLE, CANDIDATE_DRIFT_CLASSES, CANDIDATE_MODES, CANDIDATE_PATH_CLASSES, CANDIDATE_VCS, CAPABILITY_DESCRIPTOR_SPEC, CAPABILITY_KINDS, CLAUDE_SKILL_EXPOSURE_PREFIX, CODEX_APPLIED_MISMATCH_CODES, CODEX_APP_SERVER_HOST_ID, CODEX_CHARACTERIZED_HOST_VERSION, CODEX_DISABLED_FEATURE_KEYS, CODEX_ESCALATION_REFUSAL_CODES, CODEX_HOOK_EVENT, CODEX_HOOK_EVENT_NAME, CODEX_HOOK_EXECUTION_MODE, CODEX_HOOK_SUBCOMMAND, CODEX_HOST_TOOLS, CODEX_PINNED_HOST_VERSION, CODEX_THREAD_CONFIG_FILE, CODEX_UNENFORCEABLE_TOOL_SOURCES, COMPILED_POLICY_SPEC, COMPOSITION_MANIFEST_FILE, COMPOSITION_MANIFEST_SPEC, COMPOSITION_PROFILES, CONFIG_FINDING_CODES, CONFIRMATION_CLASSES, CONFIRMATION_DENIAL_CODES, CONFIRMATION_FIXTURE_PROFILE, CONFIRMATION_OPERATION_PREFIX, CONFORMING_ATTESTATION_LEVEL, CONSUMPTION_GATE_RECORD_BLOCKER_CODES, CONTROL_PLANE_CLAIMS, CONTROL_PLANE_CLAIM_KINDS, CONTROL_PLANE_CONFLICT_BLOCKER_CODE, CONTROL_PLANE_DISPOSITIONS, COORDINATION_MESSAGE_KINDS, COORDINATION_MESSAGE_SPEC, COORDINATION_PORT_UNBOUND_CODE, COORDINATION_PROTOCOL_VERSION, COORDINATION_REFUSALS, CRITERION_DISPOSITIONS, CanonicalizationError, DEFAULT_BASE_MOVEMENT_POLICY, DEFAULT_BASE_REF, DEFAULT_CAPTURE_ATTEMPTS, DEFAULT_OBSERVATION_LIFETIME_SECONDS, DEFAULT_RUN_FRESHNESS_WINDOW_MS, DEFAULT_STORAGE_NAMESPACE, DELIVERABLE_TREE_V1, DELIVERABLE_TREE_V1_NARRATION_SET, DELIVERY_BLOCKER_REMEDIATIONS, DELIVERY_EVIDENCE_1, DELIVERY_OWNED_TREE_PREFIXES, DELIVERY_POSTURE_FALLBACK_SOURCE, DELIVERY_POSTURE_MAX_BYTES, DELIVERY_POSTURE_NETWORK_TIMEOUT_MS, DELIVERY_POSTURE_PATH, DELIVERY_POSTURE_SCHEMA, DELIVERY_PROVIDER_RAILS_VERSION, DELIVERY_RECORD_DRIFT_CLASSES, DELIVERY_RECORD_VERSION, DELIVERY_STATES, DELIVERY_TRANSITION_TABLE, DESCENDANT_TEARDOWN_STATUSES, DISPOSABLE_OUTCOME_AUTHORITIES, DISPOSABLE_REVIEW_LENSES, DISPOSABLE_SENSOR_CAPABILITY, DISPOSABLE_STAGE_GRANT, DigestError, EVENT_VOCABULARY, EVIDENCE_KINDS, EXECUTION_CONTEXT_KINDS, EXECUTION_GRANT_SPEC, EXTERNAL_ACTIONS, EXTERNAL_ACTION_OUTCOMES, EXTERNAL_ACTION_RESULT_SPEC, EXTERNAL_VERIFICATIONS, FACADE_CAPABILITY_CLASSES, FACADE_OPERATIONS, FACADE_SURFACES, FINDING_DISPOSITIONS, FINDING_SCOPES, FINDING_SEVERITIES, FINISH_LINES, FINISH_LINE_ACTIONS, FINISH_LINE_RESULT_SPEC, FRESHNESS_KINDS, GATE_STRUCTURAL_FINDING_CODES, GRANT_ATTESTATION_SPEC, GRANT_PROFILES, HARNESS_VERSION, HOST_ACTIVITY_STATES, HOST_ADMISSION_SCENARIOS, HOST_BINDING_BLOCKER_CODES, HOST_CONFORMANCE_CASES, HOST_INTERCEPTION_SCENARIOS, IDENTITY_DOMAIN, IDENTITY_FINDING_CODES, INSTALLED_DATA_LIMITS, INSTALL_RECEIPT_SPEC, INTAKE_STATES, INTERNAL_ERROR_CODE, INVOCATION_FENCE_SPEC, INVOCATION_WAIVER_SCOPE, InstalledDataResourceError, InstalledDataSourceError, JOURNALS, JOURNAL_ENTRY_SPEC, MANAGED_DELIVERY_NAMESPACE, MANDATORY_LENS_CATEGORIES, MANIFEST_REJECTION_CODES, MANIFEST_REJECTION_REGISTRY, MANIFEST_RULE_IDS, MAX_BLOCKER_DETAIL_LENGTH, MAX_PORTABLE_ARTIFACTS, MAX_PORTABLE_ARTIFACT_BYTES, MAX_PORTABLE_EVIDENCE_BYTES, MAX_PORTABLE_RECORD_BYTES, MAX_RUN_LABEL, MAX_RUN_LENSES, MAX_RUN_PATH, MAX_RUN_PROVIDER_ID, MAX_RUN_URL, META_RULE_IDS, MINIMUM_NODE, MINIMUM_PYTHON, NON_WAIVABLE_INTEGRITY_CODES, OBSERVATION_ONLY_KINDS, OPERATION_CLAIM_SPEC, OPERATION_RESULT_SPEC, OPERATOR_CONFIRMATION_SPEC, OTHER_INSTALLATION_ARTIFACTS, OUTCOME_VERIFICATION_SPEC, PACKAGE_NAME, PACKED_HARNESS_PACKAGES, PATH_MATCHER_KINDS, PERSONA_MANIFEST_ENTRY, PERSONA_MANIFEST_SPEC, PINNED_AGENT_SKILLS, POLICY_CAPABILITY_KINDS, POLICY_COMPILE_CODES, POLICY_SNAPSHOT_SPEC, PORTABLE_INTAKE_GRANT, PORTABLE_MODEL_DRIVEN_STAGES, PORTABLE_PRIVILEGED_CREDENTIALS, PORTABLE_STAGE_GRANT, PREPARATION_FAILURE_CLASSES, PREPARATION_RECEIPT_LEAF, PREPARATION_RECEIPT_SCHEMA_VERSION, PRIVILEGED_ACTIONS, PRIVILEGED_CAPABILITY_KINDS, PRODUCT_COMPOSITION_PIN_SPEC, PRODUCT_TRUST_LABEL, PRODUCT_TRUST_STATE_SPEC, PROJECTION_CONSUMPTION_OBSERVATION_SPEC, PROJECTION_DIR, PROJECTION_RECEIPT_FILE, PROVIDER_POLICIES, PROVIDER_REVIEW_HANDOFF_SPEC, PROVIDER_REVIEW_RESULT_SPEC, ProcessLockRefused, READ_ONLY_CAPABILITY_KINDS, RECEIPTED_SKILLS_ROOT, RECHECKED_VALUES, RECONCILIATION_FINDINGS, RECORDER_EMITTED_CODES, RECORDS_LEAF, RECORD_QUARANTINE_REASONS, RECORD_SCHEMA_VERSION, REPOSITORY_POLICY_DOCUMENT_SPEC, RESOLUTION_KINDS, RESOLUTION_OUTCOMES, RESUME_ELIGIBILITIES, REVIEWER_APPROVAL_ROLE, REVIEWER_ATTEMPT_SPEC, REVIEWER_RESULTS, REVIEW_GREEN_1, REVIEW_GREEN_2, REVIEW_LENS_CATEGORIES, REVIEW_VERDICTS, RUN_ACTIVITY_STATES, RUN_ACTOR_ROLES, RUN_CANDIDATE_TREE_SHA, RUN_COMMAND_OUTCOMES, RUN_ENDED_RESULTS, RUN_EVENT_KINDS, RUN_EVENT_KINDS_V1, RUN_EVENT_PAYLOAD_GRAMMAR_SPEC, RUN_EVENT_SPEC, RUN_EVENT_SPEC_V2, RUN_FREE_TEXT_MEMBERS, RUN_GATE_REPORTED_OUTCOMES, RUN_JOURNAL_REQUIRED_ENTRIES, RUN_JOURNAL_ROUND_BINDINGS, RUN_JOURNAL_STATUSES, RUN_JOURNAL_VIOLATIONS, RUN_PROVIDER_ID, RUN_ROOT_LEAF, RUN_ROOT_NAMESPACE, RUN_ROOT_REFUSAL_REASONS, RUN_STORE_DIRECTORY, RUN_STORE_ID, RUN_TICKET, ReviewInputError, SCOPED_DELIVERY_CONTRACT_SPEC, SECRET_PATTERNS, SECURITY_BLOCKED_MIGRATION_ACTION, SENSITIVE_APPROVAL_ASSERTION_SPEC, SENSITIVE_MAINTENANCE_ACTIONS, SENSOR_OUTCOMES, SENSOR_RESULT_SPEC, SHADOW_MILESTONE_GATE_RECORD_SPEC, SHADOW_MILESTONE_GATE_RECORD_SPEC_SUFFIX, SIMULATED_MESSAGE_OPTION_NAMES, SPINE_GIT_OID, SPINE_ID, SPINE_INSTANT, SPINE_SHA256, SUBMISSION_CANDIDATE_FIELDS, SUBSTRATE_BLOCKER_CODES, SUPPORTED_CONTRACT_VERSIONS, SUPPORTED_ENVELOPE_SPECS, SUPPORTED_PAYLOAD_SPECS, SUPPORTED_PLATFORMS, SUSPENDED_DELIVERY_STATES, TERMINAL_DELIVERY_STATES, TERMINATION_PROVENANCE_KINDS, TERMINATION_PROVENANCE_OPERATION, TOOL_DENIAL_CODES, TRACKER_ABSENCE_FALLBACKS, TRACKER_POSTURES, UNBOUND_COORDINATION_PORT, UNBOUND_EXTERNAL_ACTION_PORT, UNKNOWN_CONTEXT_REASONS, V1_ATTESTATION_LEVEL, VALIDATOR_EMITTED_CODES, WAIVER_ACTIONS, WAIVER_APPROVAL_ORIGIN_PREFIX, WAIVER_SCOPES, WORKFLOW_CHECKPOINT_BINDINGS, WORKFLOW_GRAPH_ENTRY, WORKSPACE_DISPOSITIONS, actionChainDigest, adaptClaudeCodeReviewResult, admitCoordinationMessage, applySecretDiscipline, assertSha256Hex, assertionClassOf, assertionLaneAvailability, assertionProviderConfigPathFor, authorizeFinishLineAction, bindingOf, buildCompositionManifest, buildDeliveryRecord, candidateTreeEvidenceReader, candidateTreeSourceReader, canonicalBytes, canonicalize, captureCheckBindings, captureCheckOutputSnapshots, captureCheckOutputs, captureGitCandidate, captureInstalledDataBinding, captureInstalledDataResources, capturePhysicalSource, capturePortableEvidenceContext, capturePortableVerificationInputs, captureRunArtifact, captureScopedCheckInputs, checkActionAuthorization, checkBoundPolicy, checkClaimAuthorized, checkContractWithinPolicy, checkDeployPreconditions, checkFacadeSurfaceInvariants, checkMergeReadyAgainstOutcome, checkMutationLane, checkNoDowngrade, checkOutcomeCoversContract, checkPositiveCriterion, checkReviewFloor, claimContradictsLocalHistory, classifyActionOutcome, classifyCandidateDrift, classifyCandidatePath, classifyEventKind, classifyExecutionContext, claudeCodeBinding, codexAppServerBinding, codexEnabledToolsFor, codexEscalationTokens, codexHookDecision, codexHookTurn, codexHostTool, codexNamesDisabledSurface, codexPermissionProfileId, codexPermissionProfileOf, codexSubagentPosture, codexToolIsLocallyEnforceable, codexWrittenPaths, collectLiveProviderResults, compareSubmissionCandidate, compareUtf16CodeUnits, compileDisposableCompiledPolicy, compileDisposablePolicy, compileRepositoryPolicy, compiledAdopterPolicyBindingDigest, composeBlockerInventory, composeClaudeCodeSession, composeCodexAppServerThread, composeManagedStatus, composeOutcomeVerification, compositionManifestBytes, computeCheckWiringFingerprint, computeDeliverableIdentity, computePreparationFingerprint, computeRecordId, confirmationClassOf, conflictBlockerEpochOf, consumeProviderRailMessages, createArtifactsPort, createBlocker, createCandidateCapture, createCodexAppServerConformancePort, createCoordinationSimulator, createExecPort, createFakeHostConformancePort, createIntakeJournalStore, createInternalErrorBlocker, createJournalStore, createMaintenanceJournalStore, createManagedDeliveryFacade, createOsNativeAssertionSource, createProviderReviewHandoff, createQualificationFixtureAssertionSource, createResourceApplicabilityBinding, createResourceApplicabilityProjection, createRunStore, decideCodexHookInvocation, decideFinishLine, defaultRunRootBase, defineHarnessConfig, deleteDelivery, deliveryRecordBytes, deliveryRecordPathFor, deriveDeliveryRecordPath, deriveTelemetry, describeRunEventPayload, digestCanonical, digestDeliverableEntries, digestsEqual, discoverRecords, discriminateInstall, effectiveDeliveryAuthority, effectiveHostedChecksPolicy, emittableFindingCodes, enforceAllowedResolution, entryHref, evaluateActionApproval, evaluateCandidateActivation, evaluateCanonicalRecheck, evaluateCodexEscalation, evaluateConfirmationEcho, evaluateGate, evaluateHostAdmission, evaluateMigrationConsumption, evaluatePreparationReceipt, evaluateRunJournal, evaluateToolInvocation, evaluateWaiverConsumption, explainRunJournal, exportDelivery, facadeOperation, faithfullyAppliedCodexConfiguration, garbageCollectGenerations, generationDigestOf, gitNamespaceClearedEnvironment, gradeHostActivity, grantDigest, identityDefinitionOf, inspectInstallation, installComposition, invalidatePreparationReceipt, invokeExternalActionOnce, invokeProviderRail, invokedDirectly, isDeliveryOwnedTreeEntry, isDeliveryOwnedTreePath, isDeliveryRecordRunSpan, isDeliveryTransitionValid, isEnvSignalPresent, isHostedCheckExemption, isHostedCheckInstant, isHostedChecksPolicy, isInsideResolved, isInstalledDataConsumerDefinition, isIntakeTransitionValid, isManifestRejectionCode, isObligationActive, isPhysicalSourceDefinition, isRecordFreshForCandidate, isRecordNeutralPath, isResourceApplicabilityBinding, isReviewNeutralPath, isRunEventKind, isRunInstant, isSafeRelativePath, isScopedCheckDefinition, isSha256Hex, journalIntentPayload, journalResultPayload, listArchiveEntries, livePreflightProbes, loadAssertionProviderConfig, loadBundledWorkflowGraph, loadPinnedGeneration, localDigestTrustPredicate, localFactEpochOf, maintainTrustState, manifestDigest, matchResourceApplicabilityProjection, matchesNeutralSet, matchesPathMatcher, materializeProjection, mintGrantAttestation, needsCommittedSymlinkTarget, neutralizeForDisplay, normalizeInstalledDataResourceRequests, observeAuthorityEpoch, openProviderRailProcess, operationsOnSurface, packComposition, parseCandidateNumstat, parseCandidateTreeListing, parseCodexHookInput, parseDeliveryRecord, parseProjectionConsumptionObservation, parseProviderReviewResult, parseReviewOutcome, parseTreeEntries, parseTrustState, physicalSourceOutputOverlap, planExternalAction, portableArtifactContents, projectReviewActivation, projectRunActivities, projectShippedPersonas, projectionConsumptionObservationFile, publishPreparationReceipt, publishRecord, qualifyReviewAttempts, readArchiveEntry, readCompiledRepositoryPolicy, readConsumptionMarker, readRunArtifact, readWorkflowRelease, receiptFileName, receiptPathFor, reconcileBeforeRetry, reconcileRemoteClaim, reconciliationActions, reconstructResourceApplicability, recordFileName, recordIdentity, recordOutputProvider, recoverInterruptedMaintenance, redactSecretText, reduceDeliveryJournal, reduceIntakeJournal, reduceToProviderId, registrationBinding, remediationFor, renderBlockers, renderCodexHookDecision, repairInstallation, replayLedgerOf, repositoryEvidenceReader, resolveActiveGeneration, resolveCommonDirectoryNamespace, resolveDeliveryPosture, resolveObservationLifetimeSeconds, resolveReceiptStorage, resolveRecordStorage, resolveReviewCharters, resolveRunStoreLocation, retainedCheckOutput, revalidateBeforeInvoke, reviewerLists, revokePreparationAttempt, rollbackComposition, runActionReconciliationError, runActivityTransitionError, runAdmission, runGitCommand, runGitDirect, runHostIntegrationConformance, runJournalCarries, runPrimaryTicket, sanitizedDetail, scopedBudgetOffenders, scopedCheckIdentity, selectDeliveryRecordForIdentity, selectScopedCheckAttempt, sensitiveGroupsFor, serializeBlockers, sha256Hex, submitManifest, trackerPostureOf, trustStorePathFor, updateComposition, validateAcceptedContract, validateAdapterCapability, validateAdapterSet, validateAuthorityRevocation, validateCapabilityDescriptor, validateCompositionManifest, validateCompositionPin, validateCoordinationMessage, validateExecutionGrant, validateExternalActionResult, validateFinishLineResult, validateGrantAttestation, validateHarnessConfig, validateInstalledDataResourceCapture, validateInvocationFence, validateJournalEntry, validateManifest, validateOperatorConfirmation, validateOutcomeVerification, validatePolicySnapshot, validateProductTrustState, validateRepositoryPolicyDocument, validateResourceApplicabilityBinding, validateResourceApplicabilityProjection, validateReviewGreenClaim, validateReviewedContext, validateReviewerAttempt, validateRunEvent, validateRunEventInput, validateSensitiveApprovalAssertion, validateSensorResult, verifyAppliedCodexThreadConfiguration, verifyCompiledPolicy, verifyDeliveryRecord, verifyGenerationClosure, verifyPortableEvidence, verifyProjection, withDeliverableIdentity, withProcessLock, workflowStageBindingFor, writeAssertionProviderConfig };
+export type { AcceptedContract, ActionAdapterBinding, ActionApprovalContext, ActionApprovalVerdict, ActionChainLink, ActionClassification, ActionEvidence, ActivationKind, AdapterCapability, AdditionalReviewLens, AdmissionDecision, AdmissionDenial, AdmissionDenialCode, AdmissionExpectation, AdmissionInput, AdmissionOptions, AdmissionResult, AdmittedInvocation, AgentExecutionContext, ArtifactObservation, ArtifactObservationStatus, ArtifactPresence, ArtifactsPort, ArtifactsPortOptions, AssertionAvailabilityProbe, AssertionClass, AssertionEvaluation, AssertionEvaluationRequest, AssertionProviderConfig, AssertionSource, AssertionSourceAvailability, AssertionSourcePort, AssertionSourceView, AttestationLevel, AuthorityGrantView, AuthorityRevocation, AvailablePersona, BaseMovementPolicy, BlockedResolution, Blocker, BlockerInput, BlockerInventoryEntry, BlockerSource, BlockerSourceKind, BoundActionIntent, BuildCompositionManifestInput, BuildDeliveryRecordInput, BuildDeliveryRecordResult, CandidateActivationOptions, CandidateBase, CandidateBinding, CandidateCapture, CandidateCaptureCode, CandidateCaptureOptions, CandidateCommandResult, CandidateCommandRunner, CandidateComparison, CandidateDeliverable, CandidateDiffEntry, CandidateDriftClass, CandidateMode, CandidatePathClass, CandidateStatusEntry, CandidateTreeEntry, CandidateTreeInputReader, CandidateVcs, CanonicalErrorCode, CaptureCandidate, CapturedCandidate, CheckActionAuthorizationInput, CheckBinding, CheckBindingOptions, CheckpointAdmissionExpectation, CheckpointOverride, CiExecutionContext, CiPolicy, ClaimAuthorityView, ClaimDisposition, ClaimReconciliation, ClassifyExecutionContextInput, ClaudeCodeReviewAdaptation, CodexAppServerConformancePortInput, CodexAppliedMismatch, CodexAppliedMismatchCode, CodexAppliedThreadConfiguration, CodexDisabledFeatureKey, CodexEscalationRefusalCode, CodexEscalationRequest, CodexHookInput, CodexHostTool, CodexPermissionProfile, CodexThreadStartRequest, CodexUnenforceableToolSource, CollectLiveProviderInput, CommandArguments, CompareCheck, CompileDisposablePolicyInput, CompileRepositoryPolicyInput, CompileRepositoryPolicyResult, CompiledAdopterPolicyBinding, CompiledCheckpointGrant, CompiledPolicy, ComposeCodexAppServerThreadResult, ComposeHostSessionInput, ComposeHostSessionResult, ComposedHostSession, CompositionInventoryEntry, CompositionProfile, ComputeIdentity, ConfigFindingCode, ConfirmationClass, ConfirmationDenial, ConfirmationDenialCode, ConfirmationEchoAttempt, ConfirmationEchoDecision, ConsumeProviderRailOptions, ConsumedWaiver, ConsumptionGateRecordBlockerCode, ConsumptionMarker, ControlPlaneClaim, CoordinationAdmission, CoordinationAdmissionView, CoordinationAuthentication, CoordinationDispatch, CoordinationMessage, CoordinationMessageKind, CoordinationPort, CoordinationRefusal, CoordinationRefusalCode, CoordinationReplayLedger, CoordinationSimulator, CoordinationSimulatorOptions, CreateFacadeInput, DeclaredArtifact, DelegatedResolution, DeleteDeliveryResult, DeliverableIdentityDefinition, DeliverableIdentityOptions, DeliverableIdentityRequest, DeliverableTreeEntry, DeliveryEvidenceManifest, DeliveryJournalState, DeliveryPosture, DeliveryPostureCode, DeliveryPostureResult, DeliveryRecord, DeliveryRecordAttestation, DeliveryRecordCheck, DeliveryRecordClaim, DeliveryRecordDriftClass, DeliveryRecordFile, DeliveryRecordHostedChecks, DeliveryRecordRunSpan, DeliveryRecordVerification, DeliveryState, DeliveryTransitionRow, DeniedInvocation, DeployPreconditionInput, DigestErrorCode, EffectiveDeliveryAuthorityInput, EligibleCheck, EmitProjectionConsumptionResult, EnvSnapshot, EnvironmentRequirement, EvaluateGateInput, EventClassification, EventKindEntry, EvidenceRecord, EvidenceRecordIdentity, EvidenceResolution, ExecInvocation, ExecOutcome, ExecPort, ExecutionContext, ExecutionContextKind, ExportDeliveryResult, ExternalAction, ExternalActionIntent, ExternalActionInvocation, ExternalActionPort, ExternalVerification, FacadeCapabilityClass, FacadeFailure, FacadeFenceRule, FacadeJournalRule, FacadeOperation, FacadeSurface, FacadeSurfaceFinding, FacadeSurfaceRule, FinishLineDecision, FinishLineInput, FinishLineRefusal, FinishLineResult, FreshnessKind, GarbageCollectInput, GateDecision, GateStructuralFindingCode, GitRunner, GradeHostActivityInput, GrantProfile, HarnessConfig, HarnessConfigInput, HarnessConfigValidation, HostActivity, HostActivityState, HostAdmissionScenario, HostBindingBlocker, HostBindingBlockerCode, HostBindingRefusalDetail, HostConformanceCase, HostConformanceResult, HostIntegrationPort, HostInterceptionScenario, HostObservationStamp, HostSessionGrant, HostedCheckExemption, HostedCheckExemptionScope, HostedChecksPolicy, HumanExecutionContext, IdentityFindingCode, IgnoredStoreEntry, InspectInstallationInput, InspectedGeneration, InstallCompositionInput, InstallCompositionResult, InstallDiscrimination, InstallReceipt, InstallationPresence, InstalledDataAttemptOrigin, InstalledDataConsumerDefinition, InstalledDataResourceCapture, InstalledDataResourceContext, InstalledDataResourcePorts, InstalledDataResourceRequest, InstalledDataSourceTree, IntakeAdmissionExpectation, IntakeJournalState, IntakeJournalStore, IntakeState, InvocationOutcome, Journal, JournalAppendResult, JournalReadResult, JournalStore, LaneAvailability, ListedDelivery, ListedTreeEntry, LiveProviderCollection, LiveProviderFinding, LiveProviderResult, LoadPinnedGenerationResult, LocalHistoryView, MaintainTrustStateInput, MaintenanceJournalStore, ManagedCheckpoint, ManagedDeliveryFacade, ManagedDeliveryStatus, ManagedHostBinding, ManagedInstallation, ManagedStatusInput, ManifestArtifact, ManifestAttestation, ManifestBase, ManifestCandidate, ManifestClaim, ManifestDeliverable, ManifestProvider, ManifestRejection, ManifestRejectionCode, ManifestRejectionCodeEntry, ManifestRuleId, ManifestValidation, ManifestValidationContext, MigrationConsumptionContext, MigrationConsumptionVerdict, MigrationPath, MigrationRefusal, MirrorRecordView, MirroredMessageView, MutationLaneResult, MutationVerification, NamespaceGitLaunch, NamespaceGitRunner, NamespaceResolution, NamespaceResolutionInput, NativeReviewConclusion, NeutralMatcher, NoDowngradeDecision, NonEmptyTuple, NormalizedAdmission, NormalizedInterception, NormalizedTeardown, NormalizedTermination, NotApplicableResolution, ObligationActivation, ObligationFinding, ObligationPolicy, ObligationResolution, ObserveAuthorityEpochResult, ObservedActionResult, ObservedActivityEntry, OpenProviderRailProcessInput, OtherInstallationArtifact, OutcomeCriterion, OutcomeVerification, PackCompositionInput, PackCompositionResult, ParseDeliveryRecordResult, ParseTrustStateResult, PathClassification, PathMatcher, PathMatcherKind, PhysicalSourceDefinition, PlanExternalActionInput, PlanExternalActionVerdict, PolicyCapabilityKind, PolicyGrantView, PolicyRejection, PolicySnapshot, PolicyVerdict, PortableEvidence, PortableEvidenceContext, PositiveCriterionVerdict, PreflightProbes, PreparationCandidate, PreparationCommand, PreparationEvaluation, PreparationFailureClass, PreparationInput, PreparationOptions, PreparationReceipt, ProductTrustPort, ProductTrustState, ProductTrustView, ProjectShippedPersonasResult, ProjectionConsumptionObservation, ProjectionConsumptionRecord, ProjectionConsumptionUnobserved, ProviderPolicy, ProviderRailAttemptInput, ProviderRailAttemptOptions, ProviderRailBlocker, ProviderRailCancel, ProviderRailConsumption, ProviderRailEvent, ProviderRailEvidence, ProviderRailInvocationResult, ProviderRailMessage, ProviderRailNegotiate, ProviderRailNegotiation, ProviderRailProgress, ProviderRailRequest, ProviderRailSession, ProviderRailTerminal, ProviderRegistration, ProviderReviewCandidate, ProviderReviewCapability, ProviderReviewFinding, ProviderReviewHandoff, ProviderReviewHandoffReviewer, ProviderReviewParseResult, ProviderReviewResult, ProviderReviewTerminalState, ProviderReviewVerdict, PublishOptions, PublishRecordInput, PublishStatus, PublishedPreparationReceipt, PublishedRecord, QualifiedAttempts, QuarantinedRecord, ReadConsumptionMarkerResult, RecheckConsumption, RecheckFailure, RecheckResult, RecheckValues, RecheckedValue, RecomputedIdentity, ReconciliationAction, ReconciliationDisposition, ReconciliationFinding, RecordCandidateBinding, RecordDiscovery, RecordIdentity, RecordQuarantineReason, RecordResolution, RecordSelector, RecordStorageOptions, RecordedHostedCheckExemption, RecordedRegistrationBinding, RecordedReviewAttempt, RecordedSensorResult, ReduceDeliveryResult, ReduceIntakeResult, RegistrationBindingInput, RegistrationBindingResult, RegistrationBindingView, RegistrationMismatch, RejectionEmitter, Remediation, RemediationCatalog, RenderOptions, RenderedConfirmationChallenge, RepairInstallationInput, RepositoryPolicyDocument, ResolutionKind, ResolutionOutcome, ResolveActiveGenerationResult, ResolveDeliveryPostureInput, ResolvedCharter, ResolvedPersonaSource, ResourceApplicabilityBinding, ResourceApplicabilityProjection, RetentionContext, RetentionFailure, RetrySafety, RevalidationObservation, ReviewActivationProjection, ReviewGreenClaimInput, ReviewInputReader, ReviewOutcome, ReviewRejection, ReviewVerdict, ReviewerOutcome, ReviewerResult, RollbackCompositionInput, RunActivityObservation, RunActivityProjection, RunActivityState, RunActorRole, RunAllocateResult, RunAppendResult, RunArtifactMetadata, RunArtifactResult, RunAttemptObservation, RunCommandOutcome, RunCurrentResult, RunDiscardResult, RunEvent, RunEventActor, RunEventInput, RunEventKind, RunEventPayloadGrammar, RunEventPayloadMemberGrammar, RunEventRepo, RunEventValueGrammar, RunEventValueType, RunEventVersion, RunHistoryEntry, RunJournalDiagnostics, RunJournalEvaluation, RunJournalExplanation, RunJournalRequiredEntry, RunJournalRoundBinding, RunJournalRow, RunJournalStatus, RunJournalViolation, RunMatch, RunPreparationObservation, RunReadResult, RunReferencedObservation, RunRoot, RunRootRefusalReason, RunRootRequest, RunRootResolution, RunSetCurrentResult, RunStore, RunStoreLocation, RunStoreRejection, RunStoreRejectionCode, RunWaitObservation, SatisfiedEvidenceResolution, SatisfiedLiveFactResolution, ScopedCheckAttempt, ScopedCheckDefinition, ScopedCheckPlan, ScopedExecutionDefinition, ScopedExecutionProfile, ScopedInputCapture, ScopedInputCapturePorts, ScopedRuntimeObservation, SecretDisciplineResult, SecretPattern, SensitiveLaneInput, SensitiveMaintenanceAction, SensitivePathGroup, SerializedBlocker, SerializedBlockers, SerializedRemediation, ShippedPersonaRejection, ShippedPersonaRejectionCode, SimulatedExchange, SimulatedMessageOptions, SpineRejection, SpineRejectionCode, SpineVerdict, SubmissionInput, SubmissionOptions, SubmissionOutcome, SubmissionRecord, SubstrateBlocker, SubstrateBlockerCode, SubstrateFailure, SubstrateRejection, SubstrateRejectionCode, SubstrateVerdict, ToolDenial, ToolDenialCode, ToolInvocationDecision, ToolInvocationRequest, TrackerPosture, TrustCheckInput, TrustDecision, UnknownContextReason, UnknownExecutionContext, UnreadableRecordInput, UpdateCompositionInput, UpdateCompositionResult, ValidBlockerCode, ValueCheck, VerificationBase, VerifiedClosure, VerifyAppliedCodexThreadConfiguration, VerifyDeliveryRecordOptions, VerifyProjectionResult, WaivedResolution, WaiverAction, WaiverApproval, WaiverConsumptionContext, WaiverConsumptionVerdict, WaiverPrompt, WaiverPromptOutcome, WaiverProposal, WaiverRecordIdentity, WaiverRefusal, WaiverResolution, WaiverScope, WorkflowCheckpointBinding, WorkflowGraph, WorkflowStage, WorkspaceDisposition, WorkspaceStorage, WriteFileOptions };
