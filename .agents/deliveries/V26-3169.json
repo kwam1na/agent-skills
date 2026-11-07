@@ -499,6 +499,17 @@
           "text": "The base rerun retries a declared flake once before base_broken, keeps its log beside the candidate's check log and links it from the stop, and base.broken names the rerun's failing tests in check.failed's shape"
         }
       ]
+    },
+    "V26-3218": {
+      "title": "The adoption guide's end-to-end test sometimes finds a lane's checkout still there after its merge",
+      "lane": "lane-3",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3218-done",
+          "text": "The cause of 'the lane's checkout outlived its merge' is stated with evidence, the guide's end-to-end row passes 20 runs in a row under load, and V26-3108's supervisor rows still pass"
+        }
+      ]
     }
   },
   "finish": [

@@ -238,6 +238,12 @@ Lane 1, added by the lead after V26-2807, as the follow-up V26-3089 deferred: la
 unblocked in lane-1's files. Files: `merge_queue.py`, `schemas.json`, `references/orchestration-guide.md`, `tests/test_merge_queue.py`,
 `tests/test_orchestration_state.py`. Sensors: `tests/test_merge_queue.py`, `tests/test_orchestration_state.py`, the corpus guards.
 
+### V26-3218. The adoption guide's end-to-end test sometimes finds a lane's checkout still there after its merge
+
+Lane 3, added by the lead after the row failed twice in lane-2's runs, the second time on a branch without V26-3087. V26-3108's cleanup wait is
+the first suspect. Diagnose before any code. Files: `tests/test_run_delivery.py` and, if the product is wrong, `run_delivery.py`, both moved
+from lane-2 once the cause is known. Sensors: `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_lane_rows.py`.
+
 ### V26-3178. Refuse a hand-off whose --run another subject already holds
 
 Lane 1, added by the lead while V26-2986 waits for V26-3064 to merge: a follow-up lane 1 found at V26-3005's hand-off. Files: `delivery_state.py`,
