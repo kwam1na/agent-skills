@@ -36,7 +36,6 @@
         "skills/orchestrate-work/references/orchestration-guide.md",
         "skills/orchestrate-work/scripts/render_state.py",
         "tests/test_orchestration_render.py",
-        "provenance.lock.json",
         "agent_skills/validate.py",
         "tests/test_validate.py"
       ]
@@ -54,7 +53,8 @@
         "skills/run-delivery/templates/round-brief.md",
         "tests/test_round_brief_template_corpus.py",
         "skills/run-delivery/SKILL.md",
-        "tests/test_run_delivery_plan_review.py"
+        "tests/test_run_delivery_plan_review.py",
+        "provenance.lock.json"
       ]
     },
     "lane-3": {
