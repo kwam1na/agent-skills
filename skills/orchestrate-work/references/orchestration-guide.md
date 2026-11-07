@@ -128,6 +128,8 @@ posts as the publishing step says.
 | `candidate.stopped` | On the ticket: the stop code and what happens next, whether returned to the lane, re-queued or pending a decision. |
 | `base.broken` | On the epic: the stop code and its detail (the failing check, an unverified merge, a base that moved under a batch, or a batch that landed in part), and that the queue is stopped; `base.repaired` reopens it. |
 | `base.repaired` | On the epic: the fix that landed and the gap it closed. |
+| `base.rerun.started` | None: the candidate's failure already reached the lead as `check.failed`, and the record and the views show the re-run in progress. |
+| `base.rerun.finished` | None: its verdict posts with `candidate.stopped`, or with `base.broken` when the base fails the check too. |
 | `lease.granted` | On the ticket whose work needs the lease: the lease, its holder and when it will be released. |
 | `lease.released` | On the same ticket: the lease is released. |
 | `release.started` | None: the release posts once it finishes. |

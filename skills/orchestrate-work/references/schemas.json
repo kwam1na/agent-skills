@@ -118,6 +118,26 @@
                             }
                           }
                         }
+                      },
+                      "baseRerun": {
+                        "description": "Present while the queue re-runs a candidate's failing checks on the base, after they failed and before the verdict: the candidate has failed and waits on the re-run to tell whether the failure is the base's own.",
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "startedAt",
+                          "checks"
+                        ],
+                        "properties": {
+                          "startedAt": {
+                            "$ref": "#/$defs/timestamp"
+                          },
+                          "checks": {
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/$defs/name"
+                            }
+                          }
+                        }
                       }
                     }
                   }
@@ -951,6 +971,8 @@
           "candidate.stopped",
           "base.broken",
           "base.repaired",
+          "base.rerun.started",
+          "base.rerun.finished",
           "lease.granted",
           "lease.released",
           "release.started",

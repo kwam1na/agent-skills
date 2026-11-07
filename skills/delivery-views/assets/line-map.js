@@ -262,7 +262,7 @@
   var KIND_WORDS = table({
     "lane.assigned": "Assigned", "review.round": "Review round", "candidate.handed": "Handed over", "check.started": "Check started",
     "check.finished": "Check finished", "check.failed": "Check failed", "check.retried": "Check retried", "check.reused": "Check reused", "candidate.merged": "Landed",
-    "candidate.stopped": "Stopped", "base.broken": "Base broken", "base.repaired": "Base repaired", "lease.granted": "Lease granted",
+    "candidate.stopped": "Stopped", "base.broken": "Base broken", "base.repaired": "Base repaired", "base.rerun.started": "Rerun on the main line", "base.rerun.finished": "Rerun verdict", "lease.granted": "Lease granted",
     "lease.released": "Lease released", "release.started": "Release started", "release.finished": "Release finished",
     "finish.met": "Finish line met", "decision.recorded": "Decision", "blocker.recorded": "Blocker", "delivery.closed": "Delivery closed"
   });
@@ -439,6 +439,17 @@
   }
   function stageKey(item) { return item.pending === true && item.stage === "queued" ? "pending" : text(item.stage); }
   function stageWords(item) { return STAGE_WORDS[stageKey(item)] || "Stage not recognised"; }
+  /**
+   * The base re-run a piece waits on: its check failed and the queue is running the failing checks on the main line to
+   * tell whether the failure is the main line's own. Only the piece the checking panel names, while it is being checked.
+   */
+  function rerunOf(doc, item) {
+    var current = checkingNow(doc);
+    if (!current || !isObject(current.baseRerun) || item.stage !== "checking") { return null; }
+    return current.subject !== undefined && current.subject !== null && String(current.subject) === subjectOf(item) ? current.baseRerun : null;
+  }
+  var RERUN_WORDS = "Failed, waiting on the main line's rerun";
+  function pieceWords(doc, item) { return rerunOf(doc, item) ? RERUN_WORDS : stageWords(item); }
   /** A piece that hadn't landed when its delivery closed isn't in any stage any more. */
   function unlandedAtClose(doc, piece) { return Boolean(closedEntry(doc)) && (piece.planned || piece.item.stage !== "merged"); }
   // Each stage's mark, in the page's one grammar: circles for how far a piece has got, a hollow diamond for a hand-over
@@ -738,8 +749,16 @@
       add(box, members);
       add(box, el("div", "ck-batch-note", "One test run for all of them; each lands only if it matches what was tested."));
     } else {
-      add(box, add(el("div", "ck-h"), el("span", "ck-dot"), el("span", "ck-h-words", "Being checked now")));
+      var waitsOnRerun = byId[current.subject] && rerunOf(doc, byId[current.subject]);
+      add(box, add(el("div", "ck-h"), el("span", "ck-dot"), el("span", "ck-h-words", waitsOnRerun ? RERUN_WORDS : "Being checked now")));
       add(box, el("div", "ck-t", byId[current.subject] ? titleOf(doc, byId[current.subject]) : text(current.title) || text(current.subject)));
+    }
+    // The run failed and the queue is re-running the failing checks on the main line, to tell whose failure it is.
+    if (isObject(current.baseRerun)) {
+      var rerunChecks = list(current.baseRerun.checks).map(text).filter(Boolean);
+      var rerunSince = spoken(current.baseRerun.startedAt);
+      add(box, el("div", "ck-rerun", "Rerunning " + (rerunChecks.length ? rerunChecks.join(", ") : "the failing checks") +
+        " on the main line, to tell whether it fails there too" + (rerunSince ? " · started " + rerunSince : "")));
     }
     // Checks the lead chose never pass for the provider's answer: each member's reason is said beside the run, one
     // line each until opened, after the run's progress, which is what the panel is for.
@@ -1303,7 +1322,7 @@
         var button = el("button", "stop-btn " + kind + (landing ? " landing" : ""));
         button.type = "button";
         button.setAttribute("data-subject", key);
-        button.setAttribute("aria-label", titleOf(doc, piece.item) + ", " + (kind === "unlanded" ? "Not landed" : stageWords(piece.item)));
+        button.setAttribute("aria-label", titleOf(doc, piece.item) + ", " + (kind === "unlanded" ? "Not landed" : pieceWords(doc, piece.item)));
         button.setAttribute("aria-pressed", String(selected === key));
         var show = function () { selected = key; showDetail(doc, piece, colours, nowSubject); };
         button.addEventListener("click", show);
@@ -1363,6 +1382,9 @@
       event = last("review.round"); at = event && isObject(event.review) ? event.review.startedAt : null;
     } else if (item.stage === "queued") {
       label = "Handed over"; basis = "Recorded hand-off"; event = handedIndex >= 0 ? own[handedIndex] : null;
+    } else if (item.stage === "checking" && rerunOf(doc, item)) {
+      label = "Waiting on the rerun since"; basis = "Recorded base rerun start"; event = last("base.rerun.started", checks);
+      at = event ? null : text(rerunOf(doc, item).startedAt) || null;
     } else if (item.stage === "checking") {
       label = "Checking since"; basis = "Recorded check start"; event = last("check.started", checks);
     } else if (item.stage === "checked") {
@@ -1408,7 +1430,7 @@
     var stage = el("span", "d-stage");
     var icon = unlanded ? null : stageIcon(item);
     if (icon) { stage.appendChild(icon); }
-    add(stage, unlanded ? "Not landed" : stageWords(item));
+    add(stage, unlanded ? "Not landed" : pieceWords(doc, item));
     if (timing) {
       var relative = spoken(timing.at);
       var when = el("span", "d-stage-time", (item.stage === "merged" ? (relative ? " " + relative : " · time unknown")
@@ -1573,7 +1595,7 @@
     return box;
   }
 
-  var HISTORY = table({ "candidate.handed": "Handed over", "check.started": "Check started", "check.finished": "Check finished", "check.failed": "Check failed", "check.retried": "Retried", "check.reused": "Reused", "candidate.stopped": "Stopped", "candidate.merged": "Landed" });
+  var HISTORY = table({ "candidate.handed": "Handed over", "check.started": "Check started", "check.finished": "Check finished", "check.failed": "Check failed", "check.retried": "Retried", "check.reused": "Reused", "base.rerun.started": "Rerun on the main line", "base.rerun.finished": "Rerun verdict", "candidate.stopped": "Stopped", "candidate.merged": "Landed" });
   var historyOpen = Object.create(null);
   function historyFor(doc, item) {
     var rows = journalFor(doc, item.subject, HISTORY);

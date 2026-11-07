@@ -70,8 +70,9 @@ file that is malformed or can't be read runs `fullHealth` and holds the close on
   stand; once anyone else rewrote them, the wait stays for the lane to end.
   A lead who drops a stopped candidate from the queue also clears a row still
   saying it stopped, since no later queue write will. The tool alone keeps a
-  row's `focusAt`, `focusBy`, which says the queue wrote its words, and
-  `waitingBy`, which says who set its `waitingOn`. A lane writes only its own
+  row's `focusAt`, `focusBy`, which says the queue wrote its words,
+  `waitingBy`, which says who set its `waitingOn`, and `restedFrom`, the
+  lane's own last word, kept while the queue's words stand over it. A lane writes only its own
   lane's `focus`, `state` and `waitingOn`, its own review rounds, the run
   building its own planned work, and its own hand-off, which the tool turns
   into a queue element, with any suite evidence
@@ -263,7 +264,11 @@ python3 -B <skill>/scripts/merge_queue.py [--repo <checkout top level>] --state 
   on a fresh checkout of the synced head. Each check's elapsed time shows
   against its usual duration; a failed check's failing tests and its log reach
   the record, the journal and the views, journaled as `check.failed` as soon as
-  the check fails, before the base re-run. A failure made only of the binding's
+  the check fails, before the base re-run. While the failing checks re-run on
+  the base, the checking panel's `baseRerun` says the candidate failed and
+  waits on that re-run; its start and its verdict are journaled as
+  `base.rerun.started` and `base.rerun.finished`, so the journal reads failure,
+  re-run start, verdict, stop. A failure made only of the binding's
   declared flakes is retried once and journaled as `check.retried`; any other
   failure is never retried. A check the binding lists in `reusableChecks` is
   not run again when the synced tree is exactly the tree the lane's hand-off
