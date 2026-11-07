@@ -52,9 +52,16 @@ class Server(http.server.ThreadingHTTPServer):
         self.server_name, self.server_port = self.server_address[:2]
 ```
 
-The run-delivery fixtures' in-app serve is such a server. A row runs it on every
-platform under a modelled stall and requires it to listen within five seconds,
-after first showing that the stock `python -m http.server` doesn't.
+The run-delivery fixtures' in-app serve is such a server, and so is the live
+view's `_LiveServer` in orchestrate-work's `render_state.py`, which the
+supervisor and `run-delivery view` start. Each has a row that runs it under a
+modelled 60-second stall and requires it to answer within a few seconds, after
+first showing that the stock server doesn't:
+`test_the_in_app_server_listens_at_once_when_name_lookups_stall` in
+`tests/test_run_delivery.py`, and
+`test_the_live_view_listens_at_once_when_name_lookups_stall` in
+`tests/test_orchestration_render.py`. The adoption-guide walkthrough holds the
+serve it declares to the same bound.
 
 ## Why This Works
 
@@ -74,5 +81,9 @@ unchanged, so the server takes connections as soon as its socket listens.
 
 ## Related Issues
 
-- The live view's own server, `_LiveServer` in orchestrate-work's
-  `render_state.py`, binds the same way, and the supervisor and `view` start it.
+- Other `HTTPServer` users in the suite still bind the stalling way: the fake
+  Jira server in `tests/test_run_delivery_tracker.py`, and the servers the
+  `delivery_views` live tests start. They make those units slower on macOS by
+  about 34 seconds per server, but don't time out.
+- `tests.test_run_delivery_supervisor` is also long in its own right, about
+  1342 seconds on Ubuntu, which is a separate cause from this one.

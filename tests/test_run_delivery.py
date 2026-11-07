@@ -221,7 +221,6 @@ else:
     print(json.dumps({**pr, "url": args.url, "head": pr.get("head") or head(pr["source"])}))
 '''
 
-# A real listener: argv is the port, a mark that names it in its command line, and "reuse" to share the port.
 # The fixtures' in-app server. `python -m http.server` binds through HTTPServer.server_bind, which looks up the
 # address's host name before it listens; where reverse lookups go unanswered (macOS runners) that takes about 34
 # seconds, and every in-app check waited it out. This one names its address without a lookup.
@@ -254,6 +253,31 @@ def serve_argv(script: Path) -> list[str]:
     return [sys.executable, "-B", str(script), "{port}", "{dir}"]
 
 
+def listens_under_stalled_lookup(argv: list[str], seconds: float) -> bool:
+    """Whether a serve `argv` ({port}, {dir}) listens within `seconds` while every reverse lookup of a loopback address
+    stalls for a minute. The server is started here and stopped by the pid recorded here."""
+    with tempfile.TemporaryDirectory() as tmp:
+        stalled = Path(tmp) / "stalled"
+        stalled.mkdir()
+        (stalled / "sitecustomize.py").write_text(STALLED_LOOKUP % 60)
+        port = free_port()
+        argv = [part.replace("{port}", str(port)).replace("{dir}", tmp) for part in argv]
+        server = subprocess.Popen(argv, env={**clean_environment(), "PYTHONPATH": str(stalled)},
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            deadline = time.monotonic() + seconds
+            while time.monotonic() < deadline:
+                with socket.socket() as probe:
+                    if probe.connect_ex(("127.0.0.1", port)) == 0:
+                        return True
+                time.sleep(0.05)
+            return False
+        finally:
+            server.kill()
+            server.wait()
+
+
+# A real listener: argv is the port, a mark that names it in its command line, and "reuse" to share the port.
 LISTENER = r'''
 import socket, sys, time
 s = socket.socket()
@@ -2619,31 +2643,9 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         its own name before it listens delays every in-app check by the lookup. The fixtures' declared serve doesn't."""
         fx = self.fixture()
         declared = json.loads((fx.main / ".agents/run-delivery.json").read_text())["inApp"]["serve"]["argv"]
-        with tempfile.TemporaryDirectory() as tmp:
-            stalled = Path(tmp) / "stalled"
-            stalled.mkdir()
-            (stalled / "sitecustomize.py").write_text(STALLED_LOOKUP % 60)
-            env = {**clean_environment(), "PYTHONPATH": str(stalled)}
-
-            def listens_within(argv: list[str], seconds: float) -> bool:
-                port = free_port()
-                argv = [part.replace("{port}", str(port)).replace("{dir}", tmp) for part in argv]
-                server = subprocess.Popen(argv, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                try:
-                    deadline = time.monotonic() + seconds
-                    while time.monotonic() < deadline:
-                        with socket.socket() as probe:
-                            if probe.connect_ex(("127.0.0.1", port)) == 0:
-                                return True
-                        time.sleep(0.05)
-                    return False
-                finally:  # started here, stopped by the pid recorded here
-                    server.kill()
-                    server.wait()
-
-            stock = [sys.executable, "-B", "-m", "http.server", "{port}", "--bind", "127.0.0.1", "--directory", "{dir}"]
-            self.assertFalse(listens_within(stock, 3), "the stalled lookup didn't hold up the stock server")
-            self.assertTrue(listens_within(declared, 5), f"the fixtures' serve waited for the stalled lookup: {declared}")
+        stock = [sys.executable, "-B", "-m", "http.server", "{port}", "--bind", "127.0.0.1", "--directory", "{dir}"]
+        self.assertFalse(listens_under_stalled_lookup(stock, 3), "the stalled lookup didn't hold up the stock server")
+        self.assertTrue(listens_under_stalled_lookup(declared, 5), f"the fixtures' serve waited for the stalled lookup: {declared}")
 
     def listener(self, port: int, mark: str, reuse: bool = False) -> subprocess.Popen:
         """A real listener on `port`, started here and stopped at cleanup by the pid recorded here. `mark` rides in its
@@ -5375,6 +5377,8 @@ class RunDeliveryAdoptionGuideTests(unittest.TestCase):
             used.add(GUIDE_SUBSTITUTIONS[0])
             conf["inApp"]["build"]["argv"] = ["sh", "-c", "mkdir -p out && cp src/*.txt out/"]
             conf["inApp"]["serve"]["argv"] = serve_argv(fakes / "static_serve.py")
+            self.assertTrue(listens_under_stalled_lookup(conf["inApp"]["serve"]["argv"], 5),
+                            "the guide's serve waited for a stalled name lookup")
             conf["inApp"]["check"]["argv"] = [sys.executable, "-B", str(fakes / "contract_check.py"), "{spec}", "{port}",
                                               "{args}"]
             used.add(GUIDE_SUBSTITUTIONS[1])
