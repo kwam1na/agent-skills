@@ -4117,7 +4117,7 @@ def troubleshooting_section() -> str:
     return text[text.index("## Troubleshooting"):]
 
 
-DOCTOR_LABELS = ["host and tools", "orchestration binding", "configuration", "release generation",
+DOCTOR_LABELS = ["host and tools", "orchestration binding", "merge queue candidate step", "configuration", "release generation",
                  "release on the delivery base", "gates", "lane checkouts ignored", "tracker issue URL",
                  "pipeline PR review", "gh", "forge find", "forge write access", "tracker snapshot token",
                  "snapshots and publishers", "in-app adapters", "in-app adapter contract", "video evidence tools",
@@ -4463,6 +4463,32 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         if expect_code is not None:
             expect(code == expect_code, f"doctor exited {code}, not {expect_code}:\n{out}")
         return out
+
+    def test_the_candidate_row_proves_the_merge_queues_candidate_step_can_run(self) -> None:
+        fx = self.fixture()
+        path = fx.main / ".agents/orchestration.json"
+        self.assertEqual(doctor_lines(self.doctor(fx, "--offline"))["merge queue candidate step"],
+                         ("ok", "true {candidate} resolves"))
+        binding = json.loads(path.read_text())
+        for argv, problem in (
+                ([sys.executable, "-B", "tools/missing.py", "{candidate}"], "its script tools/missing.py doesn't exist in the repository"),
+                (["no-such-candidate-program", "{candidate}"], "its program no-such-candidate-program isn't on PATH"),
+                ([sys.executable, "-B", "./tools", "{candidate}"], "its script ./tools doesn't exist in the repository")):
+            with self.subTest(argv=argv):
+                path.write_text(json.dumps({**binding, "candidate": argv}, indent=2))
+                out = self.doctor(fx, "--offline")
+                self.assertEqual(failing(out), {"merge queue candidate step": (
+                    f"the binding's candidate step can't run: {problem}; fix: correct its argv in .agents/orchestration.json, "
+                    "then run it once by hand with a branch that exists")}, out)
+        # A script the repository holds resolves.
+        path.write_text(json.dumps({**binding, "candidate": [sys.executable, "-B", "tools/fake_forge.py", "{candidate}"]}, indent=2))
+        self.assertEqual(doctor_lines(self.doctor(fx, "--offline"))["merge queue candidate step"][0], "ok")
+        # An argv without {candidate} fails the binding itself, and the candidate row waits on it.
+        path.write_text(json.dumps({**binding, "candidate": ["true", "feature"]}, indent=2))
+        lines = doctor_lines(self.doctor(fx, "--offline"))
+        self.assertEqual(lines["orchestration binding"][0], "wrong")
+        self.assertIn("/candidate: the candidate argv must use {candidate} as a whole element", lines["orchestration binding"][1])
+        self.assertEqual(lines["merge queue candidate step"], ("skipped", "(needs binding)"))
 
     def test_the_plan_row_checks_the_plan_a_delivery_with_criteria_makes(self) -> None:
         fx = self.fixture()

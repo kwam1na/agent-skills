@@ -284,7 +284,7 @@ supervisor's.
   | Code | What the lead does |
   | --- | --- |
   | `candidate_moved` | The lane pushed after hand-off. Check the new head as a fresh hand-off, write it as `head`, and re-queue. |
-  | `candidate_unknown`, `candidate_unresolved` | Add the candidate to `queue[]`, or fix its reference, and re-queue. |
+  | `candidate_unknown`, `candidate_unresolved` | Add the candidate to `queue[]`, or fix its reference, and re-queue. A `candidate_unresolved` stop carries the candidate command's exit code or timeout, the end of its stderr, and the end of its stdout, scrubbed of secrets. |
   | `already_merged` | Nothing to do; mark the lane `done` only if it was left `handed` (see the merge rule below). |
   | `source_conflict` | Return the candidate to its lane to resolve the listed paths. |
   | `lease_required` | Obtain the named lease through the lease sequence, record the lead (the `--lead` name) as holder, and re-queue. |
@@ -1241,6 +1241,10 @@ for every member.
 
 - Every argv is an array of strings, and placeholders stand alone.
 - `merge` uses `{expectedHead}`.
+- `candidate` uses `{candidate}`, so each subject resolves to its own branch and head.
+- Run the `candidate` command once by hand, with a branch that exists, and see it print the JSON
+  answer. run-delivery's `doctor` checks that its program and any script it names exist, and `serve`
+  holds itself, taking nothing, while they don't.
 - Every check's `environmentProfile` names a profile in `profiles`.
 - Every check timeout is at or below `checkTimeoutCeiling`.
 - Every `leadInputs` lease names a lease in `leases`.
