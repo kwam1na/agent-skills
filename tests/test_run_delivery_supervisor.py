@@ -2037,6 +2037,7 @@ class SupervisorPostMergeTests(unittest.TestCase):
 
     def test_a_lane_that_says_done_during_the_pass_is_cleaned_up_before_the_close(self) -> None:
         fx = self.fixture()
+        (fx.tmp / "flow-log").mkdir(parents=True, exist_ok=True)
         with open(fx.tmp / "flow-log/plan-changes.jsonl", "a") as changes:
             changes.write(json.dumps({"type": "change", "id": "c1", "kind": "removed", "subjects": ["FX-3"], "by": "lead",
                                       "why": "Out of scope.", "at": "2026-01-01T00:00:00Z"}) + "\n")
