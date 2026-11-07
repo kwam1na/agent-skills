@@ -6509,11 +6509,14 @@ class Supervisor:
             doc = derived.get("doc") or load_state()
             needs = derived["needs"] if "needs" in derived else needs_you(c, doc, self.flapping())
             holds = close_holds(c, doc, needs)
+            if all(hold.startswith("not cleaned up: ") for hold in holds):
+                # A lane may have moved off its story since this pass's cleanup, as its last word: clean up again, so
+                # the close never outruns the checkout it leaves, then read the holds again. A checkout this cleanup
+                # still can't remove keeps holding the close until a later pass removes it.
+                entry["cleanupBeforeClose"] = cleanup()
+                holds = close_holds(c, load_state(), needs)
             entry["needsYou"], entry["closeHeldBy"] = needs, holds
             if not holds:
-                # A lane may have moved off its story since this pass's cleanup, as its last word: clean up again, so
-                # the close never outruns the checkout it leaves.
-                entry["cleanupBeforeClose"] = cleanup()
                 entry["closeOut"], closed = close_out(c, self.flapping(), self.once)
                 render_views(c)
         except (Stop, ValueError, OSError, subprocess.SubprocessError) as error:
