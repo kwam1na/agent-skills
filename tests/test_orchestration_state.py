@@ -5026,6 +5026,7 @@ VALID_FIXTURES = {
     "valid", "fresh", "version as whole float", "long head", "null rounds", "checking now null", "with lane",
     "with tickets", "snapshot with a summary", "planned with a run", "planned with its ticket started",
     "queued with its ticket started", "lane wait set by the queue", "a decision carrying a review",
+    "queue check with a title", "step with a title",
     "checking now awaiting the base rerun",
 }
 JOURNAL_KINDS = [
@@ -5067,6 +5068,17 @@ class SchemaAgreementTests(unittest.TestCase):
                 ("lane wait set by someone else", with_change(state, ("lanes", 0, "waitingBy"), "someone")),
                 ("checking now absent", with_change(state, ("meta", "checking", "now"), KeyError)),
                 ("checking now null", with_change(state, ("meta", "checking", "now"), None)),
+                ("queue check with a title", with_change(state, ("queue", 0, "checks"),
+                                                         [{"id": "unit", "state": "passed", "title": "Unit tests"},
+                                                          {"id": "lint", "state": "passed"}])),
+                ("queue check with an empty title", with_change(state, ("queue", 0, "checks"),
+                                                                [{"id": "unit", "state": "passed", "title": ""}])),
+                ("queue check title over long", with_change(state, ("queue", 0, "checks"),
+                                                            [{"id": "unit", "state": "passed", "title": "t" * 201}])),
+                ("step with a title", with_change(state, ("meta", "checking", "now", "steps"),
+                                                  [{"label": "unit", "state": "running", "title": "Unit tests"}])),
+                ("step title over long", with_change(state, ("meta", "checking", "now", "steps"),
+                                                     [{"label": "unit", "state": "running", "title": "t" * 201}])),
                 ("step state unknown",
                  with_change(state, ("meta", "checking", "now", "steps"), [{"label": "x", "state": "?"}])),
                 ("checking now awaiting the base rerun", with_change(state, ("meta", "checking", "now", "baseRerun"),
@@ -5711,6 +5723,11 @@ class LeadSelectionTests(unittest.TestCase):
         self.assertEqual((entry["kind"], entry["subject"], entry["lane"]), ("check.selected", "work-q", "lane-1"))
         self.assertIn("parser", entry["summary"])
         self.assertIn("only the parser changed", entry["summary"])
+
+    def test_a_selected_check_keeps_its_title_and_an_empty_one_is_refused(self) -> None:
+        item = self.select([{**selected_check("parser"), "title": "Parser unit tests"}])
+        self.assertEqual(item["leadSelection"]["checks"][0]["title"], "Parser unit tests")
+        self.assertEqual(self.refused(lambda: self.select([{**selected_check("lexer"), "title": ""}])), "select_invalid")
 
     def test_the_command_line_records_and_clears_a_selection(self) -> None:
         binding = Path(self.directory.parent) / "orchestration.json"
