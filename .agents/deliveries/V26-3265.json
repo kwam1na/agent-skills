@@ -149,7 +149,7 @@
       "criteria": [
         {
           "id": "v26-3182-done",
-          "text": "v1.6.0-rc.3 is applied here in its own commit, and .agents/orchestration.json declares regenerable.listings for provenance.lock.json; doctor validates it, the listing is quoted by path, and a scratch listing outside regenerable.paths is refused"
+          "text": "v1.6.0-rc.3 is applied here in its own commit, and .agents/orchestration.json declares regenerable.listings for provenance.lock.json; doctor validates it, the listing is quoted by path, and a scratch listing outside regenerable.paths is refused. Lane 2 delivers it last, on the lead's word once rc.3 is published, in one pull request carrying the apply commit then the binding commit."
         }
       ]
     }
