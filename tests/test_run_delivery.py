@@ -776,6 +776,81 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         expect(check(relisted, carried={"l-r1-1"}, n=2) == [], check(relisted, carried={"l-r1-1"}, n=2))
         expect(check(lens_result(lateFindings=["l-r1-9"])), "a lateFindings id that isn't one of the result's own was accepted")
 
+    def test_lead_assign_warns_of_files_outside_the_lane_before_it_starts(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        setup_delivery(fx)
+        plan = m / "docs/plan.md"
+        plan.write_text(plan.read_text()
+                        .replace("- Scenarios: it loads; it fails.\n",
+                                 "- Scenarios: it loads; it fails.\n- Files: `src/one.txt`, `src/two.txt`, `one.txt`, `tools/`, "
+                                 "`docs/refs/*.md`, `x/notes2.md`, `src/one-log.txt`, `x/a.md`, `./tools/fake_check.py`, "
+                                 "`Makefile`.\n")
+                        .replace("- Scenarios: it renders.\n", "- Scenarios: it renders.\n- Files: `src/two.txt`.\n")
+                        .replace("| Copy | \"Couldn't be loaded.\" |\n",
+                                 "| Copy | \"Couldn't be loaded.\" |\n| S10's files | `tools/s10.py` |\n"))
+        # A bare name or a path's end that several files share is the lane's own match; a directory and a glob resolve;
+        # a path's end matches whole folder names; a bare word with no extension, and a row naming S10, aren't S1's.
+        for path in ("src/one.txt", "docs/one.txt", "docs/refs/notes.md", "docs/deep/x/notes2.md", "docs/deep/yx/notes2.md",
+                     "src/one-dir/x/a.md", "docs/x/a.md", "docs/Makefile"):
+            (m / path).parent.mkdir(parents=True, exist_ok=True)
+            (m / path).write_text(f"{path}\n")
+        commit(m, "FX-1: the plan names FX-2's files")
+        (m / "docs/guide.md").write_text("guide\n")
+        (m / "docs/rare.md").write_text("rare\n")
+        commit(m, "FX-1: the docs")
+        # History, without the sweeping change below: src/one.txt changes 5 times, docs/refs/notes.md (named) 4.
+        # docs/pair.md changes with src/one.txt in 4 of 5 and with notes.md in 3 of 4, so its best match is the later
+        # name. docs/guide.md, z1 and z2 change with notes.md in 3 of 4, docs/rare.md twice (too few), docs/gone.md 3
+        # times but is gone from the base, and src/one-extra.txt, the lane's own, as often as docs/pair.md. Four are
+        # shown, so a fifth that shouldn't be (the lane's own, or docs/log.md below) would show.
+        named, own, zs = "docs/refs/notes.md", "src/one-extra.txt", ["docs/z1.md", "docs/z2.md"]
+        common = ["docs/guide.md", named, own, "docs/pair.md", "docs/gone.md", *zs]
+        for k, also in enumerate(([*common, "docs/rare.md"], [*common, "docs/rare.md"], common, ["docs/pair.md", own])):
+            (m / "src/one.txt").write_text(f"{k + 1}\n")
+            for path in also:
+                (m / path).write_text(f"{path} {k}\n")
+            commit(m, f"FX-1: change {k}")
+        sh("git", "rm", "-q", "docs/gone.md", cwd=m)
+        commit(m, "FX-1: docs/gone.md goes")
+        (m / "sweep").mkdir()
+        for k in range(45):
+            (m / f"sweep/{k}.txt").write_text("x\n")
+        for path in ("src/one.txt", "docs/guide.md", named):
+            (m / path).write_text("sweep\n")
+        commit(m, "FX-1: a sweeping change, which would make guide.md 4 of 5 with notes.md if it counted")
+        # src/one-log.txt changes 13 times, 3 of them with docs/log.md: often enough, but too small a share.
+        (m / "src/one-log.txt").write_text("0\n")
+        commit(m, "FX-1: a log")
+        for k in range(12):
+            (m / "src/one-log.txt").write_text(f"{k + 1}\n")
+            if k < 3:
+                (m / "docs/log.md").write_text(f"{k}\n")
+            commit(m, f"FX-1: log {k}")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        # The lead's checkout holds a commit the base doesn't: the warning reads the base's files.
+        (m / "tools/local-only.py").write_text("x\n")
+        commit(m, "FX-1: not on the base")
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-assign", "FX-2", "--lane", "lane-1", "--title", "Lane 1", cwd=m)
+        self.assertEqual(code, 0, out)
+        shared = "(no lane's; with docs/refs/notes.md in 3 of 4 changes)"
+        self.assertIn("Files outside lane-1's owns, before it starts (lead-accept refuses a change to any of them):\n"
+                      "  FX-2 names docs/deep/x/notes2.md (no lane's), docs/refs/notes.md (no lane's), src/two.txt (lane-2's), "
+                      "tools/fake_check.py (no lane's), tools/fake_forge.py (no lane's)\n"
+                      "  FX-2's files often change with docs/pair.md (no lane's; with src/one.txt in 4 of 5 changes), "
+                      f"docs/guide.md {shared}, docs/z1.md {shared}, docs/z2.md {shared}\n"
+                      "Move each to lane-1's owns now, or plan the story on the lane that owns it.\n", out)
+        for quiet in ("docs/rare.md", "docs/log.md", "src/one-extra.txt", "docs/gone.md", "docs/x/a.md",
+                      "yx/notes2.md", "tools/s10.py", "Makefile", "./tools", "tools/local-only.py"):
+            self.assertNotIn(quiet, out)
+        self.assertLess(out.index("Files outside"), out.index("Assignment message for lane-1"))
+        # A story that names only its lane's files gets no warning.
+        code, out = fx.flow("lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("Files outside", out)
+
     def test_a_lens_keeps_one_checkout_across_rounds_and_is_reprepared_only_when_a_dependency_changes(self) -> None:
         fx = self.fixture()
         m = fx.main
@@ -3056,6 +3131,32 @@ class RunDeliveryReleaseAndNamesTests(unittest.TestCase):
                     proc.kill()
                     proc.wait()
 
+    # -- the integration build ------------------------------------------------------------------------------
+
+    def test_build_without_a_story_key_builds_the_delivery_under_its_own_key(self) -> None:
+        fx = self.fixture()
+        setup_delivery(fx)
+        m = fx.main
+        conf = json.loads((m / ".agents/run-delivery.json").read_text())
+        conf["inApp"]["build"]["argv"] = ["sh", "-c", 'mkdir -p out && cp src/*.txt out/ && printf %s "$0" > out/key.txt', "{key}"]
+        (m / ".agents/run-delivery.json").write_text(json.dumps(conf, indent=2))
+        commit(m, "FX-1: the build names its key")
+        fx.flow("lead-init", cwd=m)
+        head = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
+        code, out = fx.flow("build", cwd=m)
+        expect(code == 0 and f"built {head[:10]}" in out, out)
+        self.assertEqual((m / "out/key.txt").read_text(), "FX-1")
+        self.assertEqual(json.loads((m / "out/.flow-build.json").read_text())["head"], head)
+        # A story's build still names the story, and a key that is not one of the delivery's is still refused.
+        code, out = fx.flow("build", "FX-2", cwd=m)
+        expect(code == 0, out)
+        self.assertEqual((m / "out/key.txt").read_text(), "FX-2")
+        code, out = fx.flow("build", "FX-9", cwd=m)
+        expect(code == 2 and "FX-9 is not a story of FX-1" in out, out)
+        # An empty key is a key, refused like any other that is not a story, never the integration build.
+        code, out = fx.flow("build", "", cwd=m)
+        expect(code == 2 and " is not a story of FX-1" in out, out)
+
     # -- sign-in values -------------------------------------------------------------------------------------
 
     def test_adapter_arguments_that_look_like_sign_in_values_are_refused(self) -> None:
@@ -3962,14 +4063,14 @@ def doctor_lines(out: str) -> dict[str, tuple[str, str]]:
     """Each check's line, by its label: (status, the rest)."""
     found = {}
     for line in out.splitlines():
-        match = re.match(r"^(ok|missing|wrong|skipped) +([^:]+): (.*)$", line)
+        match = re.match(r"^(ok|missing|wrong|skipped|warn) +([^:]+): (.*)$", line)
         if match:
             found[match.group(2)] = (match.group(1), match.group(3))
     return found
 
 
 def failing(out: str) -> dict[str, str]:
-    return {label: rest for label, (status, rest) in doctor_lines(out).items() if status not in ("ok", "skipped")}
+    return {label: rest for label, (status, rest) in doctor_lines(out).items() if status not in ("ok", "skipped", "warn")}
 
 
 # The words each failing doctor line starts its detail with, as the adoption guide's troubleshooting section keys them.
@@ -4002,7 +4103,7 @@ DOCTOR_LABELS = ["host and tools", "orchestration binding", "merge queue candida
                  "release on the delivery base", "gates", "lane checkouts ignored", "tracker issue URL",
                  "pipeline PR review", "gh", "forge find", "forge write access", "tracker snapshot token",
                  "snapshots and publishers", "in-app adapters", "in-app adapter contract", "video evidence tools",
-                 "Node", "harness configuration", "delivery file", "plan chapter", "plan sections", "context sections",
+                 "Node", "harness configuration", "delivery file", "plan chapter", "plan sections", "story files", "context sections",
                  "configuration on the remote base", "pull requests marked ready", "delivery supervisor",
                  "gates on the base"]
 
@@ -4390,6 +4491,48 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         out = self.doctor(fx, "--offline")
         self.assertEqual(list(failing(out)), ["plan chapter"], out)
         self.assertIn("finish[0].covers.criteria[1]: names no criterion of the plan's units", failing(out)["plan chapter"])
+
+    def test_the_story_files_row_warns_of_a_named_file_outside_its_lane_without_failing(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        out = self.doctor(fx, "--offline")
+        self.assertEqual(doctor_lines(out)["story files"], ("ok", "every file a story's plan section names is its lane's"), out)
+        plan = m / "docs/plan.md"
+        plan.write_text(plan.read_text()
+                        .replace("- Scenarios: it loads; it fails.\n",
+                                 "- Scenarios: it loads; it fails.\n- Files: `src/one-new.txt`, `src/two.txt`, `tools/fake_check.py`, "
+                                 "`app.txt`, `refs/notes.md`, `run_delivery.py`, `run_delivery.py gate`, `/api/two$`.\n")
+                        .replace("| Copy | \"Couldn't be loaded.\" |\n",
+                                 "| Copy | \"Couldn't be loaded.\" |\n| S1's check | `tools/fake_forge.py` |\n"
+                                 "| Lane 2's files | `tools/lane-two.py` | `src/two-only.txt`, after FX-2 |\n"))
+        (m / "docs/refs").mkdir()
+        (m / "docs/refs/notes.md").write_text("notes\n")
+        commit(m, "FX-1: the plan names files")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        # The installed release is tracked too, but no lane edits it: a bare name only it holds names nothing.
+        self.assertTrue(sh("git", "ls-files", "*/run_delivery.py", cwd=m).stdout.strip())
+        out = self.doctor(fx, "--offline")
+        self.assertEqual(doctor_lines(out)["story files"],
+                         ("warn", "FX-2 (lane-1) names docs/refs/notes.md (no lane's), src/app.txt (no lane's), "
+                                  "src/two.txt (lane-2's) and 2 more; fix: move each to the story's lane's owns before it "
+                                  "starts, or plan the story on the lane that owns it"), out)
+        self.assertEqual(failing(out), {}, out)
+        self.assertEqual(fx.flow("doctor", "--delivery", "FX-1", "--offline", cwd=m)[0], 0, "a warning failed doctor")
+        # Past five stories, doctor's one line counts the rest.
+        path = m / ".agents/deliveries/FX-1.json"
+        d = json.loads(path.read_text())
+        heading = "### S2 (FX-3). Thing two (AC2)\n"
+        extra = "".join(f"### S{k} (FX-{k}). Thing {k}\n\n- Files: `src/two.txt`.\n\n" for k in range(4, 10))
+        plan.write_text(plan.read_text().replace(heading, extra + heading))
+        for k in range(4, 10):
+            d["stories"][f"FX-{k}"] = {"title": f"Thing {k}", "lane": "lane-1", "label": f"S{k}"}
+        path.write_text(json.dumps(d, indent=2))
+        commit(m, "FX-1: more stories")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        status, detail = doctor_lines(self.doctor(fx, "--offline"))["story files"]
+        self.assertEqual(status, "warn")
+        self.assertEqual(detail.count(" names "), 5, detail)
+        self.assertIn("; and 2 more stories (lead-assign lists each one's); fix:", detail)
 
     def test_a_binding_serves_a_delivery_to_any_of_its_bases(self) -> None:
         """Bases: a delivery committed only on integration-2 runs from the lead's setup to a lane's draft PR."""

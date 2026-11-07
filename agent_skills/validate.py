@@ -158,10 +158,11 @@ def _validate_tracker_properties(reader: CorpusReader) -> None:
     """An adopting repository declares its tracker properties; a release does not.
 
     The document is repository-owned configuration rather than release payload,
-    so it is required only where the repository's own instruction file is
-    present. A released corpus extracted on its own is unaffected.
+    so its absence is a finding only where the repository's own instruction file
+    is present. A released corpus extracted on its own is unaffected. A document
+    that is there is always validated, with or without that file.
     """
-    if not (reader.root / REPOSITORY_INSTRUCTIONS).is_file():
+    if not (reader.root / REPOSITORY_INSTRUCTIONS).is_file() and not (reader.root / TRACKER_PROPERTIES).exists():
         return
     try:
         contents = (reader.root / TRACKER_PROPERTIES).read_text(encoding="utf-8")
