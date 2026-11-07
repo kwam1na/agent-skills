@@ -42,7 +42,9 @@
         "tests/test_run_delivery.py",
         "provenance.lock.json",
         "skills/run-delivery/SKILL.md",
-        "skills/run-delivery/references/config.md"
+        "skills/run-delivery/references/config.md",
+        "scripts/release_channel.py",
+        "tests/test_release_channel.py"
       ]
     },
     "lane-2": {
