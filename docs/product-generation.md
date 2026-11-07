@@ -186,8 +186,11 @@ Setting `PYTHONDONTWRITEBYTECODE=1` for the suite stops it being written.
 `18523d91ff3843c5dbef6f2e85275d865cba0b4e`, that repository's `main` at the merge of its
 0.8.0 version bump, which the `v0.8.0` tag names. Unlike the 0.7.8 runtime before it, which
 was a cherry-pick branch, it is `main` itself, so it carries everything merged there up to
-the bump: opt-in scoped-execution budgets and fail-fast, one warm snapshot base shared per
-setup key, and bounded validation reads.
+the bump, including opt-in scoped-execution budgets and fail-fast, one warm snapshot base
+shared per setup key, finite physical source snapshots and bounded validation reads. Its
+`prepare` also changes what it checks: with no mechanical check selected, it validates the
+preparation without opening a scoped session and leaves runtime and source identity to
+`gate`, which still refuses what `prepare` used to.
 
 `HARNESS_VERSION` 0.8.0 is part of every preparation fingerprint, so it invalidates
 receipts prepared by an earlier runtime: an adopter's in-flight deliveries prepare again
