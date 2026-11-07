@@ -1,0 +1,243 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3265",
+  "headline": "V26-3265: finish the delivery workflow's loose ends",
+  "plan": "docs/plans/2026-11-07-loose-ends.md",
+  "laneBrief": "docs/plans/2026-11-07-loose-ends.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-07-loose-ends.lane-notes.md"
+  },
+  "context": {
+    "sections": [
+      "Decisions"
+    ]
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "skills/run-delivery/*",
+        "tests/test_run_delivery.py",
+        "tests/test_run_delivery_supervisor.py",
+        "tests/test_run_delivery_plan_review.py",
+        "tests/test_round_brief_template_corpus.py",
+        "tests/test_review_and_compounding.py",
+        "docs/solutions/*",
+        "tests/fixtures/delivery-views/line-map/*",
+        "skills/orchestrate-work/references/schemas.json",
+        "tests/test_registry.py",
+        "catalog.json",
+        "profiles/*"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "skills/orchestrate-work/scripts/merge_queue.py",
+        "tests/test_merge_queue.py",
+        "skills/orchestrate-work/references/orchestration-guide.md",
+        "skills/delivery-views/*",
+        "tests/test_delivery_views_page.py",
+        "tests/delivery_views_page/*",
+        ".agent-skills/*",
+        ".agents/orchestration.json"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3232": {
+      "title": "Fix the macOS `test_run_delivery` timeout",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3232-done",
+          "text": "macOS CI's test_run_delivery no longer reaches its unit limit: the reproduced cause is fixed in run_group (or where it lives), a cross-platform row modelling it failed before the fix and passes after, the named test keeps its deadline unskipped, and the supervisor module's timeout is fixed here or in its own change right after"
+        }
+      ]
+    },
+    "V26-3175": {
+      "title": "Pin `lead-close`'s busy-port lines",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3175-done",
+          "text": "lead-close's held-lease and free-lease-with-listener lines each have a row with a real listener, and each row fails when its branch's line is removed"
+        }
+      ]
+    },
+    "V26-3201": {
+      "title": "`lane-start` marks the start, and assignment checks readiness",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3201-done",
+          "text": "lane-start prints the start move and post in manual mode and moves a planned story to building; lead-assign refuses a not-ready story unless --force, assigns a ready one silently, and both it and doctor --delivery print the not-checked line for a story with no snapshot"
+        }
+      ]
+    },
+    "V26-3194": {
+      "title": "One out-of-delta P1 rule in both briefs and every reducer",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3194-done",
+          "text": "Both briefs state obtain-review's out-of-delta P1 rule; review-reduce accepts a deferred P1 only in round > 1, listed late, with a deferredIssue, and the six named rows pin it; the drift test's declared difference is gone"
+        }
+      ]
+    },
+    "V26-3183": {
+      "title": "A ready-made `reviewGate` command",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3183-done",
+          "text": "A run-delivery command exits 0 only when review.pr's review is current and passing at the head, exits non-zero with a one-line reason otherwise, and the adoption guide shows it as reviewGate"
+        }
+      ]
+    },
+    "V26-3180": {
+      "title": "A run-delivery command for `carry-review`",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3180-done",
+          "text": "A run-delivery lead command runs carry-review, prints the from..to diffstat before writing, refuses when --to isn't the queued head, and the adoption guide's Accept section names it"
+        }
+      ]
+    },
+    "V26-3197": {
+      "title": "Every merge-queue step keeps its stderr",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3197-done",
+          "text": "ready, prepare, candidate, the regenerators and postSync keep a log and put its path and a scrubbed stderr tail in their stops; each row shows a marker present and a secret absent, and the guide states the scrub's limit"
+        }
+      ]
+    },
+    "V26-3164": {
+      "title": "The page lane's \"plan shown is out of date\" flake",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3164-done",
+          "text": "The page flake's cause is established or reproduced and fixed, or the item closes with the bounded evidence and hypothesis recorded, together with V26-3232's page half"
+        }
+      ]
+    },
+    "V26-3242": {
+      "title": "Three integration-review gaps",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3242-done",
+          "text": "A stopped-partway close with a holding need names lead-close; the line map words base.verified and selection.refused; a titled refusalStops row shows the titles; each is pinned"
+        }
+      ]
+    },
+    "V26-3182": {
+      "title": "Adopt `regenerable.listings` here",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3182-done",
+          "text": "v1.6.0-rc.3 is applied here in its own commit, and .agents/orchestration.json declares regenerable.listings for provenance.lock.json; doctor validates it, the listing is quoted by path, and a scratch listing outside regenerable.paths is refused"
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "Every story",
+      "text": "Each story merged to main through the merge queue, or closed with its recorded reason where the plan allows",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "main-ci",
+      "label": "Main CI",
+      "text": "main's CI on the last merged commit passes on the Ubuntu job, cut-release and the macOS job, with the run linked",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the last merged commit",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "rc3",
+      "label": "rc.3",
+      "text": "v1.6.0-rc.3 is tagged, its published digests verified, and it is applied here",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "deferrals",
+      "label": "Deferrals",
+      "text": "Every deferral has an open follow-up item, filed under the epic",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "grantedBy": "the operator",
+    "grantedOn": "2026-11-07"
+  },
+  "approvals": [
+    {
+      "id": "approval-1",
+      "text": "The plan, approved by the operator on 2026-11-07 after three plan-review rounds.",
+      "state": "done",
+      "who": "the operator"
+    },
+    {
+      "id": "approval-2",
+      "text": "The v1.6.0-rc.3 tag push, approved by the operator on 2026-11-07, to be pushed once the release step's checks pass.",
+      "state": "done",
+      "who": "the operator"
+    }
+  ],
+  "outOfScope": [
+    "The other backlog epics: lead hand-work (V26-3250), release safety (V26-3266), posture readers (V26-3267), and the harness runtime (V26-3268).",
+    "Promoting `v1.6.0-rc.3` to `v1.6.0`. That happens after the candidate is applied in an adopter, under the repository's release rule.",
+    "Making tracker refinement moves for V26-3201. Its Scope 5 already rules them out.",
+    "Any change to obtain-review's rule text for V26-3194, beyond the drift test's declared difference. Its rule is the one being adopted."
+  ],
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  },
+  "outcome": {
+    "summary": "The delivery workflow's leftover gaps are closed, and macOS CI is green again.",
+    "text": "Ten backlog items land on main: macOS CI stops timing out in run-delivery's tests, the merge queue keeps every step's stderr, run-delivery gains reviewGate and carry-review commands and a real lane-start, both round briefs share one out-of-delta P1 rule, the integration review's gaps close, and this repository adopts regenerable.listings on v1.6.0-rc.3."
+  }
+}
