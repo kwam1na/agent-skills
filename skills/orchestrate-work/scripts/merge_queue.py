@@ -388,6 +388,26 @@ def binding_errors(binding: object) -> list[str]:
     return errors
 
 
+def started_run(completed: Completed | None) -> bool:
+    """Whether a check's run started at all: one that could not start says nothing about the tree."""
+    return completed is not None and (completed.timed_out or completed.returncode is not None)
+
+
+def failed_run(completed: Completed) -> bool:
+    return completed.timed_out or completed.returncode != 0
+
+
+def failure_words(check_id: str, failures: list[str], log: str | None) -> str:
+    """A failed check as a stop or the journal names it: the check, its failing tests and its log."""
+    parts = []
+    if failures:
+        more = f" and {len(failures) - STOP_FAILURES} more" if len(failures) > STOP_FAILURES else ""
+        parts.append("failing " + ", ".join(failures[:STOP_FAILURES]) + more)
+    if log:
+        parts.append("log " + log)
+    return check_id + (f" ({'; '.join(parts)})" if parts else "")
+
+
 TITLE_LIMIT = 200
 
 
@@ -2047,12 +2067,32 @@ class Runner:
                     continue
                 completed = self.run_one(check, base_checkout, base_context)
                 # A re-run that could not start says nothing about the base.
-                started = completed is not None and (completed.timed_out or completed.returncode is not None)
-                if started and (completed.timed_out or completed.returncode != 0):
-                    verdicts.append(f"{check['id']} also fails")
-                    broken = Stop("base_broken", f"{check['id']} also fails on {self.base} at {base_head}")
+                if not started_run(completed):
+                    verdicts.append(f"{check['id']} could not start there")
+                    continue
+                failures, log = self.rerun_outcome(check["id"], completed)
+                retried = False
+                flake = self.flake_for(check["id"], failures) if failed_run(completed) and not completed.timed_out else None
+                if flake is not None:
+                    # As on the candidate: a failure made only of declared flakes is retried once, on the record.
+                    named = ", ".join(failure["id"] for failure in failures) or "the whole check"
+                    self.journal("check.retried", f"{check['id']} failed on the base re-run only on known flakes "
+                                                  f"({named}; {flake}); retrying once there", subject)
+                    self.record_history({}, {check["id"]: 1}, None)
+                    completed = self.run_one(check, base_checkout, base_context)
+                    retried = True
+                    if not started_run(completed):
+                        self.record_rerun(subject, check["id"], failures, log)
+                        verdicts.append(f"{check['id']} could not start there on its flake retry")
+                        continue
+                    failures, log = self.rerun_outcome(check["id"], completed)
+                self.record_rerun(subject, check["id"], failures, log)
+                if failed_run(completed):
+                    named = failure_words(check["id"], [failure["id"] for failure in failures], log)
+                    verdicts.append(f"{check['id']} also fails{named[len(check['id']):]}")
+                    broken = Stop("base_broken", f"{named} also fails on {self.base} at {base_head}")
                     break
-                verdicts.append(f"{check['id']} passed" if started else f"{check['id']} could not start there")
+                verdicts.append(f"{check['id']} passed{' after a flake retry' if retried else ''} (log {log})")
         except BaseException as error:
             self.end_rerun(subject, base_head, began, f"ended without a verdict ({type(error).__name__})")
             raise
@@ -2061,6 +2101,25 @@ class Runner:
             self.end_rerun(subject, base_head, began, f"{verdict}: the base is broken")
             raise broken
         self.end_rerun(subject, base_head, began, f"{verdict}: the failure is the candidate's")
+
+    def rerun_outcome(self, check_id: str, completed: Completed) -> tuple[list[dict], str]:
+        """A base re-run's failing tests, as the binding's failure pattern finds them, and its kept log."""
+        failures = self.failures(completed) if failed_run(completed) else []
+        return failures, self.save_log(f"{check_id}.base-rerun", completed)
+
+    def record_rerun(self, subject: str, check_id: str, failures: list[dict], log: str) -> None:
+        """Put a base re-run's failing tests and log on the candidate's queue row, beside its own run's."""
+        rerun = {**({"failures": [failure["id"] for failure in failures]} if failures else {}), "log": log}
+
+        def build(current: dict) -> tuple[dict, dict]:
+            queue = [dict(item) for item in current["queue"]]
+            for item in queue:
+                if item["subject"] == subject:
+                    item["checks"] = [{**row, "baseRerun": rerun} if row["id"] == check_id else row for row in item["checks"]]
+            return {"queue": queue}, {}
+
+        with contextlib.suppress(Stop, delivery_state.StateError):
+            self.write(build=build)
 
     def end_rerun(self, subject: str, base_head: str, began: float, verdict: str) -> None:
         """Journal the base re-run's verdict and how long the candidate waited on it, and end the waiting state."""
@@ -2080,14 +2139,7 @@ class Runner:
     def failure_text(check_id: str, result: Result) -> str:
         """A failed check as a stop names it: its failing tests and its log."""
         entry = next((item for item in reversed(result.checks) if item["id"] == check_id), {})
-        parts = []
-        if entry.get("failures"):
-            named = [failure["id"] for failure in entry["failures"]]
-            more = f" and {len(named) - STOP_FAILURES} more" if len(named) > STOP_FAILURES else ""
-            parts.append("failing " + ", ".join(named[:STOP_FAILURES]) + more)
-        if entry.get("log"):
-            parts.append("log " + entry["log"])
-        return check_id + (f" ({'; '.join(parts)})" if parts else "")
+        return failure_words(check_id, [failure["id"] for failure in entry.get("failures") or []], entry.get("log"))
 
     def base_prerequisites_pass(self, check: dict, by_id: dict[str, dict], checkout: Path, context: Context) -> bool:
         """Run a check's prerequisites, in order, on the base re-run checkout."""

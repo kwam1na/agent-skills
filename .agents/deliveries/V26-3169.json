@@ -36,7 +36,8 @@
         "skills/orchestrate-work/references/orchestration-guide.md",
         "skills/orchestrate-work/scripts/render_state.py",
         "tests/test_orchestration_render.py",
-        "provenance.lock.json"
+        "agent_skills/validate.py",
+        "tests/test_validate.py"
       ]
     },
     "lane-2": {
@@ -52,7 +53,8 @@
         "skills/run-delivery/templates/round-brief.md",
         "tests/test_round_brief_template_corpus.py",
         "skills/run-delivery/SKILL.md",
-        "tests/test_run_delivery_plan_review.py"
+        "tests/test_run_delivery_plan_review.py",
+        "provenance.lock.json"
       ]
     },
     "lane-3": {
@@ -392,7 +394,7 @@
     },
     "V26-3073": {
       "title": "Small setup fixes: build without a story key, tracker validation without AGENTS.md",
-      "lane": "lane-2",
+      "lane": "lane-1",
       "inApp": "none",
       "criteria": [
         {

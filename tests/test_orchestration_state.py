@@ -5026,7 +5026,7 @@ VALID_FIXTURES = {
     "valid", "fresh", "version as whole float", "long head", "null rounds", "checking now null", "with lane",
     "with tickets", "snapshot with a summary", "planned with a run", "planned with its ticket started",
     "queued with its ticket started", "lane wait set by the queue", "a decision carrying a review",
-    "queue check with a title", "step with a title",
+    "queue check with a title", "step with a title", "queue check with its base re-run",
     "checking now awaiting the base rerun",
 }
 JOURNAL_KINDS = [
@@ -5071,6 +5071,14 @@ class SchemaAgreementTests(unittest.TestCase):
                 ("queue check with a title", with_change(state, ("queue", 0, "checks"),
                                                          [{"id": "unit", "state": "passed", "title": "Unit tests"},
                                                           {"id": "lint", "state": "passed"}])),
+                ("queue check with its base re-run", with_change(state, ("queue", 0, "checks"), [
+                    {"id": "unit", "state": "failed", "failures": ["test_a"], "log": "logs/a.log",
+                     "baseRerun": {"failures": ["test_a"], "log": "logs/b.log"}},
+                    {"id": "lint", "state": "failed", "baseRerun": {"log": "logs/c.log"}}])),
+                ("base re-run without its log", with_change(state, ("queue", 0, "checks"), [
+                    {"id": "unit", "state": "failed", "baseRerun": {"failures": ["test_a"]}}])),
+                ("base re-run with an unknown field", with_change(state, ("queue", 0, "checks"), [
+                    {"id": "unit", "state": "failed", "baseRerun": {"log": "logs/b.log", "verdict": "broken"}}])),
                 ("queue check with an empty title", with_change(state, ("queue", 0, "checks"),
                                                                 [{"id": "unit", "state": "passed", "title": ""}])),
                 ("queue check title over long", with_change(state, ("queue", 0, "checks"),
