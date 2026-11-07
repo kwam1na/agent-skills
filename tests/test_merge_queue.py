@@ -5879,7 +5879,7 @@ class CandidateStepTests(MergeQueueTestCase):
         self.assertIn("its script tools/missing.py doesn't exist in the repository", hold["reason"])
 
     def test_the_program_check_finds_each_missing_part(self) -> None:
-        present = {"tools/c.py", "run.py", "tools/c.ts", "tools/c.sh", "tools/c.pl", "tools/c.js"}.__contains__
+        present = {"tools/c.py", "run.py", "tools/c.ts", "tools/c.sh", "tools/c.pl", "tools/c.js", "tools/c.rb"}.__contains__
         cases = [
             ([PY, "tools/c.py", "{candidate}"], []),
             ([PY, "-B", "./tools/c.py", "{candidate}"], []),
@@ -5901,7 +5901,19 @@ class CandidateStepTests(MergeQueueTestCase):
             (["deno", "run", "-A", "tools/c.ts", "{candidate}"], []),
             (["bun", "run", "tools/c.ts", "{candidate}"], []),
             (["bash", "-o", "pipefail", "tools/c.sh", "{candidate}"], []),
-            (["perl", "-I", "skills", "tools/c.pl", "{candidate}"], []),
+            (["perl", "-I", "lib/perl5", "tools/c.pl", "{candidate}"], []),
+            # Python's -I is isolated mode and takes no value, so the script after it is still checked.
+            ([PY, "-I", "tools/gone.py", "{candidate}"], ["its script tools/gone.py doesn't exist in the repository"]),
+            ([PY, "-I", "tools/c.py", "{candidate}"], []),
+            (["pypy3", "-I", "tools/gone.py", "{candidate}"], ["its script tools/gone.py doesn't exist in the repository"]),
+            (["py", "-I", "tools/gone.py", "{candidate}"], ["its script tools/gone.py doesn't exist in the repository"]),
+            (["PYTHON.EXE", "-I", "tools/gone.py", "{candidate}"], ["its script tools/gone.py doesn't exist in the repository"]),
+            # Ruby's -I, like perl's, names a folder to load from: its value isn't the script.
+            (["ruby", "-I", "lib/ruby", "tools/c.rb", "{candidate}"], []),
+            (["node", "--import", "tsx/esm", "tools/c.js", "{candidate}"], []),
+            (["node", "--require", "ts-node/register", "tools/c.js", "{candidate}"], []),
+            (["node", "--loader", "ts-node/esm", "tools/c.js", "{candidate}"], []),
+            (["node", "--print", "process.argv/2", "{candidate}"], []),
             (["node", "-r", "ts-node/register", "tools/c.js", "{candidate}"], []),
             (["node", "-p", "process.argv/2", "{candidate}"], []),
             (["deno", "run", "-A", "tools/gone.ts", "{candidate}"], ["its script tools/gone.ts doesn't exist in the repository"]),
@@ -5915,7 +5927,7 @@ class CandidateStepTests(MergeQueueTestCase):
         # Stand-ins for interpreters this machine may not have, first on the PATH the check reads.
         stand_ins = self.directory / "bin"
         stand_ins.mkdir()
-        for name in ("deno", "bun", "node", "perl"):
+        for name in ("deno", "bun", "node", "perl", "ruby", "pypy3", "py", "PYTHON.EXE"):
             (stand_ins / name).write_text("#!/bin/sh\n")
             (stand_ins / name).chmod(0o755)
         search = os.pathsep.join([str(stand_ins), os.environ.get("PATH", "")])
