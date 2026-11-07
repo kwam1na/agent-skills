@@ -781,37 +781,44 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         m = fx.main
         setup_delivery(fx)
         plan = m / "docs/plan.md"
-        plan.write_text(plan.read_text().replace("- Scenarios: it loads; it fails.\n",
-                                                 "- Scenarios: it loads; it fails.\n- Files: `src/one.txt`, `src/two.txt`, "
-                                                 "`one.txt`, `tools/`, `docs/refs/*.md`, `x/notes2.md`, `src/one-log.txt`.\n"))
-        (m / "src/one.txt").write_text("0\n")
-        # A bare name another file shares is the lane's own match; a directory, a glob and a path's end resolve too.
-        (m / "docs/one.txt").write_text("not the story's\n")
-        (m / "docs/refs").mkdir()
-        (m / "docs/refs/notes.md").write_text("notes\n")
-        (m / "docs/deep/x").mkdir(parents=True)
-        (m / "docs/deep/x/notes2.md").write_text("notes\n")
+        plan.write_text(plan.read_text()
+                        .replace("- Scenarios: it loads; it fails.\n",
+                                 "- Scenarios: it loads; it fails.\n- Files: `src/one.txt`, `src/two.txt`, `one.txt`, `tools/`, "
+                                 "`docs/refs/*.md`, `x/notes2.md`, `src/one-log.txt`, `x/a.md`, `./tools/fake_check.py`, "
+                                 "`Makefile`.\n")
+                        .replace("- Scenarios: it renders.\n", "- Scenarios: it renders.\n- Files: `src/two.txt`.\n")
+                        .replace("| Copy | \"Couldn't be loaded.\" |\n",
+                                 "| Copy | \"Couldn't be loaded.\" |\n| S10's files | `tools/s10.py` |\n"))
+        # A bare name or a path's end that several files share is the lane's own match; a directory and a glob resolve;
+        # a path's end matches whole folder names; a bare word with no extension, and a row naming S10, aren't S1's.
+        for path in ("src/one.txt", "docs/one.txt", "docs/refs/notes.md", "docs/deep/x/notes2.md", "docs/deep/yx/notes2.md",
+                     "src/one-dir/x/a.md", "docs/x/a.md", "docs/Makefile"):
+            (m / path).parent.mkdir(parents=True, exist_ok=True)
+            (m / path).write_text(f"{path}\n")
         commit(m, "FX-1: the plan names FX-2's files")
         (m / "docs/guide.md").write_text("guide\n")
         (m / "docs/rare.md").write_text("rare\n")
         commit(m, "FX-1: the docs")
-        # History: src/one.txt changes with docs/guide.md in 3 of its 5 changes, with docs/rare.md in 2 (too few), with
-        # docs/plan.md in 1, and once in a sweeping change that doesn't count.
-        # It also changes 3 times with a file the story names outside the lane, and with one of the lane's own, neither
-        # of which the warning repeats.
-        named, own = "docs/refs/notes.md", "src/one-extra.txt"
-        for k, also in enumerate((["docs/guide.md", "docs/rare.md", named, own], ["docs/guide.md", "docs/rare.md", named, own],
-                                  ["docs/guide.md", named, own], [])):
+        # History, without the sweeping change below: src/one.txt changes 5 times, docs/refs/notes.md (named) 4.
+        # docs/pair.md changes with src/one.txt in 4 of 5 and with notes.md in 3 of 4, so its best match is the later
+        # name. docs/guide.md, z1 and z2 change with notes.md in 3 of 4, docs/rare.md twice (too few), docs/gone.md 3
+        # times but is gone from the base, and src/one-extra.txt, the lane's own, as often as docs/pair.md. Four are
+        # shown, so a fifth that shouldn't be (the lane's own, or docs/log.md below) would show.
+        named, own, zs = "docs/refs/notes.md", "src/one-extra.txt", ["docs/z1.md", "docs/z2.md"]
+        common = ["docs/guide.md", named, own, "docs/pair.md", "docs/gone.md", *zs]
+        for k, also in enumerate(([*common, "docs/rare.md"], [*common, "docs/rare.md"], common, ["docs/pair.md", own])):
             (m / "src/one.txt").write_text(f"{k + 1}\n")
             for path in also:
                 (m / path).write_text(f"{path} {k}\n")
             commit(m, f"FX-1: change {k}")
+        sh("git", "rm", "-q", "docs/gone.md", cwd=m)
+        commit(m, "FX-1: docs/gone.md goes")
         (m / "sweep").mkdir()
         for k in range(45):
             (m / f"sweep/{k}.txt").write_text("x\n")
-        (m / "src/one.txt").write_text("sweep\n")
-        (m / "docs/guide.md").write_text("sweep\n")
-        commit(m, "FX-1: a sweeping change")
+        for path in ("src/one.txt", "docs/guide.md", named):
+            (m / path).write_text("sweep\n")
+        commit(m, "FX-1: a sweeping change, which would make guide.md 4 of 5 with notes.md if it counted")
         # src/one-log.txt changes 13 times, 3 of them with docs/log.md: often enough, but too small a share.
         (m / "src/one-log.txt").write_text("0\n")
         commit(m, "FX-1: a log")
@@ -821,19 +828,25 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
                 (m / "docs/log.md").write_text(f"{k}\n")
             commit(m, f"FX-1: log {k}")
         sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        # The lead's checkout holds a commit the base doesn't: the warning reads the base's files.
+        (m / "tools/local-only.py").write_text("x\n")
+        commit(m, "FX-1: not on the base")
         code, out = fx.flow("lead-init", cwd=m)
         self.assertEqual(code, 0, out)
         code, out = fx.flow("lead-assign", "FX-2", "--lane", "lane-1", "--title", "Lane 1", cwd=m)
         self.assertEqual(code, 0, out)
+        shared = "(no lane's; with docs/refs/notes.md in 3 of 4 changes)"
         self.assertIn("Files outside lane-1's owns, before it starts (lead-accept refuses a change to any of them):\n"
                       "  FX-2 names docs/deep/x/notes2.md (no lane's), docs/refs/notes.md (no lane's), src/two.txt (lane-2's), "
                       "tools/fake_check.py (no lane's), tools/fake_forge.py (no lane's)\n"
-                      "  FX-2's files often change with docs/guide.md (no lane's; with docs/refs/notes.md in 3 of 4 changes)\n"
+                      "  FX-2's files often change with docs/pair.md (no lane's; with src/one.txt in 4 of 5 changes), "
+                      f"docs/guide.md {shared}, docs/z1.md {shared}, docs/z2.md {shared}\n"
                       "Move each to lane-1's owns now, or plan the story on the lane that owns it.\n", out)
-        for quiet in ("docs/rare.md", "docs/log.md", "src/one-extra.txt"):
+        for quiet in ("docs/rare.md", "docs/log.md", "src/one-extra.txt", "docs/gone.md", "docs/x/a.md",
+                      "yx/notes2.md", "tools/s10.py", "Makefile", "./tools", "tools/local-only.py"):
             self.assertNotIn(quiet, out)
-        self.assertIn("Assignment message for lane-1", out)
-        # A story whose files are all its lane's gets no warning.
+        self.assertLess(out.index("Files outside"), out.index("Assignment message for lane-1"))
+        # A story that names only its lane's files gets no warning.
         code, out = fx.flow("lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2", cwd=m)
         self.assertEqual(code, 0, out)
         self.assertNotIn("Files outside", out)
