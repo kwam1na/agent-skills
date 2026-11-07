@@ -249,6 +249,12 @@ from lane-2 once the cause is known. Sensors: `tests/test_run_delivery.py`, `tes
 Lane 2, added by the lead after V26-3088, whose review deferred these two edges at its round bound. Files: `merge_queue.py`, `run_delivery.py`,
 `tests/test_merge_queue.py`, `tests/test_run_delivery.py`. Sensors: those tests and the corpus guards.
 
+### V26-3239. Describe the delivery record's close marks in the orchestration guide and run-delivery's SKILL.md
+
+Lane 2, added by the lead after V26-3109, whose hand-off named this doc gap. It starts once V26-3109 merges. Files:
+`references/orchestration-guide.md`, `skills/run-delivery/SKILL.md`, and the corpus pins that guard the close-out. Sensors: those pins and
+`tests/test_run_delivery.py`.
+
 ### V26-3178. Refuse a hand-off whose --run another subject already holds
 
 Lane 1, added by the lead while V26-2986 waits for V26-3064 to merge: a follow-up lane 1 found at V26-3005's hand-off. Files: `delivery_state.py`,
