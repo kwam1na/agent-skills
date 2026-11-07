@@ -6,7 +6,7 @@ import { readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 
-import { CORPUS, RENDER, REPLAYED_RUNS, ROOT, block, embedded, expect, openPage, pageWithRuns, readJson, renderIn, repository, summarize } from "./support.mjs";
+import { CORPUS, RENDER, REPLAYED_RUNS, ROOT, block, embedded, expect, openPage, pageWithRuns, readJson, renderIn, repository, runSync, summarize } from "./support.mjs";
 import { FIX, readings, reportView } from "./round-reports.mjs";
 
 const SOURCE = path.join(CORPUS, "source");
@@ -1107,7 +1107,7 @@ test("draws checks as chips up to twelve, says a run is stale after ninety minut
 
 test("follows the live server through the adapter it injects into the page", async () => {
   // The page exactly as the server serves it at /view/: the adapter goes in right after the opt-in marker.
-  const served = spawnSync("python3", ["-B", "-c", [
+  const served = runSync("python3", ["-B", "-c", [
     "import sys; sys.path.insert(0, sys.argv[1]); import render_state as r",
     "sys.stdin.reconfigure(encoding='utf-8'); sys.stdout.reconfigure(encoding='utf-8', newline='\\n')",
     "page = sys.stdin.read()",
@@ -1151,7 +1151,7 @@ test("prints the page for a document on stdin, and nothing for anything else", a
     expect(block(good.page, "delivery-runs")).toEqual({ "run-7": { runId: "run-7", unavailable: true } });
     // renderIn sends its document as JSON, so the raw text goes to the same command directly.
     for (const bad of ["not json", "[1]", "null"]) {
-      const result = spawnSync("python3", ["-B", RENDER, "line-map", "--config", ".agents/delivery-views.json", "--binding", ".agents/orchestration.json"],
+      const result = runSync("python3", ["-B", RENDER, "line-map", "--config", ".agents/delivery-views.json", "--binding", ".agents/orchestration.json"],
         { cwd: root, input: bad, encoding: "utf8" });
       expect(result.status).toBe(1);
       expect(result.stdout).toBe("");

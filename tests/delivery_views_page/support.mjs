@@ -1,7 +1,7 @@
 // Renders delivery-views pages with the shipped renderer and opens them as a browser would, under jsdom.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, cpSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +11,25 @@ export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 export const RENDER = path.join(ROOT, "skills", "delivery-views", "scripts", "render.py");
 export const CORPUS = path.join(ROOT, "tests", "fixtures", "delivery-views", "line-map");
 const PYTHON = process.env.PYTHON || "python3";
+
+/**
+ * spawnSync, with any `input` given to the child as a file it reads for stdin rather than through a pipe: on macOS a
+ * pipe that `input` writes into can leave the child waiting on stdin for an end that never comes, and the page lane
+ * then runs out its whole limit. A child that still runs past `timeout` is stopped, so the row fails and says so.
+ */
+export function runSync(command, args, { input, timeout = 120000, ...options } = {}) {
+  if (input === undefined) return spawnSync(command, args, { timeout, ...options });
+  const folder = mkdtempSync(path.join(tmpdir(), "page-input-"));
+  const file = path.join(folder, "stdin");
+  writeFileSync(file, input);
+  const fd = openSync(file, "r");
+  try {
+    return spawnSync(command, args, { timeout, ...options, stdio: [fd, "pipe", "pipe"] });
+  } finally {
+    closeSync(fd);
+    rmSync(folder, { recursive: true, force: true });
+  }
+}
 
 export function readJson(file) {
   return JSON.parse(readFileSync(file, "utf8"));
@@ -46,7 +65,7 @@ export const REPLAYED_RUNS = { argv: [PYTHON, "-B", "{root}/replay-runs.py", "{r
 
 /** Runs `render.py line-map` in a repository with the document on stdin. */
 export function renderIn(root, document, extra = []) {
-  const result = spawnSync(PYTHON, ["-B", RENDER, "line-map", "--config", ".agents/delivery-views.json",
+  const result = runSync(PYTHON, ["-B", RENDER, "line-map", "--config", ".agents/delivery-views.json",
     "--binding", ".agents/orchestration.json", ...extra], { cwd: root, input: JSON.stringify(document), encoding: "utf8" });
   return { page: result.stdout, status: result.status, stderr: result.stderr };
 }
@@ -85,7 +104,7 @@ export function renderHistoryPage(document, { config, runsCommands = null, expor
       mkdirSync(folder, { recursive: true });
       for (const [file, text] of Object.entries(exports)) writeFileSync(path.join(folder, file), text);
     }
-    const result = spawnSync(PYTHON, ["-B", RENDER, "history", "--config", ".agents/delivery-views.json",
+    const result = runSync(PYTHON, ["-B", RENDER, "history", "--config", ".agents/delivery-views.json",
       "--binding", ".agents/orchestration.json", ...(now ? ["--now", now] : [])],
       { cwd: root, input: JSON.stringify(document), encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
     if (result.status !== 0) throw new Error(`render.py history exited ${result.status}: ${result.stderr}`);
@@ -287,7 +306,7 @@ export async function openPage(page, scenario = {}) {
 
 const TOOLS = path.join(ROOT, "tests", "delivery_views_page", "page_tools.py");
 function tool(request) {
-  const result = spawnSync(PYTHON, ["-B", TOOLS], { input: JSON.stringify(request), encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  const result = runSync(PYTHON, ["-B", TOOLS], { input: JSON.stringify(request), encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
   if (result.status !== 0) throw new Error(`page_tools.py exited ${result.status}: ${result.stderr}`);
   return result.stdout;
 }
