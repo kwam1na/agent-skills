@@ -842,6 +842,36 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
             self.assertEqual(text.count("heads the lane's part"), 1, text)
         self.assertIn("Every finding this lens raised in an earlier round that is still open must appear", brief)
 
+    def test_a_plan_line_that_is_the_evidence_heading_isnt_taken_for_the_lanes(self) -> None:
+        # Only a top-level story heading lets the plan's part carry a whole `## Evidence so far` line; the lane's own
+        # heading comes after it, so a re-seed must cut at the last one.
+        fx = self.fixture()
+        m = fx.main
+        setup_delivery(fx)
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        plan = m / "docs/plan.md"
+        plan.write_text(plan.read_text().replace("### S1 (FX-2). Thing one (AC1). Regex `/api/one$`\n\n- Scenarios: it loads; it fails.\n",
+                                                 "# S1 (FX-2). Thing one (AC1)\n\n- Scenarios: it loads; it fails.\n\n"
+                                                 "## Evidence so far\n\n- PLAN-OWN-EVIDENCE\n\n# Rest\n"))
+        commit(m, "FX-1: a top-level story heading")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        wt = fx.lane("FX-2")
+        (wt / "src/one.txt").write_text("one\n")
+        commit(wt, "FX-2: one")
+        context = wt / ".orchestration/review/FX-2/context.md"
+        code, out = fx.flow("review-prepare", "FX-2", "--round", "1", cwd=wt)
+        self.assertEqual(code, 2, out)
+        context.write_text(context.read_text().replace(next(line for line in context.read_text().splitlines()
+                                                            if line.startswith(CONTEXT_TODO)), "- LANE-EVIDENCE"))
+        code, out = fx.flow("review-prepare", "FX-2", "--round", "1", cwd=wt)
+        self.assertEqual(code, 0, out)
+        seeded = context.read_text()
+        self.assertEqual(seeded.count("PLAN-OWN-EVIDENCE"), 1, seeded)
+        self.assertEqual(seeded.count("- LANE-EVIDENCE"), 1, seeded)
+        self.assertEqual(seeded.count("## Evidence so far\n"), 2, seeded)
+        self.assertLess(seeded.index("PLAN-OWN-EVIDENCE"), seeded.rindex("## Evidence so far"), seeded)
+
     def test_a_context_the_lane_wrote_its_own_way_is_left_as_it_is(self) -> None:
         fx = self.fixture()
         setup_delivery(fx)
