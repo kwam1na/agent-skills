@@ -54,7 +54,7 @@ the command reference.
 | Lead | `lead-run [--resume] [--once]` | The supervisor: keeps `serve` and the live view running, and each pass reconciles, cleans up merged stories once their lane moves off them, journals `finish.met`, renders with publishers, copies the record to `latest`, and runs the close-out once nothing holds it (references/config.md). `--resume` stops what a killed one left and starts it again; `--once` runs one pass. |
 | Lead | `lead-resolve <journal id>\|full-health --why T` | Resolves a recorded blocker, or asks the supervisor's next pass to rerun a failed `fullHealth` (under the `focused` posture, once the base returns to `gate`). |
 | Lead | `lead-brief` | Renders the lane brief from the templates and the config, and enters any story the record doesn't hold yet as planned work. |
-| Lead | `lead-assign <key...> --lane L --title T [--note N]` | Records the assignment; prints the assignment message. |
+| Lead | `lead-assign <key...> --lane L --title T [--note N]` | Records the assignment; prints the assignment message. First it warns, without refusing, of the files outside the lane that `lead-accept` would refuse: those the story's plan section names, and those that have often changed with them (in at least 3 and a quarter of a named file's recent changes), with each one's owner, so the lead can move them before the lane starts. |
 | Lead | `lead-accept <key> [--accept-blocked LABEL]... [--accept-restarts]` or `lead-accept --requeue <key>` | Verifies a hand-off's claims (head, PR, rounds, evidence, owned files, gates, in-app), makes the lead decide every blocked item and restart, marks the draft ready under the `readyPullRequests` grant, then accepts and journals the decisions. `--requeue` puts a stopped candidate the lead has resolved back in the queue at its handed head, with no new hand-off. On work already merged outside the queue it checks the merged PR instead of the open one, can't check owned files, marks nothing ready, and records the decisions once; work merged with no hand-off is refused, for the lead to journal a decision instead. |
 | Lead | `lead-cleanup [key...]` | After a story merges: keeps its lane evidence beside the record, then removes its checkout and local branch, and its remote branch only if `run-delivery.json` allows it and its PR is closed. Removes nothing unless every tip is on the base and the checkout is clean. With no keys, sweeps every story and skips the unmerged ones. |
 | Lead | `lead-reconcile` | One sweep: takes the binding's forge and tracker snapshots and reconciles the record with them, so a story's stop leaves "Not started" once its ticket starts or its draft PR opens, and reaches "In review" if the PR is opened for review. The supervisor runs one every pass. |
@@ -72,8 +72,8 @@ the command reference.
 python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py doctor [--delivery <key>] [--offline] [--run-adapters] [--run-gates]
 ```
 
-It prints one line per check: `ok`, `missing` or `wrong` with its fix, or `skipped` with the check it depends on or the
-flag that turns it on. A check whose prerequisite failed is skipped, so one missing prerequisite shows as one line.
+It prints one line per check: `ok`, `missing` or `wrong` with its fix, `warn` for a finding that doesn't fail it, or
+`skipped` with the check it depends on or the flag that turns it on. A check whose prerequisite failed is skipped, so one missing prerequisite shows as one line.
 It exits 0 when no check is `missing` or `wrong`, 1 when one is, and 2 on a usage error or a non-POSIX host.
 
 | Check | When |
@@ -96,6 +96,7 @@ It exits 0 when no check is `missing` or `wrong`, 1 when one is, and 2 on a usag
 | ffmpeg and ffprobe, with the filters video evidence uses | a story is marked for video evidence |
 | Node 22.6 or newer reads the harness configuration, through the generation's runtime loader | `harness.config.ts` exists |
 | The delivery file: every story has a lane, and lanes own disjoint files | `--delivery` |
+| Story files: each file a story's plan section names is its lane's. A file outside the lane is reported as `warn`, which doesn't fail the check, since a plan may move files between lanes as stories merge | `--delivery` |
 | The gates pass on the base, in a fresh prepared checkout that is removed afterwards | `--run-gates` |
 
 What it changes: it fetches the delivery base (not with `--offline`, which reads the local remote-tracking refs), runs
