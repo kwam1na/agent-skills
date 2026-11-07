@@ -2299,6 +2299,9 @@ class CloseStoppedPartwayTests(unittest.TestCase):
                 if path == "supervisor":
                     last = self.once(fx)
                     self.assertFalse(any("failed" in line for line in last.get("closeOut", [])), last)
+                    # A close-out that raised is recorded under the pass's close, and never reaches its friction note.
+                    self.assertFalse(str(last.get("close", "")).startswith("failed"), last)
+                    self.assertIn("friction", closed_of(fx), last)
                 else:
                     code, out = fx.flow("lead-close", cwd=fx.main)
                     self.assertIn(code, (0, 1), out)
