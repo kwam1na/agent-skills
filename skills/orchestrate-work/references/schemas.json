@@ -581,6 +581,26 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 200
+                  },
+                  "baseRerun": {
+                    "description": "For a check that failed on the candidate and was re-run on the base: that re-run's failing tests, as the binding's failure pattern finds them, and its output, relative to the state directory. After a declared flake's retry there, the retry's.",
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "log"
+                    ],
+                    "properties": {
+                      "failures": {
+                        "type": "array",
+                        "items": {
+                          "$ref": "#/$defs/name"
+                        }
+                      },
+                      "log": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
                   }
                 }
               }
