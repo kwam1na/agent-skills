@@ -99,6 +99,7 @@ ELEMENT_KEYS = {
 SELECTOR = re.compile(r"^(?P<array>[a-z]+)\[(?P<key>[A-Za-z]+)=(?P<value>[^\]]+)\]$")
 # Fields only the runner writes. Everything else, apart from the fields the
 # tool itself maintains, belongs to the lead.
+CLOSED_KIND = "delivery.closed"
 RUNNER_META = ("checking", "baseHead", "releasedHead", "checkHistory", "sources", "sourceReports")
 RUNNER_QUEUE = ("stage", "checks", "syncedHead", "checkSelection")
 # Written only by a lane's hand-off, through the tool: no patch, the lead's or the runner's, changes it.
@@ -1314,6 +1315,10 @@ def append_journal(
         if errors:
             raise StateError("entry_invalid", "; ".join(errors))
         _require_unicode(entry, "entry_invalid")
+        if kind == CLOSED_KIND:
+            # The close's started mark goes in with the entry, so a close journaled by hand carries it too. It is
+            # written first: a delivery.closed line never stands without its mark.
+            current = _with_closing(directory, current, {"started": {"entry": entry["id"], "at": entry["at"]}})
         line = json.dumps(entry, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n"
         complete = _journal_text(directory)[1]
         with open(directory / JOURNAL_FILE, "ab") as stream:
@@ -1324,6 +1329,38 @@ def append_journal(
             os.fsync(stream.fileno())
         _note_change(directory, "journal", version=current["version"], journal=entry["id"])
     return entry
+
+
+def _with_closing(directory: Path, current: dict, closing: dict) -> dict:
+    """Write the record's close marks, under the state lock the caller holds; returns the written state."""
+    updated = copy.deepcopy(current)
+    updated["meta"]["closing"] = closing
+    updated["version"] = current["version"] + 1
+    updated["meta"]["updatedAt"] = now()
+    errors = state_errors(updated)
+    if errors:
+        raise StateError("patch_invalid", "; ".join(errors))
+    _write_atomically(directory / STATE_FILE, dumps(updated))
+    _note_change(directory, "patch", version=updated["version"])
+    return updated
+
+
+def close_finished(directory: Path, *, entry: int) -> dict:
+    """The close's finished mark: the archive for delivery.closed entry ``entry`` has landed.
+
+    Only the latest delivery.closed counts, and only once its started mark is there; marking it again changes nothing.
+    """
+    with file_lock(directory / STATE_LOCK):
+        current = read_state(directory)
+        closed = [item for item in read_journal(directory) if item["kind"] == CLOSED_KIND]
+        if not closed or closed[-1]["id"] != entry:
+            raise StateError("close_unknown", f"journal entry {entry} is not the latest {CLOSED_KIND}")
+        closing = current["meta"].get("closing") or {}
+        if (closing.get("started") or {}).get("entry") != entry:
+            raise StateError("close_unknown", f"the record has no started mark for journal entry {entry}")
+        if (closing.get("finished") or {}).get("entry") == entry:
+            return current
+        return _with_closing(directory, current, {**closing, "finished": {"entry": entry, "at": now()}})
 
 
 # Native review observations: independent of product runs and admission.
@@ -4119,6 +4156,8 @@ def main(argv: list[str] | None = None) -> int:
     entry.add_argument("--subject")
     entry.add_argument("--writer", choices=("lead", "lane"), default="lead",
                        help="lane: a lane journals a review round of its own work")
+    finished = commands.add_parser("close-finished", help="mark the close of delivery.closed entry N finished, once its archive has landed")
+    finished.add_argument("--entry", type=int, required=True)
     _add_wait_arguments(commands.add_parser("wait", help="read the record and the machine until something needs the lead"))
     evidence = commands.add_parser("review-evidence",
                                    help="say whether a subject's review evidence is captured for its reviewed head")
@@ -4233,6 +4272,8 @@ def main(argv: list[str] | None = None) -> int:
                     writer="lane" if args.writer == "lane" else None,
                 ),
             }
+        elif args.command == "close-finished":
+            result = {"ok": True, "state": close_finished(args.dir, entry=args.entry)}
         elif args.command == "headline":
             bound = binding_state(args.binding).get("statusOverrideMaxAgeSeconds") if args.binding is not None else None
             age = args.max_age if args.max_age is not None else bound or STATUS_OVERRIDE_MAX_AGE_SECONDS

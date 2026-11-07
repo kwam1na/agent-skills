@@ -361,6 +361,50 @@
                 }
               }
             }
+          },
+          "closing": {
+            "description": "The close's two marks, each naming its delivery.closed journal entry. The state tool writes started in the same write as that entry; finished is written once the archive has landed, in the live record and the archived copy. Started with no finished mark for the same entry, and no close running, is a close that stopped partway. A mark for an earlier entry doesn't count.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "started"
+            ],
+            "properties": {
+              "started": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "entry",
+                  "at"
+                ],
+                "properties": {
+                  "entry": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "at": {
+                    "$ref": "#/$defs/timestamp"
+                  }
+                }
+              },
+              "finished": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "entry",
+                  "at"
+                ],
+                "properties": {
+                  "entry": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "at": {
+                    "$ref": "#/$defs/timestamp"
+                  }
+                }
+              }
+            }
           }
         }
       },
