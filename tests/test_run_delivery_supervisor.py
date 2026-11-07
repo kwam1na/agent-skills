@@ -950,6 +950,21 @@ class SupervisorPassTests(unittest.TestCase):
         self.once(fx)
         self.assertEqual(len(kinds(fx, "delivery.closed")), 1, passes(fx)[-1])
 
+    def test_a_merged_story_whose_checkout_is_still_there_holds_the_close(self) -> None:
+        fx = self.fixture()
+        self.closable(fx)
+        # Everything else is met, but cleanup can't remove FX-2's checkout this pass: the close waits for it, as it
+        # does when the merge lands after the pass's cleanup has read the record.
+        wt = fx.main / "lanes/FX-2"
+        (wt / "stray.txt").write_text("not committed\n")
+        self.holds_alone(fx, "not cleaned up: FX-2")
+        self.assertTrue(wt.exists())
+        (wt / "stray.txt").unlink()
+        last = self.once(fx)
+        self.assertFalse(wt.exists(), "the pass closed without cleaning up the merged story's checkout")
+        self.assertEqual(last["closeHeldBy"], [], last)
+        self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)
+
     def test_what_the_close_waits_on_is_cut_to_five_and_a_pass_still_writing_is_passed_over(self) -> None:
         fx = self.fixture()
         log = fx.tmp / "flow-log/FX-1.supervisor.jsonl"

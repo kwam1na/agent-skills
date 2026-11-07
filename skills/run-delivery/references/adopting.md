@@ -484,8 +484,8 @@ When a lane has no story left, tell it so; it sets its focus `done`, as its brie
 python3 -B .agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py --dir .orchestration/state focus --lane lane-1 --text "<story-key> merged; nothing left" --state done
 ```
 
-When every story is merged or removed, every finish line is met, every lane is idle or done, and nothing in "Needs
-you" holds it, the supervisor closes the delivery itself, in order: `fullHealth` once per base head (skipped when the
+When every story is merged or removed, every merged story's checkout is cleaned up, every finish line is met, every
+lane is idle or done, and nothing in "Needs you" holds it, the supervisor closes the delivery itself, in order: `fullHealth` once per base head (skipped when the
 base declares the `focused` posture), a follow-up for
 each deferred finding, `delivery.closed` and then a wait until the tracker has every update, the archive, a friction
 note stub beside
