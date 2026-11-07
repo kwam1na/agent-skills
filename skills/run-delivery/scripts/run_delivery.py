@@ -5559,7 +5559,8 @@ def forget_checkout(c, checkout: Path) -> None:
     common = Path(git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=c.root))
     for entry in (common / "worktrees").glob("*/gitdir") if (common / "worktrees").is_dir() else []:
         with contextlib.suppress(OSError):
-            if Path(entry.read_text().strip()).parent == checkout:
+            # Git records the resolved folder: /private/var for a checkout under /var.
+            if Path(entry.read_text().strip()).parent.resolve() == checkout.resolve():
                 shutil.rmtree(entry.parent, ignore_errors=True)
 
 
