@@ -1819,7 +1819,10 @@ def plan_review_reduce(args) -> None:
     for lens in meta["lenses"]:
         remove_checkout(folder / "checkouts" / lens)
     plan_review_summary(c, [*rounds, outcome])
-    if not getattr(c, "plan_store", None) and (c.state / "state.json").exists():
+    if getattr(c, "plan_store", None):
+        if aligned:
+            print(f"  {write_plan_review_record(c, [*rounds, outcome])}")
+    elif (c.state / "state.json").exists():
         print(f"  {rebuild_plan_quietly(c)}")
 
 
@@ -1863,8 +1866,168 @@ def plan_review_end(args) -> None:
     (folder / "ended.json").write_text(json.dumps({"at": now(), "round": rounds[-1]["round"], "reason": reason},
                                                   indent=2) + "\n")
     print(f"{plan_review_name(c)} plan review ended after round {rounds[-1]['round']}: {reason}")
-    if not getattr(c, "plan_store", None) and (c.state / "state.json").exists():
+    if getattr(c, "plan_store", None):
+        print(f"  {write_plan_review_record(c, rounds)}")
+    elif (c.state / "state.json").exists():
         print(f"  {rebuild_plan_quietly(c)}")
+
+
+# A standalone plan's review record, `<plan stem>.review.json` beside the plan: the shape the hand-written records in a
+# repository's plans already have, with what the store adds. One validator checks both.
+
+PLAN_REVIEW_RECORD = "plan-review-evidence/1"
+PLAN_REVIEW_RECORD_WRITER = "run-delivery plan-review"
+PLAN_REVIEW_OUTCOMES = {"aligned": "unanimous-alignment", "ended": "ended-without-alignment"}
+
+
+def plan_review_record_path(c) -> Path:
+    return c.root / c.plan.with_name(c.plan.stem + ".review.json")
+
+
+def plan_review_record(c, rounds: list[dict]) -> dict:
+    """The record of a review that aligned or was ended, from its store alone."""
+    last = rounds[-1]
+    ended = plan_review_ended(c)
+    plan = c.plan.as_posix()
+    reviewed = subprocess.run(["git", "show", f"{last['candidate']}:{plan}"], cwd=c.root, capture_output=True,
+                              check=True).stdout  # the blob's own bytes, with no newline translation
+    folder = plan_review_dir(c)
+    reviews = []
+    for lens in last["lenses"]:
+        n, entry = next((r["round"], e) for r in reversed(rounds) for e in r["entries"] if e["lens"] == lens)
+        raw = result_path(folder, n, c.lenses[lens][0]).read_bytes()
+        reviews.append({"lens": lens, "round": n, "findings": entry["result"].get("findings", []),
+                        "result": entry["result"], "resultSha256": hashlib.sha256(raw).hexdigest()})
+    count = len(rounds)
+    risks = [f"{count} review round{'' if count == 1 else 's'}; findings open after each round: "
+             f"{', '.join(str(len(r['open'])) for r in rounds)}."]
+    if ended:
+        risks.append(f"Ended without alignment after round {ended['round']}: {ended['reason']}")
+        risks += [f"Open {f['severity']} {f['id']} ({f['lens']}): {f['summary']}" for f in last["open"]]
+    current = c.root / c.plan
+    if not current.is_file() or current.read_bytes() != reviewed:
+        risks.append(f"The plan's current text differs from round {last['round']}'s candidate {last['candidate'][:12]}; "
+                     "this record covers the reviewed text.")
+    record = {"schemaVersion": PLAN_REVIEW_RECORD, "writtenBy": PLAN_REVIEW_RECORD_WRITER, "plan": plan,
+              "planSha256": hashlib.sha256(reviewed).hexdigest(), "planCommit": last["candidate"],
+              "outcome": PLAN_REVIEW_OUTCOMES["ended" if ended else "aligned"], "requiredLenses": last["lenses"],
+              "rounds": [{"round": r["round"], "candidate": r["candidate"], "outcome": r["outcome"],
+                          "startedAt": r["startedAt"], "finishedAt": r["finishedAt"],
+                          "open": [f["id"] for f in r["open"]]} for r in rounds],
+              "reviews": reviews, "residualRisks": risks}
+    if ended:
+        record["ended"] = {"round": ended["round"], "reason": ended["reason"], "at": ended["at"]}
+    return record
+
+
+def write_plan_review_record(c, rounds: list[dict]) -> str:
+    """Write the review's record beside the plan, unless a hand-written one is there; says which."""
+    path = plan_review_record_path(c)
+    shown = path.relative_to(c.root).as_posix()
+    existing = load_json(path) if path.is_file() else None
+    if path.exists() and not (isinstance(existing, dict) and existing.get("writtenBy") == PLAN_REVIEW_RECORD_WRITER):
+        return f"kept the hand-written review record {shown}; the store's record wasn't written"
+    record = plan_review_record(c, rounds)
+    problems = plan_review_record_problems(record)
+    if problems:
+        raise Stop(f"the review record for {shown} fails its own check:\n  " + "\n  ".join(problems))
+    path.write_text(json.dumps(record, indent=2) + "\n")
+    return f"wrote the review record {shown}; commit it with the plan"
+
+
+def plan_review_record_problems(record: object) -> list[str]:
+    """What's wrong with a `plan-review-evidence/1` record, hand-written or generated, as messages; empty when valid."""
+    if not isinstance(record, dict):
+        return ["the record must be a JSON object"]
+    problems = []
+    if record.get("schemaVersion") != PLAN_REVIEW_RECORD:
+        problems.append(f"schemaVersion must be {PLAN_REVIEW_RECORD}")
+    plan = record.get("plan")
+    if (not isinstance(plan, str) or not plan.strip() or plan.startswith("/") or "\\" in plan
+            or ".." in plan.split("/")):
+        problems.append("plan must be the plan's path inside the repository, with / separators")
+    if not isinstance(record.get("planSha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", record["planSha256"]):
+        problems.append("planSha256 must be 64 lowercase hex digits")
+    outcome = record.get("outcome")
+    if outcome not in PLAN_REVIEW_OUTCOMES.values():
+        problems.append(f"outcome must be one of {', '.join(PLAN_REVIEW_OUTCOMES.values())}")
+    lenses = record.get("requiredLenses")
+    if (not isinstance(lenses, list) or not 1 <= len(lenses) <= 12 or len(set(map(str, lenses))) != len(lenses)
+            or not all(isinstance(lens, str) and lens.strip() for lens in lenses)):
+        problems.append("requiredLenses must be 1 to 12 different lens names")
+        lenses = None
+    reviews = record.get("reviews")
+    if not isinstance(reviews, list) or not all(isinstance(r, dict) for r in reviews):
+        problems.append("reviews must be a list of objects, one per required lens")
+        reviews = []
+    elif lenses is not None and sorted(map(str, (r.get("lens") for r in reviews))) != sorted(lenses):
+        problems.append("reviews must hold exactly one review for each required lens")
+    risks = record.get("residualRisks")
+    if not isinstance(risks, list) or not all(isinstance(r, str) and r.strip() for r in risks):
+        problems.append("residualRisks must be a list of non-empty strings")
+    for review in reviews:
+        lens = review.get("lens")
+        findings = review.get("findings")
+        if not isinstance(findings, list) or not all(isinstance(f, dict) for f in findings):
+            problems.append(f"{lens}: findings must be a list of objects")
+            continue
+        if findings and outcome == PLAN_REVIEW_OUTCOMES["aligned"]:
+            problems.append(f"{lens}: a review with findings contradicts outcome unanimous-alignment")
+    ended = record.get("ended")
+    if outcome == PLAN_REVIEW_OUTCOMES["ended"]:
+        if not isinstance(ended, dict) or not isinstance(ended.get("reason"), str) or not ended["reason"].strip():
+            problems.append("ended must give the operator's reason when the outcome is ended-without-alignment")
+    elif ended is not None:
+        problems.append("ended belongs only to outcome ended-without-alignment")
+    rounds = record.get("rounds")
+    if rounds is None:  # a hand-written record names no rounds; what follows is the store's part
+        return problems
+    if (not isinstance(rounds, list) or not rounds or not all(isinstance(r, dict) for r in rounds)
+            or [r.get("round") for r in rounds] != list(range(1, len(rounds) + 1))):
+        return problems + ["rounds must be the review's rounds, numbered from 1 with none skipped"]
+    outcomes = [r.get("outcome") for r in rounds]
+    # An amendment reviews on after an aligned round, so an earlier round may be aligned; the last decides the outcome.
+    if any(o not in ("unresolved", "aligned") for o in outcomes[:-1]) or outcomes[-1] != (
+            "aligned" if outcome == PLAN_REVIEW_OUTCOMES["aligned"] else "unresolved"):
+        problems.append("rounds: each round is aligned or unresolved, and the last must agree with outcome")
+    if not all(isinstance(r.get("candidate"), str) and re.fullmatch(r"[0-9a-f]{40,64}", r["candidate"]) for r in rounds):
+        problems.append("rounds: each round's candidate must be a full commit id")
+    if record.get("planCommit") != rounds[-1].get("candidate"):
+        problems.append("planCommit must be the last round's candidate")
+    if isinstance(ended, dict) and ended.get("round") != len(rounds):
+        problems.append("ended.round must be the last round")
+    for review in reviews:
+        lens, result, n = review.get("lens"), review.get("result"), review.get("round")
+        if not isinstance(n, int) or isinstance(n, bool) or not 1 <= n <= len(rounds):
+            problems.append(f"{lens}: round must be one of the review's rounds")
+        if not isinstance(result, dict) or result.get("lensId") != lens or result.get("round") != n:
+            problems.append(f"{lens}: result must be this lens's own result from its round (lensId and round)")
+        elif result.get("findings", []) != review.get("findings"):
+            problems.append(f"{lens}: findings must be its result's findings")
+        if not isinstance(review.get("resultSha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", review["resultSha256"]):
+            problems.append(f"{lens}: resultSha256 must be 64 lowercase hex digits")
+    return problems
+
+
+def plan_review_check(args) -> None:
+    """Validate review records; prints one line per record and refuses when any fails."""
+    failed = False
+    for given in args.records:
+        path = Path(given)
+        try:
+            record = json.loads(path.read_text())
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            print(f"{path}: can't be read as JSON ({error})")
+            failed = True
+            continue
+        problems = plan_review_record_problems(record)
+        if problems:
+            failed = True
+            print(f"{path}: not a valid {PLAN_REVIEW_RECORD} record:\n  " + "\n  ".join(problems))
+        else:
+            print(f"{path}: a valid {PLAN_REVIEW_RECORD} record")
+    if failed:
+        raise Stop("some review records aren't valid")
 
 
 # -- lane: gates, build and in-app checks -------------------------------------------------
@@ -6846,6 +7009,8 @@ def main(argv: list[str] | None = None) -> None:
     q = command(review_commands, "end", help="end a review that isn't converging, with the operator's reason")
     q.add_argument("--plan", help=plan_help)
     q.add_argument("--reason", required=True); q.set_defaults(fn=plan_review_end)
+    q = command(review_commands, "check", help="validate plan-review-evidence/1 records, hand-written or written by a review")
+    q.add_argument("records", nargs="+", metavar="RECORD"); q.set_defaults(fn=plan_review_check)
     p = command(sub, "gate"); p.add_argument("key"); p.set_defaults(fn=gate)
     p = command(sub, "build"); p.add_argument("key"); p.set_defaults(fn=build)
     p = command(sub, "app-check"); p.add_argument("key"); p.add_argument("name")
