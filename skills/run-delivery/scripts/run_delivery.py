@@ -6508,6 +6508,7 @@ class Doctor:
         return [
             ("platform", "host and tools", (), self.platform),
             ("binding", "orchestration binding", ("platform",), self.check_binding),
+            ("candidate", "merge queue candidate step", ("binding",), self.candidate_step),
             ("config", "configuration", ("platform",), self.config),
             ("generation", "release generation", ("platform",), self.generation),
             ("committed", "release on the delivery base", ("config", "binding", "generation"), self.committed),
@@ -6634,6 +6635,16 @@ class Doctor:
                              "orchestration-binding/1")
         self.binding = binding
         return "ok", f"{path.name} validates against orchestration-binding/1"
+
+    def candidate_step(self):
+        import merge_queue  # noqa: E402  (the installed release's own, which check_binding put on the path)
+        argv = self.binding["candidate"]
+        problems = merge_queue.candidate_problems(argv, lambda relative: (self.root / relative).is_file(),
+                                                  os.environ.get("PATH"))
+        if problems:
+            return "wrong", (f"the binding's candidate step can't run: {'; '.join(problems)}; fix: correct its argv in "
+                             ".agents/orchestration.json, then run it once by hand with a branch that exists")
+        return "ok", f"{' '.join(argv)} resolves"
 
     def base(self) -> str | None:
         """The delivery base: the named delivery file's baseBranch, or the binding's base.ref (also when the file
