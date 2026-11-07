@@ -190,7 +190,7 @@ for path in args:
         sys.exit(1)
 """,
     "provider.py": """
-import json, pathlib, sys, time
+import json, os, pathlib, sys, time
 request = json.load(sys.stdin)
 mode = pathlib.Path("tools/provider-mode.txt").read_text().strip()
 py = sys.executable
@@ -201,6 +201,8 @@ def check(cid, *args, **more):
 if mode == "fail":
     sys.exit(2)
 if mode == "refuse":
+    if os.environ.get("MQ_STEP_TOKEN"):
+        sys.stderr.write("asked with " + os.environ["MQ_STEP_TOKEN"] + "\\n")
     sys.stderr.write("over the budget: unit (400s), e2e (700s)\\n")
     sys.exit(3)
 if mode == "malformed":
@@ -311,6 +313,7 @@ if sys.argv[1] == "on":
 else:
     pathlib.Path(".lease-material").unlink(missing_ok=True)
     if os.environ.get("MQ_WITHDRAW") == "fail":
+        sys.stderr.write("withdraw refused for " + os.environ.get("MQ_STEP_TOKEN", "") + "\\n")
         sys.exit(1)
 """,
     "leadinput.py": """
@@ -940,12 +943,18 @@ class SyncSafetyTests(MergeQueueTestCase):
                 self.assertEqual(adopter.tip("feature"), head)
 
     def test_a_failing_withdraw_stops_and_pushes_nothing(self) -> None:
-        adopter = self.environment_adopter({"MQ_WITHDRAW": "fail"})
+        secret = "s3cr3t-withdraw-value-from-the-environment"
+        adopter = self.environment_adopter({"MQ_WITHDRAW": "fail", "MQ_STEP_TOKEN": secret})
         head = adopter.lane_commit("feature", {"src/app.txt": "app two\n"})
         adopter.enqueue("feature", head, lead_inputs=["api"])
         adopter.grant("backend")
-        self.assertStopped(self.run_queue(adopter, "feature"), "lease_withdraw_failed")
+        detail = self.assertStopped(self.run_queue(adopter, "feature"), "lease_withdraw_failed")["stop"]["detail"]
         self.assertEqual(adopter.tip("feature"), head)
+        # Why, scrubbed, and the log that keeps the whole output, secret and all.
+        self.assertIn("withdrawing lease backend failed: withdraw refused for [redacted]; nothing is pushed; ", detail)
+        self.assertNotIn(secret, detail)
+        log = re.search(r"its whole output is in (logs/\S+\.log) under the state directory", detail).group(1)
+        self.assertIn(f"withdraw refused for {secret}", (adopter.state / log).read_text(encoding="utf-8"))
 
     def test_every_git_command_runs_with_the_empty_hooks_directory(self) -> None:
         adopter = self.adopter()
@@ -1135,6 +1144,16 @@ class RegenerableListingTests(MergeQueueTestCase):
                                                           **(marked if version == "base" else keep)))
                     results = self.run_queue(adopter, "feature")
                     self.stopped_naming_the_lock(adopter, results, base, head, f"at the {version} {says}")
+
+    def test_a_failing_listing_says_why_scrubbed_and_names_its_log(self) -> None:
+        adopter = self.lock_adopter([PY, "tools/listing.py"])
+        head = self.candidate(adopter, self.side({"src/app.txt": "app two\n"}))
+        base = adopter.advance_base(self.side({"src/lib.txt": "lib two\n"}, listingMode="fails"))
+        results = self.run_queue(adopter, "feature")
+        self.stopped_naming_the_lock(adopter, results, base, head, "at the base exited 1: cannot list; its whole output is in logs/")
+        detail = results[-1].document()["stop"]["detail"]
+        log = re.search(r"its whole output is in (logs/\S+\.log) under the state directory", detail).group(1)
+        self.assertIn("cannot list", (adopter.state / log).read_text(encoding="utf-8"))
 
     def test_a_version_without_the_path_stops(self) -> None:
         adopter = self.adopter({"regenerable": {
@@ -1475,6 +1494,106 @@ class MergeRefusalDetailTests(MergeQueueTestCase):
         tail = queue.scrubbed_tail(straddling, environment, limit=25)
         self.assertEqual(tail, ("[redacted]" + "y" * 20)[-25:])
         self.assertFalse(any(part in tail for part in ("value", "the-token", "of-the")))
+
+
+class StepStderrTests(MergeQueueTestCase):
+    """Every runner step that refuses keeps its whole output in a log and says why in the stop, bounded and scrubbed."""
+
+    SECRET = "s3cr3t-step-value-from-the-environment"
+
+    def loud(self, step: str, *extra: str) -> list[str]:
+        """A step that writes a secret and a marker to its stderr, then fails."""
+        code = ("import os, sys; sys.stderr.write('using ' + os.environ['MQ_STEP_TOKEN'] + '\\n'"
+                f" + 'x' * 2000 + '\\nMARKER-{step}: the step refused for ' + os.environ['MQ_STEP_TOKEN'] + '\\n'); sys.exit(1)")
+        return [PY, "-c", code, *extra]
+
+    def rows(self) -> dict[str, tuple[dict, str, str]]:
+        """Per step: the binding change that makes it the loud one, the stop it gives, and what the detail starts with."""
+        return {
+            "ready": ({"ready": self.loud("ready", "{candidate}")}, "ready_refused", "ready refused feature: "),
+            "prepare": ({"prepare": [self.loud("prepare")]}, "prepare_failed", f"prepare {PY} failed: "),
+            "candidate": ({"candidate": self.loud("candidate", "{candidate}")}, "candidate_unresolved",
+                          "feature did not resolve to a branch and head: the candidate command exited 1; stderr: "),
+            "regenerator": ({"regenerable": {"paths": ["gen/**"], "regenerators": [self.loud("regenerator")]}},
+                            "sync_step_failed", f"regenerator {PY} failed: "),
+            "postSync": ({"postSync": [{"argv": self.loud("postSync"), "paths": ["notes/fingerprint.txt"]}]},
+                         "sync_step_failed", f"postSync step {PY} failed: "),
+        }
+
+    def test_each_step_keeps_its_stderr_in_a_log_and_a_scrubbed_tail_in_the_stop(self) -> None:
+        for step, (changes, reason, opening) in self.rows().items():
+            with self.subTest(step=step):
+                self.fresh()
+                adopter = self.environment_adopter({"MQ_STEP_TOKEN": self.SECRET}, changes)
+                self.candidate(adopter)
+                before = adopter.tip("main")
+                document = self.assertStopped(self.run_queue(adopter, "feature"), reason)
+                Draft202012Validator(schema("merge-queue-result")).validate(document)
+                self.assertEqual(adopter.tip("main"), before)
+                detail = document["stop"]["detail"]
+                self.assertTrue(detail.startswith(opening), detail)
+                # The secret on the marker's own line is in the tail, so only the scrub keeps it out.
+                self.assertIn(f"MARKER-{step}: the step refused for [redacted]", detail)
+                self.assertNotIn("x" * (queue.TAIL_LIMIT + 1), detail, "only a bounded tail is kept")
+                # The whole stderr, secret and all, is in the log the detail names, under the state directory.
+                log = re.search(r"its whole output is in (logs/\S+\.log) under the state directory", detail).group(1)
+                kept = (adopter.state / log).read_text(encoding="utf-8")
+                self.assertIn(f"using {self.SECRET}\n" + "x" * 2000 + f"\nMARKER-{step}: the step refused for {self.SECRET}\n", kept)
+                self.assertNotIn(self.SECRET, json.dumps(document))
+                for name in (state_tool.STATE_FILE, state_tool.JOURNAL_FILE):
+                    self.assertNotIn(self.SECRET, (adopter.state / name).read_text(encoding="utf-8"))
+
+    def test_a_refused_push_says_why_and_names_its_log(self) -> None:
+        adopter = self.adopter()
+        head = self.candidate(adopter)
+        adopter.advance_base({"src/lib.txt": "lib two\n"})
+        # A held lock on the candidate's ref makes the remote refuse the synced head's push.
+        lock = adopter.remote / "refs" / "heads" / "feature.lock"
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.write_bytes(b"")
+        detail = self.assertStopped(self.run_queue(adopter, "feature"), "push_refused")["stop"]["detail"]
+        self.assertEqual(adopter.tip("feature"), head)
+        self.assertIn("pushing feature failed: ", detail)
+        self.assertIn("feature", detail.split("failed: ", 1)[1].split("; its whole output", 1)[0], "the tail carries git's words")
+        log = re.search(r"its whole output is in (logs/\S+\.log) under the state directory", detail).group(1)
+        self.assertIn("lock", (adopter.state / log).read_text(encoding="utf-8"))
+
+    def test_the_guide_states_what_the_scrub_removes_and_that_it_removes_nothing_else(self) -> None:
+        guide = " ".join((ROOT / "skills/orchestrate-work/references/orchestration-guide.md").read_text(encoding="utf-8").split())
+        for phrase in (
+                "Every step the runner runs for a candidate keeps its whole output when it refuses",
+                "The scrub has a limit.",
+                "It removes nothing else: a secret outside the environment that matches none of these reaches the stop, "
+                "the record and the journal.",
+                "The log is never scrubbed"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, guide)
+
+    def test_a_secret_inside_the_tail_is_redacted_there(self) -> None:
+        # The secret on the marker's own line, so the tail would carry it if the scrub did not run.
+        code = ("import os, sys; sys.stderr.write('refused for ' + os.environ['MQ_STEP_TOKEN'] + ' and ghp_' + 'A' * 36"
+                " + '\\n'); sys.exit(1)")
+        adopter = self.environment_adopter({"MQ_STEP_TOKEN": self.SECRET}, {"ready": [PY, "-c", code, "{candidate}"]})
+        self.candidate(adopter)
+        detail = self.assertStopped(self.run_queue(adopter, "feature"), "ready_refused")["stop"]["detail"]
+        self.assertIn("ready refused feature: refused for [redacted] and [redacted]; its whole output is in logs/", detail)
+
+    def test_a_step_that_prints_nothing_or_times_out_says_so_and_names_its_log(self) -> None:
+        silent = [PY, "-c", "import sys; sys.exit(1)"]
+        slow = [PY, "-c", "import time; time.sleep(30)"]
+        for how, argv, says in (("silent", silent, "printed nothing"), ("slow", slow, "timed out")):
+            for step, changes, reason in (
+                    ("ready", {"ready": [*argv, "{candidate}"]}, "ready_refused"),
+                    ("prepare", {"prepare": [argv]}, "prepare_failed"),
+                    ("postSync", {"postSync": [{"argv": argv, "paths": ["notes/fingerprint.txt"]}]}, "sync_step_failed")):
+                with self.subTest(step=step, how=how):
+                    self.fresh()
+                    adopter = self.environment_adopter({}, {**changes, "checkTimeoutSeconds": 2})
+                    self.candidate(adopter)
+                    detail = self.assertStopped(self.run_queue(adopter, "feature"), reason)["stop"]["detail"]
+                    self.assertIn(says, detail)
+                    log = re.search(r"its whole output is in (logs/\S+\.log) under the state directory", detail).group(1)
+                    self.assertTrue((adopter.state / log).is_file())
 
 
 class SelectionTests(MergeQueueTestCase):
@@ -5704,6 +5823,10 @@ class LeadSelectionTests(MergeQueueTestCase):
         self.assertNotEqual(adopter.item("first")["stage"], "merged")
 
 
+# What a refused step's stop ends with: its reason, then the log that keeps its whole output.
+KEPT_AFTER = r"{}; its whole output is in logs/\S+\.log under the state directory\Z"
+
+
 class CandidateStepTests(MergeQueueTestCase):
     """The candidate step says why it gave no branch and head, a binding must pass {candidate}, and serve holds,
     taking nothing, when the step's program or script is missing."""
@@ -5744,7 +5867,7 @@ class CandidateStepTests(MergeQueueTestCase):
     def test_text_where_json_belongs_is_shown_bounded(self) -> None:
         detail, _ = self.stop(self.adopter({"candidate": self.script("print('x' * 1000 + ' END')")}))
         self.assertIn("the candidate command printed no JSON; stdout: ", detail)
-        self.assertTrue(detail.endswith("x END"), detail)
+        self.assertRegex(detail, KEPT_AFTER.format("x END"))
         self.assertNotIn("x" * queue.CANDIDATE_OUT_LIMIT, detail)
 
     def test_json_without_a_head_shows_the_answer(self) -> None:
@@ -5753,12 +5876,12 @@ class CandidateStepTests(MergeQueueTestCase):
 
     def test_a_silent_failure_says_so(self) -> None:
         detail, _ = self.stop(self.adopter({"candidate": self.script("import sys; sys.exit(4)")}))
-        self.assertTrue(detail.endswith("the candidate command exited 4; it printed nothing"), detail)
+        self.assertRegex(detail, KEPT_AFTER.format(re.escape("the candidate command exited 4; it printed nothing")))
 
     def test_a_candidate_command_that_runs_too_long_says_it_timed_out(self) -> None:
         adopter = self.adopter({"candidate": self.script("import time; time.sleep(30)"), "checkTimeoutSeconds": 1})
         detail, _ = self.stop(adopter)
-        self.assertTrue(detail.endswith("the candidate command timed out after 1s"), detail)
+        self.assertRegex(detail, KEPT_AFTER.format(re.escape("the candidate command timed out after 1s")))
 
     def test_a_failing_command_is_never_resolved_even_with_a_valid_answer(self) -> None:
         code = ("import subprocess, sys; subprocess.run([sys.executable, 'tools/candidate.py', sys.argv[1]], check=True)"
@@ -5768,7 +5891,7 @@ class CandidateStepTests(MergeQueueTestCase):
 
     def test_a_failing_command_that_explains_on_stdout_shows_it(self) -> None:
         detail, _ = self.stop(self.adopter({"candidate": self.script("print('no such PR'); import sys; sys.exit(1)")}))
-        self.assertTrue(detail.endswith("the candidate command exited 1; stdout: no such PR"), detail)
+        self.assertRegex(detail, KEPT_AFTER.format(re.escape("the candidate command exited 1; stdout: no such PR")))
 
     def test_an_invalid_branch_is_named(self) -> None:
         code = "import json; print(json.dumps({'branch': 'bad..name', 'head': '0' * 40}))"
@@ -6007,6 +6130,16 @@ class ProviderRefusalTests(MergeQueueTestCase):
         self.assertStopped(self.run_queue(adopter, "feature"), "provider_refused")
         self.assertEqual(self.ran(adopter), [])
         self.assertEqual(adopter.tip("main"), base)
+
+    def test_a_refusing_providers_words_are_scrubbed_before_they_reach_the_record(self) -> None:
+        secret = "s3cr3t-provider-value-from-the-environment"
+        adopter = self.environment_adopter({"MQ_STEP_TOKEN": secret}, self.STOPS)
+        self.candidate(adopter, {"src/app.txt": "app two\n", "tools/provider-mode.txt": "refuse\n"})
+        document = self.assertStopped(self.run_queue(adopter, "feature"), "provider_refused")
+        self.assertIn("asked with [redacted]", document["stop"]["detail"])
+        self.assertNotIn(secret, json.dumps(document))
+        for name in (state_tool.STATE_FILE, state_tool.JOURNAL_FILE):
+            self.assertNotIn(secret, (adopter.state / name).read_text(encoding="utf-8"))
 
     def test_a_refusal_from_the_candidate_s_own_provider_stops_it_too(self) -> None:
         adopter = self.adopter(self.STOPS)

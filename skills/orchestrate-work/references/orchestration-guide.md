@@ -286,7 +286,7 @@ supervisor's.
   | Code | What the lead does |
   | --- | --- |
   | `candidate_moved` | The lane pushed after hand-off. Check the new head as a fresh hand-off, write it as `head`, and re-queue. |
-  | `candidate_unknown`, `candidate_unresolved` | Add the candidate to `queue[]`, or fix its reference, and re-queue. A `candidate_unresolved` stop carries the candidate command's exit code or timeout, the end of its stderr, and the end of its stdout, scrubbed of secrets. |
+  | `candidate_unknown`, `candidate_unresolved` | Add the candidate to `queue[]`, or fix its reference, and re-queue. A `candidate_unresolved` stop carries the candidate command's exit code or timeout, the end of its stderr, and the end of its stdout, scrubbed (see step output below), and names the log that keeps its whole output. |
   | `already_merged` | Nothing to do; mark the lane `done` only if it was left `handed` (see the merge rule below). |
   | `source_conflict` | Return the candidate to its lane to resolve the listed paths. |
   | `lease_required` | Obtain the named lease through the lease sequence, record the lead (the `--lead` name) as holder, and re-queue. |
@@ -1182,6 +1182,24 @@ binding declares may change.
 - **History.** `meta.checkHistory` keeps each check's last five passing
   durations and how often a declared flake made it retry, and the last five
   whole check runs. Only the runner writes it.
+- **Step output.** Every step the runner runs for a candidate keeps its whole
+  output when it refuses: `prepare`, the candidate command, a regenerable
+  listing, each regenerator, lead input, lease materialize and withdraw, each
+  `postSync` step, the push, `ready`, the review gate and `merge`. The output is
+  written to a log of its own under `logs/` in the state directory, and the stop
+  names that log. Except for the review gate's, whose stop says only how it
+  failed, the stop also carries the last 400 characters of the step's stderr
+  (200 for a listing), or says that it timed out or printed nothing. A provider that
+  fails is not a stop; its record's `detail` carries the same scrubbed tail.
+  The scrub has a limit. Before the tail is cut it removes the values, four
+  characters or longer, of the environment variables the runner gives its steps,
+  the binding's `environment` included, whose names look secret (a token, a
+  secret, a password, an API or private key, or an auth value), the token shapes it knows, an
+  authorization header to the end of its line, and the value after `bearer`,
+  `token`, `password`, `passwd`, `secret` or `api key`. It removes nothing else:
+  a secret outside the environment that matches none of these reaches the stop,
+  the record and the journal. The log is never scrubbed, so keep `logs/` as
+  private as the secrets themselves.
 - **Failure detail.** A failed or timed-out check's whole output is kept under
   `logs/` in the state directory, each run in a file of its own; prune old
   logs with the rest of the record. The binding's `checkOutput.failurePattern`
