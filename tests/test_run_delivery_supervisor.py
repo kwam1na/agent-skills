@@ -2267,6 +2267,8 @@ class SupervisorBackgroundHealthTests(unittest.TestCase):
         self.assertNotEqual(second["head"], first)
         self.assertEqual(second["merge"]["subject"], "FX-3")
         self.assertEqual(health_runs(fx), 2)
+        # The run writes its result, then journals what it means for the base.
+        wait_for(lambda: len(self.base_events(fx)) == 2, "the second run's base entry", 30)
         self.assertIn("after FX-3's merge", self.base_events(fx)[-1]["summary"])
 
     def test_lead_close_stops_a_run_a_once_pass_waits_on(self) -> None:
