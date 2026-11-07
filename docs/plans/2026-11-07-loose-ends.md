@@ -33,6 +33,10 @@ the operator's rulings, order, file ownership, the release in the middle, and ho
    path already exists to track it without blocking convergence, and a plan P1 is cheapest to fix before any lane starts. So run-delivery's
    `STORY_SEVERITIES`, `PLAN_SEVERITIES`, `review-reduce` and `plan-review reduce` change, and obtain-review's text doesn't. The item's
    characterization-first posture still applies: record what each reducer does today before changing either.
+   The reducer can't see the delta, so the rule is mechanical. A story review accepts a deferred P1 only in a verification round (round > 1),
+   only when its id is in the result's `lateFindings` (an out-of-delta finding is against lines unchanged since the lens's last round), and
+   only with a non-empty `deferredIssue`. Every other deferred P1, and every deferred P0, is refused as today. `plan-review reduce` already
+   accepts a P1 in any round, so for plan review only `PLAN_SEVERITIES`' text changes.
 2. **V26-3182, the release (operator ruling, 2026-11-07).** `regenerable.listings` is on `main` (#255) but not in `v1.6.0-rc.2`. Once every
    lane story has merged, the lead cuts `v1.6.0-rc.3` at that batch boundary, so the candidate also carries this epic's fixes, and applies it
    here. V26-3182 then lands last, from the lead. The lead asks the operator before pushing the tag. A tag push publishes, and tagging is not
@@ -45,7 +49,9 @@ the operator's rulings, order, file ownership, the release in the middle, and ho
 4. **V26-3164 and V26-3232's page flake are diagnosed together**, as the epic says. Both are the "The plan shown is out of date." message. The
    page lane's lane owns both, so V26-3232's page half moves to V26-3164, and V26-3232 keeps the `test_run_delivery` half.
 5. **V26-3201 Scope 4, readiness before assignment (lead's call).** `doctor --delivery` warns, and `lead-assign` refuses, with `--force`
-   overriding the refusal. Both name the story, its status and the missing transition, and neither moves anything.
+   overriding the refusal. Both name the story, its status and the missing transition, and neither moves anything. A story with no tracker
+   snapshot isn't refused: `lead-assign` assigns it and prints that readiness wasn't checked for lack of a snapshot, and `doctor --delivery`
+   prints the same line.
 
 ## Units and order
 
@@ -54,15 +60,16 @@ holds the run-delivery chain throughout. Lane 2 takes the queue and the views, t
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | V26-3232, V26-3175, V26-3201, V26-3194, V26-3183, V26-3180 | `skills/run-delivery/` (script, templates, `references/adopting.md`), `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_plan_review.py`, `tests/test_round_brief_template_corpus.py`, `tests/test_review_and_compounding.py` |
+| 1 | 1 | V26-3232, the supervisor timeout if separate, V26-3175, V26-3201, V26-3194, V26-3183, V26-3180 | `skills/run-delivery/` (script, templates, `references/adopting.md`), `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_plan_review.py`, `tests/test_round_brief_template_corpus.py`, `tests/test_review_and_compounding.py`, `docs/solutions/` for V26-3232's note, `tests/fixtures/delivery-views/line-map/`, `skills/orchestrate-work/references/schemas.json`, `tests/test_registry.py`, and `catalog.json` and `profiles/*.json` for V26-3183 if it adds an output |
 | 1 | 2 | V26-3197, V26-3164 | `skills/orchestrate-work/scripts/merge_queue.py`, `tests/test_merge_queue.py`, `skills/orchestrate-work/references/orchestration-guide.md`, `skills/delivery-views/`, `tests/test_delivery_views_page.py`, `tests/delivery_views_page/` |
 | 2 | 1 | V26-3242 | lane 1's files, plus lane 2's once V26-3164 merges |
-| 3 | lead | rc.3, then V26-3182 | `.agents/orchestration.json` |
+| 3 | lead | rc.3, its apply, then V26-3182 | `.agent-skills/`, `.agents/orchestration.json` |
 
 **Moving ownership.** A file passes when the item holding it merges. The lead rewrites `lanes.*.owns` at each hand-over, the same way the
 V26-3169 plan did, pushing only while no candidate is synced or checking. `provenance.lock.json` moves to the lane being accepted immediately
 before each `lead-accept`. Each item's test-pin updates belong to it, including the `schemas.json` shape pins and the tracker updates table
-if a journal kind is added. If lane 2 finishes before lane 1 reaches V26-3242, the lead gives lane 2 whatever unblocked follow-up the record
+if a journal kind is added. The tracker updates table is in `orchestration-guide.md`, which lane 2 holds in tier 1. It passes to lane 1
+only after V26-3197 merges, so a lane 1 item that adds a journal kind before then waits for that hand-over before it hands off. If lane 2 finishes before lane 1 reaches V26-3242, the lead gives lane 2 whatever unblocked follow-up the record
 holds, or rests it and records why, since no unblocked work in this epic needs files lane 1 doesn't own.
 
 **Shared resources.** V26-3175's rows bind real listeners on ephemeral ports the test owns, and touch the in-app lease. Modules that can't share
@@ -76,9 +83,13 @@ granted lease.
 Lane 1, tier 1, not blocked. Characterization-first: reproduce the hang locally on macOS under CI's conditions (a cleared environment keeping
 CI's baseline and its workflow `env`, no tty) before changing anything, and capture a sample of the stalled process. The open hypothesis is
 the stdin-pipe class fixed in ff710de, or `run_group`'s reads outliving the group kill when a backgrounded child holds the pipes. Fix it in
-`run_group` if that's where it lives. If the supervisor module's timeout has the same cause, fix it here too. If not, file it. Files:
-`run_delivery.py`, `tests/test_run_delivery.py`. Sensors: the named test, `tests/test_run_delivery.py`, and macOS CI on the change request
-with the `full-matrix` label. Compounding: the solution note the item names, if the pipe explains it.
+`run_group` if that's where it lives. If the supervisor module's timeout has the same cause, fix it here too. If not, fix it in this lane
+as its own change right after V26-3232, filed as a child of the epic, since the finish line needs macOS green. The fix adds a row that runs
+on every platform: a child backgrounds a grandchild that holds the stdout and stderr pipes, and `run_group` must return within a short bound
+after the group kill. The named test keeps its current deadline and isn't skipped on any platform. Files: `run_delivery.py`,
+`tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`. Sensors: the named test, `tests/test_run_delivery.py`,
+`tests/test_run_delivery_supervisor.py`, and macOS CI on the change request with the `full-matrix` label. Compounding: the solution note the
+item names, if the pipe explains it.
 
 ### V26-3175. Pin `lead-close`'s busy-port lines
 
@@ -88,14 +99,20 @@ names its pid and the kill hint, and each row fails when its branch's line is re
 
 ### V26-3201. `lane-start` marks the start, and assignment checks readiness
 
-Lane 1, tier 1, after V26-3175. Test-first, per the item's seven scenarios, with Decision 5 for Scope 4. Files: `run_delivery.py`,
+Lane 1, tier 1, after V26-3175. Test-first, per the item's seven scenarios, with Decision 5 for Scope 4. Decision 5 adds four rows. A story
+whose snapshot offers the first start transition is assigned without `--force`, and no readiness line is printed. A not-ready story makes
+`lead-assign` exit non-zero, naming the story, its status and the missing transition, and leaves the record byte-identical. The same story
+with `--force` is assigned, and the output still names the story and status. A story with no snapshot is assigned, with the not-checked line.
+Files: `run_delivery.py`,
 `skills/run-delivery/templates/lane-brief.md`, `tests/test_run_delivery.py`, and the line-map goldens only if a fixture covers a started story
 with no snapshot. Sensors: the `lane-start`, `lead-assign` and `doctor` tests, and the brief template tests.
 
 ### V26-3194. One out-of-delta P1 rule in both briefs and every reducer
 
 Lane 1, tier 1, after V26-3201. Characterization-first: first, a row per reducer recording where today's out-of-delta P1 ends up. Then apply
-Decision 1. Files: `run_delivery.py` (`STORY_SEVERITIES`, `PLAN_SEVERITIES`, `review_reduce`, `plan_review_reduce`),
+Decision 1, with these rows. The existing round-1 "deferred P1" refusal stays unchanged. A round-2 deferred P1 listed in `lateFindings`, with a
+`deferredIssue`, is accepted, reduces to aligned, and appears in the deferred-findings follow-up list. A round-2 deferred P1 not in
+`lateFindings` is refused. A round-2 deferred P1 with no `deferredIssue` is refused. A round-2 deferred P0 is refused. Files: `run_delivery.py` (`STORY_SEVERITIES`, `PLAN_SEVERITIES`, `review_reduce`, `plan_review_reduce`),
 `skills/run-delivery/templates/round-brief.md` if it restates the rule, and `tests/test_round_brief_template_corpus.py`, whose declared
 difference goes. Sensors: the four the item names.
 
@@ -113,8 +130,10 @@ in it. Files: `run_delivery.py`, `references/adopting.md`, `tests/test_run_deliv
 
 ### V26-3197. Every merge-queue step keeps its stderr
 
-Lane 2, tier 1, not blocked. Test-first, per the item, with a row per step putting a known secret in its stderr. The guide states the scrub's
-limit. Files: `merge_queue.py`, `tests/test_merge_queue.py`, `orchestration-guide.md`. Sensors: `tests/test_merge_queue.py`.
+Lane 2, tier 1, not blocked. Test-first, per the item, with a row per step (`ready`, `prepare`, `candidate`, the regenerators, `postSync`).
+Each row writes both a known secret and a known non-secret marker line to the step's stderr. It asserts that the marker appears in the stop
+detail's tail, that the detail names a `logs/...log` path, that the named log holds the full stderr, and that the secret is absent from the
+detail. The guide states the scrub's limit. Files: `merge_queue.py`, `tests/test_merge_queue.py`, `orchestration-guide.md`. Sensors: `tests/test_merge_queue.py`.
 
 ### V26-3164. The page lane's "plan shown is out of date" flake
 
@@ -132,14 +151,16 @@ words `base.verified` and `selection.refused`, and a titled `refusalStops` row. 
 ### V26-3182. Adopt `regenerable.listings` here
 
 Lead, tier 3, after `v1.6.0-rc.3` is applied (Decision 2). Sensor-only, per the item: `doctor`, the binding check, and the queue's own
-`source_conflict` row. Files: `.agents/orchestration.json`. Sensors: `scripts/validate-registry.py`, `run_delivery.py doctor`,
+`source_conflict` row. The evidence shows `doctor` or the binding check reading the declared listings back by name, so that an empty or
+wrong declaration can't pass. Files: `.agents/orchestration.json`. Sensors: `scripts/validate-registry.py`, `run_delivery.py doctor`,
 `tests/test_own_deliveries.py`.
 
 ## Release step
 
 After V26-3242 merges and `main`'s CI is green on Ubuntu and `cut-release` at that commit, the lead clears `skills/` bytecode, runs the full
 suite locally on macOS with Python 3.11, and brings the operator the commit and the run for the `v1.6.0-rc.3` tag. On a yes, it pushes the
-annotated tag, verifies the published release's digests, applies it at `.agent-skills/current`, and then lands V26-3182.
+annotated tag, verifies the published release's digests, and applies it at `.agent-skills/current`. The apply is committed as its own change
+and merged through the queue, the way earlier applies were. Then V26-3182 lands.
 
 ## Execution posture
 
