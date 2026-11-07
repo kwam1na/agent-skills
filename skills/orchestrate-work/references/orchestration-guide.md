@@ -1104,6 +1104,13 @@ binding declares may change.
   A narrower run would also change the answer: a test the candidate adds doesn't
   exist on the base, so it could fail there for that reason alone and read as a
   broken base, and a test that fails only beside others could pass there alone.
+  The re-run's output is kept under `logs/` beside the candidate's, and the
+  queue row's check carries it as `baseRerun`, with the failing tests the
+  binding's failure pattern finds in it. A declared flake failing there is
+  retried once, as on the candidate, before it can read as a broken base. A
+  `base_broken` stop and its `base.broken` entry name the check, its failing
+  tests and the re-run's log, in the words `check.failed` uses for the
+  candidate's run, and `base.rerun.finished` links each re-run's log.
 - **Queue estimates.** The state tool's `show` adds a position and an expected
   start for each candidate waiting at `queued`. The start counts what remains
   of the run in progress once (a batch is one run), then one median run for
@@ -1124,7 +1131,9 @@ fails again stops the candidate as usual, and its result keeps both failures.
 Never retried: a mix of a flake and anything else; a timeout; and, for a flake
 declared with `tests`, a failure whose ids the pattern cannot read, since the
 patterns can only vouch for failures they can name. A declaration without
-`tests` covers the whole check, whatever its output says.
+`tests` covers the whole check, whatever its output says. The same rule holds
+on the base re-run: a flake failing there is retried once there, journaled as
+`check.retried` and counted, before the queue stops with `base_broken`.
 
 ### Reused checks
 

@@ -118,6 +118,17 @@ if args[:1] == ["--fail-with"]:
         print("FAIL: " + test + " boom")
     print("some other output")
     sys.exit(1)
+if args[:1] == ["--base-flake"]:
+    # Fails for real on a tree carrying the candidate's file; on the base, fails on a flaky test, once or always.
+    if pathlib.Path("src/candidate.txt").exists():
+        print("FAIL: test_real boom")
+        sys.exit(1)
+    flag = pathlib.Path(os.environ["MQ_LOG"] + ".base-flaked")
+    if args[1] == "always" or not flag.exists():
+        flag.write_text("")
+        print("FAIL: test_launcher_cancel flaked on the base")
+        sys.exit(1)
+    sys.exit(0)
 if args[:1] == ["--flaky-once"]:
     # Fails the first time only, naming its tests; a flag file remembers the first run.
     flag = pathlib.Path(os.environ["MQ_LOG"] + ".flaked-" + name)
@@ -3578,6 +3589,81 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.assertEqual(len(self.journal(adopter, "check.failed")), 1)
         self.assertEqual(self.journal(adopter, "base.rerun.started"), [])
         self.assertEqual(self.journal(adopter, "base.rerun.finished"), [])
+
+    BASE_FLAKES = [{"check": "suite", "tests": ["test_launcher_.*"], "ref": "FLAKE-9"}]
+
+    def base_flake_adopter(self, how: str) -> Adopter:
+        adopter = self.visible_adopter([check_entry("suite", "--base-flake", how)], flakes=self.BASE_FLAKES)
+        self.candidate(adopter, {"src/candidate.txt": "candidate\n"})
+        return adopter
+
+    def test_a_declared_flake_failing_on_the_base_rerun_is_retried_once_there(self) -> None:
+        adopter = self.base_flake_adopter("once")
+        results = self.run_queue(adopter, "feature")
+        document = self.assertStopped(results, "check_failed")
+        self.assertFalse(document["stop"]["queueStopped"])
+        self.assertEqual(self.journal(adopter, "base.broken"), [])
+        [retried] = self.journal(adopter, "check.retried")
+        self.assertEqual(retried["subject"], "feature")
+        self.assertIn("base re-run", retried["summary"])
+        self.assertIn("test_launcher_cancel", retried["summary"])
+        self.assertIn("FLAKE-9", retried["summary"])
+        [started] = self.journal(adopter, "base.rerun.started")
+        [finished] = self.journal(adopter, "base.rerun.finished")
+        self.assertLess(started["id"], retried["id"])
+        self.assertLess(retried["id"], finished["id"])
+        self.assertIn("suite passed after a flake retry", finished["summary"])
+        self.assertEqual(state_tool.read_state(adopter.state)["meta"]["checkHistory"]["checks"]["suite"]["flakes"], 1)
+
+    def test_a_declared_flake_failing_its_base_retry_too_breaks_the_base_naming_its_tests_and_log(self) -> None:
+        adopter = self.base_flake_adopter("always")
+        results = self.run_queue(adopter, "feature")
+        document = self.assertStopped(results, "base_broken")
+        self.assertEqual(len(self.journal(adopter, "check.retried")), 1)
+        row = next(check for check in adopter.item("feature")["checks"] if check["id"] == "suite")
+        rerun = row["baseRerun"]
+        self.assertEqual(rerun["failures"], ["test_launcher_cancel"])
+        self.assertIn("flaked on the base", (adopter.state / rerun["log"]).read_text(encoding="utf-8"))
+        # The candidate's own run keeps its tests and log beside the re-run's.
+        self.assertEqual(row["failures"], ["test_real"])
+        self.assertNotEqual(row["log"], rerun["log"])
+        words = f"suite (failing test_launcher_cancel; log {rerun['log']})"
+        self.assertIn(words, document["stop"]["detail"])
+        [broken] = self.journal(adopter, "base.broken")
+        self.assertIn(words, broken["summary"])
+
+    def test_a_base_rerun_failure_keeps_its_log_and_names_its_tests_like_a_check_failure(self) -> None:
+        adopter = self.visible_adopter([check_entry("suite", "--fail-with", "test_alpha", "test_beta")])
+        adopter.advance_base({"src/app.txt": "app broken\n"})
+        self.candidate(adopter, {"src/lib.txt": "lib two\n"})
+        results = self.run_queue(adopter, "feature")
+        document = self.assertStopped(results, "base_broken")
+        self.assertTrue(document["stop"]["queueStopped"])
+        row = next(check for check in adopter.item("feature")["checks"] if check["id"] == "suite")
+        rerun = row["baseRerun"]
+        self.assertEqual(rerun["failures"], ["test_alpha", "test_beta"])
+        self.assertTrue(rerun["log"].startswith("logs/"))
+        self.assertIn("some other output", (adopter.state / rerun["log"]).read_text(encoding="utf-8"))
+        [failed] = self.journal(adopter, "check.failed")
+        [broken] = self.journal(adopter, "base.broken")
+        # Named as check.failed names the candidate's run: the check, then its failing tests and log.
+        self.assertIn(f"suite (failing test_alpha, test_beta; log {row['log']})", failed["summary"])
+        self.assertIn(f"suite (failing test_alpha, test_beta; log {rerun['log']})", broken["summary"])
+        self.assertIn(rerun["log"], document["stop"]["detail"])
+        # No flake is declared, so nothing is retried.
+        self.assertEqual(self.journal(adopter, "check.retried"), [])
+
+    def test_a_base_rerun_that_passes_keeps_its_log_on_the_record(self) -> None:
+        adopter = self.base_flake_adopter("once")
+        (Path(str(adopter.log) + ".base-flaked")).write_text("")
+        results = self.run_queue(adopter, "feature")
+        self.assertStopped(results, "check_failed")
+        row = next(check for check in adopter.item("feature")["checks"] if check["id"] == "suite")
+        self.assertNotIn("failures", row["baseRerun"])
+        self.assertTrue((adopter.state / row["baseRerun"]["log"]).is_file())
+        self.assertEqual(self.journal(adopter, "check.retried"), [])
+        [finished] = self.journal(adopter, "base.rerun.finished")
+        self.assertIn(row["baseRerun"]["log"], finished["summary"])
 
     def test_a_failure_matching_only_a_declared_flake_is_retried_once_and_journaled(self) -> None:
         flakes = [{"check": "suite", "tests": ["test_launcher_.*"], "ref": "FLAKE-7"}]
