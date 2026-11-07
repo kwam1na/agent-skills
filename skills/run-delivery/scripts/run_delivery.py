@@ -1836,7 +1836,8 @@ def plan_review_record(c, rounds: list[dict]) -> dict:
     last = rounds[-1]
     ended = plan_review_ended(c)
     plan = c.plan.as_posix()
-    reviewed = run(["git", "show", f"{last['candidate']}:{plan}"], cwd=c.root).stdout
+    reviewed = subprocess.run(["git", "show", f"{last['candidate']}:{plan}"], cwd=c.root, capture_output=True,
+                              check=True).stdout  # the blob's own bytes, with no newline translation
     folder = plan_review_dir(c)
     reviews = []
     for lens in last["lenses"]:
@@ -1851,11 +1852,11 @@ def plan_review_record(c, rounds: list[dict]) -> dict:
         risks.append(f"Ended without alignment after round {ended['round']}: {ended['reason']}")
         risks += [f"Open {f['severity']} {f['id']} ({f['lens']}): {f['summary']}" for f in last["open"]]
     current = c.root / c.plan
-    if not current.is_file() or current.read_text() != reviewed:
+    if not current.is_file() or current.read_bytes() != reviewed:
         risks.append(f"The plan's current text differs from round {last['round']}'s candidate {last['candidate'][:12]}; "
                      "this record covers the reviewed text.")
     record = {"schemaVersion": PLAN_REVIEW_RECORD, "writtenBy": PLAN_REVIEW_RECORD_WRITER, "plan": plan,
-              "planSha256": hashlib.sha256(reviewed.encode()).hexdigest(), "planCommit": last["candidate"],
+              "planSha256": hashlib.sha256(reviewed).hexdigest(), "planCommit": last["candidate"],
               "outcome": PLAN_REVIEW_OUTCOMES["ended" if ended else "aligned"], "requiredLenses": last["lenses"],
               "rounds": [{"round": r["round"], "candidate": r["candidate"], "outcome": r["outcome"],
                           "startedAt": r["startedAt"], "finishedAt": r["finishedAt"],
@@ -1932,9 +1933,10 @@ def plan_review_record_problems(record: object) -> list[str]:
             or [r.get("round") for r in rounds] != list(range(1, len(rounds) + 1))):
         return problems + ["rounds must be the review's rounds, numbered from 1 with none skipped"]
     outcomes = [r.get("outcome") for r in rounds]
-    if any(o != "unresolved" for o in outcomes[:-1]) or outcomes[-1] != ("aligned" if outcome == PLAN_REVIEW_OUTCOMES["aligned"]
-                                                                        else "unresolved"):
-        problems.append("rounds: every round before the last must be unresolved, and the last must agree with outcome")
+    # An amendment reviews on after an aligned round, so an earlier round may be aligned; the last decides the outcome.
+    if any(o not in ("unresolved", "aligned") for o in outcomes[:-1]) or outcomes[-1] != (
+            "aligned" if outcome == PLAN_REVIEW_OUTCOMES["aligned"] else "unresolved"):
+        problems.append("rounds: each round is aligned or unresolved, and the last must agree with outcome")
     if not all(isinstance(r.get("candidate"), str) and re.fullmatch(r"[0-9a-f]{40,64}", r["candidate"]) for r in rounds):
         problems.append("rounds: each round's candidate must be a full commit id")
     if record.get("planCommit") != rounds[-1].get("candidate"):
