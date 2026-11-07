@@ -7,13 +7,15 @@ when it stops converging. `build_plan` reads its store, so every plan write keep
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
 import os
 import sys
 import unittest
 from pathlib import Path
 
-from tests.test_run_delivery import POSIX_ONLY, Fixture, commit, installed_release, plan_delivery, sh
+from tests.test_run_delivery import POSIX_ONLY, ROOT, Fixture, commit, installed_release, plan_delivery, sh
 
 RUN_SERIALLY = True
 
@@ -869,6 +871,178 @@ class PlanWriteTests(PlanReviewCase):
         archive = fx.call("archive_plan_review", fx.tmp / "archive", cwd=fx.main, delivery="FX-1")
         self.assertEqual(sorted(p.name for p in Path(archive).iterdir()),
                          sorted(p.name for p in store(fx).iterdir() if p.name != "checkouts"))
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class PlanReviewRecordTests(PlanReviewCase):
+    """A standalone plan's review writes its `plan-review-evidence/1` record beside the plan when the lenses align or the
+    operator ends it, and `plan-review check` validates that shape, the hand-written records included."""
+
+    PLAN = "docs/plans/x.md"
+    RECORD = "docs/plans/x.review.json"
+
+    def standalone(self, fx: Fixture) -> Path:
+        with_slug(fx, self.PLAN, "x-plan", "# X\n\n## Outcome\n\nSomething works.\n")
+        code, out = self.flow(fx, "prepare", "--plan", self.PLAN, "--lenses", f"{OC},{AT}")
+        self.assertEqual(code, 0, out)
+        folder = slug_store(fx, "x-plan")
+        results(fx, 1, {OC: {"findings": [finding(OC, 1, 1), finding(OC, 1, 2, "A second case is left out.")]}}, folder, "x-plan.plan")
+        code, out = self.flow(fx, "reduce", "--plan", self.PLAN)
+        self.assertEqual(code, 0, out)
+        self.assertFalse((fx.main / self.RECORD).exists(), "an unresolved round wrote a record")
+        plan = fx.main / self.PLAN
+        plan.write_text(plan.read_text() + "\nRound 1 is answered.\n")
+        commit(fx.main, "x: round 1 answered")
+        code, out = self.flow(fx, "prepare", "--plan", self.PLAN)
+        self.assertEqual(code, 0, out)
+        return folder
+
+    def check(self, fx: Fixture, *paths) -> tuple[int, str]:
+        return self.flow(fx, "check", *[str(p) for p in paths])
+
+    def test_an_aligned_review_writes_its_record_beside_the_plan_and_the_check_accepts_it(self) -> None:
+        fx = self.fixture()
+        folder = self.standalone(fx)
+        closed = [{"id": f"outcome-correctness-r1-{k}", "state": "fixed", "resolution": "Answered."} for k in (1, 2)]
+        results(fx, 2, {OC: {"resolved": closed}}, folder, "x-plan.plan")
+        code, out = self.flow(fx, "reduce", "--plan", self.PLAN)
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"wrote the review record {self.RECORD}", out)
+        record = json.loads((fx.main / self.RECORD).read_text())
+        rounds = [json.loads((folder / f"round-{n}.json").read_text()) for n in (1, 2)]
+        candidate = rounds[1]["candidate"]
+        reviewed = sh("git", "show", f"{candidate}:{self.PLAN}", cwd=fx.main).stdout
+        self.assertEqual(record["schemaVersion"], "plan-review-evidence/1")
+        self.assertEqual(record["writtenBy"], "run-delivery plan-review")
+        self.assertEqual((record["plan"], record["planCommit"], record["outcome"], record["requiredLenses"]),
+                         (self.PLAN, candidate, "unanimous-alignment", [OC, AT]))
+        self.assertEqual(record["planSha256"], hashlib.sha256(reviewed.encode()).hexdigest())
+        self.assertEqual([(r["round"], r["candidate"], r["outcome"], r["open"]) for r in record["rounds"]],
+                         [(1, rounds[0]["candidate"], "unresolved", ["outcome-correctness-r1-1", "outcome-correctness-r1-2"]),
+                          (2, candidate, "aligned", [])])
+        by_lens = {r["lens"]: r for r in record["reviews"]}
+        self.assertEqual(sorted(by_lens), [AT, OC])
+        for lens, review in by_lens.items():
+            raw = (folder / f"result-r2-{SHORT[lens]}.json").read_bytes()
+            self.assertEqual((review["round"], review["result"], review["resultSha256"], review["findings"]),
+                             (2, json.loads(raw), hashlib.sha256(raw).hexdigest(), []))
+        self.assertEqual(record["residualRisks"][0], "2 review rounds; findings open after each round: 2, 0.")
+        self.assertNotIn("ended", record)
+        self.assertEqual(self.check(fx, fx.main / self.RECORD), (0, f"{fx.main / self.RECORD}: a valid plan-review-evidence/1 record\n"))
+
+    def test_an_ended_review_writes_its_record_with_the_reason_and_the_findings_left_open(self) -> None:
+        fx = self.fixture()
+        folder = self.standalone(fx)
+        still = [{"id": "outcome-correctness-r1-1", "state": "open", "resolution": "Still open."},
+                 {"id": "outcome-correctness-r1-2", "state": "fixed", "resolution": "Answered."}]
+        results(fx, 2, {OC: {"resolved": still, "override": {"outcome": "changes-requested"}}}, folder, "x-plan.plan")
+        self.assertEqual(self.flow(fx, "reduce", "--plan", self.PLAN)[0], 0)
+        self.assertFalse((fx.main / self.RECORD).exists())
+        # The plan moves on after the last reviewed candidate; the record says the text it covers isn't the current one.
+        plan = fx.main / self.PLAN
+        plan.write_text(plan.read_text() + "\nAn edit after the review.\n")
+        code, out = self.flow(fx, "end", "--plan", self.PLAN, "--reason", "The operator took the risk.")
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"wrote the review record {self.RECORD}", out)
+        record = json.loads((fx.main / self.RECORD).read_text())
+        self.assertEqual(record["outcome"], "ended-without-alignment")
+        reviewed = sh("git", "show", f"{record['planCommit']}:{self.PLAN}", cwd=fx.main).stdout
+        self.assertEqual(record["planSha256"], hashlib.sha256(reviewed.encode()).hexdigest(), "the digest isn't the reviewed text's")
+        self.assertEqual((record["ended"]["round"], record["ended"]["reason"]), (2, "The operator took the risk."))
+        self.assertEqual([r["outcome"] for r in record["rounds"]], ["unresolved", "unresolved"])
+        risks = record["residualRisks"]
+        self.assertIn("Ended without alignment after round 2: The operator took the risk.", risks)
+        self.assertIn("Open P1 outcome-correctness-r1-1 (lens.outcome-correctness): The plan leaves a case out.", risks)
+        self.assertFalse(any("outcome-correctness-r1-2" in r for r in risks), risks)
+        self.assertTrue(any(r.startswith(f"The plan's current text differs from round 2's candidate {record['planCommit'][:12]}")
+                            for r in risks), risks)
+        self.assertEqual(self.check(fx, fx.main / self.RECORD)[0], 0)
+
+    def test_a_hand_written_record_beside_the_plan_is_kept(self) -> None:
+        fx = self.fixture()
+        folder = self.standalone(fx)
+        own = (ROOT / "docs/plans/2026-11-02-adoption-gaps.review.json").read_text()
+        (fx.main / self.RECORD).write_text(own)
+        commit(fx.main, "x: a hand-written record")
+        closed = [{"id": f"outcome-correctness-r1-{k}", "state": "fixed", "resolution": "Answered."} for k in (1, 2)]
+        results(fx, 2, {OC: {"resolved": closed}}, folder, "x-plan.plan")
+        code, out = self.flow(fx, "reduce", "--plan", self.PLAN)
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"kept the hand-written review record {self.RECORD}", out)
+        self.assertEqual((fx.main / self.RECORD).read_text(), own)
+
+    def test_a_deliverys_own_plan_review_writes_no_record_into_the_checkout(self) -> None:
+        fx = self.fixture()
+        review_delivery(fx)
+        self.three_rounds(fx)
+        self.assertEqual(sorted(p.name for p in (fx.main / "docs").rglob("*.review.json")), [])
+
+    def test_the_check_accepts_every_record_in_the_repository(self) -> None:
+        fx = self.fixture()
+        records = sorted((ROOT / "docs/plans").glob("*.review.json"))
+        self.assertGreater(len(records), 5)
+        code, out = self.check(fx, *records)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out.count("a valid plan-review-evidence/1 record"), len(records), out)
+
+    def test_the_check_refuses_each_broken_shape_and_names_why(self) -> None:
+        fx = self.fixture()
+        folder = self.standalone(fx)
+        closed = [{"id": f"outcome-correctness-r1-{k}", "state": "fixed", "resolution": "Answered."} for k in (1, 2)]
+        results(fx, 2, {OC: {"resolved": closed}}, folder, "x-plan.plan")
+        self.assertEqual(self.flow(fx, "reduce", "--plan", self.PLAN)[0], 0)
+        good = json.loads((fx.main / self.RECORD).read_text())
+        hand = json.loads((ROOT / "docs/plans/2026-11-02-adoption-gaps.review.json").read_text())
+
+        def broken(base: dict, change) -> dict:
+            record = copy.deepcopy(base)
+            change(record)
+            return record
+
+        cases = {
+            "not an object": ([], "a JSON object"),
+            "another schema": (broken(hand, lambda r: r.update(schemaVersion="plan-review-evidence/2")), "schemaVersion"),
+            "an absolute plan": (broken(hand, lambda r: r.update(plan="/etc/plan.md")), "plan"),
+            "a plan outside the repository": (broken(hand, lambda r: r.update(plan="../plan.md")), "plan"),
+            "a short digest": (broken(hand, lambda r: r.update(planSha256="abc")), "planSha256"),
+            "an unknown outcome": (broken(hand, lambda r: r.update(outcome="mostly-aligned")), "outcome"),
+            "no lenses": (broken(hand, lambda r: r.update(requiredLenses=[])), "requiredLenses"),
+            "a repeated lens": (broken(hand, lambda r: r.update(requiredLenses=["adversarial", "adversarial"])), "requiredLenses"),
+            "a lens with no review": (broken(hand, lambda r: r["reviews"].pop()), "reviews"),
+            "a review of another lens": (broken(hand, lambda r: r["reviews"][0].update(lens="security")), "reviews"),
+            "findings that aren't a list": (broken(hand, lambda r: r["reviews"][0].update(findings="none")), "findings"),
+            "aligned with a finding": (broken(hand, lambda r: r["reviews"][0].update(findings=[{"id": "a-r1-1", "severity": "P2", "summary": "s"}])),
+                                       "unanimous-alignment"),
+            "an empty risk": (broken(hand, lambda r: r["residualRisks"].append(" ")), "residualRisks"),
+            "risks that aren't a list": (broken(hand, lambda r: r.update(residualRisks="none")), "residualRisks"),
+            "ended with no reason": (broken(hand, lambda r: r.update(outcome="ended-without-alignment")), "ended"),
+            "ended while aligned": (broken(good, lambda r: r.update(ended={"round": 2, "reason": "x", "at": "t"})), "ended"),
+            "a skipped round": (broken(good, lambda r: r["rounds"][1].update(round=3)), "rounds"),
+            "an aligned round before the last": (broken(good, lambda r: r["rounds"][0].update(outcome="aligned")), "rounds"),
+            "a last round that disagrees": (broken(good, lambda r: r["rounds"][1].update(outcome="unresolved")), "rounds"),
+            "a commit that isn't the last round's": (broken(good, lambda r: r.update(planCommit=r["rounds"][0]["candidate"])), "planCommit"),
+            "another lens's result": (broken(good, lambda r: r["reviews"][0]["result"].update(lensId=AT)), "lensId"),
+            "a short candidate": (broken(good, lambda r: r["rounds"][0].update(candidate="abc123")), "candidate"),
+            "a result with no digest": (broken(good, lambda r: r["reviews"][0].update(resultSha256="")), "resultSha256"),
+            "a backslashed plan": (broken(hand, lambda r: r.update(plan="docs\\plans\\x.md")), "plan"),
+            "ended at an earlier round": (broken(good, lambda r: r.update(
+                outcome="ended-without-alignment", ended={"round": 1, "reason": "x", "at": "t"},
+                rounds=[dict(x, outcome="unresolved") for x in r["rounds"]])), "ended.round"),
+            "a result from a round never run": (broken(good, lambda r: r["reviews"][0].update(round=3)), "round"),
+            "a result whose findings differ": (broken(good, lambda r: r.update(
+                outcome="ended-without-alignment", ended={"round": 2, "reason": "x", "at": "t"},
+                rounds=[dict(x, outcome="unresolved") for x in r["rounds"]],
+                reviews=[dict(r["reviews"][0], findings=[{"id": "x", "severity": "P1", "summary": "s"}]), *r["reviews"][1:]])),
+                "its result's findings"),
+        }
+        for name, (record, word) in cases.items():
+            with self.subTest(name):
+                path = fx.tmp / "broken.review.json"
+                path.write_text(json.dumps(record))
+                code, out = self.check(fx, path)
+                self.assertEqual(code, 2, out)
+                self.assertIn(word, out)
+        self.assertEqual(self.check(fx, fx.tmp / "missing.review.json")[0], 2)
 
 
 if __name__ == "__main__":
