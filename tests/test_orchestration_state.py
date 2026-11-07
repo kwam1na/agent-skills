@@ -5338,10 +5338,11 @@ def bullets_after(text: str, lead_in: str) -> list[str]:
 
 
 # Files the skill text names that live in an adopter's repository or are
-# written into its state directory, as views, the outbox or the
-# acknowledgement, not shipped with the skill.
+# written into its state directory, as views, the outbox, the
+# acknowledgement, or beside it, as the close's closed.json; none
+# is shipped with the skill.
 ADOPTER_FILES = frozenset({".agents/orchestration.json", ".agents/delivery-posture.json", "delivery.md", "delivery.html", "outbox/outbox.json",
-                           "published.json", "recovery.json", "changes.jsonl", "plan.json"})
+                           "published.json", "recovery.json", "changes.jsonl", "plan.json", "closed.json"})
 
 
 def review_round(number: int, candidate: str, *, finding: bool = False, resolved: bool = False) -> dict:
