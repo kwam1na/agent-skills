@@ -484,8 +484,8 @@ When a lane has no story left, tell it so; it sets its focus `done`, as its brie
 python3 -B .agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py --dir .orchestration/state focus --lane lane-1 --text "<story-key> merged; nothing left" --state done
 ```
 
-When every story is merged or removed, every finish line is met, every lane is idle or done, and nothing in "Needs
-you" holds it, the supervisor closes the delivery itself, in order: `fullHealth` once per base head (skipped when the
+When every story is merged or removed, every merged story's checkout is cleaned up, every finish line is met, every
+lane is idle or done, and nothing in "Needs you" holds it, the supervisor closes the delivery itself, in order: `fullHealth` once per base head (skipped when the
 base declares the `focused` posture), a follow-up for
 each deferred finding, `delivery.closed` and then a wait until the tracker has every update, the archive, a friction
 note stub beside
@@ -608,7 +608,8 @@ change and the delivery file reach `main`, and each integration base, through a 
   left running and starts it on the new release, or with the new token exported. Nothing it did is done twice.
 - **Merge strategy.** Merge with merge commits. After each merge, the queue checks that the base holds the checked
   head's tree on top of the base it checked against, and a squash passes that too. But a squashed story's branch never
-  reaches the base, so the supervisor's cleanup reports it unmerged and leaves its checkout and branches for you.
+  reaches the base, so the supervisor's cleanup reports it unmerged and leaves its checkout and branches for you, and
+  the supervisor's close waits on "not cleaned up: <story>" until you remove that checkout.
   Squash, with the adapter's `--strategy squash`, only where the forge requires it.
 - **A test account that allows one session at a time.** The in-app lease serializes every lane's checks of the running
   app, so one account signs in for one check at a time. Give the lease's lock a path every checkout shares.

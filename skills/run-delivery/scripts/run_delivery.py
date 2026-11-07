@@ -5625,6 +5625,12 @@ def close_holds(c, doc: dict, needs: list[dict]) -> list[str]:
     busy = [lane["id"] for lane in state["lanes"] if lane.get("state") not in LANE_DONE]
     if busy:
         holds.append(f"lanes not idle or done: {', '.join(busy)}")
+    # A merge can land after the pass's cleanup read the record, and the close ends the passes: it waits for the next
+    # pass's cleanup, as it does for a checkout cleanup couldn't remove.
+    left = [q["subject"] for q in state["queue"] if q["stage"] == "merged" and q["subject"] in c.stories
+            and c.lane_checkout(q["subject"]).exists()]
+    if left:
+        holds.append(f"not cleaned up: {', '.join(left)}")
     holds += [item["text"] for item in needs if item["holding"]]
     return holds
 
@@ -6222,11 +6228,16 @@ def ship(args) -> None:
         raise Stop("git apply failed" + (f"; resolve the conflicts in {path}: {unmerged}" if unmerged else f": {applied.stderr.strip()}"))
     if outside:
         raise Stop("files outside the ship paths were staged; this must not happen")
+    # The lead's own integration is reviewed like a lane's unit before it reaches the default branch: the
+    # orchestration guide's close-out, "Review the integration".
+    review = ("then review the integration with `$review-work` before it reaches the default branch, as the "
+              "orchestration guide's close-out says")
     if args.no_gates or not c.gates:
-        print("  next: prepare the checkout, run the gates there, then commit as one change. Its PR waits for the user.")
+        print(f"  next: prepare the checkout, run the gates there, then commit as one change, {review}. "
+              "Its PR waits for the user.")
         return
     ship_gates(c, path, s)
-    print("  next: commit the staged change as one commit. Its PR waits for the user.")
+    print(f"  next: commit the staged change as one commit, {review}. Its PR waits for the user.")
 
 
 def ship_diff(c, s: dict) -> tuple[str, list[str]]:
