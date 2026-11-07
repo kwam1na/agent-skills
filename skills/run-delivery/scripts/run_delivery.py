@@ -5221,7 +5221,9 @@ def finishing_command(c, doc: dict) -> str:
     """What finishes a close that stopped partway: a resumed supervisor when the record meets the close condition (no
     planned story, nothing unmerged, every finish line met, no busy lane, as close_holds reads it); otherwise lead-close,
     since a resumed supervisor would hold on what is unmet and never finish it."""
-    return "lead-run --resume" if not close_holds(c, doc, []) else "lead-close"
+    # A checkout cleanup hasn't removed yet holds only until the resumed supervisor's own next pass cleans it up.
+    unmet = [hold for hold in close_holds(c, doc, []) if not hold.startswith("not cleaned up:")]
+    return "lead-run --resume" if not unmet else "lead-close"
 
 
 def closed_status(c) -> str | None:

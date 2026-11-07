@@ -2171,7 +2171,12 @@ class CloseStoppedPartwayTests(unittest.TestCase):
                 fx = self.closable_fixture()
                 self.stopped_at(fx, point)
                 self.assertEqual((fx.tmp / "flow-log/FX-1.closed.json").exists(), point == "closed.json")
+                # A merged story's checkout still there holds a resumed supervisor only until its own cleanup, so the
+                # record still names a resume.
+                left = fx.main / "lanes/FX-2"
+                left.mkdir(parents=True, exist_ok=True)
                 self.assert_partway(fx, "lead-run --resume")
+                left.rmdir()
                 archive = self.finish_with_resume(fx)
                 if point == "closed.json":
                     # The resume took the done-once return, and still wrote the mark in the kept archive.
