@@ -115,7 +115,7 @@ posts as the publishing step says.
 | Journal kind | Tracker update |
 | --- | --- |
 | `lane.assigned` | On the ticket: it moves to started, naming the lane and what it delivers. |
-| `review.round` | None: the lane posts each round on its own ticket, as its brief says. |
+| `review.round` | None: a lane posts each round on its own ticket, as its brief says, and the lead posts the integration review's rounds on the epic. |
 | `review.evidence` | None: the lane already posted each captured round on its own ticket; the evidence shows in the record and the views. |
 | `candidate.handed` | On the ticket: the hand-off checked as a claim and queued, with its change request, reviewed head and review rounds. |
 | `check.started` | None: checking is transient, and its outcome posts with `candidate.merged` or `candidate.stopped`. |
@@ -392,6 +392,24 @@ friction note. The steps below are for a delivery without it.
   checkout the epic created.
 - Preserve what the epic taught with `$compound-learning`.
 - Journal `delivery.closed`, and render the views one last time.
+
+Every unit reached the delivery's base reviewed by two lenses, but the lead's own
+integration work has had no reviewer. The delivery reaches the default branch in
+three steps, with the supervisor or without it:
+
+1. **Integrate.** Build the product-only change, with run-delivery's `ship`
+   where the repository uses it. Merge the default branch into the delivery's
+   base first when it moved, resolve its conflicts, and fix what the merged
+   tree breaks.
+2. **Review the integration.** Run `$review-work` with the delivery's lenses and
+   round bound on the lead's own changes since the last unit merged: removing
+   the delivery-only files, any merge of the default branch with its conflict
+   resolutions, read as `git show --cc` and not as the whole incoming branch,
+   and any fix the merged tree needed. A delivery whose integration changed
+   nothing beyond removing the delivery-only files still runs it, on that
+   removal. Findings are triaged as a lane's are, and each round is journaled
+   under the delivery as `review.round`, with the delivery's key as its subject.
+3. **Merge to the default branch** only once that review is aligned.
 
 ## Lane brief template
 

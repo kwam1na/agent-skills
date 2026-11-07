@@ -1542,6 +1542,24 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         names = sh("git", "diff", "--cached", "--name-only", cwd=path).stdout.split()
         return names, {n: sh("git", "show", f":{n}", cwd=path).stdout for n in names}
 
+    def test_ship_names_the_integration_review_before_the_default_branch(self) -> None:
+        fx, _ = self.ship_fixture()
+        m = fx.main
+        self.on(m, "feature/FX-1", {"src/one.txt": "one\n"}, "FX-2: one")
+        step = "review the integration with `$review-work` before it reaches the default branch"
+        for options in ((), ("--no-gates",)):
+            with self.subTest(options=options):
+                code, out = fx.flow("ship", *options, cwd=m)
+                # The next run builds the branch afresh.
+                sh("git", "worktree", "remove", "--force", m / "lanes/ship-FX-1", cwd=m, check=False)
+                sh("git", "branch", "-D", "ship/FX-1", cwd=m, check=False)
+                self.assertEqual(code, 0, out)
+                said = out.splitlines()[-1]
+                self.assertIn(step, said)
+                # Named between committing the change and its PR, the order the guide's close-out gives.
+                self.assertLess(said.index("commit"), said.index(step))
+                self.assertLess(said.index(step), said.index("Its PR waits for the user"))
+
     def test_ship_leaves_out_tooling_changed_after_the_tooling_commit(self) -> None:
         for whole in (".", "./"):
             with self.subTest(paths=whole):
@@ -5853,6 +5871,26 @@ class DeliveryPostureReaderTests(unittest.TestCase):
                 said["reason"].encode("utf-8")
                 closing = {"fullHealth": "skipped", **said}
                 views.validate_plan({**plan(), "closeOut": closing})
+
+    def test_the_close_out_reviews_the_leads_integration_between_integrating_and_merging(self) -> None:
+        guide = " ".join((ROOT / "skills/orchestrate-work/references/orchestration-guide.md").read_text(encoding="utf-8").split())
+        close_out = guide[guide.index("### 8. Close out"):guide.index("## Lane brief template")]
+        steps = ["1. **Integrate.**", "2. **Review the integration.**", "3. **Merge to the default branch**"]
+        at = [close_out.index(step) for step in steps]
+        self.assertEqual(at, sorted(at), "the review sits between the integration and the merge")
+        for phrase in (
+            "Run `$review-work` with the delivery's lenses and round bound on the lead's own changes since the last unit merged",
+            "removing the delivery-only files, any merge of the default branch with its conflict resolutions, read as "
+            "`git show --cc` and not as the whole incoming branch, and any fix the merged tree needed",
+            "A delivery whose integration changed nothing beyond removing the delivery-only files still runs it, on that removal",
+            "Findings are triaged as a lane's are",
+            "each round is journaled under the delivery as `review.round`, with the delivery's key as its subject",
+            "only once that review is aligned",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, close_out)
+        self.assertIn("| `review.round` | None: a lane posts each round on its own ticket, as its brief says, and the lead "
+                      "posts the integration review's rounds on the epic. |", guide)
 
     def test_the_rule_is_pinned_where_a_delivery_without_the_supervisor_reads_it(self) -> None:
         def normal(path: str) -> str:
