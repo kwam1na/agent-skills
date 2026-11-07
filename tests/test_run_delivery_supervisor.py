@@ -2280,6 +2280,53 @@ class CloseStoppedPartwayTests(unittest.TestCase):
                     entry = self.closing_entry(fx)
                     self.assertEqual(drawn["state"]["meta"]["closing"]["finished"]["entry"], entry)
 
+    def strip_marks(self, fx: Fixture) -> None:
+        """As a delivery.closed a tool that wrote no marks journaled leaves the record."""
+        state = fx.tmp / "record"
+        written = json.loads((state / "state.json").read_text())
+        written["meta"].pop("closing", None)
+        (state / "state.json").write_text(json.dumps(written, indent=2) + "\n")
+
+    def test_a_close_journaled_without_marks_still_closes_on_each_path_unmarked(self) -> None:
+        for path in ("supervisor", "lead-close"):
+            with self.subTest(path=path):
+                fx = self.closable_fixture()
+                state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "closed by an older tool")
+                self.strip_marks(fx)
+                if path == "supervisor":
+                    last = self.once(fx)
+                    self.assertFalse(any("failed" in line for line in last.get("closeOut", [])), last)
+                else:
+                    code, out = fx.flow("lead-close", cwd=fx.main)
+                    self.assertIn(code, (0, 1), out)
+                closed = closed_of(fx)
+                self.assertEqual(closed["entry"], self.closing_entry(fx))
+                self.assertNotIn("closing", json.loads((fx.tmp / "record/state.json").read_text())["meta"])
+                self.assertTrue(self.status(fx).startswith("supervisor: stopped; the delivery is closed."))
+
+    def test_a_close_waiting_on_the_host_outbox_under_a_live_supervisor_is_its_needs_not_a_stop(self) -> None:
+        fx, self.backend = self.fixture(updates="host")
+        self.closable(fx)
+        code, out = fx.flow("lead-run", "--resume", cwd=fx.main, env=running(fx))
+        self.assertEqual(code, 0, out)
+        listed = lambda: json.loads((fx.tmp / "record/needs-you.json").read_text()) if (fx.tmp / "record/needs-you.json").exists() else {}
+        held = lambda: any("outbox" in item["text"] and item["holding"] for item in listed().get("items", []))
+        wait_for(held, "the outbox to hold the close")
+        # Posted and acked by hand, as a host does: the close is journaled, and waits on the outbox for its own entry.
+        state_tool(fx, "ack", "--version", str(record(fx)["state"]["version"]), "--through",
+                   str(max(e["id"] for e in record(fx)["journal"])))
+        wait_for(lambda: kinds(fx, "delivery.closed"), "the supervisor to journal the close")
+        wait_for(lambda: held() and listed().get("at", "") > kinds(fx, "delivery.closed")[-1]["at"],
+                 "the supervisor's list to hold the close on the outbox after it was journaled")
+        needs = json.loads((fx.tmp / "record/needs-you.json").read_text())
+        # What the page reads as a close still running: the list current, its supervisor running, the outbox holding it.
+        self.assertTrue(needs["running"], needs)
+        self.assertGreater(datetime.datetime.fromisoformat(needs["staleAfter"].replace("Z", "+00:00")),
+                           datetime.datetime.now(datetime.timezone.utc))
+        self.assertEqual(self.marks(fx.tmp / "record").get("finished"), None)
+        self.assertTrue(self.status(fx).startswith("supervisor: running"))
+        self.assertNotIn("stopped partway", self.status(fx))
+
     def test_a_record_without_marks_reads_as_it_did(self) -> None:
         fx = self.closable_fixture()
         self.once(fx)

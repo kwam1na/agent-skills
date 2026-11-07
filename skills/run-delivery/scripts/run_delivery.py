@@ -5922,7 +5922,10 @@ def kept_close(c, closed: dict | None) -> dict | None:
 
 def finish_close(c, closed: dict, archive: Path) -> list[str]:
     """The close's finished mark, once its archive has landed: in the live record, and in the archived copy and its
-    views. Writing it again changes nothing."""
+    views. Writing it again changes nothing. A record with no started mark for this close, journaled by a tool that
+    wrote no marks, closes as before: unmarked."""
+    if close_progress(load_state()) is None:
+        return []
     state_tool("close-finished", "--entry", str(closed["id"]))
     copy = archive / c.state.name
     if not (copy / "state.json").exists():
