@@ -2236,6 +2236,21 @@ class CloseStoppedPartwayTests(unittest.TestCase):
         self.once(fx)
         self.assertEqual(closed_of(fx)["archive"], closed["archive"])
 
+    def test_lead_close_refuses_a_supervisor_until_a_later_close_is_journaled(self) -> None:
+        fx = self.closable_fixture()
+        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "closed by hand")
+        code, out = fx.flow("lead-close", cwd=fx.main)
+        self.assertIn(code, (0, 1), out)
+        # New work alone doesn't undo lead-close's close: its entry is still the latest delivery.closed.
+        state_tool(fx, "journal", "--kind", "lane.assigned", "--summary", "more work", "--lane", "lane-1")
+        code, out = fx.flow("lead-run", "--once", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("the delivery is closed: lead-close closed it", out)
+        # A later close is a close closed.json doesn't speak for.
+        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "closed again by hand")
+        code, out = fx.flow("lead-run", "--once", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+
     def test_a_clean_close_and_a_clean_second_close_on_each_path(self) -> None:
         for path in ("supervisor", "lead-close"):
             with self.subTest(path=path):

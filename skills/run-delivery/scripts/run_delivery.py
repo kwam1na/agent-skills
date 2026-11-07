@@ -5231,7 +5231,7 @@ def closed_status(c) -> str | None:
     marks reads as before, by closed.json alone."""
     tool = c.release / "skills/orchestrate-work/scripts/delivery_state.py"
     doc = json.loads(run([sys.executable, "-B", str(tool), "--dir", str(c.state), "show"]).stdout)
-    closed = kept_close(c, latest_close(doc["journal"]))
+    closed = kept_close(c, last_close(doc["journal"]))
     progress = close_progress(doc)
     if progress == "partway":
         command = finishing_command(c, doc)
@@ -6210,7 +6210,7 @@ def lead_run(args) -> None:
     c = cfg()
     if not (c.state / "state.json").exists():
         raise Stop(f"no record at {c.state}: lead-init starts it, and its supervisor")
-    closed = kept_close(c, latest_close(load_state()["journal"]))
+    closed = kept_close(c, last_close(load_state()["journal"]))
     if closed and closed.get("by") == "lead-close":
         raise Stop("the delivery is closed: lead-close closed it. " + closed_words(closed))
     if args.resume:
