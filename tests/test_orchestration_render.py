@@ -611,11 +611,11 @@ EMPTY_STATE = {
 }
 PINNED_EMPTY_VIEWS = {
     "delivery.md": "bf22eae1f7b5115650ba06265e138d9b9ed720f44158d1fc761ba4df356507c9",
-    "delivery.html": "6ce6f338d48ebbb25f66193ec52f4657422cf2eaf286ae9b1de38eb023b26b4a",
+    "delivery.html": "4fa4847c194b084a1e8789d9e6ce791089652443916fea61d72f5fb4dd44aed3",
 }
 PINNED_VIEWS = {
     "delivery.md": "412c01eecfbdcfba6f1f5f650a0368c29c40e3e7cf3b0ef44d0687e68115d79c",
-    "delivery.html": "71a42852ef31312b1a20b1b448ed717c4184df84b3ec6b67920579486ea84241",
+    "delivery.html": "f5baf37476fd8034bc7718c08f0c235cd09cd34d82a9b2971373ba1344f7b223",
 }
 
 
@@ -900,6 +900,34 @@ def visibility_document() -> dict:
             "estimates": delivery_state.queue_estimates(state, at=state["meta"]["updatedAt"])}
 
 
+LONG_TITLE = "Behaviour scenario: shop-storefront-composition " + "x" * 200
+
+
+def titled_document() -> dict:
+    """Checks carrying titles, one hostile and one long, beside old checks that carry none."""
+    state = copy.deepcopy(FIXED_STATE)
+    state["meta"]["checking"]["now"]["steps"] = [
+        {"label": "e2e", "state": "passed", "title": "Webapp e2e <b>(Playwright)</b> & more",
+         "startedAt": "2026-10-20T11:50:00Z", "finishedAt": "2026-10-20T11:50:30Z"},
+        {"label": "scenario", "state": "pending", "title": LONG_TITLE},
+        {"label": "fmt", "state": "pending"},
+    ]
+    state["queue"][0]["checks"] = [
+        {"id": "suite", "state": "failed", "title": "Suite (pytest)", "failures": ["test_alpha"], "log": "logs/01-suite.log"},
+        {"id": "whole", "state": "passed"},
+    ]
+    return {"state": state, "journal": FIXED_JOURNAL}
+
+
+TITLED_LINES = (
+    "Webapp e2e <b>(Playwright)</b> & more: passed · took 30s",
+    LONG_TITLE[:79] + "…: pending",
+    "fmt: pending",
+    "Suite (pytest): failed · failing test_alpha · log logs/01-suite.log",
+    "whole: passed",
+)
+
+
 def ticket_document() -> dict:
     """The fixed state with the tracker's own titles and summaries for its queued, planned and follow-up work."""
     state = copy.deepcopy(FIXED_STATE)
@@ -1018,6 +1046,15 @@ class CheckVisibilityViewTests(unittest.TestCase):
                 self.assertIn(render_state._markdown_text(line), view)
         # The selection the lead's checks came from is said once, not again as waiting.
         self.assertNotIn(render_state._markdown_text(f"lead selection for {document['state']['queue'][0]['head']}"), view)
+
+    def test_the_markdown_view_names_checks_by_title_and_by_id_without_one(self) -> None:
+        view = render_state.render_markdown(titled_document())
+        for line in TITLED_LINES:
+            with self.subTest(line=line):
+                self.assertIn(render_state._markdown_text(line), view)
+        self.assertNotIn("<b>", view)
+        self.assertNotIn(LONG_TITLE, view)
+        self.assertNotIn("suite: failed", view)
 
     def test_a_document_without_estimates_or_timing_renders_as_before(self) -> None:
         document = {"state": FIXED_STATE, "journal": FIXED_JOURNAL}
@@ -2226,6 +2263,16 @@ setTimeout(async () => {
         for line in VISIBILITY_LINES:
             with self.subTest(line=line):
                 self.assertIn(line, shown["text"])
+
+    def test_the_page_names_checks_by_title_as_the_markdown_does(self) -> None:
+        shown = self.run_page({"now": "2026-10-20T12:00:00Z"}, titled_document())
+        # The page details only a failed check, and lists every check by name on the row.
+        self.assertIn("Suite (pytest) failed, whole passed", shown["text"])
+        for line in TITLED_LINES[:-1]:
+            with self.subTest(line=line):
+                self.assertIn(line, shown["text"])
+        self.assertNotIn("B", shown["tags"])
+        self.assertNotIn(LONG_TITLE, shown["text"])
 
     def test_the_page_says_whose_checks_ran_as_the_markdown_does(self) -> None:
         document = selection_document()

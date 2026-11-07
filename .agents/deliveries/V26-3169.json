@@ -35,8 +35,7 @@
         "tests/test_orchestration_adopter.py",
         "skills/orchestrate-work/references/orchestration-guide.md",
         "skills/orchestrate-work/scripts/render_state.py",
-        "tests/test_orchestration_render.py",
-        "provenance.lock.json"
+        "tests/test_orchestration_render.py"
       ]
     },
     "lane-2": {
@@ -50,7 +49,10 @@
         "tests/test_lane_rows.py",
         "tests/test_run_delivery_tracker.py",
         "skills/run-delivery/templates/round-brief.md",
-        "tests/test_round_brief_template_corpus.py"
+        "tests/test_round_brief_template_corpus.py",
+        "provenance.lock.json",
+        "skills/run-delivery/SKILL.md",
+        "tests/test_run_delivery_plan_review.py"
       ]
     },
     "lane-3": {
@@ -69,7 +71,6 @@
         "docs/solutions/best-practices/delivery-posture-harness-read-from-the-base-2026-11-04.md",
         "skills/run-delivery/adapters/*",
         "skills/run-delivery/references/adopting.md",
-        "skills/run-delivery/SKILL.md",
         "tests/test_forge_adapters.py",
         "skills/run-delivery/references/config.md",
         "catalog.json",
@@ -485,6 +486,17 @@
         {
           "id": "v26-3192-done",
           "text": "Fenced text in a compared section is compared, the four placeholder sections are compared after rendering or the test says why not, and each declared divergence is reconciled or kept with a reason"
+        }
+      ]
+    },
+    "V26-3215": {
+      "title": "Have the merge queue's base rerun honour flakes, keep its log, and name its failing tests",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3215-done",
+          "text": "The base rerun retries a declared flake once before base_broken, keeps its log beside the candidate's check log and links it from the stop, and base.broken names the rerun's failing tests in check.failed's shape"
         }
       ]
     }

@@ -227,6 +227,14 @@ if mode == "shadow":
     checks = [{"id": "always", "argv": [py, "-c", "pass"], "cwd": ".", "reasons": ["shadow"], "prerequisites": []}]
 if mode == "dummy":
     checks = [check("dummy")]
+if mode == "titled":
+    checks = [check("unit", "src/app.txt", title="Unit tests (webapp) <b>&"), check("plain")]
+if mode == "long-title":
+    checks = [check("unit", "src/app.txt", title="Behaviour scenario: " + "x" * 400)]
+if mode == "exact-title":
+    checks = [check("unit", "src/app.txt", title="T" * 200)]
+if mode == "empty-title":
+    checks = [check("unit", "src/app.txt", title="")]
 if mode == "prereq":
     checks = [check("build", "--build"), check("needs-build", "--needs-build", prerequisites=["build"])]
 if mode == "dirty":
@@ -3247,6 +3255,82 @@ class CheckVisibilityTests(MergeQueueTestCase):
         unit = [step for steps in seen for step in steps if step["label"] == "unit"]
         self.assertTrue(unit)
         self.assertNotIn("expectedSeconds", unit[0])
+
+    def test_a_providers_titles_reach_the_record_and_untitled_checks_keep_their_ids(self) -> None:
+        adopter = self.adopter({"alwaysRun": [check_entry("always", title="Always-on smoke")]}, mode="titled")
+        self.candidate(adopter)
+        patched, seen = self.recorded_steps()
+        with patched:
+            results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        rows = {check["id"]: check for check in adopter.item("feature")["checks"]}
+        self.assertEqual(rows["unit"]["title"], "Unit tests (webapp) <b>&")
+        self.assertEqual(rows["always"]["title"], "Always-on smoke")
+        self.assertNotIn("title", rows["plain"])
+        # The checking panel carries the same titles from the first write that names the checks.
+        self.assertTrue(seen)
+        named = next(steps for steps in seen if any(step["label"] == "unit" for step in steps))
+        first = {step["label"]: step for step in named}
+        self.assertEqual(first["unit"]["title"], "Unit tests (webapp) <b>&")
+        self.assertEqual(first["always"]["title"], "Always-on smoke")
+        self.assertNotIn("title", first["plain"])
+        every = [step for steps in seen for step in steps if step["label"] == "unit"]
+        self.assertTrue(all(step["title"] == "Unit tests (webapp) <b>&" for step in every))
+        # The id stays the check's name everywhere else.
+        [selection] = [result.document()["selection"] for result in results if result.document().get("selection")]
+        self.assertIn("unit", selection["checks"])
+
+    def test_a_long_title_is_cut_to_the_records_limit(self) -> None:
+        adopter = self.adopter(mode="long-title")
+        self.candidate(adopter)
+        self.run_queue(adopter, "feature")
+        title = next(check for check in adopter.item("feature")["checks"] if check["id"] == "unit")["title"]
+        self.assertEqual(len(title), 200)
+        self.assertTrue(title.startswith("Behaviour scenario: xxx"))
+        self.assertTrue(title.endswith("…"))
+
+    def test_a_title_of_exactly_the_records_limit_is_kept_whole(self) -> None:
+        adopter = self.adopter(mode="exact-title")
+        self.candidate(adopter)
+        self.run_queue(adopter, "feature")
+        title = next(check for check in adopter.item("feature")["checks"] if check["id"] == "unit")["title"]
+        self.assertEqual(title, "T" * 200)
+
+    def test_a_titles_change_leaves_a_checks_definition_as_it_was(self) -> None:
+        binding = {"checkTimeoutSeconds": 20, "profiles": {}, "environment": {}, "prepare": [], "hooks": "bypass"}
+        plain = check_entry("unit", "src/app.txt")
+        definitions = {queue.check_definition({**plain, **more}, binding)
+                       for more in ({}, {"title": "Unit tests"}, {"title": "Unit tests, renamed"})}
+        self.assertEqual(len(definitions), 1)
+        self.assertNotEqual(queue.check_definition({**plain, "argv": [PY, "tools/check.py", "other"]}, binding),
+                            definitions.pop())
+
+    def test_a_batchs_first_write_names_its_checks_by_title(self) -> None:
+        adopter = self.adopter(mode="titled")
+        for name, changes in (("first", {"src/lib.txt": "lib two\n"}), ("second", {"src/extra.txt": "extra\n"})):
+            self.candidate(adopter, changes, name=name)
+        patched, seen = self.recorded_steps()
+        with patched:
+            adopter.runner().run_command("batch", ["first", "second"])
+        named = next(steps for steps in seen if any(step["label"] == "unit" for step in steps))
+        self.assertEqual({step["label"]: step.get("title") for step in named}["unit"], "Unit tests (webapp) <b>&")
+        self.assertTrue(all(step["state"] == "pending" for step in named))
+
+    def test_a_binding_check_with_an_empty_title_is_refused(self) -> None:
+        adopter = self.adopter({"alwaysRun": [check_entry("always", title="")]})
+        self.candidate(adopter)
+        last = self.run_queue(adopter, "feature")[-1].document()
+        self.assertEqual(last["outcome"], "refused", last)
+        self.assertIn("title", last["stop"]["detail"])
+
+    def test_an_empty_title_makes_the_providers_answer_malformed(self) -> None:
+        adopter = self.adopter(mode="empty-title")
+        self.candidate(adopter)
+        results = self.run_queue(adopter, "feature")
+        [selection] = [result.document()["selection"] for result in results if result.document().get("selection")]
+        [provider] = [record for record in selection["providers"] if record["source"] == "base"]
+        self.assertEqual(provider["outcome"], "malformed")
+        self.assertIn("title", provider["detail"])
 
     def test_a_passing_run_adds_to_the_history_and_keeps_the_last_five(self) -> None:
         adopter = self.visible_adopter([check_entry("always")])
