@@ -114,12 +114,13 @@ test("a closed delivery names a piece with no lane as having none, and a stop na
 const LIVE_NEEDS = (over = {}) => ({ spec: "delivery-needs-you/1", running: true, pass: 3, at: "2026-10-30T11:59:30Z",
   staleAfter: "2026-10-30T12:01:30Z", items: [{ holding: true, source: "host outbox", text: "The host outbox hasn't been acked through journal entry 4",
     clears: "the host posting its outbox" }], ...over });
-function closing({ finish = true, marks = "started", earlier = false, needs = null, reopened = false, removed = null } = {}) {
+function closing({ finish = true, marks = "started", earlier = false, needs = null, reopened = false, removed = null, stage = "merged",
+  lane = "idle" } = {}) {
   const steps = [...landed("A"), close];
   if (reopened) steps.push([50, "candidate.handed", "A"], [55, "delivery.closed", null]);
-  const document = record({ queue: [item("A", "merged")], journal: journal(steps),
+  const document = record({ queue: [item("A", stage)], journal: journal(steps),
     finish: [{ id: "line", text: "The line is met", met: finish }] });
-  document.state.lanes[0].state = "idle";
+  document.state.lanes[0].state = lane;
   const closed = document.journal.filter((entry) => entry.kind === "delivery.closed").at(-1);
   const entry = earlier ? closed.id - 1 : closed.id;
   if (marks !== "none") {
@@ -143,6 +144,13 @@ test("a close that stopped partway says so and names a resumed supervisor when t
 test("a planned piece the plan removed holds nothing, so the close still finishes with a resumed supervisor", async () => {
   expect((await partway(closing({ removed: "removed" }))).querySelector("p").textContent).toContain("Finish it with lead-run --resume.");
   expect((await partway(closing({ removed: "kept" }))).querySelector("p").textContent).toContain("Finish it with lead-close");
+});
+
+test("a story left unmerged, or a lane still busy, means only lead-close can finish the close", async () => {
+  for (const shape of [{ stage: "stopped" }, { stage: "queued" }, { lane: "working" }, { lane: "blocked" }]) {
+    const text = (await partway(closing(shape))).querySelector("p").textContent;
+    expect([shape, text.includes("Finish it with lead-close, which doesn't wait for the tracker")]).toEqual([shape, true]);
+  }
 });
 
 test("a close that stopped partway on a record short of its close condition names lead-close, which doesn't wait for the tracker", async () => {

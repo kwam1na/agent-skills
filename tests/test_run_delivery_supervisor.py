@@ -2087,6 +2087,7 @@ class CloseStoppedPartwayTests(unittest.TestCase):
     fixture = SupervisorTrackerTests.fixture
     once = SupervisorTrackerTests.once
     closable = SupervisorTrackerTests.closable
+    drawn = SupervisorTrackerTests.drawn
 
     def stopped_at(self, fx: Fixture, point: str, *command: str) -> str:
         """Run the real command, stopped at `point` as a kill there would stop it: a sitecustomize shim, first on the
@@ -2116,10 +2117,13 @@ class CloseStoppedPartwayTests(unittest.TestCase):
         self.assertEqual(marks["started"]["entry"], entry, marks)
         self.assertNotEqual((marks.get("finished") or {}).get("entry"), entry, marks)
         said = self.status(fx)
-        self.assertIn(f"stopped partway through the close; finish it with", said)
-        self.assertTrue(said.endswith(command) if command == "lead-run --resume" else command in said, said)
+        # The command named is the one after "finish it with", not one the line mentions anywhere else.
+        named = re.search(r"stopped partway through the close; finish it with .*?(lead-run --resume|lead-close)(;|$)", said)
+        self.assertIsNotNone(named, said)
+        self.assertEqual(named.group(1), command, said)
         code, out = fx.flow("doctor", "--offline", "--delivery", "FX-1", cwd=fx.main)
-        self.assertIn("stopped partway through the close", out)
+        verdict = next(line for line in out.splitlines() if "stopped partway through the close" in line)
+        self.assertTrue(verdict.startswith("wrong"), verdict)
 
     def assert_finished(self, fx: Fixture) -> Path:
         entry = self.closing_entry(fx)
@@ -2254,7 +2258,9 @@ class CloseStoppedPartwayTests(unittest.TestCase):
     def test_a_clean_close_and_a_clean_second_close_on_each_path(self) -> None:
         for path in ("supervisor", "lead-close"):
             with self.subTest(path=path):
-                fx = self.closable_fixture()
+                fx, self.backend = self.fixture()
+                self.drawn(fx)
+                self.closable(fx)
                 for turn in (1, 2):
                     if turn == 2:
                         # Reopened by new work, then closed again: a new entry, a new archive, its own marks.
@@ -2268,17 +2274,14 @@ class CloseStoppedPartwayTests(unittest.TestCase):
                         self.assertIn(code, (0, 1), out)
                     self.assertEqual(len(kinds(fx, "delivery.closed")), turn)
                     archive = self.assert_finished(fx)
-                    # The archived copy's page reads the same marks the record holds: a close finished, by this entry.
-                    shown = sh(sys.executable, "-B", fx.release / "skills/orchestrate-work/scripts/delivery_state.py",
-                               "--dir", archive / "record", "show").stdout
-                    (fx.main / "views.json").write_text(json.dumps({"spec": "delivery-views-config/1"}))
-                    page = sh(sys.executable, "-B", fx.release / "skills/delivery-views/scripts/render.py", "line-map",
-                              "--config", "views.json", "--binding", ".agents/orchestration.json", "--state-dir",
-                              archive / "record", input=shown, cwd=fx.main).stdout
-                    embedded = re.search(r'<script type="application/json" id="delivery-state">(.*?)</script>', page, re.S)
-                    drawn = json.loads(embedded.group(1).replace("\\u003c", "<"))
+                    # The archived copy's own line map, as the close re-rendered it, reads the close finished: what the
+                    # page draws from, and so no "stopped partway" box.
                     entry = self.closing_entry(fx)
-                    self.assertEqual(drawn["state"]["meta"]["closing"]["finished"]["entry"], entry)
+                    for folder in (archive / "record", fx.tmp / "record"):
+                        page = (folder / "line-map.html").read_text(encoding="utf-8")
+                        embedded = re.search(r'<script type="application/json" id="delivery-state">(.*?)</script>', page, re.S)
+                        drawn = json.loads(embedded.group(1).replace("\\u003c", "<"))
+                        self.assertEqual(drawn["state"]["meta"]["closing"]["finished"]["entry"], entry, folder)
 
     def strip_marks(self, fx: Fixture) -> None:
         """As a delivery.closed a tool that wrote no marks journaled leaves the record."""
@@ -2337,15 +2340,18 @@ class CloseStoppedPartwayTests(unittest.TestCase):
         self.assertTrue(self.status(fx).startswith("supervisor: stopped; the delivery is closed."))
 
     def test_a_delivery_closed_reopened_closed_again_and_stopped_is_judged_on_its_last_close(self) -> None:
-        fx = self.closable_fixture()
-        self.once(fx)
-        first = self.closing_entry(fx)
-        state_tool(fx, "journal", "--kind", "lane.assigned", "--summary", "more work", "--lane", "lane-1")
-        state_tool(fx, "focus", "--lane", "lane-1", "--text", "done", "--state", "done")
-        self.stopped_at(fx, "archive")
-        self.assertGreater(self.closing_entry(fx), first)
-        self.assert_partway(fx, "lead-run --resume")
-        self.finish_with_resume(fx)
+        for kind in ("lane.assigned", "candidate.handed", "check.started"):
+            with self.subTest(reopened_by=kind):
+                fx = self.closable_fixture()
+                self.once(fx)
+                first, archive = self.closing_entry(fx), closed_of(fx)["archive"]
+                state_tool(fx, "journal", "--kind", kind, "--summary", "more work", "--lane", "lane-1",
+                           *(["--subject", "FX-2"] if kind != "lane.assigned" else []))
+                state_tool(fx, "focus", "--lane", "lane-1", "--text", "done", "--state", "done")
+                self.stopped_at(fx, "archive")
+                self.assertGreater(self.closing_entry(fx), first)
+                self.assert_partway(fx, "lead-run --resume")
+                self.assertNotEqual(self.finish_with_resume(fx), Path(archive))
 
 
 # Where a row stops a close: (event, run_delivery.py function, the function that called it or None, which time).
