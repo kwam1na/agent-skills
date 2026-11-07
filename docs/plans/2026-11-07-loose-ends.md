@@ -85,8 +85,8 @@ CI's baseline and its workflow `env`, no tty) before changing anything, and capt
 the stdin-pipe class fixed in ff710de, or `run_group`'s reads outliving the group kill when a backgrounded child holds the pipes. Fix it in
 `run_group` if that's where it lives. If the supervisor module's timeout has the same cause, fix it here too. If not, fix it in this lane
 as its own change right after V26-3232, filed as a child of the epic, since the finish line needs macOS green. The fix adds a row that runs
-on every platform: a child backgrounds a grandchild that holds the stdout and stderr pipes, and `run_group` must return within a short bound
-after the group kill. The named test keeps its current deadline and isn't skipped on any platform. Files: `run_delivery.py`,
+on every platform and models the reproduced cause (for example, a grandchild that leaves the group and holds the stdout and stderr pipes):
+`run_group` must return within a short bound. The row must fail before the fix, and the lane records that red run. The named test keeps its current deadline and isn't skipped on any platform. Files: `run_delivery.py`,
 `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`. Sensors: the named test, `tests/test_run_delivery.py`,
 `tests/test_run_delivery_supervisor.py`, and macOS CI on the change request with the `full-matrix` label. Compounding: the solution note the
 item names, if the pipe explains it.
@@ -102,7 +102,8 @@ names its pid and the kill hint, and each row fails when its branch's line is re
 Lane 1, tier 1, after V26-3175. Test-first, per the item's seven scenarios, with Decision 5 for Scope 4. Decision 5 adds four rows. A story
 whose snapshot offers the first start transition is assigned without `--force`, and no readiness line is printed. A not-ready story makes
 `lead-assign` exit non-zero, naming the story, its status and the missing transition, and leaves the record byte-identical. The same story
-with `--force` is assigned, and the output still names the story and status. A story with no snapshot is assigned, with the not-checked line.
+with `--force` is assigned, and the output still names the story and status. A story with no snapshot is assigned, with the not-checked line, and `doctor --delivery`
+prints the same line for it.
 Files: `run_delivery.py`,
 `skills/run-delivery/templates/lane-brief.md`, `tests/test_run_delivery.py`, and the line-map goldens only if a fixture covers a started story
 with no snapshot. Sensors: the `lane-start`, `lead-assign` and `doctor` tests, and the brief template tests.
@@ -112,7 +113,8 @@ with no snapshot. Sensors: the `lane-start`, `lead-assign` and `doctor` tests, a
 Lane 1, tier 1, after V26-3201. Characterization-first: first, a row per reducer recording where today's out-of-delta P1 ends up. Then apply
 Decision 1, with these rows. The existing round-1 "deferred P1" refusal stays unchanged. A round-2 deferred P1 listed in `lateFindings`, with a
 `deferredIssue`, is accepted, reduces to aligned, and appears in the deferred-findings follow-up list. A round-2 deferred P1 not in
-`lateFindings` is refused. A round-2 deferred P1 with no `deferredIssue` is refused. A round-2 deferred P0 is refused. Files: `run_delivery.py` (`STORY_SEVERITIES`, `PLAN_SEVERITIES`, `review_reduce`, `plan_review_reduce`),
+`lateFindings` is refused. A round-2 deferred P1 with no `deferredIssue` is refused. A round-2 deferred P0 is refused. A round-1 result with a deferred P1 that is listed in `lateFindings` and carries a non-empty
+`deferredIssue` is refused, so the round condition is pinned on its own. Files: `run_delivery.py` (`STORY_SEVERITIES`, `PLAN_SEVERITIES`, `review_reduce`, `plan_review_reduce`),
 `skills/run-delivery/templates/round-brief.md` if it restates the rule, and `tests/test_round_brief_template_corpus.py`, whose declared
 difference goes. Sensors: the four the item names.
 
@@ -151,8 +153,9 @@ words `base.verified` and `selection.refused`, and a titled `refusalStops` row. 
 ### V26-3182. Adopt `regenerable.listings` here
 
 Lead, tier 3, after `v1.6.0-rc.3` is applied (Decision 2). Sensor-only, per the item: `doctor`, the binding check, and the queue's own
-`source_conflict` row. The evidence shows `doctor` or the binding check reading the declared listings back by name, so that an empty or
-wrong declaration can't pass. Files: `.agents/orchestration.json`. Sensors: `scripts/validate-registry.py`, `run_delivery.py doctor`,
+`source_conflict` row. The evidence quotes the committed `regenerable.listings` entry by path beside `doctor`'s validating binding row.
+It also shows the binding check refusing a scratch copy whose listing names a path outside `regenerable.paths` (the
+`/regenerable/listings/0: ... is not a regenerable path` error), so a wrong declaration can't pass silently. Files: `.agents/orchestration.json`. Sensors: `scripts/validate-registry.py`, `run_delivery.py doctor`,
 `tests/test_own_deliveries.py`.
 
 ## Release step
