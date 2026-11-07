@@ -251,13 +251,17 @@ and every lead command repeats it. It keeps the merge queue's `serve` and the li
    absent; `checkTimeoutCeiling` doesn't bound it). Its result goes to the full-health log, and the journal gets
    `base.verified` on a pass, `base.broken` on a failure, or `base.repaired` on the first pass after a failed run,
    each naming the merge the run follows. A `base.broken` stops the queue until a `base.repaired`, and a pass repairs
-   only a break `fullHealth` found. The pass lasts as long as the run, so its views and a stop asked meanwhile wait
-   for it;
+   only a break `fullHealth` found. The run is `full-health-run`, in a session of its own that holds the flow log's
+   `<delivery>.full-health.lock` while it runs, recording its pid, head and start; the pass starts it and passes
+   that follow see it running, so the supervisor keeps passing beside it and the run holds the close until it ends.
+   A start that finds the lock held runs nothing, a run that outlives its supervisor is adopted by the next one, and
+   `lead-close` or `lead-init --replace` stops it, recording no result. `lead-run --once` waits for the run it
+   starts;
 4. `finish.met`, once for each finish line whose covered criteria have every covered proof done;
 5. the binding's `state` publishers; then "Needs you", written over the last pass's list in the record's
    `needs-you.json`; then the binding's renderers, so the line map shows this pass's list;
 6. a copy of the record and the flow log into `latest` at the archive location, under the state lock;
-7. the close-out, when the close condition holds.
+7. the close-out, when the close condition holds, after that cleanup once more, so a lane that moved off its story during the pass doesn't leave its checkout behind a closed delivery.
 
 The close condition: every planned and queued story merged or removed, every finish line met, every lane idle or
 done, and no "Needs you" item holding. "Needs you" is derived each pass, and its file is only that pass's view of it,

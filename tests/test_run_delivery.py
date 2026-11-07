@@ -406,6 +406,20 @@ def stop_supervisors(root: Path) -> None:
         if held or any(in_group(child) for child in recorded.get("children") or []):
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(pid, signal.SIGKILL)
+    # A post-merge fullHealth run leads a session of its own, so it outlives its supervisor: stop it while it holds its
+    # lock, and only then.
+    for lock in root.rglob("*.full-health.lock"):
+        with open(lock, "a+") as probe:
+            try:
+                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(probe, fcntl.LOCK_UN)
+                continue
+            except BlockingIOError:
+                pass
+        pid = json.loads(lock.read_text() or "{}").get("pid")
+        if isinstance(pid, int) and pid > 1:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(pid, signal.SIGKILL)
 
 
 def report(**over):
