@@ -232,6 +232,12 @@ Lane 2, added by the lead after V26-3181, because it failed V26-3091's queue che
 supervisor write in between fails the guide's end-to-end test with `version_stale`. Files: `run_delivery.py`, `tests/test_run_delivery.py`.
 Sensors: `tests/test_run_delivery.py`, with a write forced between read and patch.
 
+### V26-3215. Have the merge queue's base rerun honour flakes, keep its log, and name its failing tests
+
+Lane 1, added by the lead after V26-2807, as the follow-up V26-3089 deferred: lane-1's planned stories wait on lane-2's chain, and this one is
+unblocked in lane-1's files. Files: `merge_queue.py`, `schemas.json`, `references/orchestration-guide.md`, `tests/test_merge_queue.py`,
+`tests/test_orchestration_state.py`. Sensors: `tests/test_merge_queue.py`, `tests/test_orchestration_state.py`, the corpus guards.
+
 ### V26-3178. Refuse a hand-off whose --run another subject already holds
 
 Lane 1, added by the lead while V26-2986 waits for V26-3064 to merge: a follow-up lane 1 found at V26-3005's hand-off. Files: `delivery_state.py`,
