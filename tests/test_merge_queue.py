@@ -6234,6 +6234,31 @@ class ProviderRefusalTests(MergeQueueTestCase):
         self.assertEqual(adopter.item("feature")["checkSelection"],
                          {"by": "lead", "head": head, "reason": "the lead judged it worth the wide run"})
 
+    def test_under_refusal_stops_a_providers_titles_and_the_lead_s_titled_selection_reach_the_record(self) -> None:
+        # A provider that answers keeps its titles under refusalStops, as it does without the flag.
+        adopter = self.adopter({**self.STOPS, "alwaysRun": [check_entry("always", title="Always-on smoke")]}, mode="titled")
+        self.candidate(adopter)
+        results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        rows = {check["id"]: check for check in adopter.item("feature")["checks"]}
+        self.assertEqual(rows["unit"]["title"], "Unit tests (webapp) <b>&")
+        self.assertEqual(rows["always"]["title"], "Always-on smoke")
+        self.assertNotIn("title", rows["plain"])
+        # A refused candidate the lead releases with titled checks shows the lead's titles, and an untitled one its id.
+        self.fresh()
+        adopter = self.adopter(self.STOPS, mode="refuse")
+        head = self.candidate(adopter)
+        self.assertStopped(self.run_queue(adopter, "feature"), "provider_refused")
+        chosen = [check_entry("focused", title="Focused unit tests"), check_entry("wide")]
+        state_tool.select_checks(adopter.state, "feature", binding=adopter.binding, head=head, checks=chosen,
+                                 reason="the lead chose titled checks")
+        self.requeue(adopter, "feature")
+        results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        rows = {check["id"]: check for check in adopter.item("feature")["checks"]}
+        self.assertEqual(rows["focused"]["title"], "Focused unit tests")
+        self.assertNotIn("title", rows["wide"])
+
     def test_a_refused_batch_stops_every_member_and_names_each(self) -> None:
         adopter = self.adopter(self.STOPS, mode="refuse")
         base = adopter.tip("main")
