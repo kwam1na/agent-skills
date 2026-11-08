@@ -48,7 +48,9 @@
     "lane-2": {
       "owns": [
         ".agent-skills/*",
-        ".agents/orchestration.json"
+        ".agents/orchestration.json",
+        ".agents/skills/*",
+        ".claude/skills/*"
       ]
     }
   },
