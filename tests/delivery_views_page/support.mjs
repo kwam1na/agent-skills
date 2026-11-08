@@ -136,8 +136,10 @@ export function planEnd(app) {
  * the live server's adapter; `rendered: <page>` serves the page at its /view/ address as the server's next
  * render, and a function gives each answer in turn: a page, { refuse: <status>, body }, an Error it fails with, or a promise
  * of one, to hold an answer open. `strayFetch` gives a page with no address a fetch that records any call. Steps: { push }, { status }, { resolve }, { event }, { dropped }, { hover }, { leave },
- * { click, index? } (focus, then click), { toggle }, { run: <function> }, { asked: <n> } (until the page has fetched its address n times and
- * taken in the answer) or { wait }. Each snapshot is { app, text, focused, source,
+ * { click, index? } (focus, then click), { toggle }, { run: <function> }, { asked: <n> } (until the page has fetched its address n times;
+ * an answer already given is taken in by then, and the snapshot follows the step's wait, so a later ask the page's own timer
+ * starts meanwhile, which a loaded machine can delay the snapshot past, may have landed too: hold that answer open with a
+ * promise to see the page before it) or { wait }. Each snapshot is { app, text, focused, source,
  * titled }, titled counting the elements anywhere in the document that carry a title attribute.
  *
  * `stored: { key: value }` puts values in the page's storage before it loads; storage needs an address, so it goes with
