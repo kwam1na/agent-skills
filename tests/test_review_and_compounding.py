@@ -216,7 +216,7 @@ LATE_P1_DEFERRAL = {
 }
 # The old rule, its phrasings and their synonyms: only P2 and P3 defer, or a P1 never does.
 OLD_DEFERRAL_RULE = (
-    r"only (a |the )?P2 (or|and|/) ?P3( findings?)? (can|may|is|are)",
+    r"only (a |the )?P2 ?(or|and|/) ?P3( findings?)? (can|may|is|are)",
     r"P2/P3 only",
     r"P0 (and|or|/) ?P1 (findings )?are (blocking and are )?never deferred",
     r"P1s? (findings? )?(is|are) never deferred",
