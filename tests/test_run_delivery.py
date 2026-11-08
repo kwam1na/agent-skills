@@ -2662,6 +2662,56 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         self.assertEqual(proc.stdout.readline().strip(), "listening", f"the {mark} listener didn't start")
         return proc
 
+    def closable(self) -> Fixture:
+        """A delivery of its own, initialized and journalled closed, so lead-close runs to its in-app step."""
+        fx = self.fixture()
+        setup_delivery(fx)
+        code, out = fx.flow("lead-init", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        sh(sys.executable, "-B", fx.release / "skills/orchestrate-work/scripts/delivery_state.py", "--dir", fx.tmp / "record",
+           "journal", "--kind", "delivery.closed", "--summary", "closed", cwd=fx.main)
+        home = fx.tmp / "home"
+        home.mkdir()
+        fx.env = {**fx.env, "HOME": str(home)}
+        return fx
+
+    def test_lead_close_with_the_lease_held_reports_only_the_held_lease(self) -> None:
+        fx = self.closable()
+        listener = self.listener(fx.port, "held-lease-mark")  # the check's own server, inside the lease
+        lock = fx.tmp / "app.lock"
+        holder = subprocess.Popen([sys.executable, "-c", "import fcntl, sys, time; f = open(sys.argv[1], 'a+'); "
+                                   "fcntl.flock(f, fcntl.LOCK_EX); f.truncate(0); f.write('app-check pid 1 since then\\n'); "
+                                   "f.flush(); print('holding', flush=True); time.sleep(60)", str(lock)],
+                                  stdout=subprocess.PIPE, text=True)
+
+        def stop():  # started here, stopped by the pid recorded here
+            if holder.poll() is None:
+                holder.kill()
+            holder.wait()
+            holder.stdout.close()
+        self.addCleanup(stop)
+        self.assertEqual(holder.stdout.readline().strip(), "holding")
+        code, out = fx.flow("lead-close", cwd=fx.main)
+        left = [line for line in out.splitlines() if line.startswith("  left: ")]
+        self.assertEqual(code, 1, out)
+        self.assertEqual(left, ["  left: the in-app lease is held (app-check pid 1 since then); gave up after 0s"], out)
+        self.assertNotIn("kill", out, "a held lease's server got a kill hint")
+        self.assertNotIn("is free", out, "a held lease was reported free")
+        self.assertIsNone(listener.poll(), "lead-close stopped the server a live check holds")
+
+    def test_lead_close_with_the_lease_free_names_the_ports_listener_and_the_kill_hint(self) -> None:
+        fx = self.closable()
+        listener = self.listener(fx.port, "free-lease-mark")  # a build served by hand, outside the lease
+        code, out = fx.flow("lead-close", cwd=fx.main)
+        left = [line for line in out.splitlines() if line.startswith("  left: ")]
+        self.assertEqual(code, 1, out)
+        self.assertIn(f"  done: the in-app lease {fx.tmp / 'app.lock'} is free", out)
+        self.assertEqual(len(left), 1, out)
+        self.assertIn(f"outside the in-app lease: pid {listener.pid} (", left[0])
+        self.assertIn("free-lease-mark", left[0], "the named command line isn't the listener's")
+        self.assertIn(f"stop it (kill {listener.pid}) and run again", left[0])
+        self.assertIsNone(listener.poll(), "lead-close stopped a server outside the lease")
+
     def test_the_port_holder_is_named_by_its_listening_pid(self) -> None:
         port = free_port()  # an ephemeral port this case owns
         listener = self.listener(port, "holder-mark-one")
