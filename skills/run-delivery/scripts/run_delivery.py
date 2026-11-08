@@ -3075,6 +3075,10 @@ def lane_start(args) -> None:
     since = assigned[-1]["at"] if assigned else None
     starts = [s for s in tracker_publisher.read_flow(c.flow_log, c.delivery, tracker_publisher.LANE_STARTS)
               if s.get("subject") == key and (since is None or s.get("at", "") >= since)]
+    # On every run, so a start recorded without its stage move gets it on the next one; a story past planned is left as
+    # it is. It comes first, so the stage is moved before the start is recorded.
+    if mark_building(c, key, lane):
+        did.append(f"{lane} started it: now building")
     if not starts:
         # The focus is set only with the start, so running it again never resets what the lane has said since.
         state_tool("focus", "--lane", lane, "--text", f"{key}: started", "--state", "working", "--waiting-on", "")
@@ -3082,14 +3086,27 @@ def lane_start(args) -> None:
         tracker_publisher.record_lane_start(c.flow_log, c.delivery, key, lane)
         did.append("recorded the start")
         conf = tracker_conf(c)
-        if conf["mode"] == "host":
+        # Made by hand, through the host's tools or the lane's own: the publisher makes it in publisher mode.
+        if conf["mode"] in ("host", "manual"):
             moves = conf["transitions"].get("start") or []
             update = f"Started ({lane}): {c.label(key)}: {c.stories[key]['title']}"
             if moves:
                 print(f"Tracker move (your story {key}): {said_moves(moves)}, with your tracker tools.")
             print(f"Tracker post (your story {key}): {update}")
-            lane_print(c, key, {"move": "start", "transitions": moves, "post": update})
+            if conf["mode"] == "host":
+                lane_print(c, key, {"move": "start", "transitions": moves, "post": update})
     print(f"{key}: " + ("; ".join(did) if did else "already started; nothing to do") + f". Work in {path}.")
+
+
+def mark_building(c, key: str, lane: str) -> bool:
+    """Move a story still planned to building in the record, as its lane: the one stage a lane writes. A story already
+    past planned is left as it is. Returns whether it moved."""
+    def compute(doc: dict):
+        entry = next((e for e in doc["state"].get("planned", []) if e["subject"] == key), None)
+        if entry is None or entry.get("stage") != "planned" or entry.get("lane") != lane:
+            return None
+        return ["--lane", lane, "--element", f"planned[subject={key}]", "--patch", json.dumps({"stage": "building"})]
+    return patch_from(compute, f"{key}'s start", writer="lane") is not None
 
 
 def push(args) -> None:
@@ -4634,6 +4651,51 @@ def lead_brief(args) -> None:
     print(f"wrote {out}")
 
 
+# Where the tracker snapshot is kept: serve's refresh, under the record, and lead-reconcile's, beside it.
+TRACKER_SNAPSHOTS = ("snapshots/tracker.json", "../snapshots/trackerSnapshot.json")
+
+
+def tracker_snapshot_items(c) -> dict | None:
+    """The newest tracker snapshot kept for the delivery, as its items by subject; None when none is kept."""
+    newest = None
+    for rel in TRACKER_SNAPSHOTS:
+        try:
+            snapshot = json.loads((c.state / rel).read_text())
+        except (OSError, ValueError):
+            continue
+        if not isinstance(snapshot, dict) or snapshot.get("source") != "tracker" or not isinstance(snapshot.get("items"), list):
+            continue
+        if newest is None or str(snapshot.get("takenAt", "")) > str(newest.get("takenAt", "")):
+            newest = snapshot
+    if newest is None:
+        return None
+    return {item["subject"]: item for item in newest["items"] if isinstance(item, dict) and "subject" in item}
+
+
+def story_readiness(c, key: str) -> tuple[str, str | None]:
+    """Whether a story's tracker item offers the first start move, from the tracker snapshot: ("ready", None),
+    ("not-ready", why), or ("not-checked", why) when the snapshot can't say. Nothing to check with no start move, or
+    for an item already under way. It reads; it never moves anything."""
+    moves = tracker_conf(c)["transitions"].get("start") or []
+    if not moves:
+        return "ready", None
+    items = tracker_snapshot_items(c)
+    if items is None:
+        return "not-checked", f"{key}: readiness wasn't checked: there is no tracker snapshot"
+    item = items.get(key)
+    if item is None:
+        return "not-checked", f"{key}: readiness wasn't checked: the tracker snapshot doesn't list it"
+    if item.get("state") != "backlog":
+        return "ready", None
+    offered = item.get("offeredTransitions")
+    if not isinstance(offered, list):
+        return "not-checked", f"{key}: readiness wasn't checked: the tracker snapshot doesn't list its offered moves"
+    if moves[0] in offered:
+        return "ready", None
+    return "not-ready", (f"{key} is in {item.get('status') or 'a status the snapshot does not name'}: "
+                         f"\"{moves[0]}\" isn't offered; refine it first")
+
+
 def lead_assign(args) -> None:
     c = cfg()
     keys = [c.require(k) for k in args.keys]
@@ -4643,6 +4705,11 @@ def lead_assign(args) -> None:
     problems = plan_problems(c, keys)
     if problems:
         raise Stop("; ".join(problems))
+    # Before anything is written: a story its tracker isn't ready to start is refused unless the lead forces it.
+    readiness = {key: story_readiness(c, key) for key in keys}
+    unready = [line for state, line in readiness.values() if state == "not-ready"]
+    if unready and not args.force:
+        raise Stop("; ".join(unready) + "; nothing was assigned. Have the item made ready, or assign it anyway with --force")
     register_stories(c)
     rebuild_plan(c)
     tracked = tracked_at_base(c)
@@ -4661,6 +4728,13 @@ def lead_assign(args) -> None:
     for key in keys:
         state_tool("journal", "--kind", "lane.assigned", "--lane", args.lane, "--subject", key, "--summary",
                    f"{args.lane} assigned {key}: {c.stories[key]['title']}" + (f" ({args.note})" if args.note else ""))
+    said = [line + ("; assigned anyway (--force)" if state == "not-ready" else "")
+            for state, line in readiness.values() if line]
+    if said:
+        print("Readiness, from the tracker snapshot:")
+        for line in said:
+            print(f"  {line}")
+        print()
     print(f"Assignment message for {args.lane} ({args.title}):\n")
     print(f"You are {args.lane} in the {c.delivery} delivery. Read the lane brief first: {c.root / c.lane_brief}\n")
     print("Your stories, in order (one branch, one review and one hand-off each):")
@@ -7025,6 +7099,7 @@ class Doctor:
             ("plan", "plan chapter", ("delivery",), self.check_plan),
             ("plan-sections", "plan sections", ("delivery",), self.stories_planned),
             ("story-files", "story files", ("plan-sections",), self.story_files),
+            ("readiness", "story readiness", ("delivery",), self.story_readiness),
             ("context-sections", "context sections", ("delivery",), self.context_planned),
             ("remote-base", "configuration on the remote base", ("delivery",), self.remote_base),
             ("ready", "pull requests marked ready", ("delivery",), self.ready),
@@ -7427,6 +7502,27 @@ class Doctor:
         return "warn", ("; ".join(problems) + "; fix: move each to the story's lane's owns before it starts, or plan the "
                         "story on the lane that owns it")
 
+    def story_readiness(self):
+        d = self.delivery
+        if not tracker_conf(d)["transitions"].get("start"):
+            return "ok", "lanes make no start move, so there is no readiness to check"
+        if (d.state / "state.json").exists():
+            doc = json.loads(run([sys.executable, "-B", str(d.release / "skills/orchestrate-work/scripts/delivery_state.py"),
+                                  "--dir", str(d.state), "show"]).stdout)
+            waiting = [e["subject"] for e in doc["state"].get("planned", []) if e.get("stage") == "planned"]
+        else:  # Before lead-init, every story is still to start.
+            waiting = list(d.stories)
+        found = {key: story_readiness(d, key) for key in waiting if key in d.stories}
+        unready = [line for state, line in found.values() if state == "not-ready"]
+        unchecked = [line for state, line in found.values() if state == "not-checked"]
+        if unready:
+            # A warning: lead-assign refuses these, and --force overrides it.
+            return "warn", "; ".join(unready + unchecked) + "; fix: have each item made ready before its lane starts"
+        if unchecked:
+            return self.not_applicable("; ".join(unchecked))
+        return "ok", (f"each of the {len(found)} stories still planned is offered its first start move"
+                      if found else "no story is still waiting to start")
+
     def context_planned(self):
         d = self.delivery
         if not d.context_sections:
@@ -7594,7 +7690,10 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--head", required=True); p.add_argument("--record", required=True); p.set_defaults(fn=full_health_run)
     p = command(sub, "lead-brief"); p.set_defaults(fn=lead_brief)
     p = command(sub, "lead-assign"); p.add_argument("keys", nargs="+"); p.add_argument("--lane", required=True)
-    p.add_argument("--title", required=True); p.add_argument("--note"); p.set_defaults(fn=lead_assign)
+    p.add_argument("--title", required=True); p.add_argument("--note")
+    p.add_argument("--force", action="store_true",
+                   help="assign a story whose tracker item doesn't offer the first start move")
+    p.set_defaults(fn=lead_assign)
     p = command(sub, "lead-accept"); p.add_argument("key", nargs="?"); p.add_argument("--accept-blocked", action="append")
     p.add_argument("--requeue", metavar="KEY", help="re-queue a stopped candidate you resolved, with no new hand-off")
     p.add_argument("--accept-restarts", action="store_true")
