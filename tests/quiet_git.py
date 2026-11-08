@@ -7,7 +7,11 @@ from pathlib import Path
 
 # Appended once rather than set by `git config`, which rewrites the file for each setting. What a repository
 # receives stays one pack rather than a file per object, no fetch starts maintenance, and no ref keeps a log.
-QUIET = "[transfer]\n\tunpackLimit = 1\n[maintenance]\n\tauto = false\n[core]\n\tlogAllRefUpdates = false\n"
+# `maintenance.auto` covers the path newer Git takes after a push, fetch or commit. Older Git (2.39, as macOS ships)
+# has receive-pack start `gc --auto` itself after each push, which only `receive.autoGc` stops; `gc.auto = 0` makes any
+# automatic gc that does start do nothing.
+QUIET = ("[transfer]\n\tunpackLimit = 1\n[maintenance]\n\tauto = false\n[core]\n\tlogAllRefUpdates = false\n"
+         "[receive]\n\tautoGc = false\n[gc]\n\tauto = 0\n")
 
 
 def quieten(repository: Path) -> None:
