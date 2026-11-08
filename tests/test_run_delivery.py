@@ -853,7 +853,7 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
             return self.call("check_result", r, key="K", lens="lens.l", short="l", n=n, meta=META, carried=[],
                              sets=("carried",))
 
-        def result(n=2, severity="P1", late=True, issue="file V26-9999 for the retry path"):
+        def result(n=2, severity="P1", late=True, issue="a follow-up for the retry path"):
             finding = {"id": f"l-r{n}-1", "severity": severity, "summary": "s", "state": "deferred"}
             if issue is not None:
                 finding["deferredIssue"] = issue
