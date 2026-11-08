@@ -846,16 +846,69 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         expect(check(relisted, carried={"l-r1-1"}, n=2) == [], check(relisted, carried={"l-r1-1"}, n=2))
         expect(check(lens_result(lateFindings=["l-r1-9"])), "a lateFindings id that isn't one of the result's own was accepted")
 
-    def test_where_a_late_out_of_delta_p1_ends_up_in_a_story_review(self) -> None:
-        """Characterization: review-reduce's check of a verification round's new P1 outside the delta."""
-        check = lambda r: self.call("check_result", r, key="K", lens="lens.l", short="l", n=2, meta=META, carried=[],
-                                    sets=("carried",))
-        late = {"id": "l-r2-1", "severity": "P1", "summary": "s", "state": "deferred", "deferredIssue": "follow it up"}
-        deferred = lens_result(round=2, resolvedFindings=[], findings=[late], lateFindings=["l-r2-1"])
-        self.assertIn("finding l-r2-1 is P1 and can't be deferred", check(deferred))
+    def test_a_story_review_defers_a_p1_only_when_it_is_late_in_a_verification_round_with_its_follow_up(self) -> None:
+        """Decision 1: review-reduce accepts a deferred P1 only in round > 1, listed in lateFindings, with a non-empty
+        deferredIssue. Every other deferred P1, and every deferred P0, is refused as before."""
+        def check(r, n=2):
+            return self.call("check_result", r, key="K", lens="lens.l", short="l", n=n, meta=META, carried=[],
+                             sets=("carried",))
+
+        def result(n=2, severity="P1", late=True, issue="file V26-9999 for the retry path"):
+            finding = {"id": f"l-r{n}-1", "severity": severity, "summary": "s", "state": "deferred"}
+            if issue is not None:
+                finding["deferredIssue"] = issue
+            return lens_result(round=n, resolvedFindings=[], findings=[finding],
+                               **({"lateFindings": [f"l-r{n}-1"]} if late else {}))
+
+        self.assertEqual(check(result()), [], "a late deferred P1 with its follow-up was refused")
+        for name, r, n, said in (
+                ("not listed in lateFindings", result(late=False), 2, "not listed in lateFindings"),
+                ("no deferredIssue", result(issue=None), 2, "with no deferredIssue"),
+                ("a blank deferredIssue", result(issue="  "), 2, "with no deferredIssue"),
+                ("a deferred P0", result(severity="P0"), 2, "is P0 and can't be deferred"),
+                ("in round 1, even listed late with its follow-up", result(n=1), 1, "can't be deferred in an assessment round")):
+            with self.subTest(name):
+                problems = check(r, n=n)
+                self.assertTrue(any(said in problem for problem in problems), problems)
+        # Filed open instead, the same late P1 blocks, as before.
         filed = lens_result(round=2, outcome="changes-requested", resolvedFindings=[], lateFindings=["l-r2-1"],
                             findings=[{"id": "l-r2-1", "severity": "P1", "summary": "s"}])
-        self.assertEqual(check(filed), [], "today a late P1 is accepted only as an open finding, which blocks")
+        self.assertEqual(check(filed), [])
+
+    def test_a_late_deferred_p1_reduces_to_aligned_and_is_listed_for_its_follow_up(self) -> None:
+        fx = self.fixture()
+        setup_delivery(fx)
+        code, out = fx.flow("lead-init", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        wt = fx.lane("FX-2")
+        review = wt / ".orchestration/review/FX-2"
+        lenses = fx.lenses(wt)
+        short0 = lenses[0][1][0]
+        for n, change in ((1, "one\n"), (2, "two\n")):
+            (wt / "src/one.txt").write_text(change)
+            commit(wt, f"FX-2: {change.strip()}")
+            code, out = fx.flow("review-prepare", "FX-2", "--round", str(n), cwd=wt)
+            if code == 2 and "Evidence so far" in out:
+                context = review / "context.md"
+                context.write_text(context.read_text().replace(next(line for line in context.read_text().splitlines()
+                                                                    if line.startswith(CONTEXT_TODO)), "- evidence"))
+                code, out = fx.flow("review-prepare", "FX-2", "--round", str(n), cwd=wt)
+            self.assertEqual(code, 0, out)
+            if n == 1:
+                write_results(review, 1, "FX-2", lenses)
+            else:
+                write_results(review, 2, "FX-2", lenses, resolved=[])
+                path = review / f"result-r2-{short0}.json"
+                first = json.loads(path.read_text())
+                first.update(outcome="aligned", lateFindings=[f"{short0}-r2-1"], findings=[
+                    {"id": f"{short0}-r2-1", "severity": "P1", "summary": "the retry path swallows the error",
+                     "state": "deferred", "deferredIssue": "file a follow-up for the retry path"}])
+                path.write_text(json.dumps(first))
+            code, out = fx.flow("review-reduce", "FX-2", "--round", str(n), cwd=wt)
+            self.assertEqual(code, 0, out)
+        self.assertIn("FX-2 round 2: aligned", out)
+        self.assertIn(f"deferred P1 {short0}-r2-1", out)
+        self.assertIn("-> follow-up: file a follow-up for the retry path", out)
 
     def test_lead_assign_warns_of_files_outside_the_lane_before_it_starts(self) -> None:
         fx = self.fixture()

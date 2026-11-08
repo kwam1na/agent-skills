@@ -87,14 +87,18 @@ SEVERITIES = ("P0", "P1", "P2", "P3")
 CLOSED = ("closed", "fixed", "withdrawn", "dropped", "deferred")
 CONTEXT_TODO = "TODO: replace this line with your evidence so far"
 # The round brief's severity rules: a story's review defers P2 and P3; a plan review has no deferral path.
+# The out-of-delta rule, in obtain-review's words, which both kinds of brief carry as obtain-review states it.
+OUT_OF_DELTA = (
+    "    In a verification round, for delivery review, a new finding outside the delta is filed only at P0, and a P1\n"
+    "    becomes a deferral with a follow-up item; for plan review (`unbounded`), it is filed at P0 or P1, with no\n"
+    "    deferral.\n")
 STORY_SEVERITIES = (
-    "  - P0 and P1 are actionable and never deferred. In a verification round, a new finding outside the delta is filed\n"
-    "    only at P0; a P1 outside the delta is recorded in `evidence` as dissent instead.\n"
+    "  - P0 and P1 are actionable, and a P0 is never deferred.\n" + OUT_OF_DELTA +
     "  - P2 and P3 are deferrable: file each with `\"state\": \"deferred\"` and `\"deferredIssue\": \"<what its follow-up item\n"
-    "    must say>\"`. A deferred finding doesn't block `aligned`.")
+    "    must say>\"`, and so is that P1, which also lists its id in `lateFindings`. A deferred finding doesn't block\n"
+    "    `aligned`.")
 PLAN_SEVERITIES = (
-    "  - P0 and P1 are actionable, and a plan review never defers them. In a verification round, a new finding outside\n"
-    "    the delta is filed only at P0; a P1 outside the delta is recorded in `evidence` as dissent instead.\n"
+    "  - P0 and P1 are actionable, and a plan review never defers them.\n" + OUT_OF_DELTA +
     "  - P2 and P3 notes belong in `evidence`, never in `findings`: a plan review has no deferral path, so a result\n"
     "    carries no `state` or `deferredIssue` on any finding.")
 STAMP = ".flow-build.json"
@@ -1171,6 +1175,8 @@ def check_result(result: object, *, key: str, lens: str, short: str, n: int, met
         return problems + ["findings must be a list"]
     open_blocking = False
     ids = set()
+    late_ids = result.get("lateFindings", [])
+    late_ids = set(late_ids) if isinstance(late_ids, list) and all(isinstance(x, str) for x in late_ids) else set()
     for f in findings:
         if not isinstance(f, dict) or not isinstance(f.get("id"), str) or not isinstance(f.get("summary"), str):
             problems.append(f"finding {f!r} lacks id or summary")
@@ -1181,9 +1187,20 @@ def check_result(result: object, *, key: str, lens: str, short: str, n: int, met
         if f.get("severity") not in SEVERITIES:
             problems.append(f"finding {f['id']} has severity {f.get('severity')!r}")
         elif f["severity"] in ("P0", "P1"):
-            if f.get("state") == "deferred":
-                problems.append(f"finding {f['id']} is {f['severity']} and can't be deferred")
-            open_blocking = True
+            if f.get("state") != "deferred":
+                open_blocking = True
+            elif f["severity"] == "P0":
+                problems.append(f"finding {f['id']} is P0 and can't be deferred")
+            # The out-of-delta rule's one deferral: a verification round's new P1 against lines unchanged since the
+            # lens's last round, marked late, with what its follow-up item must say.
+            elif n == 1:
+                problems.append(f"finding {f['id']} is P1 and can't be deferred in an assessment round")
+            elif f["id"] not in late_ids:
+                problems.append(f"finding {f['id']} is a deferred P1 not listed in lateFindings: only a P1 outside "
+                                "the delta is deferred")
+            elif not str(f.get("deferredIssue", "")).strip():
+                problems.append(f"finding {f['id']} is a deferred P1 with no deferredIssue: say what its follow-up "
+                                "item must say")
         elif f.get("state") != "deferred" or not str(f.get("deferredIssue", "")).strip():
             problems.append(f"finding {f['id']} is {f['severity']}: file it with state deferred and a deferredIssue")
     if result.get("outcome") == "aligned" and open_blocking:
