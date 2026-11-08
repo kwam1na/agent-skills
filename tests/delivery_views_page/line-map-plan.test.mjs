@@ -492,6 +492,23 @@ function live(page, rendered, steps, extra = {}) {
   return open(page, { store: { read: "pending" }, quicker: 100, rendered, steps, ...extra });
 }
 const SETTLE = { asked: 1 };
+/**
+ * A stall longer than the page's slow pace at `quicker: 500` (PLAN_BEHIND / 500, 60ms), as a loaded machine gives
+ * between two steps: a snapshot of the whole app copies it into a new JSDOM, and under load that alone can take this long.
+ * It holds the event loop, so the page's retry comes due during it and runs before the step's own snapshot.
+ */
+const STALL = { run: () => { const until = Date.now() + 80; while (Date.now() < until) { /* held */ } } };
+/**
+ * A server that is down for the first ask and answers `answer` to the next, but only once `release` has run. However
+ * late the step after the failure takes its snapshot, the retry can't have landed by then: that snapshot shows the page
+ * after the failed ask alone, and the release step's shows it after the answer.
+ */
+function downThenHeld(answer) {
+  let asked = 0;
+  let free;
+  const held = new Promise((resolve) => { free = resolve; });
+  return { rendered: () => (asked++ === 0 ? new Error("down") : held), release: { run: () => free(answer) } };
+}
 /** Time for an ask that should not come. */
 const QUIET = { wait: 60 };
 
@@ -576,8 +593,8 @@ for (const [name, answered] of [
 
 test("a failed refresh lands on a later try, and the note goes", async () => {
   const { page, plan, replanned, after } = replanning();
-  let asked = 0;
-  const snaps = await live(page, () => (asked++ === 0 ? new Error("down") : after), [{ push: replanned }, { asked: 1 }, { asked: 2 }], { quicker: 500 });
+  const server = downThenHeld(after);
+  const snaps = await live(page, server.rendered, [{ push: replanned }, { ...STALL, asked: 1 }, { ...server.release, asked: 2 }], { quicker: 500 });
   expect(planNote(snaps[2].app)).toBe(OUT_OF_DATE);
   expect(outcome(snaps[2].app)).toBe(plan.outcome.summary);
   expect(planNote(snaps[3].app)).toBeNull();
@@ -630,8 +647,8 @@ test("once out of date, an answer holding the plan in use says it is current aft
   const lagging = structuredClone(document);
   lagging.journal.push({ id: 14, at: minute(40), kind: "decision.recorded", lane: null, subject: null, summary: "Plan updated: 2026-10-30T13:00:00Z; a unit changed" });
   const held = render(document, { ...plan, updated: "2026-10-30T14:00:00Z" });
-  let asked = 0;
-  const snaps = await live(held, () => (asked++ === 0 ? new Error("down") : held), [{ push: lagging }, { asked: 1 }, { asked: 2 }], { quicker: 500 });
+  const server = downThenHeld(held);
+  const snaps = await live(held, server.rendered, [{ push: lagging }, { ...STALL, asked: 1 }, { ...server.release, asked: 2 }], { quicker: 500 });
   expect(planNote(snaps[2].app)).toBe(OUT_OF_DATE);
   expect(planNote(snaps[3].app)).toBeNull();
 });
@@ -639,8 +656,8 @@ test("once out of date, an answer holding the plan in use says it is current aft
 test("a later plan taken after a failed ask shows no note", async () => {
   const { page, changed, replanned } = replanning();
   const newer = render(replanned, { ...changed, updated: "2026-10-30T14:00:00Z", outcome: { ...changed.outcome, summary: "A later outcome still." } });
-  let asked = 0;
-  const snaps = await live(page, () => (asked++ === 0 ? new Error("down") : newer), [{ push: replanned }, { asked: 1 }, { asked: 2 }], { quicker: 500 });
+  const server = downThenHeld(newer);
+  const snaps = await live(page, server.rendered, [{ push: replanned }, { ...STALL, asked: 1 }, { ...server.release, asked: 2 }], { quicker: 500 });
   expect(planNote(snaps[2].app)).toBe(OUT_OF_DATE);
   expect(outcome(snaps[3].app)).toBe("A later outcome still.");
   expect(planNote(snaps[3].app)).toBeNull();
@@ -715,8 +732,8 @@ test("an answer arriving after the record stopped naming another plan is dropped
 
 test("once out of date, an answer that is merely older keeps the note", async () => {
   const { page, plan, replanned } = replanning();
-  let asked = 0;
-  const snaps = await live(page, () => (asked++ === 0 ? new Error("down") : page), [{ push: replanned }, { asked: 1 }, { asked: 2 }], { quicker: 500 });
+  const server = downThenHeld(page);
+  const snaps = await live(page, server.rendered, [{ push: replanned }, { ...STALL, asked: 1 }, { ...server.release, asked: 2 }], { quicker: 500 });
   expect(planNote(snaps[2].app)).toBe(OUT_OF_DATE);
   expect(planNote(snaps[3].app)).toBe(OUT_OF_DATE);
   expect(outcome(snaps[3].app)).toBe(plan.outcome.summary);
