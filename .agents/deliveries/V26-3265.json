@@ -39,7 +39,8 @@
         "tests/quiet_git.py",
         "skills/orchestrate-work/scripts/delivery_state.py",
         "skills/orchestrate-work/SKILL.md",
-        "tests/test_orchestration_state.py"
+        "tests/test_orchestration_state.py",
+        "tests/test_delivery_views_snapshots.py"
       ]
     },
     "lane-2": {
