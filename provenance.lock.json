@@ -473,7 +473,7 @@
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "31e5c319aa7c1b7758ca67ecd955683e06e4134fd9d37bc7e6d68e8bf3eed716"
+          "sha256": "2960dce8e1c840bacb58253898c59d73b22f3973da049a51a9f4449e4c19c801"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
@@ -993,7 +993,7 @@
       "outputs": [
         {
           "path": "skills/review-work/SKILL.md",
-          "sha256": "ee5e3f1c542893dcc00cf026c2b7f3af4fbf31d6fe1cd6092fe0e8575d609320"
+          "sha256": "24ab712cbee42f033fa7e0348a7f8e7f11468b9b1cd405f14c1f7da28fa393f0"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -1062,7 +1062,7 @@
         },
         {
           "path": "skills/run-delivery/templates/lane-brief.md",
-          "sha256": "c8ff3a2f8364feff08d6b2039f4ef6d37361e7ee240730a22511270419f14511"
+          "sha256": "30716bd23dad879634f26eb07b7aa3d50fbb6c30b4a69b7790aadd33317e3c77"
         },
         {
           "path": "skills/run-delivery/templates/round-brief.md",

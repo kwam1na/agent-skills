@@ -83,9 +83,11 @@ resumes. `run-delivery` does the mechanical part.
 6. If you ever lose your review folder (a recreated checkout, say), tell the lead: the lead-side log still has your
    earlier preparations, and the lead decides on them at acceptance.
 
-Triage: blocking (P0/P1) findings are always fixed in the lane. Lenses file P2/P3 as deferred, with what the follow-up
-must say: fix the cheap ones in the lane anyway, and pass the expensive ones to the lead with `--findings`. A finding
-first raised in a later round, against code an earlier round approved, is judged on scope before it blocks.
+Triage: blocking findings, every P0 and every P1 a lens files open, are always fixed in the lane. Lenses file P2/P3 as
+deferred, with what the follow-up must say, and a P1 too when a verification round files it new outside the delta,
+listing its id in `lateFindings`; a P0 is never deferred. Fix the cheap deferrals in the lane anyway, and pass the
+expensive ones to the lead with `--findings`. A finding first raised in a later round, against code an earlier round
+approved, is judged on scope before it blocks.
 
 ## Hand-off
 
