@@ -41,8 +41,11 @@ policy.
 
 ## Convergence
 
-P0 and P1 findings are blocking and are never deferred. A P2 or P3 finding may
-be deferred only when it is actionable, nonblocking, and names its tracked
+P0 and P1 findings are blocking. A P0 is never deferred, and neither is a P1,
+except one a delivery review's verification round files first outside the delta:
+it is recorded as a deferral with its tracked follow-up item, as obtain-review's
+out-of-delta rule says. A plan review defers no P1. A P2 or P3 finding may be
+deferred only when it is actionable, nonblocking, and names its tracked
 follow-up item. Under `review.green/1` that exception is limited to `expansion`
 scope. An `in_contract` P2 or P3 deferral requires the consumer to declare
 `review.green/2` in the review obligation's accepted payload specs; its evidence

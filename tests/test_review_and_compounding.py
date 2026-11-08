@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -205,6 +206,62 @@ class CompoundingWorkflowTests(unittest.TestCase):
 
         self.assertEqual(decision.status, "blocked")
         self.assertEqual(decision.blockers, ("compounding evidence is required",))
+
+
+
+ROOT = Path(__file__).resolve().parents[1]
+# Every place a skill states which findings defer says it as run-delivery's reducers and the round briefs enforce it:
+# a P0 never defers, P2 and P3 do, and a P1 only when a story review's verification round files it new outside the
+# delta, listed late and with its follow-up.
+LATE_P1_DEFERRAL = {
+    "skills/orchestrate-work/references/orchestration-guide.md": (
+        "A P0 is never deferred, and a P2 or P3 can be. A P1 can be deferred only when a verification round files it"
+        " new against lines outside the delta: its id is listed in `lateFindings` and it carries `deferredIssue`."
+        " Closing a carried finding as `deferred` stays a P2 or P3 move.",
+    ),
+    "skills/run-delivery/templates/lane-brief.md": (
+        "Triage: blocking findings, every P0 and every P1 a lens files open, are always fixed in the lane. Lenses file"
+        " P2/P3 as deferred, with what the follow-up must say, and a P1 too when a verification round files it new"
+        " outside the delta, listing its id in `lateFindings`; a P0 is never deferred.",
+    ),
+    "skills/review-work/SKILL.md": (
+        "P0 and P1 findings are blocking. A P0 is never deferred, and neither is a P1, except one a delivery review's"
+        " verification round files first outside the delta: it is recorded as a deferral with its tracked follow-up"
+        " item, as obtain-review's out-of-delta rule says. A plan review defers no P1.",
+    ),
+}
+# The old rule, its phrasings and their synonyms: only P2 and P3 defer, or a P1 never does.
+OLD_DEFERRAL_RULE = (
+    r"only (a |the )?P2 ?(or|and|/) ?P3( findings?)? (can|may|is|are)",
+    r"P2/P3 only",
+    r"P0 (and|or|/) ?P1 (findings )?are (blocking and are )?never deferred",
+    r"P1s? (findings? )?(is|are) never deferred",
+    r"\(P0/P1\) findings are always fixed",
+    r"(blocking|P0 and P1) findings are always fixed in the lane\. Lenses file P2/P3 as deferred, with what the"
+    r" follow-up must say:",
+)
+
+
+def normalized(relative: str) -> str:
+    return " ".join((ROOT / relative).read_text(encoding="utf-8").split())
+
+
+class LateP1DeferralWordingTests(unittest.TestCase):
+    """Each skill that says which findings defer states the late-P1 deferral, and none keeps the old rule."""
+
+    def test_each_file_states_the_late_p1_deferral(self) -> None:
+        for relative, phrases in LATE_P1_DEFERRAL.items():
+            text = normalized(relative)
+            for phrase in phrases:
+                with self.subTest(path=relative, phrase=phrase[:60]):
+                    self.assertIn(" ".join(phrase.split()), text)
+
+    def test_no_file_keeps_the_old_rule_or_a_synonym_of_it(self) -> None:
+        for relative in LATE_P1_DEFERRAL:
+            text = normalized(relative)
+            for pattern in OLD_DEFERRAL_RULE:
+                with self.subTest(path=relative, pattern=pattern):
+                    self.assertIsNone(re.search(pattern, text, re.IGNORECASE))
 
 
 if __name__ == "__main__":

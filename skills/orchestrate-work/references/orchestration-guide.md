@@ -598,7 +598,10 @@ Ask each lens for its result in review-lens-result/1, on top of the shape
 open going into the round, with its `id`, `state` and `resolution`; a finding closed
 in evidence alone stays open. `state` is one of `closed`, `fixed`, `withdrawn`,
 `dropped`, `deferred` or `open`, and a `deferred` one also carries `deferredIssue`,
-naming its follow-up item. Only a P2 or P3 can be deferred.
+naming its follow-up item. A P0 is never deferred, and a P2 or P3 can be. A P1
+can be deferred only when a verification round files it new against lines
+outside the delta: its id is listed in `lateFindings` and it carries
+`deferredIssue`. Closing a carried finding as `deferred` stays a P2 or P3 move.
 
 Save every lens's result for every round, one outcome file per round, as the lens
 returned it, outside your checkout, and keep the files until close-out:
