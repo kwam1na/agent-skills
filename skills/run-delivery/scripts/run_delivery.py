@@ -20,6 +20,8 @@ Lane:
 Lead:
   lead-setup <key> --plan P --base B --pattern RE ... | lead-init | lead-brief | lead-assign <key...> --lane L --title T
   lead-accept <key> [--accept-blocked LABEL ...] [--accept-restarts] | ship | adapter-test
+Merge queue:
+  pr-review-current --branch B --head H [--wait]   (a reviewGate: exit 0 only for a current, passing review.pr review)
 Anyone:
   view [--archive PATH] [--port N]
 
@@ -3216,6 +3218,52 @@ def pr_review(args) -> None:
     print(review["body"])
     print("\nTriage every finding like a lens finding: fix what blocks in the lane (then gates, a lens round and this "
           "review again at the new head), and fix or defer the rest. Hand off with --pr-review-triage saying which.")
+
+
+def pr_review_current(args) -> None:
+    """The merge queue's reviewGate: exit 0 only when review.pr's review is current and passing at --head.
+
+    It runs in the queue's checkout of the base, where no delivery is named, so it reads only the repository's own
+    configuration. Every refusal is one line on stderr, an adapter's own included, for the queue's log."""
+    try:
+        review_gate(args)
+    except Stop as error:
+        raise Stop(" ".join(str(error).split())) from None
+
+
+def review_gate(args) -> None:
+    global CFG
+    c = CFG = Config(repo(), need_delivery=False, pick=False)
+    conf = pr_review_config()
+    if not conf:
+        raise Stop(f"this repository declares no PR review ({c.name} review.pr), so there is no review to gate on")
+    if not forge_answers("reviews"):
+        raise Stop(f"PR reviews are unsupported by this forge adapter ({c.forge.get('adapter')} has no `reviews` "
+                   f"command): remove review.pr from {c.name}, or use an adapter that answers `reviews`")
+    url = forge("find", "--source", args.branch).get("url")
+    if not url:
+        raise Stop(f"no open PR for {args.branch}")
+    wait = int(conf.get("waitSeconds", 1800)) if args.wait else 0
+    deadline = time.time() + wait
+    while True:
+        # Read each time: a forge can show the PR at its old head for a while after the queue pushes the synced one.
+        reported = forge("get", "--url", url).get("head")
+        moved = not same_commit(reported, args.head)
+        status, review, checks = ("pending", None, []) if moved else pr_review_state(url, args.head, conf)
+        left = deadline - time.time()
+        if status != "pending" or left <= 0:
+            break
+        time.sleep(min(10, left))  # a merge waits on it, so it looks again sooner than a lane's pr-review
+    if moved:
+        raise Stop(f"the PR is at {str(reported)[:10]}, not {args.head[:10]}: its review is of another head"
+                   + (f" (waited {wait}s)" if args.wait else ""))
+    states = ", ".join(f"{ch['name']} {ch['state']}" for ch in checks) or "no checks"
+    if status == "failed":
+        raise Stop(f"the pipeline failed at {args.head[:10]}: {states}")
+    if status == "pending":
+        raise Stop(f"no current {conf['author']} review at {args.head[:10]}"
+                   + (f" (waited {wait}s)" if args.wait else "") + f": {states}")
+    print(f"{conf['author']} review of {args.head[:10]} at {review['at']} is current: {states}")
 
 
 def handoff(args) -> None:
@@ -7643,6 +7691,11 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(fn=app_video)
     p = command(sub, "open-pr"); p.add_argument("key"); p.add_argument("--title", required=True)
     p.add_argument("--body-file", required=True); p.set_defaults(fn=open_pr)
+    p = command(sub, "pr-review-current", help="a reviewGate for the merge queue: exit 0 only when review.pr's "
+                "review is current and passing at --head")
+    p.add_argument("--branch", required=True); p.add_argument("--head", required=True)
+    p.add_argument("--wait", action="store_true", help="wait up to review.pr's waitSeconds for the review")
+    p.set_defaults(fn=pr_review_current)
     p = command(sub, "pr-review"); p.add_argument("key"); p.add_argument("--wait", action="store_true")
     p.set_defaults(fn=pr_review)
     p = command(sub, "handoff"); p.add_argument("key"); p.add_argument("--pr", required=True)
