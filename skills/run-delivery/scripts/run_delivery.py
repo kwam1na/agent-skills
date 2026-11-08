@@ -7485,11 +7485,14 @@ class Doctor:
 
     def story_readiness(self):
         d = self.delivery
-        if not (d.state / "state.json").exists():
-            return self.not_applicable("no record yet: lead-init starts it")
-        doc = json.loads(run([sys.executable, "-B", str(d.release / "skills/orchestrate-work/scripts/delivery_state.py"),
-                              "--dir", str(d.state), "show"]).stdout)
-        waiting = [e["subject"] for e in doc["state"].get("planned", []) if e.get("stage") == "planned"]
+        if not tracker_conf(d)["transitions"].get("start"):
+            return "ok", "lanes make no start move, so there is no readiness to check"
+        if (d.state / "state.json").exists():
+            doc = json.loads(run([sys.executable, "-B", str(d.release / "skills/orchestrate-work/scripts/delivery_state.py"),
+                                  "--dir", str(d.state), "show"]).stdout)
+            waiting = [e["subject"] for e in doc["state"].get("planned", []) if e.get("stage") == "planned"]
+        else:  # Before lead-init, every story is still to start.
+            waiting = list(d.stories)
         found = {key: story_readiness(d, key) for key in waiting if key in d.stories}
         unready = [line for state, line in found.values() if state == "not-ready"]
         unchecked = [line for state, line in found.values() if state == "not-checked"]
