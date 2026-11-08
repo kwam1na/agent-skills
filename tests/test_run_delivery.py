@@ -2696,6 +2696,7 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertEqual(left, ["  left: the in-app lease is held (app-check pid 1 since then); gave up after 0s"], out)
         self.assertNotIn("kill", out, "a held lease's server got a kill hint")
+        self.assertNotIn("is free", out, "a held lease was reported free")
         self.assertIsNone(listener.poll(), "lead-close stopped the server a live check holds")
 
     def test_lead_close_with_the_lease_free_names_the_ports_listener_and_the_kill_hint(self) -> None:
