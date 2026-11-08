@@ -201,3 +201,11 @@ Lane 1, after V26-3242 (lead's addition, from V26-3194's round-1 deferral). Sens
 by meaning across the profiles finds no other old statement, and presence and absence pins cover each file. Files: those three, their
 corpus tests, and the catalog, profiles and provenance lock if outputs change. Sensors: the corpus tests, `tests/test_linear_qualification.py`,
 `scripts/validate-registry.py`.
+
+### V26-3290. Gate the last plan-chapter page test against the slow-answer race
+
+Lane 1 (lead's addition, before rc.3). The Ubuntu job, which gates the release, failed the page lane on three of the last five runs on `main`,
+always in "a render that never holds the named plan ends in the out-of-date note, until one does". It's V26-3164's race: `{ asked: n }` waits
+for the ask, not the answer. Characterization-first: reproduce it with a stall, then gate the test as V26-3164 gated its four, and check every
+other page test that relies on an answer after `{ asked: n }`. Files: `tests/delivery_views_page/`. Sensors: the page lane,
+`tests/test_linear_qualification.py`, and Ubuntu CI on the change request.

@@ -184,6 +184,17 @@
           "text": "orchestration-guide.md, the lane brief template and review-work SKILL.md state V26-3194s rule (P0 never deferred; a P1 only when new, outside the delta, late, in a verification round, with its follow-up); a search by meaning across the profiles finds no other old statement; presence and absence pins cover each file"
         }
       ]
+    },
+    "V26-3290": {
+      "title": "Gate the last plan-chapter page test against the slow-answer race",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3290-done",
+          "text": "The render-that-never-holds-the-named-plan page test is gated against the slow-answer race; a stall reproduces the failure without the gate and passes with it; a mutation fails it; every other page test that relies on an answer after asked:n is checked and gated if it can lose it"
+        }
+      ]
     }
   },
   "finish": [
