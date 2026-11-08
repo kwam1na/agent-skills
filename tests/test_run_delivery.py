@@ -765,13 +765,13 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         passed = {"name": "pipe", "state": "passed", "at": "2026-01-01T00:00:10"}
         current = {"author": "Pipeline Bot", "at": "2026-01-01T00:00:30", "body": "fine"}
         cases = [
-            ("no checks and no review", {"checks": [], "reviews": []}, "no Pipeline Bot review"),
+            ("no checks and no review", {"checks": [], "reviews": []}, "no current Pipeline Bot review"),
             ("a pending pipeline", {"checks": [{**passed, "state": "pending"}], "reviews": [current]}, "pipe pending"),
             ("a failed pipeline", {"checks": [{**passed, "state": "failed"}], "reviews": [current]}, "pipe failed"),
             ("a review from before the pipeline", {"checks": [passed], "reviews": [{**current, "at": "2026-01-01T00:00:05"}]},
-             "no Pipeline Bot review"),
+             "no current Pipeline Bot review"),
             ("someone else's review", {"checks": [passed], "reviews": [{**current, "author": "Someone"}]},
-             "no Pipeline Bot review"),
+             "no current Pipeline Bot review"),
         ]
         for what, answer, reason in cases:
             with self.subTest(what):
