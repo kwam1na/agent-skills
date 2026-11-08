@@ -20,6 +20,9 @@ Lane:
 Lead:
   lead-setup <key> --plan P --base B --pattern RE ... | lead-init | lead-brief | lead-assign <key...> --lane L --title T
   lead-accept <key> [--accept-blocked LABEL ...] [--accept-restarts] | ship | adapter-test
+  lead-carry-review <key> --from HEAD --to HEAD --reason TEXT
+Merge queue:
+  pr-review-current --branch B --head H [--wait]   (a reviewGate: exit 0 only for a current, passing review.pr review)
 Anyone:
   view [--archive PATH] [--port N]
 
@@ -87,14 +90,18 @@ SEVERITIES = ("P0", "P1", "P2", "P3")
 CLOSED = ("closed", "fixed", "withdrawn", "dropped", "deferred")
 CONTEXT_TODO = "TODO: replace this line with your evidence so far"
 # The round brief's severity rules: a story's review defers P2 and P3; a plan review has no deferral path.
+# The out-of-delta rule, in obtain-review's words, which both kinds of brief carry as obtain-review states it.
+OUT_OF_DELTA = (
+    "    In a verification round, for delivery review, a new finding outside the delta is filed only at P0, and a P1\n"
+    "    becomes a deferral with a follow-up item; for plan review (`unbounded`), it is filed at P0 or P1, with no\n"
+    "    deferral.\n")
 STORY_SEVERITIES = (
-    "  - P0 and P1 are actionable and never deferred. In a verification round, a new finding outside the delta is filed\n"
-    "    only at P0; a P1 outside the delta is recorded in `evidence` as dissent instead.\n"
+    "  - P0 and P1 are actionable, and a P0 is never deferred.\n" + OUT_OF_DELTA +
     "  - P2 and P3 are deferrable: file each with `\"state\": \"deferred\"` and `\"deferredIssue\": \"<what its follow-up item\n"
-    "    must say>\"`. A deferred finding doesn't block `aligned`.")
+    "    must say>\"`, and so is that P1, which also lists its id in `lateFindings`. A deferred finding doesn't block\n"
+    "    `aligned`.")
 PLAN_SEVERITIES = (
-    "  - P0 and P1 are actionable, and a plan review never defers them. In a verification round, a new finding outside\n"
-    "    the delta is filed only at P0; a P1 outside the delta is recorded in `evidence` as dissent instead.\n"
+    "  - P0 and P1 are actionable, and a plan review never defers them.\n" + OUT_OF_DELTA +
     "  - P2 and P3 notes belong in `evidence`, never in `findings`: a plan review has no deferral path, so a result\n"
     "    carries no `state` or `deferredIssue` on any finding.")
 STAMP = ".flow-build.json"
@@ -1171,6 +1178,8 @@ def check_result(result: object, *, key: str, lens: str, short: str, n: int, met
         return problems + ["findings must be a list"]
     open_blocking = False
     ids = set()
+    late_ids = result.get("lateFindings", [])
+    late_ids = set(late_ids) if isinstance(late_ids, list) and all(isinstance(x, str) for x in late_ids) else set()
     for f in findings:
         if not isinstance(f, dict) or not isinstance(f.get("id"), str) or not isinstance(f.get("summary"), str):
             problems.append(f"finding {f!r} lacks id or summary")
@@ -1181,9 +1190,20 @@ def check_result(result: object, *, key: str, lens: str, short: str, n: int, met
         if f.get("severity") not in SEVERITIES:
             problems.append(f"finding {f['id']} has severity {f.get('severity')!r}")
         elif f["severity"] in ("P0", "P1"):
-            if f.get("state") == "deferred":
-                problems.append(f"finding {f['id']} is {f['severity']} and can't be deferred")
-            open_blocking = True
+            if f.get("state") != "deferred":
+                open_blocking = True
+            elif f["severity"] == "P0":
+                problems.append(f"finding {f['id']} is P0 and can't be deferred")
+            # The out-of-delta rule's one deferral: a verification round's new P1 against lines unchanged since the
+            # lens's last round, marked late, with what its follow-up item must say.
+            elif n == 1:
+                problems.append(f"finding {f['id']} is P1 and can't be deferred in an assessment round")
+            elif f["id"] not in late_ids:
+                problems.append(f"finding {f['id']} is a deferred P1 not listed in lateFindings: only a P1 outside "
+                                "the delta is deferred")
+            elif not str(f.get("deferredIssue", "")).strip():
+                problems.append(f"finding {f['id']} is a deferred P1 with no deferredIssue: say what its follow-up "
+                                "item must say")
         elif f.get("state") != "deferred" or not str(f.get("deferredIssue", "")).strip():
             problems.append(f"finding {f['id']} is {f['severity']}: file it with state deferred and a deferredIssue")
     if result.get("outcome") == "aligned" and open_blocking:
@@ -3218,6 +3238,52 @@ def pr_review(args) -> None:
           "review again at the new head), and fix or defer the rest. Hand off with --pr-review-triage saying which.")
 
 
+def pr_review_current(args) -> None:
+    """The merge queue's reviewGate: exit 0 only when review.pr's review is current and passing at --head.
+
+    It runs in the queue's checkout of the base, where no delivery is named, so it reads only the repository's own
+    configuration. Every refusal is one line on stderr, an adapter's own included, for the queue's log."""
+    try:
+        review_gate(args)
+    except Stop as error:
+        raise Stop(" ".join(str(error).split())) from None
+
+
+def review_gate(args) -> None:
+    global CFG
+    c = CFG = Config(repo(), need_delivery=False, pick=False)
+    conf = pr_review_config()
+    if not conf:
+        raise Stop(f"this repository declares no PR review ({c.name} review.pr), so there is no review to gate on")
+    if not forge_answers("reviews"):
+        raise Stop(f"PR reviews are unsupported by this forge adapter ({c.forge.get('adapter')} has no `reviews` "
+                   f"command): remove review.pr from {c.name}, or use an adapter that answers `reviews`")
+    url = forge("find", "--source", args.branch).get("url")
+    if not url:
+        raise Stop(f"no open PR for {args.branch}")
+    wait = int(conf.get("waitSeconds", 1800)) if args.wait else 0
+    deadline = time.time() + wait
+    while True:
+        # Read each time: a forge can show the PR at its old head for a while after the queue pushes the synced one.
+        reported = forge("get", "--url", url).get("head")
+        moved = not same_commit(reported, args.head)
+        status, review, checks = ("pending", None, []) if moved else pr_review_state(url, args.head, conf)
+        left = deadline - time.time()
+        if status != "pending" or left <= 0:
+            break
+        time.sleep(min(10, left))  # a merge waits on it, so it looks again sooner than a lane's pr-review
+    if moved:
+        raise Stop(f"the PR is at {str(reported)[:10]}, not {args.head[:10]}: its review is of another head"
+                   + (f" (waited {wait}s)" if args.wait else ""))
+    states = ", ".join(f"{ch['name']} {ch['state']}" for ch in checks) or "no checks"
+    if status == "failed":
+        raise Stop(f"the pipeline failed at {args.head[:10]}: {states}")
+    if status == "pending":
+        raise Stop(f"no current {conf['author']} review at {args.head[:10]}"
+                   + (f" (waited {wait}s)" if args.wait else "") + f": {states}")
+    print(f"{conf['author']} review of {args.head[:10]} at {review['at']} is current: {states}")
+
+
 def handoff(args) -> None:
     c = cfg()
     key = c.require(args.key)
@@ -4501,6 +4567,43 @@ def plan_list_items(body: str) -> list[str]:
             items[-1] += " " + line.strip()
     items = [re.sub(r"\s+", " ", text) for text in items if text][:100]
     return [text if len(text) <= 600 else text[:599] + "\u2026" for text in items]
+
+
+def lead_carry_review(args) -> None:
+    """Carry a story's captured review across commits the lead judged need no new round, showing them first.
+
+    The state tool's carry-review does the carry and every check on it; this shows from..to, the diff the judgement
+    rests on, before that write, and passes the state tool's refusal through unchanged."""
+    c = cfg()
+    key = c.require(args.key)
+    heads = []
+    for given in (args.from_head, args.to_head):
+        found = git("rev-parse", "--verify", "--quiet", f"{given}^{{commit}}", check=False)
+        if not found:
+            git("fetch", "-q", c.remote, c.branch(key), check=False)
+            found = git("rev-parse", "--verify", "--quiet", f"{given}^{{commit}}", check=False)
+        if not found:
+            raise Stop(f"no commit {given} here or on {c.remote}/{c.branch(key)}: name the heads the record holds")
+        heads.append(found)
+    from_head, to_head = heads
+    changed = git("diff", "--name-status", "--no-renames", f"{from_head}..{to_head}").splitlines()
+    summary = git("diff", "--shortstat", f"{from_head}..{to_head}") or "no changes"
+    print(f"{key}'s review carries from {from_head[:10]} to {to_head[:10]} across: {summary.strip()}")
+    for line in changed:
+        status, _, path = line.partition("\t")
+        print(f"  {status:<2} {path}")
+    sys.stdout.flush()  # shown before the write, and before a refusal on stderr when both go to one pipe
+    done = state_tool("carry-review", "--writer", "lead", "--subject", key, "--from", from_head, "--to", to_head,
+                      "--reason", args.reason, check=False)
+    try:
+        answer = json.loads(done.stdout)
+    except ValueError:
+        answer = {}
+    answer = answer if isinstance(answer, dict) else {}
+    if done.returncode != 0:
+        said = f"{answer['code']}: {answer.get('error', '')}" if answer.get("code") else (done.stderr or done.stdout).strip()
+        raise Stop(f"the state tool refused the carry: {said}")
+    print(f"carried: {answer.get('entry', {}).get('summary', '')}")
 
 
 def lead_init(args) -> None:
@@ -7667,6 +7770,11 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(fn=app_video)
     p = command(sub, "open-pr"); p.add_argument("key"); p.add_argument("--title", required=True)
     p.add_argument("--body-file", required=True); p.set_defaults(fn=open_pr)
+    p = command(sub, "pr-review-current", help="a reviewGate for the merge queue: exit 0 only when review.pr's "
+                "review is current and passing at --head")
+    p.add_argument("--branch", required=True); p.add_argument("--head", required=True)
+    p.add_argument("--wait", action="store_true", help="wait up to review.pr's waitSeconds for the review")
+    p.set_defaults(fn=pr_review_current)
     p = command(sub, "pr-review"); p.add_argument("key"); p.add_argument("--wait", action="store_true")
     p.set_defaults(fn=pr_review)
     p = command(sub, "handoff"); p.add_argument("key"); p.add_argument("--pr", required=True)
@@ -7705,6 +7813,12 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--requeue", metavar="KEY", help="re-queue a stopped candidate you resolved, with no new hand-off")
     p.add_argument("--accept-restarts", action="store_true")
     p.add_argument("--accept-discarded", action="append", type=int, metavar="ROUND"); p.set_defaults(fn=lead_accept)
+    p = command(sub, "lead-carry-review", help="carry a story's captured review to its queued head across commits that "
+                "need no new round, showing their diff first")
+    p.add_argument("key"); p.add_argument("--from", dest="from_head", required=True, help="the head the evidence covers")
+    p.add_argument("--to", dest="to_head", required=True, help="the story's queued head")
+    p.add_argument("--reason", required=True, help="why the commits between them need no new round")
+    p.set_defaults(fn=lead_carry_review)
     p = command(sub, "lead-resolve", help="resolve a recorded blocker, or rerun a failed fullHealth")
     p.add_argument("id", help="the blocker's journal id, or full-health to rerun a failed fullHealth")
     p.add_argument("--why", required=True)

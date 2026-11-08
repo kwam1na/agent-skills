@@ -1492,7 +1492,12 @@ def validate_review_outcomes(outcomes: object, subject: str, candidate: str) -> 
                 origins[identifier] = lens
                 severities[identifier] = min(severities.get(identifier, finding["severity"]), finding["severity"])
                 if finding.get("state") == "deferred":
-                    require(severities[identifier] in ("P2", "P3"), "only a P2 or P3 finding may be deferred", about)
+                    # The out-of-delta rule's one P1 deferral: a verification round's new P1 the lens lists as late.
+                    late = result.get("lateFindings") if isinstance(result.get("lateFindings"), list) else []
+                    require(severities[identifier] in ("P2", "P3")
+                            or (severities[identifier] == "P1" and number > 1 and identifier in late),
+                            "only a P2 or P3 finding may be deferred, or a P1 a verification round lists in lateFindings",
+                            about)
                     require(isinstance(finding.get("deferredIssue"), str) and bool(finding["deferredIssue"].strip()),
                             "a deferred finding names no deferredIssue", about)
                     open_findings.discard(identifier)

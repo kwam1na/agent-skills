@@ -726,6 +726,204 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
     def call(self, fn: str, *args, cwd: Path | None = None, **kwargs):
         return call(self.tool, fn, *args, cwd=cwd or Path(tempfile.gettempdir()), **kwargs)
 
+    # -- the lead's review carry ------------------------------------------------------------------------
+
+    def test_lead_carry_review_shows_the_diff_it_carries_across_and_passes_the_state_tools_refusal_through(self) -> None:
+        """`lead-carry-review` prints from..to's diffstat, naming each file, before the state tool's carry writes; a
+        refusal is the state tool's own text, and writes nothing."""
+        fx = self.fixture()
+        m = fx.main
+        setup_delivery(fx)
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-assign", "FX-2", "--lane", "lane-1", "--title", "Lane 1", cwd=m)
+        self.assertEqual(code, 0, out)
+        sh("git", "checkout", "-q", "-b", "feature/FX-2", cwd=m)
+        (m / "src/one.txt").write_text("one\n")
+        commit(m, "FX-2: one")
+        reviewed = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
+        (m / "src/one-fixture.txt").write_text("fixture\n")
+        commit(m, "FX-2: a fixture after the last round")
+        queued = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
+        (m / "src/one-later.txt").write_text("later\n")
+        commit(m, "FX-2: a later commit nobody handed off")
+        later = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
+        sh("git", "checkout", "-q", "feature/FX-1", cwd=m)
+        state = Path(json.loads((m / ".agents/deliveries/FX-1.json").read_text())["stateDirectory"])
+        tool = fx.release / "skills/orchestrate-work/scripts/delivery_state.py"
+
+        def state_tool(*args: str) -> dict:
+            done = subprocess.run([sys.executable, "-B", str(tool), "--dir", str(state), *args], cwd=m, env=fx.env,
+                                  text=True, capture_output=True, timeout=120)
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            return json.loads(done.stdout)
+
+        rounds = []
+        for number in (1, 2):
+            entries = []
+            for lens in ("lens.outcome-correctness", "lens.adversarial-testing"):
+                binding = {"subjectRef": "FX-2", "candidateRef": reviewed, "round": number}
+                entries.append({"lens": lens, "state": "obtained", "binding": binding, "result": {
+                    "schemaVersion": "review-lens-result/1", "lensId": lens, **binding, "outcome": "aligned",
+                    "findings": [], "resolvedFindings": [], "evidence": ["observed"]}})
+            rounds.append(fx.tmp / f"round-{number}.json")
+            rounds[-1].write_text(json.dumps({"round": number, "outcome": "aligned", "entries": entries}))
+        state_tool("capture-review", "--subject", "FX-2", "--candidate", reviewed,
+                   *[part for path in rounds for part in ("--outcome", str(path))])
+        state_tool("handoff", "--lane", "lane-1", "--subject", "FX-2", "--head", queued, "--change-request",
+                   "https://forge.test/pr/1", "--rounds", "2")
+        journal = lambda: [e for e in state_tool("show")["journal"] if e.get("reviewCarry")]
+        sh("git", "push", "-q", "origin", "feature/FX-2", cwd=m)
+        other = fx.tmp / "elsewhere"
+        sh("git", "clone", "-q", "-b", "feature/FX-2", fx.origin, other)
+        quieten(other)
+        (other / "src/one-remote.txt").write_text("remote\n")
+        sh("git", "-c", "user.name=Lane", "-c", "user.email=lane@example.test", "add", "src/one-remote.txt", cwd=other)
+        sh("git", "-c", "user.name=Lane", "-c", "user.email=lane@example.test", "commit", "-q", "-m", "FX-2: elsewhere",
+           cwd=other)
+        sh("git", "push", "-q", "origin", "feature/FX-2", cwd=other)
+        remote_only = sh("git", "rev-parse", "HEAD", cwd=other).stdout.strip()
+        self.assertNotEqual(sh("git", "cat-file", "-t", remote_only, cwd=m, check=False).returncode, 0)
+
+        with self.subTest("a --to that isn't the queued head: the state tool's own refusal, and no write"):
+            code, out = fx.flow("lead-carry-review", "FX-2", "--from", reviewed, "--to", later, "--reason", "fixture", cwd=m)
+            self.assertEqual(code, 2, out)
+            refusal = out.index(f"carry_invalid: FX-2 is queued at {queued}, not {later}")
+            shown = out.index(f"FX-2's review carries from {reviewed[:10]} to {later[:10]} across:")
+            self.assertLess(shown, refusal, "the diff is shown before the state tool is asked")
+            self.assertIn("src/one-later.txt", out[shown:refusal])
+            self.assertEqual(journal(), [])
+        with self.subTest("a head only on the story's remote branch is fetched, then judged by the state tool"):
+            code, out = fx.flow("lead-carry-review", "FX-2", "--from", reviewed, "--to", remote_only, "--reason", "x",
+                                cwd=m)
+            self.assertEqual(code, 2, out)
+            self.assertNotIn("no commit", out)
+            self.assertIn(f"carry_invalid: FX-2 is queued at {queued}, not {remote_only}", out)
+            self.assertIn("src/one-remote.txt", out)
+            self.assertEqual(journal(), [])
+        with self.subTest("a head that names no commit is refused before the state tool"):
+            code, out = fx.flow("lead-carry-review", "FX-2", "--from", reviewed, "--to", "f" * 40, "--reason", "x", cwd=m)
+            self.assertEqual(code, 2, out)
+            self.assertIn(f"no commit {'f' * 40}", out)
+            self.assertEqual(journal(), [])
+        code, out = fx.flow("lead-carry-review", "FX-2", "--from", reviewed, "--to", queued, "--reason",
+                            "only a fixture changed", cwd=m)
+        self.assertEqual(code, 0, out)
+        diff = out.index(f"FX-2's review carries from {reviewed[:10]} to {queued[:10]} across:")
+        done = out.index("carried: ")
+        listed = {line.split()[-1] for line in out[diff:done].splitlines()[1:] if line.strip()}
+        # Exactly the commits between the heads: not the reviewed head's own change, nor a later one.
+        self.assertEqual(listed, {"src/one-fixture.txt"}, out)
+        carried = journal()
+        self.assertEqual(len(carried), 1, carried)
+        self.assertIn(f"carried: {carried[0]['summary']}\n", out)
+        self.assertEqual((carried[0]["reviewCarry"]["from"], carried[0]["reviewCarry"]["to"]), (reviewed, queued))
+        self.assertIn("only a fixture changed", carried[0]["summary"])
+
+    # -- the merge queue's review gate -----------------------------------------------------------------
+
+    def test_pr_review_current_passes_only_a_current_passing_review_at_the_named_head(self) -> None:
+        """`pr-review-current` is a ready-made reviewGate: exit 0 only for the configured review, current and passing
+        at that head; every other answer exits non-zero with one line on stderr."""
+        fx = self.fixture()
+        m = fx.main
+        sh("git", "checkout", "-q", "-b", "feature/FX-2", cwd=m)
+        (m / "src/one.txt").write_text("one\n")
+        commit(m, "FX-2: one")
+        sh("git", "push", "-q", "-u", "origin", "feature/FX-2", cwd=m)
+        head = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
+        reviews = fx.tmp / "reviews.json"
+        env = {**fx.env, "FAKE_FORGE_REVIEWS": str(reviews)}
+
+        def gate(*extra: str, at: str = head, conf: dict | None = None) -> tuple[int, str, str]:
+            if conf is not None:
+                path = fx.tmp / "flow-gate.json"
+                path.write_text(json.dumps(conf))
+                env["RUN_DELIVERY_CONFIG"] = str(path)
+            done = subprocess.run([sys.executable, "-B", str(fx.tool), "pr-review-current", "--branch", "feature/FX-2",
+                                   "--head", at, *extra], cwd=m, env=env, text=True, capture_output=True, timeout=300)
+            self.assertNotIn("Traceback", done.stderr)
+            return done.returncode, done.stdout, done.stderr
+
+        def refused(answer: tuple[int, str, str], reason: str) -> None:
+            code, _, err = answer
+            self.assertNotEqual(code, 0, f"passed: {answer}")
+            self.assertEqual(len(err.strip().splitlines()), 1, f"the reason isn't one line: {err!r}")
+            self.assertIn(reason, err)
+
+        base = json.loads((m / ".agents/run-delivery.json").read_text())
+        refused(gate(), "review.pr")
+        conf = {**base, "review": {**base["review"], "pr": {"author": "Pipeline Bot", "waitSeconds": 1}}}
+        refused(gate(conf=conf), "no open PR for feature/FX-2")
+        (fx.tmp / "forge.json").write_text(json.dumps({"https://forge.test/pr/1": {
+            "source": "feature/FX-2", "destination": "main", "state": "open", "title": "FX-2: one"}}))
+        passed = {"name": "pipe", "state": "passed", "at": "2026-01-01T00:00:10"}
+        current = {"author": "Pipeline Bot", "at": "2026-01-01T00:00:30", "body": "fine"}
+        cases = [
+            ("no checks and no review", {"checks": [], "reviews": []}, "no current Pipeline Bot review"),
+            ("a pending pipeline", {"checks": [{**passed, "state": "pending"}], "reviews": [current]}, "pipe pending"),
+            ("a failed pipeline", {"checks": [{**passed, "state": "failed"}], "reviews": [current]}, "pipe failed"),
+            ("a review from before the pipeline", {"checks": [passed], "reviews": [{**current, "at": "2026-01-01T00:00:05"}]},
+             "no current Pipeline Bot review"),
+            ("someone else's review", {"checks": [passed], "reviews": [{**current, "author": "Someone"}]},
+             "no current Pipeline Bot review"),
+        ]
+        for what, answer, reason in cases:
+            with self.subTest(what):
+                reviews.write_text(json.dumps(answer))
+                refused(gate(), reason)
+        reviews.write_text(json.dumps({"checks": [passed], "reviews": [current]}))
+        code, out, err = gate()
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertIn("Pipeline Bot", out)
+        with self.subTest("the PR at another head"):
+            refused(gate(at=fx.tooling), f"the PR is at {head[:10]}, not {fx.tooling[:10]}")
+        with self.subTest("an adapter that can't fetch reviews"):
+            refused(gate(conf={**conf, "forge": {"adapter": "none"}}), "no `reviews` command")
+        with self.subTest("an adapter's own error, over several lines, is one line"):
+            loud = {"argv": ["sh", "-c", "printf 'forge said no\\nand said why\\n' >&2; exit 3"]}
+            refused(gate(conf={**conf, "forge": loud}), "and said why")
+        gate(conf=conf)
+        with self.subTest("without --wait it answers at once, however long waitSeconds is"):
+            gate(conf={**conf, "review": {**conf["review"], "pr": {"author": "Pipeline Bot", "waitSeconds": 30}}})
+            reviews.write_text(json.dumps({"checks": [{**passed, "state": "pending"}], "reviews": []}))
+            started = time.monotonic()
+            answer = gate()
+            refused(answer, "pipe pending")
+            self.assertNotIn("waited", answer[2])
+            self.assertLess(time.monotonic() - started, 10, "waited without --wait")
+            gate(conf=conf)
+        with self.subTest("--wait gives up after review.pr's waitSeconds"):
+            reviews.write_text(json.dumps({"checks": [{**passed, "state": "pending"}], "reviews": []}))
+            started = time.monotonic()
+            answer = gate("--wait")
+            refused(answer, "waited 1s")
+            self.assertLess(time.monotonic() - started, 20, "waited past waitSeconds")
+        with self.subTest("--wait waits out a forge still showing the PR at its old head"):
+            gate(conf={**conf, "review": {**conf["review"], "pr": {"author": "Pipeline Bot", "waitSeconds": 30}}})
+            reviews.write_text(json.dumps({"checks": [passed], "reviews": [current]}))
+            prs = json.loads((fx.tmp / "forge.json").read_text())
+            lagging = {url: {**pr, "head": fx.tooling[:12]} for url, pr in prs.items()}
+            (fx.tmp / "forge.json").write_text(json.dumps(lagging))
+            refused(gate(), f"the PR is at {fx.tooling[:10]}, not {head[:10]}")
+            catch_up = threading.Timer(1, lambda: (fx.tmp / "forge.json").write_text(json.dumps(prs)))
+            catch_up.start()
+            self.addCleanup(catch_up.cancel)
+            started = time.monotonic()
+            code, out, err = gate("--wait")
+            self.assertEqual((code, err), (0, ""), out)
+            self.assertLess(time.monotonic() - started, 25, "kept waiting after the forge caught up")
+            gate(conf=conf)
+        with self.subTest("--wait passes once the review lands within the wait"):
+            gate(conf={**conf, "review": {**conf["review"], "pr": {"author": "Pipeline Bot", "waitSeconds": 30}}})
+            land = threading.Timer(1, lambda: reviews.write_text(json.dumps({"checks": [passed], "reviews": [current]})))
+            land.start()
+            self.addCleanup(land.cancel)
+            started = time.monotonic()
+            code, out, err = gate("--wait")
+            self.assertEqual((code, err), (0, ""), out)
+            self.assertLess(time.monotonic() - started, 25, "kept waiting after the review landed")
+
     # -- the release the cases run from ----------------------------------------------------------------
 
     def test_the_built_release_carries_the_rebound_runtime_and_verifies(self) -> None:
@@ -846,6 +1044,70 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
                                                           {"id": "l-r1-2", "state": "fixed", "resolution": "fixed in round 1"}])
         expect(check(relisted, carried={"l-r1-1"}, n=2) == [], check(relisted, carried={"l-r1-1"}, n=2))
         expect(check(lens_result(lateFindings=["l-r1-9"])), "a lateFindings id that isn't one of the result's own was accepted")
+
+    def test_a_story_review_defers_a_p1_only_when_it_is_late_in_a_verification_round_with_its_follow_up(self) -> None:
+        """Decision 1: review-reduce accepts a deferred P1 only in round > 1, listed in lateFindings, with a non-empty
+        deferredIssue. Every other deferred P1, and every deferred P0, is refused as before."""
+        def check(r, n=2):
+            return self.call("check_result", r, key="K", lens="lens.l", short="l", n=n, meta=META, carried=[],
+                             sets=("carried",))
+
+        def result(n=2, severity="P1", late=True, issue="a follow-up for the retry path"):
+            finding = {"id": f"l-r{n}-1", "severity": severity, "summary": "s", "state": "deferred"}
+            if issue is not None:
+                finding["deferredIssue"] = issue
+            return lens_result(round=n, resolvedFindings=[], findings=[finding],
+                               **({"lateFindings": [f"l-r{n}-1"]} if late else {}))
+
+        self.assertEqual(check(result()), [], "a late deferred P1 with its follow-up was refused")
+        for name, r, n, said in (
+                ("not listed in lateFindings", result(late=False), 2, "not listed in lateFindings"),
+                ("no deferredIssue", result(issue=None), 2, "with no deferredIssue"),
+                ("a blank deferredIssue", result(issue="  "), 2, "with no deferredIssue"),
+                ("a deferred P0", result(severity="P0"), 2, "is P0 and can't be deferred"),
+                ("in round 1, even listed late with its follow-up", result(n=1), 1, "can't be deferred in an assessment round")):
+            with self.subTest(name):
+                problems = check(r, n=n)
+                self.assertTrue(any(said in problem for problem in problems), problems)
+        # Filed open instead, the same late P1 blocks, as before.
+        filed = lens_result(round=2, outcome="changes-requested", resolvedFindings=[], lateFindings=["l-r2-1"],
+                            findings=[{"id": "l-r2-1", "severity": "P1", "summary": "s"}])
+        self.assertEqual(check(filed), [])
+
+    def test_a_late_deferred_p1_reduces_to_aligned_and_is_listed_for_its_follow_up(self) -> None:
+        fx = self.fixture()
+        setup_delivery(fx)
+        code, out = fx.flow("lead-init", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        wt = fx.lane("FX-2")
+        review = wt / ".orchestration/review/FX-2"
+        lenses = fx.lenses(wt)
+        short0 = lenses[0][1][0]
+        for n, change in ((1, "one\n"), (2, "two\n")):
+            (wt / "src/one.txt").write_text(change)
+            commit(wt, f"FX-2: {change.strip()}")
+            code, out = fx.flow("review-prepare", "FX-2", "--round", str(n), cwd=wt)
+            if code == 2 and "Evidence so far" in out:
+                context = review / "context.md"
+                context.write_text(context.read_text().replace(next(line for line in context.read_text().splitlines()
+                                                                    if line.startswith(CONTEXT_TODO)), "- evidence"))
+                code, out = fx.flow("review-prepare", "FX-2", "--round", str(n), cwd=wt)
+            self.assertEqual(code, 0, out)
+            if n == 1:
+                write_results(review, 1, "FX-2", lenses)
+            else:
+                write_results(review, 2, "FX-2", lenses, resolved=[])
+                path = review / f"result-r2-{short0}.json"
+                first = json.loads(path.read_text())
+                first.update(outcome="aligned", lateFindings=[f"{short0}-r2-1"], findings=[
+                    {"id": f"{short0}-r2-1", "severity": "P1", "summary": "the retry path swallows the error",
+                     "state": "deferred", "deferredIssue": "file a follow-up for the retry path"}])
+                path.write_text(json.dumps(first))
+            code, out = fx.flow("review-reduce", "FX-2", "--round", str(n), cwd=wt)
+            self.assertEqual(code, 0, out)
+        self.assertIn("FX-2 round 2: aligned", out)
+        self.assertIn(f"deferred P1 {short0}-r2-1", out)
+        self.assertIn("-> follow-up: file a follow-up for the retry path", out)
 
     def test_lead_assign_warns_of_files_outside_the_lane_before_it_starts(self) -> None:
         fx = self.fixture()
@@ -5382,6 +5644,7 @@ GUIDE_NAMES = {
                              "base, the binding, `.agents/run-delivery.json`, the delivery file and the lane brief reach "
                              "the base through a pull request, reviewed and merged like any change"),
     "finish lines by covers and proofs": ("### Answer", "It judges each finish line by the record's covers and proofs"),
+    "the review carry": ("### Accept", "lead-carry-review <story-key> --from <reviewed-head> --to <queued-head> --reason"),
 }
 # The worked adopter's binding: its bases, and a merge step that calls the forge adapter, pinned to the checked head.
 WORKED_BASES = ["main", "integration-*"]
@@ -5389,6 +5652,9 @@ WORKED_MERGE = ["python3", "-B", ".agent-skills/current/skills/run-delivery/adap
                 "--source", "{branch}", "--head", "{expectedHead}", "--strategy", "merge", "--destination", "{base}"]
 WORKED_CANDIDATE = ["python3", "-B", ".agent-skills/current/skills/run-delivery/adapters/forge_bitbucket.py",
                     "candidate", "--key", "{candidate}"]
+# The worked adopter's review gate: run-delivery's own check of the pipeline's review at the head the queue merges.
+WORKED_REVIEW_GATE = ["python3", "-B", ".agent-skills/current/skills/run-delivery/scripts/run_delivery.py",
+                      "pr-review-current", "--branch", "{branch}", "--head", "{expectedHead}", "--wait"]
 # Every push in an example is labelled, on the line just above it, for an unprotected base.
 UNPROTECTED = "unprotected base"
 PUSH = re.compile(r"\bgit\b(?:\s+-[Cc]\s+\S+)*\s+push\b|git\(\"push\"")
@@ -5665,6 +5931,11 @@ class RunDeliveryAdoptionGuideTests(unittest.TestCase):
         self.assertEqual(binding["bases"], WORKED_BASES)
         self.assertEqual(binding["merge"], WORKED_MERGE)
         self.assertEqual(binding["candidate"], WORKED_CANDIDATE)
+        self.assertEqual(binding["reviewGate"]["argv"], WORKED_REVIEW_GATE)
+        conf = next(document for document in worked if "forge" in document)
+        # The queue's bound on the gate outlasts the gate's own wait for the review, and the binding's ceiling allows it.
+        self.assertGreater(binding["reviewGate"]["timeoutSeconds"], conf["review"]["pr"]["waitSeconds"])
+        self.assertLessEqual(binding["reviewGate"]["timeoutSeconds"], binding["checkTimeoutCeiling"])
         self.assertEqual(set(binding["environment"]), {"FLOW_FORGE_REPOSITORY", "FLOW_FORGE_TOKEN_ENV"})
         self.assertTrue(any("tracker_publisher.py" in part for entry in binding["state"]["publishers"]
                             for part in entry["argv"]))
