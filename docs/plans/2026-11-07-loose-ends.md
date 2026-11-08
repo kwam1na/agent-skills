@@ -193,3 +193,11 @@ release step and the close.
 
 The epic and its ten items are in Linear. The lead posts at each milestone with the host's Linear tools and moves items to their final state.
 V26-3232 and V26-3164's descriptions get Decisions 3 and 4 recorded as comments when the delivery starts.
+
+### V26-3288. State the late-P1 deferral everywhere a skill says only P2 and P3 defer
+
+Lane 1, after V26-3242 (lead's addition, from V26-3194's round-1 deferral). Sensor-only. Three places still state the old rule:
+`orchestration-guide.md:601`, the lane brief template's triage line, and `review-work/SKILL.md:44`. Each states V26-3194's rule, a search
+by meaning across the profiles finds no other old statement, and presence and absence pins cover each file. Files: those three, their
+corpus tests, and the catalog, profiles and provenance lock if outputs change. Sensors: the corpus tests, `tests/test_linear_qualification.py`,
+`scripts/validate-registry.py`.
