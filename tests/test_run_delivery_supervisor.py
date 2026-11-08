@@ -2302,6 +2302,36 @@ class CloseStoppedPartwayTests(unittest.TestCase):
         self.assertIn(code, (0, 1), out)
         self.assert_finished(fx)
 
+    def test_a_close_held_only_by_the_publishers_lag_still_names_a_resume(self) -> None:
+        """The publisher posts on a later pass by itself, so its lag alone doesn't make the close name lead-close."""
+        fx = self.closable_fixture()
+        with self.backend.edit() as store:
+            store["failures"].append({"op": "comment", "ticket": "FX-1", "status": 409, "times": 50})
+        self.once(fx)
+        self.assert_partway(fx, "lead-run --resume")
+        with self.backend.edit() as store:
+            store["failures"].clear()
+        self.finish_with_resume(fx)
+
+    def test_a_close_held_only_by_a_running_full_health_still_names_a_resume(self) -> None:
+        """A running fullHealth clears when it ends, on a pass of its own, so it alone doesn't name lead-close."""
+        fx = self.closable_fixture()
+        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "closed by hand")
+        self.stopped_at(fx, "lead-close render", "lead-close")
+        lock = fx.tmp / "flow-log/FX-1.full-health.lock"
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        with open(lock, "a+") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            try:
+                held.truncate(0)
+                held.write(json.dumps({"pid": os.getpid(), "head": "0" * 40, "startedAt": "2026-01-01T00:00:00Z"}))
+                held.flush()
+                self.assert_partway(fx, "lead-run --resume")
+            finally:
+                fcntl.flock(held, fcntl.LOCK_UN)
+        lock.unlink()
+        self.finish_with_resume(fx)
+
     def test_an_early_close_stopped_in_lead_close_names_lead_close_which_finishes_it_and_reports_what_is_unposted(self) -> None:
         fx = self.closable_fixture()
         # A finish line the lead closed early without meeting.
