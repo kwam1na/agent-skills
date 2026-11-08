@@ -145,7 +145,8 @@ export function planEnd(app) {
  * `stored: { key: value }` puts values in the page's storage before it loads; storage needs an address, so it goes with
  * `rendered`.
  *
- * `quicker: <n>` runs the page's timers n times faster. `scroll: { y }` places the reader, with the plan chapter ending at
+ * `quicker: <n>` runs the page's timers n times faster and holds its runs refresh, so `asked` counts the plan's asks
+ * alone. `scroll: { y }` places the reader, with the plan chapter ending at
  * `planEnd`, and the result's `scrollY` says where the window ended. The result's `fetched` lists fetches of the page's
  * address and `fetchOptions` what each asked for.
  *
@@ -179,9 +180,10 @@ export async function openPage(page, scenario = {}) {
       // Held, not run: a `tick` step runs each one as the page's timer would.
       window.setInterval = (callback) => { intervals.push(callback); return 0; };
       if (scenario.quicker) {
-        // The runs refresh keeps its own three seconds, so every fetch a quickened test sees is the plan's.
+        // The runs refresh fetches the same address, three seconds after a push, so it is held, not run: every fetch a
+        // quickened test sees is the plan's, however long a loaded machine makes the test.
         const wait = window.setTimeout.bind(window);
-        window.setTimeout = (run, delay, ...rest) => wait(run, delay === 3000 ? delay : (delay || 0) / scenario.quicker, ...rest);
+        window.setTimeout = (run, delay, ...rest) => (delay === 3000 ? 0 : wait(run, (delay || 0) / scenario.quicker, ...rest));
       }
       if (scenario.scroll) {
         // What jsdom lacks to place a page: where the reader is, and a plan chapter that ends where what it and the

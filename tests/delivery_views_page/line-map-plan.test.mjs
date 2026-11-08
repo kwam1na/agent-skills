@@ -511,6 +511,24 @@ function downThenHeld(answer) {
 }
 /** Time for an ask that should not come. */
 const QUIET = { wait: 60 };
+/**
+ * A stall past the three seconds after a push that the page's runs refresh waits, as a loaded machine gives a test with
+ * this many asks. That refresh fetches the same address, so if it ran, it would take one of the answers a test counts.
+ */
+const RUNS_DUE = { run: () => { const until = Date.now() + 3100; while (Date.now() < until) { /* held */ } } };
+/**
+ * A server answering `answer(n)` to the nth ask, that holds each ask numbered in `holds` open until a step runs
+ * `release`, in turn. However late the snapshot before that step is taken, the held ask can't have landed by then.
+ */
+function holding(answer, ...holds) {
+  let asked = 0;
+  const gates = new Map(holds.map((n) => { let open; const shut = new Promise((resolve) => { open = resolve; }); return [n, { shut, open }]; }));
+  const waiting = [...holds];
+  return {
+    rendered: () => { const n = ++asked; return gates.has(n) ? gates.get(n).shut.then(() => answer(n)) : answer(n); },
+    release: { run: () => gates.get(waiting.shift()).open() },
+  };
+}
 
 test("a live page shows a changed plan with no reload, and no note on the way", async () => {
   const { page, plan, replanned, after } = replanning();
@@ -541,8 +559,9 @@ test("a live page keeps asking until the server has rendered the plan the record
 
 test("a render that never holds the named plan ends in the out-of-date note, until one does", async () => {
   const { page, plan, replanned, after } = replanning();
-  let asked = 0;
-  const snaps = await live(page, () => (asked++ < 16 ? page : after), [{ push: replanned, asked: 14 }, { asked: 15 }, { asked: 16 }, { asked: 17 }]);
+  const server = holding((n) => (n <= 16 ? page : after), 15, 17);
+  const snaps = await live(page, server.rendered,
+    [{ push: replanned, asked: 14 }, { ...server.release, asked: 15 }, { ...RUNS_DUE, asked: 16 }, { ...server.release, asked: 17 }]);
   // Quiet while it may yet be rendered, then saying so, and still asking.
   expect(planNote(snaps[1].app)).toBeNull();
   expect(outcome(snaps[3].app)).toBe(plan.outcome.summary);
@@ -619,8 +638,8 @@ test("a plan a server still rendering hasn't reached yet is taken when it arrive
   restored.journal.push({ id: 14, at: minute(40), kind: "decision.recorded", lane: null, subject: null, summary: `Plan updated: ${plan.updated}; restored` });
   const later = { ...plan, updated: "2026-10-30T14:00:00Z", outcome: { ...plan.outcome, summary: "The later plan's outcome." } };
   const held = render(document, later);
-  let asked = 0;
-  const snaps = await live(held, () => (asked++ < 3 ? held : render(restored, plan)), [{ push: restored }, { asked: 3 }, { asked: 4 }]);
+  const server = holding((n) => (n <= 3 ? held : render(restored, plan)), 4);
+  const snaps = await live(held, server.rendered, [{ push: restored }, { asked: 3 }, { ...server.release, asked: 4 }]);
   expect(outcome(snaps[2].app)).toBe("The later plan's outcome.");
   expect(planNote(snaps[2].app)).toBeNull();
   expect(outcome(snaps[3].app)).toBe(plan.outcome.summary);
@@ -677,7 +696,9 @@ test("each newly named plan gets its own patience", async () => {
   const { page, replanned } = replanning();
   const again = structuredClone(replanned);
   again.journal.push({ id: 15, at: minute(41), kind: "decision.recorded", lane: null, subject: null, summary: "Plan updated: 2026-10-30T13:30:00Z; another change" });
-  const snaps = await live(page, page, [{ push: replanned }, { asked: 14 }, { push: again }, { asked: 28 }, { asked: 29 }]);
+  // The ask after the fourteenth is answered only once the record names the next plan, so it is that plan's first.
+  const server = holding(() => page, 15, 29);
+  const snaps = await live(page, server.rendered, [{ push: replanned }, { asked: 14 }, { push: again, ...server.release }, { asked: 28 }, { ...server.release, asked: 29 }]);
   expect(planNote(snaps[4].app)).toBeNull();
   expect(planNote(snaps[5].app)).toBe(OUT_OF_DATE);
 });
