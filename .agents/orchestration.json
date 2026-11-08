@@ -29,6 +29,17 @@
         "-B",
         "scripts/update-provenance.py"
       ]
+    ],
+    "listings": [
+      {
+        "path": "provenance.lock.json",
+        "argv": [
+          "python3",
+          "-B",
+          "scripts/update-provenance.py",
+          "--list-outputs"
+        ]
+      }
     ]
   },
   "postSync": [],
