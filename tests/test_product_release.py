@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 class StoredRuntimeTests(unittest.TestCase):
     def test_the_stored_runtime_declares_the_version_it_was_built_as(self) -> None:
         descriptor = json.loads((ROOT / "product-runtime/runtime.json").read_text(encoding="utf-8"))
-        self.assertEqual(descriptor["runtimeVersion"], "0.8.0")
+        self.assertEqual(descriptor["runtimeVersion"], "0.8.1")
         # The constant the kernel reports its version by, which a build keeps apart from the descriptor.
         self.assertIn(f'HARNESS_VERSION = "{descriptor["runtimeVersion"]}"', (ROOT / "product-runtime/kernel.mjs").read_text(encoding="utf-8"))
 
