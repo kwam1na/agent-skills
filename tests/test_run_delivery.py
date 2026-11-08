@@ -6235,8 +6235,10 @@ class LaneStartAndReadinessTests(unittest.TestCase):
         for name, value in vars(installed_release()).items():
             setattr(cls, name, value)
 
-    def delivery(self, updates: str | None = "manual", transitions: dict | None = None, assign: bool = True):
-        """FX-3 (lane-2) planned, with in-app checks off, and the tracker settings given; assigned unless told not."""
+    def delivery(self, updates: str | None = "manual", transitions: dict | None = None, assign: bool = True,
+                 init: bool = True):
+        """FX-3 (lane-2) planned, with in-app checks off, and the tracker settings given; initialized and assigned unless
+        told not."""
         from tests.test_run_delivery_tracker import FileBackend  # here, so neither module imports the other at load
         fx = Fixture(self.generation, self.receipt)
         self.addCleanup(fx.close)
@@ -6253,13 +6255,16 @@ class LaneStartAndReadinessTests(unittest.TestCase):
                 store["issues"][key] = {"status": "Backlog", "comments": [], "markers": [], "labels": [], "parent": None,
                                         "summary": key}
         conf = json.loads((m / ".agents/run-delivery.json").read_text())
-        tracker = {**conf["tracker"], **backend.adapter(), "transitions": transitions or {"start": ["Start work"]}}
+        tracker = {**conf["tracker"], **backend.adapter(),
+                   "transitions": {"start": ["Start work"]} if transitions is None else transitions}
         if updates:
             tracker["updates"] = updates
         conf["tracker"] = tracker
         own = fx.tmp / "run-delivery.json"
         own.write_text(json.dumps(conf, indent=2))
         fx.env.update({"RUN_DELIVERY_CONFIG": str(own), **backend.env()})
+        if not init:
+            return fx
         code, out = fx.flow("lead-init", cwd=m)
         self.assertEqual(code, 0, out)
         if assign:
@@ -6301,13 +6306,15 @@ class LaneStartAndReadinessTests(unittest.TestCase):
         self.assertIn("story readiness", doctor_lines(out), out)
         return doctor_lines(out)["story readiness"]
 
-    def snapshot(self, fx, **item) -> None:
-        """The tracker snapshot serve keeps, holding FX-3 as given."""
-        folder = fx.tmp / "record/snapshots"
-        folder.mkdir(parents=True, exist_ok=True)
-        taken = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        (folder / "tracker.json").write_text(json.dumps({"schemaVersion": "work-snapshot/1", "source": "tracker",
-                                                         "takenAt": taken, "items": [{"subject": "FX-3", **item}]}))
+    def snapshot(self, fx, path: str = "record/snapshots/tracker.json", ago: int = 0, subject: str = "FX-3",
+                 others: tuple = (), **item) -> None:
+        """A kept tracker snapshot, serve's unless another path is given, taken `ago` seconds back, holding the item
+        given and any others."""
+        path = fx.tmp / path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        taken = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        path.write_text(json.dumps({"schemaVersion": "work-snapshot/1", "source": "tracker", "takenAt": taken,
+                                    "items": [{"subject": subject, **item}, *others]}))
 
     # lane-start, in each mode.
 
@@ -6375,11 +6382,13 @@ class LaneStartAndReadinessTests(unittest.TestCase):
 
     def test_a_story_offered_its_start_move_is_assigned_with_no_readiness_line(self) -> None:
         fx = self.delivery(assign=False)
-        self.snapshot(fx, state="backlog", status="Ready for Dev", offeredTransitions=["Start work", "Close"])
+        ready = {"state": "backlog", "status": "Ready for Dev", "offeredTransitions": ["Start work", "Close"]}
+        self.snapshot(fx, **ready, others=({"subject": "FX-2", **ready},))
         _, out = self.assign(fx)
         self.assertNotIn("readiness", out.lower())
         self.assertNotIn("isn't offered", out)
         self.assertIn("lane-start FX-3", out)
+        self.assertEqual(self.doctor(fx)[0], "ok")
 
     def test_a_story_not_offered_its_start_move_is_refused_and_nothing_is_written(self) -> None:
         fx = self.delivery(assign=False)
@@ -6419,6 +6428,60 @@ class LaneStartAndReadinessTests(unittest.TestCase):
         _, out = self.assign(fx)
         self.assertIn(line, out)
         self.assertIn(line, self.doctor(fx)[1])
+
+    def test_a_start_recorded_without_its_stage_move_gets_it_on_the_next_run(self) -> None:
+        fx = self.delivery("manual")
+        assigned = [e for e in self.record(fx)["journal"] if e["kind"] == "lane.assigned"][-1]["at"]
+        starts = fx.tmp / "flow-log/FX-1.lane-starts.jsonl"
+        starts.parent.mkdir(parents=True, exist_ok=True)
+        # A run that recorded the start and stopped before the record moved: what the next run finds.
+        with open(starts, "a") as log:
+            log.write(json.dumps({"subject": "FX-3", "lane": "lane-2", "at": assigned}) + "\n")
+        out = self.started(fx)
+        self.assertIn("lane-2 started it: now building", out)
+        self.assertEqual(self.stage(fx), "building")
+        self.assertNotIn("already started", out)
+
+    def test_the_newer_of_the_two_kept_snapshots_decides(self) -> None:
+        # lead-reconcile's, beside the record, says not ready; serve's says ready. Whichever is newer decides.
+        for reconcile_ago, serve_ago, refused in ((0, 60, True), (60, 0, False)):
+            with self.subTest(newer="lead-reconcile's" if refused else "serve's"):
+                fx = self.delivery(assign=False)
+                self.snapshot(fx, path="snapshots/trackerSnapshot.json", ago=reconcile_ago, state="backlog",
+                              status="To Be Refined", offeredTransitions=["Refined"])
+                self.snapshot(fx, ago=serve_ago, state="backlog", status="Ready for Dev", offeredTransitions=["Start work"])
+                code, out = fx.flow("lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2", cwd=fx.main)
+                self.assertEqual(code != 0, refused, out)
+                self.assertEqual("FX-3 is in To Be Refined" in out, refused, out)
+
+    def test_only_the_first_start_move_counts(self) -> None:
+        fx = self.delivery(transitions={"start": ["Start work", "Complete"]}, assign=False)
+        self.snapshot(fx, state="backlog", status="Triage", offeredTransitions=["Complete"])
+        code, out = fx.flow("lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2", cwd=fx.main)
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("FX-3 is in Triage: \"Start work\" isn't offered; refine it first", out)
+
+    def test_doctor_checks_readiness_before_lead_init(self) -> None:
+        fx = self.delivery(init=False)
+        self.assertFalse((fx.tmp / "record/state.json").exists())
+        self.snapshot(fx, state="backlog", status="To Be Refined", offeredTransitions=["Refined"])
+        status, detail = self.doctor(fx)
+        self.assertEqual(status, "warn", detail)
+        self.assertIn("FX-3 is in To Be Refined: \"Start work\" isn't offered; refine it first", detail)
+
+    def test_with_no_start_move_there_is_no_readiness_to_check(self) -> None:
+        fx = self.delivery(transitions={}, assign=False)
+        self.snapshot(fx, state="backlog", status="To Be Refined", offeredTransitions=["Refined"])
+        _, out = self.assign(fx)
+        self.assertNotIn("readiness", out.lower())
+        self.assertNotIn("isn't offered", out)
+        self.assertEqual(self.doctor(fx), ("ok", "lanes make no start move, so there is no readiness to check"))
+
+    def test_a_snapshot_that_doesnt_list_the_story_says_so(self) -> None:
+        fx = self.delivery(assign=False)
+        self.snapshot(fx, subject="FX-9", state="backlog", status="To Be Refined", offeredTransitions=["Refined"])
+        _, out = self.assign(fx)
+        self.assertIn("FX-3: readiness wasn't checked: the tracker snapshot doesn't list it", out)
 
     def test_a_story_already_under_way_isnt_held_to_its_start_move(self) -> None:
         fx = self.delivery(assign=False)

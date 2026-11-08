@@ -3058,14 +3058,16 @@ def lane_start(args) -> None:
     since = assigned[-1]["at"] if assigned else None
     starts = [s for s in tracker_publisher.read_flow(c.flow_log, c.delivery, tracker_publisher.LANE_STARTS)
               if s.get("subject") == key and (since is None or s.get("at", "") >= since)]
+    # Before the start is recorded, so a write that fails leaves nothing recorded and the next run starts it whole; and
+    # on every run, so a start recorded without its stage move gets it. A story past planned is left as it is.
+    if mark_building(c, key, lane):
+        did.append(f"{lane} started it: now building")
     if not starts:
         # The focus is set only with the start, so running it again never resets what the lane has said since.
         state_tool("focus", "--lane", lane, "--text", f"{key}: started", "--state", "working", "--waiting-on", "")
         did.append(f"set {lane}'s focus")
         tracker_publisher.record_lane_start(c.flow_log, c.delivery, key, lane)
         did.append("recorded the start")
-        if mark_building(c, key, lane):
-            did.append(f"{lane} started it: now building")
         conf = tracker_conf(c)
         # Made by hand, through the host's tools or the lane's own: the publisher makes it in publisher mode.
         if conf["mode"] in ("host", "manual"):

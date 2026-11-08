@@ -170,7 +170,8 @@ class JiraTests(SnapshotCase):
         pages = copy.deepcopy(JIRA)
         first = pages["page-1"]["issues"][0]
         first["transitions"] = [{"id": "11", "name": "Refined", "to": {"name": "Ready for Dev"}},
-                                {"id": "12", "name": "Won't do"}, {"id": "13", "name": "Refined"}, {"id": "14"}, "junk"]
+                                {"id": "12", "name": "Won't do"}, {"id": "13", "name": "Refined"}, {"id": "14"},
+                                {"id": "15", "name": ""}, "junk"]
         transport = Transport((SEARCH, 200, pages["page-1"]), (SEARCH, 200, pages["page-2"]))
         code, out, _ = self.run_kind(JIRA_ARGS, transport, JIRA_ENV)
         self.assertEqual(code, 0)
