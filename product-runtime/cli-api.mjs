@@ -553,6 +553,21 @@ function selfReferences(...created) {
 function executionPath(root, value2) {
   return value2.split(path3.delimiter).filter((p) => p && path3.isAbsolute(p) && !inside(root, p) && !p.split(path3.sep).includes("node_modules")).join(path3.delimiter) || "/usr/bin:/bin";
 }
+async function materializationDepth(input, git) {
+  if (input.gitContext === "none") return 1;
+  const { headSha, base } = input.candidate;
+  try {
+    for (const tip of [headSha, base.tipSha]) {
+      const boundary = (await git("-C", input.rootDir, "rev-list", "--boundary", `${base.mergeBaseSha}..${tip}`)).split("\n").filter((line) => line.startsWith("-"));
+      if (tip !== base.mergeBaseSha && boundary.join("\n") !== `-${base.mergeBaseSha}`) return void 0;
+    }
+    const counts = await Promise.all([headSha, base.tipSha].map((tip) => git("-C", input.rootDir, "rev-list", "--count", `${base.mergeBaseSha}..${tip}`)));
+    const longest = Math.max(...counts.map(Number));
+    return Number.isSafeInteger(longest) && longest >= 0 ? longest + 1 : void 0;
+  } catch {
+    return void 0;
+  }
+}
 async function createCheckSnapshot(input) {
   if (input.physicalSource !== void 0) return createFiniteCheckSnapshot(input);
   const report2 = (phase, started) => {
@@ -598,7 +613,20 @@ async function createCheckSnapshot(input) {
   const cleanup = () => removeTrees([rootDir, ...privateControl ? [privateControl] : []]);
   try {
     await git("init", "-q");
-    await git("fetch", "--update-shallow", "--no-tags", "--no-write-fetch-head", input.rootDir, input.candidate.headSha, input.candidate.base.tipSha, input.candidate.treeSha);
+    const depth = await materializationDepth(input, git);
+    const mergeBase = input.gitContext !== "none" && depth !== void 0 ? [] : [input.candidate.base.mergeBaseSha];
+    await git(
+      "fetch",
+      "--update-shallow",
+      ...depth === void 0 ? [] : ["--depth", String(depth)],
+      "--no-tags",
+      "--no-write-fetch-head",
+      input.rootDir,
+      input.candidate.headSha,
+      input.candidate.base.tipSha,
+      ...mergeBase,
+      input.candidate.treeSha
+    );
     await git("update-ref", "HEAD", input.candidate.headSha);
     await git("read-tree", input.candidate.treeSha);
     await git("checkout-index", "--all", "--force");

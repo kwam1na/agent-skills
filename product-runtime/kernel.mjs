@@ -8014,7 +8014,7 @@ function recordOutputConfiguration(config, deliverableDigest) {
 // packages/kernel/src/preparation.ts
 var PREPARATION_RECEIPT_SCHEMA_VERSION = 1;
 var PREPARATION_RECEIPT_LEAF = "preparation";
-var HARNESS_VERSION = "0.8.0";
+var HARNESS_VERSION = "0.8.1";
 var PREPARATION_FAILURE_CLASSES = ["missing", "invalid", "wiring_mismatch", "base_changed", "stale"];
 var DIRECTORY_MODE2 = 448;
 var RECEIPT_MODE = 384;
