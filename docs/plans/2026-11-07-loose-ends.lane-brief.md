@@ -34,7 +34,7 @@ assemble briefs, round files or records by hand, and don't edit what they write.
 
 | Lane | Stories | Owns |
 | --- | --- | --- |
-| lane-1 | V26-3232, V26-3272, V26-3175, V26-3201, V26-3194, V26-3183, V26-3180, V26-3242, V26-3288 | `skills/run-delivery/*`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_plan_review.py`, `tests/test_round_brief_template_corpus.py`, `tests/test_review_and_compounding.py`, `docs/solutions/*`, `tests/fixtures/delivery-views/line-map/*`, `skills/orchestrate-work/references/schemas.json`, `tests/test_registry.py`, `catalog.json`, `profiles/*`, `skills/orchestrate-work/scripts/render_state.py`, `tests/test_orchestration_render.py`, `provenance.lock.json`, `skills/orchestrate-work/scripts/merge_queue.py`, `tests/test_merge_queue.py`, `skills/orchestrate-work/references/orchestration-guide.md`, `skills/delivery-views/*`, `tests/test_delivery_views_page.py`, `tests/delivery_views_page/*`, `tests/quiet_git.py`, `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/SKILL.md`, `tests/test_orchestration_state.py`, `tests/test_delivery_views_snapshots.py`, `skills/review-work/SKILL.md` |
+| lane-1 | V26-3232, V26-3272, V26-3175, V26-3201, V26-3194, V26-3183, V26-3180, V26-3242, V26-3288, V26-3290 | `skills/run-delivery/*`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_plan_review.py`, `tests/test_round_brief_template_corpus.py`, `tests/test_review_and_compounding.py`, `docs/solutions/*`, `tests/fixtures/delivery-views/line-map/*`, `skills/orchestrate-work/references/schemas.json`, `tests/test_registry.py`, `catalog.json`, `profiles/*`, `skills/orchestrate-work/scripts/render_state.py`, `tests/test_orchestration_render.py`, `provenance.lock.json`, `skills/orchestrate-work/scripts/merge_queue.py`, `tests/test_merge_queue.py`, `skills/orchestrate-work/references/orchestration-guide.md`, `skills/delivery-views/*`, `tests/test_delivery_views_page.py`, `tests/delivery_views_page/*`, `tests/quiet_git.py`, `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/SKILL.md`, `tests/test_orchestration_state.py`, `tests/test_delivery_views_snapshots.py`, `skills/review-work/SKILL.md`, `tests/test_review_bound_corpus.py` |
 | lane-2 | V26-3197, V26-3164, V26-3182 | `.agent-skills/*`, `.agents/orchestration.json` |
 
 | Story | Label | Pinned request patterns | In-app checks its hand-off needs |
@@ -51,6 +51,7 @@ assemble briefs, round files or records by hand, and don't edit what they write.
 | V26-3242 | V26-3242 | - | none |
 | V26-3182 | V26-3182 | - | none |
 | V26-3288 | V26-3288 | - | none |
+| V26-3290 | V26-3290 | - | none |
 
 ## The focused lane profile
 
