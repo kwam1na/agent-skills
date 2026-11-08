@@ -192,9 +192,6 @@ class CompoundingWorkflowTests(unittest.TestCase):
         self.assertEqual(decision.blockers, ("compounding evidence is required",))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 ROOT = Path(__file__).resolve().parents[1]
 # Every place a skill states which findings defer says it as run-delivery's reducers and the round briefs enforce it:
@@ -219,10 +216,10 @@ LATE_P1_DEFERRAL = {
 }
 # The old rule, its phrasings and their synonyms: only P2 and P3 defer, or a P1 never does.
 OLD_DEFERRAL_RULE = (
-    r"only (a |the )?P2 (or|and|/) ?P3 (finding )?(can|may|is|are)",
+    r"only (a |the )?P2 (or|and|/) ?P3( findings?)? (can|may|is|are)",
     r"P2/P3 only",
     r"P0 (and|or|/) ?P1 (findings )?are (blocking and are )?never deferred",
-    r"P1 (findings? )?(is|are) never deferred",
+    r"P1s? (findings? )?(is|are) never deferred",
     r"\(P0/P1\) findings are always fixed",
     r"(blocking|P0 and P1) findings are always fixed in the lane\. Lenses file P2/P3 as deferred, with what the"
     r" follow-up must say:",
@@ -249,3 +246,7 @@ class LateP1DeferralWordingTests(unittest.TestCase):
             for pattern in OLD_DEFERRAL_RULE:
                 with self.subTest(path=relative, pattern=pattern):
                     self.assertIsNone(re.search(pattern, text, re.IGNORECASE))
+
+
+if __name__ == "__main__":
+    unittest.main()
