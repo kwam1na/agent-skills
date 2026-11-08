@@ -1038,7 +1038,7 @@
         },
         {
           "path": "skills/run-delivery/references/adopting.md",
-          "sha256": "32af7e36dbf04e2d4660649dc122c9bab19997571e93b5608545273d6959e86b"
+          "sha256": "84b98032693e256d3c0950dba89955494788e094da874846cbecbf96543d41b4"
         },
         {
           "path": "skills/run-delivery/references/config.md",
@@ -1046,7 +1046,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "3942093d46d14e9cba8082fdc7963fea026b8fe27cd343177ef14c026df74f0f"
+          "sha256": "5600f9a241bc2255715de6d1bb98e892efec7a4b81495b5e6aaf0986075cce5a"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",

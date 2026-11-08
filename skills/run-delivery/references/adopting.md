@@ -536,6 +536,7 @@ one this repository changes from the walk-through above; everything else stays a
 | `trackerSnapshot`, `publishers` | none | Jira's snapshot, and run-delivery's tracker publisher |
 | `tracker` | an issue address | Jira's adapter, and its moves |
 | `review.pr` | none | the pipeline's review |
+| The binding's `reviewGate`, `checkTimeoutCeiling` | none, `1200` | run-delivery's `pr-review-current`, `1900` |
 | `reviewWhen` | none: lanes make the review move by hand | `pipeline-green` |
 | `authority` | `push`, `draftPullRequests` | adds `readyPullRequests` |
 
@@ -554,6 +555,7 @@ retargeted to another base in the forge is refused rather than merged there:
   "reviewGate": {"argv": ["python3", "-B", ".agent-skills/current/skills/run-delivery/scripts/run_delivery.py",
                           "pr-review-current", "--branch", "{branch}", "--head", "{expectedHead}", "--wait"],
                  "timeoutSeconds": 1900},
+  "checkTimeoutCeiling": 1900,
   "environment": {"FLOW_FORGE_REPOSITORY": "<workspace>/<repository>", "FLOW_FORGE_TOKEN_ENV": "BITBUCKET_TOKEN"},
   "state": {"directory": ".orchestration/state", "renderers": [],
             "forgeSnapshot": {"argv": ["python3", "-B", ".agent-skills/current/skills/delivery-views/scripts/snapshot.py",

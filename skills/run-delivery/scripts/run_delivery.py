@@ -3226,17 +3226,20 @@ def review_gate(args) -> None:
     url = forge("find", "--source", args.branch).get("url")
     if not url:
         raise Stop(f"no open PR for {args.branch}")
-    reported = forge("get", "--url", url).get("head")
-    if not same_commit(reported, args.head):
-        raise Stop(f"the PR is at {str(reported)[:10]}, not {args.head[:10]}: its review is of another head")
     wait = int(conf.get("waitSeconds", 1800)) if args.wait else 0
     deadline = time.time() + wait
     while True:
-        status, review, checks = pr_review_state(url, args.head, conf)
+        # Read each time: a forge can show the PR at its old head for a while after the queue pushes the synced one.
+        reported = forge("get", "--url", url).get("head")
+        moved = not same_commit(reported, args.head)
+        status, review, checks = ("pending", None, []) if moved else pr_review_state(url, args.head, conf)
         left = deadline - time.time()
         if status != "pending" or left <= 0:
             break
         time.sleep(min(10, left))  # a merge waits on it, so it looks again sooner than a lane's pr-review
+    if moved:
+        raise Stop(f"the PR is at {str(reported)[:10]}, not {args.head[:10]}: its review is of another head"
+                   + (f" (waited {wait}s)" if args.wait else ""))
     states = ", ".join(f"{ch['name']} {ch['state']}" for ch in checks) or "no checks"
     if status == "failed":
         raise Stop(f"the pipeline failed at {args.head[:10]}: {states}")

@@ -785,13 +785,40 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
             refused(gate(at=fx.tooling), f"the PR is at {head[:10]}, not {fx.tooling[:10]}")
         with self.subTest("an adapter that can't fetch reviews"):
             refused(gate(conf={**conf, "forge": {"adapter": "none"}}), "no `reviews` command")
+        with self.subTest("an adapter's own error, over several lines, is one line"):
+            loud = {"argv": ["sh", "-c", "printf 'forge said no\\nand said why\\n' >&2; exit 3"]}
+            refused(gate(conf={**conf, "forge": loud}), "and said why")
         gate(conf=conf)
+        with self.subTest("without --wait it answers at once, however long waitSeconds is"):
+            gate(conf={**conf, "review": {**conf["review"], "pr": {"author": "Pipeline Bot", "waitSeconds": 30}}})
+            reviews.write_text(json.dumps({"checks": [{**passed, "state": "pending"}], "reviews": []}))
+            started = time.monotonic()
+            answer = gate()
+            refused(answer, "pipe pending")
+            self.assertNotIn("waited", answer[2])
+            self.assertLess(time.monotonic() - started, 10, "waited without --wait")
+            gate(conf=conf)
         with self.subTest("--wait gives up after review.pr's waitSeconds"):
             reviews.write_text(json.dumps({"checks": [{**passed, "state": "pending"}], "reviews": []}))
             started = time.monotonic()
             answer = gate("--wait")
             refused(answer, "waited 1s")
             self.assertLess(time.monotonic() - started, 20, "waited past waitSeconds")
+        with self.subTest("--wait waits out a forge still showing the PR at its old head"):
+            gate(conf={**conf, "review": {**conf["review"], "pr": {"author": "Pipeline Bot", "waitSeconds": 30}}})
+            reviews.write_text(json.dumps({"checks": [passed], "reviews": [current]}))
+            prs = json.loads((fx.tmp / "forge.json").read_text())
+            lagging = {url: {**pr, "head": fx.tooling[:12]} for url, pr in prs.items()}
+            (fx.tmp / "forge.json").write_text(json.dumps(lagging))
+            refused(gate(), f"the PR is at {fx.tooling[:10]}, not {head[:10]}")
+            catch_up = threading.Timer(1, lambda: (fx.tmp / "forge.json").write_text(json.dumps(prs)))
+            catch_up.start()
+            self.addCleanup(catch_up.cancel)
+            started = time.monotonic()
+            code, out, err = gate("--wait")
+            self.assertEqual((code, err), (0, ""), out)
+            self.assertLess(time.monotonic() - started, 25, "kept waiting after the forge caught up")
+            gate(conf=conf)
         with self.subTest("--wait passes once the review lands within the wait"):
             gate(conf={**conf, "review": {**conf["review"], "pr": {"author": "Pipeline Bot", "waitSeconds": 30}}})
             land = threading.Timer(1, lambda: reviews.write_text(json.dumps({"checks": [passed], "reviews": [current]})))
@@ -5746,8 +5773,9 @@ class RunDeliveryAdoptionGuideTests(unittest.TestCase):
         self.assertEqual(binding["candidate"], WORKED_CANDIDATE)
         self.assertEqual(binding["reviewGate"]["argv"], WORKED_REVIEW_GATE)
         conf = next(document for document in worked if "forge" in document)
-        # The queue's bound on the gate outlasts the gate's own wait for the review.
+        # The queue's bound on the gate outlasts the gate's own wait for the review, and the binding's ceiling allows it.
         self.assertGreater(binding["reviewGate"]["timeoutSeconds"], conf["review"]["pr"]["waitSeconds"])
+        self.assertLessEqual(binding["reviewGate"]["timeoutSeconds"], binding["checkTimeoutCeiling"])
         self.assertEqual(set(binding["environment"]), {"FLOW_FORGE_REPOSITORY", "FLOW_FORGE_TOKEN_ENV"})
         self.assertTrue(any("tracker_publisher.py" in part for entry in binding["state"]["publishers"]
                             for part in entry["argv"]))
