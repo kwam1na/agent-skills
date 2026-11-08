@@ -28,7 +28,8 @@
         "catalog.json",
         "profiles/*",
         "skills/orchestrate-work/scripts/render_state.py",
-        "tests/test_orchestration_render.py"
+        "tests/test_orchestration_render.py",
+        "provenance.lock.json"
       ]
     },
     "lane-2": {
@@ -41,7 +42,6 @@
         "tests/delivery_views_page/*",
         ".agent-skills/*",
         ".agents/orchestration.json",
-        "provenance.lock.json",
         "tests/quiet_git.py"
       ]
     }
