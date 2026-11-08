@@ -30,8 +30,8 @@ from tests.test_run_delivery import (POSIX_ONLY, Fixture, commit, doctor_binding
                                      sh, stop_supervisors, write_results)
 from tests.test_run_delivery_tracker import FileBackend, JiraBackend
 
-# Supervisors, their children and a shared fake forge state: one case at a time.
-RUN_SERIALLY = True
+# Each class that starts supervisors marks itself run_serially, so its cases run one at a time and alone on the machine.
+# The module isn't marked: marked, it would be one unit of every class, past the runner's unit limit on a macOS runner.
 
 FORGE = r'''
 import argparse, json, os, subprocess, sys
@@ -296,6 +296,22 @@ def alive(pid: int) -> bool:
     except ProcessLookupError:
         return False
     return True
+
+
+class ModuleUnitsTests(unittest.TestCase):
+    """The runner plans this module as one unit per class, and runs every class that starts supervisors alone."""
+
+    def test_each_supervisor_class_is_a_serial_unit_of_its_own(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        listed = subprocess.run([sys.executable, "-B", str(root / "scripts/run-tests.py"), "--list", "-p", Path(__file__).name],
+                                cwd=root, capture_output=True, text=True, timeout=120, check=True).stdout
+        units = {line.split()[0]: "(serial)" in line for line in listed.splitlines() if line.strip()}
+        self.assertNotIn(__name__, units, "the module is planned as one unit")
+        starters = [name for name, cls in sorted(globals().items()) if isinstance(cls, type)
+                    and issubclass(cls, unittest.TestCase) and "setUpClass" in vars(cls)]
+        self.assertGreaterEqual(len(starters), 8, starters)
+        for name in starters:
+            self.assertIs(units.get(f"{__name__}.{name}"), True, f"{name} isn't a serial unit of its own: {listed}")
 
 
 class ProofStateTests(unittest.TestCase):
@@ -710,6 +726,9 @@ class SupervisorProcessTests(unittest.TestCase):
 class SettledLockTests(unittest.TestCase):
     """A read during a restart finds the truncated file: the test's reads retry, within their bound."""
 
+    # The race it stages is 0.2 s wide: on a loaded machine, a parallel worker could close it before the plain read.
+    run_serially = True
+
     def fixture(self) -> tuple[types.SimpleNamespace, Path]:
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
@@ -731,6 +750,44 @@ class SettledLockTests(unittest.TestCase):
         started = time.monotonic()
         with self.assertRaisesRegex(AssertionError, "stayed empty for 0.2s"):
             settled_lock(fx, seconds=0.2)
+        self.assertLess(time.monotonic() - started, 5)
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class HeldRunLockTests(unittest.TestCase):
+    """A read of the fullHealth run's lock while it's held and empty, between taking and writing it, retries within its
+    bound: the reads SupervisorBackgroundHealthTests makes through run_lock."""
+
+    # Like SettledLockTests, it stages a 0.2 s race.
+    run_serially = True
+
+    def held_empty_lock(self) -> tuple[types.SimpleNamespace, Path]:
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        lock = Path(folder.name) / "flow-log/FX-1.full-health.lock"
+        lock.parent.mkdir()
+        lock.write_text("")
+        holder = open(lock, "a+")  # a second open file: its flock conflicts with run_lock's probe, as a run's would
+        self.addCleanup(holder.close)
+        fcntl.flock(holder, fcntl.LOCK_EX)
+        return types.SimpleNamespace(tmp=Path(folder.name)), lock
+
+    def run_lock(self, fx: types.SimpleNamespace, **kwargs) -> dict:
+        return SupervisorBackgroundHealthTests.run_lock(self, fx, **kwargs)
+
+    def test_a_read_before_the_run_writes_waits_for_the_write(self) -> None:
+        fx, lock = self.held_empty_lock()
+        writer = threading.Timer(0.2, lock.write_text, ['{"pid": 7, "head": "h"}'])
+        writer.start()
+        self.addCleanup(writer.join)
+        self.assertEqual(self.run_lock(fx, seconds=0), {"held": True}, "the single read this guards against no longer finds the race")
+        self.assertEqual(self.run_lock(fx), {"pid": 7, "head": "h", "held": True})
+
+    def test_a_lock_that_stays_empty_reads_held_within_the_bound(self) -> None:
+        fx, _ = self.held_empty_lock()
+        started = time.monotonic()
+        self.assertEqual(self.run_lock(fx, seconds=0.5), {"held": True})
+        self.assertGreaterEqual(time.monotonic() - started, 0.5)
         self.assertLess(time.monotonic() - started, 5)
 
 
@@ -2751,23 +2808,29 @@ class SupervisorBackgroundHealthTests(unittest.TestCase):
     base_events = SupervisorPostMergeTests.base_events
     results = SupervisorPostMergeTests.results
 
-    def run_lock(self, fx: Fixture) -> dict:
-        """What the fullHealth run's lock records, and whether a process holds it."""
+    def run_lock(self, fx: Fixture, seconds: float = 5) -> dict:
+        """What the fullHealth run's lock records, and whether a process holds it. The run takes the lock before it first
+        writes it, and truncates it before each rewrite, so a held lock can read empty for a moment: such a read is
+        retried within `seconds`, as settled_lock retries the supervisor's."""
         lock = fx.tmp / "flow-log/FX-1.full-health.lock"
-        if not lock.exists():
-            return {"held": False}
-        with open(lock, "a+") as probe:
+        deadline = time.monotonic() + seconds
+        while True:
+            if not lock.exists():
+                return {"held": False}
+            with open(lock, "a+") as probe:
+                try:
+                    fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    fcntl.flock(probe, fcntl.LOCK_UN)
+                    held = False
+                except BlockingIOError:
+                    held = True
             try:
-                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                fcntl.flock(probe, fcntl.LOCK_UN)
-                held = False
-            except BlockingIOError:
-                held = True
-        try:
-            recorded = json.loads(lock.read_text() or "{}")
-        except ValueError:
-            recorded = {}
-        return {**recorded, "held": held}
+                recorded = json.loads(lock.read_text() or "{}")
+            except ValueError:
+                recorded = {}
+            if recorded or not held or time.monotonic() >= deadline:
+                return {**recorded, "held": held}
+            time.sleep(0.02)
 
     def slow_run_under_a_supervisor(self, seconds: str = "60") -> Fixture:
         """FX-2 merged by hand, then a running supervisor whose first pass starts a slow fullHealth after it."""
@@ -2777,8 +2840,13 @@ class SupervisorBackgroundHealthTests(unittest.TestCase):
         fx.env["FX_HEALTH_SECONDS"] = seconds
         code, out = fx.flow("lead-run", "--resume", cwd=fx.main, env=running(fx))
         self.assertEqual(code, 0, out)
-        wait_for(lambda: self.run_lock(fx)["held"], "the fullHealth run to start", 60)
+        wait_for(lambda: self.run_started(fx), "the fullHealth run to start", 60)
         return fx
+
+    def run_started(self, fx: Fixture) -> bool:
+        """Whether a fullHealth run holds its lock and has written what it records there."""
+        run = self.run_lock(fx)
+        return run["held"] and "pid" in run and "head" in run
 
     def test_a_supervisor_keeps_passing_restarts_serve_and_keeps_needs_you_fresh_while_it_runs(self) -> None:
         fx = self.slow_run_under_a_supervisor()
