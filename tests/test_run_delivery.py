@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import base64
 import contextlib
+import datetime
 import fcntl
 import hashlib
 import io
@@ -4187,7 +4188,7 @@ TROUBLESHOOTING_KEYS = [
     "is below the runtime's nodeMinimum", "stories with no plan section", "context.sections the plan lacks",
     "no plan at", "has no configuration for lanes", "forge.mergeNeedsReady says the merge step refuses a draft",
     "the supervisor is down", "don't have the default signal dispositions",
-    "binding doesn't serve the base",
+    "binding doesn't serve the base", "isn't offered; refine it first",
 ]
 
 
@@ -4200,7 +4201,7 @@ DOCTOR_LABELS = ["host and tools", "orchestration binding", "merge queue candida
                  "release on the delivery base", "gates", "lane checkouts ignored", "tracker issue URL",
                  "pipeline PR review", "gh", "forge find", "forge write access", "tracker snapshot token",
                  "snapshots and publishers", "in-app adapters", "in-app adapter contract", "video evidence tools",
-                 "Node", "harness configuration", "delivery file", "plan chapter", "plan sections", "story files", "context sections",
+                 "Node", "harness configuration", "delivery file", "plan chapter", "plan sections", "story files", "story readiness", "context sections",
                  "configuration on the remote base", "pull requests marked ready", "delivery supervisor",
                  "gates on the base"]
 
@@ -6221,6 +6222,210 @@ class DeliveryPostureReaderTests(unittest.TestCase):
         self.assertIn("remains the backstop for anything a selection missed, unless the base declares the `focused` posture", guide)
         self.assertIn("say the run was skipped under the posture, naming its source and reason", guide)
 
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class LaneStartAndReadinessTests(unittest.TestCase):
+    """lane-start moves its story to building in the record in every tracker mode, and in manual mode prints the start
+    move and post as host mode does. lead-assign and doctor --delivery check that a story's tracker item offers the
+    first start move, from the tracker snapshot, before its lane starts."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        for name, value in vars(installed_release()).items():
+            setattr(cls, name, value)
+
+    def delivery(self, updates: str | None = "manual", transitions: dict | None = None, assign: bool = True):
+        """FX-3 (lane-2) planned, with in-app checks off, and the tracker settings given; assigned unless told not."""
+        from tests.test_run_delivery_tracker import FileBackend  # here, so neither module imports the other at load
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        m = fx.main
+        path = setup_delivery(fx)
+        d = json.loads(path.read_text())
+        d["stories"]["FX-3"]["inApp"] = "none"
+        path.write_text(json.dumps(d, indent=2))
+        commit(m, "FX-1: FX-3 needs no in-app checks")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        backend = FileBackend(fx.tmp)
+        with backend.edit() as store:
+            for key in ("FX-1", "FX-2", "FX-3"):
+                store["issues"][key] = {"status": "Backlog", "comments": [], "markers": [], "labels": [], "parent": None,
+                                        "summary": key}
+        conf = json.loads((m / ".agents/run-delivery.json").read_text())
+        tracker = {**conf["tracker"], **backend.adapter(), "transitions": transitions or {"start": ["Start work"]}}
+        if updates:
+            tracker["updates"] = updates
+        conf["tracker"] = tracker
+        own = fx.tmp / "run-delivery.json"
+        own.write_text(json.dumps(conf, indent=2))
+        fx.env.update({"RUN_DELIVERY_CONFIG": str(own), **backend.env()})
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        if assign:
+            self.assign(fx)
+        return fx
+
+    def assign(self, fx, *extra: str) -> tuple[int, str]:
+        code, out = fx.flow("lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2", *extra, cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        return code, out
+
+    def record(self, fx) -> dict:
+        return json.loads(sh(sys.executable, "-B", fx.release / "skills/orchestrate-work/scripts/delivery_state.py",
+                             "--dir", fx.tmp / "record", "show").stdout)
+
+    def stage(self, fx, key: str = "FX-3") -> str:
+        doc = self.record(fx)["state"]
+        return next(entry["stage"] for entry in [*doc.get("planned", []), *doc["queue"]] if entry["subject"] == key)
+
+    def lane_prints(self, fx) -> list[dict]:
+        path = fx.tmp / "flow-log/FX-1.lane-prints.jsonl"
+        return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+    def started(self, fx) -> str:
+        code, out = fx.flow("lane-start", "FX-3", "--base", "feature/FX-1", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        return out
+
+    def doctor(self, fx) -> tuple[str, str]:
+        """doctor --delivery's readiness line, with the repository bound so its delivery rows run."""
+        bound = doctor_binding()
+        bound["state"]["publishers"] = []
+        (fx.main / ".agents/orchestration.json").write_text(json.dumps(bound, indent=2))
+        own = Path(fx.env["RUN_DELIVERY_CONFIG"])
+        conf = json.loads(own.read_text())
+        del conf["gates"]  # The binding's fallback checks are the gates.
+        own.write_text(json.dumps(conf, indent=2))
+        code, out = fx.flow("doctor", "--delivery", "FX-1", "--offline", cwd=fx.main)
+        self.assertIn("story readiness", doctor_lines(out), out)
+        return doctor_lines(out)["story readiness"]
+
+    def snapshot(self, fx, **item) -> None:
+        """The tracker snapshot serve keeps, holding FX-3 as given."""
+        folder = fx.tmp / "record/snapshots"
+        folder.mkdir(parents=True, exist_ok=True)
+        taken = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        (folder / "tracker.json").write_text(json.dumps({"schemaVersion": "work-snapshot/1", "source": "tracker",
+                                                         "takenAt": taken, "items": [{"subject": "FX-3", **item}]}))
+
+    # lane-start, in each mode.
+
+    def test_in_manual_mode_a_new_start_prints_the_move_and_post_and_moves_the_story_to_building(self) -> None:
+        fx = self.delivery("manual")
+        self.assertEqual(self.stage(fx), "planned")
+        out = self.started(fx)
+        self.assertIn('Tracker move (your story FX-3): "Start work", with your tracker tools.', out)
+        self.assertIn("Tracker post (your story FX-3): Started (lane-2): S2: Thing two", out)
+        self.assertIn("lane-2 started it: now building", out)
+        self.assertEqual(self.stage(fx), "building")
+        self.assertEqual(self.lane_prints(fx), [], "only host mode writes the lane's print to the flow log")
+
+    def test_in_manual_mode_a_re_run_prints_and_changes_nothing(self) -> None:
+        fx = self.delivery("manual")
+        self.started(fx)
+        before = [(fx.tmp / "record" / name).read_bytes() for name in ("state.json", "journal.jsonl")]
+        out = self.started(fx)
+        self.assertIn("already started; nothing to do", out)
+        self.assertNotIn("Tracker", out)
+        self.assertNotIn("now building", out)
+        self.assertEqual([(fx.tmp / "record" / name).read_bytes() for name in ("state.json", "journal.jsonl")], before)
+
+    def test_in_host_mode_the_print_is_still_written_and_the_story_moves_to_building(self) -> None:
+        fx = self.delivery("host")
+        out = self.started(fx)
+        self.assertIn('Tracker move (your story FX-3): "Start work", with your tracker tools.', out)
+        self.assertEqual([(p["subject"], p["move"]) for p in self.lane_prints(fx)], [("FX-3", "start")])
+        self.assertEqual(self.stage(fx), "building")
+
+    def test_in_publisher_mode_the_publisher_makes_the_move_and_the_story_moves_to_building(self) -> None:
+        fx = self.delivery(None)
+        out = self.started(fx)
+        self.assertNotIn("Tracker move", out)
+        self.assertNotIn("Tracker post", out)
+        self.assertEqual(self.lane_prints(fx), [])
+        self.assertEqual(self.stage(fx), "building")
+
+    def test_a_reassigned_story_already_in_review_doesnt_move_back(self) -> None:
+        fx = self.delivery("manual")
+        self.started(fx)
+        sh(sys.executable, "-B", fx.release / "skills/orchestrate-work/scripts/delivery_state.py", "--dir",
+           fx.tmp / "record", "patch", "--writer", "lead", "--version", str(self.record(fx)["state"]["version"]),
+           "--element", "planned[subject=FX-3]", "--patch", json.dumps({"stage": "review"}))
+        self.assign(fx)
+        out = self.started(fx)
+        self.assertIn("Tracker move (your story FX-3)", out, "a new assignment is a new start")
+        self.assertNotIn("now building", out)
+        self.assertEqual(self.stage(fx), "review")
+
+    def test_the_brief_says_who_makes_the_start_move_in_each_mode(self) -> None:
+        for updates, said in (("manual", "`lane-start` prints it; make it with your tracker tools."),
+                              ("host", "`lane-start` prints it; make it with your tracker tools."),
+                              (None, "the tracker publisher makes it once `lane-start` records your start.")):
+            with self.subTest(updates=updates or "publisher"):
+                fx = self.delivery(updates, assign=False)
+                code, out = fx.flow("lead-brief", cwd=fx.main)
+                self.assertEqual(code, 0, out)
+                brief = " ".join((fx.main / "docs/lane-brief.md").read_text().split())
+                self.assertIn(f'The start move, "Start work": {said}', brief)
+                self.assertIn("moves the story from planned to building in the record, so the line map shows it started",
+                              brief)
+
+    # Readiness before assignment.
+
+    def test_a_story_offered_its_start_move_is_assigned_with_no_readiness_line(self) -> None:
+        fx = self.delivery(assign=False)
+        self.snapshot(fx, state="backlog", status="Ready for Dev", offeredTransitions=["Start work", "Close"])
+        _, out = self.assign(fx)
+        self.assertNotIn("readiness", out.lower())
+        self.assertNotIn("isn't offered", out)
+        self.assertIn("lane-start FX-3", out)
+
+    def test_a_story_not_offered_its_start_move_is_refused_and_nothing_is_written(self) -> None:
+        fx = self.delivery(assign=False)
+        self.snapshot(fx, state="backlog", status="To Be Refined", offeredTransitions=["Refined"])
+        record = fx.tmp / "record"
+        before = [(record / name).read_bytes() for name in ("state.json", "journal.jsonl")]
+        code, out = fx.flow("lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2", cwd=fx.main)
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("FX-3 is in To Be Refined: \"Start work\" isn't offered; refine it first", out)
+        self.assertIn("--force", out)
+        self.assertEqual([(record / name).read_bytes() for name in ("state.json", "journal.jsonl")], before)
+        status, detail = self.doctor(fx)
+        self.assertEqual(status, "warn", detail)
+        self.assertIn("FX-3 is in To Be Refined: \"Start work\" isn't offered; refine it first", detail)
+        self.assertEqual([(record / name).read_bytes() for name in ("state.json", "journal.jsonl")], before,
+                         "doctor moved something")
+
+    def test_force_assigns_a_story_not_offered_its_start_move_and_still_names_it(self) -> None:
+        fx = self.delivery(assign=False)
+        self.snapshot(fx, state="backlog", status="To Be Refined", offeredTransitions=["Refined"])
+        _, out = self.assign(fx, "--force")
+        self.assertIn("FX-3 is in To Be Refined: \"Start work\" isn't offered", out)
+        self.assertIn("lane-start FX-3", out)
+        self.assertEqual([e["subject"] for e in self.record(fx)["journal"] if e["kind"] == "lane.assigned"], ["FX-3"])
+
+    def test_a_story_with_no_snapshot_is_assigned_and_both_commands_say_readiness_wasnt_checked(self) -> None:
+        fx = self.delivery(assign=False)
+        line = "FX-3: readiness wasn't checked: there is no tracker snapshot"
+        _, out = self.assign(fx)
+        self.assertIn(line, out)
+        self.assertIn(line, self.doctor(fx)[1])
+
+    def test_a_snapshot_without_offered_moves_says_why_readiness_wasnt_checked(self) -> None:
+        fx = self.delivery(assign=False)
+        self.snapshot(fx, state="backlog")
+        line = "FX-3: readiness wasn't checked: the tracker snapshot doesn't list its offered moves"
+        _, out = self.assign(fx)
+        self.assertIn(line, out)
+        self.assertIn(line, self.doctor(fx)[1])
+
+    def test_a_story_already_under_way_isnt_held_to_its_start_move(self) -> None:
+        fx = self.delivery(assign=False)
+        self.snapshot(fx, state="started", status="In Review", offeredTransitions=["Done"])
+        _, out = self.assign(fx)
+        self.assertNotIn("isn't offered", out)
+        self.assertNotIn("readiness", out.lower())
 
 if __name__ == "__main__":
     unittest.main()

@@ -166,6 +166,23 @@ class JiraTests(SnapshotCase):
         self.assertTrue(summary.endswith("…"))
         self.assertEqual(items["APP-14"], {"subject": "APP-14", "title": "Dropped idea", "state": "canceled"})
 
+    def test_the_search_expands_transitions_and_an_expanded_issue_names_its_status_and_offered_moves(self) -> None:
+        pages = copy.deepcopy(JIRA)
+        first = pages["page-1"]["issues"][0]
+        first["transitions"] = [{"id": "11", "name": "Refined", "to": {"name": "Ready for Dev"}},
+                                {"id": "12", "name": "Won't do"}, {"id": "13", "name": "Refined"}, {"id": "14"}, "junk"]
+        transport = Transport((SEARCH, 200, pages["page-1"]), (SEARCH, 200, pages["page-2"]))
+        code, out, _ = self.run_kind(JIRA_ARGS, transport, JIRA_ENV)
+        self.assertEqual(code, 0)
+        for url, _ in transport.requests:
+            self.assertEqual(urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)["expand"], ["transitions"])
+        items = {item["subject"]: item for item in self.checked(out, parent="APP-10")["items"]}
+        self.assertEqual((items[first["key"]]["status"], items[first["key"]]["offeredTransitions"]),
+                         (first["fields"]["status"]["name"], ["Refined", "Won't do"]))
+        # An issue the answer gives no transitions for carries neither field.
+        self.assertNotIn("status", items["APP-12"])
+        self.assertNotIn("offeredTransitions", items["APP-12"])
+
     def test_a_done_status_not_listed_as_canceled_is_completed(self) -> None:
         code, out, _ = self.run_kind(JIRA_ARGS, self.pages(), JIRA_ENV)
         self.assertEqual(code, 0)

@@ -2755,6 +2755,19 @@
                 "closed"
               ]
             },
+            "status": {
+              "description": "Tracker snapshots only, optional: the tracker's own name for the item's status. A snapshot that gives offeredTransitions gives this too.",
+              "type": "string",
+              "minLength": 1
+            },
+            "offeredTransitions": {
+              "description": "Tracker snapshots only, optional: the names of the moves the tracker offers from that status, each once. Readiness before assignment reads whether the first configured start move is among them; without this field it isn't checked.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
             "changeRequest": {
               "$ref": "#/$defs/name"
             },

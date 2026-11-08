@@ -796,6 +796,28 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual(result["summary"], "no drift")
         self.assertEqual(state_tool.show(self.directory)["state"]["version"], version)
 
+    def test_a_tracker_item_may_name_its_status_and_offered_moves_and_reconcile_reads_them_for_nothing(self) -> None:
+        plain = [{"subject": "work-now", "title": "Work in progress", "state": "started"}]
+        named = [{**plain[0], "status": "In Progress", "offeredTransitions": ["Submit for review", "Stop work"]}]
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", self.snapshot("tracker", named))
+        self.assertEqual(code, 0, result)
+        state = state_tool.show(self.directory)["state"]
+        self.assertEqual(state["planned"], [{"subject": "work-now", "title": "Work in progress", "lane": None,
+                                              "stage": "building", "trackerStarted": True}])
+        code, result = run_tool(self.directory, "reconcile", "--snapshot", self.snapshot("tracker", plain))
+        self.assertEqual((code, result["drift"]), (0, False), "the fields' absence is drift")
+        before = self.bytes()
+        for name, source, item in (
+                ("a forge item's status", "forge", {"subject": "work-now", "state": "open", "status": "Open"}),
+                ("a forge item's offered moves", "forge", {"subject": "work-now", "state": "open", "offeredTransitions": []}),
+                ("offered moves with no status", "tracker", {**plain[0], "offeredTransitions": ["Stop work"]}),
+                ("an empty status", "tracker", {**plain[0], "status": ""}),
+                ("a move offered twice", "tracker", {**plain[0], "status": "In Progress", "offeredTransitions": ["A", "A"]})):
+            with self.subTest(name):
+                code, refused = run_tool(self.directory, "reconcile", "--snapshot", self.snapshot(source, [item]))
+                self.assertEqual((code, refused["code"]), (1, "snapshot_invalid"), refused)
+                self.assertEqual(self.bytes(), before)
+
     def test_a_forge_snapshot_s_blockers_change_nothing_the_tracker_s_are_authoritative(self) -> None:
         self.lead({"planned": [{"subject": "work-a", "title": "A", "lane": None, "stage": "planned"}]})
         plain = self.snapshot("forge", [{"subject": "work-a", "state": "open", "changeRequest": "cr-1"}])
@@ -3506,6 +3528,54 @@ class LaneWriterTests(unittest.TestCase):
         for name, call in refusals.items():
             with self.subTest(name):
                 self.assertEqual(self.refused(call), "writer_not_owned")
+
+    def at_stage(self, subject: str, stage: str) -> None:
+        self.lead({"stage": stage}, selector=f"planned[subject={subject}]")
+
+    def stage_of(self, subject: str) -> str:
+        return next(entry for entry in state_tool.read_state(self.directory)["planned"] if entry["subject"] == subject)["stage"]
+
+    def test_a_lane_moves_its_own_planned_story_to_building_and_nothing_else(self) -> None:
+        self.at_stage("work-a", "planned")
+        before = state_tool.read_state(self.directory)
+        written = self.as_lane("lane-1", {"stage": "building"}, selector="planned[subject=work-a]")
+        self.assertEqual(self.stage_of("work-a"), "building")
+        # Only that stage moved: the other planned story, the queue and the lanes are as they were.
+        self.assertEqual([entry for entry in written["planned"] if entry["subject"] != "work-a"],
+                         [entry for entry in before["planned"] if entry["subject"] != "work-a"])
+        self.assertEqual((written["queue"], written["lanes"]), (before["queue"], before["lanes"]))
+        # Moved again, it is already building: the story is left as it is.
+        again = self.as_lane("lane-1", {"stage": "building"}, selector="planned[subject=work-a]")
+        self.assertEqual([entry for entry in again["planned"]], [entry for entry in written["planned"]])
+
+    def test_every_other_stage_write_by_a_lane_is_refused(self) -> None:
+        self.at_stage("work-a", "planned")
+        self.at_stage("work-b", "planned")
+        refusals = {
+            "another lane's planned story": lambda: self.as_lane("lane-1", {"stage": "building"},
+                                                                 selector="planned[subject=work-b]"),
+            "a stage other than building": lambda: self.as_lane("lane-1", {"stage": "review"},
+                                                                selector="planned[subject=work-a]"),
+            "the stage and its title at once": lambda: self.as_lane("lane-1", {"stage": "building", "title": "Mine"},
+                                                                    selector="planned[subject=work-a]"),
+        }
+        for name, call in refusals.items():
+            with self.subTest(name):
+                self.assertEqual(self.refused(call), "writer_not_owned")
+        for stage in ("building", "review"):
+            with self.subTest(f"a story already in {stage}"):
+                self.at_stage("work-a", stage)
+                moves = ["planned", "review"] if stage == "building" else ["building", "planned"]
+                for to in moves:
+                    self.assertEqual(self.refused(lambda: self.as_lane("lane-1", {"stage": to},
+                                                                       selector="planned[subject=work-a]")),
+                                     "writer_not_owned")
+
+    def test_the_skill_names_the_one_stage_a_lane_moves(self) -> None:
+        skill = " ".join((SKILL / "SKILL.md").read_text(encoding="utf-8").split())
+        self.assertIn("the one stage move it makes, a story planned in its own lane from `planned` to `building` when it "
+                      "starts it", skill)
+        self.assertIn("refuses anything else with `writer_not_owned` for a lane", skill)
 
     def test_a_lane_write_names_its_lane(self) -> None:
         code = self.refused(lambda: state_tool.patch(self.directory, writer="lane", version=self.version(),

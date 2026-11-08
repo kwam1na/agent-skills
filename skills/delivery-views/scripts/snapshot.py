@@ -288,8 +288,9 @@ def jira_snapshot(args: argparse.Namespace, environ: dict, transport: Transport,
     issues: list[dict] = []
     token = None
     while True:
+        # The transitions say which moves each issue's status offers, so readiness can be read from the snapshot.
         query = {"jql": f"parent = {args.parent}", "fields": "summary,description,status,issuelinks",
-                 "maxResults": "100"}
+                 "expand": "transitions", "maxResults": "100"}
         if token:
             query["nextPageToken"] = token
         page = client.get(f"{site}/rest/api/3/search/jql?{urllib.parse.urlencode(query)}")
@@ -327,6 +328,13 @@ def jira_snapshot(args: argparse.Namespace, environ: dict, transport: Transport,
         else:
             raise Failure(f"{_shown(key)} has a status category the snapshot does not know: {_shown(category_key)}")
         item = {"subject": key, "title": _text(fields.get("summary"), f"{_shown(key)}'s summary"), "state": state}
+        transitions = issue.get("transitions")
+        if isinstance(transitions, list):
+            # Only with the issue's transitions expanded: its own status name and the moves offered from it.
+            item["status"] = name
+            item["offeredTransitions"] = list(dict.fromkeys(
+                move["name"] for move in transitions
+                if isinstance(move, dict) and isinstance(move.get("name"), str) and move["name"]))
         description = fields.get("description")
         if description is not None:
             summary = _shorten(flatten_adf(description))
