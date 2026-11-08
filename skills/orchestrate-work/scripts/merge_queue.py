@@ -903,8 +903,9 @@ class Runner:
             for argv in self.binding["prepare"]:
                 completed = self.run_argv(argv, path, context, self.binding["checkTimeoutSeconds"])
                 if completed.returncode != 0:
-                    what = "timed out" if completed.timed_out else f"failed: {completed.stderr.strip()[-400:]}"
-                    raise Stop("prepare_failed", f"prepare {argv[0]} {what} in the fresh {label} checkout of {commit}")
+                    said, kept = self.refusal("prepare", completed)
+                    what = said if completed.timed_out else f"failed: {said}"
+                    raise Stop("prepare_failed", f"prepare {argv[0]} {what} in the fresh {label} checkout of {commit}; {kept}")
         return path
 
     def remove_checkouts(self) -> None:
@@ -1043,6 +1044,18 @@ class Runner:
         directory.mkdir(parents=True, exist_ok=True)
         (directory / name).write_bytes((completed.stdout + completed.stderr).encode("utf-8", "replace"))
         return f"logs/{name}"
+
+    def refusal(self, step_id: str, completed: Completed, limit: int = TAIL_LIMIT) -> tuple[str, str]:
+        """Why a step refused, as its stop says it, and where its whole output is kept.
+
+        The output goes to a log under the state directory, secrets and all. The stop gets only a bounded tail of
+        the step's stderr, scrubbed as ``scrubbed_tail`` does, or says the step timed out or printed nothing."""
+        log = self.save_log(step_id, completed)
+        if completed.timed_out:
+            said = "timed out"
+        else:
+            said = scrubbed_tail(completed.stderr, self.environment(), limit) or "printed nothing"
+        return said, f"its whole output is in {log} under the state directory"
 
     def failures(self, completed: Completed) -> list[dict]:
         """The failing tests or steps the binding's failure pattern finds in a check's output, each once."""
@@ -1439,8 +1452,9 @@ class Runner:
             or not isinstance(resolved.get("head"), str)
             or not re.fullmatch(r"[0-9a-f]{40}([0-9a-f]{24})?", resolved["head"])
         ):
+            _, kept = self.refusal("candidate", completed)
             raise Stop("candidate_unresolved", f"{subject} did not resolve to a branch and head: "
-                                               f"{self.candidate_said(completed, resolved, timeout)}")
+                                               f"{self.candidate_said(completed, resolved, timeout)}; {kept}")
         branch = resolved["branch"]
         if not self.valid_branch(branch):
             raise Stop("ref_invalid", f"{subject} resolved to an invalid branch name: "
@@ -1610,10 +1624,9 @@ class Runner:
         completed = self.run_argv(argv, checkout, context or Context(), self.binding["checkTimeoutSeconds"], stdin=shown.stdout)
         listed: object = None
         why = None
-        if completed.timed_out:
-            why = "timed out"
-        elif completed.returncode != 0:
-            why = f"exited {completed.returncode}: {completed.stderr.strip()[-200:]}"
+        if completed.returncode != 0:
+            said, kept = self.refusal("listing", completed, CANDIDATE_OUT_LIMIT)
+            why = f"{said if completed.timed_out else f'exited {completed.returncode}: {said}'}; {kept}"
         elif not completed.stdout.strip():
             why = "printed nothing"
         else:
@@ -1651,10 +1664,9 @@ class Runner:
 
     def step(self, argv: list[str], checkout: Path, context: Context, timeout: float, what: str) -> None:
         completed = self.run_argv(argv, checkout, context, timeout)
-        if completed.timed_out:
-            raise Stop("sync_step_failed", f"{what} {argv[0]} timed out")
         if completed.returncode != 0:
-            raise Stop("sync_step_failed", f"{what} {argv[0]} failed: {completed.stderr.strip()[-400:]}")
+            said, kept = self.refusal(what, completed)
+            raise Stop("sync_step_failed", f"{what} {argv[0]} {said if completed.timed_out else 'failed: ' + said}; {kept}")
 
     def run_lead_input(self, entry: dict, checkout: Path, context: Context) -> None:
         timeout = entry.get("timeoutSeconds", self.binding["checkTimeoutSeconds"])
@@ -1678,7 +1690,8 @@ class Runner:
             if "withdraw" in lease:
                 completed = self.run_argv(lease["withdraw"], checkout, context, timeout)
                 if completed.returncode != 0:
-                    raise Stop("lease_withdraw_failed", f"withdrawing lease {lease_id} failed; nothing is pushed")
+                    said, kept = self.refusal(f"lease {lease_id} withdraw", completed)
+                    raise Stop("lease_withdraw_failed", f"withdrawing lease {lease_id} failed: {said}; nothing is pushed; {kept}")
         if failure is not None:
             raise failure
 
@@ -1713,7 +1726,8 @@ class Runner:
             current = self.git("ls-remote", "--heads", self.remote, f"refs/heads/{branch}", check=False).stdout.split()
             if current and current[0] != resolved:
                 raise Stop("candidate_moved", f"{branch} moved during sync; nothing was pushed")
-            raise Stop("push_refused", f"pushing {branch} failed: {pushed.stderr.strip()[-400:]}")
+            said, kept = self.refusal("push", pushed)
+            raise Stop("push_refused", f"pushing {branch} failed: {said}; {kept}")
 
     # -- check -------------------------------------------------------------
 
@@ -1792,10 +1806,12 @@ class Runner:
         completed = self.run_argv(settings["argv"], cwd, context, settings["timeoutSeconds"], stdin=json.dumps(request))
         if completed.timed_out:
             return {"source": source, "outcome": "timed_out", "detail": f"no answer within {settings['timeoutSeconds']}s"}, [], False, []
+        # Its words reach the record and the journal, so they are scrubbed and bounded as a stop's are.
+        said = scrubbed_tail(completed.stderr, self.environment())
         if completed.returncode is None:
-            return {"source": source, "outcome": "missing", "detail": completed.stderr.strip()[-400:]}, [], False, []
+            return {"source": source, "outcome": "missing", "detail": said}, [], False, []
         if completed.returncode != 0:
-            return {"source": source, "outcome": "failed", "detail": f"exited {completed.returncode}: {completed.stderr.strip()[-400:]}"}, [], False, []
+            return {"source": source, "outcome": "failed", "detail": f"exited {completed.returncode}: {said}"}, [], False, []
         try:
             answer = json.loads(completed.stdout)
         except json.JSONDecodeError as error:
@@ -2321,16 +2337,16 @@ class Runner:
             checkMode="single" if batch_synced is None else "batch",
         )
         timeout = self.binding["checkTimeoutSeconds"]
-        if self.run_argv(self.binding["ready"], anchor, context, timeout).returncode != 0:
-            raise Stop("ready_refused", f"ready refused {subject}")
+        readied = self.run_argv(self.binding["ready"], anchor, context, timeout)
+        if readied.returncode != 0:
+            said, kept = self.refusal("ready", readied)
+            raise Stop("ready_refused", f"ready refused {subject}: {said}; {kept}")
         self.review_gate(subject, synced, anchor, context)
         merging = self.run_argv(self.binding["merge"], anchor, context, timeout)
         if merging.returncode != 0:
             # Why it refused, from the command itself: its whole output in a log, a bounded and scrubbed tail here.
-            log = self.save_log("merge", merging)
-            said = "timed out" if merging.timed_out else (scrubbed_tail(merging.stderr, self.environment()) or "printed nothing")
-            raise Stop("merge_refused", f"merge refused {subject} at {synced}: {said}; "
-                                        f"its whole output is in {log} under the state directory")
+            said, kept = self.refusal("merge", merging)
+            raise Stop("merge_refused", f"merge refused {subject} at {synced}: {said}; {kept}")
         merged = self.fetch(self.base, "base")
         result.mergedHead = merged
         parent = self.git("rev-parse", "--verify", "-q", f"{merged}^1", check=False).stdout.strip()
