@@ -726,6 +726,100 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
     def call(self, fn: str, *args, cwd: Path | None = None, **kwargs):
         return call(self.tool, fn, *args, cwd=cwd or Path(tempfile.gettempdir()), **kwargs)
 
+    # -- the lead's review carry ------------------------------------------------------------------------
+
+    def test_lead_carry_review_shows_the_diff_it_carries_across_and_passes_the_state_tools_refusal_through(self) -> None:
+        """`lead-carry-review` prints from..to's diffstat, naming each file, before the state tool's carry writes; a
+        refusal is the state tool's own text, and writes nothing."""
+        fx = self.fixture()
+        m = fx.main
+        setup_delivery(fx)
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-assign", "FX-2", "--lane", "lane-1", "--title", "Lane 1", cwd=m)
+        self.assertEqual(code, 0, out)
+        sh("git", "checkout", "-q", "-b", "feature/FX-2", cwd=m)
+        (m / "src/one.txt").write_text("one\n")
+        commit(m, "FX-2: one")
+        reviewed = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
+        (m / "src/one-fixture.txt").write_text("fixture\n")
+        commit(m, "FX-2: a fixture after the last round")
+        queued = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
+        (m / "src/one-later.txt").write_text("later\n")
+        commit(m, "FX-2: a later commit nobody handed off")
+        later = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
+        sh("git", "checkout", "-q", "feature/FX-1", cwd=m)
+        state = Path(json.loads((m / ".agents/deliveries/FX-1.json").read_text())["stateDirectory"])
+        tool = fx.release / "skills/orchestrate-work/scripts/delivery_state.py"
+
+        def state_tool(*args: str) -> dict:
+            done = subprocess.run([sys.executable, "-B", str(tool), "--dir", str(state), *args], cwd=m, env=fx.env,
+                                  text=True, capture_output=True, timeout=120)
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            return json.loads(done.stdout)
+
+        rounds = []
+        for number in (1, 2):
+            entries = []
+            for lens in ("lens.outcome-correctness", "lens.adversarial-testing"):
+                binding = {"subjectRef": "FX-2", "candidateRef": reviewed, "round": number}
+                entries.append({"lens": lens, "state": "obtained", "binding": binding, "result": {
+                    "schemaVersion": "review-lens-result/1", "lensId": lens, **binding, "outcome": "aligned",
+                    "findings": [], "resolvedFindings": [], "evidence": ["observed"]}})
+            rounds.append(fx.tmp / f"round-{number}.json")
+            rounds[-1].write_text(json.dumps({"round": number, "outcome": "aligned", "entries": entries}))
+        state_tool("capture-review", "--subject", "FX-2", "--candidate", reviewed,
+                   *[part for path in rounds for part in ("--outcome", str(path))])
+        state_tool("handoff", "--lane", "lane-1", "--subject", "FX-2", "--head", queued, "--change-request",
+                   "https://forge.test/pr/1", "--rounds", "2")
+        journal = lambda: [e for e in state_tool("show")["journal"] if e.get("reviewCarry")]
+        sh("git", "push", "-q", "origin", "feature/FX-2", cwd=m)
+        other = fx.tmp / "elsewhere"
+        sh("git", "clone", "-q", "-b", "feature/FX-2", fx.origin, other)
+        quieten(other)
+        (other / "src/one-remote.txt").write_text("remote\n")
+        sh("git", "-c", "user.name=Lane", "-c", "user.email=lane@example.test", "add", "src/one-remote.txt", cwd=other)
+        sh("git", "-c", "user.name=Lane", "-c", "user.email=lane@example.test", "commit", "-q", "-m", "FX-2: elsewhere",
+           cwd=other)
+        sh("git", "push", "-q", "origin", "feature/FX-2", cwd=other)
+        remote_only = sh("git", "rev-parse", "HEAD", cwd=other).stdout.strip()
+        self.assertNotEqual(sh("git", "cat-file", "-t", remote_only, cwd=m, check=False).returncode, 0)
+
+        with self.subTest("a --to that isn't the queued head: the state tool's own refusal, and no write"):
+            code, out = fx.flow("lead-carry-review", "FX-2", "--from", reviewed, "--to", later, "--reason", "fixture", cwd=m)
+            self.assertEqual(code, 2, out)
+            refusal = out.index(f"carry_invalid: FX-2 is queued at {queued}, not {later}")
+            shown = out.index(f"FX-2's review carries from {reviewed[:10]} to {later[:10]} across:")
+            self.assertLess(shown, refusal, "the diff is shown before the state tool is asked")
+            self.assertIn("src/one-later.txt", out[shown:refusal])
+            self.assertEqual(journal(), [])
+        with self.subTest("a head only on the story's remote branch is fetched, then judged by the state tool"):
+            code, out = fx.flow("lead-carry-review", "FX-2", "--from", reviewed, "--to", remote_only, "--reason", "x",
+                                cwd=m)
+            self.assertEqual(code, 2, out)
+            self.assertNotIn("no commit", out)
+            self.assertIn(f"carry_invalid: FX-2 is queued at {queued}, not {remote_only}", out)
+            self.assertIn("src/one-remote.txt", out)
+            self.assertEqual(journal(), [])
+        with self.subTest("a head that names no commit is refused before the state tool"):
+            code, out = fx.flow("lead-carry-review", "FX-2", "--from", reviewed, "--to", "f" * 40, "--reason", "x", cwd=m)
+            self.assertEqual(code, 2, out)
+            self.assertIn(f"no commit {'f' * 40}", out)
+            self.assertEqual(journal(), [])
+        code, out = fx.flow("lead-carry-review", "FX-2", "--from", reviewed, "--to", queued, "--reason",
+                            "only a fixture changed", cwd=m)
+        self.assertEqual(code, 0, out)
+        diff = out.index(f"FX-2's review carries from {reviewed[:10]} to {queued[:10]} across:")
+        done = out.index("carried: ")
+        listed = {line.split()[-1] for line in out[diff:done].splitlines()[1:] if line.strip()}
+        # Exactly the commits between the heads: not the reviewed head's own change, nor a later one.
+        self.assertEqual(listed, {"src/one-fixture.txt"}, out)
+        carried = journal()
+        self.assertEqual(len(carried), 1, carried)
+        self.assertIn(f"carried: {carried[0]['summary']}\n", out)
+        self.assertEqual((carried[0]["reviewCarry"]["from"], carried[0]["reviewCarry"]["to"]), (reviewed, queued))
+        self.assertIn("only a fixture changed", carried[0]["summary"])
+
     # -- the merge queue's review gate -----------------------------------------------------------------
 
     def test_pr_review_current_passes_only_a_current_passing_review_at_the_named_head(self) -> None:
@@ -5550,6 +5644,7 @@ GUIDE_NAMES = {
                              "base, the binding, `.agents/run-delivery.json`, the delivery file and the lane brief reach "
                              "the base through a pull request, reviewed and merged like any change"),
     "finish lines by covers and proofs": ("### Answer", "It judges each finish line by the record's covers and proofs"),
+    "the review carry": ("### Accept", "lead-carry-review <story-key> --from <reviewed-head> --to <queued-head> --reason"),
 }
 # The worked adopter's binding: its bases, and a merge step that calls the forge adapter, pinned to the checked head.
 WORKED_BASES = ["main", "integration-*"]

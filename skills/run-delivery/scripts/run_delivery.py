@@ -20,6 +20,7 @@ Lane:
 Lead:
   lead-setup <key> --plan P --base B --pattern RE ... | lead-init | lead-brief | lead-assign <key...> --lane L --title T
   lead-accept <key> [--accept-blocked LABEL ...] [--accept-restarts] | ship | adapter-test
+  lead-carry-review <key> --from HEAD --to HEAD --reason TEXT
 Merge queue:
   pr-review-current --branch B --head H [--wait]   (a reviewGate: exit 0 only for a current, passing review.pr review)
 Anyone:
@@ -4568,6 +4569,43 @@ def plan_list_items(body: str) -> list[str]:
     return [text if len(text) <= 600 else text[:599] + "\u2026" for text in items]
 
 
+def lead_carry_review(args) -> None:
+    """Carry a story's captured review across commits the lead judged need no new round, showing them first.
+
+    The state tool's carry-review does the carry and every check on it; this shows from..to, the diff the judgement
+    rests on, before that write, and passes the state tool's refusal through unchanged."""
+    c = cfg()
+    key = c.require(args.key)
+    heads = []
+    for given in (args.from_head, args.to_head):
+        found = git("rev-parse", "--verify", "--quiet", f"{given}^{{commit}}", check=False)
+        if not found:
+            git("fetch", "-q", c.remote, c.branch(key), check=False)
+            found = git("rev-parse", "--verify", "--quiet", f"{given}^{{commit}}", check=False)
+        if not found:
+            raise Stop(f"no commit {given} here or on {c.remote}/{c.branch(key)}: name the heads the record holds")
+        heads.append(found)
+    from_head, to_head = heads
+    changed = git("diff", "--name-status", "--no-renames", f"{from_head}..{to_head}").splitlines()
+    summary = git("diff", "--shortstat", f"{from_head}..{to_head}") or "no changes"
+    print(f"{key}'s review carries from {from_head[:10]} to {to_head[:10]} across: {summary.strip()}")
+    for line in changed:
+        status, _, path = line.partition("\t")
+        print(f"  {status:<2} {path}")
+    sys.stdout.flush()  # shown before the write, and before a refusal on stderr when both go to one pipe
+    done = state_tool("carry-review", "--writer", "lead", "--subject", key, "--from", from_head, "--to", to_head,
+                      "--reason", args.reason, check=False)
+    try:
+        answer = json.loads(done.stdout)
+    except ValueError:
+        answer = {}
+    answer = answer if isinstance(answer, dict) else {}
+    if done.returncode != 0:
+        said = f"{answer['code']}: {answer.get('error', '')}" if answer.get("code") else (done.stderr or done.stdout).strip()
+        raise Stop(f"the state tool refused the carry: {said}")
+    print(f"carried: {answer.get('entry', {}).get('summary', '')}")
+
+
 def lead_init(args) -> None:
     c = cfg()
     c.check_lanes()
@@ -7751,6 +7789,12 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--requeue", metavar="KEY", help="re-queue a stopped candidate you resolved, with no new hand-off")
     p.add_argument("--accept-restarts", action="store_true")
     p.add_argument("--accept-discarded", action="append", type=int, metavar="ROUND"); p.set_defaults(fn=lead_accept)
+    p = command(sub, "lead-carry-review", help="carry a story's captured review to its queued head across commits that "
+                "need no new round, showing their diff first")
+    p.add_argument("key"); p.add_argument("--from", dest="from_head", required=True, help="the head the evidence covers")
+    p.add_argument("--to", dest="to_head", required=True, help="the story's queued head")
+    p.add_argument("--reason", required=True, help="why the commits between them need no new round")
+    p.set_defaults(fn=lead_carry_review)
     p = command(sub, "lead-resolve", help="resolve a recorded blocker, or rerun a failed fullHealth")
     p.add_argument("id", help="the blocker's journal id, or full-health to rerun a failed fullHealth")
     p.add_argument("--why", required=True)
