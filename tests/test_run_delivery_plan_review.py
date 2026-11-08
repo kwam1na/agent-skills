@@ -16,7 +16,7 @@ import sys
 import unittest
 from pathlib import Path
 
-from tests.test_run_delivery import POSIX_ONLY, ROOT, Fixture, commit, installed_release, plan_delivery, sh
+from tests.test_run_delivery import POSIX_ONLY, ROOT, Fixture, call, commit, installed_release, plan_delivery, sh
 
 RUN_SERIALLY = True
 
@@ -1105,6 +1105,34 @@ class PlanReviewRecordTests(PlanReviewCase):
         self.assertEqual(code, 2, out)
         self.assertIn(f"{fx.main / self.RECORD}: a valid plan-review-evidence/1 record", out)
 
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class PlanReviewOutOfDeltaTests(unittest.TestCase):
+    """plan-review reduce's check of a verification round's new P1 outside the delta: filed, never deferred."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        for name, value in vars(installed_release()).items():
+            setattr(cls, name, value)
+
+    def check(self, result: dict) -> list[str]:
+        return call(self.tool, "plan_check_result", result, subject="EX-1.plan", lens="lens.l", short="l", n=2,
+                    meta={"candidate": "c" * 40, "tree": "t" * 40}, carried=[], known={}, sets=("carried",),
+                    cwd=Path(self.generation))
+
+    def result(self, **over) -> dict:
+        return {"schemaVersion": "review-lens-result/1", "lensId": "lens.l", "subjectRef": "EX-1.plan",
+                "candidateRef": "c" * 40, "round": 2, "evidence": [f"tree {'t' * 40} checked"], "resolvedFindings": [],
+                **over}
+
+    def test_a_late_out_of_delta_p1_is_filed_and_never_deferred(self) -> None:
+        late = {"id": "l-r2-1", "severity": "P1", "summary": "s"}
+        filed = self.result(outcome="changes-requested", findings=[late], lateFindings=["l-r2-1"])
+        self.assertEqual(self.check(filed), [])
+        deferred = self.result(outcome="aligned", lateFindings=["l-r2-1"],
+                               findings=[{**late, "state": "deferred", "deferredIssue": "follow it up"}])
+        self.assertIn("finding l-r2-1 carries a state or deferredIssue: a plan review defers nothing", self.check(deferred))
 
 if __name__ == "__main__":
     unittest.main()

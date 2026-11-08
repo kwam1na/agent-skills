@@ -133,6 +133,22 @@ class ReviewWorkflowTests(unittest.TestCase):
             scenario["expectedLateFindings"],
         )
 
+    def test_a_late_p1_a_lens_defers_leaves_its_round_aligned_and_stays_visible(self) -> None:
+        """obtain-review's reducer: a verification round's late P1 the lens defers is kept out of `findings` and marked
+        late in its deferral. It never reaches the convergence decision, so the lens's aligned round converges with the
+        finding still shown. Filed in `findings` instead, it blocks an aligned round."""
+        late = "P1: the retry path swallows the error (deferred, follow-up filed)"
+        first = (ReviewLensResult("correctness", "aligned", evidence=("retry.py:1-90",)),)
+        deferred = ReviewLensResult("correctness", "aligned", evidence=("retry.py:88",), late_findings=(late,))
+        result = review_work(ReviewRequest(required_lenses=("correctness",), rounds=(first, (deferred,)), max_rounds=4))
+        self.assertEqual(result.status, "aligned")
+        self.assertEqual([(item.finding, item.lens, item.round_number) for item in result.late_findings],
+                         [(late, "correctness", 2)])
+        filed = ReviewLensResult("correctness", "aligned", findings=(late,), evidence=("retry.py:88",),
+                                 late_findings=(late,))
+        result = review_work(ReviewRequest(required_lenses=("correctness",), rounds=(first, (filed,)), max_rounds=4))
+        self.assertEqual((result.status, result.blockers), ("blocked", ("aligned review has findings: correctness in round 2",)))
+
     def test_missing_evidence_blocks_alignment(self) -> None:
         result = review_work(
             ReviewRequest(
