@@ -2770,23 +2770,29 @@ class SupervisorBackgroundHealthTests(unittest.TestCase):
     base_events = SupervisorPostMergeTests.base_events
     results = SupervisorPostMergeTests.results
 
-    def run_lock(self, fx: Fixture) -> dict:
-        """What the fullHealth run's lock records, and whether a process holds it."""
+    def run_lock(self, fx: Fixture, seconds: float = 5) -> dict:
+        """What the fullHealth run's lock records, and whether a process holds it. The run takes the lock before it first
+        writes it, and truncates it before each rewrite, so a held lock can read empty for a moment: such a read is
+        retried within `seconds`, as settled_lock retries the supervisor's."""
         lock = fx.tmp / "flow-log/FX-1.full-health.lock"
-        if not lock.exists():
-            return {"held": False}
-        with open(lock, "a+") as probe:
+        deadline = time.monotonic() + seconds
+        while True:
+            if not lock.exists():
+                return {"held": False}
+            with open(lock, "a+") as probe:
+                try:
+                    fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    fcntl.flock(probe, fcntl.LOCK_UN)
+                    held = False
+                except BlockingIOError:
+                    held = True
             try:
-                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                fcntl.flock(probe, fcntl.LOCK_UN)
-                held = False
-            except BlockingIOError:
-                held = True
-        try:
-            recorded = json.loads(lock.read_text() or "{}")
-        except ValueError:
-            recorded = {}
-        return {**recorded, "held": held}
+                recorded = json.loads(lock.read_text() or "{}")
+            except ValueError:
+                recorded = {}
+            if recorded or not held or time.monotonic() >= deadline:
+                return {**recorded, "held": held}
+            time.sleep(0.02)
 
     def slow_run_under_a_supervisor(self, seconds: str = "60") -> Fixture:
         """FX-2 merged by hand, then a running supervisor whose first pass starts a slow fullHealth after it."""
@@ -2800,8 +2806,7 @@ class SupervisorBackgroundHealthTests(unittest.TestCase):
         return fx
 
     def run_started(self, fx: Fixture) -> bool:
-        """Whether a fullHealth run holds its lock and has written what it records there. The run takes the lock before it
-        writes it, so a read can find the lock held and still empty."""
+        """Whether a fullHealth run holds its lock and has written what it records there."""
         run = self.run_lock(fx)
         return run["held"] and "pid" in run and "head" in run
 
