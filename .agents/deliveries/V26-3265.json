@@ -26,17 +26,21 @@
         "skills/orchestrate-work/references/schemas.json",
         "tests/test_registry.py",
         "catalog.json",
-        "profiles/*"
-      ]
-    },
-    "lane-2": {
-      "owns": [
+        "profiles/*",
+        "skills/orchestrate-work/scripts/render_state.py",
+        "tests/test_orchestration_render.py",
+        "provenance.lock.json",
         "skills/orchestrate-work/scripts/merge_queue.py",
         "tests/test_merge_queue.py",
         "skills/orchestrate-work/references/orchestration-guide.md",
         "skills/delivery-views/*",
         "tests/test_delivery_views_page.py",
         "tests/delivery_views_page/*",
+        "tests/quiet_git.py"
+      ]
+    },
+    "lane-2": {
+      "owns": [
         ".agent-skills/*",
         ".agents/orchestration.json"
       ]
@@ -51,6 +55,17 @@
         {
           "id": "v26-3232-done",
           "text": "macOS CI's test_run_delivery no longer reaches its unit limit: the reproduced cause is fixed in run_group (or where it lives), a cross-platform row modelling it failed before the fix and passes after, the named test keeps its deadline unskipped, and the supervisor module's timeout is fixed here or in its own change right after"
+        }
+      ]
+    },
+    "V26-3272": {
+      "title": "Bring test_run_delivery_supervisor under its unit limit",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3272-done",
+          "text": "tests.test_run_delivery_supervisor finishes with at least a 2x margin inside its unit limit on macOS and Ubuntu CI, with before and after timings recorded, no test skipped, loosened or given a longer deadline, and its coverage unchanged"
         }
       ]
     },
