@@ -41,7 +41,8 @@
         "skills/orchestrate-work/SKILL.md",
         "tests/test_orchestration_state.py",
         "tests/test_delivery_views_snapshots.py",
-        "skills/review-work/SKILL.md"
+        "skills/review-work/SKILL.md",
+        "tests/test_review_bound_corpus.py"
       ]
     },
     "lane-2": {
