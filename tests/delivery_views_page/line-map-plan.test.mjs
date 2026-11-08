@@ -696,11 +696,12 @@ test("each newly named plan gets its own patience", async () => {
   const { page, replanned } = replanning();
   const again = structuredClone(replanned);
   again.journal.push({ id: 15, at: minute(41), kind: "decision.recorded", lane: null, subject: null, summary: "Plan updated: 2026-10-30T13:30:00Z; another change" });
-  // The ask after the fourteenth is answered only once the record names the next plan, so it is that plan's first.
+  // The fifteenth ask is still waiting when the record names the next plan, so its answer is that plan's first try.
   const server = holding(() => page, 15, 29);
-  const snaps = await live(page, server.rendered, [{ push: replanned }, { asked: 14 }, { push: again, ...server.release }, { asked: 28 }, { ...server.release, asked: 29 }]);
-  expect(planNote(snaps[4].app)).toBeNull();
-  expect(planNote(snaps[5].app)).toBe(OUT_OF_DATE);
+  const snaps = await live(page, server.rendered,
+    [{ push: replanned }, { asked: 14 }, { asked: 15 }, { push: again, ...server.release }, { asked: 28 }, { ...server.release, asked: 29 }]);
+  expect(planNote(snaps[5].app)).toBeNull();
+  expect(planNote(snaps[6].app)).toBe(OUT_OF_DATE);
 });
 
 test("a live page takes an earlier plan when the server holds the one the record names", async () => {
