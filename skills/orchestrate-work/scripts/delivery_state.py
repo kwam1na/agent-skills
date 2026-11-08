@@ -687,7 +687,8 @@ def ownership_violations(before: dict, after: dict, writer: str) -> list[str]:
 
 
 def lane_violations(before: dict, after: dict, lane: str) -> list[str]:
-    """What a lane changed beyond its own lane's focus, state and waiting-on: anything at all is refused."""
+    """What a lane changed beyond its own lane's focus, state and waiting-on, and beyond the one stage it moves: a story
+    planned in its own lane, from planned to building, when it starts it. Anything else at all is refused."""
     if lane not in [entry.get("id") for entry in before.get("lanes", [])]:
         return [f"there is no lane {lane}"]
     expected = copy.deepcopy(after)
@@ -697,8 +698,14 @@ def lane_violations(before: dict, after: dict, lane: str) -> list[str]:
             for field in LANE_FIELDS:
                 if field in previous:
                     entry[field] = previous[field]
+    if len(expected.get("planned", [])) == len(before.get("planned", [])):
+        for entry, previous in zip(expected.get("planned", []), before.get("planned", [])):
+            if (entry.get("subject") == previous.get("subject") and entry.get("lane") == previous.get("lane") == lane
+                    and previous.get("stage") == "planned" and entry.get("stage") == "building"):
+                entry["stage"] = "planned"
     if expected != before:
-        return [f"a lane writes only its own lane's {', '.join(LANE_FIELDS[:3])}"]
+        return [f"a lane writes only its own lane's {', '.join(LANE_FIELDS[:3])}, and moves a story planned in its own "
+                "lane from planned to building"]
     return []
 
 
@@ -2198,6 +2205,16 @@ def check_snapshot(snapshot: object, name: str, max_age: float, *, parent: str |
             _parse_time(snapshot["takenAt"], exact=True)
         except ValueError:
             errors.append("/takenAt: not a real time")
+    if not errors:
+        for index, item in enumerate(snapshot["items"]):
+            for field in ("status", "offeredTransitions"):
+                if field in item and snapshot["source"] != "tracker":
+                    errors.append(f"/items/{index}/{field}: only a tracker snapshot carries it")
+            if "offeredTransitions" in item and "status" not in item:
+                errors.append(f"/items/{index}/offeredTransitions: the moves offered are from a status the item names")
+            offered = item.get("offeredTransitions", [])
+            if len(offered) != len(set(offered)):
+                errors.append(f"/items/{index}/offeredTransitions: each move appears once")
     if not errors:
         for index, item in enumerate(snapshot["items"]):
             if "mergedAt" not in item:
