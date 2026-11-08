@@ -5407,9 +5407,29 @@ def finishing_command(c, doc: dict) -> str:
     """What finishes a close that stopped partway: a resumed supervisor when the record meets the close condition (no
     planned story, nothing unmerged, every finish line met, no busy lane, as close_holds reads it); otherwise lead-close,
     since a resumed supervisor would hold on what is unmet and never finish it."""
-    # A checkout cleanup hasn't removed yet holds only until the resumed supervisor's own next pass cleans it up.
-    unmet = [hold for hold in close_holds(c, doc, []) if not hold.startswith("not cleaned up:")]
+    # A checkout cleanup hasn't removed yet holds only until the resumed supervisor's own next pass cleans it up, and
+    # so do the needs a later pass clears by itself: the publisher's lag, and a fullHealth run ending. Every other
+    # holding need waits on the lead, so a resumed supervisor would hold on it for good.
+    with configured(c):  # doctor reads a delivery's close while its own configuration is the global one
+        needs = [item for item in needs_you(c, doc, closing=True) if not clears_by_itself(item)]
+    unmet = [hold for hold in close_holds(c, doc, needs) if not hold.startswith("not cleaned up:")]
     return "lead-run --resume" if not unmet else "lead-close"
+
+
+@contextlib.contextmanager
+def configured(c):
+    """Run with `c` as the configuration the helpers read, then put the one before it back."""
+    global CFG
+    before, CFG = CFG, c
+    try:
+        yield c
+    finally:
+        CFG = before
+
+
+def clears_by_itself(item: dict) -> bool:
+    """Whether a "Needs you" item clears on the supervisor's own passes, with nothing from the lead."""
+    return item["source"] == "tracker publisher" or item["clears"] == FULL_HEALTH_RUNNING_CLEARS
 
 
 def closed_status(c) -> str | None:
@@ -5750,6 +5770,10 @@ def blocker_resolved(c, doc: dict, entry: dict, resolutions: set[int]) -> bool:
     return False
 
 
+# A running fullHealth's need: the run ending clears it, on a pass of its own.
+FULL_HEALTH_RUNNING_CLEARS = "the run ending, or lead-close, which stops it"
+
+
 def tracker_item(item: dict, mode: str | None) -> dict:
     """A tracker "Needs you" item with where it comes from and what clears it: the publisher's lag clears when it
     posts, the host outbox's when it is posted and acknowledged; a ledger line is only shown, and stays."""
@@ -5771,7 +5795,7 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
     running = full_health_running(c)
     if running is not None:
         items.append({"holding": True, "source": "fullHealth", "text": f"{running_words(running)}; the close waits "
-                      "for its result", "clears": "the run ending, or lead-close, which stops it"})
+                      "for its result", "clears": FULL_HEALTH_RUNNING_CLEARS})
     last, rerun = full_health_results(c, head) if head else (None, False)
     if last and last["result"] == "failed" and not rerun and delivery_posture(c)["posture"] != "focused":
         items.append({"holding": True, "source": "fullHealth",

@@ -370,6 +370,22 @@ test("names each check by the title its provider gave, by its id where none was 
   expect(pushed.app.querySelector(".ck-run.settled .ck-run-name")?.textContent).toBe("Storefront build <img src=x onerror=alert(1)> passed");
 });
 
+test("words a passed post-merge fullHealth and a provider's refused selection in the history, not as raw kinds", async () => {
+  const document = fixtureDocument();
+  document.journal.push(
+    { at: "2026-10-22T05:08:00Z", id: 45, kind: "base.verified", summary: "fullHealth passed at the base head PAY-2358's merge reached" },
+    { at: "2026-10-22T05:09:00Z", id: 46, kind: "selection.refused", lane: "payments", subject: "PAY-2361",
+      summary: "The provider refused PAY-2361's checks: no checks match the diff" },
+  );
+  const [shown] = await open(document);
+  const words = [...shown.app.querySelectorAll("#happened .who")].map((who) => who.textContent);
+  expect(words).toContain("Base verified");
+  expect(words).toContain("Checks refused · Payments · PAY-2361");
+  for (const raw of ["base.verified", "selection.refused"]) {
+    expect(words.some((word) => word.includes(raw))).toBe(false);
+  }
+});
+
 test("says a piece whose check failed is waiting on the main line's rerun, on the line, in its detail and in the now block", async () => {
   const document = fixtureDocument();
   const now = document.state.meta.checking.now;
