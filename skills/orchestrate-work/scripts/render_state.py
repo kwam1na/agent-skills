@@ -98,6 +98,7 @@ import json
 import os
 import re
 import socket
+import socketserver
 import subprocess
 import tempfile
 import threading
@@ -1685,6 +1686,12 @@ def _live_renderers(config: object) -> list[dict]:
 class _LiveServer(http.server.ThreadingHTTPServer):
     daemon_threads = True
     block_on_close = False
+
+    def server_bind(self) -> None:
+        # HTTPServer's own bind looks up the address's host name before it listens, and where reverse lookups go
+        # unanswered (macOS runners) that takes about 34 seconds. Nothing here reads the name, so take the address.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = str(self.server_address[0]), self.server_address[1]
 
 
 class _LiveServer6(_LiveServer):
