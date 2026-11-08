@@ -754,6 +754,44 @@ class SettledLockTests(unittest.TestCase):
 
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class HeldRunLockTests(unittest.TestCase):
+    """A read of the fullHealth run's lock while it's held and empty, between taking and writing it, retries within its
+    bound: the reads SupervisorBackgroundHealthTests makes through run_lock."""
+
+    # Like SettledLockTests, it stages a 0.2 s race.
+    run_serially = True
+
+    def held_empty_lock(self) -> tuple[types.SimpleNamespace, Path]:
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        lock = Path(folder.name) / "flow-log/FX-1.full-health.lock"
+        lock.parent.mkdir()
+        lock.write_text("")
+        holder = open(lock, "a+")  # a second open file: its flock conflicts with run_lock's probe, as a run's would
+        self.addCleanup(holder.close)
+        fcntl.flock(holder, fcntl.LOCK_EX)
+        return types.SimpleNamespace(tmp=Path(folder.name)), lock
+
+    def run_lock(self, fx: types.SimpleNamespace, **kwargs) -> dict:
+        return SupervisorBackgroundHealthTests.run_lock(self, fx, **kwargs)
+
+    def test_a_read_before_the_run_writes_waits_for_the_write(self) -> None:
+        fx, lock = self.held_empty_lock()
+        writer = threading.Timer(0.2, lock.write_text, ['{"pid": 7, "head": "h"}'])
+        writer.start()
+        self.addCleanup(writer.join)
+        self.assertEqual(self.run_lock(fx, seconds=0), {"held": True}, "the single read this guards against no longer finds the race")
+        self.assertEqual(self.run_lock(fx), {"pid": 7, "head": "h", "held": True})
+
+    def test_a_lock_that_stays_empty_reads_held_within_the_bound(self) -> None:
+        fx, _ = self.held_empty_lock()
+        started = time.monotonic()
+        self.assertEqual(self.run_lock(fx, seconds=0.5), {"held": True})
+        self.assertGreaterEqual(time.monotonic() - started, 0.5)
+        self.assertLess(time.monotonic() - started, 5)
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
 class SupervisorPassTests(unittest.TestCase):
     """One pass at a time, with `lead-run --once`: acceptance, the finish lines, "Needs you" and the close-out."""
 
