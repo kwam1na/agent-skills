@@ -40,7 +40,9 @@
         "skills/orchestrate-work/scripts/delivery_state.py",
         "skills/orchestrate-work/SKILL.md",
         "tests/test_orchestration_state.py",
-        "tests/test_delivery_views_snapshots.py"
+        "tests/test_delivery_views_snapshots.py",
+        "skills/review-work/SKILL.md",
+        "tests/test_review_bound_corpus.py"
       ]
     },
     "lane-2": {
@@ -169,6 +171,17 @@
         {
           "id": "v26-3182-done",
           "text": "v1.6.0-rc.3 is applied here in its own commit, and .agents/orchestration.json declares regenerable.listings for provenance.lock.json; doctor validates it, the listing is quoted by path, and a scratch listing outside regenerable.paths is refused. Lane 2 delivers it last, on the lead's word once rc.3 is published, in one pull request carrying the apply commit then the binding commit."
+        }
+      ]
+    },
+    "V26-3288": {
+      "title": "State the late-P1 deferral everywhere a skill says only P2 and P3 defer",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3288-done",
+          "text": "orchestration-guide.md, the lane brief template and review-work SKILL.md state V26-3194s rule (P0 never deferred; a P1 only when new, outside the delta, late, in a verification round, with its follow-up); a search by meaning across the profiles finds no other old statement; presence and absence pins cover each file"
         }
       ]
     }

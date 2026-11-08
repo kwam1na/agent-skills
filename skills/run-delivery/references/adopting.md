@@ -461,6 +461,17 @@ When the repository's merge step refuses a draft (`forge.mergeNeedsReady`), the 
 hand-off pending and names the adapter. A candidate the queue stopped, which you have since resolved, goes back with
 `lead-accept --requeue <story-key>`, with no new hand-off.
 
+A capture binds to the head its last round reviewed. When a commit after that round needs no new round, such as a
+fixture-only change, carry the review to the queued head instead of asking for another round:
+
+```text example outline
+run_delivery.py lead-carry-review <story-key> --from <reviewed-head> --to <queued-head> --reason "<why no new round>"
+```
+
+It prints the files changed between the two heads, the diff your judgement rests on, and then journals the carry
+through the state tool's `carry-review`. A `--to` that isn't the story's queued head, a capture whose last round isn't
+aligned, or one that leaves a P0 or P1 open is refused with the state tool's own reason, and nothing is written.
+
 ### Answer
 
 Everything else is the supervisor's. Each pass it reconciles the forge and the tracker, cleans up each merged story

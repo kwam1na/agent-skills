@@ -5447,6 +5447,24 @@ class ReviewRefusalTests(unittest.TestCase):
     def test_the_valid_rounds_pass(self) -> None:
         state_tool.validate_review_outcomes(self.rounds(), "work-a", HEAD_B)
 
+    def test_a_verification_round_may_defer_a_new_p1_it_lists_as_late_and_nothing_else(self) -> None:
+        def with_late(number=2, severity="P1", listed=True):
+            outcomes = self.rounds()
+            result = outcomes[number - 1]["entries"][0]["result"]
+            result["findings"] = [*result["findings"], {"id": "F9", "severity": severity, "summary": "late",
+                                                         "state": "deferred", "deferredIssue": "file its follow-up"}]
+            if listed:
+                result["lateFindings"] = ["F9"]
+            return outcomes
+
+        state_tool.validate_review_outcomes(with_late(), "work-a", HEAD_B)
+        refused = "only a P2 or P3 finding may be deferred, or a P1 a verification round lists in lateFindings"
+        for name, outcomes, where in (("not listed in lateFindings", with_late(listed=False), "round 2"),
+                                      ("in round 1, though listed late", with_late(number=1), "round 1"),
+                                      ("a P0, though listed late", with_late(severity="P0"), "round 2")):
+            with self.subTest(name):
+                self.assertIn(f"{where}, lens lens.outcome-correctness, finding F9: {refused}", self.refusal(outcomes))
+
     def test_each_refusal_names_its_round_lens_and_field(self) -> None:
         def change(edit):
             outcomes = self.rounds()

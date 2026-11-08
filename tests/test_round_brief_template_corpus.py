@@ -479,11 +479,11 @@ DIVERGENCES = (
             "`findings`: only P0 and P1 findings inside the round's scope are actionable.",
         ),
         (
-            'P0 and P1 are actionable and never deferred.',
+            'P0 and P1 are actionable, and a P0 is never deferred.',
             'P0 and P1 are actionable, and a plan review never defers them.',
             (
                 'P2 and P3 are deferrable: file each with `"state": "deferred"` and `"deferredIssue": "<what its '
-                'follow-up item must say>"`.'
+                'follow-up item must say>"`, and so is that P1, which also lists its id in `lateFindings`.'
             ),
             (
                 'P2 and P3 notes belong in `evidence`, never in `findings`: a plan review has no deferral path, so '
@@ -502,21 +502,11 @@ DIVERGENCES = (
                 'A late finding the out-of-delta rule keeps out of `findings` is marked late in the deferral that '
                 'records it instead.'
             ),
-            (
-                'In a verification round, for delivery review, a new finding outside the delta is filed only at P0, '
-                'and a P1 becomes a deferral with a follow-up item; for plan review (`unbounded`), it is filed at '
-                'P0 or P1, with no deferral.'
-            ),
         ),
+        (),
         (
-            (
-                'In a verification round, a new finding outside the delta is filed only at P0; a P1 outside the '
-                'delta is recorded in `evidence` as dissent instead.'
-            ),
-        ),
-        (
-            'Known conflict, awaiting a ruling: obtain-review makes a story-review P1 a deferral with a follow-up and files '
-            'a plan-review P1; run-delivery records both as dissent in evidence.'
+            'How a late deferral is recorded, not what the rule is: run-delivery keeps the deferred P1 in `findings` '
+            'with `"state": "deferred"` and lists its id in `lateFindings`, as its severities say.'
         ),
     ),
     (
@@ -862,10 +852,10 @@ KIND_ONLY = (
                 'One entry per finding, `{"id", "state": "closed|fixed|withdrawn|deferred|open", "resolution": '
                 '"..."}`.'
             ),
-            'P0 and P1 are actionable and never deferred.',
+            'P0 and P1 are actionable, and a P0 is never deferred.',
             (
                 'P2 and P3 are deferrable: file each with `"state": "deferred"` and `"deferredIssue": "<what its '
-                'follow-up item must say>"`.'
+                'follow-up item must say>"`, and so is that P1, which also lists its id in `lateFindings`.'
             ),
             (
                 '```json {"schemaVersion": "review-lens-result/1", "lensId": "lens.example", "subjectRef": "EX-1", '
