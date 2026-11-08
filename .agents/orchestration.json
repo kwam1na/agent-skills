@@ -216,5 +216,6 @@
     },
     "refreshSeconds": 180,
     "liveHome": "line-map"
-  }
+  },
+  "fullHealthTimeoutSeconds": 5400
 }
