@@ -773,11 +773,33 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         state_tool("handoff", "--lane", "lane-1", "--subject", "FX-2", "--head", queued, "--change-request",
                    "https://forge.test/pr/1", "--rounds", "2")
         journal = lambda: [e for e in state_tool("show")["journal"] if e.get("reviewCarry")]
+        sh("git", "push", "-q", "origin", "feature/FX-2", cwd=m)
+        other = fx.tmp / "elsewhere"
+        sh("git", "clone", "-q", "-b", "feature/FX-2", fx.origin, other)
+        quieten(other)
+        (other / "src/one-remote.txt").write_text("remote\n")
+        sh("git", "-c", "user.name=Lane", "-c", "user.email=lane@example.test", "add", "src/one-remote.txt", cwd=other)
+        sh("git", "-c", "user.name=Lane", "-c", "user.email=lane@example.test", "commit", "-q", "-m", "FX-2: elsewhere",
+           cwd=other)
+        sh("git", "push", "-q", "origin", "feature/FX-2", cwd=other)
+        remote_only = sh("git", "rev-parse", "HEAD", cwd=other).stdout.strip()
+        self.assertNotEqual(sh("git", "cat-file", "-t", remote_only, cwd=m, check=False).returncode, 0)
 
         with self.subTest("a --to that isn't the queued head: the state tool's own refusal, and no write"):
             code, out = fx.flow("lead-carry-review", "FX-2", "--from", reviewed, "--to", later, "--reason", "fixture", cwd=m)
             self.assertEqual(code, 2, out)
-            self.assertIn(f"carry_invalid: FX-2 is queued at {queued}, not {later}", out)
+            refusal = out.index(f"carry_invalid: FX-2 is queued at {queued}, not {later}")
+            shown = out.index(f"FX-2's review carries from {reviewed[:10]} to {later[:10]} across:")
+            self.assertLess(shown, refusal, "the diff is shown before the state tool is asked")
+            self.assertIn("src/one-later.txt", out[shown:refusal])
+            self.assertEqual(journal(), [])
+        with self.subTest("a head only on the story's remote branch is fetched, then judged by the state tool"):
+            code, out = fx.flow("lead-carry-review", "FX-2", "--from", reviewed, "--to", remote_only, "--reason", "x",
+                                cwd=m)
+            self.assertEqual(code, 2, out)
+            self.assertNotIn("no commit", out)
+            self.assertIn(f"carry_invalid: FX-2 is queued at {queued}, not {remote_only}", out)
+            self.assertIn("src/one-remote.txt", out)
             self.assertEqual(journal(), [])
         with self.subTest("a head that names no commit is refused before the state tool"):
             code, out = fx.flow("lead-carry-review", "FX-2", "--from", reviewed, "--to", "f" * 40, "--reason", "x", cwd=m)
@@ -788,12 +810,13 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
                             "only a fixture changed", cwd=m)
         self.assertEqual(code, 0, out)
         diff = out.index(f"FX-2's review carries from {reviewed[:10]} to {queued[:10]} across:")
-        self.assertIn("src/one-fixture.txt", out[diff:])
-        self.assertNotIn("src/one-later.txt", out)
-        self.assertNotIn("src/one.txt ", out, "the reviewed head's own change isn't part of the carry")
-        self.assertLess(diff, out.index("carried"), "the diff comes before the write")
+        done = out.index("carried: ")
+        listed = {line.split()[-1] for line in out[diff:done].splitlines()[1:] if line.strip()}
+        # Exactly the commits between the heads: not the reviewed head's own change, nor a later one.
+        self.assertEqual(listed, {"src/one-fixture.txt"}, out)
         carried = journal()
         self.assertEqual(len(carried), 1, carried)
+        self.assertIn(f"carried: {carried[0]['summary']}\n", out)
         self.assertEqual((carried[0]["reviewCarry"]["from"], carried[0]["reviewCarry"]["to"]), (reviewed, queued))
         self.assertIn("only a fixture changed", carried[0]["summary"])
 

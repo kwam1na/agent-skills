@@ -4527,6 +4527,7 @@ def lead_carry_review(args) -> None:
     for line in changed:
         status, _, path = line.partition("\t")
         print(f"  {status:<2} {path}")
+    sys.stdout.flush()  # shown before the write, and before a refusal on stderr when both go to one pipe
     done = state_tool("carry-review", "--writer", "lead", "--subject", key, "--from", from_head, "--to", to_head,
                       "--reason", args.reason, check=False)
     try:
