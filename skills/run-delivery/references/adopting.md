@@ -379,6 +379,13 @@ brief:
 python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lead-assign <story-key> --lane lane-1 --title "Lane 1"
 ```
 
+Before it assigns anything, `lead-assign` checks that each story's tracker item offers the first start move the
+configuration names, as the kept tracker snapshot reads it. A story that isn't ready is refused, naming its status and
+the move that isn't offered, and nothing is written; `--force` assigns it anyway. Neither `lead-assign` nor
+`doctor --delivery`, which warns of the same stories, moves the item. Only a snapshot that lists each item's offered
+moves can say (the Jira snapshot does; Linear's doesn't), so otherwise both commands print that readiness wasn't
+checked, and why.
+
 Once the delivery has started, change the plan's criteria and finish lines only through `lead-plan change`. It records
 what the plan said before and after and why, edits the delivery file, and commits it; it never pushes, and it refuses
 on a checkout with uncommitted changes or one behind the base. `--kind changed` or `relaxed` rewords a criterion,
@@ -746,6 +753,11 @@ do. A line marked `skipped` names the check it waits on: fix that one first.
 - **`is missing (lead-setup writes it)`**: the delivery file doesn't exist yet. `lead-setup` drafts it.
 - **`stories without a lane`**: give each story a lane listed in `lanes`.
 - **`lanes own the same files`**: make each lane's `owns` disjoint, so no file belongs to two lanes.
+- **`isn't offered; refine it first`**: the story's tracker item is in a status its first start move isn't offered
+  from, as the tracker snapshot reads it, so its lane can't start it. Have the item made ready (in the tracker, by
+  whoever owns that status), then assign it. `lead-assign` refuses the story until then, and `--force` assigns it
+  anyway. Neither command moves the item. A snapshot that doesn't list a story's offered moves, or no snapshot at all,
+  leaves readiness unchecked, and both commands say so.
 - **`fails on`**: a gate fails on the delivery base itself. Repair the base before any lane starts.
 - **`isn't a valid delivery-plan/1`**: the stories' criteria and the finish lines' covers make a plan the view can't
   read. Correct the delivery file at the key path the line names.
