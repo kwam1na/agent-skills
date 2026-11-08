@@ -726,6 +726,9 @@ class SupervisorProcessTests(unittest.TestCase):
 class SettledLockTests(unittest.TestCase):
     """A read during a restart finds the truncated file: the test's reads retry, within their bound."""
 
+    # The race it stages is 0.2 s wide: on a loaded machine, a parallel worker could close it before the plain read.
+    run_serially = True
+
     def fixture(self) -> tuple[types.SimpleNamespace, Path]:
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
@@ -2793,8 +2796,14 @@ class SupervisorBackgroundHealthTests(unittest.TestCase):
         fx.env["FX_HEALTH_SECONDS"] = seconds
         code, out = fx.flow("lead-run", "--resume", cwd=fx.main, env=running(fx))
         self.assertEqual(code, 0, out)
-        wait_for(lambda: self.run_lock(fx)["held"], "the fullHealth run to start", 60)
+        wait_for(lambda: self.run_started(fx), "the fullHealth run to start", 60)
         return fx
+
+    def run_started(self, fx: Fixture) -> bool:
+        """Whether a fullHealth run holds its lock and has written what it records there. The run takes the lock before it
+        writes it, so a read can find the lock held and still empty."""
+        run = self.run_lock(fx)
+        return run["held"] and "pid" in run and "head" in run
 
     def test_a_supervisor_keeps_passing_restarts_serve_and_keeps_needs_you_fresh_while_it_runs(self) -> None:
         fx = self.slow_run_under_a_supervisor()
