@@ -60,7 +60,7 @@ holds the run-delivery chain throughout. Lane 2 takes the queue and the views, t
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | V26-3232, the supervisor timeout if separate, V26-3175, V26-3201, V26-3194, V26-3183, V26-3180 | `skills/run-delivery/` (script, templates, `references/adopting.md`), `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_plan_review.py`, `tests/test_round_brief_template_corpus.py`, `tests/test_review_and_compounding.py`, `docs/solutions/` for V26-3232's note, `tests/fixtures/delivery-views/line-map/`, `skills/orchestrate-work/references/schemas.json`, `tests/test_registry.py`, and `catalog.json` and `profiles/*.json` for V26-3183 if it adds an output |
+| 1 | 1 | V26-3232, V26-3272 (the supervisor timeout's separate cause), V26-3175, V26-3201, V26-3194, V26-3183, V26-3180 | `skills/run-delivery/` (script, templates, `references/adopting.md`), `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_plan_review.py`, `tests/test_round_brief_template_corpus.py`, `tests/test_review_and_compounding.py`, `docs/solutions/` for V26-3232's note, `tests/fixtures/delivery-views/line-map/`, `skills/orchestrate-work/references/schemas.json`, `tests/test_registry.py`, `catalog.json` and `profiles/*.json` (for V26-3183 if it adds an output, and for V26-3232's `render_state.py` digest), and `skills/orchestrate-work/scripts/render_state.py` with `tests/test_orchestration_render.py` for V26-3232 |
 | 1 | 2 | V26-3197, V26-3164 | `skills/orchestrate-work/scripts/merge_queue.py`, `tests/test_merge_queue.py`, `skills/orchestrate-work/references/orchestration-guide.md`, `skills/delivery-views/`, `tests/test_delivery_views_page.py`, `tests/delivery_views_page/` |
 | 2 | 1 | V26-3242 | lane 1's files, plus lane 2's once V26-3164 merges |
 | 3 | lead | rc.3, its apply, then V26-3182 | `.agent-skills/`, `.agents/orchestration.json` |
@@ -90,6 +90,18 @@ on every platform and models the reproduced cause (for example, a grandchild tha
 `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`. Sensors: the named test, `tests/test_run_delivery.py`,
 `tests/test_run_delivery_supervisor.py`, and macOS CI on the change request with the `full-matrix` label. Compounding: the solution note the
 item names, if the pipe explains it.
+
+Lead's correction (2026-11-07), from lane 1's reproduction: the cause is not a hang. Python's built-in HTTP server looks up its own host
+name before listening, and on the macOS runner that lookup takes about 34 s per server. The fix also covers `_LiveServer` in
+`skills/orchestrate-work/scripts/render_state.py`, shipped code with the same stall, with its catalog and provenance digests. The
+supervisor module's separate cause, its own length, is V26-3272.
+
+### V26-3272. Bring `test_run_delivery_supervisor` under its unit limit
+
+Lane 1, tier 1, after V26-3232. Characterization-first: profile the module and record where its time goes, then change it. It finishes with
+at least a 2× margin inside its unit limit on macOS and Ubuntu CI, with no test skipped, loosened or given a longer deadline, and its coverage
+unchanged. Files: `tests/test_run_delivery_supervisor.py`, and `run_delivery.py` only if a wait in the code under test is the cost. Sensors:
+`tests/test_run_delivery_supervisor.py`, `scripts/run-tests.py` timings, and macOS CI with the `full-matrix` label.
 
 ### V26-3175. Pin `lead-close`'s busy-port lines
 
