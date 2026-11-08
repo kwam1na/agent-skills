@@ -846,6 +846,17 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         expect(check(relisted, carried={"l-r1-1"}, n=2) == [], check(relisted, carried={"l-r1-1"}, n=2))
         expect(check(lens_result(lateFindings=["l-r1-9"])), "a lateFindings id that isn't one of the result's own was accepted")
 
+    def test_where_a_late_out_of_delta_p1_ends_up_in_a_story_review(self) -> None:
+        """Characterization: review-reduce's check of a verification round's new P1 outside the delta."""
+        check = lambda r: self.call("check_result", r, key="K", lens="lens.l", short="l", n=2, meta=META, carried=[],
+                                    sets=("carried",))
+        late = {"id": "l-r2-1", "severity": "P1", "summary": "s", "state": "deferred", "deferredIssue": "follow it up"}
+        deferred = lens_result(round=2, resolvedFindings=[], findings=[late], lateFindings=["l-r2-1"])
+        self.assertIn("finding l-r2-1 is P1 and can't be deferred", check(deferred))
+        filed = lens_result(round=2, outcome="changes-requested", resolvedFindings=[], lateFindings=["l-r2-1"],
+                            findings=[{"id": "l-r2-1", "severity": "P1", "summary": "s"}])
+        self.assertEqual(check(filed), [], "today a late P1 is accepted only as an open finding, which blocks")
+
     def test_lead_assign_warns_of_files_outside_the_lane_before_it_starts(self) -> None:
         fx = self.fixture()
         m = fx.main
