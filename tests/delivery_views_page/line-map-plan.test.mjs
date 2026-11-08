@@ -697,7 +697,7 @@ test("each newly named plan gets its own patience", async () => {
   const again = structuredClone(replanned);
   again.journal.push({ id: 15, at: minute(41), kind: "decision.recorded", lane: null, subject: null, summary: "Plan updated: 2026-10-30T13:30:00Z; another change" });
   // The fifteenth ask is still waiting when the record names the next plan, so its answer is that plan's first try.
-  const server = holding(() => page, 15, 29);
+  const server = holding(() => page, 15, 29, 30);
   const snaps = await live(page, server.rendered,
     [{ push: replanned }, { asked: 14 }, { asked: 15 }, { push: again, ...server.release }, { asked: 28 }, { ...server.release, asked: 29 }]);
   expect(planNote(snaps[5].app)).toBeNull();
