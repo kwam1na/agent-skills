@@ -726,6 +726,110 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
     def call(self, fn: str, *args, cwd: Path | None = None, **kwargs):
         return call(self.tool, fn, *args, cwd=cwd or Path(tempfile.gettempdir()), **kwargs)
 
+    # -- the merge queue's review gate -----------------------------------------------------------------
+
+    def test_pr_review_current_passes_only_a_current_passing_review_at_the_named_head(self) -> None:
+        """`pr-review-current` is a ready-made reviewGate: exit 0 only for the configured review, current and passing
+        at that head; every other answer exits non-zero with one line on stderr."""
+        fx = self.fixture()
+        m = fx.main
+        sh("git", "checkout", "-q", "-b", "feature/FX-2", cwd=m)
+        (m / "src/one.txt").write_text("one\n")
+        commit(m, "FX-2: one")
+        sh("git", "push", "-q", "-u", "origin", "feature/FX-2", cwd=m)
+        head = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
+        reviews = fx.tmp / "reviews.json"
+        env = {**fx.env, "FAKE_FORGE_REVIEWS": str(reviews)}
+
+        def gate(*extra: str, at: str = head, conf: dict | None = None) -> tuple[int, str, str]:
+            if conf is not None:
+                path = fx.tmp / "flow-gate.json"
+                path.write_text(json.dumps(conf))
+                env["RUN_DELIVERY_CONFIG"] = str(path)
+            done = subprocess.run([sys.executable, "-B", str(fx.tool), "pr-review-current", "--branch", "feature/FX-2",
+                                   "--head", at, *extra], cwd=m, env=env, text=True, capture_output=True, timeout=300)
+            self.assertNotIn("Traceback", done.stderr)
+            return done.returncode, done.stdout, done.stderr
+
+        def refused(answer: tuple[int, str, str], reason: str) -> None:
+            code, _, err = answer
+            self.assertNotEqual(code, 0, f"passed: {answer}")
+            self.assertEqual(len(err.strip().splitlines()), 1, f"the reason isn't one line: {err!r}")
+            self.assertIn(reason, err)
+
+        base = json.loads((m / ".agents/run-delivery.json").read_text())
+        refused(gate(), "review.pr")
+        conf = {**base, "review": {**base["review"], "pr": {"author": "Pipeline Bot", "waitSeconds": 1}}}
+        refused(gate(conf=conf), "no open PR for feature/FX-2")
+        (fx.tmp / "forge.json").write_text(json.dumps({"https://forge.test/pr/1": {
+            "source": "feature/FX-2", "destination": "main", "state": "open", "title": "FX-2: one"}}))
+        passed = {"name": "pipe", "state": "passed", "at": "2026-01-01T00:00:10"}
+        current = {"author": "Pipeline Bot", "at": "2026-01-01T00:00:30", "body": "fine"}
+        cases = [
+            ("no checks and no review", {"checks": [], "reviews": []}, "no current Pipeline Bot review"),
+            ("a pending pipeline", {"checks": [{**passed, "state": "pending"}], "reviews": [current]}, "pipe pending"),
+            ("a failed pipeline", {"checks": [{**passed, "state": "failed"}], "reviews": [current]}, "pipe failed"),
+            ("a review from before the pipeline", {"checks": [passed], "reviews": [{**current, "at": "2026-01-01T00:00:05"}]},
+             "no current Pipeline Bot review"),
+            ("someone else's review", {"checks": [passed], "reviews": [{**current, "author": "Someone"}]},
+             "no current Pipeline Bot review"),
+        ]
+        for what, answer, reason in cases:
+            with self.subTest(what):
+                reviews.write_text(json.dumps(answer))
+                refused(gate(), reason)
+        reviews.write_text(json.dumps({"checks": [passed], "reviews": [current]}))
+        code, out, err = gate()
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertIn("Pipeline Bot", out)
+        with self.subTest("the PR at another head"):
+            refused(gate(at=fx.tooling), f"the PR is at {head[:10]}, not {fx.tooling[:10]}")
+        with self.subTest("an adapter that can't fetch reviews"):
+            refused(gate(conf={**conf, "forge": {"adapter": "none"}}), "no `reviews` command")
+        with self.subTest("an adapter's own error, over several lines, is one line"):
+            loud = {"argv": ["sh", "-c", "printf 'forge said no\\nand said why\\n' >&2; exit 3"]}
+            refused(gate(conf={**conf, "forge": loud}), "and said why")
+        gate(conf=conf)
+        with self.subTest("without --wait it answers at once, however long waitSeconds is"):
+            gate(conf={**conf, "review": {**conf["review"], "pr": {"author": "Pipeline Bot", "waitSeconds": 30}}})
+            reviews.write_text(json.dumps({"checks": [{**passed, "state": "pending"}], "reviews": []}))
+            started = time.monotonic()
+            answer = gate()
+            refused(answer, "pipe pending")
+            self.assertNotIn("waited", answer[2])
+            self.assertLess(time.monotonic() - started, 10, "waited without --wait")
+            gate(conf=conf)
+        with self.subTest("--wait gives up after review.pr's waitSeconds"):
+            reviews.write_text(json.dumps({"checks": [{**passed, "state": "pending"}], "reviews": []}))
+            started = time.monotonic()
+            answer = gate("--wait")
+            refused(answer, "waited 1s")
+            self.assertLess(time.monotonic() - started, 20, "waited past waitSeconds")
+        with self.subTest("--wait waits out a forge still showing the PR at its old head"):
+            gate(conf={**conf, "review": {**conf["review"], "pr": {"author": "Pipeline Bot", "waitSeconds": 30}}})
+            reviews.write_text(json.dumps({"checks": [passed], "reviews": [current]}))
+            prs = json.loads((fx.tmp / "forge.json").read_text())
+            lagging = {url: {**pr, "head": fx.tooling[:12]} for url, pr in prs.items()}
+            (fx.tmp / "forge.json").write_text(json.dumps(lagging))
+            refused(gate(), f"the PR is at {fx.tooling[:10]}, not {head[:10]}")
+            catch_up = threading.Timer(1, lambda: (fx.tmp / "forge.json").write_text(json.dumps(prs)))
+            catch_up.start()
+            self.addCleanup(catch_up.cancel)
+            started = time.monotonic()
+            code, out, err = gate("--wait")
+            self.assertEqual((code, err), (0, ""), out)
+            self.assertLess(time.monotonic() - started, 25, "kept waiting after the forge caught up")
+            gate(conf=conf)
+        with self.subTest("--wait passes once the review lands within the wait"):
+            gate(conf={**conf, "review": {**conf["review"], "pr": {"author": "Pipeline Bot", "waitSeconds": 30}}})
+            land = threading.Timer(1, lambda: reviews.write_text(json.dumps({"checks": [passed], "reviews": [current]})))
+            land.start()
+            self.addCleanup(land.cancel)
+            started = time.monotonic()
+            code, out, err = gate("--wait")
+            self.assertEqual((code, err), (0, ""), out)
+            self.assertLess(time.monotonic() - started, 25, "kept waiting after the review landed")
+
     # -- the release the cases run from ----------------------------------------------------------------
 
     def test_the_built_release_carries_the_rebound_runtime_and_verifies(self) -> None:
@@ -5453,6 +5557,9 @@ WORKED_MERGE = ["python3", "-B", ".agent-skills/current/skills/run-delivery/adap
                 "--source", "{branch}", "--head", "{expectedHead}", "--strategy", "merge", "--destination", "{base}"]
 WORKED_CANDIDATE = ["python3", "-B", ".agent-skills/current/skills/run-delivery/adapters/forge_bitbucket.py",
                     "candidate", "--key", "{candidate}"]
+# The worked adopter's review gate: run-delivery's own check of the pipeline's review at the head the queue merges.
+WORKED_REVIEW_GATE = ["python3", "-B", ".agent-skills/current/skills/run-delivery/scripts/run_delivery.py",
+                      "pr-review-current", "--branch", "{branch}", "--head", "{expectedHead}", "--wait"]
 # Every push in an example is labelled, on the line just above it, for an unprotected base.
 UNPROTECTED = "unprotected base"
 PUSH = re.compile(r"\bgit\b(?:\s+-[Cc]\s+\S+)*\s+push\b|git\(\"push\"")
@@ -5729,6 +5836,11 @@ class RunDeliveryAdoptionGuideTests(unittest.TestCase):
         self.assertEqual(binding["bases"], WORKED_BASES)
         self.assertEqual(binding["merge"], WORKED_MERGE)
         self.assertEqual(binding["candidate"], WORKED_CANDIDATE)
+        self.assertEqual(binding["reviewGate"]["argv"], WORKED_REVIEW_GATE)
+        conf = next(document for document in worked if "forge" in document)
+        # The queue's bound on the gate outlasts the gate's own wait for the review, and the binding's ceiling allows it.
+        self.assertGreater(binding["reviewGate"]["timeoutSeconds"], conf["review"]["pr"]["waitSeconds"])
+        self.assertLessEqual(binding["reviewGate"]["timeoutSeconds"], binding["checkTimeoutCeiling"])
         self.assertEqual(set(binding["environment"]), {"FLOW_FORGE_REPOSITORY", "FLOW_FORGE_TOKEN_ENV"})
         self.assertTrue(any("tracker_publisher.py" in part for entry in binding["state"]["publishers"]
                             for part in entry["argv"]))
