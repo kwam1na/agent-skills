@@ -30,8 +30,8 @@ from tests.test_run_delivery import (POSIX_ONLY, Fixture, commit, doctor_binding
                                      sh, stop_supervisors, write_results)
 from tests.test_run_delivery_tracker import FileBackend, JiraBackend
 
-# Supervisors, their children and a shared fake forge state: one case at a time.
-RUN_SERIALLY = True
+# Each class that starts supervisors marks itself run_serially, so its cases run one at a time and alone on the machine.
+# The module isn't marked: marked, it would be one unit of every class, past the runner's unit limit on a macOS runner.
 
 FORGE = r'''
 import argparse, json, os, subprocess, sys
@@ -296,6 +296,22 @@ def alive(pid: int) -> bool:
     except ProcessLookupError:
         return False
     return True
+
+
+class ModuleUnitsTests(unittest.TestCase):
+    """The runner plans this module as one unit per class, and runs every class that starts supervisors alone."""
+
+    def test_each_supervisor_class_is_a_serial_unit_of_its_own(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        listed = subprocess.run([sys.executable, "-B", str(root / "scripts/run-tests.py"), "--list", "-p", Path(__file__).name],
+                                cwd=root, capture_output=True, text=True, timeout=120, check=True).stdout
+        units = {line.split()[0]: "(serial)" in line for line in listed.splitlines() if line.strip()}
+        self.assertNotIn(__name__, units, "the module is planned as one unit")
+        starters = [name for name, cls in sorted(globals().items()) if isinstance(cls, type)
+                    and issubclass(cls, unittest.TestCase) and "setUpClass" in vars(cls)]
+        self.assertGreaterEqual(len(starters), 8, starters)
+        for name in starters:
+            self.assertIs(units.get(f"{__name__}.{name}"), True, f"{name} isn't a serial unit of its own: {listed}")
 
 
 class ProofStateTests(unittest.TestCase):
