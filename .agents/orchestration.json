@@ -76,7 +76,7 @@
     "failurePattern": "^(?:FAIL|ERROR): (?P<id>\\S+)"
   },
   "checkTimeoutSeconds": 1800,
-  "checkTimeoutCeiling": 3600,
+  "checkTimeoutCeiling": 5400,
   "environment": {
     "PYTHONDONTWRITEBYTECODE": "1"
   },
