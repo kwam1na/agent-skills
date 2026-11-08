@@ -29,20 +29,20 @@
         "profiles/*",
         "skills/orchestrate-work/scripts/render_state.py",
         "tests/test_orchestration_render.py",
-        "provenance.lock.json"
-      ]
-    },
-    "lane-2": {
-      "owns": [
+        "provenance.lock.json",
         "skills/orchestrate-work/scripts/merge_queue.py",
         "tests/test_merge_queue.py",
         "skills/orchestrate-work/references/orchestration-guide.md",
         "skills/delivery-views/*",
         "tests/test_delivery_views_page.py",
         "tests/delivery_views_page/*",
-        ".agent-skills/*",
-        ".agents/orchestration.json",
         "tests/quiet_git.py"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        ".agent-skills/*",
+        ".agents/orchestration.json"
       ]
     }
   },
