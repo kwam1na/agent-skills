@@ -67,10 +67,12 @@ Lane 1, tier 1, not blocked. Characterization-first: reproduce the stray `superv
 anything. Then every `run_delivery.py` invocation in `tests/test_run_delivery.py` and its siblings runs with an explicit fixture repository
 and state directory, and the module's cleaned environment strips every variable `Config` or `setting()` reads, `DELIVERY_STATE` included.
 The guard row builds its own main checkout with a linked worktree, and plants a delivery under that main checkout's `.orchestration/` and
-`.agents/deliveries/`. It runs the module's lead commands from the worktree, with `DELIVERY_STATE` and every other variable `Config` or
-`setting()` reads set to point at the planted delivery. It detects contact by comparing the planted files byte for byte, content and
-mtime, before and after, and by a planted marker the tool would print or copy; never by atime. The lane records a red run of the guard on
-the unfixed tree that reproduces the named case, then the green run after the fix. The hand-off records whether
+`.agents/deliveries/`. It sets `DELIVERY_STATE` and every other variable `Config` or `setting()` reads, current and legacy names alike, to
+point at the planted delivery in the test process's own environment (`os.environ`, through `mock.patch.dict`) before the `Fixture` and
+its cleaned environment are built. It then runs the module's lead commands from the worktree with the module's ordinary cleaned
+environment, never with those variables passed in `env=`. It detects contact by comparing the planted files byte for byte, content and
+mtime, before and after, and by a planted marker the tool would print or copy; never by atime. The lane records two red runs of the guard: one on
+the unfixed tree that reproduces the named case, and one with the environment strip reverted. Then it records the green run after the fix. The hand-off records whether
 any case ever wrote to a live record, and names the write if one did. Files: `tests/test_run_delivery.py`, its siblings in lane 1, and
 `run_delivery.py` only if the repository is resolved from the working directory where it shouldn't be. Sensors: `tests/test_run_delivery.py`,
 `scripts/measure-test-writes.py`.
@@ -81,7 +83,8 @@ Lane 1, tier 1, after V26-3286. Characterization-first: find the test or tests t
 changing anything. Each stops what it started by recorded pid, even when it fails or is interrupted. The outlives row looks while the
 case's folder still exists, with the exit guard out of the way (the state directory and install kept), and finds supervisors independently
 of the test's own records: a process-table scan for `run_delivery.py`, `render_state.py` or `merge_queue.py` processes whose command line
-names the case's temporary folder. The lane records it red against the unfixed leaking case. `Supervisor.run` exits when its state
+names the case's temporary folder, or runs from that folder, or names the case's install with an `--delivery FX-` key, so a
+supervisor whose children have died is still found. The lane records it red against the unfixed leaking case. `Supervisor.run` exits when its state
 directory or its install disappears (Decision 3), proved with the test's own cleanup disabled, by three rows. One removes the state
 directory under a running supervisor and asserts it exits on its own within a bound. One removes the install a running supervisor was
 started from, a per-case install copy rather than the module-shared `installed_release()`, keeping its state directory, and asserts the
