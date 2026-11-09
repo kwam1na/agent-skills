@@ -34,7 +34,25 @@ A lead checkout's job is to hold the base plus that lead's own pending plan comm
 for that, and it fails as soon as two leads need the base at once. Checking the relation to the base, and what
 the commits ahead change, keeps another lead's unpushed work out of the push the command prints.
 
-## When to Apply
+## Prevention
 
-- Before a second delivery's lead starts on a machine where another delivery's lead already works.
-- Whenever a lead command refuses by branch name in a checkout that holds the base's tip.
+- Before a second delivery's lead starts on a machine where another lead already works, make it a worktree of its
+  own on its own branch; no lead commits in the operator's checkout or in another lead's.
+- Push each plan commit with the printed `git push origin HEAD:<base>` before another lead's work lands in the same
+  worktree, so what is ahead of the base is only that delivery's own.
+- Treat a lead command that refuses by branch name in a checkout at the base's tip as a defect, not as a reason to
+  edit the delivery file by hand.
+
+## Examples
+
+```sh
+git -C <operator-checkout> fetch -q origin main
+git -C <operator-checkout> worktree add --no-track -b lead/<delivery> .orchestration/lanes/<delivery> origin/main
+cd .orchestration/lanes/<delivery>
+python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lead-plan approval approval-3 --state done
+git push origin HEAD:main
+```
+
+## Related
+
+- `skills/run-delivery/references/adopting.md`, section 8, "Several deliveries on one machine: one lead worktree each".
