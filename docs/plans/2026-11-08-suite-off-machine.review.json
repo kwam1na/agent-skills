@@ -1,0 +1,115 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "writtenBy": "run-delivery plan-review",
+  "plan": "docs/plans/2026-11-08-suite-off-machine.md",
+  "planSha256": "94555ec30f050a271fe5d838be3aa35e7353539f8ae6df52a4e5475f15572330",
+  "planCommit": "d20136fa1345f61e9f5efa08a7364e4189d84937",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": [
+    "lens.outcome-correctness",
+    "lens.adversarial-testing"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "candidate": "17827a81e4e0bef23e01ce52829f458afe8d037e",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-09T00:19:53.495545Z",
+      "finishedAt": "2026-11-09T00:23:47.339295Z",
+      "open": [
+        "outcome-correctness-r1-1",
+        "adversarial-testing-r1-1",
+        "adversarial-testing-r1-2",
+        "adversarial-testing-r1-3",
+        "adversarial-testing-r1-4",
+        "adversarial-testing-r1-5"
+      ]
+    },
+    {
+      "round": 2,
+      "candidate": "91d47d9d0aad2669cef77d5fb88a203e87acb269",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-09T00:24:24.812542Z",
+      "finishedAt": "2026-11-09T00:26:11.564686Z",
+      "open": [
+        "adversarial-testing-r2-1"
+      ]
+    },
+    {
+      "round": 3,
+      "candidate": "d20136fa1345f61e9f5efa08a7364e4189d84937",
+      "outcome": "aligned",
+      "startedAt": "2026-11-09T00:26:29.222615Z",
+      "finishedAt": "2026-11-09T00:27:59.652176Z",
+      "open": []
+    }
+  ],
+  "reviews": [
+    {
+      "lens": "lens.outcome-correctness",
+      "round": 3,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.outcome-correctness",
+        "subjectRef": "suite-off-machine.plan",
+        "candidateRef": "d20136fa1345f61e9f5efa08a7364e4189d84937",
+        "round": 3,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [],
+        "evidence": [
+          "Reviewed tree 1dfd3a4c2d7d98c61bf1487c3afe102eede4c726 at HEAD d20136fa1345f61e9f5efa08a7364e4189d84937. Start identity check passed: `git rev-parse HEAD^{tree}` matched and `git status --porcelain` was empty. The same two checks passed again at the end. No probes or mutants were made, so there was nothing to revert.",
+          "The delta was derived with `git diff 91d47d9d0aad2669cef77d5fb88a203e87acb269..d20136fa1345f61e9f5efa08a7364e4189d84937`. It touches only docs/plans/2026-11-08-suite-off-machine.md: the V26-3286 guard row's environment setup and red runs, and the V26-3273 outlives row's process match. I reviewed the whole delta.",
+          "Carried findings: none open going into this round. outcome-correctness-r1-1 was closed as fixed in round 2. The finish-line bullet it concerned (docs/plans/2026-11-08-suite-off-machine.md:16-19) is unchanged by this delta, so resolvedFindings is empty.",
+          "Model class: Opus 5.5 (claude-opus-5-5), running as a native subagent. The host exposes no progress or permission signals to this lens, which is recorded here as a limitation. There is no run ID because the repository declares no run-event command.",
+          "Realization basis: host-convention.",
+          "No checks were run. The brief scopes no sensors or test files for a plan review, and I read source files only to check the delta's factual claims.",
+          "V26-3286 delta, checked against the code. tests/test_run_delivery.py:113-116 `clean_environment()` builds from `os.environ` and today strips only the `DELIVERY_FLOW_`, `RUN_DELIVERY_` and `FAKE_FORGE_` prefixes, so `DELIVERY_STATE` (read at run_delivery.py:609-610) passes through. The fixture captures that environment when it is built (tests/test_run_delivery.py:381). Setting the variables through `mock.patch.dict(os.environ)` before the Fixture is built, and never through `env=`, therefore tests the strip itself, and the red run with the strip reverted is a real control. `setting()` (run_delivery.py:174-183) falls back to legacy names, so 'current and legacy names alike' is required and correct.",
+          "V26-3273 delta, checked against the code. The extended match adds 'runs from that folder' and 'names the case's install with an `--delivery FX-` key', which closes the round 2 P3 note. The supervisor's own argv (run_delivery.py:5469) names only the install, `--delivery <key>` and `lead-run`, and its working directory is the fixture root (run_delivery.py:5471, cwd=c.root). Either new criterion now finds a supervisor whose children have died.",
+          "Note, not filed: for most cases the 'case's install' is the module-shared `installed_release()`, so the match can also catch an FX- supervisor left by an earlier case in the same module. Any such process is itself a leak, and the modules run serially (RUN_SERIALLY / run_serially), so this cannot produce a false green.",
+          "Approval conditions: this round raises no findings, so none are attached."
+        ]
+      },
+      "resultSha256": "75d5211a0893947825b67431ee180e1e61f31e922743c89492172593b42f6dba"
+    },
+    {
+      "lens": "lens.adversarial-testing",
+      "round": 3,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.adversarial-testing",
+        "subjectRef": "suite-off-machine.plan",
+        "candidateRef": "d20136fa1345f61e9f5efa08a7364e4189d84937",
+        "round": 3,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [
+          {
+            "id": "adversarial-testing-r2-1",
+            "state": "fixed",
+            "resolution": "docs/plans/2026-11-08-suite-off-machine.md:70-75 now has the guard set DELIVERY_STATE and every other variable Config or setting() reads, current and legacy names alike, in the test process's os.environ through mock.patch.dict, before the Fixture and its cleaned environment are built. The commands then run with the module's ordinary cleaned environment and never get those variables through env=. Two red runs are recorded, one on the unfixed tree for the named case and one with the environment strip reverted, then the green run. Adopted as written."
+          }
+        ],
+        "evidence": [
+          "Reviewed tree 1dfd3a4c2d7d98c61bf1487c3afe102eede4c726 at HEAD d20136fa1345f61e9f5efa08a7364e4189d84937 in the private checkout. Start check: tree SHA matched and `git status --porcelain` was empty. End check: tree SHA matched and status was empty (CLEAN).",
+          "Delta derived with `git diff 91d47d9d0aad2669cef77d5fb88a203e87acb269..d20136fa1345f61e9f5efa08a7364e4189d84937`. It touches only docs/plans/2026-11-08-suite-off-machine.md: V26-3286's guard-environment paragraph and V26-3273's outlives-row scan criteria. I reviewed both hunks.",
+          "Re-check of carried findings: the only finding open going into this round, adversarial-testing-r2-1, was adopted exactly as its approval condition states. The round-1 findings were closed in round 2. The revision leaves their adopted text in place and does not weaken it.",
+          "Delta review for V26-3286: the guard patches os.environ before the Fixture snapshot at tests/test_run_delivery.py:381 and runs with the ordinary cleaned environment, so a reverted strip now reaches the child, and the second recorded red run proves it. No surviving mutation found.",
+          "Delta review for V26-3273: the scan now matches the supervisor itself through its cwd, or through the install path plus `--delivery FX-` (start_supervisor's argv at run_delivery.py:5469). Deleting the recorded-pid stop would leave a findable process, and the row would go red. This also resolves the round-2 P2 note about a supervisor whose children have died. No surviving mutation found.",
+          "P3 (not filed): the install-plus-FX- match can also catch another case's supervisor started from the module-shared install. SupervisorProcessTests is run_serially, so that would show up as a false red at worst, never a false green.",
+          "P2 (not filed, carried): no pin covers future run_delivery.py invocations against the 'every invocation runs with an explicit fixture repository and state directory' claim. It is deferrable.",
+          "Model class: Opus 5.5 (claude-opus-5-5), run as a native subagent. The host exposes no progress or permission signals, which limits what this result can report.",
+          "Realization basis: host-convention.",
+          "Scope: plan review, read-only. No sensor or test was run and no mutant was planted, since the brief names no checks or test files. Mutations were reasoned only against the delta's rows and the code they touch: clean_environment, Fixture.__init__ and start_supervisor.",
+          "Approval conditions: this round raises no findings, so there are none."
+        ]
+      },
+      "resultSha256": "9b5fcf90c48b76b1fbd2cabba5654993876d9fec91bb306812c57412c257cb31"
+    }
+  ],
+  "residualRisks": [
+    "3 review rounds; findings open after each round: 6, 1, 0."
+  ]
+}
