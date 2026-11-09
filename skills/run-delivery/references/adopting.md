@@ -314,8 +314,23 @@ python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lea
 (`push`, `draftPullRequests`, or both) and `--granted-by` who allowed it. `--no-authority` says lanes get none and hand
 their branches to the lead.
 
-Complete it from the plan: the lanes and the files each owns, each story's lane and the in-app checks its hand-off
-needs (`"loaded"` here: one passing check of the running app), the finish lines, and where the record lives.
+A plan in plan-work's format (its SKILL.md, "Plan Format for a Delivery", has the grammar and an example) needs no
+`--pattern`: each `### KEY. Title` under `## Stories` is a story. Its section's opening sentence, `Lane N, tier T, not
+blocked.` or `Lane N, tier T, after KEY.`, gives its lane, `lane-N`, and its `after` keys. The `Units and order`
+table's lowest-tier row for each lane gives that lane's `owns`, a folder `dir/` becoming `dir/*`. Each story's criteria
+come from its tracker item's Acceptance Criteria section, which the tracker snapshot carries: `--tracker-snapshot F`,
+or else the binding's `state.trackerSnapshot`, run for the delivery's key. `lead-setup` notes each story it left
+unassigned, each lane it found no row for, and each story it drafted no criteria for, and why.
+
+The `after` keys are the plan's order. `next` reads them without the tracker once the binding names `lead-hints` as
+its `state.workHints`, with the argv `python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py
+--delivery {parent} lead-hints`. It prints each story's `Files:` paths as its files and its `after` keys as its
+blockers. A blocker stops blocking once the record holds it merged, or the tracker snapshot holds it completed or
+canceled.
+
+Complete the rest from the plan: the in-app checks each story's hand-off needs (`"loaded"` here: one passing check of
+the running app), the finish lines, and where the record lives. A plan in another format leaves the lanes, each story's
+lane and the files each lane owns to you.
 
 Criteria turn on the live view's plan chapter, which shows whether the work is still what was agreed and what proves
 it; the finish line's `label` and `covers` and the `outcome` shape it. Every key is optional; a delivery file with no

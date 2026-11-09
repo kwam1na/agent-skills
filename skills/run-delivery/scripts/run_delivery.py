@@ -4419,13 +4419,30 @@ def lead_setup(args) -> None:
     existing = json.loads(path.read_text()) if path.exists() else None
     grant = lanes_grant(args, existing)
     plan = c.root / args.plan
-    pattern = re.compile(args.pattern, re.M)
+    text = plan.read_text()
+    pattern = re.compile(args.pattern or STORY_HEADING, re.M)
     if "key" not in pattern.groupindex or "title" not in pattern.groupindex:
         raise Stop("the pattern must name groups `key` and `title` (and may name `label` and `pinned`)")
-    stories = {}
-    for m in pattern.finditer(plan.read_text()):
+    sections = plan_sections(text)
+    # The plan format's headings are read under its `## Stories`; a pattern of the lead's own reads the whole plan.
+    scope = next((body for level, title, body in sections if level == 2 and title == "Stories"), None) \
+        if args.pattern is None else None
+    stories, read = {}, {}
+    notes = []
+    for m in pattern.finditer(scope if scope is not None else text):
         g = m.groupdict()
         story = {"title": g["title"].strip(), "lane": "unassigned"}
+        heading = m.group(0).strip()
+        section = next((body for _, _, body in sections if body.startswith(heading)), "")
+        found = story_plan(section)
+        if found is None:
+            notes.append(f"plan story {g['key']}'s section doesn't open with its lane sentence (\"Lane N, tier T, not "
+                         "blocked.\" or \"Lane N, tier T, after KEY.\"): left it unassigned")
+        else:
+            story["lane"] = found["lane"]
+            if found["after"]:
+                story["after"] = found["after"]
+            read[g["key"]] = found
         if g.get("label"):
             story["label"] = g["label"]
         if g.get("pinned"):
@@ -4437,18 +4454,34 @@ def lead_setup(args) -> None:
         stories[g["key"]] = story
     if not stories:
         raise Stop(f"the pattern matched no heading in {args.plan}")
-    notes = []
-    if args.tracker_snapshot:
-        items = json.loads(Path(args.tracker_snapshot).read_text()).get("items", [])
-        tracked = {i["subject"]: i for i in items if i["subject"] != key and i.get("state") != "canceled"}
+    for subject, found in read.items():
+        unknown = [after for after in found["after"] if after not in stories]
+        if unknown:
+            notes.append(f"plan story {subject} comes after {', '.join(unknown)}, which the plan has no story for")
+    lanes, missing = units_owns(text)
+    if missing:
+        notes.append(missing)
+    for lane in sorted({story["lane"] for story in stories.values() if story["lane"] != "unassigned"} - set(lanes)):
+        notes.append(f"{lane} has stories but no row in the plan's '{UNITS_SECTION}' table: drafted it owning nothing")
+        lanes[lane] = []
+    snapshot, said = setup_tracker_snapshot(c, args, key)
+    if said:
+        notes.append(said)
+    if snapshot is not None:
+        tracked = {i["subject"]: i for i in snapshot if i["subject"] != key and i.get("state") != "canceled"}
         for subject, item in tracked.items():
             if subject not in stories:
                 notes.append(f"tracker item {subject} ({item.get('title')}) has no plan heading; add it or cancel it")
-        for subject in stories:
+        for subject, story in stories.items():
             if subject not in tracked:
                 notes.append(f"plan story {subject} has no tracker item")
+            elif tracked[subject].get("criteria"):
+                story["criteria"] = [{"id": f"{subject.lower()}-{n}", "text": criterion}
+                                     for n, criterion in enumerate(tracked[subject]["criteria"], start=1)]
+            else:
+                notes.append(f"plan story {subject}'s tracker item has no Acceptance Criteria section: drafted no "
+                             "criteria for it")
     drafted = {}
-    sections = plan_sections(plan.read_text())
     for field, name, noun in (("approvals", args.approvals_section, "approvals"),
                             ("outOfScope", args.out_of_scope_section, "out-of-scope items")):
         if not name:
@@ -4492,7 +4525,7 @@ def lead_setup(args) -> None:
         "laneBrief": str(Path(args.plan).with_suffix("")) + ".lane-brief.md",
         "brief": {"notes": None},
         "context": {"sections": args.context_section or []},
-        "lanes": {},
+        "lanes": {lane: {"owns": owns} for lane, owns in lanes.items()},
         "stories": stories,
         "finish": [EVIDENCE_FINISH] if any(st.get("evidence") == "video" for st in stories.values()) else [],
         **({"authority": grant} if grant else {}),
@@ -4515,10 +4548,55 @@ def lead_setup(args) -> None:
                      f"already made reads as made: {', '.join(loose)}")
     if adoptable:
         print(adopt_plan_review(c, adoptable, key))
-    print("next: give each story its lane, list the lanes and the files each owns, set inApp requirements, the finish "
-          "lines and the brief notes (all from the approved plan), then lead-init and lead-brief")
+    print("next: check each story's lane, criteria and order and the lanes' owns against the approved plan, fill in "
+          "what the notes below name, set inApp requirements, the finish lines and the brief notes, then lead-init and "
+          "lead-brief")
     for n in notes:
         print(f"  note: {n}")
+
+
+def lead_hints(args) -> None:
+    """Print the delivery's work-hints/1 for orchestrate-work's `next`: each story's files, from its plan section's
+    `Files:` sentence, and its blockers, the `after` keys its delivery-file story holds. A binding names this command
+    as its state.workHints, so `next` reads the plan's order without the tracker."""
+    c = cfg()
+    sections = plan_sections(c.shelf.text(c.plan) or "")
+    items = {}
+    for key, story in c.stories.items():
+        section = story_section(sections, key) or ""
+        hint = {}
+        files = section_files(section)
+        if files:
+            hint["files"] = files
+        if story.get("after"):
+            hint["blockers"] = list(story["after"])
+        items[key] = hint
+    print(json.dumps({"items": items}, indent=2))
+
+
+def setup_tracker_snapshot(c, args, key: str) -> tuple[list[dict] | None, str | None]:
+    """The tracker snapshot lead-setup drafts criteria from, as its items: the --tracker-snapshot file, else the
+    binding's trackerSnapshot command run for the delivery's own key. None, with why, when there is neither or the
+    command fails."""
+    if args.tracker_snapshot:
+        return json.loads(Path(args.tracker_snapshot).read_text()).get("items", []), None
+    spec = (c.binding.get("state") or {}).get("trackerSnapshot")
+    if not spec:
+        return None, ("no tracker snapshot (pass --tracker-snapshot, or declare the binding's state.trackerSnapshot): "
+                      "drafted no story's criteria")
+    argv = expand_argv(spec["argv"], stateDirectory=str(c.main / c.state_rel), parent=key)
+    try:
+        taken = run(argv, cwd=c.root, check=False, timeout=int(spec.get("timeoutSeconds", 60)))
+    except subprocess.TimeoutExpired:
+        return None, "the binding's tracker snapshot timed out: drafted no story's criteria"
+    if taken.returncode != 0:
+        return None, (f"the binding's tracker snapshot failed ({taken.returncode}: "
+                      f"{(taken.stderr or taken.stdout).strip()[-200:]}): drafted no story's criteria")
+    try:
+        items = json.loads(taken.stdout).get("items", [])
+    except (ValueError, AttributeError):
+        return None, "the binding's tracker snapshot printed no snapshot: drafted no story's criteria"
+    return items, None
 
 
 def review_when_note(c, answer: str | None, notes: list[str]) -> None:
@@ -4551,6 +4629,87 @@ def add_tracker_publisher(c) -> str | None:
     publishers.append(entry)
     c.binding_path.write_text(json.dumps(binding, indent=2) + "\n")
     return entry["id"]
+
+
+# The plan format lead-setup reads (plan-work's SKILL.md documents it, with an example): a story is a `### KEY. Title`
+# heading under `## Stories`, whose section opens with its lane sentence and may hold a `Files:` sentence, and the
+# `## Units and order` table gives each lane's files.
+PLAN_KEY = r"[A-Z][A-Z0-9]*-[0-9]+"
+STORY_HEADING = rf"^### (?P<key>{PLAN_KEY})\. (?P<title>.+)$"
+LANE_SENTENCE = re.compile(rf"Lane ([0-9]+), tier ([0-9]+), (?:not blocked|after ({PLAN_KEY}(?:, {PLAN_KEY})*"
+                           rf"(?: and {PLAN_KEY})?))\.(?=\s|$)")
+UNITS_SECTION = "Units and order"
+UNITS_COLUMNS = ("Tier", "Lane", "Items, in order", "Owns")
+
+
+def plan_paths(text: str) -> list[str]:
+    """The backticked repository paths in a plan's `Files:` sentence or `Owns` cell, in order, each once; a folder
+    (ending in /) becomes the glob of everything under it."""
+    paths = []
+    for token in re.findall(r"`([^`\n]+)`", text):
+        token = token.strip()
+        path = token + "*" if token.endswith("/") else token
+        if path not in paths:
+            paths.append(path)
+    return paths
+
+
+def plan_sentence(text: str, opening: str) -> str | None:
+    """The sentence of `text` (one line, whitespace folded) that starts with `opening`, without it and its full stop;
+    a full stop inside backticks, as in a file name, ends no sentence."""
+    found = re.search(rf"(?:^|(?<=[.:] )){re.escape(opening)}", text)
+    if found is None:
+        return None
+    rest = text[found.end():]
+    masked = re.sub(r"`[^`]*`", lambda m: "x" * len(m.group()), rest)
+    end = re.search(r"\.(?=\s|$)", masked)
+    return rest[:end.start()] if end else rest
+
+
+def section_body(section: str) -> str:
+    """A plan section's text after its heading, as one line with its whitespace folded."""
+    return " ".join(section.split("\n", 1)[1].split()) if "\n" in section else ""
+
+
+def section_files(section: str) -> list[str]:
+    """The paths a story's plan section lists in its `Files:` sentence; none without one."""
+    files = plan_sentence(section_body(section), "Files:")
+    return plan_paths(files) if files is not None else []
+
+
+def story_plan(section: str) -> dict | None:
+    """A story's lane, tier and `after` keys from its plan section (heading included); None when the section doesn't
+    open with its lane sentence."""
+    found = LANE_SENTENCE.match(section_body(section))
+    if found is None:
+        return None
+    lane, tier, keys = found.groups()
+    return {"lane": f"lane-{int(lane)}", "tier": int(tier), "after": re.findall(PLAN_KEY, keys or "")}
+
+
+def units_owns(text: str) -> tuple[dict[str, list[str]], str | None]:
+    """Each lane's `owns` from the plan's `Units and order` table, read from its lowest-tier row; a later row lists
+    only what the lane gains when an earlier item merges, which the lead applies then. With what's missing, if any."""
+    body = next((b for level, title, b in plan_sections(text) if level == 2 and title == UNITS_SECTION), None)
+    if body is None:
+        return {}, f"the plan has no '{UNITS_SECTION}' section: drafted no lane's owns"
+    rows = [[cell.strip() for cell in line.strip().strip("|").split("|")] for line in body.splitlines()
+            if line.strip().startswith("|")]
+    if not rows or any(name not in rows[0] for name in UNITS_COLUMNS):
+        return {}, (f"the plan's '{UNITS_SECTION}' section holds no table with the columns "
+                    f"{', '.join(UNITS_COLUMNS)}: drafted no lane's owns")
+    at = {name: rows[0].index(name) for name in UNITS_COLUMNS}
+    lowest: dict[str, tuple[int, list[str]]] = {}
+    for row in rows[1:]:
+        if len(row) < len(rows[0]) or set("".join(row)) <= set("-: "):
+            continue
+        tier, lane = re.fullmatch(r"[0-9]+", row[at["Tier"]]), re.fullmatch(r"(?:Lane )?([0-9]+)", row[at["Lane"]])
+        if tier is None or lane is None:
+            continue
+        name = f"lane-{int(lane.group(1))}"
+        if name not in lowest or int(tier.group()) < lowest[name][0]:
+            lowest[name] = (int(tier.group()), plan_paths(row[at["Owns"]]))
+    return {name: owns for name, (_, owns) in sorted(lowest.items())}, None
 
 
 def plan_list_items(body: str) -> list[str]:
@@ -7780,8 +7939,12 @@ def main(argv: list[str] | None = None) -> None:
     p = command(sub, "handoff"); p.add_argument("key"); p.add_argument("--pr", required=True)
     p.add_argument("--pr-review-triage")
     p.add_argument("--findings"); p.add_argument("--blocked", action="append", default=[]); p.set_defaults(fn=handoff)
+    p = command(sub, "lead-hints", help="print the delivery's work-hints/1: each story's plan files and its after keys")
+    p.set_defaults(fn=lead_hints)
     p = command(sub, "lead-setup"); p.add_argument("key"); p.add_argument("--plan", required=True)
-    p.add_argument("--base", help="default: the binding's base.ref"); p.add_argument("--pattern", required=True); p.add_argument("--headline")
+    p.add_argument("--base", help="default: the binding's base.ref"); p.add_argument("--headline")
+    p.add_argument("--pattern", help="a regex naming groups key and title for each story heading; default: the plan "
+                   "format's `### KEY. Title` under `## Stories`")
     p.add_argument("--tracker-snapshot"); p.add_argument("--ship-from"); p.add_argument("--ship-path", action="append")
     p.add_argument("--context-section", action="append"); p.add_argument("--force", action="store_true")
     p.add_argument("--approvals-section", help="draft approvals from this plan section's list")

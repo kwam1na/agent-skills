@@ -3870,6 +3870,157 @@ def plan_delivery(fx: Fixture) -> Path:
     return path
 
 
+THIS_PLAN = "docs/plans/2026-11-09-lead-hand-work.md"
+# This delivery's own plan (V26-3250), as its stories' `after` keys and its lanes' lowest-tier rows say, written out
+# here so that nothing the lead's ownership moves rewrite is read.
+THIS_PLAN_AFTER = {"V26-3276": [], "V26-3259": [], "V26-3256": ["V26-3276", "V26-3259"], "V26-3263": ["V26-3256"],
+                   "V26-3257": ["V26-3263"], "V26-3310": ["V26-3257"], "V26-3309": ["V26-3257", "V26-3259"]}
+THIS_PLAN_OWNS = {
+    "lane-1": ["skills/run-delivery/*", "tests/test_run_delivery.py", "tests/test_run_delivery_supervisor.py",
+               "tests/test_run_delivery_plan_review.py", "tests/test_run_delivery_tracker.py", "skills/plan-work/*",
+               "docs/solutions/*", "catalog.json", "profiles/*"],
+    "lane-2": ["skills/orchestrate-work/*", "tests/test_orchestration_state.py", "tests/test_orchestration_render.py",
+               "tests/test_merge_queue.py", "tests/test_lead_wait.py", "tests/test_registry.py", "skills/delivery-views/*",
+               "tests/test_delivery_views_page.py", "tests/test_delivery_views_snapshots.py", "tests/delivery_views_page/*",
+               "tests/fixtures/delivery-views/*"],
+}
+
+
+def plan_format_example() -> str:
+    """The plan-format example plan-work's SKILL.md documents."""
+    text = (ROOT / "skills/plan-work/SKILL.md").read_text(encoding="utf-8")
+    found = re.findall(r"^```markdown example plan-format\n(.*?)^```$", text, re.MULTILINE | re.DOTALL)
+    assert len(found) == 1, "plan-work's SKILL.md documents one plan-format example"
+    return found[0]
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class RunDeliveryPlanFormatTests(unittest.TestCase):
+    """lead-setup drafts each story's lane, criteria and order and the lanes' owns from a plan in plan-work's
+    format, and lead-hints passes the order on to orchestrate-work's next."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        for name, value in vars(installed_release()).items():
+            setattr(cls, name, value)
+
+    def fixture(self) -> Fixture:
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        return fx
+
+    def setup(self, fx: Fixture, plan: str, *extra: str, key: str = "EX-1") -> tuple[int, str, dict | None]:
+        (fx.main / "docs/format-plan.md").write_text(plan)
+        commit(fx.main, f"{key}: the plan")
+        code, out = fx.flow("lead-setup", key, "--plan", "docs/format-plan.md", "--base", "feature/FX-1",
+                            "--no-authority", *extra, cwd=fx.main)
+        path = fx.main / f".agents/deliveries/{key}.json"
+        return code, out, json.loads(path.read_text()) if path.exists() else None
+
+    def test_this_deliverys_plan_drafts_its_committed_lanes_criteria_order_and_owns(self) -> None:
+        committed = json.loads(sh("git", "show", "HEAD:.agents/deliveries/V26-3250.json", cwd=ROOT).stdout)["stories"]
+        # The tracker snapshot carries each item's criteria, as the snapshot producer reads them from the item.
+        items = [{"subject": key, "title": story["title"], "state": "backlog",
+                  "criteria": [criterion["text"] for criterion in story.get("criteria", [])]}
+                 for key, story in committed.items()]
+        tracker = self.fixture()
+        snapshot = tracker.tmp / "tracker.json"
+        snapshot.write_text(json.dumps({"takenAt": "2026-11-09T00:00:00Z", "source": "tracker", "items": items}))
+        code, out, drafted = self.setup(tracker, (ROOT / THIS_PLAN).read_text(encoding="utf-8"),
+                                        "--tracker-snapshot", str(snapshot), key="V26-3250")
+        self.assertEqual(code, 0, out)
+        stories = drafted["stories"]
+        self.assertLessEqual(set(committed), set(stories), out)
+        for key, story in committed.items():
+            with self.subTest(key):
+                self.assertEqual(stories[key]["lane"], story["lane"])
+                self.assertEqual([c["text"] for c in stories[key].get("criteria", [])],
+                                 [c["text"] for c in story.get("criteria", [])])
+                self.assertEqual(stories[key].get("after", []), story.get("after", THIS_PLAN_AFTER[key]))
+                self.assertEqual(stories[key].get("after", []), THIS_PLAN_AFTER[key])
+        self.assertEqual({lane: entry["owns"] for lane, entry in drafted["lanes"].items()}, THIS_PLAN_OWNS)
+        self.assertNotIn("unassigned", out)
+        self.assertNotIn("drafted no", out)
+
+    def test_plan_works_example_drafts_every_story_with_no_hand_edit(self) -> None:
+        fx = self.fixture()
+        code, out, drafted = self.setup(fx, plan_format_example())
+        self.assertEqual(code, 0, out)
+        self.assertEqual({key: (story["lane"], story.get("after", [])) for key, story in drafted["stories"].items()},
+                         {"EX-2": ("lane-1", []), "EX-3": ("lane-2", ["EX-2"]), "EX-4": ("lane-2", ["EX-2", "EX-3"])})
+        self.assertEqual({key: story["title"] for key, story in drafted["stories"].items()},
+                         {"EX-2": "Serve the greeting from the API", "EX-3": "Show the greeting on the front page",
+                          "EX-4": "Greet a returning visitor by name"})
+        # Each lane's lowest-tier row: lane-2's tier-2 row is what it gains later, not its owns.
+        self.assertEqual(drafted["lanes"], {"lane-1": {"owns": ["src/api/*", "tests/test_api.py"]},
+                                            "lane-2": {"owns": ["src/web/*", "tests/test_web.py"]}})
+        # With no tracker snapshot, no story has criteria, and lead-setup says so.
+        self.assertTrue(all("criteria" not in story for story in drafted["stories"].values()), drafted)
+        self.assertIn("note: no tracker snapshot (pass --tracker-snapshot, or declare the binding's "
+                      "state.trackerSnapshot): drafted no story's criteria", out)
+
+    def test_a_section_with_no_lane_sentence_leaves_its_story_unassigned_and_says_so(self) -> None:
+        fx = self.fixture()
+        plan = plan_format_example().replace("Lane 2, tier 1, after EX-2. Test-first.", "Test-first.")
+        code, out, drafted = self.setup(fx, plan)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(drafted["stories"]["EX-3"]["lane"], "unassigned")
+        self.assertNotIn("after", drafted["stories"]["EX-3"])
+        self.assertIn("note: plan story EX-3's section doesn't open with its lane sentence", out)
+        self.assertIn("left it unassigned", out)
+        self.assertEqual(drafted["stories"]["EX-2"]["lane"], "lane-1")
+
+    def test_criteria_come_from_the_tracker_snapshot_and_a_story_without_any_is_named(self) -> None:
+        fx = self.fixture()
+        snapshot = fx.tmp / "tracker.json"
+        snapshot.write_text(json.dumps({"takenAt": "2026-11-09T00:00:00Z", "source": "tracker", "items": [
+            {"subject": "EX-2", "state": "backlog", "criteria": ["The API serves it", "It says when it fails"]},
+            {"subject": "EX-3", "state": "backlog"},
+            {"subject": "EX-4", "state": "backlog", "criteria": []}]}))
+        code, out, drafted = self.setup(fx, plan_format_example(), "--tracker-snapshot", str(snapshot))
+        self.assertEqual(code, 0, out)
+        self.assertEqual(drafted["stories"]["EX-2"]["criteria"], [{"id": "ex-2-1", "text": "The API serves it"},
+                                                                 {"id": "ex-2-2", "text": "It says when it fails"}])
+        for key in ("EX-3", "EX-4"):
+            self.assertNotIn("criteria", drafted["stories"][key])
+            self.assertIn(f"note: plan story {key}'s tracker item has no Acceptance Criteria section", out)
+        # The binding's own tracker snapshot, run for the delivery, when no file is given.
+        binding = fx.main / ".agents/orchestration.json"
+        document = json.loads(binding.read_text()) if binding.exists() else {}
+        document.setdefault("state", {})["trackerSnapshot"] = {"argv": ["cat", str(snapshot)]}
+        binding.write_text(json.dumps(document, indent=2))
+        commit(fx.main, "EX-1: the binding's tracker snapshot")
+        code, out = fx.flow("lead-setup", "EX-1", "--plan", "docs/format-plan.md", "--base", "feature/FX-1",
+                            "--no-authority", "--force", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        drafted = json.loads((fx.main / ".agents/deliveries/EX-1.json").read_text())
+        self.assertEqual([c["id"] for c in drafted["stories"]["EX-2"]["criteria"]], ["ex-2-1", "ex-2-2"])
+        self.assertNotIn("no tracker snapshot", out)
+
+    def test_lead_hints_passes_each_storys_after_keys_and_plan_files_as_work_hints(self) -> None:
+        fx = self.fixture()
+        code, out, drafted = self.setup(fx, plan_format_example())
+        self.assertEqual(code, 0, out)
+        path = fx.main / ".agents/deliveries/EX-1.json"
+        drafted["stateDirectory"] = str(fx.tmp / "record-ex")
+        path.write_text(json.dumps(drafted, indent=2))
+        commit(fx.main, "EX-1: delivery")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+        code, out = fx.flow("--delivery", "EX-1", "lead-hints", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        hints = json.loads(out)
+        self.assertEqual(hints, {"items": {
+            "EX-2": {"files": ["src/api/greeting.py", "tests/test_api.py"]},
+            "EX-3": {"files": ["src/web/front.py", "src/web/templates/*", "tests/test_web.py"], "blockers": ["EX-2"]},
+            "EX-4": {"files": ["src/api/visitor.py"], "blockers": ["EX-2", "EX-3"]}}})
+        # It is a work-hints/1 the release's next reads.
+        checked = subprocess.run(
+            [sys.executable, "-B", "-c", "import json, sys; sys.path.insert(0, sys.argv[1]); import delivery_state; "
+             "delivery_state.check_hints(json.loads(sys.argv[2]), 'hints'); print('ok')",
+             str(fx.release / "skills/orchestrate-work/scripts"), out], capture_output=True, text=True)
+        self.assertEqual(checked.stdout.strip(), "ok", checked.stderr)
+
+
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
 class RunDeliveryPlanTests(unittest.TestCase):
     """The plan chapter's producer: plan.json from the delivery file, the changes log and the lead-side flow logs,
