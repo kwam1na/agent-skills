@@ -7427,6 +7427,14 @@ class DeliveryPostureReaderTests(unittest.TestCase):
         self.assertEqual(len(re.findall(r"\[", vectors["sixty-five-sibling-arrays-at-depth-2"]["base"]["text"])), 65)
         self.assertEqual(len(re.findall(r'"o\d+": \{\}', vectors["sixty-five-sibling-objects-at-depth-2"]["base"]["text"])), 65)
 
+    def test_the_posture_table_says_nesting_past_64_levels_is_malformed(self) -> None:
+        # The reader gates a declaration nested past POSTURE_MAX_DEPTH, so the table an adopter reads has to say so.
+        config = " ".join((ROOT / "skills/run-delivery/references/config.md").read_text(encoding="utf-8").split())
+        self.assertEqual(self.tool.POSTURE_MAX_DEPTH, 64)
+        self.assertIn("| Not valid UTF-8 JSON, JSON nesting arrays or objects more than 64 levels deep (the top-level object "
+                      "being 1), an object failing the shape above, or an unknown `posture` | `gate` | `posture_malformed` |",
+                      config)
+
     def test_neither_page_promises_a_rerun_while_the_base_says_focused(self) -> None:
         # Under focused no pass runs a fullHealth rerun, so lead-resolve's wording says it waits for gate.
         def normal(path: str) -> str:
