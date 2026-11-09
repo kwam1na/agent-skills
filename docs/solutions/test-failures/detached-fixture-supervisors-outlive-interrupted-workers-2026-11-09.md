@@ -80,6 +80,6 @@ everything in place.
 
 ## Related Issues
 
-- V26-3273: the leaked `FX-1` supervisors found on 2026-11-07.
-- V26-3316's diagnosis found the walk's `FileNotFoundError` and a leaked adoption-guide supervisor.
+- The leaked `FX-1` supervisors found on the operator's machine on 2026-11-07.
+- A later diagnosis found the walk's `FileNotFoundError` and a leaked adoption-guide supervisor.
 - `docs/solutions/best-practices/stopping-a-recorded-pid-2026-11-03.md`: stop a recorded pid only while its lock is held.
