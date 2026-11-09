@@ -29,6 +29,7 @@ from unittest import mock
 
 from tests.test_run_delivery import (POSIX_ONLY, Fixture, add_story, commit, doctor_binding, installed_release,
                                      plan_delivery, setup_delivery, sh, stop_supervisors, write_results)
+from tests.test_run_delivery import stop_and_reap  # a process the case started: stopped, then waited for
 from tests.test_run_delivery_tracker import FileBackend, JiraBackend
 
 # Each class that starts supervisors marks itself run_serially, so its cases run one at a time and alone on the machine.
@@ -991,6 +992,62 @@ class SupervisorPassTests(unittest.TestCase):
                   for subject in ("left", "done", "waits", "taken", "stopped", "absent")}
         self.assertEqual(states, {"left": "done", "done": "done", "waits": "open", "taken": "done", "stopped": "open",
                                   "absent": "open"})
+
+    def test_a_settled_storys_checkout_is_cleaned_when_its_lane_is_reassigned_before_the_pass(self) -> None:
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        self.addCleanup(stop_supervisors, fx.tmp)
+        path = plan_delivery(fx, supervised(fx))
+        code, out = fx.flow("lead-init", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-assign", "FX-2", "--lane", "lane-1", "--title", "lane-1", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        wt = fx.lane("FX-2")
+        code, out = fx.flow("handoff", "FX-2", "--no-change", "--evidence", "one-loads and one-fails hold", cwd=wt)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        # The lane takes its next story before any pass runs: it is no longer idle.
+        add_story(fx, path, "FX-4", why="The lane's next story.")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+        code, out = fx.flow("lead-assign", "FX-4", "--lane", "lane-1", "--title", "lane-1", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(next(l for l in record(fx)["state"]["lanes"] if l["id"] == "lane-1")["state"], "assigned")
+        self.once(fx)
+        self.assertFalse(wt.exists(), "the settled story's checkout stayed once its lane took other work")
+
+    def test_a_story_settled_with_no_change_counts_for_the_close_and_the_stories_finish_line(self) -> None:
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        self.addCleanup(stop_supervisors, fx.tmp)
+        path = plan_delivery(fx, supervised(fx))
+        d = json.loads(path.read_text())
+        d["finish"] = [{"id": "stories", "label": "Every story", "text": "Each item merged, or closed with a recorded reason",
+                        "covers": {"criteria": "all", "proofs": ["review", "merged"]}}]
+        path.write_text(json.dumps(d, indent=2))
+        commit(fx.main, "FX-1: the stories finish line")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+        code, out = fx.flow("lead-init", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-assign", "FX-2", "--lane", "lane-1", "--title", "lane-1", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        wt = fx.lane("FX-2")
+        code, out = fx.flow("handoff", "FX-2", "--no-change", "--evidence",
+                            "one-loads: test_one_loads passes; one-fails: test_one_fails passes", cwd=wt)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        held = self.once(fx)["closeHeldBy"]
+        self.assertFalse([hold for hold in held if "FX-2" in hold], f"the settled story still holds the close: {held}")
+        self.assertIn("not handed off: FX-3", held)
+        self.assertFalse(wt.exists(), "the settled story's checkout outlived its lane moving off it")
+        self.merged(fx, "FX-3", "lane-2")
+        state_tool(fx, "focus", "--lane", "lane-2", "--text", "done", "--state", "done")
+        last = self.once(fx)
+        self.assertEqual([e["subject"] for e in kinds(fx, "finish.met")], ["stories"], last)
+        self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)
+        settled = next(p for p in record(fx)["state"]["planned"] if p["subject"] == "FX-2")
+        self.assertEqual(settled["stage"], "settled", "the close removed the settled story from the record")
 
     def closable(self, fx: Fixture) -> None:
         """No finish lines, FX-2 merged, its lane done, FX-3 removed: nothing holds the close."""
@@ -3098,7 +3155,7 @@ class SupervisorBackgroundHealthTests(unittest.TestCase):
         fx.env["FX_HEALTH_SECONDS"] = "300"
         once = subprocess.Popen([sys.executable, "-B", str(fx.tool), "lead-run", "--once"], cwd=fx.main, env=fx.env,
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-        self.addCleanup(lambda: once.poll() is None and os.killpg(once.pid, signal.SIGKILL))
+        self.addCleanup(stop_and_reap, once)
         wait_for(lambda: self.run_lock(fx).get("command"), "the --once pass's run to start", 60)
         run = self.run_lock(fx)
         state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "FX-1 closed by hand.")
@@ -3114,7 +3171,7 @@ class SupervisorBackgroundHealthTests(unittest.TestCase):
         fx = self.fixture()
         # A live group leader that reuses the recorded pid, as far as the lock can tell: its start time differs.
         other = subprocess.Popen(["sleep", "120"], start_new_session=True)
-        self.addCleanup(lambda: other.poll() is None and os.killpg(other.pid, signal.SIGKILL))
+        self.addCleanup(stop_and_reap, other)
         lock = fx.tmp / "flow-log/FX-1.full-health.lock"
         lock.parent.mkdir(parents=True, exist_ok=True)
         lock.write_text(json.dumps({"pid": 99999, "head": "e" * 40, "command": other.pid,
@@ -3427,6 +3484,16 @@ class NoSupervisorOutlivesItsCaseTests(unittest.TestCase):
         self.assertFalse(alive(holder.pid), "the supervisor outlived its case's cleanup")
 
     # -- the supervisor exits once what it serves is gone --------------------------------------------------------------
+
+    def test_starting_the_supervisor_lets_its_handle_go_without_a_resource_warning(self) -> None:
+        """lead-init starts the supervisor to outlive it and never waits for it: with every ResourceWarning an error,
+        as the suite's own sensor runs, it still ends with no warning that the subprocess is still running."""
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        fx.env["PYTHONWARNINGS"] = "error::ResourceWarning"
+        self.started(fx)  # its command's output carries no traceback, or the fixture fails it
+        log = self.supervisor_log(fx)
+        self.assertNotIn("ResourceWarning", log)
 
     def test_a_supervisor_whose_record_is_removed_exits_on_its_own(self) -> None:
         fx = Fixture(self.generation, self.receipt)

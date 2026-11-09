@@ -16,11 +16,13 @@ their own signal handlers, working directory and module state.
 from __future__ import annotations
 
 import argparse
+import ast
 import atexit
 import base64
 import contextlib
 import datetime
 import fcntl
+import gc
 import hashlib
 import io
 import importlib.util
@@ -38,6 +40,7 @@ import threading
 import time
 import types
 import unittest
+import warnings
 import zipfile
 from pathlib import Path
 from unittest import mock
@@ -4760,6 +4763,154 @@ class RunDeliveryPlanTests(unittest.TestCase):
             self.assertEqual((path.read_bytes(), self.written(fx), sh("git", "rev-parse", "HEAD", cwd=m).stdout), before, argv)
             self.assertEqual(sh("git", "status", "--porcelain", cwd=m).stdout, "", argv)
 
+    def no_change_lane(self) -> tuple[Fixture, Path, Path]:
+        """FX-2, whose two criteria already hold, assigned and started in its lane's checkout from the base."""
+        fx = self.fixture()
+        path = plan_delivery(fx)
+        m = fx.main
+        fx.flow("lead-init", cwd=m)
+        code, out = fx.flow("lead-assign", "FX-2", "--lane", "lane-1", "--title", "Lane 1", cwd=m)
+        self.assertEqual(code, 0, out)
+        return fx, path, fx.lane("FX-2")
+
+    def base(self, fx: Fixture) -> str:
+        return sh("git", "rev-parse", "origin/feature/FX-1", cwd=fx.main).stdout.strip()
+
+    def test_a_story_that_needs_no_change_is_handed_off_and_settled_with_no_branch_pr_or_base_commit(self) -> None:
+        fx, path, wt = self.no_change_lane()
+        m = fx.main
+        before = self.base(fx)
+        code, out = fx.flow("handoff", "FX-2", "--no-change", "--evidence",
+                            "one-loads: test_one_loads passes at the base; one-fails: test_one_fails passes", cwd=wt)
+        self.assertEqual(code, 0, out)
+        self.assertIn("candidate: none, no change needed", out)
+        self.assertIn(f"base head the evidence ran at: `{before}`", out)
+        record = self.record(fx)
+        self.assertEqual(record["state"]["queue"], [], "a no-change hand-off entered the merge queue")
+        entry = next(p for p in record["state"]["planned"] if p["subject"] == "FX-2")
+        self.assertEqual((entry["stage"], entry["noChange"]["baseHead"]), ("review", before))
+        # No branch was pushed, no change request opened.
+        self.assertEqual(sh("git", "ls-remote", "--heads", "origin", "feature/FX-2", cwd=m).stdout, "")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertIn("accepted FX-2: settled with no change needed", out)
+        record = self.record(fx)
+        entry = next(p for p in record["state"]["planned"] if p["subject"] == "FX-2")
+        self.assertEqual(entry["stage"], "settled")
+        self.assertEqual(record["state"]["queue"], [])
+        self.assertEqual(self.base(fx), before, "a base commit was made")
+        self.assertEqual(sh("git", "ls-remote", "origin", "feature/FX-1", cwd=m).stdout.split()[0], before)
+        # The plan keeps it, not removed, and counts every proof it owes done, as the line map and finish lines do.
+        plan = self.plan(fx)
+        unit = next(u for u in plan["units"] if u["subject"] == "FX-2")
+        self.assertFalse(unit.get("removed", False))
+        states = {kind: fx.call("proof_state", None, plan, self.record(fx), unit, kind, cwd=m, delivery="FX-1")
+                  for kind in unit["proofs"]}
+        self.assertEqual(set(states.values()), {"done"}, states)
+
+    def test_a_base_that_moved_after_the_hand_off_still_settles_it(self) -> None:
+        fx, path, wt = self.no_change_lane()
+        m = fx.main
+        code, out = fx.flow("handoff", "FX-2", "--no-change", "--evidence", "one-loads and one-fails hold", cwd=wt)
+        self.assertEqual(code, 0, out)
+        handed = self.base(fx)
+        # Another clone moves the base, so the lead's checkout knows of it only once lead-accept fetches.
+        other = fx.tmp / "other-clone"
+        origin = sh("git", "remote", "get-url", "origin", cwd=m).stdout.strip()
+        sh("git", "clone", "-q", "--branch", "feature/FX-1", origin, other)
+        (other / "docs/later.md").write_text("later\n")
+        commit(other, "FX-1: the base moves on")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=other)
+        self.assertEqual(self.base(fx), handed, "the lead's checkout already knew the base had moved")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertNotEqual(self.base(fx), handed, "lead-accept judged the hand-off against a base it never fetched")
+        self.assertEqual(next(p for p in self.record(fx)["state"]["planned"] if p["subject"] == "FX-2")["stage"], "settled")
+
+    def test_a_no_change_hand_off_from_a_head_the_base_doesnt_hold_is_refused(self) -> None:
+        fx, path, wt = self.no_change_lane()
+        m = fx.main
+        # The lane's checkout holds a change: that is a hand-off with a PR.
+        (wt / "src/one.txt").write_text("changed\n")
+        commit(wt, "FX-2: a change")
+        code, out = fx.flow("handoff", "FX-2", "--no-change", "--evidence", "one-loads and one-fails hold", cwd=wt)
+        self.assertEqual(code, 2, out)
+        self.assertIn("this checkout holds a change, so hand it off with --pr", out)
+        self.assertEqual(next(p for p in self.record(fx)["state"]["planned"] if p["subject"] == "FX-2")["stage"], "planned")
+        # The lead refuses evidence run at a head the base doesn't hold.
+        stray = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+        sh(sys.executable, "-B", fx.release / "skills/orchestrate-work/scripts/delivery_state.py", "--dir", fx.tmp / "record",
+           "handoff", "--no-change", "--lane", "lane-1", "--subject", "FX-2", "--base-head", stray, "--evidence-text",
+           "one-loads and one-fails hold")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 1, out)
+        self.assertIn(f"NOT accepted: FX-2", out)
+        self.assertIn(f"the evidence ran at {stray[:10]}, which origin/feature/FX-1 doesn't hold", out)
+        self.assertNotEqual(next(p for p in self.record(fx)["state"]["planned"] if p["subject"] == "FX-2")["stage"], "settled")
+
+    def test_the_lead_settles_no_change_evidence_only_when_it_names_every_criterion(self) -> None:
+        fx, path, wt = self.no_change_lane()
+        m = fx.main
+        code, out = fx.flow("handoff", "FX-2", "--no-change", "--evidence", "one-loads: test_one_loads passes", cwd=wt)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 1, out)
+        self.assertIn("the evidence names no proof of criterion one-fails", out)
+        # Nor does a longer token that only holds it.
+        for longer in ("one-fails.extra", "one-failsafe", "not-one-fails-yet", "xone-fails"):
+            with self.subTest(longer=longer):
+                code, out = fx.flow("handoff", "FX-2", "--no-change", "--evidence", f"one-loads holds; {longer} holds", cwd=wt)
+                self.assertEqual(code, 0, out)
+                code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+                self.assertEqual(code, 1, out)
+                self.assertIn("the evidence names no proof of criterion one-fails", out)
+        self.assertNotIn("one-loads,", out)
+        self.assertEqual(next(p for p in self.record(fx)["state"]["planned"] if p["subject"] == "FX-2")["stage"], "review")
+        # Handed off again, from a file, naming both: accepted.
+        evidence = fx.tmp / "evidence.md"
+        # A sentence may end on a criterion id: its full stop isn't part of the id.
+        evidence.write_text("one-loads: test_one_loads passes\ntest_one_fails proves one-fails.\n")
+        code, out = fx.flow("handoff", "FX-2", "--no-change", "--evidence", f"@{evidence}", cwd=wt)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 0, out)
+        code, again = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 2, again)
+        self.assertIn("FX-2 is already settled with no change", again)
+        self.assertEqual(next(p for p in self.record(fx)["state"]["planned"] if p["subject"] == "FX-2")["noChange"]["evidence"],
+                         "one-loads: test_one_loads passes\ntest_one_fails proves one-fails.")
+
+    def test_a_no_change_story_with_no_criteria_is_refused_naming_it_and_the_fix(self) -> None:
+        fx = self.fixture()
+        path = plan_delivery(fx)
+        m = fx.main
+        d = json.loads(path.read_text())
+        del d["stories"]["FX-3"]["criteria"]
+        d["finish"][0]["covers"]["criteria"] = ["one-loads", "one-fails"]
+        path.write_text(json.dumps(d, indent=2))
+        commit(m, "FX-1: FX-3 has no criteria")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        fx.flow("lead-init", cwd=m)
+        fx.flow("lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2", cwd=m)
+        wt = fx.lane("FX-3")
+        code, out = fx.flow("handoff", "FX-3", "--no-change", "--evidence", "it holds", cwd=wt)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-accept", "FX-3", cwd=m)
+        self.assertEqual(code, 2, out)
+        self.assertIn("FX-3 has no criteria", out)
+        self.assertIn("fix: record its criteria first", out)
+
+    def test_a_no_change_hand_off_takes_its_evidence_and_nothing_a_change_carries(self) -> None:
+        fx, path, wt = self.no_change_lane()
+        for argv, words in ((["--no-change"], "--no-change needs --evidence"),
+                            (["--no-change", "--evidence", "x", "--pr", "https://forge.test/pr/1"], "no --pr"),
+                            ([], "a hand-off needs --pr")):
+            with self.subTest(argv=argv):
+                code, out = fx.flow("handoff", "FX-2", *argv, cwd=wt)
+                self.assertEqual(code, 2, out)
+                self.assertIn(words, out)
+        self.assertEqual(next(p for p in self.record(fx)["state"]["planned"] if p["subject"] == "FX-2")["stage"], "planned")
+
     def test_lead_assign_rebuilds_for_a_story_it_registers(self) -> None:
         fx = self.fixture()
         path = plan_delivery(fx)
@@ -6705,6 +6856,19 @@ class RunDeliveryArgumentTests(unittest.TestCase):
         finally:
             sys.dont_write_bytecode = previous
 
+    def setUp(self) -> None:
+        """Each case calls main() from a repository of its own, which holds no delivery, with none of the settings the
+        tool reads: so the status line every lead command ends with, and anything else that resolves a delivery, looks
+        only inside the case. (main() itself drops any configuration an earlier call left.)"""
+        folder = Path(tempfile.mkdtemp(prefix="run-delivery-arguments-"))
+        self.addCleanup(shutil.rmtree, folder, True)
+        sh("git", "init", "-q", "-b", "main", cwd=folder)
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(folder)
+        settings = without_tool_settings()
+        settings.__enter__()
+        self.addCleanup(settings.__exit__, None, None, None)
+
     def parsed(self, *argv: str) -> list[list[str]]:
         """What reaches argparse, and what the command then receives."""
         seen, received = [], []
@@ -7609,9 +7773,10 @@ class LiveDeliveryOutOfReachTests(unittest.TestCase):
                 break
             except PermissionError:
                 pid += 1
-        # Under its own key, and under the fixture's, which a command that took this state directory would look for.
+        # Under its own key and its delivery's name (the tool's lock path names the delivery), and under the fixture's,
+        # which a command that took this state directory would look for.
         (live / "flow-log").mkdir(parents=True)
-        for key in (PLANTED_KEY, "FX-1"):
+        for key in (PLANTED_KEY, PLANTED_MARKER, "FX-1"):
             lock = live / f"flow-log/{key}.supervisor.lock"
             lock.write_text(json.dumps({"pid": pid, "address": f"http://{PLANTED_MARKER}.test/"}))
             holder = open(lock, "a+")
@@ -7671,6 +7836,344 @@ class LiveDeliveryOutOfReachTests(unittest.TestCase):
                       and PLANTED_MARKER.encode() in path.read_bytes()]
             self.assertEqual(copied, [], "a lead command copied the planted delivery into the case")
         self.assertEqual(tree_snapshot(main), before, "a lead command changed the live delivery's files")
+
+
+# Folders no in-process call may touch while watched, each with what touched it: (resolved root, [event path, ...]).
+_CONTACT_WATCH: list[tuple[str, list[str]]] = []
+_CONTACT_AUDITING: list[bool] = []
+_CONTACT_BUSY = threading.local()
+# Each audit event that names a path, and which of its arguments are paths.
+_CONTACT_EVENTS = {"open": (0,), "os.listdir": (0,), "os.scandir": (0,), "os.chdir": (0,), "os.mkdir": (0,),
+                   "os.remove": (0,), "os.rmdir": (0,), "os.rename": (0, 1), "os.truncate": (0,), "os.utime": (0,),
+                   "os.chmod": (0,), "os.symlink": (0, 1), "os.link": (0, 1), "shutil.rmtree": (0,),
+                   "shutil.copyfile": (0, 1), "shutil.move": (0, 1), "fcntl.flock": ()}
+
+
+def _contact_audit(event: str, args: tuple) -> None:
+    if not _CONTACT_WATCH or getattr(_CONTACT_BUSY, "on", False):
+        return
+    if event == "subprocess.Popen":
+        _executable, argv, cwd, _env = args
+        # A command run without a cwd runs where the process is; of its arguments, those that name a path.
+        named = [arg for arg in (argv if isinstance(argv, (list, tuple)) else [argv])
+                 if isinstance(arg, (str, bytes, os.PathLike)) and os.sep in os.fsdecode(arg)]
+        paths = [cwd if cwd is not None else os.getcwd(), *named]
+    elif event in _CONTACT_EVENTS:
+        paths = [args[i] for i in _CONTACT_EVENTS[event] if i < len(args)]
+    else:
+        return
+    _CONTACT_BUSY.on = True
+    try:
+        for path in paths:
+            if path is None or isinstance(path, int):
+                continue
+            try:
+                text = os.fsdecode(path)
+            except TypeError:
+                continue
+            real = os.path.realpath(os.path.join(os.getcwd(), text))
+            for root, seen in _CONTACT_WATCH:
+                if real == root or real.startswith(root + os.sep):
+                    seen.append(f"{event} {text}")
+    finally:
+        _CONTACT_BUSY.on = False
+
+
+@contextlib.contextmanager
+def watching_contact(root: Path):
+    """Record every file opened, folder listed, file changed or command run under `root` while it is watched, by this
+    process's audit events: yields the list, one `<event> <path>` per contact."""
+    if not _CONTACT_AUDITING:
+        sys.addaudithook(_contact_audit)  # an audit hook stays for the process's life, so one serves every watch
+        _CONTACT_AUDITING.append(True)
+    watch = (os.path.realpath(root), [])
+    real_rmtree = shutil.rmtree
+
+    def rmtree(path, *args, **kwargs):
+        # Counted once, by the folder it removes: its own steps name entries relative to a folder it holds open,
+        # which would otherwise read as relative to the working directory.
+        _contact_audit("shutil.rmtree", (path, None))
+        busy, _CONTACT_BUSY.on = getattr(_CONTACT_BUSY, "on", False), True
+        try:
+            return real_rmtree(path, *args, **kwargs)
+        finally:
+            _CONTACT_BUSY.on = busy
+
+    _CONTACT_WATCH.append(watch)
+    try:
+        with mock.patch.object(shutil, "rmtree", rmtree):
+            yield watch[1]
+    finally:
+        _CONTACT_WATCH.remove(watch)
+
+
+@contextlib.contextmanager
+def without_tool_settings():
+    """The test process's own environment with none of the settings the tool reads, put back afterwards."""
+    with mock.patch.dict(os.environ):
+        for name in TOOL_SETTINGS:
+            os.environ.pop(name, None)
+        yield
+
+
+def fresh_tool(name: str) -> types.ModuleType:
+    """A copy of run_delivery.py of this case's own, loaded without writing bytecode: no global another case set."""
+    spec = importlib.util.spec_from_file_location(name, ROOT / "skills/run-delivery/scripts/run_delivery.py")
+    tool = importlib.util.module_from_spec(spec)
+    previous = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        spec.loader.exec_module(tool)
+    finally:
+        sys.dont_write_bytecode = previous
+    return tool
+
+
+def stop_and_reap(proc: subprocess.Popen) -> None:
+    """Stop a process this case started in a session of its own, by the pid its Popen recorded (so its whole group),
+    and wait for it, so it neither runs on nor is left unreaped."""
+    if proc.poll() is None:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)
+    proc.wait()
+
+
+def alive_pid(pid: int) -> bool:
+    """Whether a process with this pid exists. A stopped leader's orphaned child is reaped by init, so a caller polls
+    for a bounded while rather than reading once."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def unreaped_cleanups(source: str) -> list[str]:
+    """Each `addCleanup(lambda: ...)` in `source` that stops a process the module started with `subprocess.Popen`
+    without waiting for it, which leaves it unreaped: `<line> <lambda>`. A pid the case only recorded (a detached
+    supervisor's, say) is no child of the case's and can't be waited for, so stopping it by that pid is enough."""
+    tree = ast.parse(source)
+    started = {target.id for node in ast.walk(tree) if isinstance(node, ast.Assign)
+               and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute)
+               and node.value.func.attr == "Popen" for target in node.targets if isinstance(target, ast.Name)}
+    stops = {"kill", "killpg", "terminate", "send_signal"}
+    found = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "addCleanup"
+                and node.args and isinstance(node.args[0], ast.Lambda)):
+            continue
+        body = node.args[0]
+        calls = [call for call in ast.walk(body) if isinstance(call, ast.Call)]
+        named = lambda call: call.func.attr if isinstance(call.func, ast.Attribute) else getattr(call.func, "id", None)
+        procs = {n.id for n in ast.walk(body) if isinstance(n, ast.Name)} & started
+        waited = {call.func.value.id for call in calls if named(call) in ("wait", "communicate")
+                  and isinstance(call.func, ast.Attribute) and isinstance(call.func.value, ast.Name)}
+        waited |= {arg.id for call in calls if named(call) == "stop_and_reap" for arg in call.args[:1]
+                   if isinstance(arg, ast.Name)}
+        if procs - waited and any(named(call) in stops for call in calls):
+            found.append(f"{node.lineno} {ast.unparse(body)}")
+    return found
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class InProcessCallsStayInTheirCaseTests(unittest.TestCase):
+    """A call into the tool's main() in the test process resolves its repository, delivery and record inside its own
+    case: never from the checkout the suite runs from, never from a configuration an earlier call left, and never by
+    touching a live record or lock. And every process a case starts is waited for, so none is left running or
+    unreaped."""
+
+    plant = LiveDeliveryOutOfReachTests.plant
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        for name, value in vars(installed_release()).items():
+            setattr(cls, name, value)
+
+    def case_folder(self) -> Path:
+        folder = Path(tempfile.mkdtemp(prefix="run-delivery-in-process-"))
+        self.addCleanup(shutil.rmtree, folder, True)
+        return folder
+
+    def status_lines(self, out: str) -> list[str]:
+        return [line for line in out.splitlines() if line.startswith("supervisor:") or PLANTED_MARKER in line]
+
+    def test_the_in_process_calls_run_from_a_live_checkout_never_reach_its_delivery(self) -> None:
+        main, worktree, settings = self.plant()
+        before = tree_snapshot(main)
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(worktree)  # where the suite runs from: a story's own checkout of the live repository
+        # Each test run by itself under its class's own setup, never as a suite, whose end would also run this module's
+        # cleanups and so remove the release other cases share.
+        cases = RunDeliveryArgumentTests
+        tests = list(unittest.defaultTestLoader.loadTestsFromTestCase(cases))
+        self.assertGreater(len(tests), 10)
+        out, result = io.StringIO(), unittest.TestResult()
+        with mock.patch.dict(os.environ, settings), watching_contact(main.parent) as contact, \
+                contextlib.redirect_stdout(out):
+            cases.setUpClass()
+            try:
+                for test in tests:
+                    test.run(result)
+            finally:
+                cases.tearDownClass()
+                cases.doClassCleanups()
+        self.assertEqual(result.testsRun, len(tests))
+        self.assertTrue(result.wasSuccessful(), [text for _, text in result.failures + result.errors][:3])
+        self.assertEqual(self.status_lines(out.getvalue()), [], "an in-process call printed the live supervisor's status")
+        # Only a case's cleanup going back to where the runner was is no contact by a call.
+        back = f"os.chdir {os.path.realpath(worktree)}"
+        touched = sorted({entry for entry in contact if f"{entry.split()[0]} {os.path.realpath(entry.split(' ', 1)[1])}" != back})
+        self.assertEqual(touched, [], "an in-process call touched the live checkout")
+        self.assertEqual(tree_snapshot(main), before, "an in-process call changed the live delivery's files")
+
+    def test_a_configuration_an_earlier_call_left_is_never_the_next_calls(self) -> None:
+        main, worktree, _ = self.plant()
+        tool = fresh_tool("run_delivery_left_configured")
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(worktree)
+        with without_tool_settings():
+            left = tool.Config(worktree)  # what an earlier call, run from the live checkout, leaves cached
+        self.assertTrue((left.state / "state.json").is_file(), "the earlier call didn't resolve the live record")
+        tool.CFG, tool.DELIVERY_ARG = left, None
+        os.chdir(self.case_folder())  # this call's own case, which holds no repository
+        out = io.StringIO()
+        with without_tool_settings(), mock.patch.object(tool, "lead_plan", lambda args: None), \
+                mock.patch.object(tool.signal, "signal"), watching_contact(main.parent) as contact, \
+                contextlib.redirect_stdout(out):
+            tool.main(["--delivery", "K", "lead-plan", "why", "c1", "--why", "x"])
+        self.assertEqual(self.status_lines(out.getvalue()), [], "the call reported the earlier call's delivery")
+        self.assertEqual(contact, [], "the call touched the delivery an earlier call left configured")
+
+    def test_a_configuration_resolves_its_main_checkout_and_delivery_from_its_own_root(self) -> None:
+        main, worktree, _ = self.plant()
+        case = self.case_folder() / "case"
+        case.mkdir()
+        sh("git", "init", "-q", "-b", "main", cwd=case)
+        quieten(case)
+        (case / ".gitignore").write_text(".orchestration/\n")
+        (case / ".agents/deliveries").mkdir(parents=True)
+        (case / ".agents/run-delivery.json").write_text(json.dumps({
+            "schemaVersion": "delivery-flow/1", "branchPattern": "claude/{key}", "laneCheckout": ".orchestration/lanes/{key}",
+            "tracker": {"issueUrl": "https://case.test/{key}"}}, indent=2) + "\n")
+        for key in ("CASE-1", "CASE-5"):
+            (case / f".agents/deliveries/{key}.json").write_text(json.dumps({
+                "schemaVersion": "delivery-flow-delivery/1", "delivery": key, "baseBranch": "main",
+                "plan": f"docs/{key}.md", "lanes": {"lane-1": {"owns": ["*"]}},
+                "stories": {f"{key}0": {"lane": "lane-1", "title": key}}}, indent=2) + "\n")
+        commit(case, "two deliveries")
+        sh("git", "checkout", "-q", "-b", "claude/CASE-10", cwd=case)  # a story of CASE-1, so the branch picks it
+        tool = fresh_tool("run_delivery_rooted")
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(worktree)  # the process runs from the live checkout; the configuration is for the case
+        with without_tool_settings(), watching_contact(main.parent) as contact:
+            c = tool.Config(case)
+        self.assertEqual(Path(c.main).resolve(), case.resolve(), "the main checkout came from the process's checkout")
+        self.assertEqual(c.delivery, "CASE-1", "the delivery was picked by the process's branch")
+        self.assertTrue(Path(c.state).resolve().is_relative_to(case.resolve()), c.state)
+        self.assertEqual(contact, [], "resolving the case's configuration touched the live checkout")
+
+    def test_the_contact_watch_sees_a_read_a_lock_and_a_command_under_its_folder(self) -> None:
+        folder = self.case_folder()
+        (folder / "file").write_text("x")
+        here = os.getcwd()
+        self.addCleanup(os.chdir, here)
+        with watching_contact(folder) as contact:
+            (folder / "file").read_text()
+            with open(folder / "file", "a+") as probe:
+                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(probe, fcntl.LOCK_UN)
+            os.chdir(folder)
+            subprocess.run(["true"], check=True)
+            os.chdir(here)
+        self.assertEqual([entry.split()[0] for entry in contact],
+                         ["open", "open", "os.chdir", "subprocess.Popen"], contact)
+        elsewhere = self.case_folder()
+        (elsewhere / "inner").mkdir()
+        (elsewhere / "inner/file").write_text("x")
+        (folder / "inner").mkdir()
+        (folder / "inner/file").write_text("x")
+        with watching_contact(folder) as contact:
+            subprocess.run(["true"], check=True)
+            shutil.rmtree(elsewhere / "inner")
+        self.assertEqual(contact, [], "a command run, or a folder removed, elsewhere counted")
+        with watching_contact(folder) as contact:
+            shutil.rmtree(folder / "inner")
+        self.assertEqual([entry.split()[0] for entry in contact], ["shutil.rmtree"], contact)
+
+    def test_every_cleanup_that_stops_a_process_also_waits_for_it(self) -> None:
+        for module in ("test_run_delivery.py", "test_run_delivery_supervisor.py"):
+            with self.subTest(module=module):
+                self.assertEqual(unreaped_cleanups((ROOT / "tests" / module).read_text()), [])
+        probe = "".join(f"{name} = subprocess.Popen(['sleep', '60'])\n" for name in "abcde") + (
+            "self.addCleanup(lambda: a.poll() is None and os.killpg(a.pid, signal.SIGKILL))\n"
+            "self.addCleanup(lambda: b.poll() is None and b.kill())\n"
+            "self.addCleanup(lambda: c.poll() is None and (os.killpg(c.pid, signal.SIGKILL), c.wait()))\n"
+            "self.addCleanup(lambda: stop_and_reap(d))\n"
+            "self.addCleanup(lambda: e.poll() is None and (e.kill(), a.wait()))\n"
+            "self.addCleanup(lambda: alive(pid) and os.kill(pid, signal.SIGTERM))\n")
+        self.assertEqual([line.split()[0] for line in unreaped_cleanups(probe)], ["6", "7", "10"],
+                         "the scan misses a form, or flags a recorded pid it can't wait for")
+
+    def test_a_lease_given_up_closes_its_lock_file(self) -> None:
+        tool = fresh_tool("run_delivery_lease")
+        lock = self.case_folder() / "app.lock"
+        holder = open(lock, "a+")
+        self.addCleanup(holder.close)
+        fcntl.flock(holder, fcntl.LOCK_EX)  # held through another open file, as a live check holds it
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", ResourceWarning)
+            try:
+                tool.Lease(lock, 0, "lead-close", 0)
+            except tool.Stop as held:
+                self.assertIn("the in-app lease is held", str(held))
+            else:
+                self.fail("took a held lease")
+            gc.collect()
+        self.assertEqual([str(w.message) for w in caught if issubclass(w.category, ResourceWarning)], [],
+                         "the lease it gave up left its lock file open")
+
+    def test_stopping_and_reaping_stops_the_whole_group_the_process_leads(self) -> None:
+        # A leader with a child in its session, as `lead-run --once` starts its pass's own: stopping only the leader
+        # would leave the child running after the case.
+        leader = subprocess.Popen(["sh", "-c", "sleep 60 & echo $!; wait"], stdout=subprocess.PIPE, text=True,
+                                  start_new_session=True)
+        self.addCleanup(stop_and_reap, leader)  # on any way out, as a case's cleanup does
+        self.addCleanup(leader.stdout.close)
+        child = int(leader.stdout.readline())
+        self.addCleanup(lambda: alive_pid(child) and os.kill(child, signal.SIGKILL))
+        self.assertEqual(os.getpgid(child), leader.pid, "the child isn't in the leader's group")
+        self.assertTrue(alive_pid(child), "alive_pid can't see the running child")
+        stop_and_reap(leader)
+        deadline = time.monotonic() + 5
+        while alive_pid(child) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertFalse(alive_pid(child), "the leader's child outlived stop_and_reap")
+
+    def test_a_stopped_and_reaped_process_is_gone_and_leaves_no_warning(self) -> None:
+        def released(reap: bool) -> list[str]:
+            proc = subprocess.Popen(["sleep", "60"], start_new_session=True)
+            if reap:
+                started = time.monotonic()
+                stop_and_reap(proc)
+                # Stopped, not waited out: it ends by the signal, long before its own minute is up.
+                self.assertLess(time.monotonic() - started, 5)
+                self.assertEqual(proc.returncode, -signal.SIGKILL)
+            else:  # the form that warned: stopped, never waited for
+                os.killpg(proc.pid, signal.SIGKILL)
+                time.sleep(0.2)
+            pid = proc.pid
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always", ResourceWarning)
+                del proc
+                gc.collect()
+            if not reap:  # the control's own zombie, reaped by the pid it had unless subprocess already did
+                with contextlib.suppress(ChildProcessError):
+                    os.waitpid(pid, 0)
+            return [str(w.message) for w in caught if issubclass(w.category, ResourceWarning)]
+
+        self.assertEqual(released(reap=True), [])
+        self.assertTrue(any("is still running" in message for message in released(reap=False)), "the control didn't warn")
+
 
 if __name__ == "__main__":
     unittest.main()
