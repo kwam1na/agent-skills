@@ -190,7 +190,8 @@
     {
       "id": "approval-3",
       "text": "The edit to the epic's finish line in Linear, under the same grant.",
-      "state": "waiting"
+      "state": "done",
+      "who": "the operator"
     },
     {
       "id": "approval-4",
