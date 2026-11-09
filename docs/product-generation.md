@@ -190,9 +190,12 @@ Unlike 0.8.0 to 0.8.2, it is not that repository's `main`. Nothing merged there 
 `v0.8.2` ships in it but that change, and 0.8.3 carries 0.8.2's warm-base prewarm.
 
 What 0.8.3 adds:
-- A command run from anything but a repository's root reads the posture as `gate`, with
-  `posture_unreadable` naming the directory, and writes one `posture_unreadable:` line on
-  stderr ahead of its own blocker. Such a directory might be a plain subdirectory, a real
+- The runtime's CLI, run from anything but a repository's root, reads the posture as
+  `gate`, with `posture_unreadable` naming the directory, and writes one
+  `posture_unreadable:` line on stderr ahead of its own blocker. The installed launcher
+  never gets that far: it refuses a `--root` below the Git top level with
+  `repository.invalid` first, so this is the answer for a host that runs the runtime's
+  CLI directly from another directory. Such a directory might be a plain subdirectory, a real
   nested repository, a submodule, an untracked gitfile or a bare repository. A linked
   worktree still reads its base from its own root, including one nested under its main
   checkout, as lane checkouts are.

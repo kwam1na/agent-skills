@@ -294,41 +294,76 @@ class BuiltProductTests(unittest.TestCase):
             run_git(repository, "add", "-A")
             run_git(repository, "commit", "-qm", "a package")
             # The control: from the root, the same CLI reads the base's focused.
-            self.assertEqual(self.installed_cli(repository, repository, "verify").returncode, 0)
+            control = self.installed_cli(repository, repository, "verify")
+            self.assertEqual(control.returncode, 0, control.stdout + control.stderr)
+            self.assertEqual(control.stdout, self.focused_outcome(repository))
             self.assert_refused_outside_root(self.installed_cli(repository, subdirectory, "verify"), subdirectory.resolve())
+
+    def focused_outcome(self, repository: Path) -> str:
+        tip = run_git(repository, "rev-parse", "refs/remotes/origin/main")
+        return f"outcome: focused\nposture: focused\nreason: A fixture's reason.\nsource: origin/main\nbase tip: {tip}\n"
+
+    def focused_remote(self, folder: Path) -> Path:
+        """Another repository's remote, whose main declares focused and carries the same config."""
+        other = folder / "other"
+        other.mkdir()
+        seed = initialize_repository(other)
+        run_git(seed, "branch", "-M", "main")
+        (seed / "harness.config.ts").write_text(f"export default {json.dumps(CONSUMER_CONFIG)};\n", encoding="utf-8")
+        (seed / ".agents").mkdir()
+        (seed / POSTURE_PATH).write_text(declaration("focused"), encoding="utf-8")
+        run_git(seed, "add", "-A")
+        run_git(seed, "commit", "-qm", "focused")
+        remote = other / "remote.git"
+        run_git(other, "init", "-q", "--bare", "--initial-branch=main", str(remote))
+        run_git(seed, "remote", "add", "origin", str(remote))
+        run_git(seed, "push", "-q", "origin", "main")
+        return remote
 
     def test_verify_from_a_nested_repository_whose_origin_declares_focused_is_gated(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             repository = self.consumer(Path(folder), declaration("focused"))
-            # A repository of its own inside the root, with its own origin declaring focused and the same config.
-            other = Path(folder) / "other"
-            other.mkdir()
-            seed = initialize_repository(other)
-            run_git(seed, "branch", "-M", "main")
-            (seed / "harness.config.ts").write_text(f"export default {json.dumps(CONSUMER_CONFIG)};\n", encoding="utf-8")
-            (seed / ".agents").mkdir()
-            (seed / POSTURE_PATH).write_text(declaration("focused"), encoding="utf-8")
-            run_git(seed, "add", "-A")
-            run_git(seed, "commit", "-qm", "focused")
-            remote = other / "remote.git"
-            run_git(other, "init", "-q", "--bare", "--initial-branch=main", str(remote))
-            run_git(seed, "remote", "add", "origin", str(remote))
-            run_git(seed, "push", "-q", "origin", "main")
+            remote = self.focused_remote(Path(folder))
             nested = repository / "vendor" / "nested"
             run_git(repository, "clone", "-q", str(remote), str(nested))
+            run_git(nested, "remote", "set-head", "origin", "main")
+            # The control: from its own place, outside any work tree, the same clone reads its focused.
+            alone = Path(folder) / "alone"
+            run_git(Path(folder), "clone", "-q", str(remote), str(alone))
+            run_git(alone, "remote", "set-head", "origin", "main")
+            self.assertEqual(self.installed_cli(repository, alone, "verify").returncode, 0)
+            self.assert_refused_outside_root(self.installed_cli(repository, nested, "verify"), nested.resolve())
+
+    def test_verify_from_an_initialised_submodule_whose_origin_declares_focused_is_gated(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            repository = self.consumer(Path(folder), declaration("focused"))
+            remote = self.focused_remote(Path(folder))
+            run_git(repository, "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(remote), "modules/sub")
+            run_git(repository, "commit", "-qm", "a submodule")
+            sub = repository / "modules" / "sub"
+            run_git(sub, "remote", "set-head", "origin", "main")
+            self.assert_refused_outside_root(self.installed_cli(repository, sub, "verify"), sub.resolve())
+
+    def test_verify_from_a_clone_whose_parent_is_a_bare_repository_is_gated(self) -> None:
+        # No work tree holds the parent, so only the walk over the directories above the clone refuses it.
+        with tempfile.TemporaryDirectory() as folder:
+            repository = self.consumer(Path(folder), declaration("focused"))
+            remote = self.focused_remote(Path(folder))
+            holder = Path(folder) / "holder.git"
+            run_git(Path(folder), "clone", "-q", "--bare", str(remote), str(holder))
+            nested = holder / "nested"
+            run_git(Path(folder), "clone", "-q", str(remote), str(nested))
             run_git(nested, "remote", "set-head", "origin", "main")
             self.assert_refused_outside_root(self.installed_cli(repository, nested, "verify"), nested.resolve())
 
     def test_verify_from_a_linked_worktree_nested_under_the_root_reads_focused(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             repository = self.consumer(Path(folder), declaration("focused"))
-            tip = run_git(repository, "rev-parse", "refs/remotes/origin/main")
             lane = repository / ".orchestration" / "lanes" / "V26-0001"
             run_git(repository, "worktree", "add", "-q", "--detach", str(lane))
             result = self.harness(lane, "verify")
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual(result.stdout, "outcome: focused\nposture: focused\nreason: A fixture's reason.\n"
-                                            f"source: origin/main\nbase tip: {tip}\n")
+            self.assertEqual(result.stdout, self.focused_outcome(repository))
 
 
 @unittest.skipIf(os.name == "nt", "POSIX git stubs")

@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -24,6 +25,13 @@ class StoredRuntimeTests(unittest.TestCase):
         self.assertEqual(descriptor["runtimeVersion"], "0.8.3")
         # The constant the kernel reports its version by, which a build keeps apart from the descriptor.
         self.assertIn(f'HARNESS_VERSION = "{descriptor["runtimeVersion"]}"', (ROOT / "product-runtime/kernel.mjs").read_text(encoding="utf-8"))
+
+    def test_the_adoption_note_names_the_stored_runtime_files_and_their_digests(self) -> None:
+        # Adopters are told to compare these digests, so the table must name exactly the stored bytes.
+        note = (ROOT / "docs/product-generation.md").read_text(encoding="utf-8")
+        table = dict(re.findall(r"^\| `([^`]+)` \| `([0-9a-f]{64})` \|$", note, re.M))
+        stored = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in (ROOT / "product-runtime").iterdir()}
+        self.assertEqual(table, stored)
 
 
 class ProductReleaseTests(unittest.TestCase):
