@@ -5156,6 +5156,8 @@ import snapshot
 
 parent = sys.argv[1]
 kind = json.loads(Path("tools/tracker-states.json").read_text()).get(parent, "started")
+if kind.startswith("as:"):  # a command that ignores {parent} and answers for another issue
+    _, parent, kind = kind.split(":")
 if kind == "fail":
     print("the tracker is down", file=sys.stderr)
     raise SystemExit(3)
@@ -5245,8 +5247,22 @@ class RunDeliveryDefaultDeliveryTests(unittest.TestCase):
         d["stateDirectory"] = ".orchestration/state-5"  # inside this checkout
         path.write_text(json.dumps(d, indent=2))
         commit(m, "FX-5: its record in the lead's checkout")
-        sh(sys.executable, "-B", fx.release / "skills/orchestrate-work/scripts/delivery_state.py", "--dir",
-           m / ".orchestration/state-5", "init", "--headline", "FX-5")
+        tool = fx.release / "skills/orchestrate-work/scripts/delivery_state.py"
+        sh(sys.executable, "-B", tool, "--dir", m / ".orchestration/state-5", "init", "--headline", "FX-5")
+        # FX-1's record is open too, but outside this checkout, so it isn't this checkout's.
+        sh(sys.executable, "-B", tool, "--dir", fx.tmp / "record", "init", "--headline", "FX-1")
+        code, out, stories = self.picked(fx)
+        self.assertEqual((code, stories), (0, ["FX-6"]), out)
+        # A record that names another tracker parent isn't this delivery's.
+        shown = json.loads(sh(sys.executable, "-B", tool, "--dir", m / ".orchestration/state-5", "show").stdout)
+        sh(sys.executable, "-B", tool, "--dir", m / ".orchestration/state-5", "patch", "--writer", "lead", "--version",
+           str(shown["state"]["version"]), "--patch", json.dumps({"meta": {"trackerParent": "FX-9"}}))
+        code, out, _ = self.picked(fx)
+        self.assertEqual(code, 2, out)
+        self.assertIn("FX-1, FX-5 aren't known to be closed", out)
+        shown = json.loads(sh(sys.executable, "-B", tool, "--dir", m / ".orchestration/state-5", "show").stdout)
+        sh(sys.executable, "-B", tool, "--dir", m / ".orchestration/state-5", "patch", "--writer", "lead", "--version",
+           str(shown["state"]["version"]), "--patch", json.dumps({"meta": {"trackerParent": "FX-5"}}))
         code, out, stories = self.picked(fx)
         self.assertEqual((code, stories), (0, ["FX-6"]), out)
         # Once it is closed here, it is no longer the open record, and FX-1 is the only one not known to be closed.
@@ -5262,6 +5278,20 @@ class RunDeliveryDefaultDeliveryTests(unittest.TestCase):
                 self.assertFalse((fx.tmp / "flow-log/FX-1.closed.json").exists())
                 code, out, stories = self.picked(fx)
                 self.assertEqual((code, stories), (0, ["FX-6"]), out)
+        # A snapshot that answers for another issue says nothing of this delivery's parent.
+        (fx.main / "tools/tracker-states.json").write_text(json.dumps({"FX-1": "as:FX-9:completed", "FX-5": "started"}))
+        commit(fx.main, "a tracker command that ignores its parent")
+        code, out, _ = self.picked(fx)
+        self.assertEqual(code, 2, out)
+        self.assertIn("FX-1, FX-5 aren't known to be closed", out)
+
+    def test_a_lane_on_a_story_branch_takes_that_story_s_delivery(self) -> None:
+        fx = self.fixture({"FX-1": "started", "FX-5": "started"})
+        wt = fx.main / "lanes/FX-6"
+        sh("git", "worktree", "add", "-q", "--no-track", "-b", "feature/FX-6", wt, "origin/feature/FX-1", cwd=fx.main)
+        code, out = fx.flow("lead-hints", cwd=wt)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(list(json.JSONDecoder().raw_decode(out)[0]["items"]), ["FX-6"])
 
     def test_a_snapshot_command_that_fails_leaves_its_delivery_not_known_to_be_closed(self) -> None:
         fx = self.fixture({"FX-1": "fail", "FX-5": "started"})
