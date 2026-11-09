@@ -207,12 +207,13 @@ class OutsideAdopterTests(unittest.TestCase):
         self.assertEqual(planned["APP-12"].get("changeRequest"),
                          "https://bitbucket.org/example/app/pull-requests/34")
 
-        # Every recorded answer was asked for, in order, with credentials sent only to each provider's own
-        # origin; and no credential, raw or encoded, was written anywhere.
+        # Every recorded answer was asked for, in order, and the parent's issue once after the children, with
+        # credentials sent only to each provider's own origin; and no credential, raw or encoded, was written anywhere.
         requests = adopter.requests()
-        self.assertEqual([request["authorization"] for request in requests], ["Basic"] * 6)
-        for request, prefix in zip(requests, (SEARCH, SEARCH, API + "pullrequests?", API + "pullrequests?page=2",
-                                              API + "commit/aaaaaaaaaaaa", API + "commit/cccccccccccc")):
+        prefixes = (SEARCH, SEARCH, PARENT, API + "pullrequests?", API + "pullrequests?page=2",
+                    API + "commit/aaaaaaaaaaaa", API + "commit/cccccccccccc")
+        self.assertEqual([request["authorization"] for request in requests], ["Basic"] * len(prefixes))
+        for request, prefix in zip(requests, prefixes, strict=True):
             self.assertTrue(request["url"].startswith(prefix), request["url"])
         self.assertNotIn("nextPageToken", requests[0]["url"])
         self.assertIn("nextPageToken=token-page-2", requests[1]["url"])

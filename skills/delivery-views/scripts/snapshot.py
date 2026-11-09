@@ -347,8 +347,14 @@ def jira_snapshot(args: argparse.Namespace, environ: dict, transport: Transport,
         if blockers:
             item["blockedBy"] = blockers
         items.append(item)
-    # The search lists the children only: the parent's own status is read once, by its key.
-    answer = client.get(f"{site}/rest/api/3/issue/{urllib.parse.quote(args.parent)}?fields=status", missing_ok=True)
+    # The search lists the children only: the parent's own status is read once, by its key. A read that fails, as
+    # one the credentials may not reach, leaves the parent's state unknown and the children's snapshot stands: the
+    # record needs those, and nothing then says the parent closed. An answer it can't read still fails.
+    try:
+        answer = client.get(f"{site}/rest/api/3/issue/{urllib.parse.quote(args.parent)}?fields=status",
+                            missing_ok=True)
+    except Failure:
+        answer = None
     snapshot = {"source": "tracker", "items": items}
     if answer is not None:
         fields = answer.get("fields") if isinstance(answer, dict) else None
