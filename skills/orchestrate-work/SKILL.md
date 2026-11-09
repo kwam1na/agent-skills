@@ -555,12 +555,13 @@ run the sync loop in this order:
 5. **Acknowledge** what went out:
 
    ```bash
-   python3 -B scripts/delivery_state.py --dir <state directory> ack --version <outbox version> --through <outbox journalThrough>
+   python3 -B scripts/delivery_state.py --dir <state directory> ack
    ```
 
-   Acknowledge the outbox's own `version` and `journalThrough`, never the
-   record's: an acknowledgement beyond what the outbox held is refused with
-   `ack_invalid`. The next outbox then carries only later entries. `show` reports a
+   With no `--version` or `--through`, `ack` takes the outbox's own `version`
+   and `journalThrough`. Pass them only without an outbox, and never the
+   record's version that `show` gives: an acknowledgement beyond what the
+   outbox held is refused with `ack_invalid`, naming the outbox's version. The next outbox then carries only later entries. `show` reports a
    publication or an outbox that lags the record, so an unpublished view is
    always visible.
 

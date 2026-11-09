@@ -2628,6 +2628,24 @@ class TrackerSnapshotTests(unittest.TestCase):
             code, out, _ = state_tool._run_bounded(argv, 10, 4096)
         self.assertEqual((code, out.strip()), (0, b"x" * 1000))
 
+    def test_a_tracker_snapshot_may_carry_its_parent_s_state_and_only_a_tracker_one_does(self) -> None:
+        items = [{"subject": "epic-7-1", "state": "started"}]
+        tracker = {"takenAt": taken(), "source": "tracker", "items": items,
+                   "parent": {"subject": "epic-7", "state": "completed"}}
+        self.assertIs(state_tool.check_snapshot(tracker, "the snapshot", 900, parent="epic-7"), tracker)
+        for snapshot, words in (
+            ({**tracker, "source": "forge", "items": [{"subject": "epic-7-1", "state": "open"}]},
+             "/parent: only a tracker snapshot carries it"),
+            (tracker, "/parent: epic-7 is not the record's tracker parent epic-8"),
+            ({**tracker, "parent": {"subject": "epic-7", "state": "merged"}}, "parent"),
+            ({**tracker, "parent": {"subject": "epic-7"}}, "parent"),
+        ):
+            with self.subTest(words=words, snapshot=snapshot.get("parent")):
+                with self.assertRaises(state_tool.StateError) as refused:
+                    state_tool.check_snapshot(snapshot, "the snapshot", 900, parent="epic-8" if "epic-8" in words else "epic-7")
+                self.assertEqual(refused.exception.code, "snapshot_invalid")
+                self.assertIn(words, str(refused.exception))
+
     def test_every_dependency_shape_is_checked_in_a_tracker_snapshot(self) -> None:
         # Imported here: release qualification runs this module beside a candidate's own tests package.
         from tests.dependency_cases import CASES as DEPENDENCY_CASES
@@ -5270,6 +5288,45 @@ class PublicationTests(unittest.TestCase):
                 self.assertEqual((code, refused["code"]), (1, "ack_invalid"), refused)
         code, acked = run_tool(self.directory, "ack", "--version", str(version), "--through", "3")
         self.assertEqual((code, acked["published"]["journalThrough"]), (0, 3))
+
+    def outbox(self, version: int, through: int) -> None:
+        """What a host publisher leaves: the version and journal range it published."""
+        folder = self.directory / state_tool.OUTBOX_DIRECTORY
+        folder.mkdir(exist_ok=True)
+        (folder / state_tool.OUTBOX_FILE).write_text(json.dumps(
+            {"version": version, "journalThrough": through, "publisher": "live"}), encoding="utf-8")
+
+    def test_ack_without_a_version_acks_the_outbox_s_own_version_and_range(self) -> None:
+        published = state_tool.show(self.directory)["state"]["version"]
+        self.outbox(published, 2)
+        # The record moves on after the publisher wrote its outbox: show gives the record's version, not the outbox's.
+        state_tool.patch(self.directory, writer="lead", version=published, changes={"meta": {"headline": "Moved"}})
+        record = state_tool.show(self.directory)["state"]["version"]
+        self.assertGreater(record, published)
+        code, refused = run_tool(self.directory, "ack", "--version", str(record), "--through", "3")
+        self.assertEqual((code, refused["code"]), (1, "ack_invalid"), refused)
+        self.assertIn(f"the outbox holds version {published} through entry 2", refused["error"])
+        self.assertIn(f"ack --version {published} --through 2, or ack with neither", refused["error"])
+        code, acked = run_tool(self.directory, "ack")
+        self.assertEqual(code, 0, acked)
+        self.assertEqual((acked["published"]["version"], acked["published"]["journalThrough"]), (published, 2))
+        # Either one left out is the outbox's, and the one given is kept, even where it differs from the outbox's.
+        self.outbox(record, 3)
+        code, acked = run_tool(self.directory, "ack", "--through", "2")
+        self.assertEqual((code, acked["published"]["version"], acked["published"]["journalThrough"]), (0, record, 2), acked)
+        # Any refusal names what the outbox holds.
+        code, refused = run_tool(self.directory, "ack", "--version", "1", "--through", "3")
+        self.assertEqual((code, refused["code"]), (1, "ack_invalid"), refused)
+        self.assertIn(f"the outbox holds version {record} through entry 3", refused["error"])
+
+    def test_ack_without_a_version_and_no_outbox_is_refused_naming_what_it_needs(self) -> None:
+        before = state_tool.show(self.directory)
+        for args in ((), ("--version", str(before["state"]["version"])), ("--through", "2")):
+            with self.subTest(args=args):
+                code, refused = run_tool(self.directory, "ack", *args)
+                self.assertEqual((code, refused["code"]), (1, "ack_invalid"), refused)
+                self.assertIn("there is no outbox to acknowledge: pass --version and --through", refused["error"])
+        self.assertFalse((self.directory / state_tool.PUBLISHED_FILE).exists())
 
     def test_a_journal_entry_alone_leaves_the_publication_behind(self) -> None:
         version = state_tool.show(self.directory)["state"]["version"]

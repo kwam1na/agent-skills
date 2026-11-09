@@ -232,6 +232,83 @@ class FailureTests(RecordCase):
                 self.assertEqual(json.loads(done.stdout)["code"], "wait_invalid")
 
 
+class OutputTests(RecordCase):
+    """One wait run is one JSON document. A host that runs it in the background captures stdout and adds lines of its
+    own, such as an exit trailer, so the lead reads --output, which holds that one document alone."""
+
+    def output(self) -> Path:
+        return self.record.directory.parent / "wait.json"
+
+    def test_stdout_is_one_document_and_a_host_s_trailer_is_what_breaks_a_reader(self) -> None:
+        self.record.add_lanes("lane-1")
+        first = self.record.journal("candidate.merged")
+        process = self.record.start_wait("--after", str(first - 1), timeout="0.3")
+        stdout, _ = process.communicate(timeout=30)
+        self.assertEqual(process.returncode, 0)
+        document, end = json.JSONDecoder().raw_decode(stdout)
+        self.assertEqual(stdout[end:], "\n", "the tool printed more than one document")
+        self.assertEqual(document["woke"], "event")
+        # What a background host keeps: the tool's document, then its own trailer, which no JSON reader takes.
+        captured = stdout + "[exited with code 0]\n"
+        with self.assertRaisesRegex(json.JSONDecodeError, "Extra data"):
+            json.loads(captured)
+
+    def test_output_holds_the_one_document_stdout_has_and_restart_keeps_it(self) -> None:
+        self.record.add_lanes("lane-1")
+        first = self.record.journal("candidate.merged")
+        before = _tree(self.record.directory)
+        process = self.record.start_wait("--after", str(first - 1), f"--output={self.output()}", timeout="0.3")
+        stdout, _ = process.communicate(timeout=30)
+        self.assertEqual(process.returncode, 0)
+        self.assertEqual(self.output().read_text(encoding="utf-8"), stdout)
+        with self.output().open(encoding="utf-8") as stream:
+            written = json.load(stream)
+        self.assertEqual([event["id"] for event in written["events"]], [first])
+        self.assertEqual(written["restart"][-1], f"--output={self.output().resolve()}")
+        self.assertEqual(_tree(self.record.directory), before, "a wait wrote to the record")
+        # The next wait, from the printed arguments, writes there again: an expiry this time, the file replaced whole.
+        code, again = self.record.wait(*written["restart"])
+        self.assertEqual(code, state_tool.WAIT_EXPIRED_EXIT)
+        self.assertEqual(json.loads(self.output().read_text(encoding="utf-8")), again)
+        self.assertEqual(again["woke"], "expired")
+        self.assertEqual(state_tool.wait_arguments(again["restart"]).output, self.output().resolve())
+
+    def test_a_relative_output_is_carried_into_restart_resolved(self) -> None:
+        self.record.add_lanes("lane-1")
+        first = self.record.journal("candidate.merged")
+        relative = os.path.relpath(self.output())
+        code, result = self.record.wait("--after", str(first - 1), f"--output={relative}")
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result["restart"][-1], f"--output={self.output().resolve()}")
+        self.assertTrue(Path(result["restart"][-1].split("=", 1)[1]).is_absolute())
+
+    def test_a_failed_wait_writes_its_one_error_document_there_too(self) -> None:
+        with (self.record.directory / "journal.jsonl").open("ab") as journal:
+            journal.write(b"not json\n")
+        code, result = self.record.wait(f"--output={self.output()}")
+        self.assertEqual(code, 1)
+        self.assertEqual(json.loads(self.output().read_text(encoding="utf-8")), result)
+        self.assertEqual(result["code"], "journal_invalid")
+
+    def test_an_output_in_the_record_or_in_no_folder_is_refused_and_nothing_is_written(self) -> None:
+        before = _tree(self.record.directory)
+        for output, words in ((self.record.directory / "wait.json", "outside the state directory"),
+                              (self.record.directory, "outside the state directory"),
+                              (self.record.directory.parent / "no-such-folder/wait.json", "in a folder that exists"),
+                              (self.record.directory.parent, "must be a file in a folder that exists")):
+            with self.subTest(output=output):
+                code, result = self.record.wait(f"--output={output}")
+                self.assertEqual((code, result["code"]), (1, "wait_invalid"), result)
+                self.assertIn(words, result["error"])
+                self.assertFalse((self.record.directory.parent / "no-such-folder").exists())
+        self.assertEqual(_tree(self.record.directory), before)
+
+    def test_the_guide_tells_the_lead_to_read_the_output_file(self) -> None:
+        text = " ".join(GUIDE.read_text(encoding="utf-8").split())
+        self.assertIn("A lead that runs the wait in the background passes `--output <file>` and reads that file", text)
+        self.assertIn("not the host's capture of the command's output, which may add lines of its own", text)
+
+
 class BlockedLaneTests(RecordCase):
     def test_a_blocked_lane_ends_a_running_wait_and_is_named(self) -> None:
         self.record.add_lanes("lane-1")
