@@ -4722,9 +4722,13 @@ class RunDeliveryPlanTests(unittest.TestCase):
         self.assertEqual(record["state"]["queue"], [])
         self.assertEqual(self.base(fx), before, "a base commit was made")
         self.assertEqual(sh("git", "ls-remote", "origin", "feature/FX-1", cwd=m).stdout.split()[0], before)
-        # The plan counts it: every proof the unit owes is done.
-        unit = next(u for u in self.plan(fx)["units"] if u["subject"] == "FX-2")
+        # The plan keeps it, not removed, and counts every proof it owes done, as the line map and finish lines do.
+        plan = self.plan(fx)
+        unit = next(u for u in plan["units"] if u["subject"] == "FX-2")
         self.assertFalse(unit.get("removed", False))
+        states = {kind: fx.call("proof_state", None, plan, self.record(fx), unit, kind, cwd=m, delivery="FX-1")
+                  for kind in unit["proofs"]}
+        self.assertEqual(set(states.values()), {"done"}, states)
 
     def test_a_base_that_moved_after_the_hand_off_still_settles_it(self) -> None:
         fx, path, wt = self.no_change_lane()
@@ -4732,12 +4736,17 @@ class RunDeliveryPlanTests(unittest.TestCase):
         code, out = fx.flow("handoff", "FX-2", "--no-change", "--evidence", "one-loads and one-fails hold", cwd=wt)
         self.assertEqual(code, 0, out)
         handed = self.base(fx)
-        (m / "docs/later.md").write_text("later\n")
-        commit(m, "FX-1: the base moves on")
-        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
-        self.assertNotEqual(self.base(fx), handed)
+        # Another clone moves the base, so the lead's checkout knows of it only once lead-accept fetches.
+        other = fx.tmp / "other-clone"
+        origin = sh("git", "remote", "get-url", "origin", cwd=m).stdout.strip()
+        sh("git", "clone", "-q", "--branch", "feature/FX-1", origin, other)
+        (other / "docs/later.md").write_text("later\n")
+        commit(other, "FX-1: the base moves on")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=other)
+        self.assertEqual(self.base(fx), handed, "the lead's checkout already knew the base had moved")
         code, out = fx.flow("lead-accept", "FX-2", cwd=m)
         self.assertEqual(code, 0, out)
+        self.assertNotEqual(self.base(fx), handed, "lead-accept judged the hand-off against a base it never fetched")
         self.assertEqual(next(p for p in self.record(fx)["state"]["planned"] if p["subject"] == "FX-2")["stage"], "settled")
 
     def test_a_no_change_hand_off_from_a_head_the_base_doesnt_hold_is_refused(self) -> None:
@@ -4769,17 +4778,29 @@ class RunDeliveryPlanTests(unittest.TestCase):
         code, out = fx.flow("lead-accept", "FX-2", cwd=m)
         self.assertEqual(code, 1, out)
         self.assertIn("the evidence names no proof of criterion one-fails", out)
+        # Nor does a longer token that only holds it.
+        for longer in ("one-fails.extra", "one-failsafe", "not-one-fails-yet", "xone-fails"):
+            with self.subTest(longer=longer):
+                code, out = fx.flow("handoff", "FX-2", "--no-change", "--evidence", f"one-loads holds; {longer} holds", cwd=wt)
+                self.assertEqual(code, 0, out)
+                code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+                self.assertEqual(code, 1, out)
+                self.assertIn("the evidence names no proof of criterion one-fails", out)
         self.assertNotIn("one-loads,", out)
         self.assertEqual(next(p for p in self.record(fx)["state"]["planned"] if p["subject"] == "FX-2")["stage"], "review")
         # Handed off again, from a file, naming both: accepted.
         evidence = fx.tmp / "evidence.md"
-        evidence.write_text("one-loads: test_one_loads passes\none-fails: test_one_fails passes\n")
+        # A sentence may end on a criterion id: its full stop isn't part of the id.
+        evidence.write_text("one-loads: test_one_loads passes\ntest_one_fails proves one-fails.\n")
         code, out = fx.flow("handoff", "FX-2", "--no-change", "--evidence", f"@{evidence}", cwd=wt)
         self.assertEqual(code, 0, out)
         code, out = fx.flow("lead-accept", "FX-2", cwd=m)
         self.assertEqual(code, 0, out)
+        code, again = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 2, again)
+        self.assertIn("FX-2 is already settled with no change", again)
         self.assertEqual(next(p for p in self.record(fx)["state"]["planned"] if p["subject"] == "FX-2")["noChange"]["evidence"],
-                         "one-loads: test_one_loads passes\none-fails: test_one_fails passes")
+                         "one-loads: test_one_loads passes\ntest_one_fails proves one-fails.")
 
     def test_a_no_change_story_with_no_criteria_is_refused_naming_it_and_the_fix(self) -> None:
         fx = self.fixture()

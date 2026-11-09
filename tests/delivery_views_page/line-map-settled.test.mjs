@@ -3,7 +3,7 @@
 // proofs done, as the close does.
 import { test } from "node:test";
 
-import { REPLAYED_RUNS, expect, openPage, pageWithRuns } from "./support.mjs";
+import { REPLAYED_RUNS, expect, openPage, pageWithRuns, renderPage } from "./support.mjs";
 import { item, journal, planFor, record, unit } from "./plan-fixtures.mjs";
 
 const NOW = "2026-10-30T12:00:00Z";
@@ -63,4 +63,43 @@ test("the plan counts every proof of a unit settled with no change done, and say
     .find((entry) => entry.querySelector("[data-ticket]").getAttribute("data-ticket") === "S");
   expect(open_.querySelector(".pu-standing").textContent).not.toBe("Closed, no change needed");
   expect(open_.classList.contains("proven")).toBe(false);
+});
+
+test("on an open delivery a settled story counts as landed everywhere the line map counts", async () => {
+  const document = record({ queue: [item("A", "merged")], planned: [noChange("S")], journal: journal(landed("A")) });
+  const [shown, card] = await open(render(document), { steps: [{ click: '.stop-btn[data-subject="S"]' }] });
+  expect(shown.app.querySelector("#now .title").textContent).toBe("Every piece has landed.");
+  expect(shown.app.querySelector("#left .left-number").firstChild.textContent).toBe("0");
+  expect([...shown.app.querySelectorAll("#line .line .name")].map((name) => name.textContent)).toEqual(["Lane one2 of 2 landed"]);
+  expect(shown.app.querySelector("svg[aria-label^='Every lane merges']").getAttribute("aria-label")).toContain("2 of 2 pieces landed");
+  expect([...shown.app.querySelectorAll("#left .dots i")].map((dot) => dot.className)).toEqual(["", ""]);
+  // Its stop is drawn landed, and its card dates it from the lead's acceptance, not the hand-off.
+  expect(shown.app.querySelector('.stop-btn[data-subject="S"]').className.trim()).toBe("stop-btn merged");
+  expect(card.app.querySelector("#detail .d-stage-time").getAttribute("aria-label")).toContain("2026-10-30T11:00:00Z");
+  expect(card.app.querySelector("#detail .d-stage-time").getAttribute("aria-label")).not.toContain("2026-10-30T10:00:00Z");
+});
+
+test("a close that stopped partway with only settled planned work left meets the close condition", async () => {
+  const document = record({ queue: [item("A", "merged")], planned: [noChange("S")], journal: journal([...landed("A"), close]),
+    finish: [{ id: "line", text: "The line is met", met: true }] });
+  document.state.lanes[0].state = "idle";
+  const closed = document.journal.at(-1);
+  document.state.meta.closing = { started: { entry: closed.id, at: closed.at } };
+  const [shown] = await openPage(renderPage(document, { config: CONFIG }), { now: NOW, store: false });
+  expect(shown.app.querySelector("#now .close-partway p").textContent).toContain("Finish it with lead-run --resume.");
+});
+
+test("a lane's rule is solid up to its settled stop when work after it is still to come", async () => {
+  const document = record({ queue: [item("A", "merged")], journal: journal(landed("A")),
+    planned: [noChange("S"), { subject: "B", title: "Work B", lane: "lane-1", stage: "planned" }] });
+  const [shown] = await open(render(document));
+  const stops = shown.app.querySelector("#line .line .stops");
+  // Three stops, the last still to come: the rule runs solid through A and S, the second, and fades before B.
+  const solid = parseFloat(stops.style.getPropertyValue("--solid"));
+  const onlyA = record({ queue: [item("A", "merged")], journal: journal(landed("A")),
+    planned: [{ subject: "S", title: "Work S", lane: "lane-1", stage: "building" }, { subject: "B", title: "Work B", lane: "lane-1", stage: "planned" }] });
+  const [before] = await open(render(onlyA));
+  const solidBefore = parseFloat(before.app.querySelector("#line .line .stops").style.getPropertyValue("--solid"));
+  expect(solid).toBeGreaterThan(solidBefore);
+  expect(shown.app.querySelector("#line .line .name").textContent).toBe("Lane one2 of 3 landed");
 });

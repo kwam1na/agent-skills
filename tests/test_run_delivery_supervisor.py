@@ -991,6 +991,29 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertEqual(states, {"left": "done", "done": "done", "waits": "open", "taken": "done", "stopped": "open",
                                   "absent": "open"})
 
+    def test_a_settled_storys_checkout_is_cleaned_when_its_lane_is_reassigned_before_the_pass(self) -> None:
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        self.addCleanup(stop_supervisors, fx.tmp)
+        path = plan_delivery(fx, supervised(fx))
+        code, out = fx.flow("lead-init", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-assign", "FX-2", "--lane", "lane-1", "--title", "lane-1", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        wt = fx.lane("FX-2")
+        code, out = fx.flow("handoff", "FX-2", "--no-change", "--evidence", "one-loads and one-fails hold", cwd=wt)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        # The lane takes its next story before any pass runs: it is no longer idle.
+        add_story(fx, path, "FX-4", why="The lane's next story.")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+        code, out = fx.flow("lead-assign", "FX-4", "--lane", "lane-1", "--title", "lane-1", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(next(l for l in record(fx)["state"]["lanes"] if l["id"] == "lane-1")["state"], "assigned")
+        self.once(fx)
+        self.assertFalse(wt.exists(), "the settled story's checkout stayed once its lane took other work")
+
     def test_a_story_settled_with_no_change_counts_for_the_close_and_the_stories_finish_line(self) -> None:
         fx = Fixture(self.generation, self.receipt)
         self.addCleanup(fx.close)

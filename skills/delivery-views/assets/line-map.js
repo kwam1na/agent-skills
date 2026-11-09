@@ -1949,7 +1949,7 @@
       var waived = owed.some(function (kind) { return states[kind].state === "waived"; });
       var next = owed.filter(function (kind) { return states[kind].state !== "done" && states[kind].state !== "waived"; })[0] || null;
       proofs[subject] = { unit: unit, owed: owed, states: states, proven: proven, waived: waived, next: next,
-        handed: Boolean(queueItem(doc, subject) || settledEntry(doc, subject)), settled: Boolean(settledEntry(doc, subject)),
+        handed: Boolean(queueItem(doc, subject)), settled: Boolean(settledEntry(doc, subject)),
         review: states.review || proofOf(doc, unit, "review") };
     });
     return proofs;

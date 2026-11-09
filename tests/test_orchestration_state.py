@@ -3216,6 +3216,22 @@ class NoChangeHandoffTests(unittest.TestCase):
         code, result = run_tool(self.directory, "handoff", "--accept", "done-already")
         self.assertNotEqual(code, 0, result)
 
+    def test_a_lane_still_holding_open_work_doesnt_rest_when_its_no_change_story_settles(self) -> None:
+        for other, where in (({"subject": "next-one", "title": "Next", "lane": "lane-1", "stage": "planned"}, "planned"),
+                             (queue_item("next-one", lane="lane-1"), "queue")):
+            with self.subTest(where=where):
+                self.setUp()
+                document = state_tool.show(self.directory)["state"]
+                state_tool.patch(self.directory, writer="lead", version=document["version"],
+                                 changes={where: [*document.get(where, []), other]})
+                self.assertEqual(self.hand()[0], 0)
+                code, result = run_tool(self.directory, "handoff", "--accept", "done-already")
+                self.assertEqual(code, 0, result)
+                self.assertEqual(self.entry()["stage"], "settled")
+                lanes = state_tool.show(self.directory)["state"]["lanes"]
+                self.assertNotEqual(next(item for item in lanes if item["id"] == "lane-1")["state"], "idle",
+                                    f"a lane still holding {where} work rested")
+
     def test_the_lead_rejecting_a_no_change_hand_off_sends_it_back_building_without_its_evidence(self) -> None:
         self.assertEqual(self.hand()[0], 0)
         code, result = run_tool(self.directory, "handoff", "--reject", "done-already", "--reason", "one criterion fails")
@@ -3247,6 +3263,10 @@ class NoChangeHandoffTests(unittest.TestCase):
                   "--evidence-text", "x" * 4001], "1 to 4000 characters"),
                 (["handoff", "--no-change", "--lane", "lane-1", "--subject", "done-already", "--base-head", self.BASE,
                   "--evidence-text", "x", "--head", self.BASE], "no --head, --change-request or --evidence"),
+                (["handoff", "--no-change", "--lane", "lane-1", "--subject", "done-already", "--base-head", self.BASE,
+                  "--evidence-text", "x", "--change-request", "https://forge.test/pr/1"], "no --head, --change-request or --evidence"),
+                (["handoff", "--no-change", "--lane", "lane-1", "--subject", "done-already", "--base-head", self.BASE,
+                  "--evidence-text", "x", "--evidence", "{}"], "no --head, --change-request or --evidence"),
                 (["handoff", "--no-change", "--lane", "lane-1", "--subject", "other", "--base-head", self.BASE,
                   "--evidence-text", "x"], "planned in lane-2, not lane-1"),
                 (["handoff", "--no-change", "--lane", "lane-1", "--subject", "nobody", "--base-head", self.BASE,

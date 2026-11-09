@@ -1037,10 +1037,8 @@ def no_change_handoff(directory: Path, *, lane: str, subject: str, base_head: st
     def change(state: dict) -> dict:
         if lane not in [entry["id"] for entry in state["lanes"]]:
             raise StateError("writer_not_owned", f"there is no lane {lane}")
-        if any(item["subject"] == subject for item in state["queue"]):
-            raise StateError("handoff_invalid", f"{subject} is already in the queue; a change was handed off")
         planned = next((entry for entry in state.get("planned", []) if entry["subject"] == subject), None)
-        if planned is None:
+        if planned is None:  # a queued subject is no longer planned: a change was handed off for it
             raise StateError("subject_unknown", f"{subject} is not planned")
         if planned["lane"] != lane:
             raise StateError("writer_not_owned", f"{subject} is planned in {planned['lane']}, not {lane}")

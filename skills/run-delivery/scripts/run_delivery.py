@@ -5202,7 +5202,7 @@ def accept_no_change(c, key: str, entry: dict) -> None:
     if not is_ancestor(base_head, c.base_ref):
         problems.append(f"the evidence ran at {base_head[:10]}, which {c.base_ref} doesn't hold")
     evidence = entry["noChange"]["evidence"]
-    missing = [ident for ident in criteria if not re.search(rf"(?<![\w.-]){re.escape(ident)}(?![\w.-])", evidence)]
+    missing = [ident for ident in criteria if not re.search(rf"(?<![\w.-]){re.escape(ident)}(?![\w-]|\.[\w-])", evidence)]
     if missing:
         problems.append(f"the evidence names no proof of criterion {', '.join(missing)}; the lane hands it off again "
                         "with evidence naming every criterion by id")
@@ -5982,6 +5982,10 @@ def lane_moved_off(doc: dict, item: dict, words: dict | None = None) -> bool:
         return True
     merged = max((e["id"] for e in doc["journal"] if e["kind"] == "candidate.merged" and e.get("subject") == item["subject"]),
                  default=None)
+    if merged is None and item.get("stage") == "settled":
+        # Settled with no change, it never merged: its last hand-off is where the lane left it.
+        merged = max((e["id"] for e in doc["journal"] if e["kind"] == "candidate.handed"
+                      and e.get("subject") == item["subject"]), default=None)
     later = [e for e in doc["journal"] if e["kind"] == "lane.assigned" and e.get("lane") == item["lane"]
              and merged is not None and e["id"] > merged and e.get("subject") != item["subject"]]
     return bool(later)
