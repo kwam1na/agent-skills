@@ -399,6 +399,16 @@ def binding_errors(binding: object) -> list[str]:
     if selection.get("refusalStops") and not selection.get("lead"):
         errors.append("/selection/refusalStops: needs selection.lead, since only the lead's selection releases a "
                       "candidate the provider refused")
+    catalogue = selection.get("catalogue") or []
+    # Its ids, their reuse of the binding's own and their prerequisites first: the rest reads a catalogue sound in those.
+    problems = delivery_state.catalogue_problems(binding)
+    errors.extend(problems)
+    if catalogue and not problems:
+        errors.extend(f"/selection/catalogue: {problem}" for problem in selection_errors(catalogue, binding, check_cwd=None))
+    for check in catalogue:
+        profile = check.get("environmentProfile")
+        if profile is not None and profile not in binding["profiles"]:
+            errors.append(f"/selection/catalogue: {check['id']} names unknown environment profile {profile}")
     for name in ("alwaysRun", "fallback"):
         problems = selection_errors(binding[name], binding, check_cwd=None)
         errors.extend(f"/{name}: {problem}" for problem in problems)
@@ -2235,7 +2245,8 @@ class Runner:
                         verdicts.append(f"{check['id']} could not start there on its flake retry")
                         continue
                     failures, log = self.rerun_outcome(check["id"], completed)
-                self.record_rerun(subject, check["id"], failures, log)
+                self.record_rerun(subject, check["id"], failures, log,
+                                  verdict=("failed" if failed_run(completed) else "passed", base_head))
                 if failed_run(completed):
                     named = failure_words(check["id"], [failure["id"] for failure in failures], log)
                     verdicts.append(f"{check['id']} also fails{named[len(check['id']):]}")
@@ -2256,8 +2267,13 @@ class Runner:
         failures = self.failures(completed) if failed_run(completed) else []
         return failures, self.save_log(f"{check_id}.base-rerun", completed)
 
-    def record_rerun(self, subject: str, check_id: str, failures: list[dict], log: str) -> None:
-        """Put a base re-run's failing tests and log on the candidate's queue row, beside its own run's."""
+    def record_rerun(self, subject: str, check_id: str, failures: list[dict], log: str,
+                     verdict: tuple[str, str] | None = None) -> None:
+        """Put a base re-run's failing tests and log on the candidate's queue row, beside its own run's.
+
+        A judged re-run also joins the record's baseReruns with its verdict and the base head it checked out,
+        which outlive the row's checks, so select can warn of a selected check the base fails at that head.
+        """
         rerun = {**({"failures": [failure["id"] for failure in failures]} if failures else {}), "log": log}
 
         def build(current: dict) -> tuple[dict, dict]:
@@ -2265,7 +2281,12 @@ class Runner:
             for item in queue:
                 if item["subject"] == subject:
                     item["checks"] = [{**row, "baseRerun": rerun} if row["id"] == check_id else row for row in item["checks"]]
-            return {"queue": queue}, {}
+            if verdict is None:
+                return {"queue": queue}, {}
+            entry = {"check": check_id, "baseHead": verdict[1], "result": verdict[0], "subject": subject,
+                     "recordedAt": now()}
+            kept = [*(current["meta"].get("baseReruns") or []), entry][-delivery_state.BASE_RERUNS_KEPT:]
+            return {"queue": queue}, {"/meta/baseReruns": kept}
 
         with contextlib.suppress(Stop, delivery_state.StateError):
             self.write(build=build)

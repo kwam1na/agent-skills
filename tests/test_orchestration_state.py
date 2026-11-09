@@ -24,6 +24,7 @@ from jsonschema import Draft202012Validator
 
 import agent_skills
 from agent_skills.validate import LEAKAGE_PATTERNS, validate_corpus
+from quiet_git import quieten
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -5820,9 +5821,6 @@ class SkillTextTests(unittest.TestCase):
                 self.assertIn(point, brief)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 def selected_check(check_id: str, **fields: object) -> dict:
     check = {"id": check_id, "argv": ["python3", "-m", "pytest", f"tests/{check_id}"], "cwd": ".",
@@ -5971,3 +5969,282 @@ class LeadSelectionTests(unittest.TestCase):
                                  selector="queue[subject=work-q]",
                                  changes={"checkSelection": {"by": "lead", "head": HEAD_A, "reason": "parser only"}})
         self.assertEqual(state_tool.delivery_stats(state, [])["work-q"]["checksSelectedBy"], "lead")
+
+
+def git_in(repo: Path, *arguments: str) -> str:
+    completed = subprocess.run(["git", "-c", "core.hooksPath=/dev/null", *arguments], cwd=repo, capture_output=True,
+                               check=True, text=True)
+    return completed.stdout.strip()
+
+
+class CheckCatalogueTests(unittest.TestCase):
+    """The lead selects by catalogue id; guards join every selection; a change selects what the binding says reads it."""
+
+    SCHEMA = "skills/orchestrate-work/references/schemas.json"
+    CATALOGUE = [
+        selected_check("run-delivery", argv=["python3", "-B", "tests/test_run_delivery.py"]),
+        selected_check("corpus-guards", argv=["python3", "-B", "tests/test_registry.py"]),
+        selected_check("schema-readers", argv=["python3", "-B", "tests/test_orchestration_state.py"]),
+        selected_check("plan-fixtures", argv=["python3", "-B", "tests/test_plan_fixtures.py"],
+                       prerequisites=["fixture-build"]),
+        selected_check("fixture-build", argv=["python3", "-B", "scripts/build-fixtures.py"]),
+        selected_check("mentions-schema", argv=["python3", "-B", "tests/test_mentions.py"]),
+    ]
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        self.directory = root / "state"
+        self.repo = root / "repo"
+        self.repo.mkdir()
+        git_in(self.repo, "init", "--quiet", "--initial-branch=main")
+        quieten(self.repo)
+        git_in(self.repo, "config", "user.email", "lead@example.test")
+        git_in(self.repo, "config", "user.name", "Lead")
+        for relative, text in {self.SCHEMA: "{}\n", "tests/test_mentions.py": f"# reads {self.SCHEMA}\n",
+                               "tests/fixtures/plans/one.json": "{}\n", "src/app.py": "one\n"}.items():
+            (self.repo / relative).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / relative).write_text(text, encoding="utf-8")
+        git_in(self.repo, "add", "--all")
+        git_in(self.repo, "commit", "--quiet", "-m", "base")
+        self.base = git_in(self.repo, "rev-parse", "HEAD")
+        git_in(self.repo, "update-ref", "refs/remotes/origin/main", self.base)
+        self.binding = {
+            "base": {"remote": "origin", "ref": "main"},
+            "selection": {
+                "lead": True, "catalogue": copy.deepcopy(self.CATALOGUE), "guards": ["corpus-guards"],
+                "readers": [{"paths": [self.SCHEMA, "tests/fixtures/plans/**"], "checks": ["schema-readers", "plan-fixtures"]}],
+            },
+            "alwaysRun": [selected_check("always")],
+            "fallback": [selected_check("fallback")],
+            "profiles": {"default": {"environment": {}}},
+            "checkTimeoutCeiling": 600,
+        }
+        state_tool.init(self.directory, "Epic underway")
+
+    def candidate(self, files: dict[str, str], subject: str = "work-q") -> str:
+        git_in(self.repo, "checkout", "--quiet", "-B", subject, self.base)
+        for relative, text in files.items():
+            (self.repo / relative).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / relative).write_text(text, encoding="utf-8")
+        git_in(self.repo, "add", "--all")
+        git_in(self.repo, "commit", "--quiet", "-m", subject)
+        head = git_in(self.repo, "rev-parse", "HEAD")
+        git_in(self.repo, "checkout", "--quiet", "main")
+        state = state_tool.read_state(self.directory)
+        queue = [item for item in state["queue"] if item["subject"] != subject]
+        lanes = state["lanes"] or [lane("lane-1")]
+        state_tool.patch(self.directory, writer="lead", version=state["version"],
+                         changes={"lanes": lanes, "queue": [*queue, queue_item(subject, head=head, changeRequest="cr-1")]})
+        return head
+
+    def select(self, checks: object, head: str, *, binding: dict | None = None, subject: str = "work-q") -> list[str]:
+        item = state_tool.select_checks(self.directory, subject, binding=binding or self.binding, head=head,
+                                        checks=checks, reason="the lead's reason", repo=self.repo)
+        return [check["id"] for check in item["leadSelection"]["checks"]]
+
+    def refused(self, call) -> Exception:
+        before = (self.directory / state_tool.STATE_FILE).read_bytes()
+        with self.assertRaises(state_tool.StateError) as caught:
+            call()
+        self.assertEqual((self.directory / state_tool.STATE_FILE).read_bytes(), before)
+        return caught.exception
+
+    def test_catalogue_ids_resolve_to_their_entries_and_an_unknown_id_is_refused_by_name(self) -> None:
+        head = self.candidate({"src/app.py": "two\n"})
+        item = state_tool.select_checks(self.directory, "work-q", binding=self.binding, head=head,
+                                        checks=["run-delivery", "corpus-guards"], reason="r", repo=self.repo)
+        catalogue = {entry["id"]: entry for entry in self.CATALOGUE}
+        self.assertEqual(item["leadSelection"]["checks"], [catalogue["run-delivery"], catalogue["corpus-guards"]])
+        error = self.refused(lambda: self.select(["run-delivery", "no-such-check"], head))
+        self.assertEqual(error.code, "select_invalid")
+        self.assertIn("no-such-check", str(error))
+        self.assertNotIn("run-delivery,", str(error).split(":")[0])
+
+    def test_the_command_line_takes_comma_separated_ids(self) -> None:
+        head = self.candidate({"src/app.py": "two\n"})
+        binding = self.directory.parent / "orchestration.json"
+        binding.write_text(json.dumps(self.binding), encoding="utf-8")
+        code, result = run_tool(self.directory, "select", "--subject", "work-q", "--binding", str(binding), "--head", head,
+                                "--checks", "run-delivery,corpus-guards", "--reason", "run-delivery only",
+                                "--repo", str(self.repo))
+        self.assertEqual(code, 0, result)
+        self.assertEqual([check["id"] for check in result["item"]["leadSelection"]["checks"]],
+                         ["run-delivery", "corpus-guards"])
+        self.assertEqual(result["baseHead"], self.base)
+        for given in ("run-delivery,,corpus-guards", " , "):
+            with self.subTest(given=given):
+                code, result = run_tool(self.directory, "select", "--subject", "work-q", "--binding", str(binding),
+                                        "--head", head, "--checks", given, "--reason", "r", "--repo", str(self.repo))
+                self.assertEqual((code, result["code"]), (1, "select_invalid"))
+        code, result = run_tool(self.directory, "select", "--subject", "work-q", "--binding", str(binding), "--head", head,
+                                "--checks", "-", "--reason", "r", "--repo", str(self.repo), stdin="run-delivery\n")
+        self.assertEqual(code, 0, result)
+        self.assertEqual([check["id"] for check in result["item"]["leadSelection"]["checks"]],
+                         ["run-delivery", "corpus-guards"])
+
+    def test_a_guard_is_in_every_selection_including_one_that_names_none(self) -> None:
+        head = self.candidate({"src/app.py": "two\n"})
+        self.assertEqual(self.select(["run-delivery"], head), ["run-delivery", "corpus-guards"])
+        self.assertEqual(self.select([selected_check("parser")], head), ["parser", "corpus-guards"])
+        self.assertEqual(self.select([], head), ["corpus-guards"])
+        entry = state_tool.read_journal(self.directory)[-1]
+        self.assertIn("corpus-guards (a guard)", entry["summary"])
+        # A guard the lead names itself is selected once, and one defined differently is refused.
+        self.assertEqual(self.select(["corpus-guards", "run-delivery"], head), ["corpus-guards", "run-delivery"])
+        differing = {**self.CATALOGUE[1], "argv": ["python3", "other.py"]}
+        self.assertEqual(self.refused(lambda: self.select([differing], head)).code, "select_invalid")
+
+    def test_a_json_list_as_today_selects_exactly_what_it_lists_plus_the_guards(self) -> None:
+        head = self.candidate({"src/app.py": "two\n"})
+        listed = [selected_check("parser"), selected_check("lexer", prerequisites=["parser"])]
+        item = state_tool.select_checks(self.directory, "work-q", binding=self.binding, head=head, checks=listed,
+                                        reason="r", repo=self.repo)
+        self.assertEqual(item["leadSelection"]["checks"], [*listed, self.CATALOGUE[1]])
+        # A binding with no catalogue keeps today's selection exactly.
+        plain = {key: value for key, value in self.binding.items() if key != "selection"} | {"selection": {"lead": True}}
+        item = state_tool.select_checks(self.directory, "work-q", binding=plain, head=head, checks=listed, reason="r")
+        self.assertEqual(item["leadSelection"]["checks"], listed)
+
+    def test_an_id_brings_its_catalogue_prerequisites(self) -> None:
+        head = self.candidate({"src/app.py": "two\n"})
+        self.assertEqual(self.select(["plan-fixtures"], head), ["fixture-build", "plan-fixtures", "corpus-guards"])
+
+    def test_a_schema_change_selects_its_mapped_readers_and_fixtures_but_not_a_test_that_only_mentions_it(self) -> None:
+        head = self.candidate({self.SCHEMA: '{"changed": true}\n'})
+        chosen = self.select(["run-delivery"], head)
+        self.assertEqual(chosen, ["run-delivery", "corpus-guards", "schema-readers", "fixture-build", "plan-fixtures"])
+        self.assertNotIn("mentions-schema", chosen)
+        entry = state_tool.read_journal(self.directory)[-1]
+        self.assertIn(f"schema-readers (reads {self.SCHEMA})", entry["summary"])
+        # A change elsewhere selects no reader, and a captured fixture's own change selects them.
+        other = self.candidate({"src/app.py": "two\n"}, subject="work-r")
+        self.assertEqual(self.select(["run-delivery"], other, subject="work-r"), ["run-delivery", "corpus-guards"])
+        fixture = self.candidate({"tests/fixtures/plans/one.json": '{"x": 1}\n'}, subject="work-s")
+        self.assertIn("plan-fixtures", self.select(["run-delivery"], fixture, subject="work-s"))
+
+    def test_a_rename_selects_the_readers_of_the_path_it_leaves(self) -> None:
+        git_in(self.repo, "checkout", "--quiet", "-B", "work-q", self.base)
+        git_in(self.repo, "mv", self.SCHEMA, "skills/orchestrate-work/references/moved.json")
+        git_in(self.repo, "commit", "--quiet", "-m", "move")
+        head = git_in(self.repo, "rev-parse", "HEAD")
+        git_in(self.repo, "checkout", "--quiet", "main")
+        state = state_tool.read_state(self.directory)
+        state_tool.patch(self.directory, writer="lead", version=state["version"],
+                         changes={"lanes": [lane("lane-1")], "queue": [queue_item("work-q", head=head, changeRequest="cr-1")]})
+        self.assertIn("schema-readers", self.select(["run-delivery"], head))
+
+    def test_readers_that_cannot_read_the_changes_are_refused_rather_than_skipped(self) -> None:
+        head = self.candidate({self.SCHEMA: "{}\n{}\n"})
+        elsewhere = self.directory.parent / "not-a-repo"
+        elsewhere.mkdir()
+        error = self.refused(lambda: state_tool.select_checks(
+            self.directory, "work-q", binding=self.binding, head=head, checks=["run-delivery"], reason="r", repo=elsewhere))
+        self.assertEqual(error.code, "select_invalid")
+        self.assertIn("readers", str(error))
+
+    def test_a_catalogue_the_runner_would_refuse_is_refused(self) -> None:
+        head = self.candidate({"src/app.py": "two\n"})
+        cases = {
+            "repeated id": {"catalogue": [*self.CATALOGUE, self.CATALOGUE[0]]},
+            "binding id": {"catalogue": [*self.CATALOGUE, selected_check("always")]},
+            "outside prerequisite": {"catalogue": [*self.CATALOGUE, selected_check("x", prerequisites=["elsewhere"])]},
+            "unknown guard": {"guards": ["missing"]},
+            "unknown reader": {"readers": [{"paths": ["src/**"], "checks": ["missing"]}]},
+            "reader with no path": {"readers": [{"paths": [], "checks": ["run-delivery"]}]},
+            "reader with no check": {"readers": [{"paths": ["src/**"], "checks": []}]},
+        }
+        for name, changes in cases.items():
+            with self.subTest(name):
+                binding = {**self.binding, "selection": {**self.binding["selection"], **changes}}
+                self.assertEqual(self.refused(lambda: self.select(["run-delivery"], head, binding=binding)).code,
+                                 "binding_invalid")
+
+    def test_the_binding_schema_takes_the_catalogue_guards_and_readers(self) -> None:
+        schema = json.loads(SCHEMA_FILE.read_text(encoding="utf-8"))["orchestration-binding/1"]
+        selection = {**schema, "$ref": "#/properties/selection"}
+        selection.pop("required", None)
+        selection.pop("properties", None)
+        selection.pop("additionalProperties", None)
+        selection.pop("type", None)
+        validator = Draft202012Validator({**selection, "properties": schema["properties"], "$defs": schema["$defs"]})
+        self.assertEqual([error.message for error in validator.iter_errors(self.binding["selection"])], [])
+        self.assertNotEqual(list(validator.iter_errors({**self.binding["selection"], "aliases": []})), [])
+        self.assertNotEqual(list(validator.iter_errors({**self.binding["selection"], "readers": [{"paths": ["a"]}]})), [])
+
+    # -- the base head warning -------------------------------------------------------------------------------------
+
+    def record_rerun(self, check: str, base_head: str, result: str, subject: str = "earlier") -> None:
+        state = state_tool.read_state(self.directory)
+        entry = {"check": check, "baseHead": base_head, "result": result, "subject": subject,
+                 "recordedAt": "2026-11-08T00:00:00Z"}
+        state_tool.patch(self.directory, writer="runner", version=state["version"],
+                         assignments={"/meta/baseReruns": [*(state["meta"].get("baseReruns") or []), entry]})
+
+    def notices(self, checks: str) -> dict:
+        binding = self.directory.parent / "orchestration.json"
+        binding.write_text(json.dumps(self.binding), encoding="utf-8")
+        head = state_tool.read_state(self.directory)["queue"][0]["head"]
+        code, result = run_tool(self.directory, "select", "--subject", "work-q", "--binding", str(binding), "--head", head,
+                                "--checks", checks, "--reason", "r", "--repo", str(self.repo))
+        self.assertEqual(code, 0, result)
+        return result
+
+    def test_a_selected_check_failed_at_the_current_base_head_is_warned_about_by_id_and_head(self) -> None:
+        self.candidate({"src/app.py": "two\n"})
+        self.record_rerun("run-delivery", self.base, "failed")
+        result = self.notices("run-delivery")
+        [warning] = result["warnings"]
+        self.assertIn("run-delivery", warning)
+        self.assertIn(self.base, warning)
+        self.assertEqual(result["notes"], [])
+
+    def test_the_same_check_passing_its_rerun_at_this_head_says_nothing(self) -> None:
+        self.candidate({"src/app.py": "two\n"})
+        self.record_rerun("run-delivery", self.base, "passed")
+        result = self.notices("run-delivery")
+        self.assertEqual((result["warnings"], result["notes"]), ([], []))
+        # The latest re-run at the head is the one that counts.
+        self.record_rerun("run-delivery", self.base, "failed")
+        self.record_rerun("run-delivery", self.base, "passed")
+        self.assertEqual(self.notices("run-delivery")["warnings"], [])
+
+    def test_the_same_check_failed_at_an_older_base_head_gives_no_warning(self) -> None:
+        self.candidate({"src/app.py": "two\n"})
+        self.record_rerun("run-delivery", "c" * 40, "failed")
+        self.record_rerun("corpus-guards", self.base, "passed")
+        result = self.notices("run-delivery")
+        self.assertEqual((result["warnings"], result["notes"]), ([], []))
+
+    def test_a_check_the_story_did_not_select_failing_at_this_head_gives_no_warning(self) -> None:
+        self.candidate({"src/app.py": "two\n"})
+        self.record_rerun("mentions-schema", self.base, "failed")
+        result = self.notices("run-delivery")
+        self.assertEqual((result["warnings"], result["notes"]), ([], []))
+
+    def test_a_guard_failed_at_this_head_is_warned_about_though_the_lead_named_only_another(self) -> None:
+        self.candidate({"src/app.py": "two\n"})
+        self.record_rerun("corpus-guards", self.base, "failed")
+        [warning] = self.notices("run-delivery")["warnings"]
+        self.assertIn("corpus-guards", warning)
+
+    def test_a_head_with_no_rerun_says_nothing_is_known(self) -> None:
+        self.candidate({"src/app.py": "two\n"})
+        self.record_rerun("run-delivery", "c" * 40, "failed")
+        result = self.notices("run-delivery")
+        self.assertEqual(result["warnings"], [])
+        [note] = result["notes"]
+        self.assertIn("nothing is known", note)
+        self.assertIn(self.base, note)
+
+    def test_only_the_runner_writes_the_base_reruns(self) -> None:
+        state = state_tool.read_state(self.directory)
+        entry = {"check": "x", "baseHead": self.base, "result": "failed", "subject": "s", "recordedAt": "2026-11-08T00:00:00Z"}
+        self.assertEqual(self.refused(lambda: state_tool.patch(
+            self.directory, writer="lead", version=state["version"], assignments={"/meta/baseReruns": [entry]})).code,
+            "field_not_owned")
+
+
+if __name__ == "__main__":
+    unittest.main()
