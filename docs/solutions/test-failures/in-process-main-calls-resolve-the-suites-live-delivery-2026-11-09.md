@@ -44,7 +44,7 @@ built for one repository from inside another mixed the two.
 
 ## What Didn't Work
 
-- Stripping the tool's settings from the environment (V26-3286) doesn't help on its own. Resolution starts from the
+- Stripping the tool's settings from the environment, as the fixtures' cleaned environment does, doesn't help on its own. Resolution starts from the
   working directory, and from a global that no environment variable touches.
 - A temporary folder with no repository as the working directory hides the problem without proving anything.
   `repo()` fails before any setting is read, so the settings strip can never be shown red.
@@ -95,8 +95,9 @@ that isn't a guard, the case's own repository, is what makes the settings strip 
 
 ## Related Issues
 
-- V26-3324: the eight stray `supervisor:` lines and the `ResourceWarning` in V26-3267 lane 2's run of the two
-  run-delivery modules.
-- V26-3286: the cleaned environment and the lead-command guard from a planted live checkout.
+- The eight stray `supervisor:` lines and the `ResourceWarning` in another lane's run of the two run-delivery
+  modules, on 2026-11-09.
+- The fixtures' cleaned environment, and the guard that runs the lead commands from a planted live checkout
+  (`LiveDeliveryOutOfReachTests`).
 - `docs/solutions/test-failures/detached-fixture-supervisors-outlive-interrupted-workers-2026-11-09.md`: stopping
   what a case started.
