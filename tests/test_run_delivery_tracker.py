@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import datetime
 import fcntl
+import http.client
 import http.server
 import importlib.util
 import json
@@ -1941,7 +1942,7 @@ class FakeJiraBindTests(unittest.TestCase):
     def test_the_fake_jira_listens_at_once_when_name_lookups_stall(self) -> None:
         released = threading.Event()  # set in cleanup, so a server that waits on the lookup isn't left waiting a minute
         stalled: list[str] = []
-        real_getfqdn = socket.getfqdn
+        real_getfqdn, real_gethostbyaddr = socket.getfqdn, socket.gethostbyaddr
 
         def getfqdn(name: str = "") -> str:
             if name in self.LOOPBACK:
@@ -1949,7 +1950,13 @@ class FakeJiraBindTests(unittest.TestCase):
                 released.wait(60)
             return real_getfqdn(name)
 
-        patch = mock.patch.object(socket, "getfqdn", getfqdn)
+        def gethostbyaddr(address: str):
+            if address in self.LOOPBACK:
+                stalled.append(address)
+                released.wait(60)
+            return real_gethostbyaddr(address)
+
+        patch = mock.patch.multiple(socket, getfqdn=getfqdn, gethostbyaddr=gethostbyaddr)
         patch.start()
         made: list[FakeJira] = []
         built = threading.Thread(target=lambda: made.append(FakeJira()), daemon=True)
@@ -1966,9 +1973,20 @@ class FakeJiraBindTests(unittest.TestCase):
         built.start()
         built.join(5)
         self.assertFalse(built.is_alive(), f"FakeJira() waited on the stalled lookup of {stalled}")
-        port = made[0].server.server_address[1]
+        server = made[0].server
+        port = server.server_address[1]
+        # The name the stock bind would have looked up is the address itself.
+        self.assertEqual((server.server_name, server.server_port), ("127.0.0.1", port))
         with socket.create_connection(("127.0.0.1", port), timeout=max(0.1, 5 - (time.monotonic() - started))):
             pass
+        # And it serves: a request without credentials gets Jira's 401, within the same 5 s.
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=max(0.1, 5 - (time.monotonic() - started)))
+        try:
+            connection.request("GET", "/rest/api/3/myself")
+            response = connection.getresponse()
+            self.assertEqual((response.status, json.loads(response.read())), (401, {"errorMessages": ["unauthorized"]}))
+        finally:
+            connection.close()
         self.assertLess(time.monotonic() - started, 5)
         self.assertEqual(stalled, [], "the bind looked up a loopback name")
 
