@@ -491,6 +491,15 @@ class ReadOnlyCheckTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "validation wrote a file of the checkout"):
             self.check(self.write)
 
+    def test_validation_adding_an_empty_file_git_would_track_fails_the_check(self) -> None:
+        # An empty file adds no bytes, so only its name can show it is there.
+        relative = "tests/.validation-lock"
+        path = self.root / relative
+        self.assertNotEqual(subprocess.run(["git", "check-ignore", "-q", relative], cwd=self.root).returncode, 0)
+        self.addCleanup(path.unlink, missing_ok=True)
+        with self.assertRaisesRegex(AssertionError, "validation wrote a file of the checkout"):
+            self.check(lambda root: (root / relative).write_bytes(b""))
+
     def test_a_tracked_file_validation_removes_is_recorded_missing(self) -> None:
         relative = "skills/compound-delivery-kernel/SKILL.md"
         path = self.root / relative
