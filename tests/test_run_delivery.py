@@ -407,6 +407,9 @@ class Fixture:
             "gates": [{"id": "lint", "argv": ["sh", "-c", "test -f src/app.txt"]}, {"id": "test", "argv": ["true"]},
                       {"id": "build", "argv": ["sh", "-c", "mkdir -p out && cp src/*.txt out/"]}],
             "neverTouch": [".agents", "tools/"],
+            # Inside the case's folder: the default is under the runner's own HOME, which every supervisor pass and
+            # every close-out would write to.
+            "cleanup": {"archive": str(self.tmp / "archive/{delivery}")},
             "inApp": {"lease": "app", "lock": str(self.tmp / "app.lock"), "port": self.port,
                       "build": {"argv": ["sh", "-c", "mkdir -p out && cp src/*.txt out/"], "artifact": "out"},
                       "serve": {"argv": serve_argv(self.tmp / "static_serve.py")},
@@ -3085,8 +3088,11 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         lock = fx.tmp / "app.lock"
         recorded = lambda: [int(g) for g in re.findall(r"pgid (\d+)", lock.read_text())] if lock.exists() else []
         groups: list[int] = []
+        # The check's own temp folder, so what a killed check leaves there is this case's to see.
+        temp = fx.tmp / "temp"
+        temp.mkdir()
         proc = subprocess.Popen([sys.executable, "-B", str(fx.tool), "app-check", "FX-2", "slow", "--mode", "loaded",
-                                 "--path", "/slow", "--eval", "true"], cwd=wt, env=fx.env,
+                                 "--path", "/slow", "--eval", "true"], cwd=wt, env={**fx.env, "TMPDIR": str(temp)},
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
             deadline = time.monotonic() + 20
@@ -3100,6 +3106,9 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
             proc.wait(timeout=20)
             time.sleep(0.5)
             self.assertTrue(all(group_alive(g) for g in groups), "the kill didn't leave the check's groups running")
+            # Its spec sits beside the lease's lock, inside the fixture, not in the temp folder.
+            self.assertEqual(sorted(p.name for p in temp.iterdir()), [], "a killed check left a file in the temp folder")
+            self.assertTrue((fx.tmp / "app.lock.spec.json").is_file(), "the check's spec wasn't beside the lease's lock")
             fx.close()
             self.assertEqual([g for g in groups if group_alive(g)], [], "the fixture closed with the check's groups running")
             self.assertFalse(fx.call("port_open", fx.port, cwd=Path(tempfile.gettempdir())), "the server outlived its fixture")
@@ -3497,6 +3506,12 @@ class RunDeliveryReleaseAndNamesTests(unittest.TestCase):
     def test_lead_close_stops_this_deliverys_processes_under_either_name(self) -> None:
         fx = self.fixture()
         m = fx.main
+        conf_path = m / ".agents/run-delivery.json"
+        conf = json.loads(conf_path.read_text())
+        del conf["cleanup"]  # the default archive, under the HOME this case gives lead-close
+        conf_path.write_text(json.dumps(conf, indent=2))
+        commit(m, "FX-1: the default archive")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
         setup_delivery(fx)
         code, out = fx.flow("lead-init", cwd=m)
         expect(code == 0, out)
@@ -4546,12 +4561,6 @@ class RunDeliverySetupTests(unittest.TestCase):
     def fixture(self) -> Fixture:
         fx = Fixture(self.generation, self.receipt)
         self.addCleanup(fx.close)
-        conf_path = fx.main / ".agents/run-delivery.json"
-        conf = json.loads(conf_path.read_text())
-        conf["cleanup"] = {"archive": str(fx.tmp / "archive/{delivery}")}
-        conf_path.write_text(json.dumps(conf, indent=2))
-        commit(fx.main, "FX-1: archive inside the fixture")
-        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
         return fx
 
     def record(self, fx: Fixture) -> dict:
@@ -6844,11 +6853,24 @@ class LiveDeliveryOutOfReachTests(unittest.TestCase):
 
     def test_the_cleaned_environment_strips_every_setting_the_tool_reads(self) -> None:
         source = (SKILL / "scripts/run_delivery.py").read_text()
-        read = set(re.findall(r'os\.environ(?:\.get\(|\[)"([A-Z_]+)"', source))
-        read |= set(re.findall(r'setting\("([A-Z_]+)"\)', source))
-        read |= {name for pair in re.findall(r'\(\s*"([A-Z_]+)",\s*"([A-Z_]+)"\s*\)', source) for name in pair}
+        quoted = r"""\s*["']([A-Z][A-Z0-9_]*)["']"""
+        # Every way Python reads one: os.environ[...] / .get / .pop / .setdefault, os.getenv, `... in os.environ`, and
+        # the tool's own setting() with its earlier names.
+        read = set(re.findall(r"os\.environ(?:\.(?:get|pop|setdefault)\(|\[)" + quoted, source))
+        read |= set(re.findall(r"os\.getenv\(" + quoted, source))
+        read |= set(re.findall(quoted + r"""\s+(?:not\s+)?in\s+os\.environ\b""", source))
+        read |= set(re.findall(r"\bsetting\(" + quoted, source))
+        legacy = re.search(r"^LEGACY_NAMES = \((.*?)^\)", source, re.MULTILINE | re.DOTALL).group(1)
+        read |= {name for pair in re.findall(r"\(" + quoted + r"\s*," + quoted + r"\s*\)", legacy) for name in pair}
         read -= {"PATH"}  # the runner's own, which every case needs
         self.assertLessEqual(read, set(TOOL_SETTINGS), "the tool reads a setting this list doesn't name")
+        probe = ("os.getenv('A_ONE')\nos.environ.get(\"A_TWO\")\nos.environ['A_THREE']\nif 'A_FOUR' in os.environ: pass\n"
+                 "os.environ.pop(\"A_FIVE\", None)\nsetting('A_SIX')\n")
+        seen = set(re.findall(r"os\.environ(?:\.(?:get|pop|setdefault)\(|\[)" + quoted, probe))
+        seen |= set(re.findall(r"os\.getenv\(" + quoted, probe))
+        seen |= set(re.findall(quoted + r"""\s+(?:not\s+)?in\s+os\.environ\b""", probe))
+        seen |= set(re.findall(r"\bsetting\(" + quoted, probe))
+        self.assertEqual(seen, {"A_ONE", "A_TWO", "A_THREE", "A_FOUR", "A_FIVE", "A_SIX"}, "the scan misses a form of read")
         self.assertEqual(set(TOOL_SETTINGS) - read, set(), "a listed setting the tool no longer reads")
         with mock.patch.dict(os.environ, {name: PLANTED_MARKER for name in TOOL_SETTINGS}):
             cleaned = clean_environment()
@@ -6905,6 +6927,23 @@ class LiveDeliveryOutOfReachTests(unittest.TestCase):
         self.assertEqual(set(settings), set(TOOL_SETTINGS))
         return main, worktree, settings
 
+    def test_a_supervisor_pass_keeps_its_copy_of_the_record_inside_the_case(self) -> None:
+        """The pass's `latest` copy lands under the case's folder, never under the runner's HOME."""
+        home = Path(tempfile.mkdtemp(prefix="run-delivery-home-"))
+        self.addCleanup(shutil.rmtree, home, True)
+        identity = {f"GIT_{who}_{what}": value for who in ("AUTHOR", "COMMITTER")
+                    for what, value in (("NAME", "Runner"), ("EMAIL", "runner@example.invalid"))}
+        with mock.patch.dict(os.environ, {"HOME": str(home), **identity}):
+            fx = Fixture(self.generation, self.receipt)
+            self.addCleanup(fx.close)
+            setup_delivery(fx)
+            for argv in (["lead-init"], ["lead-run", "--once"]):
+                code, out = fx.flow(*argv, cwd=fx.main)
+                self.assertEqual(code, 0, out)
+        self.assertEqual(sorted(str(p.relative_to(home)) for p in home.rglob("*")), [],
+                         "a lead command wrote under the runner's HOME")
+        self.assertTrue((fx.tmp / "archive/FX-1/latest/record/state.json").is_file(), "the pass made no latest copy")
+
     def test_the_lead_commands_run_from_a_story_checkout_never_reach_its_live_delivery(self) -> None:
         main, worktree, settings = self.plant()
         before = tree_snapshot(main)
@@ -6928,6 +6967,11 @@ class LiveDeliveryOutOfReachTests(unittest.TestCase):
                     self.assertNotIn(str(main), out)
             self.assertIn(f"initialized {fx.tmp / 'record'}", outputs["lead-init"])
             self.assertTrue((fx.tmp / "record/state.json").is_file())
+            # Nor copied: no file the commands left in the case's folder carries the planted delivery's marker.
+            copied = [path for path in fx.tmp.rglob("*") if path.is_file() and not path.is_symlink()
+                      and ".git" not in path.relative_to(fx.tmp).parts
+                      and PLANTED_MARKER.encode() in path.read_bytes()]
+            self.assertEqual(copied, [], "a lead command copied the planted delivery into the case")
         self.assertEqual(tree_snapshot(main), before, "a lead command changed the live delivery's files")
 
 if __name__ == "__main__":

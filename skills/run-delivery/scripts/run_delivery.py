@@ -2284,9 +2284,12 @@ def run_in_app(dist: Path, spec: dict, passthrough: list[str], owner: str, lock_
     """Serve `dist` and run one check spec against it, under the in-app lease. Returns the check's report."""
     ia = need_in_app()
     port = ia["port"]
-    lease = Lease(Path(expand(ia["lock"])), port, owner, lock_wait or ia.get("lockWaitSeconds", 480))
+    lock = Path(expand(ia["lock"]))
+    lease = Lease(lock, port, owner, lock_wait or ia.get("lockWaitSeconds", 480))
     server = check = None
-    spec_file = Path(tempfile.mkstemp(suffix=".json")[1])
+    # Beside the lease's lock, under the lease: one holder at a time writes it, so a holder that is killed before it
+    # can remove it leaves one file the next holder overwrites, never a file per check in the system's temp folder.
+    spec_file = lock.with_name(lock.name + ".spec.json")
     try:
         spec_file.write_text(json.dumps(spec))
         if port_open(port):
