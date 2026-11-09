@@ -69,7 +69,7 @@
       "criteria": [
         {
           "id": "v26-3163-done",
-          "text": "posture_of_bytes measures depth per Decision 1 before parsing; every Decision 1 vector is in tests/fixtures/delivery-posture-vectors.json and both readers agree on all of them on Python 3.11 and 3.14 against the 0.8.2 runtime; red runs recorded against the unfixed reader and the five scanner mutants; the lead-resolve wording under focused is pinned in SKILL.md and references/config.md, proved red"
+          "text": "posture_of_bytes measures depth per Decision 1 before parsing; every Decision 1 vector is in tests/fixtures/delivery-posture-vectors.json and both readers agree on all of them on Python 3.11 and 3.14 against the 0.8.3 runtime; red runs recorded against the unfixed reader and the five scanner mutants; the lead-resolve wording under focused is pinned in SKILL.md and references/config.md, proved red"
         }
       ]
     }
