@@ -6669,10 +6669,12 @@ class Supervisor:
         self.lost: str | None = None
 
     def gone(self) -> str | None:
-        """What it serves that is no longer there: its record, or the install it runs from."""
-        if not self.c.state.is_dir():
+        """What it serves that is no longer there: its record (the record's state file, which the state tool only ever
+        replaces whole, so a folder a removal left behind, or one a writer made again, doesn't count), or the install
+        it runs from (this file, inside the generation)."""
+        if not (self.c.state / "state.json").is_file():
             return f"its record {self.c.state} is gone"
-        if not Path(__file__).exists() or not GENERATION.is_dir():
+        if not Path(__file__).exists():
             return f"its install {GENERATION} is gone"
         return None
 

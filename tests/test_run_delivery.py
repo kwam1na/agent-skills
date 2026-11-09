@@ -546,6 +546,7 @@ def stop_supervisors(root: Path) -> None:
 # the worker itself can stop it: on SIGTERM or SIGHUP, and at exit, it stops every live case's supervisors first.
 LIVE_CASES: list[Path] = []
 _INTERRUPT_HANDLERS: dict[int, object] = {}
+_WATCHING: list[bool] = []  # set once the handlers and the exit hook are in place
 
 
 def stop_live_cases() -> None:
@@ -565,8 +566,11 @@ def _interrupted(signum, frame) -> None:
 
 
 def watch_case(folder: Path) -> None:
-    """Stop this case's supervisors if this process is interrupted or exits before the case's own cleanup does."""
-    if not _INTERRUPT_HANDLERS and threading.current_thread() is threading.main_thread():
+    """Stop this case's supervisors if this process is interrupted or exits before the case's own cleanup does. The
+    first call, from the main thread, puts the handlers and the exit hook in place, once; a signal this process
+    ignores stays ignored."""
+    if not _WATCHING and threading.current_thread() is threading.main_thread():
+        _WATCHING.append(True)
         for signum in (signal.SIGTERM, signal.SIGHUP):
             earlier = signal.getsignal(signum)
             if earlier is signal.SIG_IGN:

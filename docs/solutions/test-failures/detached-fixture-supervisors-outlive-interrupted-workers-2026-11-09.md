@@ -18,8 +18,10 @@ resolution_type: code_fix
 `lead-init` starts the delivery's supervisor (`lead-run`) detached, with `start_new_session=True`, so that it outlives
 the command that started it. Under a test, that same detachment puts it outside the test worker's process group.
 `scripts/run-tests.py` stops a timed-out or interrupted worker by its group: SIGTERM, a three-second grace, then
-SIGKILL. Its docstring says a child moved into a session of its own is not stopped. A Python worker with the default
-SIGTERM handler dies at once, before any `addCleanup` runs, so the fixture's supervisor is left running at ppid 1.
+SIGKILL. Its docstring says a child moved into a session of its own is not stopped. Each worker installs its own
+SIGTERM handler, which raises `KeyboardInterrupt`. unittest re-raises that past `doCleanups`, so no `addCleanup` runs,
+and the fixture's supervisor is left running at ppid 1. A process with the default disposition dies at once, with the
+same result.
 
 The case's cleanup had a second way to fail. `stop_supervisors` walked the case's folder with `Path.rglob`, and the
 merge queue removes its work checkouts whenever it likes. A checkout removed mid-walk raised `FileNotFoundError`, so
@@ -47,12 +49,14 @@ disappears.
 Two guards, each proved with the other out of the way:
 
 - **The worker stops what it started.** The test module keeps the case folders whose supervisors are still its own
-  to stop. On SIGTERM, SIGHUP and at exit, it stops each one by the pid its lock records, then ends as the signal
-  would have. The cleanup's walk uses `os.walk` with an `onerror` that ignores a folder removed meanwhile, and reads
+  to stop. On SIGTERM and SIGHUP, it stops each one by the pid its lock records before anything else runs, then hands
+  the signal to the handler that was there before (the runner's), or ends as the signal would have. An exit hook does
+  the same for a process that ends with a case still live. The cleanup's walk uses `os.walk` with an `onerror` that ignores a folder removed meanwhile, and reads
   each lock without creating it again.
 - **The supervisor exits once what it serves is gone.** `Supervisor.run` checks its record and its install before each
-  pass, between steps and while it waits. Once either is gone, it says so in its log, stops its children, and writes
-  no record back.
+  pass, between steps, before it logs a pass and while it waits. Once either is gone, it says so in its log, stops its
+  children, and writes no record back. The record is its state file, not its folder: a removal can leave the folder
+  behind, and a writer can make it again.
 
 A process-table check finds a case's processes independently of what the case recorded: the command line names the
 case's folder, or the process runs from inside it, or it names the case's install and an `--delivery FX-` key. That
