@@ -27,8 +27,8 @@ import urllib.request
 from pathlib import Path
 from unittest import mock
 
-from tests.test_run_delivery import (POSIX_ONLY, SUPERVISOR_STAND_IN, Fixture, commit, doctor_binding, installed_release,
-                                     setup_delivery, sh, stop_supervisors, write_results)
+from tests.test_run_delivery import (POSIX_ONLY, Fixture, commit, doctor_binding, installed_release, setup_delivery,
+                                     sh, stop_supervisors, write_results)
 from tests.test_run_delivery_tracker import FileBackend, JiraBackend
 
 # Each class that starts supervisors marks itself run_serially, so its cases run one at a time and alone on the machine.
@@ -3075,6 +3075,8 @@ class SupervisorBackgroundHealthTests(unittest.TestCase):
         self.assertNotIn("run-delivery-full-health-", sh("git", "worktree", "list", cwd=fx.main).stdout)
 
 
+
+from tests.test_run_delivery import SUPERVISOR_STAND_IN  # noqa: E402  (a lock holder that stands in for one)
 
 # The processes a supervisor runs as: the tool, and the two children it keeps.
 SUPERVISOR_SCRIPTS = ("run_delivery.py", "render_state.py", "merge_queue.py")
