@@ -3103,7 +3103,7 @@ function refuseOverBudget(config) {
 import { computeDeliverableIdentity as computeDeliverableIdentity2, runAdmission } from "./kernel.mjs";
 
 // packages/cli/src/delivery-posture.ts
-import { resolveDeliveryPosture } from "./kernel.mjs";
+import { deliveryPostureRefusedOutsideRoot, resolveDeliveryPosture } from "./kernel.mjs";
 async function focusedOutcome(context) {
   const resolved = await resolveDeliveryPosture({
     rootDir: context.rootDir,
@@ -3124,7 +3124,7 @@ async function focusedOutcome(context) {
       ].join("\n")
     };
   }
-  if (resolved.code === "posture_malformed") context.writeError(`${resolved.code}: ${oneLine(resolved.reason, 512)}`);
+  if (resolved.code === "posture_malformed" || deliveryPostureRefusedOutsideRoot(resolved)) context.writeError(`${resolved.code}: ${oneLine(resolved.reason, 512)}`);
   return void 0;
 }
 

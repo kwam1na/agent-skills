@@ -181,18 +181,58 @@ Setting `PYTHONDONTWRITEBYTECODE=1` for the suite stops it being written.
 ### Where the stored runtime comes from
 
 `product-runtime/` is the build output of `kwam1na/agent-delivery-harness`, now at
-`v26-technologies/agent-delivery-harness`. It declares 0.8.2 and was built with
-`npm run product:build-runtime` from a clean checkout of
-`f93afd7c1dfae9208106da34633aaacdf1bfc5ba`, that repository's `main` at the merge of its
-0.8.2 version bump, which the `v0.8.2` tag names. Like the runtimes before it, it is
-`main` itself. Over 0.8.1, it prewarms each scoped check setup's warm base before any check takes a
-worker, one setup at a time, and orders them by each setup's own critical path. A worker takes a check
-only once its base has settled. Clones run one at a time, the longest-expected check's first. Over
-0.8.0, 0.8.1 added shallow snapshot materialization.
+`v26-technologies/agent-delivery-harness`. It declares 0.8.3 and was built with
+`npm run product:build-runtime` from a clean checkout of the branch `runtime/0.8.3` at
+`fc227786bc8532d62b9c511753767d76eee3e616`. That commit is the `v0.8.2` tag's commit with one
+change cherry-picked: `42f3789e4923b44cda671836d4d16ec7e4fc9542`, which reads the delivery
+posture only from a repository's root and bounds how deeply a declaration may nest.
+Unlike 0.8.0 to 0.8.2, it is not that repository's `main`. Nothing merged there after
+`v0.8.2` ships in it but that change, and 0.8.3 carries 0.8.2's warm-base prewarm.
 
-`HARNESS_VERSION` 0.8.2 is part of every preparation fingerprint, so it invalidates
+What 0.8.3 adds:
+- A command run from anything but a repository's root reads the posture as `gate`, with
+  `posture_unreadable` naming the directory, and writes one `posture_unreadable:` line on
+  stderr ahead of its own blocker. Such a directory might be a plain subdirectory, a real
+  nested repository, a submodule, an untracked gitfile or a bare repository. A linked
+  worktree still reads its base from its own root, including one nested under its main
+  checkout, as lane checkouts are.
+- A declaration nesting arrays or objects more than 64 deep is `posture_malformed`.
+
+Two clean builds from that commit give the same bytes. A build from `v0.8.1` plus the same
+change does not. The runtime's files and their sha256 digests:
+
+| File | sha256 |
+| --- | --- |
+| `LICENSE` | `02ed546806a3298b12c633742eb2fd354821d5dc9a5ee4384d4ae8196737a83f` |
+| `NOTICE` | `547c61e2d762d0cadff8c1560ac7b9c072d4d71315797e11629654079ce0882d` |
+| `bootstrap.mjs` | `5df698a9e5d7bae942ec5a40819ba52b0688cab87c653ee8b42e30160ad1225a` |
+| `cli-api.d.mts` | `4e9444db3c806c5c76d5b16ae49c93f0d30537e7f23c7a39ad1d61f301cb07c0` |
+| `cli-api.mjs` | `59850aaaff91eb1154ac25983732092d854c0e36506f4fe4fc34fea99801f4c8` |
+| `cli.mjs` | `cb94e391d844531ed69fef3766f7579e4740cb8235f919ea2f2a385329cada11` |
+| `kernel.d.mts` | `969ece0655063fba4e89fc39166a6f7f830cb1068d9740b614a95de83bce1d72` |
+| `kernel.mjs` | `65c1f222a084fbc8ea12a3abd4f4368cca511528ffbd54bc635a6b49586d0a0e` |
+| `loader.mjs` | `d00b40605a54f7defd9b8cab05825009af57baf2d5884d736eddc391ba35a1e8` |
+| `policy.mjs` | `320aa341d55833061c08b4c9e47f998c341229e964e84bebbf9db8da875a0d24` |
+| `runtime.json` | `9d9ba27d5219fc85faa04a6f6119912a3ac89b18485265f63c868152b10b7088` |
+
+`runtime.json` is the stored descriptor. A release rewrites its `workflowContentSha256` for
+each profile's workflow bytes, so a release archive's `runtime.json` digest differs from
+this one, while the other files match. `runtimeVersion` does not identify runtime bytes,
+so compare these digests.
+
+`HARNESS_VERSION` 0.8.3 is part of every preparation fingerprint, so it invalidates
 receipts prepared by an earlier runtime: an adopter's in-flight deliveries prepare again
 after applying it.
+
+#### Earlier runtimes
+
+0.8.2 was built from a clean checkout of `f93afd7c1dfae9208106da34633aaacdf1bfc5ba`, that
+repository's `main` at the merge of its 0.8.2 version bump, which the `v0.8.2` tag names.
+Like the runtimes before it, it was `main` itself. Over 0.8.1, it prewarms each scoped
+check setup's warm base before any check takes a worker, one setup at a time, and orders
+them by each setup's own critical path. A worker takes a check only once its base has
+settled. Clones run one at a time, the longest-expected check's first. Over 0.8.0, 0.8.1
+added shallow snapshot materialization.
 
 ### Before the first version tag
 
