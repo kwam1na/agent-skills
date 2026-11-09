@@ -348,8 +348,9 @@ def jira_snapshot(args: argparse.Namespace, environ: dict, transport: Transport,
             item["blockedBy"] = blockers
         items.append(item)
     # The search lists the children only: the parent's own status is read once, by its key. A read that fails, as
-    # one the credentials may not reach, leaves the parent's state unknown and the children's snapshot stands: the
-    # record needs those, and nothing then says the parent closed. An answer it can't read still fails.
+    # one the credentials may not reach or one answered with something other than JSON, leaves the parent's state
+    # unknown and the children's snapshot stands: the record needs those, and nothing then says the parent closed.
+    # A JSON answer with no fields object, or a status category it doesn't know, still fails.
     try:
         answer = client.get(f"{site}/rest/api/3/issue/{urllib.parse.quote(args.parent)}?fields=status",
                             missing_ok=True)

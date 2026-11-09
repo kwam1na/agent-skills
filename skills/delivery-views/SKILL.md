@@ -438,9 +438,10 @@ is the title, its description flattened to plain text of at most 1000
 characters is the summary, and `blockedBy` holds the other children linked
 inward by the blocks link type. The parent's own status is then read once, by
 its key, into `parent`, mapped the same way. When that read fails or the
-tracker no longer has the parent, `parent` is left out and the children's
-snapshot still prints, so nothing says the parent closed. An answer it can't
-read fails the snapshot.
+tracker no longer has the parent, or answers it with something other than
+JSON, `parent` is left out and the children's snapshot still prints, so
+nothing says the parent closed. A JSON answer with no fields object, or with
+a status category it doesn't know, fails the snapshot.
 
 **Bitbucket Cloud** (forge): `--kind bitbucket --workspace <workspace>
 --repo <repository> --binding .agents/orchestration.json --state-dir

@@ -257,7 +257,8 @@ class JiraTests(SnapshotCase):
         # record keeps its tracker items, and the delivery stays not known to be closed.
         for name, answer in (("unreachable", (ISSUE, 0, snapshot.Failure("could not reach example.atlassian.net: URLError"))),
                              ("refused", (ISSUE, 403, {"errorMessages": ["no permission"]})),
-                             ("unauthorized", (ISSUE, 401, {}))):
+                             ("unauthorized", (ISSUE, 401, {})),
+                             ("not JSON", (ISSUE, 200, b"<html>a sign-in page</html>"))):
             with self.subTest(parent_read=name):
                 transport = Transport((SEARCH, 200, JIRA["page-2"]), answer)
                 code, out, err = self.run_kind(JIRA_ARGS, transport, JIRA_ENV)
