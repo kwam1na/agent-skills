@@ -31,6 +31,12 @@ on it has merged, and may send your story back for a new round if a merge moved 
 Decision 1 binds V26-3276 and V26-3256: build V26-3256's one-command add on V26-3276's refusal. Never run a
 `lead-*` command, or a test module, from the main checkout: only from your story's own checkout.
 
+**Lane 1: V26-3257's parent state (plan review round 4 notes, binding).** Decision 6 says `snapshot.py` emits the parent's state
+"from the parent issue its Linear and Jira queries already fetch". That is inexact: the Linear query reads `issue(id: $parent)` but
+selects only `createdAt`, so add `state { type }`, and the Jira path searches `parent = KEY` and never fetches the parent, so fetch it
+once. The producer row has one Linear case and one Jira case, and in each the fixture's parent is completed while its children are
+started, asserting the emitted parent state is completed.
+
 **Lane 2: V26-3259.** Keep the catalogue additive (Decision 7): every existing binding and JSON-list selection stays valid, proved by a
 row. Don't edit `.agents/orchestration.json` for V26-3259: this repository's adoption is V26-3309, yours in tier 3, after the lead
 tags and applies the release.
