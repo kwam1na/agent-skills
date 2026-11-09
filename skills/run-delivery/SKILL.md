@@ -62,7 +62,7 @@ the command reference.
 | Lead | `lead-cleanup [key...]` | After a story merges: keeps its lane evidence beside the record, then removes its checkout and local branch, and its remote branch only if `run-delivery.json` allows it and its PR is closed. Removes nothing unless every tip is on the base and the checkout is clean. With no keys, sweeps every story and skips the unmerged ones. |
 | Lead | `lead-reconcile` | One sweep: takes the binding's forge and tracker snapshots and reconciles the record with them, so a story's stop leaves "Not started" once its ticket starts or its draft PR opens, and reaches "In review" if the PR is opened for review. The supervisor runs one every pass. |
 | Lead | `lead-evidence record\|page\|published\|status [key...]` | Records missing before/after clips against a stamped build of the merged base, reusing each story's passing hold and fail checks, then builds the delivery's evidence page (index.html plus videos/) to publish and link from the tracker. |
-| Lead | `lead-plan change\|why\|approval ...` | Records a change to the approved plan, its reason, or an approval marked done or waiting (`approval <id> --state done\|waiting [--who W]`), committing the delivery file in the lead's clean checkout; never pushes. |
+| Lead | `lead-plan change\|why\|approval ...` | Records a change to the approved plan (`change --kind added` on a new key adds the whole story: plan heading, delivery-file story with its `why`, planned entry), its reason, or an approval marked done or waiting (`approval <id> --state done\|waiting [--who W]`), committing the delivery file in the lead's clean checkout; never pushes. |
 | Lead | `lead-close` | To close early, or with the supervisor down, after `delivery.closed`: asks a running supervisor to stop after its pass, stops a post-merge `fullHealth` run still going, which records no result, records a `fullHealth` skipped under the base's `focused` posture, then cleans up every story, renders the views, archives the record, logs, plan review and evidence, stops this delivery's merge queue, live view and `lead-reconcile` sweep, removes the runner's and the ship checkouts, frees the in-app lease, and lists what's left for the operator. It closes the latest `delivery.closed` that no new work has reopened, lists the tracker updates still owed without waiting for them, writes the close's `finished` mark in the record and the archived copy once the archive has landed, and names the closing entry in `closed.json`. It finishes a close that stopped partway. |
 | Lead | `ship [--no-gates]` | Builds the product-only branch from the delivery base's ship paths, then prepares it and runs the gates there. Gate scripts that only the delivery base has are lent for the run and removed after. Commits nothing, pushes nothing. |
 | Setup | `config` | Every resolved setting and the file it came from. |
@@ -187,8 +187,10 @@ merging, or marking a pull request ready.
    keys and the files each lane owns, and notes anything it couldn't. Check those against the plan, complete the rest
    (in-app requirements, finish lines, brief notes), commit it with the delivery's tooling, then `lead-init` and
    `lead-brief`.
-   To add a story mid-delivery, add it to that file (and the plan) with a `why`, one line saying why it joins the
-   delivery, commit and push, then run `lead-brief`. It, the `lead-reconcile` sweep and `lead-assign` all enter a story
+   To add a story mid-delivery in one command, run `lead-plan change --kind added --subjects <new-key> --title T --text C
+   --why W --lane L`: it adds the plan heading, the delivery-file story with its `why` and the planned entry, and
+   commits; push it, and `lead-assign` accepts the story. By hand, add it to that file (and the plan) with a `why`,
+   one line saying why it joins the delivery, commit and push, then run `lead-brief`. It, the `lead-reconcile` sweep and `lead-assign` all enter a story
    the record doesn't hold as planned work for its lane, moving it out of the follow-ups if the tracker reconcile filed
    it there, so the live view shows it straight away, and the plan records it as an `added` change carrying that
    `why`. A story added after `lead-init` froze the plan with no `why` is refused, by name and with the fix, and
