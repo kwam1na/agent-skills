@@ -398,8 +398,17 @@ python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lea
 git push -q origin main
 ```
 
-A story added to the delivery file mid-delivery is recorded as `added` when `lead-brief`, `lead-assign` or the
-supervisor registers it, with no reason until you give one with `lead-plan why <change-id> --why <reason>`; the plan
+To add a story mid-delivery, add it to the delivery file and the plan with a `why`, one line saying why it joins the
+delivery, then commit and push. `lead-brief`, `lead-reconcile` or `lead-assign` registers it as planned work, and the
+plan records it as an `added` change carrying that `why`, such as `"why": "Review found the gap it closes"` beside
+the story's `title` and `lane`.
+
+A story added after `lead-init` froze the plan with no `why`, or one the plan can't carry (empty, not text, over the
+plan's text cap, or holding a control character), is refused by each of those commands, naming its key and the fix,
+and nothing is registered; `lead-plan` refuses too, since its rebuild registers. The supervisor's sweep leaves the
+story unregistered and goes on, saying so in its pass. A story already in the file when `lead-init` ran is frozen
+with the plan and needs no `why`. `doctor --delivery` names a story waiting without one, and an `added` change a
+record already holds with no reason, with the `lead-plan why <change-id> --why <reason>` that gives it one; the plan
 chapter flags every change without one. An edit made to the criteria or `covers` by hand shows in the plan as
 `unrecorded`.
 

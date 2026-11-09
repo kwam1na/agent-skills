@@ -148,6 +148,8 @@ checks may need no file at all.
       "title": "What the story does",
       "lane": "lane-1",
       "label": "S1",                          // optional short name the plan uses
+      "why": "Review found the gap it closes", // a story added after lead-init: its reason, which its `added`
+                                              // change carries; registration refuses one added without it
       "pinned": ["/api/things/[^/?]+$"],      // request patterns its in-app checks may hold or fail
       "inApp": "checks"
       // none | loaded | checks (a passing hold, a passing fail, and every pinned pattern used; the default when
