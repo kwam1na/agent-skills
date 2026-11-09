@@ -4488,6 +4488,28 @@ class RunDeliveryPlanTests(unittest.TestCase):
         self.assertEqual([(c["kind"], c["subjects"], c.get("why"), c.get("source")) for c in self.plan(fx)["changes"]],
                          [("added", ["FX-4"], "A lane found the gap.", "registration")])
 
+    def test_lead_plan_removes_a_story_added_without_a_why_and_records_no_added_change_for_it(self) -> None:
+        fx = self.fixture()
+        path = plan_delivery(fx)
+        m = fx.main
+        fx.flow("lead-init", cwd=m)
+        add_story(fx, path, "FX-4")
+        code, out = fx.flow("lead-plan", "change", "--kind", "removed", "--subjects", "FX-4", "--why", "Dropped.", cwd=m)
+        self.assertEqual(code, 0, f"the story registration refuses couldn't be taken out: {out}")
+        self.assertNotIn("FX-4", json.loads(path.read_text())["stories"])
+        self.assertEqual([(c["kind"], c["subjects"], c.get("why")) for c in self.plan(fx)["changes"]],
+                         [("removed", ["FX-4"], "Dropped.")])
+        logged = [json.loads(line) for line in (fx.tmp / "flow-log/plan-changes.jsonl").read_text().splitlines()]
+        self.assertFalse([e for e in logged if e["type"] == "change" and e["kind"] == "added"], logged)
+        self.assertNotIn("FX-4", [p["subject"] for p in self.record(fx)["state"]["planned"]])
+        # The exemption is the removed story's alone: another added without its reason still refuses the removal.
+        add_story(fx, path, "FX-5")
+        add_story(fx, path, "FX-6")
+        code, out = fx.flow("lead-plan", "change", "--kind", "removed", "--subjects", "FX-5", "--why", "Dropped.", cwd=m)
+        self.assertEqual(code, 2, out)
+        self.assertIn("FX-6 has no `why`", out)
+        self.assertNotIn("FX-5 has no `why`", out)
+
     def test_every_registering_command_copies_the_stories_why_into_its_added_change(self) -> None:
         for argv in (["lead-brief"], ["lead-reconcile"], ["lead-assign", "FX-4", "--lane", "lane-1", "--title", "Lane 1"]):
             with self.subTest(argv[0]):
@@ -5007,6 +5029,17 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         path.write_text(json.dumps(d, indent=2))
         commit(m, "FX-1: FX-4 dropped")
         self.assertEqual(row()[0], "ok")
+        # A criterion added by hand is recorded as an unrecorded `added` change with no reason: the plan chapter's flag,
+        # not a story added without one.
+        d = json.loads(path.read_text())
+        d["stories"]["FX-2"]["criteria"].append({"id": "one-scrolls", "text": "Thing one scrolls"})
+        path.write_text(json.dumps(d, indent=2))
+        commit(m, "FX-1: a criterion added by hand")
+        self.assertEqual(fx.flow("lead-brief", cwd=m)[0], 0)
+        logged = [json.loads(line) for line in log.read_text().splitlines()]
+        self.assertTrue([e for e in logged if e["type"] == "change" and e["kind"] == "added"
+                         and e.get("criteria") == ["one-scrolls"] and "why" not in e], logged)
+        self.assertEqual(row(), ("ok", "every story added to the plan has its reason"))
 
     def test_the_candidate_row_proves_the_merge_queues_candidate_step_can_run(self) -> None:
         fx = self.fixture()
