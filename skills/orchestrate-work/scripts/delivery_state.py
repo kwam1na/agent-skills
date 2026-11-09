@@ -1171,12 +1171,32 @@ def catalogue_problems(binding: dict) -> list[str]:
         problems.append("/selection/catalogue: ids must be unique")
     own = {check.get("id") for name in ("alwaysRun", "fallback") for check in binding.get(name) or []
            if isinstance(check, dict)}
+    profiles = binding.get("profiles") if isinstance(binding.get("profiles"), dict) else {}
+    ceiling = binding.get("checkTimeoutCeiling")
     for entry in catalogue:
         if entry.get("id") in own:
             problems.append(f"/selection/catalogue: {entry.get('id')} reuses the id of a binding check")
+        if "environmentProfile" in entry and entry["environmentProfile"] not in profiles:
+            problems.append(f"/selection/catalogue: {entry.get('id')} names unknown environment profile "
+                            f"{entry['environmentProfile']}")
+        if isinstance(ceiling, int) and isinstance(entry.get("timeoutSeconds"), int) and entry["timeoutSeconds"] > ceiling:
+            problems.append(f"/selection/catalogue: {entry.get('id')}: timeoutSeconds above the ceiling")
         missing = [name for name in entry.get("prerequisites") or [] if name not in ids]
         if missing:
             problems.append(f"/selection/catalogue: {entry.get('id')}'s prerequisites name checks outside the catalogue {missing}")
+    # A cycle is traced only through unique ids whose prerequisites all name catalogue checks.
+    sound = len(ids) == len(set(ids)) and all(name in ids for entry in catalogue for name in entry.get("prerequisites") or [])
+    if sound:
+        done: set = set()
+        remaining = list(catalogue)
+        while remaining:
+            ready = [entry for entry in remaining if all(name in done for name in entry.get("prerequisites") or [])]
+            if not ready:
+                problems.append("/selection/catalogue: prerequisites form a cycle among "
+                                + ", ".join(sorted(str(entry.get("id")) for entry in remaining)))
+                break
+            done.add(ready[0].get("id"))
+            remaining.remove(ready[0])
     for name in selection.get("guards") or []:
         if name not in ids:
             problems.append(f"/selection/guards: {name} is not a catalogue id")

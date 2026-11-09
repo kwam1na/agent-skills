@@ -405,10 +405,6 @@ def binding_errors(binding: object) -> list[str]:
     errors.extend(problems)
     if catalogue and not problems:
         errors.extend(f"/selection/catalogue: {problem}" for problem in selection_errors(catalogue, binding, check_cwd=None))
-    for check in catalogue:
-        profile = check.get("environmentProfile")
-        if profile is not None and profile not in binding["profiles"]:
-            errors.append(f"/selection/catalogue: {check['id']} names unknown environment profile {profile}")
     for name in ("alwaysRun", "fallback"):
         problems = selection_errors(binding[name], binding, check_cwd=None)
         errors.extend(f"/{name}: {problem}" for problem in problems)

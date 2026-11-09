@@ -6129,6 +6129,30 @@ class CheckCatalogueTests(unittest.TestCase):
         fixture = self.candidate({"tests/fixtures/plans/one.json": '{"x": 1}\n'}, subject="work-s")
         self.assertIn("plan-fixtures", self.select(["run-delivery"], fixture, subject="work-s"))
 
+    def test_readers_read_only_the_candidates_own_changes_since_it_forked(self) -> None:
+        head = self.candidate({"src/app.py": "two\n"})
+        # The base moves on after the fork, changing the schema itself.
+        (self.repo / self.SCHEMA).write_text('{"base": true}\n', encoding="utf-8")
+        git_in(self.repo, "commit", "--quiet", "-am", "base moves")
+        git_in(self.repo, "update-ref", "refs/remotes/origin/main", git_in(self.repo, "rev-parse", "HEAD"))
+        self.assertEqual(self.select(["run-delivery"], head), ["run-delivery", "corpus-guards"])
+
+    def test_a_reader_star_matches_within_one_segment(self) -> None:
+        binding = {**self.binding, "selection": {**self.binding["selection"],
+                                                 "readers": [{"paths": ["src/*"], "checks": ["schema-readers"]}]}}
+        shallow = self.candidate({"src/x.py": "x\n"})
+        self.assertIn("schema-readers", self.select(["run-delivery"], shallow, binding=binding))
+        deep = self.candidate({"src/deep/x.py": "x\n"}, subject="work-r")
+        self.assertNotIn("schema-readers", self.select(["run-delivery"], deep, binding=binding, subject="work-r"))
+        # The runner reads binding patterns the same way.
+        runner = _load("merge_queue")
+        for pattern, path in (("src/*", "src/x.py"), ("src/*", "src/deep/x.py"), ("src/**", "src/deep/x.py"),
+                              ("**/x.py", "x.py"), ("**/x.py", "a/b/x.py"), ("src/?.py", "src/x.py"),
+                              ("src/?.py", "src/xy.py"), ("a.b", "axb")):
+            with self.subTest(pattern=pattern, path=path):
+                self.assertEqual(bool(state_tool._binding_pattern(pattern).match(path)),
+                                 bool(runner.pattern_regex(pattern).match(path)))
+
     def test_a_rename_selects_the_readers_of_the_path_it_leaves(self) -> None:
         git_in(self.repo, "checkout", "--quiet", "-B", "work-q", self.base)
         git_in(self.repo, "mv", self.SCHEMA, "skills/orchestrate-work/references/moved.json")
@@ -6155,6 +6179,10 @@ class CheckCatalogueTests(unittest.TestCase):
             "repeated id": {"catalogue": [*self.CATALOGUE, self.CATALOGUE[0]]},
             "binding id": {"catalogue": [*self.CATALOGUE, selected_check("always")]},
             "outside prerequisite": {"catalogue": [*self.CATALOGUE, selected_check("x", prerequisites=["elsewhere"])]},
+            "prerequisite cycle": {"catalogue": [*self.CATALOGUE, selected_check("x", prerequisites=["y"]),
+                                                 selected_check("y", prerequisites=["x"])]},
+            "unknown profile": {"catalogue": [*self.CATALOGUE, selected_check("x", environmentProfile="missing")]},
+            "over the ceiling": {"catalogue": [*self.CATALOGUE, selected_check("x", timeoutSeconds=601)]},
             "unknown guard": {"guards": ["missing"]},
             "unknown reader": {"readers": [{"paths": ["src/**"], "checks": ["missing"]}]},
             "reader with no path": {"readers": [{"paths": [], "checks": ["run-delivery"]}]},
@@ -6165,6 +6193,12 @@ class CheckCatalogueTests(unittest.TestCase):
                 binding = {**self.binding, "selection": {**self.binding["selection"], **changes}}
                 self.assertEqual(self.refused(lambda: self.select(["run-delivery"], head, binding=binding)).code,
                                  "binding_invalid")
+        # Named by id, a cycle is refused as the binding's, never followed.
+        cyclic = {**self.binding, "selection": {**self.binding["selection"], "catalogue": [
+            *self.CATALOGUE, selected_check("x", prerequisites=["y"]), selected_check("y", prerequisites=["x"])]}}
+        error = self.refused(lambda: self.select(["x"], head, binding=cyclic))
+        self.assertEqual(error.code, "binding_invalid")
+        self.assertIn("cycle", str(error))
 
     def test_the_binding_schema_takes_the_catalogue_guards_and_readers(self) -> None:
         schema = json.loads(SCHEMA_FILE.read_text(encoding="utf-8"))["orchestration-binding/1"]
@@ -6215,6 +6249,49 @@ class CheckCatalogueTests(unittest.TestCase):
         self.record_rerun("run-delivery", self.base, "passed")
         self.assertEqual(self.notices("run-delivery")["warnings"], [])
 
+    def test_a_check_that_passed_and_then_failed_at_this_head_is_warned_about(self) -> None:
+        self.candidate({"src/app.py": "two\n"})
+        self.record_rerun("run-delivery", self.base, "passed")
+        self.record_rerun("run-delivery", self.base, "failed", subject="later")
+        [warning] = self.notices("run-delivery")["warnings"]
+        self.assertIn("run-delivery", warning)
+        self.assertIn(self.base, warning)
+        self.assertIn("later", warning)
+
+    def test_base_head_overrides_the_remote_tracking_ref(self) -> None:
+        self.candidate({"src/app.py": "two\n"})
+        elsewhere = "d" * 40
+        self.record_rerun("run-delivery", elsewhere, "failed")
+        binding = self.directory.parent / "orchestration.json"
+        binding.write_text(json.dumps(self.binding), encoding="utf-8")
+        head = state_tool.read_state(self.directory)["queue"][0]["head"]
+        # No readers here: the given head is only compared, never diffed from.
+        unread = {**self.binding, "selection": {**self.binding["selection"], "readers": []}}
+        binding.write_text(json.dumps(unread), encoding="utf-8")
+        code, result = run_tool(self.directory, "select", "--subject", "work-q", "--binding", str(binding), "--head", head,
+                                "--checks", "run-delivery", "--reason", "r", "--repo", str(self.repo),
+                                "--base-head", elsewhere)
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result["baseHead"], elsewhere)
+        [warning] = result["warnings"]
+        self.assertIn(elsewhere, warning)
+
+    def test_an_unreadable_base_head_says_nothing_is_known_of_reruns(self) -> None:
+        self.candidate({"src/app.py": "two\n"})
+        self.record_rerun("run-delivery", self.base, "failed")
+        baseless = {key: value for key, value in self.binding.items() if key != "base"}
+        baseless["selection"] = {**baseless["selection"], "readers": []}
+        binding = self.directory.parent / "orchestration.json"
+        binding.write_text(json.dumps(baseless), encoding="utf-8")
+        head = state_tool.read_state(self.directory)["queue"][0]["head"]
+        code, result = run_tool(self.directory, "select", "--subject", "work-q", "--binding", str(binding), "--head", head,
+                                "--checks", "run-delivery", "--reason", "r", "--repo", str(self.repo))
+        self.assertEqual(code, 0, result)
+        self.assertIsNone(result["baseHead"])
+        self.assertEqual(result["warnings"], [])
+        [note] = result["notes"]
+        self.assertIn("can't be read", note)
+
     def test_the_same_check_failed_at_an_older_base_head_gives_no_warning(self) -> None:
         self.candidate({"src/app.py": "two\n"})
         self.record_rerun("run-delivery", "c" * 40, "failed")
@@ -6252,4 +6329,6 @@ class CheckCatalogueTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
+    # Run as a script, the repository root is not on the path, and a row imports the tests package from it.
+    sys.path.insert(0, str(ROOT))
     unittest.main()
