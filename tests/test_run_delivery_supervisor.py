@@ -29,6 +29,7 @@ from unittest import mock
 
 from tests.test_run_delivery import (POSIX_ONLY, Fixture, add_story, commit, doctor_binding, installed_release,
                                      plan_delivery, setup_delivery, sh, stop_supervisors, write_results)
+from tests.test_run_delivery import stop_and_reap  # a process the case started: stopped, then waited for
 from tests.test_run_delivery_tracker import FileBackend, JiraBackend
 
 # Each class that starts supervisors marks itself run_serially, so its cases run one at a time and alone on the machine.
@@ -3055,7 +3056,7 @@ class SupervisorBackgroundHealthTests(unittest.TestCase):
         fx.env["FX_HEALTH_SECONDS"] = "300"
         once = subprocess.Popen([sys.executable, "-B", str(fx.tool), "lead-run", "--once"], cwd=fx.main, env=fx.env,
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-        self.addCleanup(lambda: once.poll() is None and os.killpg(once.pid, signal.SIGKILL))
+        self.addCleanup(stop_and_reap, once)
         wait_for(lambda: self.run_lock(fx).get("command"), "the --once pass's run to start", 60)
         run = self.run_lock(fx)
         state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "FX-1 closed by hand.")
@@ -3071,7 +3072,7 @@ class SupervisorBackgroundHealthTests(unittest.TestCase):
         fx = self.fixture()
         # A live group leader that reuses the recorded pid, as far as the lock can tell: its start time differs.
         other = subprocess.Popen(["sleep", "120"], start_new_session=True)
-        self.addCleanup(lambda: other.poll() is None and os.killpg(other.pid, signal.SIGKILL))
+        self.addCleanup(stop_and_reap, other)
         lock = fx.tmp / "flow-log/FX-1.full-health.lock"
         lock.parent.mkdir(parents=True, exist_ok=True)
         lock.write_text(json.dumps({"pid": 99999, "head": "e" * 40, "command": other.pid,

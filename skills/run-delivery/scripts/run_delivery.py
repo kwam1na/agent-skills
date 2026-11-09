@@ -143,8 +143,9 @@ def repo() -> Path:
     return Path(git("rev-parse", "--show-toplevel"))
 
 
-def main_checkout() -> Path:
-    return Path(git("rev-parse", "--path-format=absolute", "--git-common-dir")).parent
+def main_checkout(cwd: Path | None = None) -> Path:
+    """The main checkout of the repository at `cwd`, or at the working directory when no folder is given."""
+    return Path(git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=cwd)).parent
 
 
 def clean_head(cwd: Path | None = None) -> str:
@@ -398,7 +399,9 @@ class Config:
 
     def __init__(self, root: Path, delivery: str | None = None, need_delivery: bool = True, tolerant: bool = False,
                  pick: bool = True):
-        self.root, self.main = root, main_checkout()
+        # Its main checkout and, below, its branch are the root's own, never the working directory's: a configuration
+        # built for one repository from inside another resolves that repository's deliveries, and no other's.
+        self.root, self.main = root, main_checkout(root)
         self.sources: dict[str, str] = {}
         self.conflicts: list[str] = []
         self.shelf = shelf_for(root)
@@ -565,7 +568,7 @@ class Config:
         keys = self.delivery_keys()
         if len(keys) == 1:
             return keys[0]
-        branch = git("rev-parse", "--abbrev-ref", "HEAD", check=False)
+        branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=self.root, check=False)
         matches = []
         for key in keys:
             d = self.shelf.json(f"{self.deliveries_rel}/{key}.json") or {}
@@ -8092,7 +8095,10 @@ def doctor(args) -> None:
 # -- entry ---------------------------------------------------------------------------------
 
 def main(argv: list[str] | None = None) -> None:
-    global DELIVERY_ARG
+    global CFG, DELIVERY_ARG
+    # Each call resolves its own configuration: none an earlier call in this process left, for another repository or
+    # delivery, is this one's.
+    CFG = None
     parser = argparse.ArgumentParser(prog="run_delivery.py", description=__doc__.split("\n\n")[0], allow_abbrev=False)
     parser.add_argument("--delivery", help="the delivery key, when the repository has several")
     sub = parser.add_subparsers(dest="command", required=True)

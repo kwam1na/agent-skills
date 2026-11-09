@@ -1046,7 +1046,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "d19395ed30d799b2537e0f2a18a03f4097de31a7272658579a6c11aed06ff93c"
+          "sha256": "c3e93148287d59661c21e68128e7d6144592733d77bb31582b5bbc38379f8acb"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
