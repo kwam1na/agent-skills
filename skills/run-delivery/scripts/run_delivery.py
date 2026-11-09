@@ -2320,8 +2320,8 @@ def run_in_app(dist: Path, spec: dict, passthrough: list[str], owner: str, lock_
     finally:
         for proc in (check, server):  # wait for both to exit before the lease is released
             stop_group(proc)
+        spec_file.unlink(missing_ok=True)  # still under the lease: once it is released, the path is the next holder's
         lease.close()
-        spec_file.unlink(missing_ok=True)
     return report
 
 

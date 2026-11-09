@@ -3082,6 +3082,37 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
             expect(not port_open(), f"the server outlived a check interrupted by {sent.name}")
             fx.call("Lease", fx.tmp / "app.lock", fx.port, "selftest", 2, then="close", cwd=fx.tmp)
 
+    def test_a_check_removes_its_spec_before_it_releases_the_lease(self) -> None:
+        """The spec file's one path is the lease holder's: a check removes it while it still holds the lease, so it can
+        never remove the spec the next holder writes as soon as the lease is free."""
+        fx = self.fixture()
+        script = r'''
+import json, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import run_delivery as flow
+flow.CFG = flow.Config(Path.cwd(), need_delivery=False)
+lock = Path(flow.expand(flow.need_in_app()["lock"]))
+spec_file = lock.with_name(lock.name + ".spec.json")
+seen = {}
+released = flow.Lease.close
+def close(self):
+    seen["at release"] = spec_file.exists()
+    released(self)
+    spec_file.write_text("the next holder's spec")  # what the next holder writes the moment the lease is free
+flow.Lease.close = close
+report = flow.run_in_app(Path(sys.argv[2]), {"path": "/", "holds": [], "fails": [], "evals": [], "afterEvals": []},
+                         [], "order probe", 5)
+seen["after"] = spec_file.read_text() if spec_file.exists() else None
+seen["ready"] = report.get("ready")
+print(json.dumps(seen))
+'''
+        done = sh(sys.executable, "-B", "-c", script, fx.tool.parent, fx.tmp / "baseline", cwd=fx.main, env=fx.env)
+        seen = json.loads(done.stdout.strip().splitlines()[-1])
+        self.assertTrue(seen["ready"], done.stdout)
+        self.assertFalse(seen["at release"], "the check still had its spec when it released the lease")
+        self.assertEqual(seen["after"], "the next holder's spec", "the check removed the next holder's spec")
+
     def test_a_killed_check_leaves_nothing_running_once_its_fixture_closes(self) -> None:
         fx = self.fixture()
         setup_delivery(fx)
@@ -3093,11 +3124,14 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         lock = fx.tmp / "app.lock"
         recorded = lambda: [int(g) for g in re.findall(r"pgid (\d+)", lock.read_text())] if lock.exists() else []
         groups: list[int] = []
-        # The check's own temp folder, so what a killed check leaves there is this case's to see.
-        temp = fx.tmp / "check-temp"
-        temp.mkdir()
+        # The fixture gives its commands a temp folder of their own, inside the case and outside its checkouts, so what
+        # a killed check leaves there is this case's to see, and goes with it.
+        temp = Path(fx.env["TMPDIR"])
+        self.assertEqual(temp, fx.temp)
+        self.assertTrue(temp.is_relative_to(fx.tmp) and not temp.is_relative_to(fx.main), temp)
+        self.assertEqual(sorted(p.name for p in temp.iterdir()), [], "the fixture's temp folder wasn't empty before the check")
         proc = subprocess.Popen([sys.executable, "-B", str(fx.tool), "app-check", "FX-2", "slow", "--mode", "loaded",
-                                 "--path", "/slow", "--eval", "true"], cwd=wt, env={**fx.env, "TMPDIR": str(temp)},
+                                 "--path", "/slow", "--eval", "true"], cwd=wt, env=fx.env,
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
             deadline = time.monotonic() + 20
@@ -6343,7 +6377,10 @@ class DeliveryPostureReaderTests(unittest.TestCase):
 
     def resolve(self, vector: dict) -> tuple[dict, float]:
         with tempfile.TemporaryDirectory() as folder:
-            clone, env = posture_vector_repo(vector, Path(folder))
+            # The reader runs with the cleaned environment: none of the runner's delivery settings reach it.
+            with mock.patch.dict(os.environ, {name: PLANTED_MARKER for name in TOOL_SETTINGS}):
+                clone, env = posture_vector_repo(vector, Path(folder))
+            self.assertEqual(sorted(set(TOOL_SETTINGS) & set(env)), [], "the posture reader got a delivery setting")
             started = time.monotonic()
             with mock.patch.dict(os.environ, env, clear=True):
                 result = self.tool.resolve_delivery_posture(clone, "origin", "main", seconds=self.SECONDS)
@@ -6859,23 +6896,25 @@ class LiveDeliveryOutOfReachTests(unittest.TestCase):
     def test_the_cleaned_environment_strips_every_setting_the_tool_reads(self) -> None:
         source = (SKILL / "scripts/run_delivery.py").read_text()
         quoted = r"""\s*["']([A-Z][A-Z0-9_]*)["']"""
-        # Every way Python reads one: os.environ[...] / .get / .pop / .setdefault, os.getenv, `... in os.environ`, and
-        # the tool's own setting() with its earlier names.
-        read = set(re.findall(r"os\.environ(?:\.(?:get|pop|setdefault)\(|\[)" + quoted, source))
-        read |= set(re.findall(r"os\.getenv\(" + quoted, source))
-        read |= set(re.findall(quoted + r"""\s+(?:not\s+)?in\s+os\.environ\b""", source))
-        read |= set(re.findall(r"\bsetting\(" + quoted, source))
+
+        def scan(text: str) -> set[str]:
+            """Every way Python reads one: os.environ[...] / .get / .pop / .setdefault, os.getenv, `... in os.environ`,
+            and the tool's own setting()."""
+            found = set(re.findall(r"os\.environ(?:\.(?:get|pop|setdefault)\(|\[)" + quoted, text))
+            found |= set(re.findall(r"os\.getenv\(" + quoted, text))
+            found |= set(re.findall(quoted + r"""\s+(?:not\s+)?in\s+os\.environ\b""", text))
+            found |= set(re.findall(r"\bsetting\(" + quoted, text))
+            return found
+
+        read = scan(source)
+        # setting()'s earlier names, from the tool's own table of them.
         legacy = re.search(r"^LEGACY_NAMES = \((.*?)^\)", source, re.MULTILINE | re.DOTALL).group(1)
         read |= {name for pair in re.findall(r"\(" + quoted + r"\s*," + quoted + r"\s*\)", legacy) for name in pair}
         read -= {"PATH"}  # the runner's own, which every case needs
         self.assertLessEqual(read, set(TOOL_SETTINGS), "the tool reads a setting this list doesn't name")
         probe = ("os.getenv('A_ONE')\nos.environ.get(\"A_TWO\")\nos.environ['A_THREE']\nif 'A_FOUR' in os.environ: pass\n"
                  "os.environ.pop(\"A_FIVE\", None)\nsetting('A_SIX')\n")
-        seen = set(re.findall(r"os\.environ(?:\.(?:get|pop|setdefault)\(|\[)" + quoted, probe))
-        seen |= set(re.findall(r"os\.getenv\(" + quoted, probe))
-        seen |= set(re.findall(quoted + r"""\s+(?:not\s+)?in\s+os\.environ\b""", probe))
-        seen |= set(re.findall(r"\bsetting\(" + quoted, probe))
-        self.assertEqual(seen, {"A_ONE", "A_TWO", "A_THREE", "A_FOUR", "A_FIVE", "A_SIX"}, "the scan misses a form of read")
+        self.assertEqual(scan(probe), {"A_ONE", "A_TWO", "A_THREE", "A_FOUR", "A_FIVE", "A_SIX"}, "the scan misses a form of read")
         self.assertEqual(set(TOOL_SETTINGS) - read, set(), "a listed setting the tool no longer reads")
         with mock.patch.dict(os.environ, {name: PLANTED_MARKER for name in TOOL_SETTINGS}):
             cleaned = clean_environment()
