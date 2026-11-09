@@ -484,14 +484,15 @@ class CollectRunsTests(unittest.TestCase):
                     continue
                 ended, began, finished = reads[name]
                 self.assertLess(began, deadline + 0.25, "a read began after the deadline")
-                if ended == "read":
-                    self.assertFalse(runs[name].get("unavailable"))
-                    self.assertLess(finished, deadline + 0.25, "a read ran past the deadline")
-                else:
-                    self.assertTrue(runs[name].get("unavailable"))
+                # Whether it finished or was stopped, no read outlives the deadline.
+                self.assertLess(finished, deadline + 0.25, "a read ran past the deadline")
+                self.assertEqual(bool(runs[name].get("unavailable")), ended == "failed")
         shown = [name for name in names if not runs[name].get("unavailable")]
         # The deadline did bite, and not on everything.
         self.assertTrue(shown and len(shown) < len(names), shown)
+        # A read handed out before the deadline runs until it: some read was running at the deadline and was stopped
+        # there, not refused while time remained.
+        self.assertTrue(any(ended == "failed" for ended, _, _ in reads.values()), reads)
         self.assertEqual(sorted(json.loads(self.cache.read_text())["runs"]), sorted(shown))
         # The next render reads them again.
         self.runs.answer(table(listed, {name: VIEW for name in names}))
