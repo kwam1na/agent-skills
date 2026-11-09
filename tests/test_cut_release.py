@@ -32,8 +32,8 @@ FROZEN_SEED_SHA256 = {
     "cli-api.d.mts": "b80e76ee644e0f382b3f0d51638efa1de61fcf83101b7dea5998c1a70d6ab099",
     "cli-api.mjs": "382985d621b8224faa8bed8ec678ec2827356f876e346585f17a2ef9954adb9c",
     "cli.mjs": "22775252ac44b305397c64f8a83cbd52aa591ebe9342ee8ff80bf72b542dbf9f",
-    "kernel.d.mts": "85713e213e8e41e7b3f9d53afa3a37cc5e48ae46d66c3afb32d97e2e43c05709",
-    "kernel.mjs": "92706d6c2e234b0c10c979e1ba1647f69725c544e596b48b4a71b49132c59255",
+    "kernel.d.mts": "93c81e55277c5c289d3b49a82983c0c606ec3b43e23e2d6fb7eb24238938303c",
+    "kernel.mjs": "eb68146ff55470f9f1a0a62dfde9361dfb5b92749630be5cc7f0edfe8fb406ca",
     "loader.mjs": "d00b40605a54f7defd9b8cab05825009af57baf2d5884d736eddc391ba35a1e8",
     "policy.mjs": "320aa341d55833061c08b4c9e47f998c341229e964e84bebbf9db8da875a0d24",
 }
