@@ -238,7 +238,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/snapshot.py",
-          "sha256": "7d807e09bafc61dbadf1223435e3cf52540b4367f9c65cc63a9532029551a3bc"
+          "sha256": "b9c74c0d7040d3b558a67c284c3b320bb50c93ca3c7048c62288aab52c37f1a6"
         },
         {
           "path": "skills/delivery-views/scripts/views_common.py",
@@ -469,19 +469,19 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "c7caa428bd013e163e23b826cb058ccb56eec9523f274a88ec26f6164cb26b41"
+          "sha256": "211b8b436d393742a8a0acdf8de336e3fd17ccb2e0134ab32d3a0f8671177f4d"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "d18228691d96fbda0a6b04a535ca1d3c6ad349bddbef65aa1538b993a90da358"
+          "sha256": "2fb8a0d9713c68242c0fe447c459ed7a4039d1a2f5c80776dcea12f55d22ebce"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
-          "sha256": "fb3498c706b565674f333cd2ee13a7e51009f671fbf89e298ec4277604e26ded"
+          "sha256": "382ce0b5f5c7c493351aebabf781588fa428aee6bc7657a6e60c7089d435263d"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "80dc25fb109d8907e50ef9d82ae4daeaf84e8fd6695d244eaaae6ded7e06c4a0"
+          "sha256": "bdf80d042c16561dec2c2f2c9f565d7428572d4b6750504be608c8eea7aeda0a"
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",
@@ -1018,7 +1018,7 @@
       "outputs": [
         {
           "path": "skills/run-delivery/SKILL.md",
-          "sha256": "1c47166c80ee4bebaf878949ffaa8cfa06e82cfc40129030bf81b0aa6cbc3705"
+          "sha256": "79f620df6d418e7399e46e88d69d2041ced7e46da857f6062a8ff82a375753b5"
         },
         {
           "path": "skills/run-delivery/adapters/forge_bitbucket.py",
@@ -1038,15 +1038,15 @@
         },
         {
           "path": "skills/run-delivery/references/adopting.md",
-          "sha256": "816321a7578eab6e679842a7b195aef107ee253117d09a6228192302d9bf9b15"
+          "sha256": "156a5c92f5b69d3b8a4ba48371424cf689f95db38c9970f1a9b646a6dad36eac"
         },
         {
           "path": "skills/run-delivery/references/config.md",
-          "sha256": "ba335086d8f135c21fcaf7f77e88279f12acba02085ea58d245fcba120bd4092"
+          "sha256": "54c47cf58eb1f4cc3428e7f46f323635eff5861a9c1cede71666c1f1765fd0cf"
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "bcd0f0a4d78c768779440660eb63c4e63553c42122e33b7146b076ef64981e36"
+          "sha256": "44d21c21e38aedc53dada9378eb65e3e55b39d155a4dd017be09849bf3c4cc5f"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",

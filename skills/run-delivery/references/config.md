@@ -328,7 +328,7 @@ offline, the last fetched tip decides.
 | A valid `focused` declaration | `focused` | none |
 | A valid `gate` declaration | `gate` | none |
 | No file at the tip | `gate` | `posture_undeclared` |
-| Not valid UTF-8 JSON, an object failing the shape above, or an unknown `posture` | `gate` | `posture_malformed` |
+| Not valid UTF-8 JSON, JSON nesting arrays or objects more than 64 levels deep (the top-level object being 1), an object failing the shape above, or an unknown `posture` | `gate` | `posture_malformed` |
 | A symlink, tree or submodule at that path, or a blob over 64 KiB | `gate` | `posture_malformed` |
 | The base ref can't be resolved or read, or `git` fails or times out | `gate` | `posture_unreadable` |
 
