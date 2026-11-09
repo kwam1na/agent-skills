@@ -4759,6 +4759,154 @@ class RunDeliveryPlanTests(unittest.TestCase):
             self.assertEqual((path.read_bytes(), self.written(fx), sh("git", "rev-parse", "HEAD", cwd=m).stdout), before, argv)
             self.assertEqual(sh("git", "status", "--porcelain", cwd=m).stdout, "", argv)
 
+    def no_change_lane(self) -> tuple[Fixture, Path, Path]:
+        """FX-2, whose two criteria already hold, assigned and started in its lane's checkout from the base."""
+        fx = self.fixture()
+        path = plan_delivery(fx)
+        m = fx.main
+        fx.flow("lead-init", cwd=m)
+        code, out = fx.flow("lead-assign", "FX-2", "--lane", "lane-1", "--title", "Lane 1", cwd=m)
+        self.assertEqual(code, 0, out)
+        return fx, path, fx.lane("FX-2")
+
+    def base(self, fx: Fixture) -> str:
+        return sh("git", "rev-parse", "origin/feature/FX-1", cwd=fx.main).stdout.strip()
+
+    def test_a_story_that_needs_no_change_is_handed_off_and_settled_with_no_branch_pr_or_base_commit(self) -> None:
+        fx, path, wt = self.no_change_lane()
+        m = fx.main
+        before = self.base(fx)
+        code, out = fx.flow("handoff", "FX-2", "--no-change", "--evidence",
+                            "one-loads: test_one_loads passes at the base; one-fails: test_one_fails passes", cwd=wt)
+        self.assertEqual(code, 0, out)
+        self.assertIn("candidate: none, no change needed", out)
+        self.assertIn(f"base head the evidence ran at: `{before}`", out)
+        record = self.record(fx)
+        self.assertEqual(record["state"]["queue"], [], "a no-change hand-off entered the merge queue")
+        entry = next(p for p in record["state"]["planned"] if p["subject"] == "FX-2")
+        self.assertEqual((entry["stage"], entry["noChange"]["baseHead"]), ("review", before))
+        # No branch was pushed, no change request opened.
+        self.assertEqual(sh("git", "ls-remote", "--heads", "origin", "feature/FX-2", cwd=m).stdout, "")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertIn("accepted FX-2: settled with no change needed", out)
+        record = self.record(fx)
+        entry = next(p for p in record["state"]["planned"] if p["subject"] == "FX-2")
+        self.assertEqual(entry["stage"], "settled")
+        self.assertEqual(record["state"]["queue"], [])
+        self.assertEqual(self.base(fx), before, "a base commit was made")
+        self.assertEqual(sh("git", "ls-remote", "origin", "feature/FX-1", cwd=m).stdout.split()[0], before)
+        # The plan keeps it, not removed, and counts every proof it owes done, as the line map and finish lines do.
+        plan = self.plan(fx)
+        unit = next(u for u in plan["units"] if u["subject"] == "FX-2")
+        self.assertFalse(unit.get("removed", False))
+        states = {kind: fx.call("proof_state", None, plan, self.record(fx), unit, kind, cwd=m, delivery="FX-1")
+                  for kind in unit["proofs"]}
+        self.assertEqual(set(states.values()), {"done"}, states)
+
+    def test_a_base_that_moved_after_the_hand_off_still_settles_it(self) -> None:
+        fx, path, wt = self.no_change_lane()
+        m = fx.main
+        code, out = fx.flow("handoff", "FX-2", "--no-change", "--evidence", "one-loads and one-fails hold", cwd=wt)
+        self.assertEqual(code, 0, out)
+        handed = self.base(fx)
+        # Another clone moves the base, so the lead's checkout knows of it only once lead-accept fetches.
+        other = fx.tmp / "other-clone"
+        origin = sh("git", "remote", "get-url", "origin", cwd=m).stdout.strip()
+        sh("git", "clone", "-q", "--branch", "feature/FX-1", origin, other)
+        (other / "docs/later.md").write_text("later\n")
+        commit(other, "FX-1: the base moves on")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=other)
+        self.assertEqual(self.base(fx), handed, "the lead's checkout already knew the base had moved")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertNotEqual(self.base(fx), handed, "lead-accept judged the hand-off against a base it never fetched")
+        self.assertEqual(next(p for p in self.record(fx)["state"]["planned"] if p["subject"] == "FX-2")["stage"], "settled")
+
+    def test_a_no_change_hand_off_from_a_head_the_base_doesnt_hold_is_refused(self) -> None:
+        fx, path, wt = self.no_change_lane()
+        m = fx.main
+        # The lane's checkout holds a change: that is a hand-off with a PR.
+        (wt / "src/one.txt").write_text("changed\n")
+        commit(wt, "FX-2: a change")
+        code, out = fx.flow("handoff", "FX-2", "--no-change", "--evidence", "one-loads and one-fails hold", cwd=wt)
+        self.assertEqual(code, 2, out)
+        self.assertIn("this checkout holds a change, so hand it off with --pr", out)
+        self.assertEqual(next(p for p in self.record(fx)["state"]["planned"] if p["subject"] == "FX-2")["stage"], "planned")
+        # The lead refuses evidence run at a head the base doesn't hold.
+        stray = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+        sh(sys.executable, "-B", fx.release / "skills/orchestrate-work/scripts/delivery_state.py", "--dir", fx.tmp / "record",
+           "handoff", "--no-change", "--lane", "lane-1", "--subject", "FX-2", "--base-head", stray, "--evidence-text",
+           "one-loads and one-fails hold")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 1, out)
+        self.assertIn(f"NOT accepted: FX-2", out)
+        self.assertIn(f"the evidence ran at {stray[:10]}, which origin/feature/FX-1 doesn't hold", out)
+        self.assertNotEqual(next(p for p in self.record(fx)["state"]["planned"] if p["subject"] == "FX-2")["stage"], "settled")
+
+    def test_the_lead_settles_no_change_evidence_only_when_it_names_every_criterion(self) -> None:
+        fx, path, wt = self.no_change_lane()
+        m = fx.main
+        code, out = fx.flow("handoff", "FX-2", "--no-change", "--evidence", "one-loads: test_one_loads passes", cwd=wt)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 1, out)
+        self.assertIn("the evidence names no proof of criterion one-fails", out)
+        # Nor does a longer token that only holds it.
+        for longer in ("one-fails.extra", "one-failsafe", "not-one-fails-yet", "xone-fails"):
+            with self.subTest(longer=longer):
+                code, out = fx.flow("handoff", "FX-2", "--no-change", "--evidence", f"one-loads holds; {longer} holds", cwd=wt)
+                self.assertEqual(code, 0, out)
+                code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+                self.assertEqual(code, 1, out)
+                self.assertIn("the evidence names no proof of criterion one-fails", out)
+        self.assertNotIn("one-loads,", out)
+        self.assertEqual(next(p for p in self.record(fx)["state"]["planned"] if p["subject"] == "FX-2")["stage"], "review")
+        # Handed off again, from a file, naming both: accepted.
+        evidence = fx.tmp / "evidence.md"
+        # A sentence may end on a criterion id: its full stop isn't part of the id.
+        evidence.write_text("one-loads: test_one_loads passes\ntest_one_fails proves one-fails.\n")
+        code, out = fx.flow("handoff", "FX-2", "--no-change", "--evidence", f"@{evidence}", cwd=wt)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 0, out)
+        code, again = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 2, again)
+        self.assertIn("FX-2 is already settled with no change", again)
+        self.assertEqual(next(p for p in self.record(fx)["state"]["planned"] if p["subject"] == "FX-2")["noChange"]["evidence"],
+                         "one-loads: test_one_loads passes\ntest_one_fails proves one-fails.")
+
+    def test_a_no_change_story_with_no_criteria_is_refused_naming_it_and_the_fix(self) -> None:
+        fx = self.fixture()
+        path = plan_delivery(fx)
+        m = fx.main
+        d = json.loads(path.read_text())
+        del d["stories"]["FX-3"]["criteria"]
+        d["finish"][0]["covers"]["criteria"] = ["one-loads", "one-fails"]
+        path.write_text(json.dumps(d, indent=2))
+        commit(m, "FX-1: FX-3 has no criteria")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        fx.flow("lead-init", cwd=m)
+        fx.flow("lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2", cwd=m)
+        wt = fx.lane("FX-3")
+        code, out = fx.flow("handoff", "FX-3", "--no-change", "--evidence", "it holds", cwd=wt)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-accept", "FX-3", cwd=m)
+        self.assertEqual(code, 2, out)
+        self.assertIn("FX-3 has no criteria", out)
+        self.assertIn("fix: record its criteria first", out)
+
+    def test_a_no_change_hand_off_takes_its_evidence_and_nothing_a_change_carries(self) -> None:
+        fx, path, wt = self.no_change_lane()
+        for argv, words in ((["--no-change"], "--no-change needs --evidence"),
+                            (["--no-change", "--evidence", "x", "--pr", "https://forge.test/pr/1"], "no --pr"),
+                            ([], "a hand-off needs --pr")):
+            with self.subTest(argv=argv):
+                code, out = fx.flow("handoff", "FX-2", *argv, cwd=wt)
+                self.assertEqual(code, 2, out)
+                self.assertIn(words, out)
+        self.assertEqual(next(p for p in self.record(fx)["state"]["planned"] if p["subject"] == "FX-2")["stage"], "planned")
+
     def test_lead_assign_rebuilds_for_a_story_it_registers(self) -> None:
         fx = self.fixture()
         path = plan_delivery(fx)
