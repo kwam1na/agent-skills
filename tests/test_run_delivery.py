@@ -4756,6 +4756,12 @@ class RunDeliveryPlanTests(unittest.TestCase):
         path = plan_delivery(fx)
         m = fx.main
         fx.flow("lead-init", cwd=m)
+        # The tracker reconcile already filed the ticket as a follow-up: the add moves it out.
+        state_script = fx.release / "skills/orchestrate-work/scripts/delivery_state.py"
+        version = self.record(fx)["state"]["version"]
+        sh(sys.executable, "-B", state_script, "--dir", fx.tmp / "record", "patch", "--writer", "lead", "--version",
+           version, "--patch", json.dumps({"followups": [{"id": "FX-4", "title": "four", "reference": "FX-4"},
+                                                         {"id": "FX-8", "title": "eight", "reference": "FX-8"}]}))
         head = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
         code, out = fx.flow("lead-plan", "change", "--kind", "added", "--subjects", "FX-4", "--title", "Thing four",
                             "--text", "Thing four works", "--why", "A lane found the gap.", "--lane", "lane-1",
@@ -4775,6 +4781,8 @@ class RunDeliveryPlanTests(unittest.TestCase):
         # The planned entry, and one `added` change with its reason: registration finds the story held.
         self.assertIn({"subject": "FX-4", "title": "Thing four", "lane": "lane-1", "stage": "planned"},
                       self.record(fx)["state"]["planned"])
+        self.assertEqual([f["id"] for f in self.record(fx)["state"]["followups"]], ["FX-8"],
+                         "the added story is still a follow-up, or another follow-up went with it")
         changes = lambda: [(c["kind"], c["subjects"], c.get("why"), c["source"]) for c in self.plan(fx)["changes"]]
         self.assertEqual(changes(), [("added", ["FX-4"], "A lane found the gap.", "lead-plan")])
         self.assertEqual(self.plan(fx)["units"][-1]["criteria"], [{"id": "fx-4-1", "text": "Thing four works"}])
@@ -4803,7 +4811,17 @@ class RunDeliveryPlanTests(unittest.TestCase):
             sweep = subprocess.Popen([sys.executable, "-B", str(fx.tool), "lead-brief"], cwd=m, env=fx.env,
                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             self.addCleanup(lambda: sweep.poll() is None and (sweep.kill(), sweep.wait()))
-            time.sleep(3)
+            # Not a fixed wait, which a slow machine could outrun: the sweep is seen holding the lock file open, waiting
+            # on it, before anything is asserted. Without the lock it opens the file only to record its change, after
+            # it has already planned the story.
+            deadline = time.monotonic() + 120
+            while time.monotonic() < deadline and sweep.poll() is None:
+                holders = subprocess.run(["lsof", "-t", str(lock)], capture_output=True, text=True).stdout.split()
+                if str(sweep.pid) in holders:
+                    break
+                time.sleep(0.2)
+            else:
+                self.fail("the sweep never reached the plan's lock")
             self.assertIsNone(sweep.poll(), "registration ran without the plan's lock")
             self.assertNotIn("FX-4", [p["subject"] for p in self.record(fx)["state"]["planned"]],
                              "registration planned the story while the lock was held")
