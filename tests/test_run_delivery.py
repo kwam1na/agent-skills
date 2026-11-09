@@ -5179,8 +5179,8 @@ raise SystemExit(code)
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
 class RunDeliveryDefaultDeliveryTests(unittest.TestCase):
-    """A lead command without --delivery: the one delivery whose record is open here, else the only one not known to be
-    closed, else a refusal naming each one not known to be closed. The tracker is read through the snapshot producer."""
+    """A lead command without --delivery: the one delivery whose record is open here, else the one whose story branch
+    this checkout is on, else the only one not known to be closed, else a refusal naming each one not known to be closed. The tracker is read through the snapshot producer."""
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -5287,6 +5287,18 @@ class RunDeliveryDefaultDeliveryTests(unittest.TestCase):
 
     def test_a_lane_on_a_story_branch_takes_that_story_s_delivery(self) -> None:
         fx = self.fixture({"FX-1": "started", "FX-5": "started"})
+        wt = fx.main / "lanes/FX-6"
+        sh("git", "worktree", "add", "-q", "--no-track", "-b", "feature/FX-6", wt, "origin/feature/FX-1", cwd=fx.main)
+        code, out = fx.flow("lead-hints", cwd=wt)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(list(json.JSONDecoder().raw_decode(out)[0]["items"]), ["FX-6"])
+
+    def test_the_story_branch_rule_comes_before_the_only_delivery_not_known_to_be_closed(self) -> None:
+        # A deliberate addition to the default's order: FX-5's parent is completed, so FX-1 is the only delivery not
+        # known to be closed, yet a lane on FX-5's story branch still takes FX-5, as lanes did before the order.
+        fx = self.fixture({"FX-1": "started", "FX-5": "completed"})
+        code, out, stories = self.picked(fx)
+        self.assertEqual((code, stories), (0, ["FX-2", "FX-3"]), out)
         wt = fx.main / "lanes/FX-6"
         sh("git", "worktree", "add", "-q", "--no-track", "-b", "feature/FX-6", wt, "origin/feature/FX-1", cwd=fx.main)
         code, out = fx.flow("lead-hints", cwd=wt)
