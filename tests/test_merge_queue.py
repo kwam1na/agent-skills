@@ -5973,6 +5973,10 @@ class CheckCatalogueQueueTests(MergeQueueTestCase):
             "outside prerequisite": ({"catalogue": [check_entry("a", prerequisites=["always"])], "guards": []},
                                      "/selection/catalogue"),
         }
+        # A check exactly at the ceiling is within it.
+        at_ceiling = {**binding, "selection": {**selection, "catalogue": [*selection["catalogue"],
+                                                                         check_entry("p", timeoutSeconds=60)]}}
+        self.assertEqual(queue.binding_errors(at_ceiling), [])
         for name, (changes, where) in cases.items():
             with self.subTest(name):
                 errors = queue.binding_errors({**binding, "selection": {**selection, **changes}})

@@ -6193,6 +6193,11 @@ class CheckCatalogueTests(unittest.TestCase):
                 binding = {**self.binding, "selection": {**self.binding["selection"], **changes}}
                 self.assertEqual(self.refused(lambda: self.select(["run-delivery"], head, binding=binding)).code,
                                  "binding_invalid")
+        # At the ceiling exactly is within it.
+        at_ceiling = {**self.binding, "selection": {**self.binding["selection"], "catalogue": [
+            *self.CATALOGUE, selected_check("x", timeoutSeconds=600)]}}
+        self.assertEqual(state_tool.catalogue_problems(at_ceiling), [])
+        self.assertEqual(self.select(["x"], head, binding=at_ceiling), ["x", "corpus-guards"])
         # Named by id, a cycle is refused as the binding's, never followed.
         cyclic = {**self.binding, "selection": {**self.binding["selection"], "catalogue": [
             *self.CATALOGUE, selected_check("x", prerequisites=["y"]), selected_check("y", prerequisites=["x"])]}}
