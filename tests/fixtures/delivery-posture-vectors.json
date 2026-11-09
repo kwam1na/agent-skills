@@ -35,7 +35,7 @@
     "U+FEFF"
   ],
   "setup": {
-    "base": "What the remote's main holds at the path: none, or a blob (text or base64, padded with trailing spaces to padTo bytes), a symlink, a tree or a submodule. Unless fetch or ref says otherwise, it reaches the remote after the reader's clone last fetched, so a reader that doesn't fetch reads a tip with no file.",
+    "base": "What the remote's main holds at the path: none, or a blob (text or base64, padded with trailing spaces to padTo bytes; in text, each expand entry's marker becomes count copies of open, then inner, then count copies of close, or with fillTo the most copies that keep the blob at that many bytes), a symlink, a tree or a submodule. Unless fetch or ref says otherwise, it reaches the remote after the reader's clone last fetched, so a reader that doesn't fetch reads a tip with no file.",
     "fetch": "fails: the clone has fetched the tip, and the remote is then unreachable.",
     "git": "fails or hangs: every git command the reader runs exits 1, or never returns and leaves a child holding its output.",
     "ref": "missing: neither the remote nor the clone has the branch.",
@@ -765,6 +765,202 @@
       "expect": {
         "posture": "focused",
         "code": null,
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "nested-64-deep",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \"The gate is still being optimized.\", \"deep\": @1}",
+        "expand": [
+          {
+            "marker": "@1",
+            "open": "[",
+            "close": "]",
+            "count": 63
+          }
+        ]
+      },
+      "expect": {
+        "posture": "focused",
+        "code": null,
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "nested-65-deep",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \"The gate is still being optimized.\", \"deep\": @1}",
+        "expand": [
+          {
+            "marker": "@1",
+            "open": "[",
+            "close": "]",
+            "count": 64
+          }
+        ]
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "nested-1500-deep",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \"The gate is still being optimized.\", \"deep\": @1}",
+        "expand": [
+          {
+            "marker": "@1",
+            "open": "[",
+            "close": "]",
+            "count": 1499
+          }
+        ]
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "nested-as-deep-as-64-kib-holds",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \"The gate is still being optimized.\", \"deep\": @1}",
+        "expand": [
+          {
+            "marker": "@1",
+            "open": "[",
+            "close": "]",
+            "fillTo": 65536
+          }
+        ]
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "sixty-five-sibling-arrays-at-depth-2",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \"The gate is still being optimized.\", \"a0\": [], \"a1\": [], \"a2\": [], \"a3\": [], \"a4\": [], \"a5\": [], \"a6\": [], \"a7\": [], \"a8\": [], \"a9\": [], \"a10\": [], \"a11\": [], \"a12\": [], \"a13\": [], \"a14\": [], \"a15\": [], \"a16\": [], \"a17\": [], \"a18\": [], \"a19\": [], \"a20\": [], \"a21\": [], \"a22\": [], \"a23\": [], \"a24\": [], \"a25\": [], \"a26\": [], \"a27\": [], \"a28\": [], \"a29\": [], \"a30\": [], \"a31\": [], \"a32\": [], \"a33\": [], \"a34\": [], \"a35\": [], \"a36\": [], \"a37\": [], \"a38\": [], \"a39\": [], \"a40\": [], \"a41\": [], \"a42\": [], \"a43\": [], \"a44\": [], \"a45\": [], \"a46\": [], \"a47\": [], \"a48\": [], \"a49\": [], \"a50\": [], \"a51\": [], \"a52\": [], \"a53\": [], \"a54\": [], \"a55\": [], \"a56\": [], \"a57\": [], \"a58\": [], \"a59\": [], \"a60\": [], \"a61\": [], \"a62\": [], \"a63\": [], \"a64\": []}"
+      },
+      "expect": {
+        "posture": "focused",
+        "code": null,
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "sixty-five-sibling-objects-at-depth-2",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \"The gate is still being optimized.\", \"o0\": {}, \"o1\": {}, \"o2\": {}, \"o3\": {}, \"o4\": {}, \"o5\": {}, \"o6\": {}, \"o7\": {}, \"o8\": {}, \"o9\": {}, \"o10\": {}, \"o11\": {}, \"o12\": {}, \"o13\": {}, \"o14\": {}, \"o15\": {}, \"o16\": {}, \"o17\": {}, \"o18\": {}, \"o19\": {}, \"o20\": {}, \"o21\": {}, \"o22\": {}, \"o23\": {}, \"o24\": {}, \"o25\": {}, \"o26\": {}, \"o27\": {}, \"o28\": {}, \"o29\": {}, \"o30\": {}, \"o31\": {}, \"o32\": {}, \"o33\": {}, \"o34\": {}, \"o35\": {}, \"o36\": {}, \"o37\": {}, \"o38\": {}, \"o39\": {}, \"o40\": {}, \"o41\": {}, \"o42\": {}, \"o43\": {}, \"o44\": {}, \"o45\": {}, \"o46\": {}, \"o47\": {}, \"o48\": {}, \"o49\": {}, \"o50\": {}, \"o51\": {}, \"o52\": {}, \"o53\": {}, \"o54\": {}, \"o55\": {}, \"o56\": {}, \"o57\": {}, \"o58\": {}, \"o59\": {}, \"o60\": {}, \"o61\": {}, \"o62\": {}, \"o63\": {}, \"o64\": {}}"
+      },
+      "expect": {
+        "posture": "focused",
+        "code": null,
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "objects-then-arrays-each-64-deep",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \"The gate is still being optimized.\", \"objects\": @1, \"arrays\": @2}",
+        "expand": [
+          {
+            "marker": "@1",
+            "open": "{\"a\": ",
+            "close": "}",
+            "inner": "0",
+            "count": 63
+          },
+          {
+            "marker": "@2",
+            "open": "[",
+            "close": "]",
+            "count": 63
+          }
+        ]
+      },
+      "expect": {
+        "posture": "focused",
+        "code": null,
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "sixty-five-brackets-in-a-string",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \"The gate is still being optimized.\", \"note\": \"[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[\"}"
+      },
+      "expect": {
+        "posture": "focused",
+        "code": null,
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "closing-brackets-in-a-string-at-depth-64",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \"The gate is still being optimized.\", \"deep\": @1}",
+        "expand": [
+          {
+            "marker": "@1",
+            "open": "[",
+            "close": "]",
+            "inner": "\"]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\"",
+            "count": 63
+          }
+        ]
+      },
+      "expect": {
+        "posture": "focused",
+        "code": null,
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "escaped-quote-then-sixty-five-brackets-in-a-string",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \"The gate is still being optimized.\", \"note\": \"a\\\" [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[\"}"
+      },
+      "expect": {
+        "posture": "focused",
+        "code": null,
+        "source": "origin/main"
+      }
+    },
+    {
+      "id": "escaped-backslash-ends-a-string-before-65-deep",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \"The gate is still being optimized.\", \"note\": \"r\\\\\", \"deep\": @1}",
+        "expand": [
+          {
+            "marker": "@1",
+            "open": "[",
+            "close": "]",
+            "count": 64
+          }
+        ]
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
         "source": "origin/main"
       }
     }
