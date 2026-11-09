@@ -70,8 +70,8 @@ ownership, order, and how this delivery runs beside V26-3304, which is live on t
      `safe.bareRepository` says or whichever git is installed.
    - `git rev-parse --show-superproject-working-tree` prints nothing, so an initialised submodule gates.
    - The directory's parent is not inside a work tree (`git -C <dir>/.. rev-parse --is-inside-work-tree` doesn't print `true`), or it is,
-     and that enclosing work tree's `--git-common-dir` is the directory's own, both resolved to absolute paths before they are compared
-     (git prints it relative from a subdirectory). That gates a real nested repository and an untracked gitfile
+     and that enclosing work tree's `--git-common-dir` is the directory's own, both resolved to canonical real paths, symlinks followed, before
+     they are compared (git prints it relative from a subdirectory, and macOS reaches temporary folders through `/var`). That gates a real nested repository and an untracked gitfile
      pointing at another repository. It keeps a linked worktree nested in its own main checkout resolving, as lane checkouts at
      `.orchestration/lanes/<id>` and Athena's `.worktrees/<id>` are, and those read the same `origin` as the root.
 
@@ -127,14 +127,16 @@ Lane 1, tier 1, not blocked. Test-first, per the item. In the harness, the resol
 - From a subdirectory of the root, a real nested repository whose `origin` declares `focused`, an initialised submodule whose `origin`
   declares `focused`, and an untracked gitfile in a subdirectory pointing at a repository declaring `focused`: each `gate` with
   `posture_unreadable`, with the root's base declaring `focused` too, so neither a root read nor a nested read would gate.
-- From inside an embedded bare repository in the tree whose refs declare `focused`, under a git that emulates one before 2.38: a `git`
+- From a standalone bare clone in its own temporary directory, whose parent is in no work tree and whose `refs/remotes/origin/main`
+  declares `focused`, under a git that emulates one before 2.38: a `git`
   wrapper ahead of the real one on `PATH` drops the resolver's `-c safe.bareRepository=explicit` pair from its arguments and runs the real
   git with `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_NOSYSTEM=1`. The row first confirms that, under the wrapper, the bare repository's
   `rev-parse --verify refs/remotes/origin/main` succeeds, then asserts `gate` with `posture_unreadable`. Red run under the wrapper with the
-  show-toplevel failure branch mutated to carry on. The same row without the wrapper gates too, by git's own refusal.
+  show-toplevel failure branch mutated to carry on. The same row without the wrapper gates too, by git's own refusal. A second row reads
+  from a bare repository embedded in the tree, and gates by the third condition; it claims no red run against that mutant.
 - Allowed, with the base declaring `focused`, read from each one's own root: a normal clone whose parent is no work tree; a linked worktree
   made with `git worktree add` outside its main checkout; and one nested under its main checkout at `.orchestration/lanes/<id>`. Each reads
-  `focused` with no code. The nested worktree's red runs are recorded against two mutants: refusing whenever `.git` is a file, and refusing
+  `focused` with no code, including when its root is given through a symlinked path such as macOS's `/var`. The nested worktree's red runs are recorded against two mutants: refusing whenever `.git` is a file, and refusing
   whenever the parent is inside a work tree, without the common-directory check.
 - From a root, every existing scenario and vector gives what it gave before.
 - The surviving mutants fail a test: each of the two `cat-file` guards removed, the environment dropped from the URL read and from the local
