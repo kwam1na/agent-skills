@@ -6906,6 +6906,26 @@ class Supervisor:
         self.address: str | None = None
         self.handle = None
         self.started = now()
+        # Why it stopped serving, once what it serves is gone: then it exits instead of passing on over nothing.
+        self.lost: str | None = None
+
+    def gone(self) -> str | None:
+        """What it serves that is no longer there: its record (the record's state file, which the state tool only ever
+        replaces whole, so a folder a removal left behind, or one a writer made again, doesn't count), or the install
+        it runs from (this file, inside the generation)."""
+        if not (self.c.state / "state.json").is_file():
+            return f"its record {self.c.state} is gone"
+        if not Path(__file__).exists():
+            return f"its install {GENERATION} is gone"
+        return None
+
+    def lose(self) -> bool:
+        """Whether it has lost what it serves; the first time, it says so in its log, which stays open."""
+        if self.lost is None:
+            self.lost = self.gone()
+            if self.lost:
+                print(f"{now()} supervisor: stopping: {self.lost}", flush=True)
+        return self.lost is not None
 
     def write_lock(self) -> None:
         self.handle.seek(0)
@@ -7022,6 +7042,8 @@ class Supervisor:
                  ("publish", lambda: render_views(c, only="publishers")), ("needs", derive),
                  ("render", lambda: render_views(c, only="renderers")), ("latest", lambda: str(copy_latest(c))))
         for name, step in steps:
+            if self.lose():
+                return False
             try:
                 entry[name] = step()
             except (Stop, ValueError, OSError, subprocess.SubprocessError) as error:
@@ -7043,6 +7065,8 @@ class Supervisor:
                 render_views(c)
         except (Stop, ValueError, OSError, subprocess.SubprocessError) as error:
             entry["close"] = f"failed: {error}"
+        if self.lose():
+            return False
         entry["finishedAt"] = now()
         append_log("supervisor", c.delivery, entry)
         return closed
@@ -7078,21 +7102,25 @@ class Supervisor:
             number = len(read_log("supervisor", c.delivery))
             while True:
                 number += 1
-                if self.one_pass(number) or self.once or self.stop_asked():
+                if self.one_pass(number) or self.once or self.stop_asked() or self.lose():
                     return
                 deadline = time.monotonic() + supervisor_pass_seconds(c)
                 while time.monotonic() < deadline and not self.stop_asked():
+                    if self.lose():
+                        return
                     self.keep_alive()
                     time.sleep(0.2)
                 if self.stop_asked():
                     return
         finally:
             self.stop_children()
-            # Drawn and copied once more, so neither the line map nor `latest` keeps the last running list.
-            with contextlib.suppress(OSError, Stop, subprocess.SubprocessError):
-                write_needs(c, None, len(read_log("supervisor", c.delivery)), time.monotonic())
-                render_views(c, only="renderers")
-                copy_latest(c)
+            # Drawn and copied once more, so neither the line map nor `latest` keeps the last running list; not when
+            # the record or install is gone, which would only write a record back that no one is serving.
+            if not self.lost:
+                with contextlib.suppress(OSError, Stop, subprocess.SubprocessError):
+                    write_needs(c, None, len(read_log("supervisor", c.delivery)), time.monotonic())
+                    render_views(c, only="renderers")
+                    copy_latest(c)
             fcntl.flock(self.handle, fcntl.LOCK_UN)
             self.handle.close()
 
