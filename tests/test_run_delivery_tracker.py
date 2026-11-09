@@ -17,6 +17,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -25,6 +26,7 @@ import time
 import unittest
 import urllib.parse
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "skills/run-delivery/scripts"
@@ -1916,6 +1918,50 @@ class LaneCommandTests(RunDeliveryTrackerCommandTests):
         self.assertEqual(fx.flow("lead-brief", cwd=fx.main)[0], 0)
         self.assertIn("`lane-start` prints it; make it with your tracker tools.",
                       (fx.main / "docs/lane-brief.md").read_text())
+
+
+class FakeJiraBindTests(unittest.TestCase):
+    """The fake Jira listens without looking up its own host name. HTTPServer.server_bind asks socket.getfqdn for the
+    address's name before it listens, and where reverse lookups of a loopback address go unanswered, as on a macOS
+    runner, that holds every server about 34 seconds."""
+
+    # The loopback names a stalled lookup holds, as `STALLED_LOOKUP` in tests/test_run_delivery.py lists them.
+    LOOPBACK = ("", "localhost", "127.0.0.1", "::1", "0.0.0.0", "::")
+
+    def test_the_fake_jira_listens_at_once_when_name_lookups_stall(self) -> None:
+        released = threading.Event()  # set in cleanup, so a server that waits on the lookup isn't left waiting a minute
+        stalled: list[str] = []
+        real_getfqdn = socket.getfqdn
+
+        def getfqdn(name: str = "") -> str:
+            if name in self.LOOPBACK:
+                stalled.append(name)
+                released.wait(60)
+            return real_getfqdn(name)
+
+        patch = mock.patch.object(socket, "getfqdn", getfqdn)
+        patch.start()
+        made: list[FakeJira] = []
+        built = threading.Thread(target=lambda: made.append(FakeJira()), daemon=True)
+
+        def stop() -> None:  # in this order: release the lookup, let the constructor finish, then close what it made
+            released.set()
+            built.join(70)
+            patch.stop()
+            for jira in made:
+                jira.close()
+
+        self.addCleanup(stop)
+        started = time.monotonic()
+        built.start()
+        built.join(5)
+        self.assertFalse(built.is_alive(), f"FakeJira() waited on the stalled lookup of {stalled}")
+        port = made[0].server.server_address[1]
+        with socket.create_connection(("127.0.0.1", port), timeout=max(0.1, 5 - (time.monotonic() - started))):
+            pass
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertEqual(stalled, [], "the bind looked up a loopback name")
+
 
 if __name__ == "__main__":
     unittest.main()
