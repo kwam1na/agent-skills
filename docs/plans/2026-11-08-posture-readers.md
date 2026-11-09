@@ -37,36 +37,71 @@ ownership, order, and how this delivery runs beside V26-3304, which is live on t
    with `posture_malformed`, in both readers, on every Python and Node version. The top-level object is depth 1. Accepting any depth isn't
    an answer both readers can give: Python 3.11's decoder raises `RecursionError` near 1000 levels, and a 64 KiB blob can nest about 32,000
    levels, deeper than any recursion limit Python can safely raise. No declared member needs depth, and members other than the three
-   required ones are ignored. Each reader measures depth on the raw text, counting `[` and `{` outside strings (with escapes honoured), and
-   refuses before it parses, so no decoder's limit is ever reached. Malformed text of any depth is still `posture_malformed`. The vectors:
-   depth 64 accepted, depth 65 malformed, depth 1500 malformed (the ticket's case), and depth 65 inside a string accepted, each with a valid
-   `focused` declaration around it.
+   required ones are ignored. Each reader measures depth on the raw text before it parses, so no decoder's limit is ever reached. Depth is
+   the greatest number of arrays and objects open at once: it goes up by one at each `[` or `{` and down by one at each `]` or `}`, outside
+   strings. A string starts and ends at an unescaped `"`, and inside one a `\` escapes exactly the next character, so `\"` doesn't end the
+   string and `\\"` does. Malformed text of any depth is still `posture_malformed`. The shared vectors, each a valid `focused` declaration
+   around the case:
+   - one member nested 64 deep: accepted; 65 deep: malformed; 1500 deep (the ticket's case): malformed;
+   - the deepest nesting a 64 KiB blob can hold (about 32,000 levels, under the size bound): malformed, which pins "refuses before it
+     parses" against a reader that parses then walks;
+   - 65 or more sibling arrays at depth 2: accepted;
+   - two sibling members, one nesting arrays and one nesting objects, each 64 deep: accepted;
+   - a string holding 65 `[` with no backslash: accepted; a string holding closing brackets at depth 64: accepted;
+   - a string holding an escaped quote followed by 65 `[`: accepted;
+   - a string ending in an escaped backslash (`"r\\"`) followed by a member nested 65 deep: malformed.
+
+   Each reader's red runs are recorded against three mutants: a counter that never decrements, a scanner that ignores escapes, and one that
+   treats a quote as escaped whenever a backslash precedes it.
 2. **One harness change, one runtime build.** V26-3162's root rule and the JavaScript half of Decision 1 land in one pull request to the
    harness's `main`, which bumps the kernel and CLI packages to 0.8.2. The lead merges it once reviewed. So V26-3162's story carries the
    resolver half of V26-3163, and V26-3163's story here carries the Python half, the vectors and the wording pin.
 3. **The runtime is built without other work.** `product-runtime/` is rebuilt with `npm run product:build-runtime` from a clean checkout of a
    harness branch `runtime/0.8.2`: `v0.8.1`'s commit plus the merged change cherry-picked. The build's change request and
-   `docs/product-generation.md` name the commit it was built from. This keeps #200 out of what adopters run, as V26-3124 kept V26-2347's
-   commits out of 0.7.8. A later runtime build from `main` picks up both. Two runtimes then declare 0.8.2, which is why the change request
-   names the commit and the digests, never the version alone.
-4. **Repository root only.** The resolver runs `git rev-parse --show-toplevel` and `--show-superproject-working-tree` against the directory
-   it was given, and resolves only when that directory is the top level of a repository that is not itself a submodule. A subdirectory, a
-   nested repository's directory, an initialised submodule and an untracked gitfile in a subdirectory resolve to `gate` with
-   `posture_unreadable`, naming the directory. The bare-layout refusal holds on git older than 2.38, where `safe.bareRepository` is ignored,
-   because the rule doesn't depend on it. From the root every vector's answer is unchanged. `run_delivery.py`'s reader already reads the
-   delivery's own repository by path, so it needs no change for V26-3162; V26-3162's built-product rows here prove the subdirectory routes
-   gate through the built CLI as well.
+   `docs/product-generation.md` name the commit it was built from, next to the runtime's digests. This keeps #200 out of what adopters run,
+   as V26-3124 kept V26-2347's commits out of 0.7.8. A later runtime build from `main` picks up both. Two runtimes then declare 0.8.2, which
+   is why the change request names the commit and the digests, never the version alone. The build's evidence proves the claim three ways:
+   `git log --format=%H v0.8.1..runtime/0.8.2` lists only the cherry-picked commit, and its diff equals the merged pull request's; a second
+   clean build from `runtime/0.8.2` reproduces `product-runtime/` byte for byte; and the same build from the harness's `main` does not, the
+   planted failure that shows the comparison can fail.
+4. **Repository root only.** The resolver resolves only when all three hold for the directory it was given; otherwise it is `gate` with
+   `posture_unreadable`, naming the directory:
+   - `git rev-parse --show-toplevel` succeeds and prints that directory. Inside a bare repository it fails, so a bare layout gates whatever
+     `safe.bareRepository` says or whichever git is installed.
+   - `git rev-parse --show-superproject-working-tree` prints nothing, so an initialised submodule gates.
+   - The directory's parent is not inside a work tree (`git -C <dir>/.. rev-parse --is-inside-work-tree` doesn't print `true`), or it is,
+     and that enclosing work tree's `--git-common-dir` is the directory's own. That gates a real nested repository and an untracked gitfile
+     pointing at another repository. It keeps a linked worktree nested in its own main checkout resolving, as lane checkouts at
+     `.orchestration/lanes/<id>` and Athena's `.worktrees/<id>` are, and those read the same `origin` as the root.
+
+   Every git call runs with the resolver's scrubbed local environment. The accepted consequence: a repository cloned inside another
+   repository's work tree, and not a linked worktree of it, gates. From a root, every vector's answer is unchanged. `run_delivery.py`'s reader
+   already reads the delivery's own repository by path, so it needs no change for V26-3162. V26-3162's built-product rows here prove the
+   routes through the built CLI as well.
 5. **Triage against `main`, then fix or drop.** V26-3174's lane checks each finding against `main` first and records, per finding, the
    commit or test that already settles it, or its fix. A finding is dropped only with a reason the lead accepts at hand-off (it no longer
-   applies, or another merged change settles it); nothing is filed. The two behaviour items are fixed: `lead-resolve full-health` stops
-   promising a rerun while the base declares `focused`, saying instead that the rerun waits for `gate`; and `rebuild_plan`'s "moved" text
-   names a member removed from the plan, such as `closeOut`. The hanging-git stubs' sleep is renamed so no pattern a test or an operator
-   would use to find stray processes matches it, whatever PR 206 did.
-6. **Beside V26-3304.** V26-3304's lane 1 owns `skills/run-delivery/`, `tests/test_run_delivery.py` and `provenance.lock.json` in its own
-   delivery, and lane 2 here changes the same paths. The two deliveries' queues merge into the same `main`. The lane never merges the base;
-   the queue syncs at merge time, and `provenance.lock.json` is regenerable. When a sync conflicts outside it, the lead decides: requeue after
-   V26-3304's candidate lands, or have the lane rebase its branch onto `main` and carry or rerun its review as `lead-carry-review` allows. The
-   lead doesn't queue a V26-3267 candidate while a V26-3304 candidate touching the same file is in the queue.
+   applies, or another merged change settles it); nothing is filed. Where a finding names a mutation or an unguarded branch and the lane
+   says an existing test or commit settles it, the lane records that test's red run by name under the finding's own mutation, then the
+   revert. A finding with no runnable mutation records why. The lead accepts a drop only with that record. The two behaviour items, which
+   may already be settled on `main`, are checked the same way: `lead-resolve full-health` doesn't promise a rerun while the base declares
+   `focused`, saying instead that the rerun waits for `gate`; and `rebuild_plan`'s "moved" text names a member removed from the plan, such
+   as `closeOut`. For the hanging-git stubs, the lane names the pattern the finding means, renames the stubs' sleep so it doesn't match, and
+   adds a row asserting that no stub's command line matches that pattern, whatever PR 206 did.
+6. **Beside V26-3304 and V26-3250.** Both are live on the same `main`. V26-3304's lane 1 owns `skills/run-delivery/`,
+   `tests/test_run_delivery.py` and `provenance.lock.json` in its delivery; V26-3250 changes `run_delivery.py`, its references, the
+   orchestrate-work docs, `tests/test_run_delivery.py` and the lock; lane 2 here changes the same paths. The three leads agreed on
+   2026-11-08:
+   - V26-3304's V26-3286 and V26-3273 merge first. They rewrite `clean_environment()`, `Fixture.__init__`, `Config` and `main_checkout`
+     resolution, `Supervisor.run`, `start_supervisor`, `stop_children` and `SupervisorProcessTests`, so lane 2 stays out of those until they
+     merge.
+   - After that, whichever delivery is ready. No lead queues a candidate on a shared file while another delivery's candidate touching it is
+     queued, and each lead messages the others before queuing one and when a story merges.
+   - `provenance.lock.json` is regenerated by its writer at sync, never merged by hand.
+   - Each lead works in its own worktree, never on the operator's main checkout.
+
+   The lane never merges the base. When a sync conflicts outside the lock, the lead decides: requeue after the other candidate lands, or have
+   the lane rebase its branch onto `main` and carry or rerun its review as `lead-carry-review` allows. Lane 1's files are this delivery's
+   alone, so it queues without waiting.
 
 ## Units and order
 
@@ -90,22 +125,32 @@ Lane 1, tier 1, not blocked. Test-first, per the item. In the harness, the resol
 `resolveDeliveryPosture`'s byte reader. Scenarios, written first in `packages/kernel/src/delivery-posture.test.ts` and the CLI's tests:
 - From a subdirectory of the root, a real nested repository whose `origin` declares `focused`, an initialised submodule whose `origin`
   declares `focused`, and an untracked gitfile in a subdirectory pointing at a repository declaring `focused`: each `gate` with
-  `posture_unreadable`, with the root's base declaring `focused` for the first two so a root read would differ.
-- The same routes on a git older than 2.38, or with `safe.bareRepository` unset where the host's git is older: `gate`.
-- From the root, every existing scenario and vector gives what it gave before.
+  `posture_unreadable`, with the root's base declaring `focused` too, so neither a root read nor a nested read would gate.
+- From inside an embedded bare repository in the tree whose refs declare `focused`, run with `GIT_CONFIG_GLOBAL=/dev/null` and
+  `-c safe.bareRepository=all` so git's own refusal can't decide it: `gate` with `posture_unreadable`. Red run with the show-toplevel
+  failure branch mutated to carry on.
+- Allowed, with the base declaring `focused`, read from each one's own root: a normal clone whose parent is no work tree; a linked worktree
+  made with `git worktree add` outside its main checkout; and one nested under its main checkout at `.orchestration/lanes/<id>`. Each reads
+  `focused` with no code. The nested worktree's red runs are recorded against two mutants: refusing whenever `.git` is a file, and refusing
+  whenever the parent is inside a work tree, without the common-directory check.
+- From a root, every existing scenario and vector gives what it gave before.
 - The surviving mutants fail a test: each of the two `cat-file` guards removed, the environment dropped from the URL read and from the local
   read, and the CLI's interrupt check removed. The lane records each mutant's red run by test name.
 - `--no-auto-maintenance` and `--no-recurse-submodules` each removed from the fetch: a test fails.
-- Depth 64 accepted, depth 65 and depth 1500 `posture_malformed`, depth 65 inside a string accepted.
+- Every depth vector Decision 1 lists, with the red runs it names for the JavaScript reader.
 Evidence on the harness follows V26-3124's: `npm run typecheck`, `npm run sensor`, `npm run sensor:cli` and `npx vitest run` as separate
 steps on `main` before the work and on the pull request, compared per test, with no new failure and the new scenarios passing by name; and
 the same on `runtime/0.8.2` against `v0.8.1`. Here, the build per Decision 3, the literal `0.8.2` pin in `tests/test_product_release.py`,
-`tests/test_cut_release.py`'s version from the descriptor, and built-product rows in `tests/test_delivery_posture_vectors.py`: the built
-CLI's `verify` run from a subdirectory holding a nested repository whose `origin` declares `focused` stays gated, and the vector file runs
+`tests/test_cut_release.py`'s version from the descriptor, and built-product rows in `tests/test_delivery_posture_vectors.py`. In the
+first, the consumer root's base and a nested repository's `origin` both declare `focused`. The built CLI's `verify`, run from the nested
+repository's directory, is gated, and its stderr carries the `posture_unreadable` line ahead of the command's blocker. Its red run is
+recorded against a mutant that normalises the directory to `--show-toplevel` before resolving. In the second, `verify` run from a linked
+worktree nested under the consumer's root, with its base declaring `focused`, exits 0 with the `focused` outcome. The vector file runs
 against the built runtime's export. The deep-nesting vectors go into the vector file in V26-3163, not here, so the vector test stays green
 on both readers at this merge. Sensors: the harness's steps above; here `tests/test_delivery_posture_vectors.py`,
 `tests/test_product_release.py`, `tests/test_cut_release.py`, `tests/test_product_descriptors.py`, `scripts/validate-registry.py`.
-Adoption notes: `docs/product-generation.md` names the build commit and what 0.8.2 adds.
+The hand-off carries Decision 3's three build records. Adoption notes: `docs/product-generation.md` names the build commit, its digests and
+what 0.8.2 adds.
 
 ### V26-3174. Triage the deferred review findings from the delivery posture work
 
@@ -122,11 +167,12 @@ fails, then restored. Files: lane 2's `owns`, and the moved files once moved. Se
 ### V26-3163. Make both posture readers agree on deeply nested declarations
 
 Lane 2, tier 1, after V26-3174 and V26-3162. Test-first. `posture_of_bytes` in `run_delivery.py` measures depth per Decision 1 before it
-parses, so `RecursionError` is never what decides. The four depth vectors go into `tests/fixtures/delivery-posture-vectors.json`, and the
-vector test runs them against both readers. The lane records the red run of the depth-1500 and depth-65 vectors on the unfixed Python reader
-under Python 3.14, where it accepts both, and the green run on 3.11 and on 3.14, with `.venv-<name>` built by the bootstrap's
-`--environment`. The `lead-resolve` wording under `focused` in `skills/run-delivery/SKILL.md` and `references/config.md`, as V26-3174
-leaves it, is pinned by a corpus pin each, proved red. Files: `skills/run-delivery/`, `tests/test_run_delivery.py`, the moved vector files,
+parses, so `RecursionError` is never what decides. Every depth vector Decision 1 lists goes into
+`tests/fixtures/delivery-posture-vectors.json`, and the vector test runs them against both readers. The lane records the red run of the
+depth-1500 and depth-65 vectors on the unfixed Python reader under Python 3.14, where it accepts both; the red runs Decision 1 names against
+the three scanner mutants; and the green run on 3.11 and on 3.14, with `.venv-<name>` built by the bootstrap's `--environment`. The
+`lead-resolve` wording under `focused` in `skills/run-delivery/SKILL.md` and `references/config.md`, as V26-3174 leaves it, is pinned by a
+corpus pin each in `tests/test_run_delivery.py`, proved red. Files: `skills/run-delivery/`, `tests/test_run_delivery.py`, the moved vector files,
 `provenance.lock.json`. Sensors: `tests/test_delivery_posture_vectors.py` on 3.11 and 3.14, `tests/test_run_delivery.py`,
 `scripts/validate-registry.py`.
 
