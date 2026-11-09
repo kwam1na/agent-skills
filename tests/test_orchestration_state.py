@@ -4878,6 +4878,27 @@ class NextTests(unittest.TestCase):
                 self.assertFalse(fix_a["blocked"])
                 self.assertIn("unblocked", fix_a["reason"])
 
+    def test_a_dependency_settled_with_no_change_blocks_no_more(self) -> None:
+        # The record holds the dependency settled with no change needed: never queued, never merged, done all the same.
+        version = state_tool.show(self.directory)["state"]["version"]
+        planned = state_tool.show(self.directory)["state"]["planned"]
+        state_tool.patch(self.directory, writer="lead", version=version, changes={"planned": [*planned, {
+            "subject": "settled-dep", "title": "Already held", "lane": "lane-2", "stage": "settled",
+            "noChange": {"evidence": "settled-dep-1 holds", "baseHead": "a" * 40, "handedAt": taken(),
+                         "settledAt": taken()}}]})
+        # The tracker still shows it in the backlog, as it may: only the record says it is done.
+        snapshot = self.snapshot([{"subject": "fix-a", "state": "backlog"}, {"subject": "fix-b", "state": "backlog"},
+                                  {"subject": "busy", "state": "started"}, {"subject": "settled-dep", "state": "backlog"}])
+        ranked = self.ranked(snapshot, self.hints({
+            "fix-a": {"files": ["docs/a.md"], "priority": 3, "blockers": ["settled-dep"]},
+            "fix-b": {"files": ["docs/b.md"], "priority": 1, "blockers": ["busy"]}}))
+        order = [item["subject"] for item in ranked]
+        self.assertLess(order.index("fix-a"), order.index("fix-b"), ranked)
+        fix_a = next(item for item in ranked if item["subject"] == "fix-a")
+        self.assertFalse(fix_a["blocked"], fix_a)
+        self.assertIn("unblocked", fix_a["reason"])
+        self.assertNotIn("settled-dep", order, "settled work is never next")
+
     def test_hints_blockers_are_a_list_of_subjects(self) -> None:
         snapshot = self.snapshot([{"subject": "fix-a", "state": "backlog"}])
         for blockers in ("busy", [""], [7]):

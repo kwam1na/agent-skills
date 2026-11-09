@@ -3254,8 +3254,8 @@ def next_for_lane(state: dict, lane: str, snapshot: dict, hints: dict | None) ->
     item named by its reference, or by its id when it has none; the hints are
     keyed the same way. They are ordered by:
 
-    1. unblocked first: every blocker completed, canceled, or merged in the
-       record. Blockers are the tracker's ``blockedBy`` and the hints'
+    1. unblocked first: every blocker completed, canceled, or merged or
+       settled with no change in the record. Blockers are the tracker's ``blockedBy`` and the hints'
        ``blockers``, the plan's order, so the order holds when the tracker
        has none; a blocker the snapshot does not list counts as open, and work
        the snapshot does not list comes after work it shows unblocked, its
@@ -3276,6 +3276,8 @@ def next_for_lane(state: dict, lane: str, snapshot: dict, hints: dict | None) ->
     declared = {} if hints is None else hints["items"]
     tracker = {item["subject"]: item for item in snapshot["items"]}
     merged = {item["subject"] for item in state["queue"] if item["stage"] == "merged"}
+    # Work settled with no change needed is done too, though it never entered the queue: it blocks nothing.
+    merged |= {item["subject"] for item in state.get("planned", []) if item["stage"] == "settled"}
     queued = {item["subject"] for item in state["queue"]}
     open_lanes = {entry["id"] for entry in state["lanes"]
                   if entry["id"] != lane and entry["state"] not in RESTING_LANE_STATES}

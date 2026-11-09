@@ -2795,7 +2795,7 @@
               ]
             },
             "blockers": {
-              "description": "The subjects this item comes after, from the plan's order (run-delivery's lead-hints passes the delivery file's after keys). next reads them beside the tracker's blockedBy: one stops blocking once the record holds it merged, or the tracker snapshot holds it completed or canceled.",
+              "description": "The subjects this item comes after, from the plan's order (run-delivery's lead-hints passes the delivery file's after keys). next reads them beside the tracker's blockedBy: one stops blocking once the record holds it merged or settled with no change needed, or the tracker snapshot holds it completed or canceled.",
               "type": "array",
               "items": {
                 "type": "string",

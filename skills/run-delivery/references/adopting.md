@@ -325,8 +325,8 @@ unassigned, each lane it found no row for, and each story it drafted no criteria
 The `after` keys are the plan's order. `next` reads them without the tracker once the binding names `lead-hints` as
 its `state.workHints`, with the argv `python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py
 --delivery {parent} lead-hints`. It prints each story's `Files:` paths as its files and its `after` keys as its
-blockers. A blocker stops blocking once the record holds it merged, or the tracker snapshot holds it completed or
-canceled.
+blockers. A blocker stops blocking once the record holds it merged or settled with no change needed, or the tracker
+snapshot holds it completed or canceled.
 
 Complete the rest from the plan: the in-app checks each story's hand-off needs (`"loaded"` here: one passing check of
 the running app), the finish lines, and where the record lives. A plan in another format leaves the lanes, each story's
