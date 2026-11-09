@@ -5769,13 +5769,19 @@ class RunDeliveryLeadWorktreeTests(unittest.TestCase):
                             cwd=lead)
         self.assertEqual(code, 0, out)
         self.assertIn("### FX-7. Thing seven", (lead / "docs/plan.md").read_text())
+        # A story only the worktree's unpushed commit holds is this delivery's own: one added after it is taken.
+        code, out = fx.flow("lead-plan", "change", "--kind", "added", "--subjects", "FX-8", "--title", "Thing eight",
+                            "--text", "Thing eight loads", "--why", "It follows seven.", "--lane", "lane-1",
+                            "--after", "FX-7", cwd=lead)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads(path.read_text())["stories"]["FX-8"].get("after"), ["FX-7"])
         code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "done", cwd=lead)
         self.assertEqual(code, 0, out)
-        # Before any push, the rebuilt plan is the worktree's: both changes and the approval, none the base's older file.
+        # Before any push, the rebuilt plan is the worktree's: the changes and the approval, none the base's older file.
         plan = json.loads((fx.tmp / "record/plan.json").read_text())
         self.assertEqual(plan["approvals"][0]["state"], "done")
         self.assertIn("FX-7", [unit["subject"] for unit in plan["units"]])
-        self.assertEqual([c["kind"] for c in plan["changes"]], ["relaxed", "added"])
+        self.assertEqual([c["kind"] for c in plan["changes"]], ["relaxed", "added", "added"])
         on_base = self.pushed(fx, out, lead)
         on_base_criteria = {c["id"]: c["text"] for c in on_base["stories"]["FX-2"]["criteria"]}
         self.assertEqual((on_base_criteria["one-fails"], on_base["approvals"][0]["state"], "FX-7" in on_base["stories"]),
@@ -5806,6 +5812,32 @@ class RunDeliveryLeadWorktreeTests(unittest.TestCase):
                       "docs/other plan.md: a lead worktree", out)
         self.assertIn("only FX-1's own delivery file and plan", out)
         self.assertEqual(json.loads(path.read_text())["approvals"][0]["state"], "waiting")
+        # Every commit ahead is read, not only the last or the first, and another delivery's own file is not this
+        # one's: another lead's commit to FX-9's delivery file, above this lead's own approval, then below one.
+        sh("git", "reset", "-q", "--hard", "origin/feature/FX-1", cwd=lead)
+        code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "done", "--who", "the operator", cwd=lead)
+        self.assertEqual(code, 0, out)
+        other_file = lead / ".agents/deliveries/FX-9.json"
+        other_file.write_text(json.dumps({"delivery": "FX-9"}, indent=2) + "\n")
+        commit(lead, "FX-9: its delivery file")
+        above = sh("git", "rev-parse", "--short=12", "HEAD", cwd=lead).stdout.strip()
+        code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "waiting", cwd=lead)
+        self.assertEqual(code, 2, out)
+        self.assertIn(f"with {above} (FX-9: its delivery file), which changes .agents/deliveries/FX-9.json:", out)
+        sh("git", "reset", "-q", "--hard", "origin/feature/FX-1", cwd=lead)
+        other_file.write_text(json.dumps({"delivery": "FX-9"}, indent=2) + "\n")
+        commit(lead, "FX-9: its delivery file")
+        below = sh("git", "rev-parse", "--short=12", "HEAD", cwd=lead).stdout.strip()
+        code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "waiting", cwd=lead)
+        self.assertEqual(code, 2, out)  # refused already, before any own commit is on top
+        self.assertIn(f"with {below} (FX-9: its delivery file)", out)
+        d = json.loads(path.read_text())
+        d["approvals"][0]["state"] = "done"
+        path.write_text(json.dumps(d, indent=2))
+        commit(lead, "FX-1: approval approval-1 done")  # an own commit on top of the foreign one
+        code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "waiting", cwd=lead)
+        self.assertEqual(code, 2, out)
+        self.assertIn(f"with {below} (FX-9: its delivery file), which changes .agents/deliveries/FX-9.json:", out)
         # A worktree that has diverged from the base is refused as today.
         sh("git", "reset", "-q", "--hard", "origin/feature/FX-1", cwd=lead)
         (lead / "src/app.txt").write_text("the lead's\n")

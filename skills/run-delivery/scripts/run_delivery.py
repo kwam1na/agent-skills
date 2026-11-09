@@ -4135,9 +4135,9 @@ def lead_plan_checkout(c) -> Path:
             raise Stop(f"{root} is ahead of {c.base_ref} with {sha[:12]} ({subject}), which changes "
                        f"{', '.join(foreign)}: a lead worktree off {c.base_branch} may be ahead with only "
                        f"{c.delivery}'s own delivery file and plan; push that commit or drop it first")
-    # What the base holds, plus this delivery's own unpushed plan commits: the working tree is the plan to change.
+    # What the base holds, plus this delivery's own unpushed plan commits: the working tree is the plan to change,
+    # and every read of the delivery file from here on, the plan's rebuild included, goes through this shelf.
     c.shelf = Shelf(root)
-    c.load_delivery(c.delivery)
     return root
 
 
