@@ -809,6 +809,27 @@
       }
     },
     {
+      "id": "objects-nested-65-deep",
+      "base": {
+        "kind": "blob",
+        "text": "{\"schemaVersion\": \"delivery-posture/1\", \"posture\": \"focused\", \"reason\": \"The gate is still being optimized.\", \"deep\": @1}",
+        "expand": [
+          {
+            "marker": "@1",
+            "open": "{\"a\": ",
+            "close": "}",
+            "inner": "0",
+            "count": 64
+          }
+        ]
+      },
+      "expect": {
+        "posture": "gate",
+        "code": "posture_malformed",
+        "source": "origin/main"
+      }
+    },
+    {
       "id": "nested-1500-deep",
       "base": {
         "kind": "blob",

@@ -7413,7 +7413,7 @@ class DeliveryPostureReaderTests(unittest.TestCase):
             self.assertEqual(depth, 0, "brackets don't balance")
             return most
         vectors = {vector["id"]: vector for vector in self.file["vectors"]}
-        for name, depth in {"nested-64-deep": 64, "nested-65-deep": 65, "nested-1500-deep": 1500,
+        for name, depth in {"nested-64-deep": 64, "nested-65-deep": 65, "objects-nested-65-deep": 65, "nested-1500-deep": 1500,
                             "objects-then-arrays-each-64-deep": 64, "closing-brackets-in-a-string-at-depth-64": 64,
                             "escaped-backslash-ends-a-string-before-65-deep": 65, "sixty-five-sibling-arrays-at-depth-2": 2,
                             "sixty-five-sibling-objects-at-depth-2": 2, "sixty-five-brackets-in-a-string": 1,
