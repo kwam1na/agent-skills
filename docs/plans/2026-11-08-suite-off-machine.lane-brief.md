@@ -35,7 +35,7 @@ assemble briefs, round files or records by hand, and don't edit what they write.
 | Lane | Stories | Owns |
 | --- | --- | --- |
 | lane-1 | V26-3286, V26-3273 | `skills/run-delivery/*`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_plan_review.py`, `docs/solutions/*`, `provenance.lock.json`, `catalog.json`, `profiles/*` |
-| lane-2 | V26-3274, V26-3292, V26-3312 | `tests/test_run_delivery_tracker.py`, `tests/test_own_deliveries.py`, `tests/test_delivery_views_render.py` |
+| lane-2 | V26-3274, V26-3292, V26-3312, V26-3316 | `tests/test_run_delivery_tracker.py`, `tests/test_own_deliveries.py`, `tests/test_delivery_views_render.py`, `skills/orchestrate-work/scripts/delivery_state.py`, `tests/test_orchestration_state.py` |
 
 | Story | Label | Pinned request patterns | In-app checks its hand-off needs |
 | --- | --- | --- | --- |
@@ -44,6 +44,7 @@ assemble briefs, round files or records by hand, and don't edit what they write.
 | V26-3274 | V26-3274 | - | none |
 | V26-3292 | V26-3292 | - | none |
 | V26-3312 | V26-3312 | - | none |
+| V26-3316 | V26-3316 | - | none |
 
 ## The focused lane profile
 
@@ -174,8 +175,10 @@ around it.
 **Lane 1: V26-3286 first.** Reproduce the stray `supervisor:` lines and name the case before you change it. Never run a `lead-*`
 command, or a test module, from the main checkout: only from your story's own checkout.
 
-**Lane 2: V26-3274.** Record the stalled-lookup row's red run. Ask the lead to put the `full-matrix` label on your pull request so the
-macOS job runs on it, and include that job's timings for `tests.test_run_delivery_tracker` in your hand-off, beside the last `main` run's.
+**No waiting on CI (operator ruling, 2026-11-09).** No story waits on a CI job, macOS or otherwise: this machine is macOS, and the macOS
+job informs without gating. A hand-off's evidence is local: gates, the story's sensors, its red and green proofs, run under load where
+the story is about timing. A CI run still in progress at hand-off is named as information only. V26-3274's macOS timings, its one
+CI-measured criterion, are already recorded.
 
 **Shell.** Never set `TMPDIR` under a checkout. Stop only processes you started, by the pid you recorded, never by pattern with `pkill`
 or `killall`. Clear `skills/` bytecode before anything that builds a release.

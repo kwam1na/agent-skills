@@ -29,7 +29,9 @@
       "owns": [
         "tests/test_run_delivery_tracker.py",
         "tests/test_own_deliveries.py",
-        "tests/test_delivery_views_render.py"
+        "tests/test_delivery_views_render.py",
+        "skills/orchestrate-work/scripts/delivery_state.py",
+        "tests/test_orchestration_state.py"
       ]
     }
   },
@@ -86,6 +88,17 @@
         {
           "id": "v26-3312-done",
           "text": "The deadline row's race is reproduced under load or a modelling stall; the fix keeps its claim (past-deadline runs unavailable, uncached, read again next render) without loosening it; suffix order is either pinned as a collect_runs promise or replaced by what the code promises, stated in the hand-off; the row passes under the reproducing load and fails when deadline handling is dropped"
+        }
+      ]
+    },
+    "V26-3316": {
+      "title": "The adoption-guide test's pinned focus patch races the fixture supervisor",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3316-done",
+          "text": "The writer that bumps the record between the guide's version read and its pinned focus patch is named and reproduced with a modelling stall; the fix follows the cause (the guide and tool if an adopter's sequence races, the test fixture only if just the fixture does) and the hand-off says which; the row passes under the stall and fails with the fix reverted"
         }
       ]
     }
