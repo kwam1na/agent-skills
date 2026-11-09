@@ -13,6 +13,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import signal
 import contextlib
 import subprocess
@@ -26,8 +27,8 @@ import urllib.request
 from pathlib import Path
 from unittest import mock
 
-from tests.test_run_delivery import (POSIX_ONLY, Fixture, commit, doctor_binding, installed_release, setup_delivery,
-                                     sh, stop_supervisors, write_results)
+from tests.test_run_delivery import (POSIX_ONLY, SUPERVISOR_STAND_IN, Fixture, commit, doctor_binding, installed_release,
+                                     setup_delivery, sh, stop_supervisors, write_results)
 from tests.test_run_delivery_tracker import FileBackend, JiraBackend
 
 # Each class that starts supervisors marks itself run_serially, so its cases run one at a time and alone on the machine.
@@ -3073,6 +3074,182 @@ class SupervisorBackgroundHealthTests(unittest.TestCase):
         self.assertFalse(Path(run["checkout"]).exists(), "the stopped run's checkout was left behind")
         self.assertNotIn("run-delivery-full-health-", sh("git", "worktree", "list", cwd=fx.main).stdout)
 
+
+
+# The processes a supervisor runs as: the tool, and the two children it keeps.
+SUPERVISOR_SCRIPTS = ("run_delivery.py", "render_state.py", "merge_queue.py")
+# A case the way the test runner runs one: a process of its own that builds a fixture, starts its supervisor, says
+# where its folder is, and waits to be stopped.
+INTERRUPTED_CASE = r"""
+import json, sys
+from pathlib import Path
+sys.path[:0] = [sys.argv[1], sys.argv[1] + "/tests"]
+import tests.test_run_delivery as m
+fx = m.Fixture(Path(sys.argv[2]), Path(sys.argv[3]))
+m.setup_delivery(fx)
+conf = fx.main / ".agents/run-delivery.json"
+conf.write_text(json.dumps({**json.loads(conf.read_text()), "supervisor": {"passSeconds": 1}}, indent=2))
+m.commit(fx.main, "FX-1: a pass a second")
+m.sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+env = {k: v for k, v in fx.env.items() if k != "RUN_DELIVERY_SUPERVISOR"}
+code, out = fx.flow("lead-init", cwd=fx.main, env=env)
+assert code == 0, out
+print(json.dumps({"folder": str(fx.tmp)}), flush=True)
+import time
+time.sleep(600)
+"""
+
+
+def process_cwd(pid: int) -> str | None:
+    done = subprocess.run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"], capture_output=True, text=True)
+    return next((line[1:] for line in done.stdout.splitlines() if line.startswith("n")), None)
+
+
+def case_processes(folder: Path, install: Path | None = None) -> list[str]:
+    """The supervisor processes tied to one case, found from the process table rather than from anything the case
+    recorded: a run_delivery.py, render_state.py or merge_queue.py process whose command line names the case's folder,
+    or that runs from inside it, or that names the case's install and a fixture delivery. So a supervisor whose
+    children have died, or whose lock is gone, is still found."""
+    names = {str(folder), os.path.realpath(folder)}
+    found = []
+    rows = subprocess.run(["ps", "-A", "-o", "pid=,command="], capture_output=True, text=True).stdout.splitlines()
+    for row in rows:
+        pid_text, _, command = row.strip().partition(" ")
+        if not any(script in command for script in SUPERVISOR_SCRIPTS) or int(pid_text) == os.getpid():
+            continue
+        cwd = process_cwd(int(pid_text)) or ""
+        if (any(name in command for name in names)
+                or any(cwd == name or cwd.startswith(name + os.sep) for name in names)
+                or (install is not None and str(install) in command and "--delivery FX-" in command)):
+            found.append(f"{pid_text} (cwd {cwd}): {command[:300]}")
+    return found
+
+
+def stop_pids(rows: list[str]) -> None:
+    """Stop what case_processes found, by the pid each row names, and its group when it leads one."""
+    for row in rows:
+        pid = int(row.split(" ", 1)[0])
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            if os.getpgid(pid) == pid:
+                os.killpg(pid, signal.SIGKILL)
+            else:
+                os.kill(pid, signal.SIGKILL)
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class NoSupervisorOutlivesItsCaseTests(unittest.TestCase):
+    """A case's supervisor never outlives it. The case stops what it started by the pid it recorded, even when the
+    test runner interrupts it. And a supervisor whose record or install is gone exits on its own. Each guard is proved
+    with the other out of the way."""
+
+    run_serially = True
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        for name, value in vars(installed_release()).items():
+            setattr(cls, name, value)
+
+    def started(self, fx: Fixture) -> dict:
+        """The fixture's own supervisor, started by lead-init, a pass a second: its lock as recorded."""
+        setup_delivery(fx)
+        conf = fx.main / ".agents/run-delivery.json"
+        conf.write_text(json.dumps({**json.loads(conf.read_text()), "supervisor": {"passSeconds": 1}}, indent=2))
+        commit(fx.main, "FX-1: a pass a second")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+        code, out = fx.flow("lead-init", cwd=fx.main, env=running(fx))
+        self.assertEqual(code, 0, out)
+        recorded = lock_of(fx)
+        pids = [recorded["pid"], *(child["pid"] for child in recorded.get("children") or [])]
+        # Only after the assertions: whatever they found, nothing this case started outlives it.
+        self.addCleanup(stop_pids, [f"{pid} recorded" for pid in pids])
+        return recorded
+
+    def test_an_interrupted_case_leaves_no_supervisor_running(self) -> None:
+        """As the test runner stops a worker: SIGTERM to its group, a grace, then SIGKILL. The supervisor lives in a
+        session of its own, outside that group, so only the case can stop it. The case's folder, its record and the
+        install all stay, so the supervisor's own exit can't be what stops it."""
+        case = subprocess.Popen([sys.executable, "-B", "-c", INTERRUPTED_CASE, str(Path(__file__).resolve().parents[1]),
+                                 str(self.generation), str(self.receipt)],
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+        self.addCleanup(lambda: case.poll() is None and (os.killpg(case.pid, signal.SIGKILL), case.wait()))
+        line = case.stdout.readline()
+        self.assertTrue(line.startswith("{"), line + case.stdout.read() if case.poll() is not None else line)
+        folder = Path(json.loads(line)["folder"])
+        self.addCleanup(shutil.rmtree, folder, True)
+        self.addCleanup(lambda: stop_pids(case_processes(folder)))
+        self.assertTrue(case_processes(folder), "the case's supervisor wasn't running before the interrupt")
+        os.killpg(case.pid, signal.SIGTERM)
+        try:
+            case.wait(timeout=3)  # the runner's grace
+        except subprocess.TimeoutExpired:
+            os.killpg(case.pid, signal.SIGKILL)
+            case.wait()
+        case.stdout.close()
+        self.assertTrue((folder / "record/state.json").is_file() and self.generation.is_dir(),
+                        "the record or the install went: the supervisor's own exit could have stopped it")
+        deadline = time.monotonic() + 10
+        left = case_processes(folder)
+        while left and time.monotonic() < deadline:
+            time.sleep(0.5)
+            left = case_processes(folder)
+        self.assertEqual(left, [], "the interrupted case left its supervisor running")
+
+    def test_a_supervisor_whose_record_is_removed_exits_on_its_own(self) -> None:
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        recorded = self.started(fx)
+        shutil.rmtree(fx.tmp / "record")
+        wait_for(lambda: not alive(recorded["pid"]), "the supervisor to exit once its record is gone", 30)
+        self.assertEqual([c["pid"] for c in recorded["children"] if alive(c["pid"])], [], "its children outlived it")
+        self.assertFalse((fx.tmp / "record").exists(), "the supervisor wrote its record back as it stopped")
+
+    def test_a_supervisor_whose_install_is_removed_exits_on_its_own(self) -> None:
+        install = Path(tempfile.mkdtemp(prefix="run-delivery-own-install-"))
+        self.addCleanup(shutil.rmtree, install, True)
+        generation = install / "generation"
+        shutil.copytree(self.generation, generation, symlinks=True)
+        fx = Fixture(generation, self.receipt)
+        self.addCleanup(fx.close)
+        recorded = self.started(fx)
+        shutil.rmtree(generation)
+        wait_for(lambda: not alive(recorded["pid"]), "the supervisor to exit once its install is gone", 30)
+        self.assertEqual([c["pid"] for c in recorded["children"] if alive(c["pid"])], [], "its children outlived it")
+        self.assertTrue((fx.tmp / "record/state.json").is_file(), "the record went too")
+
+    def test_a_supervisor_with_its_record_and_install_keeps_running(self) -> None:
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        recorded = self.started(fx)
+        wait_for(lambda: len(passes(fx)) >= 3, "three passes")
+        self.assertTrue(alive(recorded["pid"]), "the supervisor stopped with its record and install in place")
+        self.assertEqual(lock_of(fx)["pid"], recorded["pid"])
+
+    def test_stopping_a_cases_supervisors_survives_a_folder_removed_mid_walk(self) -> None:
+        """The merge queue removes a work checkout whenever it likes, so the cleanup's walk of the case's folder can
+        meet a folder that is gone. The walk goes on, and the supervisor its lock names is still stopped."""
+        folder = Path(tempfile.mkdtemp(prefix="run-delivery-walk-"))
+        self.addCleanup(shutil.rmtree, folder, True)
+        doomed = folder / ".orchestration/work/checkouts/03-resolve"
+        (doomed / "src").mkdir(parents=True)
+        lock = folder / "flow-log/FX-1.supervisor.lock"
+        lock.parent.mkdir(parents=True)
+        holder = subprocess.Popen([sys.executable, "-B", "-c", SUPERVISOR_STAND_IN, str(lock), "default"],
+                                  stdout=subprocess.PIPE, text=True, start_new_session=True)
+        self.addCleanup(lambda: holder.poll() is None and (os.killpg(holder.pid, signal.SIGKILL), holder.wait()))
+        self.assertEqual(holder.stdout.readline().strip(), "holding")
+        scandir = os.scandir
+
+        def vanishing(path=".", *args):
+            if isinstance(path, (str, os.PathLike)) and Path(path) == doomed and doomed.exists():
+                with mock.patch("os.scandir", scandir):
+                    shutil.rmtree(doomed)  # the queue removes it between the walk finding it and listing it
+            return scandir(path, *args)
+        with mock.patch("os.scandir", vanishing):
+            stop_supervisors(folder)
+        self.assertFalse(doomed.exists(), "the walk never reached the folder it was to lose")
+        holder.wait(timeout=10)
+        holder.stdout.close()
+        self.assertFalse(alive(holder.pid), "the supervisor outlived its case's cleanup")
 
 if __name__ == "__main__":
     unittest.main()
