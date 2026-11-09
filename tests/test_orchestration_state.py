@@ -3265,11 +3265,13 @@ class LaneWriterTests(unittest.TestCase):
         self.assertNotEqual(self.row()["focus"], "never lands")
 
     def test_a_lanes_focus_is_not_retried_past_a_refusal_other_than_a_moved_record(self) -> None:
-        calls = []
-        with self.assertRaises(state_tool.StateError) as refused:
-            state_tool.set_focus(self.directory, "lane-9", "not a lane", between_read_and_write=lambda: calls.append(1))
+        before = (self.directory / state_tool.STATE_FILE).read_bytes()
+        with mock.patch.object(state_tool, "patch", wraps=state_tool.patch) as patched:
+            with self.assertRaises(state_tool.StateError) as refused:
+                state_tool.set_focus(self.directory, "lane-9", "not a lane")
         self.assertNotEqual(refused.exception.code, "version_stale")
-        self.assertLessEqual(len(calls), 1)
+        self.assertEqual(patched.call_count, 1, "only a moved record is read again")
+        self.assertEqual((self.directory / state_tool.STATE_FILE).read_bytes(), before)
 
     def queue_stops(self, lane_id: str = "lane-1", waiting_on: str = "lead") -> None:
         """The queue's words on a row, as the runner writes them when it stops a candidate."""
