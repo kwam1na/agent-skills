@@ -818,11 +818,11 @@ convenience and never the lead's only wake. Where nothing can run in the
 background, the lead tells the operator that it won't wake on its own.
 
 ```bash
-python3 -B <skill>/scripts/delivery_state.py --dir <state> wait [--after <journal id>] [--timeout <seconds>] [--poll <seconds>]
+python3 -B <skill>/scripts/delivery_state.py --dir <state> wait [--after <journal id>] [--timeout <seconds>] [--poll <seconds>] [--output <file>]
 ```
 
-`wait` reads the record and the machine only, writes nothing, and reads no CI or
-forge. It returns on the first thing needing the lead:
+`wait` reads the record and the machine only, writes nothing but its own `--output`
+file, and reads no CI or forge. It returns on the first thing needing the lead:
 
 - a journal entry after `--after` of kind `candidate.handed`, `check.failed`,
   `candidate.merged`, `candidate.stopped`, `base.broken` or `blocker.recorded`;
@@ -847,6 +847,12 @@ signal wakes it again only once it has cleared, 10% inside its limit, and
 returned. A machine value this system can't read is named in
 `unavailable` and on stderr, and is never treated as healthy. Swap is read from
 `/proc/meminfo` or `vm.swapusage`; on any other system it is unavailable.
+
+One run prints one JSON document, an error included. A lead that runs the wait in the background passes
+`--output <file>` and reads that file, not the host's capture of the command's output, which may add lines of its own,
+such as an exit trailer after the document, that a JSON reader refuses. The file is outside the state directory,
+holds the same one document, and is replaced whole by each run, a failed one too. `restart` carries `--output`, so the
+next wait writes there again.
 
 Whenever a wait names pressure, whatever else woke it, the lead finds what is
 loading the machine before taking more work, and reduces this delivery's own

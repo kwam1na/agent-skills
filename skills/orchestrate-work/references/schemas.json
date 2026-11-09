@@ -2881,6 +2881,28 @@
             }
           }
         }
+      },
+      "parent": {
+        "description": "Tracker snapshots only, optional: the epic's own item, the parent the snapshot lists the children of, and its state. A lead command with no --delivery counts a delivery whose parent is completed or canceled as closed.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "subject",
+          "state"
+        ],
+        "properties": {
+          "subject": {
+            "$ref": "#/$defs/name"
+          },
+          "state": {
+            "enum": [
+              "backlog",
+              "started",
+              "completed",
+              "canceled"
+            ]
+          }
+        }
       }
     },
     "$defs": {

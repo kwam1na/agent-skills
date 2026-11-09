@@ -561,30 +561,112 @@ class Config:
     def delivery_keys(self) -> list[str]:
         return [name[:-len(".json")] for name in self.shelf.names(self.deliveries_rel, ".json")]
 
+    def delivery_files(self) -> dict[str, dict]:
+        return {key: self.shelf.json(f"{self.deliveries_rel}/{key}.json") or {} for key in self.delivery_keys()}
+
+    def state_of(self, key: str, d: dict) -> Path:
+        """Where a delivery's record is kept on this machine, as load_delivery finds it."""
+        if os.environ.get("DELIVERY_STATE"):
+            return Path(os.environ["DELIVERY_STATE"])
+        if d.get("stateDirectory"):
+            return self.main / d["stateDirectory"]
+        return self.lane_checkout(key) / self.state_rel
+
+    def closed_here(self, key: str, d: dict) -> bool:
+        """Whether this machine's flow log for the delivery holds the closed.json lead-close writes."""
+        return (self.state_of(key, d).parent / "flow-log" / f"{key}.closed.json").exists()
+
+    def open_here(self, key: str, d: dict) -> bool:
+        """Whether the delivery's record is open in this checkout: it is kept under it, holds state.json, and isn't
+        closed. A record that names its tracker parent must name this delivery."""
+        state = self.state_of(key, d)
+        try:
+            state.resolve().relative_to(self.root.resolve())
+        except ValueError:
+            return False
+        if not (state / "state.json").is_file() or self.closed_here(key, d):
+            return False
+        parent = ((load_json(state / "state.json") or {}).get("meta") or {}).get("trackerParent")
+        return parent in (None, key)
+
+    def tracker_closed(self, key: str, d: dict) -> bool:
+        """Whether the binding's tracker snapshot, run for the delivery's own key, shows its parent completed or
+        canceled. Without a tracker snapshot, or when it fails or doesn't say, the delivery isn't known to be closed."""
+        asked = self.__dict__.setdefault("tracker_answers", {})  # each delivery's tracker is asked once per command
+        if key not in asked:
+            asked[key] = self.ask_tracker(key, d)
+        return asked[key]
+
+    def ask_tracker(self, key: str, d: dict) -> bool:
+        spec = (self.binding.get("state") or {}).get("trackerSnapshot")
+        if not spec:
+            return False
+        argv = expand_argv(spec["argv"], stateDirectory=str(self.state_of(key, d)), parent=key)
+        try:
+            taken = run(argv, cwd=self.root, check=False, timeout=int(spec.get("timeoutSeconds", 60)))
+            parent = json.loads(taken.stdout).get("parent") if taken.returncode == 0 else None
+        except (subprocess.TimeoutExpired, OSError, ValueError, AttributeError):
+            return False
+        return (isinstance(parent, dict) and parent.get("subject") == key
+                and parent.get("state") in ("completed", "canceled"))
+
+    def not_known_closed(self, files: dict[str, dict]) -> list[str]:
+        """The deliveries not known to be closed: no closed.json here, and no tracker snapshot showing the parent
+        closed. The tracker is asked only when more than one is left."""
+        left = [key for key, d in files.items() if not self.closed_here(key, d)]
+        if len(left) > 1:
+            left = [key for key in left if not self.tracker_closed(key, files[key])]
+        return left
+
     def pick_delivery(self, required: bool) -> str | None:
-        keys = self.delivery_keys()
-        if len(keys) == 1:
-            return keys[0]
+        """The delivery a command without --delivery is for: the only delivery file; else the one whose record is
+        open in this checkout; else the one whose story branch this checkout is on; else the only one not known to be
+        closed. Otherwise it refuses, naming each delivery not known to be closed."""
+        files = self.delivery_files()
+        if len(files) == 1:
+            return next(iter(files))
+        here = [key for key, d in files.items() if self.open_here(key, d)]
+        if len(here) == 1:
+            return here[0]
         branch = git("rev-parse", "--abbrev-ref", "HEAD", check=False)
-        matches = []
-        for key in keys:
-            d = self.shelf.json(f"{self.deliveries_rel}/{key}.json") or {}
-            base = d.get("baseBranch") or self.binding_base
-            if branch == base or any(branch == self.branch_pattern.format(key=k) for k in d.get("stories", {})):
-                matches.append(key)
+        matches = [key for key, d in files.items()
+                   if any(branch == self.branch_pattern.format(key=k) for k in d.get("stories", {}))]
         if len(matches) == 1:
             return matches[0]
+        left = self.not_known_closed(files)
+        if len(left) == 1:
+            return left[0]
         if required:
-            raise Stop(f"can't tell which delivery this is (branch {branch}; deliveries: "
-                       f"{keys or 'none'}); pass --delivery KEY{self.base_hint()}")
+            named = (f"{', '.join(left)} aren't known to be closed, and no record of theirs is open here" if left
+                     else f"deliveries {', '.join(files) or 'none'}, none of them open")
+            raise Stop(f"can't tell which delivery this is (branch {branch}; {named}); pass --delivery KEY"
+                       f"{self.base_hint()}")
         return None
+
+    def missing_delivery(self, key: str) -> str:
+        """For a delivery file that is missing: whether the key is a story of a delivery, and which delivery is open."""
+        files = self.delivery_files()
+        owners = [other for other, d in files.items() if key in (d.get("stories") or {})]
+        said = (f"; {key} looks like a story key: it is a story of {', '.join(owners)}" if owners
+                else f"; {key} is no story of any delivery here either")
+        try:
+            default = self.pick_delivery(False)
+        except Stop:
+            default = None
+        if default:
+            said += f"; the open delivery is {default}: pass --delivery {default}"
+        else:
+            left = self.not_known_closed(files)
+            said += (f"; the deliveries not known to be closed are {', '.join(left)}" if left
+                     else "; no delivery here is open")
+        return said
 
     def load_delivery(self, key: str) -> None:
         path = self.deliveries / f"{key}.json"
         d = self.shelf.json(f"{self.deliveries_rel}/{key}.json")
         if d is None:
             raise Stop(f"{self.shelf.where(f'{self.deliveries_rel}/{key}.json')} is missing (lead-setup writes it)"
-                       f"{self.base_hint()}")
+                       f"{self.missing_delivery(key)}{self.base_hint()}")
         if d.get("schemaVersion") != "delivery-flow-delivery/1":
             raise Stop(f"{path}: schemaVersion must be delivery-flow-delivery/1")
         self.raw, self.delivery_path = d, path
@@ -606,12 +688,12 @@ class Config:
             raise Stop("the repository's configs disagree:\n  " + "\n  ".join(conflicts))
         self.sources["baseBranch"] = f"{path.name}" if base else "orchestration binding (base.ref)"
         self.base_ref = f"{self.remote}/{self.base_branch}"
+        self.state = self.state_of(key, d)
         if os.environ.get("DELIVERY_STATE"):
-            self.state, self.sources["state"] = Path(os.environ["DELIVERY_STATE"]), "DELIVERY_STATE"
+            self.sources["state"] = "DELIVERY_STATE"
         elif d.get("stateDirectory"):
-            self.state, self.sources["state"] = self.main / d["stateDirectory"], path.name
+            self.sources["state"] = path.name
         else:
-            self.state = self.lane_checkout(key) / self.state_rel
             self.sources["state"] = "the lead's checkout (laneCheckout with the delivery key) + the binding's state.directory"
         self.flow_log = self.state.parent / "flow-log"
         self.plan = Path(d["plan"])
@@ -3903,6 +3985,7 @@ def lead_plan(args) -> None:
         raise Stop(f"{', '.join(unknown)} isn't a story of {c.delivery}")
     planned_after = None
     record_finish = None
+    reword_finish = None
     plan_text = None
     if new_story:
         # The whole story in one change: its plan heading, its delivery-file story carrying the reason its `added`
@@ -3956,24 +4039,37 @@ def lead_plan(args) -> None:
             del stories[key]
         planned_after = True
     elif args.kind == "finish":
-        if not args.finish or args.covers is None:
-            raise Stop("--kind finish takes --finish <id> and --covers <JSON>")
+        lines = raw.setdefault("finish", [])
+        line = next((item for item in lines if item["id"] == args.finish), None) if args.finish else None
+        # An existing line's wording alone may change: --text without --covers keeps what it covers.
+        if not args.finish or (args.covers is None and (line is None or args.text is None)):
+            raise Stop("--kind finish takes --finish <id> and --covers <JSON>; an existing line's --text alone "
+                       "rewords it")
         try:
-            covers = json.loads(args.covers)
+            covers = json.loads(args.covers) if args.covers is not None else plan_covers(line)
         except ValueError:
             raise Stop("--covers must be JSON, such as {\"criteria\": \"all\", \"proofs\": [\"merged\"]}")
-        lines = raw.setdefault("finish", [])
-        line = next((item for item in lines if item["id"] == args.finish), None)
         if line is None:
             if not args.text:
                 raise Stop(f"finish line {args.finish} is new: give its --text")
             line = {"id": args.finish, "text": args.text, **({"label": args.label} if args.label else {})}
             lines.append(line)
             record_finish = {"id": args.finish, "text": args.text, "met": False}
+            change.update(after=covers)
         else:
-            change["before"] = plan_covers(line)
+            reworded = args.text is not None and args.text != line["text"]
+            if not reworded and covers == plan_covers(line):
+                raise Stop(f"finish line {args.finish} already reads so and covers that: nothing to change")
+            # What changed is recorded: what it covers, or, when only its wording moved, the wording.
+            if covers != plan_covers(line) or not reworded:
+                change.update(before=plan_covers(line), after=covers)
+            else:
+                change.update(before=line["text"], after=args.text)
+            if reworded:
+                reword_finish = (args.finish, args.text)
+                line["text"] = args.text
         line.update(covers=covers, at=now())
-        change.update(finish=args.finish, after=covers)
+        change.update(finish=args.finish)
     with plan_lock(c):
         # A delivery started before its criteria has no snapshot yet: it is taken of the plan before this change.
         if (c.state / "state.json").exists() and not any(entry["type"] == "snapshot" for entry in read_plan_log(c)):
@@ -4002,6 +4098,11 @@ def lead_plan(args) -> None:
                                                 if p["subject"] not in change["subjects"]]}, "the plan change's planned work")
         if record_finish is not None:
             patch_from(lambda doc: {"finish": [*doc["state"]["finish"], record_finish]}, "the new finish line")
+        if reword_finish is not None and (c.state / "state.json").exists():  # the record's line reads as the plan's
+            ident, text = reword_finish
+            patch_from(lambda doc: None if all(line["id"] != ident or line["text"] == text for line in doc["state"]["finish"])
+                       else {"finish": [{**line, "text": text} if line["id"] == ident else line
+                                        for line in doc["state"]["finish"]]}, "the reworded finish line")
         if new_story and (c.state / "state.json").exists():
             # Planned here, so the rebuild's registration finds it held and records no second `added` change.
             key = change["subjects"][0]
@@ -4372,8 +4473,9 @@ def ready_problem(c) -> str | None:
     """A merge step that refuses drafts, with no grant for the lead to mark them ready at acceptance."""
     if c.forge.get("mergeNeedsReady") and not (c.raw.get("authority") or {}).get("readyPullRequests"):
         return (f"forge.mergeNeedsReady says the merge step refuses a draft, but the delivery grants no "
-                f"readyPullRequests; fix: add \"readyPullRequests\": true to `authority` in {c.delivery_where}, so "
-                "lead-accept marks each draft ready, or remove forge.mergeNeedsReady")
+                f"readyPullRequests; fix: add \"readyPullRequests\": true to `authority` in {c.delivery_where} (lead-setup "
+                "--force --authority push,draftPullRequests,readyPullRequests writes it), so lead-accept marks each draft "
+                "ready, or remove forge.mergeNeedsReady")
     return None
 
 
@@ -4430,11 +4532,13 @@ def patch_from(compute, what: str, writer: str = "lead", attempts: int = PATCH_A
 
 
 LANE_GRANTS = ("push", "draftPullRequests")
+# The lead's own grant, beside the lanes': lead-accept marks a draft ready under it. No lane reads it.
+LEAD_GRANTS = ("readyPullRequests",)
 
 
 def lanes_grant(args, existing: dict | None) -> dict | None:
-    """The operator's grant to lanes, as lead-setup is told it; None when lanes get none. A file drafted again keeps
-    the grant it holds unless told otherwise."""
+    """The operator's grant, as lead-setup is told it: the lanes' push and draft pull requests, and the lead's
+    readyPullRequests. None when there is none. A file drafted again keeps the grant it holds unless told otherwise."""
     if args.authority and args.no_authority:
         raise Stop("pass --authority or --no-authority, not both")
     if args.no_authority:
@@ -4443,19 +4547,19 @@ def lanes_grant(args, existing: dict | None) -> dict | None:
         if (existing or {}).get("authority"):
             return existing["authority"]
         raise Stop("lead-setup needs the lanes' authority grant: ask the operator what lanes may do on the forge, then "
-                   "pass --authority push,draftPullRequests --granted-by WHO (either or both grants), or --no-authority "
+                   "pass --authority push,draftPullRequests --granted-by WHO (either or both grants; add "
+                   "readyPullRequests, the lead's, when lead-accept marks drafts ready), or --no-authority "
                    "when lanes get none and hand their branches to the lead")
     names = [name.strip() for name in args.authority.split(",") if name.strip()]
-    if "readyPullRequests" in names:
-        raise Stop("lanes are never granted readyPullRequests: marking a pull request ready is the lead's, at acceptance")
-    unknown = [name for name in names if name not in LANE_GRANTS]
+    unknown = [name for name in names if name not in (*LANE_GRANTS, *LEAD_GRANTS)]
     if unknown or not names:
-        raise Stop(f"--authority takes {' and '.join(LANE_GRANTS)}, comma-separated, not {', '.join(unknown) or 'nothing'}")
+        raise Stop(f"--authority takes {', '.join(LANE_GRANTS)} (the lanes') and {', '.join(LEAD_GRANTS)} (the lead's, "
+                   f"to mark a draft ready at acceptance), comma-separated, not {', '.join(unknown) or 'nothing'}")
     if "draftPullRequests" in names and "push" not in names:
         raise Stop("draftPullRequests needs push: a lane opens its draft pull request from the branch it pushed")
     if not args.granted_by:
         raise Stop("--authority needs --granted-by: who granted it")
-    return {**{name: True for name in LANE_GRANTS if name in names}, "grantedBy": args.granted_by,
+    return {**{name: True for name in (*LANE_GRANTS, *LEAD_GRANTS) if name in names}, "grantedBy": args.granted_by,
             "grantedOn": args.granted_on or datetime.date.today().isoformat()}
 
 
@@ -8141,7 +8245,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--context-section", action="append"); p.add_argument("--force", action="store_true")
     p.add_argument("--approvals-section", help="draft approvals from this plan section's list")
     p.add_argument("--out-of-scope-section", help="draft outOfScope from this plan section's list")
-    p.add_argument("--authority", help="the operator's grant to lanes: push,draftPullRequests (either or both)")
+    p.add_argument("--authority", help="the operator's grant: push,draftPullRequests for lanes (either or both), and "
+                   "readyPullRequests for the lead")
     p.add_argument("--granted-by", help="who granted --authority"); p.add_argument("--granted-on", help="default: today")
     p.add_argument("--no-authority", action="store_true", help="lanes get no grant, and hand their branches to the lead")
     p.add_argument("--review-when", choices=tracker_publisher.REVIEW_WHEN,

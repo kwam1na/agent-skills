@@ -62,6 +62,19 @@ SEARCH = "https://example.atlassian.net/rest/api/3/search/jql?"
 API = "https://api.bitbucket.org/2.0/repositories/example/app/"
 
 
+ISSUE = "https://example.atlassian.net/rest/api/3/issue/APP-10?fields=status"
+
+
+def jira_parent(category: str = "indeterminate", name: str = "In Progress", status: int = 200) -> tuple:
+    """The answer for the epic's own issue, which the Jira kind reads once after its children."""
+    return (ISSUE, status, {"key": "APP-10", "fields": {"status": {"name": name, "statusCategory": {"key": category}}}})
+
+
+def jira(*script: tuple) -> "Transport":
+    """A Jira run's answers: the search pages given, then the parent's own issue, started."""
+    return Transport(*script, jira_parent())
+
+
 def body(value: object) -> bytes:
     return value if isinstance(value, bytes) else json.dumps(value).encode()
 
@@ -136,13 +149,15 @@ class SnapshotCase(unittest.TestCase):
 
 class JiraTests(SnapshotCase):
     def pages(self, *extra: str) -> Transport:
-        return Transport((SEARCH, 200, JIRA["page-1"]), (SEARCH, 200, JIRA["page-2"]))
+        return jira((SEARCH, 200, JIRA["page-1"]), (SEARCH, 200, JIRA["page-2"]))
 
     def test_children_page_by_token_and_map_to_tracker_items(self) -> None:
         transport = self.pages()
         code, out, _ = self.run_kind([*JIRA_ARGS, "--canceled-statuses", "Won't Do,Duplicate"], transport, JIRA_ENV)
         self.assertEqual(code, 0)
-        first, second = (urllib.parse.parse_qs(urllib.parse.urlsplit(url).query) for url, _ in transport.requests)
+        first, second = (urllib.parse.parse_qs(urllib.parse.urlsplit(url).query) for url, _ in transport.requests[:2])
+        # Then the parent's own issue, once: the search lists only its children.
+        self.assertEqual([url for url, _ in transport.requests[2:]], [ISSUE])
         self.assertEqual(first["jql"], ["parent = APP-10"])
         self.assertNotIn("nextPageToken", first)
         self.assertEqual(second["nextPageToken"], ["token-page-2"])
@@ -172,11 +187,12 @@ class JiraTests(SnapshotCase):
         first["transitions"] = [{"id": "11", "name": "Refined", "to": {"name": "Ready for Dev"}},
                                 {"id": "12", "name": "Won't do"}, {"id": "13", "name": "Refined"}, {"id": "14"},
                                 {"id": "15", "name": ""}, "junk"]
-        transport = Transport((SEARCH, 200, pages["page-1"]), (SEARCH, 200, pages["page-2"]))
+        transport = jira((SEARCH, 200, pages["page-1"]), (SEARCH, 200, pages["page-2"]))
         code, out, _ = self.run_kind(JIRA_ARGS, transport, JIRA_ENV)
         self.assertEqual(code, 0)
-        for url, _ in transport.requests:
+        for url, _ in transport.requests[:-1]:
             self.assertEqual(urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)["expand"], ["transitions"])
+        self.assertEqual(transport.requests[-1][0], ISSUE)
         items = {item["subject"]: item for item in self.checked(out, parent="APP-10")["items"]}
         self.assertEqual((items[first["key"]]["status"], items[first["key"]]["offeredTransitions"]),
                          (first["fields"]["status"]["name"], ["Refined", "Won't do"]))
@@ -202,7 +218,7 @@ class JiraTests(SnapshotCase):
         pages["page-2"]["issues"][0]["fields"]["description"] = {"type": "doc", "version": 1, "content": [
             heading("Acceptance Criteria"), paragraph("The view loads."), paragraph("It says when it fails."),
             heading("Notes"), paragraph("Not a criterion.")]}
-        transport = Transport((SEARCH, 200, pages["page-1"]), (SEARCH, 200, pages["page-2"]))
+        transport = jira((SEARCH, 200, pages["page-1"]), (SEARCH, 200, pages["page-2"]))
         code, out, _ = self.run_kind(JIRA_ARGS, transport, JIRA_ENV)
         self.assertEqual(code, 0)
         items = {entry["subject"]: entry for entry in self.checked(out, parent="APP-10")["items"]}
@@ -210,6 +226,33 @@ class JiraTests(SnapshotCase):
                                                        "next orders a blocked story after its dependencies."])
         self.assertNotIn("criteria", items["APP-12"])
         self.assertEqual(items["APP-13"]["criteria"], ["The view loads.", "It says when it fails."])
+
+    def test_the_parent_s_own_state_is_emitted_completed_while_its_children_are_started(self) -> None:
+        pages = copy.deepcopy(JIRA)
+        for page in (pages["page-1"], pages["page-2"]):
+            for issue in page["issues"]:
+                issue["fields"]["status"] = {"name": "In Progress", "statusCategory": {"key": "indeterminate"}}
+        transport = Transport((SEARCH, 200, pages["page-1"]), (SEARCH, 200, pages["page-2"]),
+                              jira_parent("done", "Done"))
+        code, out, _ = self.run_kind(JIRA_ARGS, transport, JIRA_ENV)
+        self.assertEqual(code, 0)
+        document = self.checked(out, parent="APP-10")
+        self.assertEqual({item["state"] for item in document["items"]}, {"started"})
+        self.assertEqual(document["parent"], {"subject": "APP-10", "state": "completed"})
+        self.assertEqual(transport.requests[-1][0], ISSUE)
+        # A status the lead lists as canceled is canceled for the parent too; one the snapshot doesn't know fails.
+        for script, expected in (((jira_parent("done", "Won't Do"),), "canceled"), ((jira_parent("new", "To Do"),), "backlog")):
+            with self.subTest(expected=expected):
+                code, out, _ = self.run_kind([*JIRA_ARGS, "--canceled-statuses", "Won't Do"],
+                                             Transport((SEARCH, 200, JIRA["page-2"]), *script), JIRA_ENV)
+                self.assertEqual((code, self.checked(out, parent="APP-10")["parent"]["state"]), (0, expected))
+        code, _, err = self.run_kind(JIRA_ARGS, Transport((SEARCH, 200, JIRA["page-2"]), jira_parent("limbo")), JIRA_ENV)
+        self.assertNotEqual(code, 0)
+        self.failed(err, "APP-10", "limbo")
+        # A parent the tracker no longer has leaves the member out: nothing says it closed.
+        code, out, _ = self.run_kind(JIRA_ARGS, Transport((SEARCH, 200, JIRA["page-2"]), (ISSUE, 404, b"{}")), JIRA_ENV)
+        self.assertEqual(code, 0)
+        self.assertNotIn("parent", self.checked(out, parent="APP-10"))
 
     def test_a_done_status_not_listed_as_canceled_is_completed(self) -> None:
         code, out, _ = self.run_kind(JIRA_ARGS, self.pages(), JIRA_ENV)
@@ -222,7 +265,7 @@ class JiraTests(SnapshotCase):
         for link in pages["page-1"]["issues"][1]["fields"]["issuelinks"]:
             if link["type"]["name"] == "Relates":
                 link["type"]["name"] = "Depends"
-        transport = Transport((SEARCH, 200, pages["page-1"]), (SEARCH, 200, pages["page-2"]))
+        transport = jira((SEARCH, 200, pages["page-1"]), (SEARCH, 200, pages["page-2"]))
         code, out, _ = self.run_kind([*JIRA_ARGS, "--blocks-link", "Depends"], transport, JIRA_ENV)
         self.assertEqual(code, 0)
         items = {item["subject"]: item for item in json.loads(out)["items"]}
@@ -235,7 +278,7 @@ class JiraTests(SnapshotCase):
                                    ("missing-status", JIRA["missing-status"], "APP-16"),
                                    ("missing issue links", no_links, "issue links")):
             with self.subTest(name):
-                code, _, err = self.run_kind(JIRA_ARGS, Transport((SEARCH, 200, page)), JIRA_ENV)
+                code, _, err = self.run_kind(JIRA_ARGS, jira((SEARCH, 200, page)), JIRA_ENV)
                 self.assertNotEqual(code, 0)
                 self.failed(err, needle)
 
@@ -245,7 +288,7 @@ class JiraTests(SnapshotCase):
         blocks = links[0]["type"]
         links += [{"id": "8", "type": blocks, "inwardIssue": {"key": "APP-11"}},
                   {"id": "9", "type": blocks, "inwardIssue": {"key": "APP-12"}}]
-        transport = Transport((SEARCH, 200, pages["page-1"]), (SEARCH, 200, pages["page-2"]))
+        transport = jira((SEARCH, 200, pages["page-1"]), (SEARCH, 200, pages["page-2"]))
         code, out, _ = self.run_kind(JIRA_ARGS, transport, JIRA_ENV)
         self.assertEqual(code, 0)
         items = {item["subject"]: item for item in json.loads(out)["items"]}
@@ -253,7 +296,7 @@ class JiraTests(SnapshotCase):
 
     def test_an_issue_listed_twice_fails(self) -> None:
         repeated = {**JIRA["page-2"], "issues": [JIRA["page-1"]["issues"][0]]}
-        transport = Transport((SEARCH, 200, JIRA["page-1"]), (SEARCH, 200, repeated))
+        transport = jira((SEARCH, 200, JIRA["page-1"]), (SEARCH, 200, repeated))
         code, _, err = self.run_kind(JIRA_ARGS, transport, JIRA_ENV)
         self.assertNotEqual(code, 0)
         self.failed(err, "twice")
@@ -261,7 +304,7 @@ class JiraTests(SnapshotCase):
     def test_provider_text_that_is_not_unicode_fails_on_one_line(self) -> None:
         page = copy.deepcopy(JIRA["page-2"])
         page["issues"][0]["fields"]["summary"] = "x\ud800"
-        code, _, err = self.run_kind(JIRA_ARGS, Transport((SEARCH, 200, page)), JIRA_ENV)
+        code, _, err = self.run_kind(JIRA_ARGS, jira((SEARCH, 200, page)), JIRA_ENV)
         self.assertNotEqual(code, 0)
         self.failed(err, "Unicode")
 
@@ -270,24 +313,24 @@ class JiraTests(SnapshotCase):
             with self.subTest(value=value):
                 page = copy.deepcopy(JIRA["unknown-category"])
                 page["issues"][0]["fields"]["status"]["statusCategory"]["key"] = value
-                code, _, err = self.run_kind(JIRA_ARGS, Transport((SEARCH, 200, page)), JIRA_ENV)
+                code, _, err = self.run_kind(JIRA_ARGS, jira((SEARCH, 200, page)), JIRA_ENV)
                 self.assertNotEqual(code, 0)
         # A long reflected token is redacted before the line is capped.
         long_token = "L" * 192
         page = copy.deepcopy(JIRA["unknown-category"])
         page["issues"][0]["fields"]["status"]["statusCategory"]["key"] = "x" * 40 + long_token
-        code, _, err = self.run_kind(JIRA_ARGS, Transport((SEARCH, 200, page)), {**JIRA_ENV, "JIRA_API_TOKEN": long_token})
+        code, _, err = self.run_kind(JIRA_ARGS, jira((SEARCH, 200, page)), {**JIRA_ENV, "JIRA_API_TOKEN": long_token})
         self.assertNotEqual(code, 0)
         self.assertNotIn("L" * 20, err)
         # The user's email is not a credential: a snapshot that names it still prints.
         page = copy.deepcopy(JIRA["page-2"])
         page["issues"][0]["fields"]["summary"] = f"Ask {EMAIL}"
-        code, out, _ = self.run_kind(JIRA_ARGS, Transport((SEARCH, 200, page)), JIRA_ENV)
+        code, out, _ = self.run_kind(JIRA_ARGS, jira((SEARCH, 200, page)), JIRA_ENV)
         self.assertEqual(code, 0)
         self.assertIn(EMAIL, out)
         page = copy.deepcopy(JIRA["page-2"])
         page["issues"][0]["fields"]["summary"] = f"title {TOKEN}"
-        code, _, err = self.run_kind(JIRA_ARGS, Transport((SEARCH, 200, page)), JIRA_ENV)
+        code, _, err = self.run_kind(JIRA_ARGS, jira((SEARCH, 200, page)), JIRA_ENV)
         self.assertNotEqual(code, 0)
         self.failed(err, "credential")
 
@@ -330,28 +373,28 @@ class FailureTests(SnapshotCase):
     def test_unauthorized_fails_at_once(self) -> None:
         for status in (401, 403):
             with self.subTest(status):
-                transport = Transport((SEARCH, status, JIRA["unauthorized"]))
+                transport = jira((SEARCH, status, JIRA["unauthorized"]))
                 code, _, err = self.run_kind(JIRA_ARGS, transport, JIRA_ENV)
                 self.assertNotEqual(code, 0)
                 self.failed(err, str(status))
                 self.assertEqual(len(transport.requests), 1)
 
     def test_rate_limited_then_success(self) -> None:
-        transport = Transport((SEARCH, 429, b"", {"Retry-After": "2"}), (SEARCH, 200, JIRA["page-1"]),
+        transport = jira((SEARCH, 429, b"", {"Retry-After": "2"}), (SEARCH, 200, JIRA["page-1"]),
                               (SEARCH, 200, JIRA["page-2"]))
         code, _, _ = self.run_kind(JIRA_ARGS, transport, JIRA_ENV)
         self.assertEqual(code, 0)
         self.assertEqual(self.slept, [2.0])
 
     def test_server_errors_retry_twice_then_fail(self) -> None:
-        transport = Transport(*[(SEARCH, 503, b"busy")] * 3)
+        transport = jira(*[(SEARCH, 503, b"busy")] * 3)
         code, _, err = self.run_kind(JIRA_ARGS, transport, JIRA_ENV)
         self.assertNotEqual(code, 0)
         self.failed(err, "503")
         self.assertEqual(len(transport.requests), 3)
 
     def test_every_server_error_is_retried(self) -> None:
-        transport = Transport((SEARCH, 520, b""), (SEARCH, 200, JIRA["page-2"]))
+        transport = jira((SEARCH, 520, b""), (SEARCH, 200, JIRA["page-2"]))
         code, _, _ = self.run_kind(JIRA_ARGS, transport, JIRA_ENV)
         self.assertEqual(code, 0)
 
@@ -365,7 +408,7 @@ class FailureTests(SnapshotCase):
         self.assertEqual(snapshot._retry_after("-5", 0), 0.0)
 
     def test_a_page_two_failure_leaves_stdout_empty(self) -> None:
-        transport = Transport((SEARCH, 200, JIRA["page-1"]), *[(SEARCH, 500, b"oops")] * 3)
+        transport = jira((SEARCH, 200, JIRA["page-1"]), *[(SEARCH, 500, b"oops")] * 3)
         code, out, _ = self.run_kind(JIRA_ARGS, transport, JIRA_ENV)
         self.assertNotEqual(code, 0)
         self.assertEqual(out, "")
@@ -374,33 +417,33 @@ class FailureTests(SnapshotCase):
         issue = JIRA["page-1"]["issues"][0]
         page = {"issues": [{**issue, "key": f"APP-{index}", "fields": {**issue["fields"], "issuelinks": []}}
                            for index in range(1000, 1500)], "isLast": True}
-        code, _, err = self.run_kind(JIRA_ARGS, Transport((SEARCH, 200, page)), JIRA_ENV)
+        code, _, err = self.run_kind(JIRA_ARGS, jira((SEARCH, 200, page)), JIRA_ENV)
         self.assertNotEqual(code, 0)
         self.failed(err, "500")
         page["issues"].pop()
-        code, _, _ = self.run_kind(JIRA_ARGS, Transport((SEARCH, 200, page)), JIRA_ENV)
+        code, _, _ = self.run_kind(JIRA_ARGS, jira((SEARCH, 200, page)), JIRA_ENV)
         self.assertEqual(code, 0)
 
     def test_the_deadline_bounds_the_whole_run(self) -> None:
         # The first page takes 30 seconds of a 20-second deadline.
-        transport = Transport((SEARCH, 200, JIRA["page-1"], {}, 30), (SEARCH, 200, JIRA["page-2"]))
+        transport = jira((SEARCH, 200, JIRA["page-1"], {}, 30), (SEARCH, 200, JIRA["page-2"]))
         code, _, err = self.run_kind([*JIRA_ARGS, "--timeout-seconds", "20"], transport, JIRA_ENV)
         self.assertNotEqual(code, 0)
         self.failed(err, "deadline")
         self.assertEqual(len(transport.requests), 1)
         # A slow last page still misses the deadline.
-        transport = Transport((SEARCH, 200, JIRA["page-1"]), (SEARCH, 200, JIRA["page-2"], {}, 30))
+        transport = jira((SEARCH, 200, JIRA["page-1"]), (SEARCH, 200, JIRA["page-2"], {}, 30))
         code, _, err = self.run_kind([*JIRA_ARGS, "--timeout-seconds", "20"], transport, JIRA_ENV)
         self.assertNotEqual(code, 0)
         self.failed(err, "deadline")
         # A Retry-After past the deadline is not waited for.
-        transport = Transport((SEARCH, 429, b"", {"Retry-After": "60"}))
+        transport = jira((SEARCH, 429, b"", {"Retry-After": "60"}))
         code, _, err = self.run_kind([*JIRA_ARGS, "--timeout-seconds", "20"], transport, JIRA_ENV)
         self.assertNotEqual(code, 0)
         self.assertEqual(self.slept, [])
 
     def test_a_redirect_to_another_origin_is_refused(self) -> None:
-        transport = Transport((SEARCH, 302, b"", {"Location": "https://evil.example/rest/api/3/search/jql"}))
+        transport = jira((SEARCH, 302, b"", {"Location": "https://evil.example/rest/api/3/search/jql"}))
         code, _, err = self.run_kind(JIRA_ARGS, transport, JIRA_ENV)
         self.assertNotEqual(code, 0)
         self.failed(err, "redirect")
@@ -408,27 +451,27 @@ class FailureTests(SnapshotCase):
         for location in ("http://example.atlassian.net/rest/api/3/search/jql",
                          "https://example.atlassian.net:8443/rest/api/3/search/jql"):
             with self.subTest(location=location):
-                transport = Transport((SEARCH, 307, b"", {"Location": location}))
+                transport = jira((SEARCH, 307, b"", {"Location": location}))
                 code, _, err = self.run_kind(JIRA_ARGS, transport, JIRA_ENV)
                 self.assertNotEqual(code, 0)
                 self.assertEqual(len(transport.requests), 1)
-        transport = Transport(*[(SEARCH, 302, b"", {"Location": SEARCH + "jql=again"})] * 7)
+        transport = jira(*[(SEARCH, 302, b"", {"Location": SEARCH + "jql=again"})] * 7)
         code, _, err = self.run_kind(JIRA_ARGS, transport, JIRA_ENV)
         self.assertNotEqual(code, 0)
         self.failed(err, "redirects")
         # A redirect on the same origin is followed, with the same authorization.
-        transport = Transport((SEARCH, 301, b"", {"Location": SEARCH + "jql=moved"}), (SEARCH, 200, JIRA["page-2"]))
+        transport = jira((SEARCH, 301, b"", {"Location": SEARCH + "jql=moved"}), (SEARCH, 200, JIRA["page-2"]))
         code, _, _ = self.run_kind(JIRA_ARGS, transport, JIRA_ENV)
         self.assertEqual(code, 0)
 
     def test_malformed_json_fails(self) -> None:
         for payload in (b"{not json", b"[]", b"\xff\xfe"):
             with self.subTest(payload=payload):
-                code, _, err = self.run_kind(JIRA_ARGS, Transport((SEARCH, 200, payload)), JIRA_ENV)
+                code, _, err = self.run_kind(JIRA_ARGS, jira((SEARCH, 200, payload)), JIRA_ENV)
                 self.assertNotEqual(code, 0)
 
     def test_an_unexpected_exception_is_one_line_with_no_secret(self) -> None:
-        transport = Transport((SEARCH, 200, RuntimeError(f"boom {TOKEN} {SECRETS[1]}")))
+        transport = jira((SEARCH, 200, RuntimeError(f"boom {TOKEN} {SECRETS[1]}")))
         code, _, err = self.run_kind(JIRA_ARGS, transport, JIRA_ENV)
         self.assertNotEqual(code, 0)
         self.failed(err, "unexpected")
@@ -619,6 +662,34 @@ class LinearTests(SnapshotCase):
                             for _, headers in transport.requests))
         self.assertEqual(transport.methods, ["POST", "POST"])
         self.assertTrue(all(headers["Content-Type"] == "application/json" for _, headers in transport.requests))
+
+    def test_the_parent_s_own_state_is_emitted_completed_while_its_children_are_started(self) -> None:
+        pages = copy.deepcopy(LINEAR)
+        pages["page-1"]["data"]["issue"]["state"] = {"type": "completed"}
+        for name in ("page-1", "page-2"):
+            for node in pages[name]["data"]["issue"]["children"]["nodes"]:
+                node["state"] = {"type": "started"}
+        transport = Transport((GRAPHQL, 200, pages["page-1"]), (GRAPHQL, 200, pages["page-2"]))
+        code, out, _ = self.run_kind(LINEAR_ARGS, transport, LINEAR_ENV)
+        self.assertEqual(code, 0)
+        document = self.checked(out, parent="ENG-100")
+        self.assertEqual({item["state"] for item in document["items"]}, {"started"})
+        self.assertEqual(document["parent"], {"subject": "ENG-100", "state": "completed"})
+        # The query it sent asks for the parent's own state, beside its children's.
+        self.assertIn("state { type }", json.loads(transport.bodies[0])["query"].split("children")[0])
+        # An answer that gives no parent state leaves the member out, as the recorded answer does.
+        self.assertNotIn("parent", json.loads(self.run_kind(
+            LINEAR_ARGS, Transport((GRAPHQL, 200, LINEAR["page-1"]), (GRAPHQL, 200, LINEAR["page-2"])), LINEAR_ENV)[1]))
+        for kind, expected in (("canceled", "canceled"), ("started", "started"), ("triage", "backlog")):
+            with self.subTest(kind=kind):
+                pages["page-1"]["data"]["issue"]["state"] = {"type": kind}
+                code, out, _ = self.run_kind(LINEAR_ARGS, Transport((GRAPHQL, 200, pages["page-1"]),
+                                                                    (GRAPHQL, 200, pages["page-2"])), LINEAR_ENV)
+                self.assertEqual((code, self.checked(out, parent="ENG-100")["parent"]["state"]), (0, expected))
+        pages["page-1"]["data"]["issue"]["state"] = {"type": "limbo"}
+        code, _, err = self.run_kind(LINEAR_ARGS, Transport((GRAPHQL, 200, pages["page-1"])), LINEAR_ENV)
+        self.assertNotEqual(code, 0)
+        self.failed(err, "ENG-100", "limbo")
 
     def test_refusals(self) -> None:
         for label, script, needle in (

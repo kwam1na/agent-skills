@@ -201,7 +201,13 @@ a = sub.add_parser("find"); a.add_argument("--source")
 a = sub.add_parser("open"); a.add_argument("--source"); a.add_argument("--destination"); a.add_argument("--title"); a.add_argument("--body-file")
 a = sub.add_parser("get"); a.add_argument("--url")
 a = sub.add_parser("reviews"); a.add_argument("--url"); a.add_argument("--head")
+a = sub.add_parser("ready"); a.add_argument("--url")
 args = p.parse_args()
+if os.environ.get("FAKE_FORGE_CALLS"):  # what was asked of the forge, in order, for a case that reads it
+    open(os.environ["FAKE_FORGE_CALLS"], "a").write(args.c + "\n")
+if args.c == "ready":
+    prs[args.url]["draft"] = False; json.dump(prs, open(state, "w")); print(json.dumps({"url": args.url, "draft": False}))
+    sys.exit(0)
 if args.c == "reviews":
     path = os.environ.get("FAKE_FORGE_REVIEWS", "")
     print(open(path).read() if path and os.path.exists(path) else json.dumps({"checks": [], "reviews": []}))
@@ -2131,6 +2137,36 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         archive = fx.tmp / "archive/FX-1"
         expect(code == 0 and "closed out" in out and list(archive.glob("*/record/journal.jsonl")), f"lead-close didn't archive: {out}")
         expect(list(archive.glob("*/evidence/FX-2/gates.json")), "the archive lacks the lane evidence")
+
+    def test_the_leads_ready_grant_is_left_out_of_the_brief_and_open_pr_still_opens_a_draft(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        path = setup_delivery(fx)
+        d = json.loads(path.read_text())
+        d["authority"]["readyPullRequests"] = True
+        path.write_text(json.dumps(d, indent=2))
+        commit(m, "FX-1: the lead may mark drafts ready")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        calls = fx.tmp / "forge-calls.txt"
+        fx.env["FAKE_FORGE_CALLS"] = str(calls)
+        code, out = fx.flow("lead-init", cwd=m); expect(code == 0, out)
+        code, out = fx.flow("lead-brief", cwd=m); expect(code == 0, out)
+        brief = " ".join((m / "docs/lane-brief.md").read_text().split())
+        authority = brief[brief.index("**Authority.**"):][:900]
+        self.assertNotIn("readyPullRequests", brief)
+        self.assertIn("never mark a pull request ready or approve one", authority)
+        self.assertIn("open its draft pull request into `feature/FX-1`", authority)
+        wt = fx.lane("FX-2")
+        (wt / "src/one.txt").write_text("one\n")
+        commit(wt, "FX-2: one")
+        code, out = fx.flow("push", "FX-2", cwd=wt); expect(code == 0, out)
+        body = fx.tmp / "body.md"
+        body.write_text("x\n")
+        code, out = fx.flow("open-pr", "FX-2", "--title", "FX-2: one", "--body-file", body, cwd=wt)
+        self.assertEqual(code, 0, out)
+        asked = calls.read_text().split()
+        self.assertIn("open", asked)
+        self.assertNotIn("ready", asked, "open-pr marked the pull request ready under the lead's grant")
 
     def test_lanes_push_and_open_prs_only_as_granted(self) -> None:
         fx = self.fixture()
@@ -4315,6 +4351,45 @@ class RunDeliveryPlanTests(unittest.TestCase):
         self.assertEqual((change["before"], change["after"]), ({"criteria": ["one-loads", "one-fails", "two-renders"],
                                                                 "proofs": ["merged"]}, narrower))
 
+    def test_a_finish_change_with_text_rewords_the_line_in_the_delivery_file_the_plan_and_the_record(self) -> None:
+        fx = self.fixture()
+        path = plan_delivery(fx)
+        m = fx.main
+        fx.flow("lead-init", cwd=m)
+        covers = json.loads(path.read_text())["finish"][0]["covers"]
+        # The wording alone: --covers may be left out, and what the line covers stays.
+        code, out = fx.flow("lead-plan", "change", "--kind", "finish", "--finish", "acs", "--text", "Every criterion is met",
+                            "--why", "Said plainly.", cwd=m)
+        self.assertEqual(code, 0, out)
+        line = json.loads(path.read_text())["finish"][0]
+        self.assertEqual((line["text"], line["covers"]), ("Every criterion is met", covers))
+        self.assertEqual(self.record(fx)["state"]["finish"][0]["text"], "Every criterion is met")
+        plan = self.plan(fx)
+        self.assertEqual([(entry["id"], entry["text"]) for entry in plan["finish"]], [("acs", "Every criterion is met")])
+        change = plan["changes"][-1]
+        self.assertEqual((change["kind"], change["before"], change["after"]), ("finish", "AC1-AC2 met", "Every criterion is met"))
+        # With new covers too, the line is reworded and the change records what it covers.
+        narrower = {"criteria": ["one-loads"], "proofs": ["merged"]}
+        code, out = fx.flow("lead-plan", "change", "--kind", "finish", "--finish", "acs", "--text", "One loads",
+                            "--covers", json.dumps(narrower), "--why", "Narrowed.", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads(path.read_text())["finish"][0]["text"], "One loads")
+        self.assertEqual(self.record(fx)["state"]["finish"][0]["text"], "One loads")
+        change = self.plan(fx)["changes"][-1]
+        self.assertEqual((change["before"], change["after"]), (covers, narrower))
+        # The same wording and covers again changes nothing, and is refused with nothing written.
+        before = (path.read_text(), len(self.plan(fx)["changes"]))
+        code, out = fx.flow("lead-plan", "change", "--kind", "finish", "--finish", "acs", "--text", "One loads",
+                            "--why", "Again.", cwd=m)
+        self.assertEqual(code, 2, out)
+        self.assertIn("already reads so and covers that: nothing to change", out)
+        self.assertEqual((path.read_text(), len(self.plan(fx)["changes"])), before)
+        # A new line still needs its covers.
+        code, out = fx.flow("lead-plan", "change", "--kind", "finish", "--finish", "new-line", "--text", "New",
+                            "--why", "w", cwd=m)
+        self.assertEqual(code, 2, out)
+        self.assertIn("--kind finish takes --finish <id> and --covers <JSON>", out)
+
     def test_a_removed_story_leaves_the_record_and_stays_in_the_plan_marked_removed(self) -> None:
         fx = self.fixture()
         path = plan_delivery(fx)
@@ -5071,6 +5146,153 @@ time.sleep(120)
 '''
 
 
+# A tracker command that is the snapshot producer itself, answered from a file rather than the network: the
+# file maps each parent to its state type, or to "fail" for a command that fails.
+FAKE_TRACKER = r'''
+import json, sys
+from pathlib import Path
+sys.path.insert(0, ".agent-skills/current/skills/delivery-views/scripts")
+import snapshot
+
+parent = sys.argv[1]
+kind = json.loads(Path("tools/tracker-states.json").read_text()).get(parent, "started")
+if kind == "fail":
+    print("the tracker is down", file=sys.stderr)
+    raise SystemExit(3)
+answer = {"data": {"issue": {"createdAt": "2026-10-20T08:00:00.000Z", "state": {"type": kind}, "children": {
+    "nodes": [{"identifier": parent + "-child", "createdAt": "2026-10-20T09:00:00.000Z", "title": "A child",
+               "description": None, "state": {"type": "started"}, "inverseRelations": {"nodes": []}}],
+    "pageInfo": {"hasNextPage": False}}}}}
+
+def transport(method, url, headers, timeout, body=None):
+    return snapshot.Response(200, {}, json.dumps(answer).encode())
+
+code, out, err = snapshot.run(["--kind", "linear", "--parent", parent, "--token-env", "T"], environ={"T": "x"},
+                              transport=transport)
+sys.stdout.write(out)
+sys.stderr.write(err)
+raise SystemExit(code)
+'''
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class RunDeliveryDefaultDeliveryTests(unittest.TestCase):
+    """A lead command without --delivery: the one delivery whose record is open here, else the only one not known to be
+    closed, else a refusal naming each one not known to be closed. The tracker is read through the snapshot producer."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        for name, value in vars(installed_release()).items():
+            setattr(cls, name, value)
+
+    def fixture(self, states: dict[str, str]) -> Fixture:
+        """FX-1 and a second delivery, FX-5, both on the fixture's base, with a binding whose tracker snapshot runs
+        the producer for each parent, its state taken from `states`."""
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        path = setup_delivery(fx)
+        m = fx.main
+        second = json.loads(path.read_text())
+        second.update(delivery="FX-5", headline="FX-5: the second delivery", stateDirectory=str(fx.tmp / "record-5"),
+                      stories={"FX-6": {"title": "Thing six", "lane": "lane-1"}})
+        (m / ".agents/deliveries/FX-5.json").write_text(json.dumps(second, indent=2))
+        (m / "tools/fake_tracker.py").write_text(FAKE_TRACKER)
+        (m / "tools/tracker-states.json").write_text(json.dumps(states))
+        (m / ".agents/orchestration.json").write_text(json.dumps({"state": {"trackerSnapshot": {
+            "argv": [sys.executable, "-B", "tools/fake_tracker.py", "{parent}"], "timeoutSeconds": 60}}}, indent=2))
+        commit(m, "FX-5: a second delivery, and the binding's tracker snapshot")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        return fx
+
+    def picked(self, fx: Fixture) -> tuple[int, str, list[str]]:
+        """What a lead command without --delivery chose: its exit code, output, and the stories it listed."""
+        code, out = fx.flow("lead-hints", cwd=fx.main)
+        try:  # the hints, then any note on the delivery's supervisor
+            stories = list(json.JSONDecoder().raw_decode(out)[0]["items"])
+        except ValueError:
+            stories = []
+        return code, out, stories
+
+    def closed_here(self, fx: Fixture, key: str, beside: Path | None = None) -> None:
+        """What lead-close leaves in this machine's flow log, beside the record (the fixture's, by default)."""
+        folder = (beside or fx.tmp) / "flow-log"
+        folder.mkdir(exist_ok=True)
+        (folder / f"{key}.closed.json").write_text(json.dumps({"by": "lead-close"}))
+
+    def test_one_closed_and_one_not_closed_delivery_file_selects_the_not_closed_one(self) -> None:
+        fx = self.fixture({})
+        self.closed_here(fx, "FX-1")
+        code, out, stories = self.picked(fx)
+        self.assertEqual((code, stories), (0, ["FX-6"]), out)
+        self.closed_here(fx, "FX-5")
+        (fx.tmp / "flow-log/FX-1.closed.json").unlink()
+        code, out, stories = self.picked(fx)
+        self.assertEqual((code, stories), (0, ["FX-2", "FX-3"]), out)
+
+    def test_two_not_closed_with_no_record_open_here_and_their_parents_started_is_refused_naming_both(self) -> None:
+        fx = self.fixture({"FX-1": "started", "FX-5": "started"})
+        code, out, _ = self.picked(fx)
+        self.assertEqual(code, 2, out)
+        self.assertIn("can't tell which delivery this is", out)
+        self.assertIn("FX-1, FX-5 aren't known to be closed, and no record of theirs is open here", out)
+        self.assertIn("pass --delivery KEY", out)
+
+    def test_two_not_closed_with_one_record_open_here_selects_that_one(self) -> None:
+        fx = self.fixture({"FX-1": "started", "FX-5": "started"})
+        m = fx.main
+        path = m / ".agents/deliveries/FX-5.json"
+        d = json.loads(path.read_text())
+        d["stateDirectory"] = ".orchestration/state-5"  # inside this checkout
+        path.write_text(json.dumps(d, indent=2))
+        commit(m, "FX-5: its record in the lead's checkout")
+        sh(sys.executable, "-B", fx.release / "skills/orchestrate-work/scripts/delivery_state.py", "--dir",
+           m / ".orchestration/state-5", "init", "--headline", "FX-5")
+        code, out, stories = self.picked(fx)
+        self.assertEqual((code, stories), (0, ["FX-6"]), out)
+        # Once it is closed here, it is no longer the open record, and FX-1 is the only one not known to be closed.
+        self.closed_here(fx, "FX-5", beside=m / ".orchestration")
+        code, out, stories = self.picked(fx)
+        self.assertEqual((code, stories), (0, ["FX-2", "FX-3"]), out)
+
+    def test_a_delivery_closed_from_another_checkout_counts_as_closed_by_its_parent_completed_or_canceled(self) -> None:
+        for state in ("completed", "canceled"):
+            with self.subTest(state=state):
+                # FX-1's file is on the base and its parent is closed in the tracker, with no closed.json here.
+                fx = self.fixture({"FX-1": state, "FX-5": "started"})
+                self.assertFalse((fx.tmp / "flow-log/FX-1.closed.json").exists())
+                code, out, stories = self.picked(fx)
+                self.assertEqual((code, stories), (0, ["FX-6"]), out)
+
+    def test_a_snapshot_command_that_fails_leaves_its_delivery_not_known_to_be_closed(self) -> None:
+        fx = self.fixture({"FX-1": "fail", "FX-5": "started"})
+        code, out, _ = self.picked(fx)
+        self.assertEqual(code, 2, out)
+        self.assertIn("FX-1, FX-5 aren't known to be closed", out)
+        # The same with no tracker snapshot at all.
+        (fx.main / ".agents/orchestration.json").write_text("{}\n")
+        commit(fx.main, "no tracker snapshot")
+        code, out, _ = self.picked(fx)
+        self.assertEqual(code, 2, out)
+        self.assertIn("FX-1, FX-5 aren't known to be closed", out)
+
+    def test_a_missing_delivery_file_names_the_open_delivery_and_says_when_the_key_is_a_story(self) -> None:
+        fx = self.fixture({"FX-1": "completed", "FX-5": "started"})
+        code, out = fx.flow("--delivery", "FX-6", "lead-accept", "FX-6", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("FX-6.json is missing (lead-setup writes it)", out)
+        self.assertIn("FX-6 looks like a story key: it is a story of FX-5", out)
+        self.assertIn("the open delivery is FX-5: pass --delivery FX-5", out)
+        code, out = fx.flow("--delivery", "FX-9", "lead-accept", "FX-6", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("FX-9 is no story of any delivery here either", out)
+        # With none to choose, it names those not known to be closed.
+        (fx.main / "tools/tracker-states.json").write_text(json.dumps({"FX-1": "started", "FX-5": "started"}))
+        commit(fx.main, "both open")
+        code, out = fx.flow("--delivery", "FX-6", "lead-accept", "FX-6", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("the deliveries not known to be closed are FX-1, FX-5", out)
+
+
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
 class RunDeliverySetupTests(unittest.TestCase):
     """What lead-init, lead-assign and lead-setup refuse before a lane starts, and how each refusal says to recover."""
@@ -5273,12 +5495,11 @@ class RunDeliverySetupTests(unittest.TestCase):
         self.assertIn("--authority push,draftPullRequests --granted-by", out)
         self.assertIn("--no-authority", out)
         self.assertFalse(path.exists(), "a delivery file was written without the grant")
-        for refused, words in ((["--authority", "push,readyPullRequests", "--granted-by", "the operator"],
-                                "lanes are never granted readyPullRequests"),
-                               (["--authority", "draftPullRequests", "--granted-by", "the operator"],
+        for refused, words in ((["--authority", "draftPullRequests", "--granted-by", "the operator"],
                                 "draftPullRequests needs push"),
                                (["--authority", "push"], "--authority needs --granted-by"),
-                               (["--authority", "bogus", "--granted-by", "x"], "--authority takes push and draftPullRequests"),
+                               (["--authority", "bogus", "--granted-by", "x"],
+                                "--authority takes push, draftPullRequests (the lanes') and readyPullRequests (the lead's"),
                                (["--authority", "push", "--granted-by", "x", "--no-authority"], "not both")):
             with self.subTest(refused=refused):
                 code, out = fx.flow(*setup, *refused, cwd=m)
@@ -5290,10 +5511,18 @@ class RunDeliverySetupTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertEqual(json.loads(path.read_text())["authority"], {
             "push": True, "draftPullRequests": True, "grantedBy": "the operator", "grantedOn": "2026-11-03"})
+        # The lead's own grant, readyPullRequests, is written beside the lanes'.
+        code, out = fx.flow(*setup, "--force", "--authority", "push,draftPullRequests,readyPullRequests", "--granted-by",
+                            "the operator", "--granted-on", "2026-11-04", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads(path.read_text())["authority"], {
+            "push": True, "draftPullRequests": True, "readyPullRequests": True, "grantedBy": "the operator",
+            "grantedOn": "2026-11-04"})
         # Drafting again keeps the grant the file holds.
         code, out = fx.flow(*setup, "--force", cwd=m)
         self.assertEqual(code, 0, out)
         self.assertEqual(json.loads(path.read_text())["authority"]["grantedBy"], "the operator")
+        self.assertTrue(json.loads(path.read_text())["authority"]["readyPullRequests"])
         code, out = fx.flow(*setup, "--force", "--no-authority", cwd=m)
         self.assertEqual(code, 0, out)
         self.assertNotIn("authority", json.loads(path.read_text()))
