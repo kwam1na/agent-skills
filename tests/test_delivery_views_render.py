@@ -7,6 +7,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests.delivery_views_fixtures import (
     FIX, LISTED, RUN_ID, VIEW, Repository, Runs, block, config, document_naming, reading, readings, reference,
@@ -445,16 +446,53 @@ class CollectRunsTests(unittest.TestCase):
         self.assertEqual(json.loads(self.cache.read_text())["runs"], {})
 
     def test_runs_past_the_deadline_are_unavailable_and_stay_uncached(self) -> None:
-        # Six at a time, two rounds of reads fit the deadline and the third does not.
-        names = [f"run-{index}" for index in range(18)]
+        # Six at a time, two rounds of reads fit the deadline, the third is still running at it, and the fourth can
+        # only be handed out after it. Which reads miss it is otherwise the machine's: a read that stalls in the second
+        # round misses it too, as on a loaded runner. So each run is held to what its own read did: a read handed out
+        # after the deadline is refused, one still running at the deadline is stopped, and only a read that finished in
+        # time is shown and cached.
+        names = [f"run-{index}" for index in range(24)]
         listed = [{"runId": name, "bytes": 1} for name in names]
         self.runs.answer(table(listed, {name: {"sleep": 1, "then": VIEW} for name in names}))
-        started = time.monotonic()
-        runs = self.collect(document_naming(names), deadline=2.5)
+        reads, lock, run_json = {}, threading.Lock(), views_common.run_json
+
+        def observed(argv, **options):  # every command the deadline let through, with when it ran and how it ended
+            key, began, ended = argv[len(self.runs.argv):], time.monotonic(), "failed"
+            try:
+                answer = run_json(argv, **options)
+                ended = "read"
+                return answer
+            finally:
+                if key[:2] == ["runs", "view"]:
+                    with lock:
+                        reads[key[2]] = (ended, began, time.monotonic())
+
+        with mock.patch.object(views_common, "run_json", observed):
+            started = time.monotonic()
+            deadline = started + 2.5
+            runs = render.collect_runs(document_naming(names), config(self.runs), self.root, self.cache, deadline)
         self.assertLess(time.monotonic() - started, 5)
-        unavailable = [name for name in names if runs[name].get("unavailable")]
-        self.assertTrue(unavailable and unavailable == names[-len(unavailable):], runs)
-        self.assertTrue(set(json.loads(self.cache.read_text())["runs"]).isdisjoint(unavailable))
+        # Reads are handed out in order, so the runs refused at the deadline are the last ones, and the fourth round's
+        # are among them.
+        refused = [name for name in names if name not in reads]
+        self.assertEqual(refused, names[len(names) - len(refused):])
+        self.assertTrue(set(names[18:]) <= set(refused), refused)
+        for name in names:
+            with self.subTest(run=name):
+                if name in refused:
+                    self.assertTrue(runs[name].get("unavailable"))
+                    continue
+                ended, began, finished = reads[name]
+                self.assertLess(began, deadline + 0.25, "a read began after the deadline")
+                if ended == "read":
+                    self.assertFalse(runs[name].get("unavailable"))
+                    self.assertLess(finished, deadline + 0.25, "a read ran past the deadline")
+                else:
+                    self.assertTrue(runs[name].get("unavailable"))
+        shown = [name for name in names if not runs[name].get("unavailable")]
+        # The deadline did bite, and not on everything.
+        self.assertTrue(shown and len(shown) < len(names), shown)
+        self.assertEqual(sorted(json.loads(self.cache.read_text())["runs"]), sorted(shown))
         # The next render reads them again.
         self.runs.answer(table(listed, {name: VIEW for name in names}))
         self.assertFalse(any(run.get("unavailable") for run in self.collect(document_naming(names)).values()))
