@@ -130,7 +130,11 @@ story's diff: `RunDeliveryAdoptionGuideTests.test_the_guide_takes_an_empty_repos
 guide's pinned `focus ... --state done`. Characterization-first, read-only: name the writer that bumps the record between the read and
 the pinned write, and reproduce the failure with a stall that models it, before changing anything. The fix follows the cause. If an
 adopter's guide sequence races, the guide changes, and the tool too if needed. If only the test's fixture races, the test serializes
-against its own writer without weakening what it proves. The hand-off says which. Files: decided by the diagnosis. Those under lane 1's
+against its own writer without weakening what it proves. The hand-off says which. Lead's ruling on the diagnosis (2026-11-09): the merge queue
+writes the record inside `set_focus`'s read-then-pinned-write window, so the fix is a bounded re-read-and-retry in `set_focus`, like
+reconcile's, with a row in `tests/test_orchestration_state.py` that fails with the retry reverted. The guide's text stays. Lane 2 owns
+`delivery_state.py` and `tests/test_orchestration_state.py` for it, and `provenance.lock.json` moves to lane 2 before its acceptance. The
+second defect the diagnosis found, `stop_supervisors`' `rglob` walk raising mid-walk and leaking a supervisor, is V26-3273's. Files: decided by the diagnosis. Those under lane 1's
 `owns` (`tests/test_run_delivery.py`, `skills/run-delivery/`) move to lane 2 only through the lead, once lane 1's stories on them have
 merged. Sensors: `RunDeliveryAdoptionGuideTests`, the adoption-guide corpus pins.
 

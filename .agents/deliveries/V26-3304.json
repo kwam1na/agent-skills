@@ -29,7 +29,9 @@
       "owns": [
         "tests/test_run_delivery_tracker.py",
         "tests/test_own_deliveries.py",
-        "tests/test_delivery_views_render.py"
+        "tests/test_delivery_views_render.py",
+        "skills/orchestrate-work/scripts/delivery_state.py",
+        "tests/test_orchestration_state.py"
       ]
     }
   },
