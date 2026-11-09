@@ -49,29 +49,34 @@ the choices two items share, order, file ownership while two other deliveries ho
    - Criteria come from each tracker item's Acceptance Criteria section, carried by the tracker snapshot as a new optional `criteria`
      member of `work-snapshot/1` items, when the binding declares a tracker snapshot. Without one, `lead-setup` leaves the story's criteria
      empty and says so.
-   V26-3256's acceptance row sets up a copy of this plan, with a tracker snapshot carrying each item's criteria, and compares the result
-   with this delivery's committed delivery file, the one `lead-setup` drafted and the lead completed by hand. `plan-work`'s template
+   V26-3256's acceptance row sets up a copy of this plan, with a tracker snapshot carrying each item's criteria. It compares each story's
+   lane, `after` keys and criteria with the committed delivery file, and each lane's `owns` with this table's lowest-tier rows, written
+   out in the row as explicit path lists. It reads nothing the lead's ownership moves rewrite, so a later move can't turn it red. `plan-work`'s template
    documents the grammar with an example, and a row runs `lead-setup` on that example.
 3. **`next` reads a story's dependencies without the tracker.** `lead-setup` writes each story's `after` keys into the delivery file.
    `work-hints/1` items gain an optional `blockers` member, run-delivery passes the delivery file's `after` keys through it, and `next`
    reads it beside the tracker's `blockedBy`. A dependency stops blocking once the record holds it merged or settled, or the tracker
-   snapshot holds it completed. V26-3256 makes all of this, in tier 2, once lane 2's files pass to lane 1.
+   snapshot holds it completed. V26-3256 makes all of this, in tier 2, once lane 2's files pass to lane 1, and V26-3263 pins the settled
+   case once settling exists.
 4. **A no-change hand-off never enters the merge queue (V26-3263).** `handoff --no-change --evidence` needs no branch, change request or
    review round. It records the base head the evidence ran at. `lead-accept` checks that head is an ancestor of the current base, which
-   may have moved since, and that the evidence names every one of the story's criteria by id, refusing with the ids missing. The record
+   may have moved since, and that the evidence names every one of the story's criteria by id, refusing with the ids missing. A story with
+   no criteria is refused, naming it and the fix: record its criteria first. The record
    holds the story as settled with no change, which is not removed: the close and the `stories` finish line count it, and the views show
    "closed, no change needed" with the evidence. No base commit is made, by the lane or the lead.
 5. **`readyPullRequests` is the lead's grant, written by `lead-setup` (V26-3257).** `--authority` accepts it beside `push` and
    `draftPullRequests` and writes it into `authority`. The brief's list of what lanes may do leaves it out and says lanes never mark a
    pull request ready. `push` and `open-pr` are unchanged, so `open-pr` still opens a draft under the grant: only `lead-accept` reads it.
 6. **The default delivery (V26-3257).** A lead command with no `--delivery` takes, in this order: the delivery whose record is open in
-   this checkout's state directory; else the only delivery file whose delivery has no close in `closed.json`; else it refuses, naming every
-   delivery that isn't closed.
+   this checkout's state directory; else the only delivery file whose delivery isn't known to be closed; else it refuses, naming every
+   delivery not known to be closed. A delivery is known to be closed when this checkout's flow log holds its `closed.json`, or, where the
+   binding declares a tracker snapshot, when the snapshot shows the delivery's own item completed or canceled. Any checkout can read the
+   second, so a delivery closed from another checkout counts as closed here.
 7. **The check catalogue is additive (V26-3259).** `select --checks` takes comma-separated catalogue ids as well as today's JSON list, so
    existing selections and bindings stay valid. Always-selected guards are added to every lead selection. A schema's readers are named in
    the binding, never inferred from what a test mentions. The base-head warning is per check: the merge queue records the base head
    beside each base re-run's result on the record, and `select` warns, naming the check and the head, when the record holds a failing base
-   re-run of a selected check id at the current base head. A head this delivery's queue never re-ran a check on, such as one another
+   re-run of a selected check id at the current base head. A passing re-run there gives no warning. A head this delivery's queue never re-ran a check on, such as one another
    delivery's merge made, gives no warning, and `select` says that nothing is known there. This is a minor, additive change to the
    binding schema.
 8. **V26-3309 is the release, by the lead, and the adoption, by lane 2.** The binding validates against the installed generation's
@@ -132,8 +137,12 @@ always-selected guards, and each schema's readers. `select --checks run-delivery
 an unknown id is refused, naming it. A guard is in every lead selection, including one that names none. A selection for a story changing
 `schemas.json` includes the readers the binding maps to it, captured plan fixtures included, without the lead naming them, and a test that
 mentions `schemas.json` but isn't mapped to it is not selected. The warning rows: a selected check whose base re-run failed at the current
-base head is warned about, by id and head; the same check failed at an older base head gives no warning; a check the story didn't select
-that failed at this head gives no warning; and a head with no re-run says nothing is known. A JSON list as today still selects exactly
+base head is warned about, by id and head; the same check passing its base re-run at this head gives no warning and no "nothing is
+known"; the same check failed at an older base head gives no warning; a check the story didn't select that failed at this head gives no
+warning; and a head with no re-run says nothing is known. A row in `tests/test_merge_queue.py` drives a candidate whose selected check
+fails, so the queue re-runs it on the base, and asserts the record's re-run entry carries the check's id, its verdict and the base head
+the re-run checked out, which differs from the candidate's synced head. It then runs `select` against that record and asserts the
+warning names that head. A JSON list as today still selects exactly
 what it lists, plus the guards. The queue runs a selection by ids the same as one by full entries. `orchestration-guide.md` documents the
 catalogue. Files: `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/scripts/merge_queue.py`,
 `skills/orchestrate-work/references/schemas.json`, `skills/orchestrate-work/references/orchestration-guide.md`,
@@ -144,8 +153,11 @@ select by what reads a change, in `docs/solutions/`, which the lead moves to lan
 ### V26-3256. Draft lanes, ownership, criteria and order from the plan at setup
 
 Lane 1, tier 2, after V26-3276 and V26-3259. Test-first, per the item and Decisions 1 to 3. The acceptance row sets up a copy of this plan,
-with a tracker snapshot carrying each item's criteria, and compares every story's lane, criteria and `after` keys, and each lane's `owns`,
-with this delivery's committed delivery file. A row with no tracker snapshot leaves criteria empty and says so. A plan section with no lane
+with a tracker snapshot carrying each item's criteria, and compares every story's lane, criteria and `after` keys with this delivery's
+committed delivery file, and each lane's `owns` with the plan table's lowest-tier rows written out in the row (Decision 2). A row in
+`tests/test_delivery_views_snapshots.py` gives the snapshot producer a tracker item whose description has an Acceptance Criteria section,
+and asserts the new member holds exactly that section's criteria; an item without the section yields none, and both snapshots validate
+against `work-snapshot/1`. A row with no tracker snapshot leaves criteria empty and says so. A plan section with no lane
 sentence leaves that story `unassigned` and says so. A row runs `lead-setup` on `plan-work`'s template example. `next` ranks a story after
 its open dependencies when the tracker snapshot has no `blockedBy`, proved red without the hints. Allow-side rows: the same fixture with
 the dependency merged in the record, then with it completed in the tracker snapshot, ranks the dependent story unblocked, ahead of a story
@@ -163,7 +175,9 @@ Lane 1, tier 2, after V26-3256. Test-first, per the item and Decision 4. A row h
 `handoff --no-change --evidence`, with no branch or change request, then `lead-accept` settles it, and the close condition and the
 `stories` finish line count it. A row proves no base commit is made, by comparing the base ref before and after. A row advances the base
 after the hand-off, and `lead-accept` still settles the story. A head that is not an ancestor of the base is refused. A story with two
-criteria and evidence naming one is refused, naming the missing criterion, and evidence naming both is accepted. The views show "closed,
+criteria and evidence naming one is refused, naming the missing criterion, and evidence naming both is accepted. A story with no
+criteria is refused, naming it. In `tests/test_orchestration_state.py`, a dependency the record holds as settled with no change unblocks
+its dependent story in `next`, ahead of a story whose dependency is still open. The views show "closed,
 no change needed" with the evidence, pinned in `render_state.py`'s output and in the page tests. Files:
 `skills/run-delivery/scripts/run_delivery.py`, `skills/orchestrate-work/scripts/delivery_state.py`,
 `skills/orchestrate-work/scripts/render_state.py`, `skills/orchestrate-work/references/schemas.json`, `skills/delivery-views/`,
@@ -175,7 +189,9 @@ no change needed" with the evidence, pinned in `render_state.py`'s output and in
 
 Lane 1, tier 2, after V26-3263. Test-first: each of the item's six points has a row that fails before its fix (Decisions 5 and 6). The
 default-delivery rows: one closed and one not-closed delivery file selects the not-closed one; two not-closed files and no record open
-here refuses, naming both; two not-closed files with one record open here selects that one. A missing delivery file's refusal names the
+here refuses, naming both as not known to be closed; two not-closed files with one record open here selects that one; and a delivery
+closed from another checkout, with its file on the base, no local `closed.json` and its item completed in the tracker snapshot, counts as
+closed, so the one other delivery is selected. A missing delivery file's refusal names the
 open delivery and says when the argument looks like a story key. `lead-setup --authority push,draftPullRequests,readyPullRequests` writes
 all three, replacing the row that pins today's refusal. The brief's list of lane grants leaves `readyPullRequests` out, and `open-pr`
 leaves the pull request a draft under the grant, each pinned by a row. `lead-plan change --kind finish --text` updates the line's text.

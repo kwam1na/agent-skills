@@ -20,18 +20,20 @@ reach (it needs an operator decision, or another epic's change), stop and tell t
 around it.
 
 **Ownership.** Lane 1 holds the run-delivery chain. Lane 2 holds the state tool, the merge queue and the views until V26-3259 merges,
-when they pass to lane 1. `provenance.lock.json` moves to the lane the lead is accepting. A lane that finds it needs a file outside its
+when they pass to lane 1. Lane 2 takes the binding for V26-3309. `provenance.lock.json` moves to the lane the lead is accepting. A lane that finds it needs a file outside its
 `owns` raises it with the lead before hand-off.
 
 **Other deliveries.** V26-3304 and V26-3267 run on `main` at the same time and change some of lane 1's files. Work and review freely.
 When your story is ready to hand off, hand off as usual: the lead holds the queue on a shared file until the other delivery's candidate
 on it has merged, and may send your story back for a new round if a merge moved its files. Never merge `main` into your branch yourself.
 
-**Lane 1: V26-3276 first, then V26-3256.** Decision 1 binds both: build V26-3256's one-command add on V26-3276's refusal. Never run a
+**Lane 1: V26-3276, then V26-3256, V26-3263 and V26-3257 in tier 2.** Tier 2 starts once V26-3259 merges and its files pass to you.
+Decision 1 binds V26-3276 and V26-3256: build V26-3256's one-command add on V26-3276's refusal. Never run a
 `lead-*` command, or a test module, from the main checkout: only from your story's own checkout.
 
 **Lane 2: V26-3259.** Keep the catalogue additive (Decision 7): every existing binding and JSON-list selection stays valid, proved by a
-row. Don't edit `.agents/orchestration.json`: this repository's adoption is V26-3309, the lead's, after a release.
+row. Don't edit `.agents/orchestration.json` for V26-3259: this repository's adoption is V26-3309, yours in tier 3, after the lead
+tags and applies the release.
 
 **Shell.** Never set `TMPDIR` under a checkout. Stop only processes you started, by the pid you recorded, never by pattern with `pkill`
 or `killall`. Clear `skills/` bytecode before anything that builds a release.
