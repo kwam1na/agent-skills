@@ -31,7 +31,8 @@
         "tests/test_own_deliveries.py",
         "tests/test_delivery_views_render.py",
         "skills/orchestrate-work/scripts/delivery_state.py",
-        "tests/test_orchestration_state.py"
+        "tests/test_orchestration_state.py",
+        "tests/test_validate.py"
       ]
     }
   },
@@ -121,6 +122,17 @@
         {
           "id": "v26-3325-done",
           "text": "The detached-supervisors solution note names no ticket or plan id and keeps its lessons; tests.test_linear_qualification and validate-registry pass at the head, the lock refreshed with the writer if the note is listed; nothing else changes"
+        }
+      ]
+    },
+    "V26-3328": {
+      "title": "The corpus read-only test hashes the operator's live delivery records",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3328-done",
+          "text": "test_valid_corpus_is_stable_and_read_only proves validate_corpus writes nothing without reading git-ignored paths; a row stays green while an ignored .orchestration file changes during validation and goes red when validation writes a tracked or corpus file, both recorded; a search of tests/ for other whole-checkout scans of ignored live state finds and fixes each, or records none"
         }
       ]
     }

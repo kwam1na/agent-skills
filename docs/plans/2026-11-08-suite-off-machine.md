@@ -51,7 +51,7 @@ Two lanes. Lane 1 holds the run-delivery chain. Lane 2 holds the tracker module 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
 | 1 | 1 | V26-3286, V26-3273, V26-3325, V26-3324 | `skills/run-delivery/`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_plan_review.py`, `docs/solutions/`, `provenance.lock.json` for `run_delivery.py`'s digest, and `catalog.json` and `profiles/*.json` only if an output is added |
-| 1 | 2 | V26-3274, V26-3292, V26-3312, V26-3316 | `tests/test_run_delivery_tracker.py`, `tests/test_own_deliveries.py`, `tests/test_delivery_views_render.py` |
+| 1 | 2 | V26-3274, V26-3292, V26-3312, V26-3316, V26-3328 | `tests/test_run_delivery_tracker.py`, `tests/test_own_deliveries.py`, `tests/test_delivery_views_render.py`, `tests/test_validate.py` |
 
 **Moving ownership.** `provenance.lock.json` belongs to lane 1, the only lane that changes a listed output. If lane 2 finds it needs a file
 outside its `owns`, it raises it with the lead before hand-off.
@@ -154,6 +154,15 @@ Lane 1, first, ahead of V26-3324 (lead's addition, 2026-11-09: `main` broke at V
 the lead's narrow selection skipped the corpus pin). Sensor-only: reword the note's id lines, keeping the lessons. Its queue selection is
 `tests.test_linear_qualification`, plus validate-registry and the provenance check. Files: that note, and `provenance.lock.json` if it lists
 the note. Sensors: `tests.test_linear_qualification`, `scripts/validate-registry.py`.
+
+### V26-3328. The corpus read-only test hashes the operator's live delivery records
+
+Lane 2 (lead's addition, 2026-11-09, under the no-deferrals ruling: the close-out's full suite from the operator's checkout at `4f9c965`
+failed only `test_valid_corpus_is_stable_and_read_only`, which digests every file under the checkout, git-ignored `.orchestration/` live
+records included; it passes in a clean worktree). Test-first: a row green while an ignored `.orchestration/` file changes during validation
+and red when validation writes a tracked or corpus file; then the digest leaves ignored paths out. A search of `tests/` for other
+whole-checkout scans of ignored live state, each fixed or recorded as none. Files: `tests/test_validate.py`, and any other test file the
+search names through the lead. Sensors: `tests/test_validate.py` from a checkout with a live record changing, `tests.test_linear_qualification`.
 
 ## Execution posture
 
