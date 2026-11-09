@@ -3854,9 +3854,21 @@ if command == ["pr", "list"]:
 '''
 
 
-def plan_delivery(fx: Fixture) -> Path:
-    """The fixture delivery with the plan chapter on: criteria, an outcome, and finish lines with covers and labels."""
-    path = setup_delivery(fx)
+def add_story(fx: Fixture, path: Path, key: str, **story) -> None:
+    """A story added to the delivery file and the plan by hand, as SKILL.md's step 3 says, and committed."""
+    d = json.loads(path.read_text())
+    d["stories"][key] = {"title": f"Thing {key}", "lane": "lane-1",
+                         "criteria": [{"id": f"{key.lower()}-works", "text": f"{key} works"}], **story}
+    path.write_text(json.dumps(d, indent=2))
+    plan = fx.main / "docs/plan.md"
+    plan.write_text(plan.read_text() + f"\n### S9 ({key}). Thing {key}\n\n- Scenarios: it works.\n")
+    commit(fx.main, f"FX-1: {key} added")
+
+
+def plan_delivery(fx: Fixture, path: Path | None = None) -> Path:
+    """The fixture delivery with the plan chapter on: criteria, an outcome, and finish lines with covers and labels.
+    Given the delivery file a fixture already set up, it adds them to that one."""
+    path = path or setup_delivery(fx)
     d = json.loads(path.read_text())
     d["stories"]["FX-2"]["criteria"] = [{"id": "one-loads", "text": "Thing one loads"},
                                         {"id": "one-fails", "text": "Thing one says when it fails"}]
@@ -4056,24 +4068,26 @@ class RunDeliveryPlanTests(unittest.TestCase):
         self.assertEqual(len(self.plan(fx)["changes"]), 1, "the recorded removal read as an unrecorded edit too")
         self.assertIn("FX-3", [u["subject"] for u in plan["approved"]["snapshot"]["units"]])
 
-    def test_a_story_registered_mid_delivery_records_an_added_change_until_lead_plan_why_gives_its_reason(self) -> None:
+    def test_a_story_registered_mid_delivery_records_an_added_change_with_its_why_and_lead_plan_why_can_restate_it(self) -> None:
         fx = self.fixture()
         path = plan_delivery(fx)
         m = fx.main
         fx.flow("lead-init", cwd=m)
         d = json.loads(path.read_text())
-        d["stories"]["FX-4"] = {"title": "Thing four", "lane": "lane-1", "criteria": [{"id": "four-works", "text": "Four works"}]}
+        d["stories"]["FX-4"] = {"title": "Thing four", "lane": "lane-1", "why": "A lane found the gap.",
+                                "criteria": [{"id": "four-works", "text": "Four works"}]}
         path.write_text(json.dumps(d, indent=2))
         commit(m, "FX-1: a story added")
         code, out = fx.flow("lead-brief", cwd=m)
         self.assertEqual(code, 0, out)
         plan = self.plan(fx)
-        self.assertEqual([(c["id"], c["kind"], c["subjects"], "why" in c) for c in plan["changes"]], [("c1", "added", ["FX-4"], False)])
+        self.assertEqual([(c["id"], c["kind"], c["subjects"], c.get("why")) for c in plan["changes"]],
+                         [("c1", "added", ["FX-4"], "A lane found the gap.")])
         self.assertEqual(plan["units"][-1]["subject"], "FX-4")
         self.assertNotIn("FX-4", [u["subject"] for u in plan["approved"]["snapshot"]["units"]])
-        code, out = fx.flow("lead-plan", "why", "c1", "--why", "A lane found the gap.", cwd=m)
+        code, out = fx.flow("lead-plan", "why", "c1", "--why", "A lane found the gap in thing two.", cwd=m)
         self.assertEqual(code, 0, out)
-        self.assertEqual(self.plan(fx)["changes"][0]["why"], "A lane found the gap.")
+        self.assertEqual(self.plan(fx)["changes"][0]["why"], "A lane found the gap in thing two.")
         code, out = fx.flow("lead-plan", "why", "c9", "--why", "x", cwd=m)
         self.assertEqual(code, 2, out)
         self.assertIn("no recorded change c9", out)
@@ -4270,7 +4284,8 @@ class RunDeliveryPlanTests(unittest.TestCase):
         m = fx.main
         fx.flow("lead-init", cwd=m)
         d = json.loads(path.read_text())
-        d["stories"]["FX-4"] = {"title": "Thing four", "lane": "lane-1", "criteria": [{"id": "four-works", "text": "Four works"}]}
+        d["stories"]["FX-4"] = {"title": "Thing four", "lane": "lane-1", "why": "Split from FX-2.",
+                                "criteria": [{"id": "four-works", "text": "Four works"}]}
         path.write_text(json.dumps(d, indent=2))
         commit(m, "FX-1: a story added")
         code, out = fx.flow("lead-plan", "change", "--kind", "relaxed", "--subjects", "FX-2", "--criterion", "one-fails",
@@ -4413,7 +4428,8 @@ class RunDeliveryPlanTests(unittest.TestCase):
         m = fx.main
         fx.flow("lead-init", cwd=m)
         d = json.loads(path.read_text())
-        d["stories"]["FX-4"] = {"title": "Thing four", "lane": "lane-1", "criteria": [{"id": "four-works", "text": "Four works"}]}
+        d["stories"]["FX-4"] = {"title": "Thing four", "lane": "lane-1", "why": "Split from FX-2.",
+                                "criteria": [{"id": "four-works", "text": "Four works"}]}
         path.write_text(json.dumps(d, indent=2))
         plan = m / "docs/plan.md"
         plan.write_text(plan.read_text() + "\n### S4 (FX-4). Thing four\n\n- Scenarios: it four.\n")
@@ -4421,8 +4437,102 @@ class RunDeliveryPlanTests(unittest.TestCase):
         code, out = fx.flow("lead-assign", "FX-4", "--lane", "lane-1", "--title", "Lane 1", cwd=m)
         self.assertEqual(code, 0, out)
         plan = self.plan(fx)
-        self.assertEqual([(c["kind"], c["subjects"]) for c in plan["changes"]], [("added", ["FX-4"])])
+        self.assertEqual([(c["kind"], c["subjects"], c.get("why")) for c in plan["changes"]],
+                         [("added", ["FX-4"], "Split from FX-2.")])
         self.assertEqual(plan["units"][-1]["subject"], "FX-4")
+
+    def held(self, fx: Fixture) -> tuple:
+        """What registration writes: the record's state and journal, plan.json and the changes log, byte for byte."""
+        return (*self.written(fx), (fx.tmp / "record/state.json").read_bytes())
+
+    def test_a_story_added_after_lead_init_without_a_why_is_refused_by_every_registering_command(self) -> None:
+        fx = self.fixture()
+        path = plan_delivery(fx)
+        m = fx.main
+        fx.flow("lead-init", cwd=m)
+        add_story(fx, path, "FX-4")
+        before = self.held(fx)
+        for argv in (["lead-brief"], ["lead-reconcile"], ["lead-assign", "FX-4", "--lane", "lane-1", "--title", "Lane 1"],
+                     ["lead-plan", "change", "--kind", "relaxed", "--subjects", "FX-2", "--criterion", "one-fails",
+                      "--text", "Eased", "--why", "Eased."]):
+            head = sh("git", "rev-parse", "HEAD", cwd=m).stdout
+            code, out = fx.flow(*argv, cwd=m)
+            self.assertEqual(code, 2, f"{argv[0]} registered a story with no reason: {out}")
+            self.assertIn("FX-4 has no `why`", out, argv)
+            self.assertIn(f"fix: give it a `why` there", out, argv)
+            self.assertIn("Nothing was registered", out, argv)
+            self.assertEqual(self.held(fx), before, f"{argv[0]} wrote something before refusing")
+            self.assertEqual((sh("git", "rev-parse", "HEAD", cwd=m).stdout, sh("git", "status", "--porcelain", cwd=m).stdout),
+                             (head, ""), argv)
+        self.assertNotIn("FX-4", [p["subject"] for p in self.record(fx)["state"]["planned"]])
+        # A `why` the plan can't carry is refused the same way, naming what is wrong with it.
+        for why, problem in (("", "must be non-empty text"), (7, "must be non-empty text"), ("x" * 5000, "over the cap"),
+                             ("two\nlines", "control character")):
+            d = json.loads(path.read_text())
+            d["stories"]["FX-4"]["why"] = why
+            path.write_text(json.dumps(d, indent=2))
+            commit(m, "FX-1: a reason the plan can't carry")
+            code, out = fx.flow("lead-brief", cwd=m)
+            self.assertEqual(code, 2, out)
+            self.assertIn("FX-4 has a `why` the plan can't carry", out)
+            self.assertIn(problem, out)
+            self.assertEqual(self.held(fx), before, repr(why))
+        # Given its reason, the same story registers, and its `added` change carries it.
+        d = json.loads(path.read_text())
+        d["stories"]["FX-4"]["why"] = "A lane found the gap."
+        path.write_text(json.dumps(d, indent=2))
+        commit(m, "FX-1: FX-4's reason")
+        code, out = fx.flow("lead-brief", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertIn("registered FX-4", out)
+        self.assertEqual([(c["kind"], c["subjects"], c.get("why"), c.get("source")) for c in self.plan(fx)["changes"]],
+                         [("added", ["FX-4"], "A lane found the gap.", "registration")])
+
+    def test_every_registering_command_copies_the_stories_why_into_its_added_change(self) -> None:
+        for argv in (["lead-brief"], ["lead-reconcile"], ["lead-assign", "FX-4", "--lane", "lane-1", "--title", "Lane 1"]):
+            with self.subTest(argv[0]):
+                fx = self.fixture()
+                path = plan_delivery(fx)
+                fx.flow("lead-init", cwd=fx.main)
+                add_story(fx, path, "FX-4", why=f"Added for {argv[0]}.")
+                code, out = fx.flow(*argv, cwd=fx.main)
+                self.assertEqual(code, 0, out)
+                self.assertIn("FX-4", [p["subject"] for p in self.record(fx)["state"]["planned"]])
+                changes = self.plan(fx)["changes"]
+                self.assertEqual([(c["kind"], c["subjects"], c.get("why")) for c in changes],
+                                 [("added", ["FX-4"], f"Added for {argv[0]}.")])
+                logged = [json.loads(line) for line in (fx.tmp / "flow-log/plan-changes.jsonl").read_text().splitlines()]
+                self.assertEqual([e.get("why") for e in logged if e["type"] == "change"], [f"Added for {argv[0]}."],
+                                 "the changes log itself lacks the reason")
+
+    def test_the_supervisors_sweep_leaves_a_story_with_no_why_unregistered_and_goes_on(self) -> None:
+        fx = self.fixture()
+        path = plan_delivery(fx)
+        m = fx.main
+        fx.flow("lead-init", cwd=m)
+        add_story(fx, path, "FX-4")
+        before = self.held(fx)
+        lines = call(fx.tool, "reconcile_once", cwd=m, env=fx.env, delivery="FX-1")
+        self.assertIn("registration refused: FX-4 has no `why`", "; ".join(lines))
+        self.assertTrue(any(line.startswith("forgeSnapshot:") for line in lines), lines)
+        self.assertFalse(any(line.startswith("plan:") for line in lines), f"the sweep rebuilt the plan around it: {lines}")
+        self.assertEqual(self.held(fx)[2], before[2], "the sweep recorded a change for it")
+        self.assertNotIn("FX-4", [p["subject"] for p in self.record(fx)["state"]["planned"]])
+
+    def test_a_story_added_between_lead_setup_and_lead_init_is_frozen_with_the_plan_and_needs_no_why(self) -> None:
+        fx = self.fixture()
+        path = plan_delivery(fx)
+        m = fx.main
+        add_story(fx, path, "FX-4")
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        for argv in (["lead-brief"], ["lead-reconcile"], ["lead-assign", "FX-4", "--lane", "lane-1", "--title", "Lane 1"]):
+            code, out = fx.flow(*argv, cwd=m)
+            self.assertEqual(code, 0, f"{argv[0]}: {out}")
+        plan = self.plan(fx)
+        self.assertIn("FX-4", [u["subject"] for u in plan["approved"]["snapshot"]["units"]])
+        self.assertEqual(plan["changes"], [], "a story frozen with the plan read as an added change")
+        self.assertIn("FX-4", [p["subject"] for p in self.record(fx)["state"]["planned"]])
 
     def test_concurrent_rebuilds_lose_no_update(self) -> None:
         fx = self.fixture()
@@ -4431,7 +4541,8 @@ class RunDeliveryPlanTests(unittest.TestCase):
         fx.flow("lead-init", cwd=m)
         d = json.loads(path.read_text())
         for n in range(4, 10):
-            d["stories"][f"FX-{n}"] = {"title": f"Thing {n}", "lane": "lane-1", "criteria": [{"id": f"c-{n}", "text": f"{n} works"}]}
+            d["stories"][f"FX-{n}"] = {"title": f"Thing {n}", "lane": "lane-1", "why": f"Thing {n} was missed.",
+                                       "criteria": [{"id": f"c-{n}", "text": f"{n} works"}]}
         path.write_text(json.dumps(d, indent=2))
         commit(m, "FX-1: six stories added")
         fx.flow("lead-brief", cwd=m)
@@ -4855,6 +4966,46 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         if expect_code is not None:
             expect(code == expect_code, f"doctor exited {code}, not {expect_code}:\n{out}")
         return out
+
+    def test_doctor_names_a_reasonless_added_change_until_lead_plan_why_records_one(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        path = plan_delivery(fx, m / ".agents/deliveries/FX-1.json")
+        code, out = fx.flow("lead-init", "--no-supervisor", cwd=m)
+        self.assertEqual(code, 0, out)
+        row = lambda: doctor_lines(self.doctor(fx, "--offline"))["added stories' reasons"]
+        self.assertEqual(row(), ("ok", "every story added to the plan has its reason"))
+        # A story waiting to be registered with no reason is named too: registration will refuse it.
+        add_story(fx, path, "FX-4")
+        status, detail = row()
+        self.assertEqual(status, "wrong", detail)
+        self.assertIn("FX-4 has no `why`, so registration refuses it; fix: give it a `why` in", detail)
+        d = json.loads(path.read_text())
+        d["stories"]["FX-4"]["why"] = "Split from FX-2."
+        path.write_text(json.dumps(d, indent=2))
+        commit(m, "FX-1: FX-4's reason")
+        self.assertEqual(fx.flow("lead-brief", cwd=m)[0], 0)
+        self.assertEqual(row()[0], "ok")
+        # A record an earlier release wrote holds the change without it.
+        log = fx.tmp / "flow-log/plan-changes.jsonl"
+        entries = [json.loads(line) for line in log.read_text().splitlines()]
+        change = next(e for e in entries if e["type"] == "change")
+        del change["why"]
+        log.write_text("".join(json.dumps(e) + "\n" for e in entries))
+        status, detail = row()
+        self.assertEqual(status, "wrong", detail)
+        self.assertIn(f"the record holds an `added` change with no reason: {change['id']} adds FX-4; fix: ", detail)
+        self.assertIn(f"lead-plan why {change['id']} --why TEXT", detail)
+        self.assertEqual(fx.flow("lead-plan", "why", change["id"], "--why", "Split from FX-2.", cwd=m)[0], 0)
+        self.assertEqual(row(), ("ok", "every story added to the plan has its reason"))
+        # A removed story's addition is the plan's history, not a story in the delivery file.
+        self.assertNotIn("why", change)
+        log.write_text("".join(json.dumps(e) + "\n" for e in entries))
+        d = json.loads(path.read_text())
+        del d["stories"]["FX-4"]
+        path.write_text(json.dumps(d, indent=2))
+        commit(m, "FX-1: FX-4 dropped")
+        self.assertEqual(row()[0], "ok")
 
     def test_the_candidate_row_proves_the_merge_queues_candidate_step_can_run(self) -> None:
         fx = self.fixture()

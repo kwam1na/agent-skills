@@ -26,8 +26,8 @@ import urllib.request
 from pathlib import Path
 from unittest import mock
 
-from tests.test_run_delivery import (POSIX_ONLY, Fixture, commit, doctor_binding, installed_release, setup_delivery,
-                                     sh, stop_supervisors, write_results)
+from tests.test_run_delivery import (POSIX_ONLY, Fixture, add_story, commit, doctor_binding, installed_release,
+                                     plan_delivery, setup_delivery, sh, stop_supervisors, write_results)
 from tests.test_run_delivery_tracker import FileBackend, JiraBackend
 
 # Each class that starts supervisors marks itself run_serially, so its cases run one at a time and alone on the machine.
@@ -823,6 +823,30 @@ class SupervisorPassTests(unittest.TestCase):
         queue_run(fx, key)
         self.assertTrue([e for e in kinds(fx, "candidate.merged") if e.get("subject") == key], record(fx)["journal"][-3:])
         return wt
+
+    def test_a_story_added_without_its_why_holds_neither_an_acceptance_nor_a_pass(self) -> None:
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        self.addCleanup(stop_supervisors, fx.tmp)
+        path = plan_delivery(fx, supervised(fx))
+        code, out = fx.flow("lead-init", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        hand_off(fx, "FX-2", "lane-1")
+        add_story(fx, path, "FX-4")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+        changes = fx.tmp / "flow-log/plan-changes.jsonl"
+        logged = changes.read_bytes()
+        # The acceptance stands, and says the plan waits for the story's reason.
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("plan: not rebuilt: FX-4 has no `why`", out)
+        self.assertIn("accepted FX-2", out)
+        # The supervisor's pass goes on with the story unregistered, and says why.
+        last = self.once(fx)
+        self.assertIn("registration refused: FX-4 has no `why`", "; ".join(last["reconcile"]))
+        self.assertTrue(any(line.startswith("forgeSnapshot:") for line in last["reconcile"]), last["reconcile"])
+        self.assertNotIn("FX-4", [p["subject"] for p in record(fx)["state"]["planned"]])
+        self.assertEqual(changes.read_bytes(), logged, "an added change with no reason was recorded")
 
     def test_a_failed_ready_leaves_the_hand_off_pending_and_names_the_adapter(self) -> None:
         fx = self.fixture()
