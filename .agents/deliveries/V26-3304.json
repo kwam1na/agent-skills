@@ -135,6 +135,17 @@
           "text": "test_valid_corpus_is_stable_and_read_only proves validate_corpus writes nothing without reading git-ignored paths; a row stays green while an ignored .orchestration file changes during validation and goes red when validation writes a tracked or corpus file, both recorded; a search of tests/ for other whole-checkout scans of ignored live state finds and fixes each, or records none"
         }
       ]
+    },
+    "V26-3330": {
+      "title": "adapter-test and app-check accept another run's server on a shared port",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3330-done",
+          "text": "adapter_contract and run_in_app each refuse after their ready-wait unless the serve they started is still running, naming its exit and stderr tail; the guide case gets a free port through a new pinned substitution; a two-run race row is red before and green after for both, the single-run allow side stays green, nothing left running"
+        }
+      ]
     }
   },
   "finish": [

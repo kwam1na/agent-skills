@@ -666,13 +666,28 @@ POSTURE_HANG = "sleep 240"
 POSTURE_GIT_STUBS = {"fails": "#!/bin/sh\nexit 1\n", "hangs": f"#!/bin/sh\n{POSTURE_HANG} &\nwait\n"}
 
 
+def expanded(base: dict) -> str:
+    """A blob vector's text with each `expand` marker replaced by its nesting, as the vector file's `setup` says."""
+    text = base["text"]
+    for entry in base.get("expand", []):
+        marker, opening, closing, inner = entry["marker"], entry["open"], entry["close"], entry.get("inner", "")
+        assert text.count(marker) == 1, f"{marker} isn't in the text exactly once"
+        if "fillTo" in entry:
+            spare = entry["fillTo"] - len((text.replace(marker, inner)).encode("utf-8"))
+            count = spare // len((opening + closing).encode("utf-8"))
+        else:
+            count = entry["count"]
+        text = text.replace(marker, opening * count + inner + closing * count)
+    return text
+
+
 def posture_tree(repository: Path, base: dict) -> None:
     """Put what a vector's `base` holds at the declaration's path into a checkout."""
     path = repository / POSTURE_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     kind = base["kind"]
     if kind == "blob":
-        data = base64.b64decode(base["base64"]) if "base64" in base else base["text"].encode("utf-8")
+        data = base64.b64decode(base["base64"]) if "base64" in base else expanded(base).encode("utf-8")
         path.write_bytes(data + b" " * (base.get("padTo", len(data)) - len(data)))
     elif kind == "symlink":
         path.symlink_to(base["target"])
@@ -7732,6 +7747,53 @@ class DeliveryPostureReaderTests(unittest.TestCase):
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, skill)
+
+    def test_the_depth_vectors_nest_as_deep_as_they_say(self) -> None:
+        # An independent count of the deepest point, so a vector that drifts from its case shows here, not as agreement.
+        def deepest(text: str) -> int:
+            depth = most = 0
+            decoder = json.JSONDecoder()
+            for token in re.finditer(r'"(?:[^"\\]|\\.)*"|[\[\]{}]', text):
+                if token.group()[0] == '"':
+                    decoder.decode(token.group())  # a real JSON string, or the vector is malformed for another reason
+                elif token.group() in "[{":
+                    depth += 1
+                    most = max(most, depth)
+                else:
+                    depth -= 1
+            self.assertEqual(depth, 0, "brackets don't balance")
+            return most
+        vectors = {vector["id"]: vector for vector in self.file["vectors"]}
+        for name, depth in {"nested-64-deep": 64, "nested-65-deep": 65, "objects-nested-65-deep": 65, "nested-1500-deep": 1500,
+                            "objects-then-arrays-each-64-deep": 64, "closing-brackets-in-a-string-at-depth-64": 64,
+                            "escaped-backslash-ends-a-string-before-65-deep": 65, "sixty-five-sibling-arrays-at-depth-2": 2,
+                            "sixty-five-sibling-objects-at-depth-2": 2, "sixty-five-brackets-in-a-string": 1,
+                            "escaped-quote-then-sixty-five-brackets-in-a-string": 1}.items():
+            with self.subTest(vector=name):
+                self.assertEqual(deepest(expanded(vectors[name]["base"])), depth)
+        filled = expanded(vectors["nested-as-deep-as-64-kib-holds"]["base"]).encode("utf-8")
+        self.assertGreater(len(filled), self.tool.POSTURE_LIMIT_BYTES - 2)
+        self.assertLessEqual(len(filled), self.tool.POSTURE_LIMIT_BYTES)
+        self.assertGreater(deepest(filled.decode("utf-8")), 32000)
+        self.assertEqual(len(re.findall(r"\[", vectors["sixty-five-sibling-arrays-at-depth-2"]["base"]["text"])), 65)
+        self.assertEqual(len(re.findall(r'"o\d+": \{\}', vectors["sixty-five-sibling-objects-at-depth-2"]["base"]["text"])), 65)
+
+    def test_the_posture_table_says_nesting_past_64_levels_is_malformed(self) -> None:
+        # The reader gates a declaration nested past POSTURE_MAX_DEPTH, so the table an adopter reads has to say so.
+        config = " ".join((ROOT / "skills/run-delivery/references/config.md").read_text(encoding="utf-8").split())
+        self.assertEqual(self.tool.POSTURE_MAX_DEPTH, 64)
+        self.assertIn("| Not valid UTF-8 JSON, JSON nesting arrays or objects more than 64 levels deep (the top-level object "
+                      "being 1), an object failing the shape above, or an unknown `posture` | `gate` | `posture_malformed` |",
+                      config)
+
+    def test_neither_page_promises_a_rerun_while_the_base_says_focused(self) -> None:
+        # Under focused no pass runs a fullHealth rerun, so lead-resolve's wording says it waits for gate.
+        def normal(path: str) -> str:
+            return " ".join((ROOT / path).read_text(encoding="utf-8").split())
+        self.assertIn("or asks the supervisor's next pass to rerun a failed `fullHealth` (under the `focused` posture, once "
+                      "the base returns to `gate`).", normal("skills/run-delivery/SKILL.md"))
+        self.assertIn("`lead-resolve full-health --why TEXT` asks the next pass to rerun a failed `fullHealth` (under the "
+                      "`focused` posture, once the base returns to `gate`).", normal("skills/run-delivery/references/config.md"))
 
     def test_the_rule_is_pinned_where_a_delivery_without_the_supervisor_reads_it(self) -> None:
         def normal(path: str) -> str:
