@@ -6782,6 +6782,310 @@ class RunDeliveryDoctorTests(unittest.TestCase):
             self.assertEqual(failing(out), {"video evidence tools": message})
 
 
+# A serve for the two-run race, coordinated through marker files in `sync` so the race happens the same way every
+# time: the first run's serve binds only once the second run's serve has started, which is after the second run found
+# the port free; the second's then finds the port taken. "second-exits" tries the bind and dies of it, as a static
+# server does, a moment after the other has bound; "second-hangs" never listens, as a serve still starting up does;
+# "second-waits" binds as soon as the other run lets the port go.
+RACE_SERVE = r'''
+import functools, http.server, os, socket, socketserver, sys, time
+role, port, site, sync = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
+mark = lambda name: open(os.path.join(sync, name), "w").write(str(os.getpid()))
+def until(name):
+    deadline = time.monotonic() + 60
+    while not os.path.exists(os.path.join(sync, name)):
+        if time.monotonic() > deadline:
+            sys.exit("never saw " + name)
+        time.sleep(0.02)
+if role == "first":
+    mark("first-started")
+    until("second-started")
+else:
+    mark("second-started")
+    until("first-bound")
+    if role == "second-hangs":
+        time.sleep(120)
+        sys.exit(0)
+    if role == "second-waits":  # binds once the other run has let the port go
+        while True:
+            with socket.socket() as probe:
+                if probe.connect_ex(("127.0.0.1", port)) != 0:
+                    break
+            time.sleep(0.05)
+    else:
+        time.sleep(0.3)  # still alive when the port first answers, as a serve slowed by a loaded machine is
+class Server(http.server.ThreadingHTTPServer):
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+server = Server(("127.0.0.1", port), functools.partial(http.server.SimpleHTTPRequestHandler, directory=site))
+mark(role + "-bound")
+server.serve_forever()
+'''
+
+# The first run's check: it waits for the case's release, so the first run's server stays up for as long as the case
+# needs it, then runs the contract check.
+GATED_CHECK = r'''
+import os, runpy, sys, time
+release, check = sys.argv.pop(1), sys.argv.pop(1)
+deadline = time.monotonic() + 60
+while not os.path.exists(release) and time.monotonic() < deadline:
+    time.sleep(0.02)
+sys.argv[0] = check
+runpy.run_path(check, run_name="__main__")
+'''
+
+# The tool's command line with a shorter wait for the serve to listen, so a case can see the wait run out.
+SHORT_READY_TOOL = r'''
+import sys
+sys.path.insert(0, sys.argv[1])
+import run_delivery as flow
+flow.SERVE_READY_SECONDS = float(sys.argv[2])
+flow.main(sys.argv[3:])
+'''
+
+# run_in_app, called as app-check calls it, on a stamped copy of the adapter fixture's page; prints the report.
+RUN_IN_APP = r'''
+import json, shutil, sys, tempfile
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import run_delivery as flow
+flow.CFG = flow.Config(Path.cwd(), need_delivery=False)
+if len(sys.argv) > 2:
+    flow.SERVE_READY_SECONDS = float(sys.argv[2])
+with tempfile.TemporaryDirectory() as tmp:
+    site = Path(tmp) / "site"
+    shutil.copytree(flow.TOOL / "assets/adapter-fixture", site)
+    flow.write_stamp(site, "f" * 40, "e" * 40)
+    try:
+        report = flow.run_in_app(site, {"path": "/", "holds": [], "fails": [], "clicks": [], "evals": [],
+                                        "afterEvals": [], "wait": 800}, [], "race", 5)
+    except flow.Stop as stop:
+        sys.exit("run-delivery: " + str(stop))
+print(json.dumps({"ready": report.get("ready"), "build": report.get("build")}))
+'''
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class ServeRaceTests(unittest.TestCase):
+    """Two runs on one port, each under a lease of its own (as suites running at once each hold their own): the run
+    whose serve loses the port refuses, naming why, and never checks against the other run's server."""
+
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp(prefix="run-delivery-serve-race-"))
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.port = free_port()
+        self.sync = self.root / "sync"
+        self.sync.mkdir()
+        (self.root / "race_serve.py").write_text(RACE_SERVE)
+        (self.root / "static_serve.py").write_text(STATIC_SERVE)
+        (self.root / "contract_check.py").write_text(FAKE_CONTRACT_CHECK)
+        (self.root / "gated_check.py").write_text(GATED_CHECK)
+        (self.root / "home").mkdir()
+        self.env = {**clean_environment(), "HOME": str(self.root / "home")}
+        self.procs: list[subprocess.Popen] = []
+        self.addCleanup(self.nothing_left_running)
+        self.addCleanup(self.stop_everything)
+
+    def adopter(self, name: str, serve: list[str], gated: bool = False) -> Path:
+        """A repository whose binding declares only the in-app adapters, on the case's one port, with its own lock.
+        A gated one's check waits for the case's release first."""
+        repo = self.root / name
+        (repo / ".agents").mkdir(parents=True)
+        sh("git", "init", "-q", "-b", "main", cwd=repo)
+        (repo / ".agents/run-delivery.json").write_text(json.dumps({"schemaVersion": "delivery-flow/1", "inApp": {
+            "lease": "app", "lock": str(self.root / f"{name}.lock"), "port": self.port,
+            "build": {"argv": ["true"], "artifact": "out"}, "serve": {"argv": serve},
+            "check": {"argv": [sys.executable, "-B", *([str(self.root / "gated_check.py"), str(self.sync / "release")]
+                                                       if gated else []),
+                               str(self.root / "contract_check.py"), "{spec}", "{port}", "{args}"]},
+            "lockWaitSeconds": 5, "checkTimeoutSeconds": 60}}, indent=2) + "\n")
+        commit(repo, "binding")
+        return repo
+
+    def race_serve(self, role: str) -> list[str]:
+        return [sys.executable, "-B", str(self.root / "race_serve.py"), role, "{port}", "{dir}", str(self.sync)]
+
+    def start(self, command: str, repo: Path, ready_seconds: float | None = None) -> subprocess.Popen:
+        tool, short = (ROOT / TOOL_RELATIVE).parent, [] if ready_seconds is None else [str(ready_seconds)]
+        if command == "adapter-test":
+            argv = ([sys.executable, "-B", str(ROOT / TOOL_RELATIVE), "adapter-test"] if not short
+                    else [sys.executable, "-B", "-c", SHORT_READY_TOOL, str(tool), *short, "adapter-test"])
+        else:
+            argv = [sys.executable, "-B", "-c", RUN_IN_APP, str(tool), *short]
+        proc = subprocess.Popen(argv, cwd=repo, env=self.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+        self.procs.append(proc)
+        return proc
+
+    def stop_everything(self) -> None:
+        """Each run, by the pid recorded at its start, then any serve group a run's lease recorded and left (a run
+        stopped here never stops its own)."""
+        for proc in self.procs:
+            stop_and_reap(proc)
+            if proc.stdout:
+                proc.stdout.close()
+        for lock in self.root.glob("*.lock"):
+            for group in re.findall(r"pgid (\d+)", lock.read_text()):
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(int(group), signal.SIGKILL)
+
+    def finish(self, proc: subprocess.Popen) -> tuple[int, str]:
+        out, _ = proc.communicate(timeout=180)
+        return proc.returncode, out
+
+    def nothing_left_running(self) -> None:
+        left = []
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            left = [line for line in sh("ps", "-axo", "command=").stdout.splitlines() if str(self.root) in line]
+            if not left:
+                break
+            time.sleep(0.2)
+        self.assertEqual(left, [], "the race left processes running")
+        with socket.socket() as probe:
+            self.assertNotEqual(probe.connect_ex(("127.0.0.1", self.port)), 0, "the race left the port listening")
+
+    def race(self, command: str, loser: str, release_early: bool = False,
+             tag: str = "") -> tuple[tuple[int, str], tuple[int, str]]:
+        """The first run's serve binds only once the second run, having found the port free, has started its own. The
+        first run's server stays up until the second run ends, or, released early, for a second after it binds."""
+        first = self.start(command, self.adopter(f"first{tag}", self.race_serve("first"), gated=True))
+        deadline = time.monotonic() + 60
+        while not (self.sync / "first-started").exists():
+            self.assertLess(time.monotonic(), deadline, "the first run's serve never started")
+            self.assertIsNone(first.poll(), first.stdout.read() if first.poll() is not None else "")
+            time.sleep(0.02)
+        second = self.start(command, self.adopter(f"second{tag}", self.race_serve(loser)))
+        if release_early:
+            while not (self.sync / "first-bound").exists():
+                self.assertLess(time.monotonic(), deadline + 60, "the first run's serve never bound")
+                time.sleep(0.02)
+            time.sleep(1)
+            (self.sync / "release").touch()
+        lost = self.finish(second)
+        (self.sync / "release").touch()
+        done = self.finish(first), lost
+        self.nothing_left_running()  # before the case's own cleanup, which stops what a lease recorded
+        return done
+
+    def assert_refused_for_the_other_server(self, done: tuple[int, str], state: str) -> None:
+        code, out = done
+        self.assertNotEqual(code, 0, f"the run whose serve lost the port went on against the other run's:\n{out}")
+        self.assertIn(f"port {self.port} answered, but not from this run's serve", out)
+        self.assertIn(state, out)
+        self.assertIn(str(self.root / "second.lock.serve.log"), out, "the refusal doesn't say where the serve's output is")
+        self.assertNotIn("Connection refused", out)
+
+    def test_adapter_test_refuses_when_its_serve_dies_of_the_port_another_run_took(self) -> None:
+        winner, loser = self.race("adapter-test", "second-exits")
+        self.assertEqual(winner[0], 0, winner[1])
+        self.assert_refused_for_the_other_server(loser, "This run's serve exited with code 1")
+        self.assertIn("Address already in use", loser[1], "the refusal doesn't carry the serve's own error")
+
+    def test_adapter_test_refuses_when_another_run_answers_while_its_serve_starts(self) -> None:
+        winner, loser = self.race("adapter-test", "second-hangs")
+        self.assertEqual(winner[0], 0, winner[1])
+        self.assert_refused_for_the_other_server(loser, "This run's serve is still running")
+        self.assertIn(f"pid {(self.sync / 'first-started').read_text()} (", loser[1],
+                      "the refusal doesn't name the other run's server")
+
+    def test_an_app_check_refuses_when_its_serve_dies_of_the_port_another_run_took(self) -> None:
+        winner, loser = self.race("run_in_app", "second-exits")
+        self.assertEqual(winner[0], 0, winner[1])
+        self.assertTrue(json.loads(winner[1].strip().splitlines()[-1])["ready"], winner[1])
+        self.assert_refused_for_the_other_server(loser, "This run's serve exited with code 1")
+        self.assertIn("Address already in use", loser[1], "the refusal doesn't carry the serve's own error")
+
+    def test_an_app_check_refuses_when_another_run_answers_while_its_serve_starts(self) -> None:
+        winner, loser = self.race("run_in_app", "second-hangs")
+        self.assertEqual(winner[0], 0, winner[1])
+        self.assert_refused_for_the_other_server(loser, "This run's serve is still running")
+        self.assertIn(f"pid {(self.sync / 'first-started').read_text()} (", loser[1],
+                      "the refusal doesn't name the other run's server")
+
+    def test_a_serve_that_gets_the_port_once_the_other_run_lets_it_go_is_this_runs(self) -> None:
+        """The allow side of the race: the other run answered first, but stopped while this run's serve was still
+        starting, and this run's serve then took the port. Its check runs against its own server."""
+        for command in ("adapter-test", "run_in_app"):
+            with self.subTest(command=command):
+                for marker in self.sync.iterdir():
+                    marker.unlink()
+                winner, second = self.race(command, "second-waits", release_early=True, tag=f"-{command}")
+                self.assertEqual(winner[0], 0, winner[1])
+                self.assertEqual(second[0], 0, second[1])
+                self.assertTrue((self.sync / "second-waits-bound").exists(), "this run's serve never took the port")
+
+    def test_a_single_run_uses_its_own_serve_and_keeps_its_output(self) -> None:
+        """The allow side: alone on the port, each command passes, and its serve's output is kept beside its lock."""
+        for command in ("adapter-test", "run_in_app"):
+            with self.subTest(command=command):
+                repo = self.adopter(f"alone-{command}", [sys.executable, "-B", str(self.root / "static_serve.py"),
+                                                         "{port}", "{dir}"])
+                code, out = self.finish(self.start(command, repo))
+                self.assertEqual(code, 0, out)
+                self.nothing_left_running()
+                log = self.root / f"alone-{command}.lock.serve.log"
+                self.assertIn("GET /.flow-build.json", log.read_text(), "the serve's output wasn't kept")
+
+    def test_a_serve_whose_listener_is_its_own_child_is_its_own(self) -> None:
+        """A serve that runs its server as a child (npm run serve, sh -c ...) listens from the serve's own process
+        group: that listener is this run's."""
+        serve = ["sh", "-c", f'"{sys.executable}" -B "{self.root / "static_serve.py"}" "$0" "$1" & wait', "{port}", "{dir}"]
+        for command in ("adapter-test", "run_in_app"):
+            with self.subTest(command=command):
+                code, out = self.finish(self.start(command, self.adopter(f"child-{command}", serve)))
+                self.assertEqual(code, 0, out)
+                self.nothing_left_running()
+
+    def without_lsof(self) -> None:
+        """The case's commands run where the host can't name a port's listeners: every program on PATH but lsof."""
+        folder = self.root / "bin-without-lsof"
+        folder.mkdir()
+        for directory in os.environ.get("PATH", "").split(os.pathsep):
+            for program in (Path(directory).iterdir() if Path(directory).is_dir() else []):
+                target = folder / program.name
+                if program.name != "lsof" and not target.exists() and os.access(program, os.X_OK):
+                    target.symlink_to(program)
+        self.env = {**self.env, "PATH": str(folder)}
+
+    def test_where_listeners_cant_be_named_a_running_serve_is_taken_as_the_listener(self) -> None:
+        self.without_lsof()
+        for command in ("adapter-test", "run_in_app"):
+            with self.subTest(command=command):
+                repo = self.adopter(f"unnamed-{command}", [sys.executable, "-B", str(self.root / "static_serve.py"),
+                                                           "{port}", "{dir}"])
+                code, out = self.finish(self.start(command, repo))
+                self.assertEqual(code, 0, out)
+                self.nothing_left_running()
+
+    def test_where_listeners_cant_be_named_a_serve_that_died_of_the_port_is_still_refused(self) -> None:
+        self.without_lsof()
+        winner, loser = self.race("run_in_app", "second-exits")
+        self.assertEqual(winner[0], 0, winner[1])
+        self.assertIn("a process this host can't name", loser[1])
+        self.assert_refused_for_the_other_server(loser, "This run's serve exited with code 1")
+
+    def test_a_serve_still_running_that_never_listens_is_named(self) -> None:
+        serve = ["sh", "-c", "echo the serve is still starting >&2; exec sleep 60"]
+        for command in ("adapter-test", "run_in_app"):
+            with self.subTest(command=command):
+                code, out = self.finish(self.start(command, self.adopter(f"silent-{command}", serve), ready_seconds=1))
+                self.assertNotEqual(code, 0, out)
+                self.assertIn(f"the serve command didn't start listening on port {self.port}", out)
+                self.assertIn("the serve is still starting", out)
+                self.nothing_left_running()
+
+    def test_a_serve_that_exits_without_listening_is_named(self) -> None:
+        serve = ["sh", "-c", "echo the serve gave up >&2; exit 3"]
+        for command in ("adapter-test", "run_in_app"):
+            with self.subTest(command=command):
+                code, out = self.finish(self.start(command, self.adopter(f"quit-{command}", serve)))
+                self.assertNotEqual(code, 0, out)
+                self.assertIn(f"the serve command exited with code 3 before it listened on port {self.port}", out)
+                self.assertIn("the serve gave up", out)
+                self.nothing_left_running()
+
+
 GUIDE = ROOT / "skills/run-delivery/references/adopting.md"
 # A marked example block: ```<language> example <kind> [<path>]
 GUIDE_BLOCK = re.compile(r"^```(?P<lang>\w*) example (?P<kind>file|repo|lane|outline)(?: (?P<path>\S+))?\n(?P<body>.*?)^```$",
@@ -6797,6 +7101,7 @@ GUIDE_SUBSTITUTIONS = (
     "doctor -> doctor --offline",
     "the binding's <forge-owner> and <forge-name> -> the fake forge's repository",
     "supervisor.passSeconds -> 1, so the supervisor's passes come within the case's time",
+    "inApp.port -> a free port, so suites running at once on one machine never share the guide's one port",
 )
 FIXTURE_KEYS = {"<delivery-key>": "FX-1", "<story-key>": "FX-2"}
 # Section 8 of the guide: the operating rules, by their opening words.
@@ -6869,6 +7174,12 @@ class RunDeliveryAdoptionGuideTests(unittest.TestCase):
             used.add(GUIDE_SUBSTITUTIONS[0])
             conf["inApp"]["build"]["argv"] = ["sh", "-c", "mkdir -p out && cp src/*.txt out/"]
             conf["inApp"]["serve"]["argv"] = serve_argv(fakes / "static_serve.py")
+            # Each case's lease is its own (its lock is under the case's HOME), so a fixed port would be shared by
+            # every suite on the machine that reached this case at once, with nothing to keep them apart.
+            declared = conf["inApp"]["port"]
+            self.assertIsInstance(declared, int)
+            conf["inApp"]["port"] = next(port for port in iter(free_port, None) if port != declared)
+            used.add(GUIDE_SUBSTITUTIONS[8])
             self.assertTrue(listens_under_stalled_lookup(conf["inApp"]["serve"]["argv"], 5),
                             "the guide's serve waited for a stalled name lookup")
             conf["inApp"]["check"]["argv"] = [sys.executable, "-B", str(fakes / "contract_check.py"), "{spec}", "{port}",
@@ -6878,6 +7189,8 @@ class RunDeliveryAdoptionGuideTests(unittest.TestCase):
             conf["supervisor"] = {"passSeconds": 1}
             used.add(GUIDE_SUBSTITUTIONS[7])
             body = json.dumps(conf, indent=2) + "\n"
+            self.assertNotEqual(json.loads(body)["inApp"]["port"], json.loads(block["body"])["inApp"]["port"],
+                                "the case runs on the guide's own port, which every suite on the machine shares")
         if path == ".agents/orchestration.json" and "<forge-owner>" in body:
             body = body.replace("<forge-owner>", "fixture").replace("<forge-name>", "repository")
             used.add(GUIDE_SUBSTITUTIONS[6])
