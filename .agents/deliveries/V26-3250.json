@@ -21,7 +21,6 @@
         "tests/test_run_delivery_plan_review.py",
         "tests/test_run_delivery_tracker.py",
         "skills/plan-work/*",
-        "docs/solutions/*",
         "catalog.json",
         "profiles/*"
       ]
@@ -38,7 +37,8 @@
         "tests/test_delivery_views_page.py",
         "tests/test_delivery_views_snapshots.py",
         "tests/delivery_views_page/*",
-        "tests/fixtures/delivery-views/*"
+        "tests/fixtures/delivery-views/*",
+        "docs/solutions/*"
       ]
     }
   },
