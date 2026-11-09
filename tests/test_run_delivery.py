@@ -570,8 +570,12 @@ def setup_delivery(fx: Fixture) -> Path:
 POSTURE_VECTORS = ROOT / "tests/fixtures/delivery-posture-vectors.json"
 POSTURE_PATH = ".agents/delivery-posture.json"
 # Every git command fails, or never returns and leaves a child holding its output, as a fetch's transport can.
-# Not `sleep 30...`: the timeout case below looks for that machine-wide, and this stub can run beside it.
-POSTURE_GIT_STUBS = {"fails": "#!/bin/sh\nexit 1\n", "hangs": "#!/bin/sh\nsleep 299 &\nwait\n"}
+# The machine-wide pattern is `pgrep -f "sleep 30"`, which the timeout case once used to find its leftovers: it matched
+# any process whose command line held that text, `sleep 300` among them. That case now checks its own process group,
+# but a hanging stub's sleep still stays out of the pattern, so no search for it, then or now, can find one.
+MACHINE_WIDE_SLEEP = re.compile("sleep 30")
+POSTURE_HANG = "sleep 240"
+POSTURE_GIT_STUBS = {"fails": "#!/bin/sh\nexit 1\n", "hangs": f"#!/bin/sh\n{POSTURE_HANG} &\nwait\n"}
 
 
 def posture_tree(repository: Path, base: dict) -> None:
@@ -6403,7 +6407,7 @@ class DeliveryPostureReaderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             child = Path(folder) / "child.pid"
             stub = Path(folder) / "git"
-            stub.write_text(f'#!/bin/sh\nsleep 299 &\necho $! > "{child}"\nwait\n')
+            stub.write_text(f'#!/bin/sh\n{POSTURE_HANG} &\necho $! > "{child}"\nwait\n')
             stub.chmod(0o755)
             started = time.monotonic()
             with mock.patch.dict(os.environ, {"PATH": f"{folder}{os.pathsep}{os.environ['PATH']}"}):
@@ -6422,6 +6426,31 @@ class DeliveryPostureReaderTests(unittest.TestCase):
         os.kill(pid, signal.SIGKILL)
         self.fail("the child that held the output outlived the bound")
 
+    def test_no_hanging_stub_s_command_line_matches_the_machine_wide_sleep_pattern(self) -> None:
+        for name, text in POSTURE_GIT_STUBS.items():
+            with self.subTest(stub=name):
+                self.assertIsNone(MACHINE_WIDE_SLEEP.search(text), text)
+        # What the pattern matches is a live command line, so read the running stub's own, in its own group.
+        with tempfile.TemporaryDirectory() as folder:
+            stub = Path(folder) / "git"
+            stub.write_text(POSTURE_GIT_STUBS["hangs"])
+            stub.chmod(0o755)
+            proc = subprocess.Popen([str(stub)], start_new_session=True)
+            try:
+                deadline, lines = time.monotonic() + 5, []
+                while time.monotonic() < deadline:
+                    rows = sh("ps", "-A", "-o", "pgid=,command=").stdout.splitlines()
+                    lines = [row.split(None, 1)[1] for row in rows
+                             if row.split(None, 1)[0] == str(proc.pid) and len(row.split(None, 1)) == 2]
+                    if any("sleep" in line for line in lines):
+                        break
+                    time.sleep(0.05)
+                self.assertTrue(any(line.split()[:2] == POSTURE_HANG.split() for line in lines), lines)
+                self.assertEqual([line for line in lines if MACHINE_WIDE_SLEEP.search(line)], [], lines)
+            finally:
+                os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait()
+
     def test_a_tip_with_a_declaration_in_a_subfolder_read_from_there_gives_the_same_answer(self) -> None:
         vector = next(v for v in self.file["vectors"] if v["id"] == "valid-focused")
         with tempfile.TemporaryDirectory() as folder:
@@ -6439,6 +6468,13 @@ class DeliveryPostureReaderTests(unittest.TestCase):
             with self.subTest(case=name):
                 said = self.tool.posture_said({**declared, **change})
                 self.assertTrue(said["reason"].strip())
+                # delivery-plan/1's caps, whatever the declaration held.
+                self.assertLessEqual(len(said["source"]), 200, said)
+                self.assertLessEqual(len(said["reason"]), 600, said)
+                if name == "long source":
+                    self.assertEqual(said["source"], ("o/" + "b" * 500)[:200])
+                if name == "long":
+                    self.assertEqual(said["reason"], "x" * 600)
                 said["reason"].encode("utf-8")
                 closing = {"fullHealth": "skipped", **said}
                 views.validate_plan({**plan(), "closeOut": closing})
@@ -6542,6 +6578,17 @@ class DeliveryPostureReaderTests(unittest.TestCase):
         self.assertIn("Nothing runs in its place, and no `fullHealth` runs after a merge either", skill)
         self.assertIn("remains the backstop for anything a selection missed, unless the base declares the `focused` posture", guide)
         self.assertIn("say the run was skipped under the posture, naming its source and reason", guide)
+        # fullHealth is a backstop only under gate: under focused nothing stands in for what a selection left out.
+        self.assertIn("Under `gate` it is the backstop for every lead-selected check set: anything a selection left out "
+                      "runs here. Under `focused` nothing is: a check a selection left out never runs.", guide)
+        self.assertNotIn("It is the backstop for every", guide)
+        self.assertIn("A selection is the lead's judgment; the post-merge `fullHealth` run is its backstop, unless the "
+                      "base declares the `focused` posture.", skill)
+        config = normal("skills/run-delivery/references/config.md")
+        self.assertIn("the post-merge tier: once the delivery has merged anything, and unless the base declares the "
+                      "`focused` posture, the binding's `fullHealth` at the base head", config)
+        self.assertIn("a failed `fullHealth` at the current base head, unless the base declares the `focused` posture, "
+                      "a broken base", config)
 
 
 
