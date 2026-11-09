@@ -14,18 +14,7 @@
   },
   "lanes": {
     "lane-1": {
-      "owns": [
-        "product-runtime/*",
-        "docs/product-generation.md",
-        "README.md",
-        "tests/test_product_release.py",
-        "tests/test_product_descriptors.py",
-        "tests/test_product_launcher.py",
-        "tests/test_cut_release.py",
-        "tests/built_product.py",
-        "tests/test_delivery_posture_vectors.py",
-        "tests/fixtures/delivery-posture-vectors.json"
-      ]
+      "owns": []
     },
     "lane-2": {
       "owns": [
@@ -35,7 +24,17 @@
         "tests/test_run_delivery.py",
         "tests/test_run_delivery_supervisor.py",
         "provenance.lock.json",
-        "docs/solutions/*"
+        "docs/solutions/*",
+        "tests/test_delivery_posture_vectors.py",
+        "tests/fixtures/delivery-posture-vectors.json",
+        "tests/test_product_release.py",
+        "tests/built_product.py",
+        "product-runtime/*",
+        "docs/product-generation.md",
+        "README.md",
+        "tests/test_product_descriptors.py",
+        "tests/test_product_launcher.py",
+        "tests/test_cut_release.py"
       ]
     }
   },

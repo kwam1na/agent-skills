@@ -16,6 +16,7 @@ their own signal handlers, working directory and module state.
 from __future__ import annotations
 
 import argparse
+import atexit
 import base64
 import contextlib
 import datetime
@@ -373,6 +374,7 @@ def host_terms(text: str) -> list[str]:
 class Fixture:
     def __init__(self, generation: Path, receipt: Path):
         self.tmp = Path(tempfile.mkdtemp(prefix="run-delivery-characterization-"))
+        watch_case(self.tmp)
         self.origin = self.tmp / "origin.git"
         self.main = self.tmp / "main"
         self.port = free_port()
@@ -459,6 +461,7 @@ class Fixture:
         stop_supervisors(self.tmp)
         self.stop_in_app()
         shutil.rmtree(self.tmp, ignore_errors=True)
+        forget_case(self.tmp)
 
     def stop_in_app(self) -> None:
         """Stop what a killed in-app holder left running. Its lease still names the groups it started, and taking the
@@ -476,19 +479,45 @@ class Fixture:
             time.sleep(0.1)
 
 
-def stop_supervisors(root: Path) -> None:
-    """Stop any supervisor a case started under this folder, and what a killed one left: a held lock's recorded pid
-    leads its group, and a lock nobody holds still names the group its children run in. Only a child still in that
-    group is the case's own."""
-    for lock in root.rglob("*.supervisor.lock"):
-        with open(lock, "a+") as probe:
+def locks_under(root: Path, suffix: str) -> list[Path]:
+    """The lock files under a case's folder. The walk goes on past a folder removed while it walks, as the merge
+    queue removes its work checkouts whenever it likes."""
+    found = []
+    for folder, _, files in os.walk(root, onerror=lambda error: None):
+        found += [Path(folder) / name for name in files if name.endswith(suffix)]
+    return found
+
+
+def lock_record(lock: Path) -> tuple[bool, dict] | None:
+    """(whether a process holds the lock, what it records), or None once the lock is gone. Opened to read, so a lock
+    removed meanwhile is never made again."""
+    try:
+        with open(lock, "rb") as probe:
             try:
                 fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 fcntl.flock(probe, fcntl.LOCK_UN)
                 held = False
             except BlockingIOError:
                 held = True
-        recorded = json.loads(lock.read_text() or "{}")
+            text = probe.read().decode(errors="replace")
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    try:
+        recorded = json.loads(text or "{}")
+    except ValueError:  # a lock being written
+        recorded = {}
+    return held, recorded if isinstance(recorded, dict) else {}
+
+
+def stop_supervisors(root: Path) -> None:
+    """Stop any supervisor a case started under this folder, and what a killed one left: a held lock's recorded pid
+    leads its group, and a lock nobody holds still names the group its children run in. Only a child still in that
+    group is the case's own."""
+    for lock in locks_under(root, ".supervisor.lock"):
+        read = lock_record(lock)
+        if read is None:
+            continue
+        held, recorded = read
         pid = recorded.get("pid")
         if not isinstance(pid, int) or pid <= 1:
             continue
@@ -502,18 +531,59 @@ def stop_supervisors(root: Path) -> None:
                 os.killpg(pid, signal.SIGKILL)
     # A post-merge fullHealth run leads a session of its own, so it outlives its supervisor: stop it while it holds its
     # lock, and only then.
-    for lock in root.rglob("*.full-health.lock"):
-        with open(lock, "a+") as probe:
-            try:
-                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                fcntl.flock(probe, fcntl.LOCK_UN)
-                continue
-            except BlockingIOError:
-                pass
-        pid = json.loads(lock.read_text() or "{}").get("pid")
+    for lock in locks_under(root, ".full-health.lock"):
+        read = lock_record(lock)
+        if read is None or not read[0]:
+            continue
+        pid = read[1].get("pid")
         if isinstance(pid, int) and pid > 1:
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(pid, signal.SIGKILL)
+
+
+# The case folders whose supervisors are still this process's to stop. A supervisor runs in a session of its own,
+# outside the test runner's process group, so when the runner stops a worker (SIGTERM, a grace, then SIGKILL) only
+# the worker itself can stop it: on SIGTERM or SIGHUP, and at exit, it stops every live case's supervisors first.
+LIVE_CASES: list[Path] = []
+_INTERRUPT_HANDLERS: dict[int, object] = {}
+_WATCHING: list[bool] = []  # set once the handlers and the exit hook are in place
+
+
+def stop_live_cases() -> None:
+    for folder in list(LIVE_CASES):
+        with contextlib.suppress(Exception):
+            stop_supervisors(folder)
+
+
+def _interrupted(signum, frame) -> None:
+    stop_live_cases()
+    earlier = _INTERRUPT_HANDLERS.get(signum, signal.SIG_DFL)
+    if callable(earlier):
+        earlier(signum, frame)
+        return
+    signal.signal(signum, signal.SIG_DFL)
+    os.kill(os.getpid(), signum)  # then end as the signal would have
+
+
+def watch_case(folder: Path) -> None:
+    """Stop this case's supervisors if this process is interrupted or exits before the case's own cleanup does. The
+    first call, from the main thread, puts the handlers and the exit hook in place, once; a signal this process
+    ignores stays ignored."""
+    if not _WATCHING and threading.current_thread() is threading.main_thread():
+        _WATCHING.append(True)
+        for signum in (signal.SIGTERM, signal.SIGHUP):
+            earlier = signal.getsignal(signum)
+            if earlier is signal.SIG_IGN:
+                continue
+            _INTERRUPT_HANDLERS[signum] = earlier
+            signal.signal(signum, _interrupted)
+        atexit.register(stop_live_cases)
+    LIVE_CASES.append(folder)
+
+
+def forget_case(folder: Path) -> None:
+    with contextlib.suppress(ValueError):
+        LIVE_CASES.remove(folder)
 
 
 def group_alive(group: int) -> bool:
@@ -2967,7 +3037,8 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         left = [line for line in out.splitlines() if line.startswith("  left: ")]
         self.assertEqual(code, 1, out)
         self.assertEqual(left, ["  left: the in-app lease is held (app-check pid 1 since then); gave up after 0s"], out)
-        self.assertNotIn("kill", out, "a held lease's server got a kill hint")
+        # The hint's own form, `kill <pid>`: the word alone also sits in paths, such as a checkout of agent-skills.
+        self.assertNotRegex(out, r"\bkill \d", "a held lease's server got a kill hint")
         self.assertNotIn("is free", out, "a held lease was reported free")
         self.assertIsNone(listener.poll(), "lead-close stopped the server a live check holds")
 
@@ -6448,8 +6519,10 @@ class RunDeliveryAdoptionGuideTests(unittest.TestCase):
     def test_the_guide_takes_an_empty_repository_to_a_closed_delivery(self) -> None:
         root = Path(tempfile.mkdtemp(prefix="run-delivery-adopter-"))
         self.addCleanup(shutil.rmtree, root, True)
+        self.addCleanup(forget_case, root)
         # Registered after the folder's removal, so it runs first: a failed case stops the supervisor it started.
         self.addCleanup(stop_supervisors, root)
+        watch_case(root)  # and an interrupted one, too
         fakes, home, bin_dir = root / "fakes", root / "home", root / "bin"
         for folder in (fakes, home, bin_dir):
             folder.mkdir()
