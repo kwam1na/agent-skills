@@ -4368,7 +4368,8 @@ class RunDeliveryPlanTests(unittest.TestCase):
         code, out = fx.flow("lead-plan", "change", "--kind", "changed", "--subjects", "FX-3", "--criterion", "two-renders",
                             "--text", "Two", "--why", "w", cwd=m)
         self.assertEqual(code, 2, out)
-        self.assertIn("diverged from origin/feature/FX-1", out)
+        self.assertIn(f"{m} is behind origin/feature/FX-1; bring it up to date first: git merge --ff-only "
+                      "origin/feature/FX-1", out)
         self.assertEqual((path.read_text(), self.written(fx)), before)
 
     def test_a_finish_change_adds_the_line_to_the_record_and_the_plan(self) -> None:
@@ -5364,13 +5365,24 @@ class RunDeliveryLeadWorktreeTests(unittest.TestCase):
         plan = json.loads((fx.tmp / "record/plan.json").read_text())
         self.assertEqual([(c["kind"], c["after"]) for c in plan["changes"]],
                          [("relaxed", "Thing one says something when it fails")])
-        # A second change before that push is ahead of the base with this delivery's own plan commit only: allowed.
+        # More changes before that push are ahead of the base with this delivery's own plan commits only: allowed.
+        # An added story commits the plan beside the delivery file.
+        code, out = fx.flow("lead-plan", "change", "--kind", "added", "--subjects", "FX-7", "--title", "Thing seven",
+                            "--text", "Thing seven loads", "--why", "The operator asked for it.", "--lane", "lane-1",
+                            cwd=lead)
+        self.assertEqual(code, 0, out)
+        self.assertIn("### FX-7. Thing seven", (lead / "docs/plan.md").read_text())
         code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "done", cwd=lead)
         self.assertEqual(code, 0, out)
+        # Before any push, the rebuilt plan is the worktree's: both changes and the approval, none the base's older file.
+        plan = json.loads((fx.tmp / "record/plan.json").read_text())
+        self.assertEqual(plan["approvals"][0]["state"], "done")
+        self.assertIn("FX-7", [unit["subject"] for unit in plan["units"]])
+        self.assertEqual([c["kind"] for c in plan["changes"]], ["relaxed", "added"])
         on_base = self.pushed(fx, out, lead)
         on_base_criteria = {c["id"]: c["text"] for c in on_base["stories"]["FX-2"]["criteria"]}
-        self.assertEqual((on_base_criteria["one-fails"], on_base["approvals"][0]["state"]),
-                         ("Thing one says something when it fails", "done"))
+        self.assertEqual((on_base_criteria["one-fails"], on_base["approvals"][0]["state"], "FX-7" in on_base["stories"]),
+                         ("Thing one says something when it fails", "done", True))
 
     def test_a_lead_worktree_behind_the_base_is_refused_naming_the_fix(self) -> None:
         fx, lead, path = self.fixture()

@@ -403,7 +403,8 @@ checked, and why.
 
 Once the delivery has started, change the plan's criteria and finish lines only through `lead-plan change`. It records
 what the plan said before and after and why, edits the delivery file, and commits it; it never pushes, and it refuses
-on a checkout with uncommitted changes or one behind the base. `--kind changed` or `relaxed` rewords a criterion,
+on a checkout with uncommitted changes, one behind the base or diverged from it, and a story branch. It runs in the
+lead's checkout of the base, or in a lead worktree of its own (section 8). `--kind changed` or `relaxed` rewords a criterion,
 `added` adds one to a story (or, for a key the delivery doesn't hold yet, the whole story, below), `removed` takes stories out of the delivery (the plan keeps them, marked removed), and
 `finish` changes or adds a finish line's `covers`. Push the commit so lanes see it:
 
@@ -693,6 +694,15 @@ change and the delivery file reach `main`, and each integration base, through a 
 - **The lead works from a checkout of the delivery's base.** On a base the binding serves, the lead's commands read the
   settings from its own working tree; anywhere else, they read the base on the remote. Keep the lead's checkout on the
   delivery's base, current with the remote.
+- **Several deliveries on one machine: one lead worktree each.** Git checks a branch out in one worktree only, so
+  when the operator's checkout already holds the base, each delivery's lead works in a worktree of its own on its
+  own branch, such as `.orchestration/lanes/<delivery>` on `lead/<delivery>`, made from the base on the remote and
+  brought up to date with `git merge --ff-only origin/<base>`. No lead commits in the operator's checkout or in
+  another lead's. `lead-plan change` and `lead-plan approval` run there when its HEAD is the base's tip, or ahead of
+  it with that delivery's own delivery file and plan commits only: they read the worktree's own delivery file, commit
+  it there, and print the push, `git push origin HEAD:<base>`, which you run. A worktree behind the base, diverged from
+  it, ahead with any other commit (another lead's, say), or with uncommitted changes is refused, naming the reason.
+  `doctor --delivery` reads a lead worktree as it reads the base's checkout.
 - **The start move happens at each `lane-start`.** A story's tracker start waits for its lane to begin it: assigning a
   story moves nothing, and reassigning one already past started never moves it back.
 

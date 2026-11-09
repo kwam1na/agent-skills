@@ -3904,6 +3904,40 @@ def rebuild_plan_quietly(c) -> str:
     return f"plan: {moved}" if moved else "plan: unchanged"
 
 
+def lead_plan_checkout(c) -> Path:
+    """The lead's checkout a plan change or approval commits in: on the base branch, as before, or a lead's own
+    worktree on its own branch (several deliveries on one machine, the operator's checkout holding the base), whose
+    HEAD is the base's tip or ahead of it with this delivery's own delivery file and plan commits only. Either is
+    clean and holds the base; a story branch is a lane's. A lead worktree then reads its own working tree."""
+    root = c.root
+    branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=root)
+    if any(branch == c.branch(key) for key in c.stories):
+        raise Stop(f"run lead-plan in the lead's checkout of {c.base_branch}, or in a lead worktree of its own; "
+                   f"{branch} is a story branch")
+    if git("status", "--porcelain", cwd=root):
+        raise Stop(f"{root} has uncommitted changes; commit or remove them first, so the plan change commits alone")
+    git("fetch", "-q", c.remote, c.base_branch, cwd=root)
+    if not is_ancestor(c.base_ref, "HEAD"):
+        if is_ancestor("HEAD", c.base_ref):
+            raise Stop(f"{root} is behind {c.base_ref}; bring it up to date first: git merge --ff-only {c.base_ref}")
+        raise Stop(f"{root} has diverged from {c.base_ref}; bring it up to date first")
+    if branch == c.base_branch:
+        return root
+    own = {f"{c.deliveries_rel}/{c.delivery}.json", Path(c.plan).as_posix()}
+    for sha in git("rev-list", "--reverse", f"{c.base_ref}..HEAD", cwd=root).split():
+        foreign = [name for name in git("diff-tree", "--no-commit-id", "--name-only", "-r", sha, cwd=root).split()
+                   if name not in own]
+        if foreign:
+            subject = git("log", "-1", "--format=%s", sha, cwd=root)
+            raise Stop(f"{root} is ahead of {c.base_ref} with {sha[:12]} ({subject}), which changes "
+                       f"{', '.join(foreign)}: a lead worktree off {c.base_branch} may be ahead with only "
+                       f"{c.delivery}'s own delivery file and plan; push that commit or drop it first")
+    # What the base holds, plus this delivery's own unpushed plan commits: the working tree is the plan to change.
+    c.shelf = Shelf(root)
+    c.load_delivery(c.delivery)
+    return root
+
+
 def lead_plan(args) -> None:
     """Record a change to the approved plan in the delivery file, or a reason for one already recorded."""
     c = cfg()
@@ -3926,15 +3960,7 @@ def lead_plan(args) -> None:
             rebuild_plan(c)
         print(f"recorded the reason for {args.change}")
         return
-    root = c.root
-    branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=root)
-    if branch != c.base_branch:
-        raise Stop(f"run lead-plan in the lead's checkout of {c.base_branch}; this one is on {branch}")
-    if git("status", "--porcelain", cwd=root):
-        raise Stop(f"{root} has uncommitted changes; commit or remove them first, so the plan change commits alone")
-    git("fetch", "-q", c.remote, c.base_branch, cwd=root)
-    if not is_ancestor(c.base_ref, "HEAD"):
-        raise Stop(f"{root} has diverged from {c.base_ref}; bring it up to date first")
+    root = lead_plan_checkout(c)
     raw = json.loads(c.delivery_path.read_text())
     if args.action == "approval":
         plan_approval(c, raw, args)
