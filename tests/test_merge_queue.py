@@ -5858,6 +5858,132 @@ class LeadSelectionTests(MergeQueueTestCase):
         self.assertNotEqual(adopter.item("first")["stage"], "merged")
 
 
+class CheckCatalogueQueueTests(MergeQueueTestCase):
+    """A selection by catalogue id runs as one by full entries, and a base re-run is recorded with the head it checked."""
+
+    def catalogue_adopter(self) -> Adopter:
+        return self.adopter({"selection": {
+            "lead": True,
+            "catalogue": [check_entry("focused", "src/app.txt"), check_entry("guard", prerequisites=["guard-setup"]),
+                          check_entry("guard-setup"), check_entry("lib", "src/lib.txt"),
+                          check_entry("suite", "--fail-with", "test_app")],
+            "guards": ["guard"],
+        }})
+
+    def ran(self, adopter: Adopter) -> list[str]:
+        return [line.split()[1] for line in adopter.log_lines() if line.startswith("check ")]
+
+    def select_tool(self, adopter: Adopter, subject: str, checks: str) -> dict:
+        """select on the command line, from the operator's checkout, after it fetched the base."""
+        run("fetch", "--quiet", "origin", cwd=adopter.operator)
+        binding = adopter.root / "binding.json"
+        binding.write_text(json.dumps(adopter.binding), encoding="utf-8")
+        completed = subprocess.run(
+            [PY, "-B", str(SCRIPTS / "delivery_state.py"), "--dir", str(adopter.state), "select", "--subject", subject,
+             "--binding", str(binding), "--head", adopter.item(subject)["head"], "--checks", checks,
+             "--reason", "the lead's reason", "--repo", str(adopter.operator)],
+            capture_output=True, text=True, check=False)
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        return json.loads(completed.stdout)
+
+    def test_the_queue_runs_a_selection_by_ids_the_same_as_one_by_full_entries(self) -> None:
+        adopter = self.catalogue_adopter()
+        self.candidate(adopter, {"src/app.txt": "app two\n"})
+        result = self.select_tool(adopter, "feature", "focused")
+        self.assertEqual(result["item"]["leadSelection"]["checks"],
+                         [check_entry("focused", "src/app.txt"), check_entry("guard-setup"),
+                          check_entry("guard", prerequisites=["guard-setup"])])
+        results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        selection = next(r.document() for r in results if r.document()["selection"] is not None)["selection"]
+        self.assertEqual(selection["checks"], ["focused", "guard-setup", "guard", "always"])
+        self.assertEqual(selection["lead"]["members"][0]["checks"], ["focused", "guard-setup", "guard"])
+        self.assertEqual(sorted(self.ran(adopter)), ["always", "focused", "guard", "guard-setup"])
+
+    def test_a_selection_recorded_before_the_binding_named_a_guard_still_runs_the_guard(self) -> None:
+        adopter = self.catalogue_adopter()
+        self.candidate(adopter, {"src/app.txt": "app two\n"})
+        unguarded = {**adopter.binding, "selection": {**adopter.binding["selection"], "guards": []}}
+        state_tool.select_checks(adopter.state, "feature", binding=unguarded, head=adopter.item("feature")["head"],
+                                 checks=["focused"], reason="before the guard", repo=adopter.operator)
+        self.assertEqual([check["id"] for check in adopter.item("feature")["leadSelection"]["checks"]], ["focused"])
+        results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        document = next(r.document() for r in results if r.document()["selection"] is not None)
+        # The guard brings its catalogue prerequisite with it.
+        self.assertEqual(document["selection"]["checks"], ["focused", "guard-setup", "guard", "always"])
+        self.assertTrue(any("added the binding's guards guard" in note for note in document["notes"]), document["notes"])
+        self.assertEqual(sorted(self.ran(adopter)), ["always", "focused", "guard", "guard-setup"])
+
+    def test_a_failing_base_rerun_is_recorded_with_its_head_and_select_warns_at_that_head(self) -> None:
+        adopter = self.catalogue_adopter()
+        base = adopter.advance_base({"src/app.txt": "FAIL on base\n", "gen/generated.txt": "FAIL on base\nlib one\n"})
+        self.candidate(adopter, {"src/lib.txt": "lib two\n"})
+        self.select_tool(adopter, "feature", "focused")
+        document = self.assertStopped(self.run_queue(adopter, "feature"), "base_broken")
+        self.assertIn("focused", document["stop"]["detail"])
+        [entry] = state_tool.read_state(adopter.state)["meta"]["baseReruns"]
+        self.assertEqual((entry["check"], entry["result"], entry["subject"]), ("focused", "failed", "feature"))
+        self.assertEqual(entry["baseHead"], base)
+        self.assertEqual(entry["baseHead"], adopter.tip("main"))
+        self.assertNotEqual(entry["baseHead"], adopter.item("feature")["syncedHead"])
+        warned = self.select_tool(adopter, "feature", "focused")
+        self.assertEqual(warned["baseHead"], base)
+        [warning] = warned["warnings"]
+        self.assertIn("focused", warning)
+        self.assertIn(base, warning)
+        # A check not re-run there gives no warning, and the head is known.
+        quiet = self.select_tool(adopter, "feature", "lib")
+        self.assertEqual((quiet["warnings"], quiet["notes"]), ([], []))
+
+    def test_a_passing_base_rerun_is_recorded_as_passed_and_the_list_keeps_its_bound(self) -> None:
+        adopter = self.catalogue_adopter()
+        filler = [{"check": "old", "baseHead": "c" * 40, "result": "failed", "subject": "old",
+                   "recordedAt": "2026-11-01T00:00:00Z"}] * state_tool.BASE_RERUNS_KEPT
+        current = state_tool.read_state(adopter.state)
+        state_tool.patch(adopter.state, writer="runner", version=current["version"], assignments={"/meta/baseReruns": filler})
+        # The suite fails with the candidate's change and passes on the base, whose re-run clears it.
+        self.candidate(adopter, {"src/app.txt": "app two\n"})
+        self.select_tool(adopter, "feature", "suite")
+        self.assertStopped(self.run_queue(adopter, "feature"), "check_failed")
+        reruns = state_tool.read_state(adopter.state)["meta"]["baseReruns"]
+        self.assertEqual(len(reruns), state_tool.BASE_RERUNS_KEPT)
+        self.assertEqual((reruns[-1]["check"], reruns[-1]["result"], reruns[-1]["baseHead"]),
+                         ("suite", "passed", adopter.tip("main")))
+        self.assertEqual(reruns[-2]["check"], "old")
+        quiet = self.select_tool(adopter, "feature", "suite")
+        self.assertEqual((quiet["warnings"], quiet["notes"]), ([], []))
+
+    def test_the_binding_checks_its_catalogue_guards_and_readers(self) -> None:
+        binding = self.catalogue_adopter().binding
+        self.assertEqual(queue.binding_errors(binding), [])
+        selection = binding["selection"]
+        reading = {**binding, "selection": {**selection, "readers": [{"paths": ["src/**"], "checks": ["lib"]}]}}
+        self.assertEqual(queue.binding_errors(reading), [])
+        self.assertTrue(Draft202012Validator(schema("orchestration-binding")).is_valid(reading))
+        cases = {
+            "unknown guard": ({"guards": ["missing"]}, "/selection/guards"),
+            "unknown reader": ({"readers": [{"paths": ["src/**"], "checks": ["missing"]}]}, "/selection/readers/0"),
+            "binding id": ({"catalogue": [*selection["catalogue"], check_entry("always")]}, "/selection/catalogue"),
+            "unknown profile": ({"catalogue": [check_entry("p", environmentProfile="missing")], "guards": []},
+                                "/selection/catalogue"),
+            "over the ceiling": ({"catalogue": [check_entry("p", timeoutSeconds=61)], "guards": []}, "/selection/catalogue"),
+            "cycle": ({"catalogue": [check_entry("a", prerequisites=["b"]), check_entry("b", prerequisites=["a"])],
+                       "guards": []}, "/selection/catalogue"),
+            "outside prerequisite": ({"catalogue": [check_entry("a", prerequisites=["always"])], "guards": []},
+                                     "/selection/catalogue"),
+        }
+        # A check exactly at the ceiling is within it.
+        at_ceiling = {**binding, "selection": {**selection, "catalogue": [*selection["catalogue"],
+                                                                         check_entry("p", timeoutSeconds=60)]}}
+        self.assertEqual(queue.binding_errors(at_ceiling), [])
+        for name, (changes, where) in cases.items():
+            with self.subTest(name):
+                errors = queue.binding_errors({**binding, "selection": {**selection, **changes}})
+                self.assertTrue(errors)
+                self.assertTrue(all(error.startswith(where) for error in errors), errors)
+
+
 # What a refused step's stop ends with: its reason, then the log that keeps its whole output.
 KEPT_AFTER = r"{}; its whole output is in logs/\S+\.log under the state directory\Z"
 

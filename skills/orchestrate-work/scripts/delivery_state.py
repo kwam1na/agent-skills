@@ -100,7 +100,7 @@ SELECTOR = re.compile(r"^(?P<array>[a-z]+)\[(?P<key>[A-Za-z]+)=(?P<value>[^\]]+)
 # Fields only the runner writes. Everything else, apart from the fields the
 # tool itself maintains, belongs to the lead.
 CLOSED_KIND = "delivery.closed"
-RUNNER_META = ("checking", "baseHead", "releasedHead", "checkHistory", "sources", "sourceReports")
+RUNNER_META = ("checking", "baseHead", "releasedHead", "checkHistory", "baseReruns", "sources", "sourceReports")
 RUNNER_QUEUE = ("stage", "checks", "syncedHead", "checkSelection")
 # Written only by a lane's hand-off, through the tool: no patch, the lead's or the runner's, changes it.
 HANDOFF_QUEUE = ("evidence",)
@@ -1106,8 +1106,201 @@ def lead_selection_errors(checks: object, binding: dict) -> list[str]:
     return problems
 
 
+def _binding_pattern(pattern: str) -> re.Pattern[str]:
+    """A binding path pattern, as the runner reads one: ``*`` matches within one segment and ``**`` any number."""
+    parts = []
+    index = 0
+    while index < len(pattern):
+        if pattern.startswith("**/", index):
+            parts.append("(?:.*/)?")
+            index += 3
+        elif pattern.startswith("**", index):
+            parts.append(".*")
+            index += 2
+        elif pattern[index] == "*":
+            parts.append("[^/]*")
+            index += 1
+        elif pattern[index] == "?":
+            parts.append("[^/]")
+            index += 1
+        else:
+            parts.append(re.escape(pattern[index]))
+            index += 1
+    return re.compile("".join(parts) + r"\Z")
+
+
+def _git_out(repo: Path, *arguments: str) -> str | None:
+    """A git command's stdout in ``repo``, or None when it fails or git is missing."""
+    try:
+        completed = subprocess.run(["git", "-C", str(repo), *arguments], capture_output=True, check=False,
+                                   stdin=subprocess.DEVNULL, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    return completed.stdout.decode("utf-8", "replace")
+
+
+def current_base_head(repo: Path, binding: dict) -> str | None:
+    """The base head the checkout ``repo`` holds for the binding's base, from its remote-tracking ref; None unread."""
+    base = binding.get("base")
+    if not (isinstance(base, dict) and isinstance(base.get("remote"), str) and isinstance(base.get("ref"), str)):
+        return None
+    out = _git_out(repo, "rev-parse", "--verify", "--quiet", f"refs/remotes/{base['remote']}/{base['ref']}^{{commit}}")
+    head = (out or "").strip()
+    return head if re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", head) else None
+
+
+def candidate_changes(repo: Path, base_head: str, head: str) -> list[str] | None:
+    """The paths ``head`` changes from where it left the base, a rename as both of its paths; None unread."""
+    if not all(re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", commit or "") for commit in (base_head, head)):
+        return None
+    out = _git_out(repo, "diff", "--name-only", "--no-renames", "-z", f"{base_head}...{head}", "--")
+    if out is None:
+        return None
+    return sorted({path for path in out.split("\0") if path})
+
+
+def catalogue_problems(binding: dict) -> list[str]:
+    """What is wrong with the binding's catalogue, guards and readers, beyond their shape."""
+    selection = binding.get("selection") if isinstance(binding.get("selection"), dict) else {}
+    catalogue = [entry for entry in selection.get("catalogue") or [] if isinstance(entry, dict)]
+    ids = [entry.get("id") for entry in catalogue]
+    problems = []
+    if len(ids) != len(set(ids)):
+        problems.append("/selection/catalogue: ids must be unique")
+    own = {check.get("id") for name in ("alwaysRun", "fallback") for check in binding.get(name) or []
+           if isinstance(check, dict)}
+    profiles = binding.get("profiles") if isinstance(binding.get("profiles"), dict) else {}
+    ceiling = binding.get("checkTimeoutCeiling")
+    for entry in catalogue:
+        if entry.get("id") in own:
+            problems.append(f"/selection/catalogue: {entry.get('id')} reuses the id of a binding check")
+        if "environmentProfile" in entry and entry["environmentProfile"] not in profiles:
+            problems.append(f"/selection/catalogue: {entry.get('id')} names unknown environment profile "
+                            f"{entry['environmentProfile']}")
+        if isinstance(ceiling, int) and isinstance(entry.get("timeoutSeconds"), int) and entry["timeoutSeconds"] > ceiling:
+            problems.append(f"/selection/catalogue: {entry.get('id')}: timeoutSeconds above the ceiling")
+        missing = [name for name in entry.get("prerequisites") or [] if name not in ids]
+        if missing:
+            problems.append(f"/selection/catalogue: {entry.get('id')}'s prerequisites name checks outside the catalogue {missing}")
+    # A cycle is traced only through unique ids whose prerequisites all name catalogue checks.
+    sound = len(ids) == len(set(ids)) and all(name in ids for entry in catalogue for name in entry.get("prerequisites") or [])
+    if sound:
+        done: set = set()
+        remaining = list(catalogue)
+        while remaining:
+            ready = [entry for entry in remaining if all(name in done for name in entry.get("prerequisites") or [])]
+            if not ready:
+                problems.append("/selection/catalogue: prerequisites form a cycle among "
+                                + ", ".join(sorted(str(entry.get("id")) for entry in remaining)))
+                break
+            done.add(ready[0].get("id"))
+            remaining.remove(ready[0])
+    for name in selection.get("guards") or []:
+        if name not in ids:
+            problems.append(f"/selection/guards: {name} is not a catalogue id")
+    guards = selection.get("guards") or []
+    if len(guards) != len(set(guards)):
+        problems.append("/selection/guards: ids must be unique")
+    for index, reader in enumerate(selection.get("readers") or []):
+        if isinstance(reader, dict) and (not reader.get("paths") or not reader.get("checks")):
+            problems.append(f"/selection/readers/{index}: name at least one path and one check")
+        for name in reader.get("checks") or [] if isinstance(reader, dict) else []:
+            if name not in ids:
+                problems.append(f"/selection/readers/{index}: {name} is not a catalogue id")
+    return problems
+
+
+def resolve_selection(checks: object, binding: dict, changed: Callable[[], list[str] | None]) -> tuple[list, list[dict]]:
+    """The lead's checks as full entries, with the guards and the readers of what the candidate changes added.
+
+    ``checks`` is a list whose strings are catalogue ids and whose objects are full entries, so a JSON list as
+    before selects exactly what it lists, plus the guards. An id brings its catalogue prerequisites with it.
+    ``changed`` gives the candidate's changed paths; it is called only when the binding declares readers. Returns
+    the checks and what was added beyond what the lead named, each ``{id, why}``.
+    """
+    if not isinstance(checks, list):
+        return checks, []  # type: ignore[return-value]
+    selection = binding.get("selection") if isinstance(binding.get("selection"), dict) else {}
+    catalogue = {entry["id"]: entry for entry in selection.get("catalogue") or []
+                 if isinstance(entry, dict) and isinstance(entry.get("id"), str)}
+    named = [check for check in checks if isinstance(check, str)]
+    unknown = [name for name in named if name not in catalogue]
+    if unknown:
+        known = ", ".join(sorted(catalogue)) or "none"
+        raise StateError("select_invalid", f"unknown check ids {', '.join(unknown)}: the binding's catalogue has {known}")
+    resolved: list = []
+    added: list[dict] = []
+
+    def present(name: object) -> dict | None:
+        return next((check for check in resolved if isinstance(check, dict) and check.get("id") == name), None)
+
+    def include(name: str, why: str | None) -> None:
+        existing = present(name)
+        if existing is not None:
+            if existing != catalogue[name]:
+                raise StateError("select_invalid", f"{name}: the selection defines it differently from the catalogue")
+            return
+        for prerequisite in catalogue[name].get("prerequisites") or []:
+            include(prerequisite, why or f"a prerequisite of {name}")
+        resolved.append(copy.deepcopy(catalogue[name]))
+        if why is not None:
+            added.append({"id": name, "why": why})
+
+    for check in checks:
+        if isinstance(check, str):
+            include(check, None)
+            continue
+        name = check.get("id") if isinstance(check, dict) else None
+        existing = present(name)
+        if existing is not None and name in catalogue:
+            # A catalogue check named both ways is selected once; any other repeat is refused as before.
+            if existing != check:
+                raise StateError("select_invalid", f"{name}: the selection defines it differently from the catalogue")
+            continue
+        resolved.append(check)
+    for name in selection.get("guards") or []:
+        if name in catalogue:
+            include(name, "a guard")
+    readers = [reader for reader in selection.get("readers") or [] if isinstance(reader, dict)]
+    if readers:
+        paths = changed()
+        if paths is None:
+            raise StateError("select_invalid", "the binding names readers, and the candidate's changes from the base "
+                                               "can't be read here: run select in a checkout holding both, or pass --repo")
+        for reader in readers:
+            hits = [path for path in paths if any(_binding_pattern(pattern).match(path) for pattern in reader["paths"])]
+            for name in reader["checks"]:
+                if hits and name in catalogue:
+                    include(name, f"reads {hits[0]}")
+    return resolved, added
+
+
+BASE_RERUNS_KEPT = 100
+
+
+def base_rerun_notices(state: dict, check_ids: list[str], base_head: str | None) -> tuple[list[str], list[str]]:
+    """What the record says of the selected checks at the current base head: warnings, then notes.
+
+    A selected check whose latest base re-run at ``base_head`` failed is warned about, by id and head. A head no
+    re-run checked out says nothing is known there. A failure at another head, or of a check not selected, says
+    nothing.
+    """
+    if base_head is None:
+        return [], ["the current base head can't be read here, so nothing is known of base re-runs at it"]
+    at_head = [entry for entry in state["meta"].get("baseReruns") or [] if entry["baseHead"] == base_head]
+    if not at_head:
+        return [], [f"nothing is known at {base_head}: this delivery's queue has re-run no check on it"]
+    latest = {entry["check"]: entry for entry in at_head}
+    warnings = [f"{name} failed its base re-run at {base_head}, for {latest[name]['subject']}: the base may fail it too"
+                for name in check_ids if name in latest and latest[name]["result"] == "failed"]
+    return warnings, []
+
+
 def select_checks(directory: Path, subject: str, *, binding: dict, head: str | None = None,
-                  checks: object = None, reason: str | None = None) -> dict:
+                  checks: object = None, reason: str | None = None, repo: Path | None = None,
+                  base_head: str | None = None) -> dict:
     """The lead records the checks a candidate runs at its reviewed head, or clears them with no head.
 
     The runner uses a selection only while the binding's ``selection.lead`` is
@@ -1120,6 +1313,16 @@ def select_checks(directory: Path, subject: str, *, binding: dict, head: str | N
             raise StateError("select_invalid", "the binding does not enable lead selection: set selection.lead to true")
         if not reason or not reason.strip():
             raise StateError("select_invalid", "say why these checks with --reason")
+        problems = catalogue_problems(binding)
+        if problems:
+            raise StateError("binding_invalid", "; ".join(problems))
+        where = Path.cwd() if repo is None else repo
+
+        def changed() -> list[str] | None:
+            base = base_head or current_base_head(where, binding)
+            return None if base is None else candidate_changes(where, base, head)  # type: ignore[arg-type]
+
+        checks, added = resolve_selection(checks, binding, changed)
         problems = lead_selection_errors(checks, binding)
         if problems:
             raise StateError("select_invalid", "; ".join(problems))
@@ -1146,6 +1349,8 @@ def select_checks(directory: Path, subject: str, *, binding: dict, head: str | N
     else:
         names = ", ".join(check["id"] for check in checks)  # type: ignore[union-attr]
         summary = f"The lead selected checks for {subject} at {head}: {names}. Why: {reason}"
+        if added:
+            summary += ". Added: " + "; ".join(f"{entry['id']} ({entry['why']})" for entry in added)
     append_journal(directory, kind="check.selected", subject=subject, lane=item.get("lane"), summary=summary)  # type: ignore[union-attr]
     return item  # type: ignore[return-value]
 
@@ -3894,7 +4099,7 @@ def _select_command(args: argparse.Namespace) -> dict:
     if args.clear:
         if args.head or args.checks or args.reason:
             raise StateError("select_invalid", "--clear takes only --subject")
-        return select_checks(args.dir, args.subject, binding={})
+        return {"ok": True, "item": select_checks(args.dir, args.subject, binding={})}
     missing = [name for name in ("binding", "head", "checks", "reason") if not getattr(args, name)]
     if missing:
         raise StateError("select_invalid", "a selection needs " + ", ".join("--" + name for name in missing))
@@ -3904,11 +4109,35 @@ def _select_command(args: argparse.Namespace) -> dict:
         raise StateError("binding_invalid", f"cannot read the binding {Path(args.binding).name}: {error}") from None
     if not isinstance(binding, dict):
         raise StateError("binding_invalid", f"{Path(args.binding).name} is not a JSON object")
-    try:
-        checks = _json_argument(args.checks, "checks")
-    except StateError as error:
-        raise StateError("select_invalid", str(error)) from None
-    return select_checks(args.dir, args.subject, binding=binding, head=args.head, checks=checks, reason=args.reason)
+    checks = _checks_argument(args.checks)
+    repo = args.repo if args.repo is not None else Path.cwd()
+    base_head = args.base_head or current_base_head(repo, binding)
+    item = select_checks(args.dir, args.subject, binding=binding, head=args.head, checks=checks, reason=args.reason,
+                         repo=repo, base_head=base_head)
+    selected = [check["id"] for check in item["leadSelection"]["checks"]]
+    warnings, notes = base_rerun_notices(read_state(args.dir), selected, base_head)
+    return {"ok": True, "item": item, "baseHead": base_head, "warnings": warnings, "notes": notes}
+
+
+def _checks_argument(value: str) -> object:
+    """--checks: a JSON list, or catalogue ids separated by commas; - reads either from stdin."""
+    text = value
+    if value == "-":
+        try:
+            text = sys.stdin.buffer.read().decode("utf-8-sig")
+        except UnicodeDecodeError:
+            raise StateError("select_invalid", "checks on stdin is not UTF-8") from None
+    if text.lstrip().startswith(("[", "{", '"')):
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as error:
+            raise StateError("select_invalid", f"checks is not JSON: {error}") from None
+    ids = [name.strip() for name in text.split(",")]
+    if not any(ids):
+        raise StateError("select_invalid", "--checks names no check")
+    if not all(ids):
+        raise StateError("select_invalid", f"--checks has an empty id in {text.strip()!r}")
+    return ids
 
 
 # What a running `wait` returns on: the journal kinds that need the lead. A blocked lane and machine pressure also end it.
@@ -4205,9 +4434,15 @@ def main(argv: list[str] | None = None) -> int:
     chosen.add_argument("--subject", required=True)
     chosen.add_argument("--binding", type=Path, help="the repository binding, with selection.lead true")
     chosen.add_argument("--head", help="the candidate's reviewed head the selection is for")
-    chosen.add_argument("--checks", help="a JSON list of checks shaped like the binding's alwaysRun entries, or - for stdin")
+    chosen.add_argument("--checks", help="catalogue ids, comma-separated, or a JSON list of checks shaped like the "
+                                         "binding's alwaysRun entries, in which a string is a catalogue id; - for stdin")
     chosen.add_argument("--reason", help="why these checks cover the candidate's diff")
     chosen.add_argument("--clear", action="store_true", help="drop the selection, so the provider selects again")
+    chosen.add_argument("--repo", type=Path, help="the checkout whose remote-tracking base and objects select reads, "
+                                               "for the readers of the candidate's changes and the base head; the "
+                                               "current directory when left out")
+    chosen.add_argument("--base-head", help="the base head to warn about and diff from, instead of the checkout's "
+                                            "remote-tracking base")
     headline = commands.add_parser("headline", help="the lead's status line, shown until it expires")
     told = headline.add_mutually_exclusive_group(required=True)
     told.add_argument("--text", help="the status line")
@@ -4303,7 +4538,7 @@ def main(argv: list[str] | None = None) -> int:
                 raise StateError("patch_invalid", "--max-age is at least 1 second")
             result = {"ok": True, "state": set_status_override(args.dir, None if args.clear else args.text, age)}
         elif args.command == "select":
-            result = {"ok": True, "item": _select_command(args)}
+            result = _select_command(args)
         elif args.command == "wait":
             code, result = _wait_command(args)
             emit(result)
