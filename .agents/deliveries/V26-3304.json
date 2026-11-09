@@ -28,7 +28,8 @@
     "lane-2": {
       "owns": [
         "tests/test_run_delivery_tracker.py",
-        "tests/test_own_deliveries.py"
+        "tests/test_own_deliveries.py",
+        "tests/test_delivery_views_render.py"
       ]
     }
   },
@@ -74,6 +75,17 @@
         {
           "id": "v26-3292-done",
           "text": "A StandingBinding row asserts the exact regenerable.listings entry for provenance.lock.json, runs its argv on the committed lock's bytes on stdin as the queue does, and compares with an independently computed sorted list; red proved for entry removed, an argv printing [], and another script, the last two failing on the run assertion"
+        }
+      ]
+    },
+    "V26-3312": {
+      "title": "Gate the run-deadline render test against the macOS wall-clock race",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3312-done",
+          "text": "The deadline row's race is reproduced under load or a modelling stall; the fix keeps its claim (past-deadline runs unavailable, uncached, read again next render) without loosening it; suffix order is either pinned as a collect_runs promise or replaced by what the code promises, stated in the hand-off; the row passes under the reproducing load and fails when deadline handling is dropped"
         }
       ]
     }

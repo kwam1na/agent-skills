@@ -38,7 +38,8 @@
         "tests/test_delivery_views_snapshots.py",
         "tests/delivery_views_page/*",
         "tests/fixtures/delivery-views/*",
-        "docs/solutions/*"
+        "docs/solutions/*",
+        "provenance.lock.json"
       ]
     }
   },
@@ -106,6 +107,18 @@
         {
           "id": "v26-3309-done",
           "text": "After the lead tags and applies the next release candidate, this repository's binding declares the check catalogue and guards, a StandingBinding row pins them and runs select by id against the committed binding, doctor validates it, and docs/own-deliveries.md says the lead selects by catalogue id"
+        }
+      ]
+    },
+    "V26-3310": {
+      "title": "Let lead-plan run from a lead's own worktree, not only a checkout on the base branch",
+      "lane": "lane-1",
+      "inApp": "none",
+      "why": "Found while leading this delivery: with three deliveries on one machine each lead works from its own worktree, where lead-plan change and approval refuse by branch name; it is a child of V26-3250, so it lands here under the no-deferrals ruling",
+      "criteria": [
+        {
+          "id": "v26-3310-done",
+          "text": "From a lead worktree on lead/<key> at the base tip, lead-plan approval and change each commit the delivery file and the commit reaches the base; a worktree behind the base, ahead with another lead's commit, or dirty is refused naming the reason; a checkout on the base branch behaves as today"
         }
       ]
     }
