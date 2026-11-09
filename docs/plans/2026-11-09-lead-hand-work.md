@@ -98,7 +98,7 @@ both, and takes the binding for V26-3309 at the end.
 | --- | --- | --- | --- |
 | 1 | 1 | V26-3276 | `skills/run-delivery/`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_plan_review.py`, `tests/test_run_delivery_tracker.py`, `skills/plan-work/`, `docs/solutions/`, `catalog.json`, `profiles/` |
 | 1 | 2 | V26-3259 | `skills/orchestrate-work/`, `tests/test_orchestration_state.py`, `tests/test_orchestration_render.py`, `tests/test_merge_queue.py`, `tests/test_lead_wait.py`, `tests/test_registry.py`, `skills/delivery-views/`, `tests/test_delivery_views_page.py`, `tests/test_delivery_views_snapshots.py`, `tests/delivery_views_page/`, `tests/fixtures/delivery-views/` |
-| 2 | 1 | V26-3256, V26-3263, V26-3257 | `skills/orchestrate-work/`, `tests/test_orchestration_state.py`, `tests/test_orchestration_render.py`, `tests/test_merge_queue.py`, `tests/test_lead_wait.py`, `tests/test_registry.py`, `skills/delivery-views/`, `tests/test_delivery_views_page.py`, `tests/test_delivery_views_snapshots.py`, `tests/delivery_views_page/`, `tests/fixtures/delivery-views/` |
+| 2 | 1 | V26-3256, V26-3263, V26-3257, V26-3310 | `skills/orchestrate-work/`, `tests/test_orchestration_state.py`, `tests/test_orchestration_render.py`, `tests/test_merge_queue.py`, `tests/test_lead_wait.py`, `tests/test_registry.py`, `skills/delivery-views/`, `tests/test_delivery_views_page.py`, `tests/test_delivery_views_snapshots.py`, `tests/delivery_views_page/`, `tests/fixtures/delivery-views/` |
 | 3 | 2 | V26-3309 | `.agents/orchestration.json`, `tests/test_own_deliveries.py`, `docs/own-deliveries.md` |
 
 **Moving ownership.** A file passes when the item holding it merges. The lead rewrites `lanes.*.owns` at the hand-over and pushes only
@@ -209,6 +209,17 @@ and ships a reader that a row uses. Files: `skills/run-delivery/scripts/run_deli
 and `tests/test_delivery_views_snapshots.py`. Sensors: `tests/test_run_delivery.py`, `tests/test_orchestration_state.py`,
 `tests/test_lead_wait.py`, `tests/test_delivery_views_snapshots.py`, `scripts/validate-registry.py`.
 
+### V26-3310. Let lead-plan run from a lead's own worktree, not only a checkout on the base branch
+
+Lane 1, tier 2, after V26-3257. Added on 2026-11-09 (plan change): with three deliveries on one machine, each lead works from its own
+worktree on `lead/<key>`, and `lead-plan change` and `lead-plan approval` refuse there by branch name. Test-first, per the item. Rows: from
+a worktree on `lead/<key>` at the base tip, `lead-plan approval` and `lead-plan change` each commit the delivery file and the commit
+reaches the base; a worktree behind the base, one ahead with another lead's unpushed commit, and a dirty one are each refused, naming the
+reason; a checkout on the base branch behaves as today. `references/adopting.md` describes one lead worktree per delivery. Files:
+`skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/references/adopting.md`, `tests/test_run_delivery.py` and
+`docs/solutions/`. Sensors: `tests/test_run_delivery.py`, `tests/test_run_delivery_plan_review.py`, `scripts/validate-registry.py`.
+Compounding: the solution note the item names.
+
 ### V26-3309. Adopt the check catalogue and always-selected guards in this repository's binding
 
 Lane 2, tier 3, after V26-3257 and V26-3259. Per Decision 8, it starts once the lead has tagged, published, verified and applied the
@@ -233,5 +244,5 @@ synced head, `fullHealth` runs after each merge, and the lead runs the full suit
 
 ## Tracking
 
-The epic and its six items are in Linear. The lead posts at each milestone with the host's Linear tools and moves items to their final
+The epic and its seven items are in Linear. The lead posts at each milestone with the host's Linear tools and moves items to their final
 state.
