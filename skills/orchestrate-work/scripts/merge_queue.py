@@ -1931,6 +1931,23 @@ class Runner:
     def select_by_lead(self, members: list[dict], checkout: Path) -> tuple[dict, list[dict]]:
         """The lead's checks and alwaysRun; no provider runs and fallback does not apply."""
         final = self.lead_checks(members, checkout)
+        # A guard is in every lead selection, one recorded before the binding named it included.
+        catalogue = {check["id"]: check for check in self.binding.get("selection", {}).get("catalogue") or []}
+        chosen = {check["id"] for check in final}
+        missing = [name for name in self.binding.get("selection", {}).get("guards") or [] if name not in chosen]
+
+        def add(name: str) -> None:
+            if name in chosen:
+                return
+            chosen.add(name)
+            for prerequisite in catalogue[name]["prerequisites"]:
+                add(prerequisite)
+            final.append(catalogue[name])
+
+        for name in missing:
+            add(name)
+        if missing:
+            self.note(f"added the binding's guards {', '.join(missing)} to the lead's selection, which did not name them")
         for check in self.binding["alwaysRun"]:
             final.append(check)
         problems = selection_errors(final, self.binding, check_cwd=checkout)

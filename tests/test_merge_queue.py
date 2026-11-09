@@ -5897,6 +5897,20 @@ class CheckCatalogueQueueTests(MergeQueueTestCase):
         self.assertEqual(selection["lead"]["members"][0]["checks"], ["focused", "guard"])
         self.assertEqual(sorted(self.ran(adopter)), ["always", "focused", "guard"])
 
+    def test_a_selection_recorded_before_the_binding_named_a_guard_still_runs_the_guard(self) -> None:
+        adopter = self.catalogue_adopter()
+        self.candidate(adopter, {"src/app.txt": "app two\n"})
+        unguarded = {**adopter.binding, "selection": {**adopter.binding["selection"], "guards": []}}
+        state_tool.select_checks(adopter.state, "feature", binding=unguarded, head=adopter.item("feature")["head"],
+                                 checks=["focused"], reason="before the guard", repo=adopter.operator)
+        self.assertEqual([check["id"] for check in adopter.item("feature")["leadSelection"]["checks"]], ["focused"])
+        results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        document = next(r.document() for r in results if r.document()["selection"] is not None)
+        self.assertEqual(document["selection"]["checks"], ["focused", "guard", "always"])
+        self.assertTrue(any("added the binding's guards guard" in note for note in document["notes"]), document["notes"])
+        self.assertEqual(sorted(self.ran(adopter)), ["always", "focused", "guard"])
+
     def test_a_failing_base_rerun_is_recorded_with_its_head_and_select_warns_at_that_head(self) -> None:
         adopter = self.catalogue_adopter()
         base = adopter.advance_base({"src/app.txt": "FAIL on base\n", "gen/generated.txt": "FAIL on base\nlib one\n"})

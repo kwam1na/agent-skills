@@ -1212,16 +1212,18 @@ def resolve_selection(checks: object, binding: dict, changed: Callable[[], list[
         raise StateError("select_invalid", f"unknown check ids {', '.join(unknown)}: the binding's catalogue has {known}")
     resolved: list = []
     added: list[dict] = []
-    given = {check.get("id") for check in checks if isinstance(check, dict)}
+
+    def present(name: object) -> dict | None:
+        return next((check for check in resolved if isinstance(check, dict) and check.get("id") == name), None)
 
     def include(name: str, why: str | None) -> None:
-        if name in given:
-            if catalogue[name] not in [check for check in resolved if isinstance(check, dict)]:
+        existing = present(name)
+        if existing is not None:
+            if existing != catalogue[name]:
                 raise StateError("select_invalid", f"{name}: the selection defines it differently from the catalogue")
             return
         for prerequisite in catalogue[name].get("prerequisites") or []:
             include(prerequisite, why or f"a prerequisite of {name}")
-        given.add(name)
         resolved.append(copy.deepcopy(catalogue[name]))
         if why is not None:
             added.append({"id": name, "why": why})
@@ -1229,8 +1231,15 @@ def resolve_selection(checks: object, binding: dict, changed: Callable[[], list[
     for check in checks:
         if isinstance(check, str):
             include(check, None)
-        else:
-            resolved.append(check)
+            continue
+        name = check.get("id") if isinstance(check, dict) else None
+        existing = present(name)
+        if existing is not None and name in catalogue:
+            # A catalogue check named both ways is selected once; any other repeat is refused as before.
+            if existing != check:
+                raise StateError("select_invalid", f"{name}: the selection defines it differently from the catalogue")
+            continue
+        resolved.append(check)
     for name in selection.get("guards") or []:
         if name in catalogue:
             include(name, "a guard")

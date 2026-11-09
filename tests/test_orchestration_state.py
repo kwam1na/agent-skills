@@ -6095,6 +6095,11 @@ class CheckCatalogueTests(unittest.TestCase):
         self.assertEqual(self.select(["corpus-guards", "run-delivery"], head), ["corpus-guards", "run-delivery"])
         differing = {**self.CATALOGUE[1], "argv": ["python3", "other.py"]}
         self.assertEqual(self.refused(lambda: self.select([differing], head)).code, "select_invalid")
+        # A catalogue check named both by id and by its entry, in either order, is selected once.
+        self.assertEqual(self.select(["run-delivery", self.CATALOGUE[0]], head), ["run-delivery", "corpus-guards"])
+        self.assertEqual(self.select([self.CATALOGUE[0], "run-delivery"], head), ["run-delivery", "corpus-guards"])
+        self.assertEqual(self.refused(lambda: self.select(
+            ["run-delivery", {**self.CATALOGUE[0], "argv": ["python3", "other.py"]}], head)).code, "select_invalid")
 
     def test_a_json_list_as_today_selects_exactly_what_it_lists_plus_the_guards(self) -> None:
         head = self.candidate({"src/app.py": "two\n"})
