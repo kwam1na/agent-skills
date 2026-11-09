@@ -210,7 +210,21 @@ supervisor's.
   Journal a `review.round`, or queue a hand-off yourself, only for a lane
   that could not write to the record, with the times, verdicts and findings
   it gives, so its stop's stats are complete.
-- Check each hand-off as a claim (the coordination protocol). When you set
+- Work whose criteria already hold on the base needs no change. The lane
+  hands it off with `handoff --no-change --lane L --subject S --base-head SHA
+  --evidence-text TEXT`: its planned element moves to `review` carrying
+  `noChange`, the evidence and the base head it ran at, the lane is `handed`,
+  and `candidate.handed` is journaled. It never enters `queue[]`. `handoff
+  --accept <subject>` settles it: stage `settled`, `noChange.settledAt` set,
+  and its lane idle when it holds nothing else. `--reject` sends it back to
+  `building` without the evidence. A settled element stays in `planned`, is
+  never removed, and counts as done: the close and every finish line count
+  it, `next` treats it as a done blocker, reconcile leaves it as it is, and
+  the views show it "closed, no change needed" with its evidence. Without
+  `meta.handoffsNeedAcceptance` it settles at the hand-off. No base commit is
+  made.
+- Check each hand-off as a claim (the coordination protocol), a no-change one
+  included. When you set
   the record's `meta.handoffsNeedAcceptance` to true, every hand-off waits as
   `pending` until you run `handoff --accept <subject>`, or
   `handoff --reject <subject> --reason <why>` to send it back to the lane's
@@ -443,8 +457,9 @@ is journaled.
 - Unless the delivery's base declares the `focused` posture at its tip, run the binding's `fullHealth` once, on the final base, unless a run at that head already stands from a merge: in a fresh detached
   checkout of the final base tip, after the binding's `prepare` steps, with
   the binding's `environment` set and its placeholders filled in. Never run
-  it in the operator's own checkout. It is the backstop for every
-  lead-selected check set: anything a selection left out runs here.
+  it in the operator's own checkout. Under `gate` it is the backstop for every
+  lead-selected check set: anything a selection left out runs here. Under
+  `focused` nothing is: a check a selection left out never runs.
 - Confirm every line in `finish[]` is met, or record why it is not.
 - Move every ticket, and the epic, to its final state through the tracker
   capability.

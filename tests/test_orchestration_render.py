@@ -612,11 +612,11 @@ EMPTY_STATE = {
 }
 PINNED_EMPTY_VIEWS = {
     "delivery.md": "bf22eae1f7b5115650ba06265e138d9b9ed720f44158d1fc761ba4df356507c9",
-    "delivery.html": "05e0ad6b0565bd5f207a65a9b84809726a51aa59fc3ddd1c32964402041435ca",
+    "delivery.html": "f16a712aecbf01ea05fe644d690082c296d838380ce68162d1fcc367016132b7",
 }
 PINNED_VIEWS = {
     "delivery.md": "412c01eecfbdcfba6f1f5f650a0368c29c40e3e7cf3b0ef44d0687e68115d79c",
-    "delivery.html": "76bfc21b2340fade00efae257024da3fa953dabe53985c0de1cd36e1e9a71136",
+    "delivery.html": "94b6925208c7ac4ec3743ae61e3524bfd59dbe3f9da2d2fe7ae0d00fac36a6c0",
 }
 
 
@@ -872,6 +872,20 @@ class StatsViewTests(unittest.TestCase):
         self.assertIn("4 rounds (reported)", render_state.render_markdown(reported))
         one = {**self.document(), "stats": {"change-1": {**self.document()["stats"]["change-1"], "rounds": 1}}}
         self.assertIn("· 1 round, findings", render_state.render_markdown(one))
+
+    def test_the_markdown_view_shows_a_story_settled_with_no_change_and_its_evidence(self) -> None:
+        document = copy.deepcopy(self.document())
+        no_change = {"evidence": "one-loads: test_one_loads passes", "baseHead": HEAD_A, "handedAt": "2026-10-21T09:00:00Z"}
+        document["state"]["planned"] = [
+            {"subject": "done-1", "title": "Done one", "lane": "lane-1", "stage": "settled",
+             "noChange": {**no_change, "settledAt": "2026-10-21T10:00:00Z"}},
+            {"subject": "done-2", "title": "Done two", "lane": "lane-1", "stage": "review", "noChange": no_change}]
+        planned = render_state.render_markdown(document)
+        planned = planned[planned.index("## Planned"):planned.index("## Lanes")]
+        self.assertIn("- done-1: Done one, closed, no change needed · lane lane-1", planned)
+        self.assertIn("- done-2: Done two, handed off, no change needed, waiting for the lead · lane lane-1", planned)
+        shown = render_state._markdown_text(f"Evidence, run at base {HEAD_A[:10]}: one-loads: test_one_loads passes")
+        self.assertEqual(planned.count(f"\n  - {shown}"), 2, planned)
 
     def test_a_document_without_stats_or_planned_work_still_renders(self) -> None:
         state = {key: value for key, value in FIXED_STATE.items() if key != "planned"}
@@ -2525,6 +2539,16 @@ setTimeout(async () => {
         for subject, found in stats.items():
             with self.subTest(subject=subject):
                 self.assertIn(render_state._stats_text(found), shown["text"])
+
+    def test_the_page_shows_a_story_settled_with_no_change_and_its_evidence_as_the_markdown_view_does(self) -> None:
+        document = copy.deepcopy(self.document)
+        document["state"]["planned"] = [{"subject": "done-1", "title": "Done one", "lane": "lane-1", "stage": "settled",
+                                         "noChange": {"evidence": "one-loads: test_one_loads passes", "baseHead": HEAD_A,
+                                                      "handedAt": "2026-10-21T09:00:00Z",
+                                                      "settledAt": "2026-10-21T10:00:00Z"}}]
+        shown = self.run_page({}, document)
+        self.assertIn("closed, no change needed", shown["text"])
+        self.assertIn(f"Evidence, run at base {HEAD_A[:10]}: one-loads: test_one_loads passes", shown["text"])
 
     def test_a_live_document_without_stats_or_planned_work_is_still_shown(self) -> None:
         live = self.live_document("Live without stats")

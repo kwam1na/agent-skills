@@ -31,7 +31,8 @@
         "tests/test_own_deliveries.py",
         "tests/test_delivery_views_render.py",
         "skills/orchestrate-work/scripts/delivery_state.py",
-        "tests/test_orchestration_state.py"
+        "tests/test_orchestration_state.py",
+        "tests/test_validate.py"
       ]
     }
   },
@@ -99,6 +100,39 @@
         {
           "id": "v26-3316-done",
           "text": "The writer that bumps the record between the guide's version read and its pinned focus patch is named and reproduced with a modelling stall; the fix follows the cause (the guide and tool if an adopter's sequence races, the test fixture only if just the fixture does) and the hand-off says which; the row passes under the stall and fails with the fix reverted"
+        }
+      ]
+    },
+    "V26-3324": {
+      "title": "In-process main() tests print a live delivery's supervisor status and take its lock",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3324-done",
+          "text": "Every in-process main() call in the run-delivery test modules resolves repository, delivery and state inside its case, never the caller's cwd, another case's cached CFG, or a live record or lock; a guard row from a live-looking checkout with a planted delivery and held supervisor lock fails on any status line, record or lock contact, red before and green after, covering the CFG cache; the ResourceWarning's Popen is named and waited or stopped by recorded pid, with a row; the hand-off says whether any product path can reach a delivery outside its repository, fixed if so"
+        }
+      ]
+    },
+    "V26-3325": {
+      "title": "Remove the ticket ids from the detached-supervisors solution note",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3325-done",
+          "text": "The detached-supervisors solution note names no ticket or plan id and keeps its lessons; tests.test_linear_qualification and validate-registry pass at the head, the lock refreshed with the writer if the note is listed; nothing else changes"
+        }
+      ]
+    },
+    "V26-3328": {
+      "title": "The corpus read-only test hashes the operator's live delivery records",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3328-done",
+          "text": "test_valid_corpus_is_stable_and_read_only proves validate_corpus writes nothing without reading git-ignored paths; a row stays green while an ignored .orchestration file changes during validation and goes red when validation writes a tracked or corpus file, both recorded; a search of tests/ for other whole-checkout scans of ignored live state finds and fixes each, or records none"
         }
       ]
     }
