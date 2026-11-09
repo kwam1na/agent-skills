@@ -457,8 +457,9 @@ is journaled.
 - Unless the delivery's base declares the `focused` posture at its tip, run the binding's `fullHealth` once, on the final base, unless a run at that head already stands from a merge: in a fresh detached
   checkout of the final base tip, after the binding's `prepare` steps, with
   the binding's `environment` set and its placeholders filled in. Never run
-  it in the operator's own checkout. It is the backstop for every
-  lead-selected check set: anything a selection left out runs here.
+  it in the operator's own checkout. Under `gate` it is the backstop for every
+  lead-selected check set: anything a selection left out runs here. Under
+  `focused` nothing is: a check a selection left out never runs.
 - Confirm every line in `finish[]` is met, or record why it is not.
 - Move every ticket, and the epic, to its final state through the tracker
   capability.

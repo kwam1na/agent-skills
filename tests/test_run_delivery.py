@@ -16,11 +16,13 @@ their own signal handlers, working directory and module state.
 from __future__ import annotations
 
 import argparse
+import ast
 import atexit
 import base64
 import contextlib
 import datetime
 import fcntl
+import gc
 import hashlib
 import io
 import importlib.util
@@ -38,6 +40,7 @@ import threading
 import time
 import types
 import unittest
+import warnings
 import zipfile
 from pathlib import Path
 from unittest import mock
@@ -655,8 +658,12 @@ def setup_delivery(fx: Fixture) -> Path:
 POSTURE_VECTORS = ROOT / "tests/fixtures/delivery-posture-vectors.json"
 POSTURE_PATH = ".agents/delivery-posture.json"
 # Every git command fails, or never returns and leaves a child holding its output, as a fetch's transport can.
-# Not `sleep 30...`: the timeout case below looks for that machine-wide, and this stub can run beside it.
-POSTURE_GIT_STUBS = {"fails": "#!/bin/sh\nexit 1\n", "hangs": "#!/bin/sh\nsleep 299 &\nwait\n"}
+# The machine-wide pattern is `pgrep -f "sleep 30"`, which the timeout case once used to find its leftovers: it matched
+# any process whose command line held that text, `sleep 300` among them. That case now checks its own process group,
+# but a hanging stub's sleep still stays out of the pattern, so no search for it, then or now, can find one.
+MACHINE_WIDE_SLEEP = re.compile("sleep 30")
+POSTURE_HANG = "sleep 240"
+POSTURE_GIT_STUBS = {"fails": "#!/bin/sh\nexit 1\n", "hangs": f"#!/bin/sh\n{POSTURE_HANG} &\nwait\n"}
 
 
 def posture_tree(repository: Path, base: dict) -> None:
@@ -7200,6 +7207,19 @@ class RunDeliveryArgumentTests(unittest.TestCase):
         finally:
             sys.dont_write_bytecode = previous
 
+    def setUp(self) -> None:
+        """Each case calls main() from a repository of its own, which holds no delivery, with none of the settings the
+        tool reads: so the status line every lead command ends with, and anything else that resolves a delivery, looks
+        only inside the case. (main() itself drops any configuration an earlier call left.)"""
+        folder = Path(tempfile.mkdtemp(prefix="run-delivery-arguments-"))
+        self.addCleanup(shutil.rmtree, folder, True)
+        sh("git", "init", "-q", "-b", "main", cwd=folder)
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(folder)
+        settings = without_tool_settings()
+        settings.__enter__()
+        self.addCleanup(settings.__exit__, None, None, None)
+
     def parsed(self, *argv: str) -> list[list[str]]:
         """What reaches argparse, and what the command then receives."""
         seen, received = [], []
@@ -7561,7 +7581,7 @@ class DeliveryPostureReaderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             child = Path(folder) / "child.pid"
             stub = Path(folder) / "git"
-            stub.write_text(f'#!/bin/sh\nsleep 299 &\necho $! > "{child}"\nwait\n')
+            stub.write_text(f'#!/bin/sh\n{POSTURE_HANG} &\necho $! > "{child}"\nwait\n')
             stub.chmod(0o755)
             started = time.monotonic()
             with mock.patch.dict(os.environ, {"PATH": f"{folder}{os.pathsep}{os.environ['PATH']}"}):
@@ -7580,6 +7600,31 @@ class DeliveryPostureReaderTests(unittest.TestCase):
         os.kill(pid, signal.SIGKILL)
         self.fail("the child that held the output outlived the bound")
 
+    def test_no_hanging_stub_s_command_line_matches_the_machine_wide_sleep_pattern(self) -> None:
+        for name, text in POSTURE_GIT_STUBS.items():
+            with self.subTest(stub=name):
+                self.assertIsNone(MACHINE_WIDE_SLEEP.search(text), text)
+        # What the pattern matches is a live command line, so read the running stub's own, in its own group.
+        with tempfile.TemporaryDirectory() as folder:
+            stub = Path(folder) / "git"
+            stub.write_text(POSTURE_GIT_STUBS["hangs"])
+            stub.chmod(0o755)
+            proc = subprocess.Popen([str(stub)], start_new_session=True)
+            try:
+                deadline, lines = time.monotonic() + 5, []
+                while time.monotonic() < deadline:
+                    rows = sh("ps", "-A", "-o", "pgid=,command=").stdout.splitlines()
+                    lines = [row.split(None, 1)[1] for row in rows
+                             if row.split(None, 1)[0] == str(proc.pid) and len(row.split(None, 1)) == 2]
+                    if any("sleep" in line for line in lines):
+                        break
+                    time.sleep(0.05)
+                self.assertTrue(any(line.split()[:2] == POSTURE_HANG.split() for line in lines), lines)
+                self.assertEqual([line for line in lines if MACHINE_WIDE_SLEEP.search(line)], [], lines)
+            finally:
+                os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait()
+
     def test_a_tip_with_a_declaration_in_a_subfolder_read_from_there_gives_the_same_answer(self) -> None:
         vector = next(v for v in self.file["vectors"] if v["id"] == "valid-focused")
         with tempfile.TemporaryDirectory() as folder:
@@ -7597,6 +7642,13 @@ class DeliveryPostureReaderTests(unittest.TestCase):
             with self.subTest(case=name):
                 said = self.tool.posture_said({**declared, **change})
                 self.assertTrue(said["reason"].strip())
+                # delivery-plan/1's caps, whatever the declaration held.
+                self.assertLessEqual(len(said["source"]), 200, said)
+                self.assertLessEqual(len(said["reason"]), 600, said)
+                if name == "long source":
+                    self.assertEqual(said["source"], ("o/" + "b" * 500)[:200])
+                if name == "long":
+                    self.assertEqual(said["reason"], "x" * 600)
                 said["reason"].encode("utf-8")
                 closing = {"fullHealth": "skipped", **said}
                 views.validate_plan({**plan(), "closeOut": closing})
@@ -7700,6 +7752,17 @@ class DeliveryPostureReaderTests(unittest.TestCase):
         self.assertIn("Nothing runs in its place, and no `fullHealth` runs after a merge either", skill)
         self.assertIn("remains the backstop for anything a selection missed, unless the base declares the `focused` posture", guide)
         self.assertIn("say the run was skipped under the posture, naming its source and reason", guide)
+        # fullHealth is a backstop only under gate: under focused nothing stands in for what a selection left out.
+        self.assertIn("Under `gate` it is the backstop for every lead-selected check set: anything a selection left out "
+                      "runs here. Under `focused` nothing is: a check a selection left out never runs.", guide)
+        self.assertNotIn("It is the backstop for every", guide)
+        self.assertIn("A selection is the lead's judgment; the post-merge `fullHealth` run is its backstop, unless the "
+                      "base declares the `focused` posture.", skill)
+        config = normal("skills/run-delivery/references/config.md")
+        self.assertIn("the post-merge tier: once the delivery has merged anything, and unless the base declares the "
+                      "`focused` posture, the binding's `fullHealth` at the base head", config)
+        self.assertIn("a failed `fullHealth` at the current base head, unless the base declares the `focused` posture, "
+                      "a broken base", config)
 
 
 
@@ -8061,9 +8124,10 @@ class LiveDeliveryOutOfReachTests(unittest.TestCase):
                 break
             except PermissionError:
                 pid += 1
-        # Under its own key, and under the fixture's, which a command that took this state directory would look for.
+        # Under its own key and its delivery's name (the tool's lock path names the delivery), and under the fixture's,
+        # which a command that took this state directory would look for.
         (live / "flow-log").mkdir(parents=True)
-        for key in (PLANTED_KEY, "FX-1"):
+        for key in (PLANTED_KEY, PLANTED_MARKER, "FX-1"):
             lock = live / f"flow-log/{key}.supervisor.lock"
             lock.write_text(json.dumps({"pid": pid, "address": f"http://{PLANTED_MARKER}.test/"}))
             holder = open(lock, "a+")
@@ -8123,6 +8187,344 @@ class LiveDeliveryOutOfReachTests(unittest.TestCase):
                       and PLANTED_MARKER.encode() in path.read_bytes()]
             self.assertEqual(copied, [], "a lead command copied the planted delivery into the case")
         self.assertEqual(tree_snapshot(main), before, "a lead command changed the live delivery's files")
+
+
+# Folders no in-process call may touch while watched, each with what touched it: (resolved root, [event path, ...]).
+_CONTACT_WATCH: list[tuple[str, list[str]]] = []
+_CONTACT_AUDITING: list[bool] = []
+_CONTACT_BUSY = threading.local()
+# Each audit event that names a path, and which of its arguments are paths.
+_CONTACT_EVENTS = {"open": (0,), "os.listdir": (0,), "os.scandir": (0,), "os.chdir": (0,), "os.mkdir": (0,),
+                   "os.remove": (0,), "os.rmdir": (0,), "os.rename": (0, 1), "os.truncate": (0,), "os.utime": (0,),
+                   "os.chmod": (0,), "os.symlink": (0, 1), "os.link": (0, 1), "shutil.rmtree": (0,),
+                   "shutil.copyfile": (0, 1), "shutil.move": (0, 1), "fcntl.flock": ()}
+
+
+def _contact_audit(event: str, args: tuple) -> None:
+    if not _CONTACT_WATCH or getattr(_CONTACT_BUSY, "on", False):
+        return
+    if event == "subprocess.Popen":
+        _executable, argv, cwd, _env = args
+        # A command run without a cwd runs where the process is; of its arguments, those that name a path.
+        named = [arg for arg in (argv if isinstance(argv, (list, tuple)) else [argv])
+                 if isinstance(arg, (str, bytes, os.PathLike)) and os.sep in os.fsdecode(arg)]
+        paths = [cwd if cwd is not None else os.getcwd(), *named]
+    elif event in _CONTACT_EVENTS:
+        paths = [args[i] for i in _CONTACT_EVENTS[event] if i < len(args)]
+    else:
+        return
+    _CONTACT_BUSY.on = True
+    try:
+        for path in paths:
+            if path is None or isinstance(path, int):
+                continue
+            try:
+                text = os.fsdecode(path)
+            except TypeError:
+                continue
+            real = os.path.realpath(os.path.join(os.getcwd(), text))
+            for root, seen in _CONTACT_WATCH:
+                if real == root or real.startswith(root + os.sep):
+                    seen.append(f"{event} {text}")
+    finally:
+        _CONTACT_BUSY.on = False
+
+
+@contextlib.contextmanager
+def watching_contact(root: Path):
+    """Record every file opened, folder listed, file changed or command run under `root` while it is watched, by this
+    process's audit events: yields the list, one `<event> <path>` per contact."""
+    if not _CONTACT_AUDITING:
+        sys.addaudithook(_contact_audit)  # an audit hook stays for the process's life, so one serves every watch
+        _CONTACT_AUDITING.append(True)
+    watch = (os.path.realpath(root), [])
+    real_rmtree = shutil.rmtree
+
+    def rmtree(path, *args, **kwargs):
+        # Counted once, by the folder it removes: its own steps name entries relative to a folder it holds open,
+        # which would otherwise read as relative to the working directory.
+        _contact_audit("shutil.rmtree", (path, None))
+        busy, _CONTACT_BUSY.on = getattr(_CONTACT_BUSY, "on", False), True
+        try:
+            return real_rmtree(path, *args, **kwargs)
+        finally:
+            _CONTACT_BUSY.on = busy
+
+    _CONTACT_WATCH.append(watch)
+    try:
+        with mock.patch.object(shutil, "rmtree", rmtree):
+            yield watch[1]
+    finally:
+        _CONTACT_WATCH.remove(watch)
+
+
+@contextlib.contextmanager
+def without_tool_settings():
+    """The test process's own environment with none of the settings the tool reads, put back afterwards."""
+    with mock.patch.dict(os.environ):
+        for name in TOOL_SETTINGS:
+            os.environ.pop(name, None)
+        yield
+
+
+def fresh_tool(name: str) -> types.ModuleType:
+    """A copy of run_delivery.py of this case's own, loaded without writing bytecode: no global another case set."""
+    spec = importlib.util.spec_from_file_location(name, ROOT / "skills/run-delivery/scripts/run_delivery.py")
+    tool = importlib.util.module_from_spec(spec)
+    previous = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        spec.loader.exec_module(tool)
+    finally:
+        sys.dont_write_bytecode = previous
+    return tool
+
+
+def stop_and_reap(proc: subprocess.Popen) -> None:
+    """Stop a process this case started in a session of its own, by the pid its Popen recorded (so its whole group),
+    and wait for it, so it neither runs on nor is left unreaped."""
+    if proc.poll() is None:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)
+    proc.wait()
+
+
+def alive_pid(pid: int) -> bool:
+    """Whether a process with this pid exists. A stopped leader's orphaned child is reaped by init, so a caller polls
+    for a bounded while rather than reading once."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def unreaped_cleanups(source: str) -> list[str]:
+    """Each `addCleanup(lambda: ...)` in `source` that stops a process the module started with `subprocess.Popen`
+    without waiting for it, which leaves it unreaped: `<line> <lambda>`. A pid the case only recorded (a detached
+    supervisor's, say) is no child of the case's and can't be waited for, so stopping it by that pid is enough."""
+    tree = ast.parse(source)
+    started = {target.id for node in ast.walk(tree) if isinstance(node, ast.Assign)
+               and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute)
+               and node.value.func.attr == "Popen" for target in node.targets if isinstance(target, ast.Name)}
+    stops = {"kill", "killpg", "terminate", "send_signal"}
+    found = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "addCleanup"
+                and node.args and isinstance(node.args[0], ast.Lambda)):
+            continue
+        body = node.args[0]
+        calls = [call for call in ast.walk(body) if isinstance(call, ast.Call)]
+        named = lambda call: call.func.attr if isinstance(call.func, ast.Attribute) else getattr(call.func, "id", None)
+        procs = {n.id for n in ast.walk(body) if isinstance(n, ast.Name)} & started
+        waited = {call.func.value.id for call in calls if named(call) in ("wait", "communicate")
+                  and isinstance(call.func, ast.Attribute) and isinstance(call.func.value, ast.Name)}
+        waited |= {arg.id for call in calls if named(call) == "stop_and_reap" for arg in call.args[:1]
+                   if isinstance(arg, ast.Name)}
+        if procs - waited and any(named(call) in stops for call in calls):
+            found.append(f"{node.lineno} {ast.unparse(body)}")
+    return found
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class InProcessCallsStayInTheirCaseTests(unittest.TestCase):
+    """A call into the tool's main() in the test process resolves its repository, delivery and record inside its own
+    case: never from the checkout the suite runs from, never from a configuration an earlier call left, and never by
+    touching a live record or lock. And every process a case starts is waited for, so none is left running or
+    unreaped."""
+
+    plant = LiveDeliveryOutOfReachTests.plant
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        for name, value in vars(installed_release()).items():
+            setattr(cls, name, value)
+
+    def case_folder(self) -> Path:
+        folder = Path(tempfile.mkdtemp(prefix="run-delivery-in-process-"))
+        self.addCleanup(shutil.rmtree, folder, True)
+        return folder
+
+    def status_lines(self, out: str) -> list[str]:
+        return [line for line in out.splitlines() if line.startswith("supervisor:") or PLANTED_MARKER in line]
+
+    def test_the_in_process_calls_run_from_a_live_checkout_never_reach_its_delivery(self) -> None:
+        main, worktree, settings = self.plant()
+        before = tree_snapshot(main)
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(worktree)  # where the suite runs from: a story's own checkout of the live repository
+        # Each test run by itself under its class's own setup, never as a suite, whose end would also run this module's
+        # cleanups and so remove the release other cases share.
+        cases = RunDeliveryArgumentTests
+        tests = list(unittest.defaultTestLoader.loadTestsFromTestCase(cases))
+        self.assertGreater(len(tests), 10)
+        out, result = io.StringIO(), unittest.TestResult()
+        with mock.patch.dict(os.environ, settings), watching_contact(main.parent) as contact, \
+                contextlib.redirect_stdout(out):
+            cases.setUpClass()
+            try:
+                for test in tests:
+                    test.run(result)
+            finally:
+                cases.tearDownClass()
+                cases.doClassCleanups()
+        self.assertEqual(result.testsRun, len(tests))
+        self.assertTrue(result.wasSuccessful(), [text for _, text in result.failures + result.errors][:3])
+        self.assertEqual(self.status_lines(out.getvalue()), [], "an in-process call printed the live supervisor's status")
+        # Only a case's cleanup going back to where the runner was is no contact by a call.
+        back = f"os.chdir {os.path.realpath(worktree)}"
+        touched = sorted({entry for entry in contact if f"{entry.split()[0]} {os.path.realpath(entry.split(' ', 1)[1])}" != back})
+        self.assertEqual(touched, [], "an in-process call touched the live checkout")
+        self.assertEqual(tree_snapshot(main), before, "an in-process call changed the live delivery's files")
+
+    def test_a_configuration_an_earlier_call_left_is_never_the_next_calls(self) -> None:
+        main, worktree, _ = self.plant()
+        tool = fresh_tool("run_delivery_left_configured")
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(worktree)
+        with without_tool_settings():
+            left = tool.Config(worktree)  # what an earlier call, run from the live checkout, leaves cached
+        self.assertTrue((left.state / "state.json").is_file(), "the earlier call didn't resolve the live record")
+        tool.CFG, tool.DELIVERY_ARG = left, None
+        os.chdir(self.case_folder())  # this call's own case, which holds no repository
+        out = io.StringIO()
+        with without_tool_settings(), mock.patch.object(tool, "lead_plan", lambda args: None), \
+                mock.patch.object(tool.signal, "signal"), watching_contact(main.parent) as contact, \
+                contextlib.redirect_stdout(out):
+            tool.main(["--delivery", "K", "lead-plan", "why", "c1", "--why", "x"])
+        self.assertEqual(self.status_lines(out.getvalue()), [], "the call reported the earlier call's delivery")
+        self.assertEqual(contact, [], "the call touched the delivery an earlier call left configured")
+
+    def test_a_configuration_resolves_its_main_checkout_and_delivery_from_its_own_root(self) -> None:
+        main, worktree, _ = self.plant()
+        case = self.case_folder() / "case"
+        case.mkdir()
+        sh("git", "init", "-q", "-b", "main", cwd=case)
+        quieten(case)
+        (case / ".gitignore").write_text(".orchestration/\n")
+        (case / ".agents/deliveries").mkdir(parents=True)
+        (case / ".agents/run-delivery.json").write_text(json.dumps({
+            "schemaVersion": "delivery-flow/1", "branchPattern": "claude/{key}", "laneCheckout": ".orchestration/lanes/{key}",
+            "tracker": {"issueUrl": "https://case.test/{key}"}}, indent=2) + "\n")
+        for key in ("CASE-1", "CASE-5"):
+            (case / f".agents/deliveries/{key}.json").write_text(json.dumps({
+                "schemaVersion": "delivery-flow-delivery/1", "delivery": key, "baseBranch": "main",
+                "plan": f"docs/{key}.md", "lanes": {"lane-1": {"owns": ["*"]}},
+                "stories": {f"{key}0": {"lane": "lane-1", "title": key}}}, indent=2) + "\n")
+        commit(case, "two deliveries")
+        sh("git", "checkout", "-q", "-b", "claude/CASE-10", cwd=case)  # a story of CASE-1, so the branch picks it
+        tool = fresh_tool("run_delivery_rooted")
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(worktree)  # the process runs from the live checkout; the configuration is for the case
+        with without_tool_settings(), watching_contact(main.parent) as contact:
+            c = tool.Config(case)
+        self.assertEqual(Path(c.main).resolve(), case.resolve(), "the main checkout came from the process's checkout")
+        self.assertEqual(c.delivery, "CASE-1", "the delivery was picked by the process's branch")
+        self.assertTrue(Path(c.state).resolve().is_relative_to(case.resolve()), c.state)
+        self.assertEqual(contact, [], "resolving the case's configuration touched the live checkout")
+
+    def test_the_contact_watch_sees_a_read_a_lock_and_a_command_under_its_folder(self) -> None:
+        folder = self.case_folder()
+        (folder / "file").write_text("x")
+        here = os.getcwd()
+        self.addCleanup(os.chdir, here)
+        with watching_contact(folder) as contact:
+            (folder / "file").read_text()
+            with open(folder / "file", "a+") as probe:
+                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(probe, fcntl.LOCK_UN)
+            os.chdir(folder)
+            subprocess.run(["true"], check=True)
+            os.chdir(here)
+        self.assertEqual([entry.split()[0] for entry in contact],
+                         ["open", "open", "os.chdir", "subprocess.Popen"], contact)
+        elsewhere = self.case_folder()
+        (elsewhere / "inner").mkdir()
+        (elsewhere / "inner/file").write_text("x")
+        (folder / "inner").mkdir()
+        (folder / "inner/file").write_text("x")
+        with watching_contact(folder) as contact:
+            subprocess.run(["true"], check=True)
+            shutil.rmtree(elsewhere / "inner")
+        self.assertEqual(contact, [], "a command run, or a folder removed, elsewhere counted")
+        with watching_contact(folder) as contact:
+            shutil.rmtree(folder / "inner")
+        self.assertEqual([entry.split()[0] for entry in contact], ["shutil.rmtree"], contact)
+
+    def test_every_cleanup_that_stops_a_process_also_waits_for_it(self) -> None:
+        for module in ("test_run_delivery.py", "test_run_delivery_supervisor.py"):
+            with self.subTest(module=module):
+                self.assertEqual(unreaped_cleanups((ROOT / "tests" / module).read_text()), [])
+        probe = "".join(f"{name} = subprocess.Popen(['sleep', '60'])\n" for name in "abcde") + (
+            "self.addCleanup(lambda: a.poll() is None and os.killpg(a.pid, signal.SIGKILL))\n"
+            "self.addCleanup(lambda: b.poll() is None and b.kill())\n"
+            "self.addCleanup(lambda: c.poll() is None and (os.killpg(c.pid, signal.SIGKILL), c.wait()))\n"
+            "self.addCleanup(lambda: stop_and_reap(d))\n"
+            "self.addCleanup(lambda: e.poll() is None and (e.kill(), a.wait()))\n"
+            "self.addCleanup(lambda: alive(pid) and os.kill(pid, signal.SIGTERM))\n")
+        self.assertEqual([line.split()[0] for line in unreaped_cleanups(probe)], ["6", "7", "10"],
+                         "the scan misses a form, or flags a recorded pid it can't wait for")
+
+    def test_a_lease_given_up_closes_its_lock_file(self) -> None:
+        tool = fresh_tool("run_delivery_lease")
+        lock = self.case_folder() / "app.lock"
+        holder = open(lock, "a+")
+        self.addCleanup(holder.close)
+        fcntl.flock(holder, fcntl.LOCK_EX)  # held through another open file, as a live check holds it
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", ResourceWarning)
+            try:
+                tool.Lease(lock, 0, "lead-close", 0)
+            except tool.Stop as held:
+                self.assertIn("the in-app lease is held", str(held))
+            else:
+                self.fail("took a held lease")
+            gc.collect()
+        self.assertEqual([str(w.message) for w in caught if issubclass(w.category, ResourceWarning)], [],
+                         "the lease it gave up left its lock file open")
+
+    def test_stopping_and_reaping_stops_the_whole_group_the_process_leads(self) -> None:
+        # A leader with a child in its session, as `lead-run --once` starts its pass's own: stopping only the leader
+        # would leave the child running after the case.
+        leader = subprocess.Popen(["sh", "-c", "sleep 60 & echo $!; wait"], stdout=subprocess.PIPE, text=True,
+                                  start_new_session=True)
+        self.addCleanup(stop_and_reap, leader)  # on any way out, as a case's cleanup does
+        self.addCleanup(leader.stdout.close)
+        child = int(leader.stdout.readline())
+        self.addCleanup(lambda: alive_pid(child) and os.kill(child, signal.SIGKILL))
+        self.assertEqual(os.getpgid(child), leader.pid, "the child isn't in the leader's group")
+        self.assertTrue(alive_pid(child), "alive_pid can't see the running child")
+        stop_and_reap(leader)
+        deadline = time.monotonic() + 5
+        while alive_pid(child) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertFalse(alive_pid(child), "the leader's child outlived stop_and_reap")
+
+    def test_a_stopped_and_reaped_process_is_gone_and_leaves_no_warning(self) -> None:
+        def released(reap: bool) -> list[str]:
+            proc = subprocess.Popen(["sleep", "60"], start_new_session=True)
+            if reap:
+                started = time.monotonic()
+                stop_and_reap(proc)
+                # Stopped, not waited out: it ends by the signal, long before its own minute is up.
+                self.assertLess(time.monotonic() - started, 5)
+                self.assertEqual(proc.returncode, -signal.SIGKILL)
+            else:  # the form that warned: stopped, never waited for
+                os.killpg(proc.pid, signal.SIGKILL)
+                time.sleep(0.2)
+            pid = proc.pid
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always", ResourceWarning)
+                del proc
+                gc.collect()
+            if not reap:  # the control's own zombie, reaped by the pid it had unless subprocess already did
+                with contextlib.suppress(ChildProcessError):
+                    os.waitpid(pid, 0)
+            return [str(w.message) for w in caught if issubclass(w.category, ResourceWarning)]
+
+        self.assertEqual(released(reap=True), [])
+        self.assertTrue(any("is still running" in message for message in released(reap=False)), "the control didn't warn")
+
 
 if __name__ == "__main__":
     unittest.main()

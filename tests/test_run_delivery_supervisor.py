@@ -29,6 +29,7 @@ from unittest import mock
 
 from tests.test_run_delivery import (POSIX_ONLY, Fixture, add_story, commit, doctor_binding, installed_release,
                                      plan_delivery, setup_delivery, sh, stop_supervisors, write_results)
+from tests.test_run_delivery import stop_and_reap  # a process the case started: stopped, then waited for
 from tests.test_run_delivery_tracker import FileBackend, JiraBackend
 
 # Each class that starts supervisors marks itself run_serially, so its cases run one at a time and alone on the machine.
@@ -1528,7 +1529,7 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertIn(rerun["id"], [mark["journal"] for mark in marks], "the rerun's decision isn't marked for the tracker")
         code, out = fx.flow("lead-resolve", "full-health", "--why", "again", cwd=m)
         self.assertEqual(code, 2, out)
-        self.assertIn("already asked for", out)
+        self.assertIn("already asked for; it runs on the supervisor's next pass", out)
         self.holds(fx)
         self.assertEqual(runs(), 3)
         self.holds(fx)
@@ -1990,6 +1991,11 @@ class SupervisorPostureTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn("if the base returns to gate", out)
         self.assertNotIn("next pass", kinds(fx, "decision.recorded")[-1]["summary"])
+        # Asked again, the refusal says the same: no pass runs it while the base says focused.
+        code, out = fx.flow("lead-resolve", "full-health", "--why", "again", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("already asked for; it runs if the base returns to gate", out)
+        self.assertNotIn("next pass", out)
         self.assertEqual(plan_of(fx)["closeOut"]["fullHealth"], "skipped")
         self.once(fx)
         self.assertEqual(plan_of(fx)["closeOut"]["fullHealth"], "skipped")
@@ -2140,10 +2146,15 @@ class SupervisorPostureRestoredTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         return fx, backend
 
-    def skipped_and_held_open(self) -> Fixture:
+    def skipped_and_held_open(self, failed: bool = False) -> Fixture:
+        """With `failed`, a failed result already stands at the tip that says focused, from before the skip."""
         fx, backend = self.fixture()
         self.closable(fx, deferred=True)
-        declare(fx, declaration())
+        tip = declare(fx, declaration())
+        if failed:
+            with open(fx.tmp / "flow-log/FX-1.full-health.jsonl", "a") as log:
+                log.write(json.dumps({"head": tip, "result": "failed", "output": "boom",
+                                      "at": "2026-01-01T00:00:00.000000Z"}) + "\n")
         with backend.edit() as store:
             store["failures"].append({"op": "create", "ticket": None, "status": 409, "times": 1})
         last = self.once(fx)
@@ -2217,6 +2228,39 @@ class SupervisorPostureRestoredTests(unittest.TestCase):
         self.assertNotIn("closeOut", plan_of(fx))
         self.assertNotIn("fullHealth", closed_of(fx))
         self.assertEqual(health_runs(fx), 0)
+
+    def test_a_failed_result_then_a_skip_then_gate_at_the_same_head_holds_the_close_on_the_failure(self) -> None:
+        fx = self.skipped_and_held_open(failed=True)
+        tip = sh("git", "rev-parse", "origin/feature/FX-1", cwd=fx.main).stdout.strip()
+        (fx.tmp / "health").write_text("fail")
+        # The same head now reads as gate: its tree can't be listed.
+        real = sh("sh", "-c", "command -v git").stdout.strip()
+        stubs = fx.tmp / "stubs"
+        stubs.mkdir()
+        (stubs / "git").write_text(f'#!/bin/sh\nif [ "$1" = ls-tree ]; then exit 1; fi\nexec {real} "$@"\n')
+        (stubs / "git").chmod(0o755)
+        path = fx.env["PATH"]
+        fx.env["PATH"] = f"{stubs}{os.pathsep}{path}"
+        try:
+            for _ in range(2):
+                gated = self.once(fx)
+                self.assertTrue(any(h.startswith(f"fullHealth failed at {tip[:10]}") for h in gated["closeHeldBy"]), gated)
+            self.assertEqual(health_runs(fx), 0, "the failed head ran again with no rerun asked for")
+            self.assertEqual(kinds(fx, "delivery.closed"), [])
+            self.assertNotIn("closeOut", plan_of(fx))
+            # The failed result reads as a gate word, so the skip journalled one change and gate the next.
+            changed = [d["summary"] for d in decisions(fx, "posture changed")]
+            self.assertEqual([("from gate to focused" in s, "from focused to gate" in s) for s in changed],
+                             [(True, False), (False, True)], changed)
+            # Under gate the lead's rerun is the next pass's, and that pass runs it.
+            (fx.tmp / "health").write_text("pass")
+            code, out = fx.flow("lead-resolve", "full-health", "--why", "fixed", cwd=fx.main)
+            self.assertEqual(code, 0, out)
+            self.assertIn("on the supervisor's next pass", out)
+            self.once(fx)
+            self.assertEqual(health_runs(fx), 1)
+        finally:
+            fx.env["PATH"] = path
 
     def test_gate_at_the_same_head_starts_a_real_run_and_clears_the_skip(self) -> None:
         fx = self.skipped_and_held_open()
@@ -3111,7 +3155,7 @@ class SupervisorBackgroundHealthTests(unittest.TestCase):
         fx.env["FX_HEALTH_SECONDS"] = "300"
         once = subprocess.Popen([sys.executable, "-B", str(fx.tool), "lead-run", "--once"], cwd=fx.main, env=fx.env,
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-        self.addCleanup(lambda: once.poll() is None and os.killpg(once.pid, signal.SIGKILL))
+        self.addCleanup(stop_and_reap, once)
         wait_for(lambda: self.run_lock(fx).get("command"), "the --once pass's run to start", 60)
         run = self.run_lock(fx)
         state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "FX-1 closed by hand.")
@@ -3127,7 +3171,7 @@ class SupervisorBackgroundHealthTests(unittest.TestCase):
         fx = self.fixture()
         # A live group leader that reuses the recorded pid, as far as the lock can tell: its start time differs.
         other = subprocess.Popen(["sleep", "120"], start_new_session=True)
-        self.addCleanup(lambda: other.poll() is None and os.killpg(other.pid, signal.SIGKILL))
+        self.addCleanup(stop_and_reap, other)
         lock = fx.tmp / "flow-log/FX-1.full-health.lock"
         lock.parent.mkdir(parents=True, exist_ok=True)
         lock.write_text(json.dumps({"pid": 99999, "head": "e" * 40, "command": other.pid,
@@ -3440,6 +3484,16 @@ class NoSupervisorOutlivesItsCaseTests(unittest.TestCase):
         self.assertFalse(alive(holder.pid), "the supervisor outlived its case's cleanup")
 
     # -- the supervisor exits once what it serves is gone --------------------------------------------------------------
+
+    def test_starting_the_supervisor_lets_its_handle_go_without_a_resource_warning(self) -> None:
+        """lead-init starts the supervisor to outlive it and never waits for it: with every ResourceWarning an error,
+        as the suite's own sensor runs, it still ends with no warning that the subprocess is still running."""
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        fx.env["PYTHONWARNINGS"] = "error::ResourceWarning"
+        self.started(fx)  # its command's output carries no traceback, or the fixture fails it
+        log = self.supervisor_log(fx)
+        self.assertNotIn("ResourceWarning", log)
 
     def test_a_supervisor_whose_record_is_removed_exits_on_its_own(self) -> None:
         fx = Fixture(self.generation, self.receipt)
