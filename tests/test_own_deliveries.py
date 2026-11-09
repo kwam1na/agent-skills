@@ -165,9 +165,11 @@ class StandingBinding(unittest.TestCase):
         # A version that isn't the one on disk, as the merge base and a candidate aren't: the listing reads its stdin.
         other = json.loads(committed)
         dropped = other["entries"][0]["outputs"].pop()["path"]
-        other["entries"][-1]["outputs"].append({"path": "skills/fixture-only/ADDED.md", "sha256": "0" * 64})
+        added = "skills/fixture-only/ADDED.md"
+        other["entries"][-1]["outputs"].append({"path": added, "sha256": "0" * 64})
         other = json.dumps(other, indent=2) + "\n"
         self.assertNotIn(dropped, listed(other))
+        self.assertIn(added, listed(other))
         self.assertEqual(listing(other), listed(other))
 
     def test_the_delivery_folders_are_ignored(self) -> None:
