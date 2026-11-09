@@ -11,6 +11,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Callable
 from unittest import mock
 
 from agent_skills.lifecycle import Lifecycle
@@ -235,10 +236,14 @@ class BuiltProductTests(unittest.TestCase):
                                                     f"source: origin/main\nbase tip: {tip}\n")
                     self.assertEqual(self.written(repository), before)
 
-    def assert_gated(self, declared: str | None, first_lines: dict[str, list[str]]) -> None:
-        """The command's own refusal and nothing else on stdout, after any lines the case adds on stderr."""
+    def assert_gated(self, declared: str | None, first_lines: dict[str, list[str]], then: Callable[[Path], None] | None = None) -> None:
+        """The command's own refusal and nothing else on stdout, after any lines the case adds on stderr.
+
+        ``then`` changes the installed consumer before any command runs."""
         with tempfile.TemporaryDirectory() as folder:
             repository = self.consumer(Path(folder), declared)
+            if then is not None:
+                then(repository)
             for command, blocker in GATED_BLOCKERS.items():
                 with self.subTest(command=command):
                     result = self.harness(repository, command)
@@ -258,8 +263,24 @@ class BuiltProductTests(unittest.TestCase):
         self.assert_gated(None, {})
 
     def test_each_command_gives_only_its_own_refusal_with_a_plain_base_that_reads_as_unreadable(self) -> None:
+        # Focused at the tip a plain `main` names, so only the rule that the base names origin/<branch> gates it.
         with mock.patch.dict(CONSUMER_CONFIG, {"baseRef": "main"}):
-            self.assert_gated(declaration("gate"), {})
+            self.assert_gated(declaration("focused"), {})
+
+    def test_a_pushed_branch_naming_itself_as_the_base_while_carrying_focused_is_gated(self) -> None:
+        # Only the default branch answers, so a candidate can't declare its own posture by naming itself as the base.
+        def publish_focused(repository: Path) -> None:
+            (repository / ".agents").mkdir(exist_ok=True)
+            (repository / POSTURE_PATH).write_text(declaration("focused"), encoding="utf-8")
+            run_git(repository, "add", "-A")
+            run_git(repository, "commit", "-qm", "the candidate declares focused")
+            run_git(repository, "push", "-q", "origin", "candidate")
+            run_git(repository, "fetch", "-q", "origin")
+            self.assertEqual(run_git(repository, "rev-parse", "refs/remotes/origin/candidate"), run_git(repository, "rev-parse", "HEAD"))
+            self.assertEqual(run_git(repository, "symbolic-ref", "refs/remotes/origin/HEAD"), "refs/remotes/origin/main")
+
+        with mock.patch.dict(CONSUMER_CONFIG, {"baseRef": "origin/candidate"}):
+            self.assert_gated(None, {}, publish_focused)
 
     def test_a_malformed_declaration_adds_its_code_and_reason_before_the_refusal(self) -> None:
         code = f"posture_malformed: {POSTURE_PATH} on origin/main is malformed"
