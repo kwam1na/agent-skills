@@ -4624,7 +4624,8 @@ DOCTOR_LABELS = ["host and tools", "orchestration binding", "merge queue candida
                  "release on the delivery base", "gates", "lane checkouts ignored", "tracker issue URL",
                  "pipeline PR review", "gh", "forge find", "forge write access", "tracker snapshot token",
                  "snapshots and publishers", "in-app adapters", "in-app adapter contract", "video evidence tools",
-                 "Node", "harness configuration", "delivery file", "plan chapter", "plan sections", "story files", "story readiness", "context sections",
+                 "Node", "harness configuration", "delivery file", "plan chapter", "added stories' reasons",
+                 "plan sections", "story files", "story readiness", "context sections",
                  "configuration on the remote base", "pull requests marked ready", "delivery supervisor",
                  "gates on the base"]
 
@@ -5235,8 +5236,8 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         out = self.doctor(fx, "--run-adapters", "--run-gates", expect_code=0)
         lines = doctor_lines(out)
         self.assertEqual(list(lines), DOCTOR_LABELS, out)
-        expected_skips = {"pipeline PR review", "gh", "forge write access", "plan chapter", "pull requests marked ready",
-                          "delivery supervisor"}
+        expected_skips = {"pipeline PR review", "gh", "forge write access", "plan chapter", "added stories' reasons",
+                          "pull requests marked ready", "delivery supervisor"}
         expected_skips |= set() if self.ffmpeg else {"video evidence tools"}
         expected_skips |= set() if self.node22 else {"harness configuration"}
         self.assertEqual({label for label, (status, _) in lines.items() if status == "skipped"}, expected_skips, out)
