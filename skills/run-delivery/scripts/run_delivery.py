@@ -4111,7 +4111,9 @@ def lead_plan_checkout(c) -> Path:
     clean and holds the base; a story branch is a lane's. A lead worktree then reads its own working tree."""
     root = c.root
     branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=root)
-    if any(branch == c.branch(key) for key in c.stories):
+    # Any delivery's story branch here is a lane's, not only this delivery's.
+    stories = {key for d in c.delivery_files().values() for key in (d.get("stories") or {})} | set(c.stories)
+    if any(branch == c.branch(key) for key in stories):
         raise Stop(f"run lead-plan in the lead's checkout of {c.base_branch}, or in a lead worktree of its own; "
                    f"{branch} is a story branch")
     if git("status", "--porcelain", cwd=root):
@@ -4125,8 +4127,9 @@ def lead_plan_checkout(c) -> Path:
         return root
     own = {f"{c.deliveries_rel}/{c.delivery}.json", Path(c.plan).as_posix()}
     for sha in git("rev-list", "--reverse", f"{c.base_ref}..HEAD", cwd=root).split():
-        foreign = [name for name in git("diff-tree", "--no-commit-id", "--name-only", "-r", sha, cwd=root).split()
-                   if name not in own]
+        # --cc lists what a merge itself adds beyond its parents, nothing for a clean one; -z keeps any path whole.
+        changed = run(["git", "diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "--cc", sha], cwd=root).stdout
+        foreign = [name for name in changed.split("\0") if name and name not in own]
         if foreign:
             subject = git("log", "-1", "--format=%s", sha, cwd=root)
             raise Stop(f"{root} is ahead of {c.base_ref} with {sha[:12]} ({subject}), which changes "

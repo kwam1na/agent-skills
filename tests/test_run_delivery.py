@@ -5716,7 +5716,9 @@ class RunDeliveryLeadWorktreeTests(unittest.TestCase):
         m = fx.main
         # A second delivery on the same base, open too: its file reaches the lead's worktree with the base.
         other = json.loads((m / ".agents/deliveries/FX-1.json").read_text())
-        (m / ".agents/deliveries/FX-9.json").write_text(json.dumps({**other, "delivery": "FX-9"}, indent=2))
+        stories = {f"FX-9{key.split('-')[1]}": story for key, story in other["stories"].items()}
+        (m / ".agents/deliveries/FX-9.json").write_text(json.dumps({**other, "delivery": "FX-9", "stories": stories},
+                                                                   indent=2))
         commit(m, "FX-9: a second delivery")
         sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
         sh("git", "fetch", "-q", "origin", cwd=lead)
@@ -5738,6 +5740,14 @@ class RunDeliveryLeadWorktreeTests(unittest.TestCase):
         self.assertEqual(self.pushed(fx, out, lead)["approvals"][0]["state"], "done")
         on_base = json.loads(sh("git", "show", "origin/feature/FX-1:.agents/deliveries/FX-9.json", cwd=lead).stdout)
         self.assertEqual(on_base["approvals"][0]["state"], "waiting")
+        # The other delivery's story branch is a lane's too, though none of FX-1's stories is on it.
+        lane = fx.tmp / "lane-FX-92"
+        sh("git", "worktree", "add", "-q", "--no-track", "-b", "feature/FX-92", lane, "origin/feature/FX-1", cwd=m)
+        code, out = fx.flow("--delivery", "FX-1", "lead-plan", "approval", "approval-1", "--state", "waiting",
+                            cwd=lane)
+        self.assertEqual(code, 2, out)
+        self.assertIn("feature/FX-92 is a story branch", out)
+        self.assertEqual(sh("git", "status", "--porcelain", cwd=lane).stdout, "")
 
     def test_a_change_from_a_lead_worktree_at_the_base_tip_commits_there_and_reaches_the_base(self) -> None:
         fx, lead, path = self.fixture()
@@ -5786,13 +5796,14 @@ class RunDeliveryLeadWorktreeTests(unittest.TestCase):
 
     def test_a_lead_worktree_ahead_with_another_lead_s_commit_is_refused_naming_it(self) -> None:
         fx, lead, path = self.fixture()
-        (lead / "docs/other-plan.md").write_text("# FX-9\n")  # another delivery's lead committed here, unpushed
+        # Another delivery's lead committed here, unpushed; a path with a space is named whole.
+        (lead / "docs/other plan.md").write_text("# FX-9\n")
         commit(lead, "FX-9: its plan")
         other = sh("git", "rev-parse", "--short=12", "HEAD", cwd=lead).stdout.strip()
         code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "done", cwd=lead)
         self.assertEqual(code, 2, out)
         self.assertIn(f"{lead} is ahead of origin/feature/FX-1 with {other} (FX-9: its plan), which changes "
-                      "docs/other-plan.md", out)
+                      "docs/other plan.md: a lead worktree", out)
         self.assertIn("only FX-1's own delivery file and plan", out)
         self.assertEqual(json.loads(path.read_text())["approvals"][0]["state"], "waiting")
         # A worktree that has diverged from the base is refused as today.
@@ -5805,6 +5816,34 @@ class RunDeliveryLeadWorktreeTests(unittest.TestCase):
         code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "done", cwd=lead)
         self.assertEqual(code, 2, out)
         self.assertIn(f"{lead} has diverged from origin/feature/FX-1", out)
+
+    def test_a_clean_merge_of_the_base_passes_and_a_merge_adding_its_own_file_is_refused(self) -> None:
+        fx, lead, path = self.fixture()
+        code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "done", "--who", "the operator", cwd=lead)
+        self.assertEqual(code, 0, out)
+        # The base moves on before that commit is pushed; the lead merges it in, cleanly.
+        (fx.main / "src/app.txt").write_text("the base's\n")
+        commit(fx.main, "the base moves on")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+        sh("git", "fetch", "-q", "origin", cwd=lead)
+        sh("git", "merge", "-q", "--no-edit", "origin/feature/FX-1", cwd=lead)
+        code, out = fx.flow("lead-plan", "change", "--kind", "relaxed", "--subjects", "FX-2", "--criterion", "one-fails",
+                            "--text", "Thing one says so when it fails", "--why", "w", cwd=lead)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.pushed(fx, out, lead)["approvals"][0]["state"], "done")
+        # A merge that adds a file neither parent has is refused, naming it, though each parent alone is the lead's.
+        sh("git", "checkout", "-q", "-b", "side", cwd=lead)
+        sh("git", "commit", "-q", "--allow-empty", "-m", "side", cwd=lead)
+        sh("git", "checkout", "-q", "lead/FX-1", cwd=lead)
+        sh("git", "commit", "-q", "--allow-empty", "-m", "main side", cwd=lead)
+        sh("git", "merge", "-q", "--no-ff", "--no-commit", "side", cwd=lead)
+        (lead / "docs/evil.md").write_text("added by the merge\n")
+        sh("git", "add", "docs/evil.md", cwd=lead)
+        sh("git", "commit", "-q", "-m", "merge side", cwd=lead)
+        merge = sh("git", "rev-parse", "--short=12", "HEAD", cwd=lead).stdout.strip()
+        code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "waiting", cwd=lead)
+        self.assertEqual(code, 2, out)
+        self.assertIn(f"with {merge} (merge side), which changes docs/evil.md:", out)
 
     def test_a_dirty_lead_worktree_is_refused(self) -> None:
         fx, lead, path = self.fixture()
