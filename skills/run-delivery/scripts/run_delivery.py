@@ -2172,17 +2172,104 @@ def port_holders(port: int) -> list[tuple[int, str]]:
     return holders
 
 
+def short_command(command: str) -> str:
+    """A long command keeps its head (the program) and its tail (the arguments, which tell one server from another)."""
+    return command if len(command) <= 160 else f"{command[:40]} ... {command[-110:]}"
+
+
 def port_busy(port: int) -> str:
     """Why the in-app port can't be used: who listens on it, outside the lease, and how to release it."""
     holders = port_holders(port)
     if not holders:
         return f"something else is listening on {port}, outside the in-app lease (its process isn't visible here); stop it first"
-    # A long command keeps its head (the program) and its tail (the arguments, which tell one server from another).
-    short = lambda command: command if len(command) <= 160 else f"{command[:40]} ... {command[-110:]}"
-    named = ", ".join(f"pid {pid} ({short(command)})" for pid, command in holders)
+    named = ", ".join(f"pid {pid} ({short_command(command)})" for pid, command in holders)
     pids = " ".join(str(pid) for pid, _ in holders)
     return (f"something else is listening on {port}, outside the in-app lease: {named}. A build served by hand doesn't "
             f"hold the lease, so app-check can't use the port: stop it (kill {pids}) and run again")
+
+
+# How long a serve that lost its port to another listener is given to exit, so its refusal can name the exit, or to
+# take the port once that listener lets it go.
+SERVE_SETTLE_SECONDS = 5
+# Where the host can't name a port's listeners, how long the serve must stay running once the port answers to be taken
+# as the listener: a serve that lost the bind dies of it well within this.
+SERVE_UNNAMED_SECONDS = 2
+
+
+def serve_log(ia: dict) -> Path:
+    """Where the serve's output goes: beside the lease's lock, written by one holder at a time, as the check's spec is."""
+    lock = Path(expand(ia["lock"]))
+    return lock.with_name(lock.name + ".serve.log")
+
+
+def start_serve(ia: dict, dist: Path, port: int, lease: "Lease") -> subprocess.Popen:
+    """Start the serve adapter on `dist` under `lease` and wait until `port` answers from it. Refuses, having stopped
+    what it started, unless the listener is this serve's: a serve that loses the port to another listener (another run
+    on the same port, under a lease of its own) exits or never listens, and the port's answer is then someone else's."""
+    log = serve_log(ia)
+    with open(log, "w") as out:
+        server = subprocess.Popen(expand_argv(ia["serve"]["argv"], dir=str(dist), port=str(port)),
+                                  stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
+    try:
+        lease.track(server.pid)
+        for _ in range(100):
+            if port_open(port) or server.poll() is not None:
+                break
+            time.sleep(0.2)
+        problem = serve_problem(server, port, log)
+    except BaseException:
+        stop_group(server)
+        raise
+    if problem:
+        stop_group(server)
+        raise Stop(problem)
+    return server
+
+
+def serve_problem(server: subprocess.Popen, port: int, log: Path) -> str | None:
+    """Why the listener on `port` isn't `server`'s, or None when it is: a listener in the serve's own process group
+    (its child, for a serve that runs its server as one), or, where the host can't name listeners, a serve that stays
+    running a moment after the port answers."""
+    def group(pid: int) -> int | None:
+        try:
+            return os.getpgid(pid)
+        except (ProcessLookupError, PermissionError):
+            return None
+
+    def output() -> str:
+        try:
+            tail = log.read_text(errors="replace").strip()[-600:]
+        except OSError:
+            tail = ""
+        return f"; its output is in {log}" + (f", ending:\n{tail}" if tail else "")
+
+    if not port_open(port):
+        if server.poll() is not None:
+            return f"the serve command exited with code {server.returncode} before it listened on port {port}" + output()
+        return f"the serve command didn't start listening on port {port}" + output()
+    holders = port_holders(port)
+    if any(group(pid) == server.pid for pid, _ in holders):
+        return None
+    if not holders:
+        settled = time.monotonic() + SERVE_UNNAMED_SECONDS
+        while server.poll() is None and time.monotonic() < settled:
+            time.sleep(0.1)
+        if server.poll() is None:
+            return None
+    # Give the serve a moment: it exits of the lost bind, so its refusal can name the exit, or it takes the port once
+    # the other listener lets it go, and is then this run's after all.
+    deadline = time.monotonic() + SERVE_SETTLE_SECONDS
+    while server.poll() is None and time.monotonic() < deadline:
+        holders = port_holders(port) or holders
+        if any(group(pid) == server.pid for pid, _ in holders):
+            return None
+        time.sleep(0.2)
+    named = ", ".join(f"pid {pid} ({short_command(command)})" for pid, command in holders) or "a process this host can't name"
+    state = (f"exited with code {server.returncode}" if server.poll() is not None
+             else f"is still running (pid {server.pid}) and isn't listening")
+    return (f"port {port} answered, but not from this run's serve: {named} took the port while the serve was starting, "
+            f"so the check would have run against that server. This run's serve {state}" + output() + ". Another run "
+            "using the same port under a lease of its own does this: give each its own port, or have them share one lock")
 
 
 class Lease:
@@ -2300,15 +2387,7 @@ def run_in_app(dist: Path, spec: dict, passthrough: list[str], owner: str, lock_
         spec_file.write_text(json.dumps(spec))
         if port_open(port):
             raise Stop(port_busy(port))
-        server = subprocess.Popen(expand_argv(ia["serve"]["argv"], dir=str(dist), port=str(port)),
-                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-        lease.track(server.pid)
-        for _ in range(100):
-            if port_open(port) or server.poll() is not None:
-                break
-            time.sleep(0.2)
-        if not port_open(port):
-            raise Stop("the serve command didn't start listening")
+        server = start_serve(ia, dist, port, lease)
         check = subprocess.Popen(expand_argv(ia["check"]["argv"], spec=str(spec_file), port=str(port), args=passthrough),
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
         lease.track(check.pid)
@@ -7508,13 +7587,7 @@ def adapter_contract(ia: dict, lease: "Lease", say) -> list[str]:
         try:
             if port_open(ia["port"]):
                 raise Stop(port_busy(ia["port"]))
-            server = subprocess.Popen(expand_argv(ia["serve"]["argv"], dir=str(site), port=str(ia["port"])),
-                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-            lease.track(server.pid)
-            for _ in range(100):
-                if port_open(ia["port"]):
-                    break
-                time.sleep(0.2)
+            server = start_serve(ia, site, ia["port"], lease)
             busy = '[aria-busy="true"]'
             loaded = "document.querySelector('#state').textContent === 'loaded'"
             hold = {"holds": ["/api/one$"], "fails": [], "clicks": [], "for": busy, "wait": 300,

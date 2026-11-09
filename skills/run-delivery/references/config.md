@@ -114,8 +114,11 @@ checks may need no file at all.
   "supervisor": { "passSeconds": 60 },        // optional: how long the supervisor waits between passes
   "inApp": {                                  // optional; its "lease" must name one of the binding's leases
     "lease": "app-session",
-    "lock": "~/.cache/my-app-session.lock",   // an OS lock, held for each check
-    "port": 4201,
+    "lock": "~/.cache/my-app-session.lock",   // an OS lock, held for each check; the serve's output is kept
+                                              // beside it, in <lock>.serve.log
+    "port": 4201,                             // the lock is what keeps runs on this port apart: checkouts that
+                                              // share a port share one lock path. A check whose serve finds the
+                                              // port answered by another listener refuses, naming it
     "build": { "argv": ["npm", "run", "build"], "artifact": "dist", "timeoutSeconds": 1800 },
     "serve": { "argv": ["my-static-server", "{dir}", "--port", "{port}"] },
     "check": { "argv": ["my-check", "--spec", "{spec}", "{args}"] },   // {args}: what the lane passes after --
