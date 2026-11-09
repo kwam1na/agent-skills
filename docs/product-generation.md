@@ -192,7 +192,7 @@ its last 0.8.3 change, which the `v0.8.3` tag names. Like the runtimes before it
 - reads each burst of source objects through one long-lived `git cat-file --batch`
   child, verifying every frame against the object it asked for;
 - hashes each host tool once per process;
-- reads the delivery posture only from the repository root;
+- reads the delivery posture only from the repository root, and bounds its depth;
 - lets a rail provider inherit exactly the descriptors it declares;
 - kills a check's process group through libc on Bun.
 
