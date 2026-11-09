@@ -473,19 +473,19 @@
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "2960dce8e1c840bacb58253898c59d73b22f3973da049a51a9f4449e4c19c801"
+          "sha256": "847a123dc28e13822f53607db50bbc897e9d7136614bde0eb3e76ae121b588b8"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
-          "sha256": "b99a23c8e606b1379a4e4d037efc07ff5acfc8c3aeecb5ec1c95cab035679e20"
+          "sha256": "bc0595f49a600fb098a573c5728c51c95022160b09caac0dbd70ee75c749df36"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "65c6007936b782a1c2d580ed06bf1de23574e299d961bc755d11671bee71ddfa"
+          "sha256": "0c4cfae2e1aad9662af010022343b2b612da177687acd21da92f97c528a3c4f9"
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",
-          "sha256": "fbe462a53be5982ff561a66551f06ca799ceb8db7edd9f83609277618e559abc"
+          "sha256": "e718646cf51b43bd23821cf1cd1d332e4f469784db192535093b16fc6fbe4676"
         },
         {
           "path": "skills/orchestrate-work/scripts/render_state.py",
@@ -1018,7 +1018,7 @@
       "outputs": [
         {
           "path": "skills/run-delivery/SKILL.md",
-          "sha256": "b3fa0a47df2dbfdc366c2c309c99c6a5f7f99e2e90abfb1b2e0e130bdeadc5a7"
+          "sha256": "a1da5ac979d82c134765cbd0d3c0ee9dacf289a8fadebf596cbd6679b6a4b13b"
         },
         {
           "path": "skills/run-delivery/adapters/forge_bitbucket.py",
@@ -1038,15 +1038,15 @@
         },
         {
           "path": "skills/run-delivery/references/adopting.md",
-          "sha256": "f666270263cf766636e33408b648aad1c2086dbfc360b5f36b507dcd54de1ff1"
+          "sha256": "ec9f29c911ccf07214bb73b924f7d6c2f2c550935e641b7ea8a17bfb35840dee"
         },
         {
           "path": "skills/run-delivery/references/config.md",
-          "sha256": "30e202758753ba1d4fd256933d4bc7c8668ffd00b299e740fdc6ce575c5c0433"
+          "sha256": "ab73679447bec4a2546b7ac3d82102f0b0db613c9addbfc9ec2030dad857dee2"
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "de09cbaf97badda95c342fd1880ffb250a5a0efdb9414b7440619ec71f7dc0d3"
+          "sha256": "eaa2e4f3a37e3cc7074d0826deb241b0f733e3eba2d95293fb39025cdcd99fde"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",

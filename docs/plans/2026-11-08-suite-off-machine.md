@@ -17,7 +17,8 @@ ownership, and how the work reaches `main`.
   snapshot before the run and another after it. The after snapshot holds no new `run_delivery.py`, `render_state.py`, `merge_queue.py` or
   fixture-server process whose command line names an `FX-` fixture key or a path under the run's temporary folder. The delivery's own
   supervisor, and any other real delivery's processes, are left out by that rule, never case by case.
-- Every deferral has an open follow-up item filed under the epic, and the epic and its items are closed with this evidence.
+- No finding is deferred (operator ruling, 2026-11-08): every finding any review in this delivery raises, at any severity, is fixed in
+  the story that found it, and no follow-up item is filed for it. The epic and its items are closed with this evidence.
 
 ## Out of scope
 
@@ -50,7 +51,7 @@ Two lanes. Lane 1 holds the run-delivery chain. Lane 2 holds the tracker module 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
 | 1 | 1 | V26-3286, V26-3273 | `skills/run-delivery/`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_plan_review.py`, `docs/solutions/`, `provenance.lock.json` for `run_delivery.py`'s digest, and `catalog.json` and `profiles/*.json` only if an output is added |
-| 1 | 2 | V26-3274, V26-3292 | `tests/test_run_delivery_tracker.py`, `tests/test_own_deliveries.py` |
+| 1 | 2 | V26-3274, V26-3292, V26-3312, V26-3316 | `tests/test_run_delivery_tracker.py`, `tests/test_own_deliveries.py`, `tests/test_delivery_views_render.py` |
 
 **Moving ownership.** `provenance.lock.json` belongs to lane 1, the only lane that changes a listed output. If lane 2 finds it needs a file
 outside its `owns`, it raises it with the lead before hand-off.
@@ -111,6 +112,31 @@ for `provenance.lock.json`, its path and argv. It runs that argv the way `merge_
 computed independently from the lock JSON's listed output paths, sorted, never through `update-provenance.py`'s own code. The row is proved
 red three ways: the entry removed, an argv that prints `[]`, and an argv naming another script. For the last two, the exact-entry literal is
 updated to match each mutated argv, so the failure lands on the run assertion, and each red run records which assertion failed. Files: `tests/test_own_deliveries.py`. Sensors: `tests/test_own_deliveries.py`, `scripts/validate-registry.py`.
+
+### V26-3312. Gate the run-deadline render test against the macOS wall-clock race
+
+Lane 2, after V26-3292 (lead's addition, 2026-11-08, under the no-deferrals ruling: found red on V26-3274's macOS full-matrix job,
+outside that story's diff). Characterization-first: reproduce `CollectRunsTests.test_runs_past_the_deadline_are_unavailable_and_stay_uncached`
+under load, or with a stall that models it, before changing it. The fix keeps the row's claim and doesn't loosen it. Either the suffix order
+is a promise `collect_runs` keeps under load and a row pins it, or the row asserts what the code does promise, and the hand-off says which.
+A mutation that drops the deadline handling fails it. Files: `tests/test_delivery_views_render.py`, and
+`skills/delivery-views/scripts/render.py` only through the lead, if the code breaks a promise. Sensors:
+`tests/test_delivery_views_render.py`, macOS CI with `full-matrix`.
+
+### V26-3316. The adoption-guide test's pinned focus patch races the fixture supervisor
+
+Lane 2, after V26-3312 (lead's addition, 2026-11-09, under the no-deferrals ruling). Found red on V26-3312's Ubuntu job, outside that
+story's diff: `RunDeliveryAdoptionGuideTests.test_the_guide_takes_an_empty_repository_to_a_closed_delivery` got `version_stale` on the
+guide's pinned `focus ... --state done`. Characterization-first, read-only: name the writer that bumps the record between the read and
+the pinned write, and reproduce the failure with a stall that models it, before changing anything. The fix follows the cause. If an
+adopter's guide sequence races, the guide changes, and the tool too if needed. If only the test's fixture races, the test serializes
+against its own writer without weakening what it proves. The hand-off says which. Lead's ruling on the diagnosis (2026-11-09): the merge queue
+writes the record inside `set_focus`'s read-then-pinned-write window, so the fix is a bounded re-read-and-retry in `set_focus`, like
+reconcile's, with a row in `tests/test_orchestration_state.py` that fails with the retry reverted. The guide's text stays. Lane 2 owns
+`delivery_state.py` and `tests/test_orchestration_state.py` for it, and `provenance.lock.json` moves to lane 2 before its acceptance. The
+second defect the diagnosis found, `stop_supervisors`' `rglob` walk raising mid-walk and leaking a supervisor, is V26-3273's. Files: decided by the diagnosis. Those under lane 1's
+`owns` (`tests/test_run_delivery.py`, `skills/run-delivery/`) move to lane 2 only through the lead, once lane 1's stories on them have
+merged. Sensors: `RunDeliveryAdoptionGuideTests`, the adoption-guide corpus pins.
 
 ## Execution posture
 

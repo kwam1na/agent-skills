@@ -11,12 +11,15 @@ from __future__ import annotations
 import contextlib
 import datetime
 import fcntl
+import http.client
 import http.server
 import importlib.util
 import json
 import os
 import re
 import shutil
+import socket
+import socketserver
 import subprocess
 import sys
 import tempfile
@@ -25,6 +28,7 @@ import time
 import unittest
 import urllib.parse
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "skills/run-delivery/scripts"
@@ -84,6 +88,15 @@ def offered(store: dict, key: str) -> list[dict]:
             if (t["from"] is None and t["to"] != status) or (t["from"] is not None and status in t["from"])]
 
 
+class _Server(http.server.ThreadingHTTPServer):
+    # HTTPServer.server_bind looks up the address's host name before it listens; where reverse lookups go unanswered
+    # (macOS runners) that takes about 34 seconds per server. This one names its address without a lookup, as
+    # `STATIC_SERVE` in tests/test_run_delivery.py does.
+    def server_bind(self) -> None:
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
 class FakeJira:
     """Jira Cloud's REST API, as much as the adapter uses, on port 0."""
 
@@ -123,7 +136,7 @@ class FakeJira:
             def do_PUT(self) -> None:
                 self.handle_any("PUT")
 
-        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.server = _Server(("127.0.0.1", 0), Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.site = f"http://127.0.0.1:{self.server.server_address[1]}"
@@ -1916,6 +1929,67 @@ class LaneCommandTests(RunDeliveryTrackerCommandTests):
         self.assertEqual(fx.flow("lead-brief", cwd=fx.main)[0], 0)
         self.assertIn("`lane-start` prints it; make it with your tracker tools.",
                       (fx.main / "docs/lane-brief.md").read_text())
+
+
+class FakeJiraBindTests(unittest.TestCase):
+    """The fake Jira listens without looking up its own host name. HTTPServer.server_bind asks socket.getfqdn for the
+    address's name before it listens, and where reverse lookups of a loopback address go unanswered, as on a macOS
+    runner, that holds every server about 34 seconds."""
+
+    # The loopback names a stalled lookup holds, as `STALLED_LOOKUP` in tests/test_run_delivery.py lists them.
+    LOOPBACK = ("", "localhost", "127.0.0.1", "::1", "0.0.0.0", "::")
+
+    def test_the_fake_jira_listens_at_once_when_name_lookups_stall(self) -> None:
+        released = threading.Event()  # set in cleanup, so a server that waits on the lookup isn't left waiting a minute
+        stalled: list[str] = []
+        real_getfqdn, real_gethostbyaddr = socket.getfqdn, socket.gethostbyaddr
+
+        def getfqdn(name: str = "") -> str:
+            if name in self.LOOPBACK:
+                stalled.append(name)
+                released.wait(60)
+            return real_getfqdn(name)
+
+        def gethostbyaddr(address: str):
+            if address in self.LOOPBACK:
+                stalled.append(address)
+                released.wait(60)
+            return real_gethostbyaddr(address)
+
+        patch = mock.patch.multiple(socket, getfqdn=getfqdn, gethostbyaddr=gethostbyaddr)
+        patch.start()
+        made: list[FakeJira] = []
+        built = threading.Thread(target=lambda: made.append(FakeJira()), daemon=True)
+
+        def stop() -> None:  # in this order: release the lookup, let the constructor finish, then close what it made
+            released.set()
+            built.join(70)
+            patch.stop()
+            for jira in made:
+                jira.close()
+
+        self.addCleanup(stop)
+        started = time.monotonic()
+        built.start()
+        built.join(5)
+        self.assertFalse(built.is_alive(), f"FakeJira() waited on the stalled lookup of {stalled}")
+        server = made[0].server
+        port = server.server_address[1]
+        # The name the stock bind would have looked up is the address itself.
+        self.assertEqual((server.server_name, server.server_port), ("127.0.0.1", port))
+        with socket.create_connection(("127.0.0.1", port), timeout=max(0.1, 5 - (time.monotonic() - started))):
+            pass
+        # And it serves: a request without credentials gets Jira's 401, within the same 5 s.
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=max(0.1, 5 - (time.monotonic() - started)))
+        try:
+            connection.request("GET", "/rest/api/3/myself")
+            response = connection.getresponse()
+            self.assertEqual((response.status, json.loads(response.read())), (401, {"errorMessages": ["unauthorized"]}))
+        finally:
+            connection.close()
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertEqual(stalled, [], "the bind looked up a loopback name")
+
 
 if __name__ == "__main__":
     unittest.main()
