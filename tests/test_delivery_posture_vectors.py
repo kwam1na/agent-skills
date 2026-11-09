@@ -361,7 +361,7 @@ class BuiltProductTests(unittest.TestCase):
     def test_verify_from_a_linked_worktree_nested_under_the_root_reads_focused(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             repository = self.consumer(Path(folder), declaration("focused"))
-            lane = repository / ".orchestration" / "lanes" / "V26-0001"
+            lane = repository / ".orchestration" / "lanes" / "lane-one"
             run_git(repository, "worktree", "add", "-q", "--detach", str(lane))
             result = self.harness(lane, "verify")
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
