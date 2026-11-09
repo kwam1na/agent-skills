@@ -1,8 +1,8 @@
 {
   "schemaVersion": "delivery-runtime/1",
-  "runtimeVersion": "0.8.3",
+  "runtimeVersion": "0.8.4",
   "nodeMinimum": "22.6.0",
-  "workflowContentSha256": "d9ae71abe90759d4eb424c6ac9441b5fcbc864002a5266df36df65e666057f9d",
+  "workflowContentSha256": "07701867af1763af18a43fedb8ad3980610c566dfabd232cd6df2602572f3a73",
   "files": [
     {
       "path": "LICENSE",
@@ -30,11 +30,11 @@
     },
     {
       "path": "kernel.d.mts",
-      "sha256": "85713e213e8e41e7b3f9d53afa3a37cc5e48ae46d66c3afb32d97e2e43c05709"
+      "sha256": "93c81e55277c5c289d3b49a82983c0c606ec3b43e23e2d6fb7eb24238938303c"
     },
     {
       "path": "kernel.mjs",
-      "sha256": "92706d6c2e234b0c10c979e1ba1647f69725c544e596b48b4a71b49132c59255"
+      "sha256": "eb68146ff55470f9f1a0a62dfde9361dfb5b92749630be5cc7f0edfe8fb406ca"
     },
     {
       "path": "loader.mjs",

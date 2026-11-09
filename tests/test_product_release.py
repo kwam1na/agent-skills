@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -21,9 +22,23 @@ ROOT = Path(__file__).resolve().parents[1]
 class StoredRuntimeTests(unittest.TestCase):
     def test_the_stored_runtime_declares_the_version_it_was_built_as(self) -> None:
         descriptor = json.loads((ROOT / "product-runtime/runtime.json").read_text(encoding="utf-8"))
-        self.assertEqual(descriptor["runtimeVersion"], "0.8.3")
+        self.assertEqual(descriptor["runtimeVersion"], "0.8.4")
         # The constant the kernel reports its version by, which a build keeps apart from the descriptor.
         self.assertIn(f'HARNESS_VERSION = "{descriptor["runtimeVersion"]}"', (ROOT / "product-runtime/kernel.mjs").read_text(encoding="utf-8"))
+
+    def test_the_stored_runtime_loads_only_literal_modules_but_the_config(self) -> None:
+        # An adopter's import scanner treats a computed load as opaque. Athena's rule: a dynamic import or require
+        # whose argument is one quoted string, or a template without interpolation, outside comments.
+        computed = re.compile(r"""\b(?:import|require)\s*\((?!\s*(?:"[^"\n]*"|'[^'\n]*'|`[^`$]*(?:\$(?!\{)[^`$]*)*`)\s*[,)])""")
+        def comments_removed(text: str) -> str:
+            text = re.sub(r"/\*[\s\S]*?\*/", " ", text)
+            return re.sub(r"(^|[^:\\\"'`])//[^\n]*", r"\1", text, flags=re.M)
+        found = {}
+        for name in ("cli-api.mjs", "cli.mjs", "kernel.mjs", "policy.mjs"):
+            text = comments_removed((ROOT / "product-runtime" / name).read_text(encoding="utf-8"))
+            found[name] = [text[match.start():match.end() + 13] for match in computed.finditer(text)]
+        # Only the CLI's load of the adopter's own harness.config.ts, which the adopter bounds by naming it.
+        self.assertEqual(found, {"cli-api.mjs": ["import(pathToFileURL"], "cli.mjs": ["import(pathToFileURL"], "kernel.mjs": [], "policy.mjs": []})
 
 
 class ProductReleaseTests(unittest.TestCase):
