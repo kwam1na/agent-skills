@@ -832,8 +832,10 @@
               "enum": [
                 "planned",
                 "building",
-                "review"
-              ]
+                "review",
+                "settled"
+              ],
+              "description": "settled: closed with no change needed, the lead having accepted the lane's evidence that the work's criteria already hold on the base; it never enters the queue, and counts as done."
             },
             "changeRequest": {
               "$ref": "#/$defs/name"
@@ -845,6 +847,32 @@
             "trackerStarted": {
               "description": "True once reconcile has seen the work's ticket started in the tracker; absent until then. Only work whose ticket was started is reported when its ticket is back in the tracker's backlog. Optional; reconcile writes it and keeps it.",
               "type": "boolean"
+            },
+            "noChange": {
+              "description": "A no-change hand-off: the lane's evidence that the work's criteria already hold, the base head the evidence ran at, and when it was handed. settledAt is the lead's acceptance, set with stage settled. Optional; written by handoff --no-change and the lead's accept.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "evidence",
+                "baseHead",
+                "handedAt"
+              ],
+              "properties": {
+                "evidence": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4000
+                },
+                "baseHead": {
+                  "$ref": "#/$defs/commit"
+                },
+                "handedAt": {
+                  "$ref": "#/$defs/timestamp"
+                },
+                "settledAt": {
+                  "$ref": "#/$defs/timestamp"
+                }
+              }
             }
           }
         }
@@ -2767,7 +2795,7 @@
               ]
             },
             "blockers": {
-              "description": "The subjects this item comes after, from the plan's order (run-delivery's lead-hints passes the delivery file's after keys). next reads them beside the tracker's blockedBy: one stops blocking once the record holds it merged, or the tracker snapshot holds it completed or canceled.",
+              "description": "The subjects this item comes after, from the plan's order (run-delivery's lead-hints passes the delivery file's after keys). next reads them beside the tracker's blockedBy: one stops blocking once the record holds it merged or settled with no change needed, or the tracker snapshot holds it completed or canceled.",
               "type": "array",
               "items": {
                 "type": "string",

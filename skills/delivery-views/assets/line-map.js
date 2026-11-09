@@ -211,7 +211,8 @@
     merged: "Landed", stopped: "Stopped, waiting for its lane", queued: "Ready, waiting to be checked",
     pending: "Handed over, waiting for the lead to accept",
     syncing: "Being checked before merge", synced: "Being checked before merge", checking: "Being checked before merge",
-    checked: "Checked, about to merge", merging: "Merging", planned: "Not started", building: "Being built", review: "In review"
+    checked: "Checked, about to merge", merging: "Merging", planned: "Not started", building: "Being built", review: "In review",
+    settled: "Closed, no change needed", nochange: "Handed over with no change needed, waiting for the lead"
   });
   var LANE_WORDS = table({ idle: "Standing by", assigned: "Assigned", working: "Building", reviewing: "In review", handed: "Handed over", blocked: "Blocked", done: "Done" });
   // The states of a check that ran in this run, and so carries a start time.
@@ -388,6 +389,8 @@
     return node;
   }
 
+  /** A piece that is done: merged through the queue, or planned work the lead settled with no change needed. */
+  function isLanded(piece) { return piece.planned ? piece.item.stage === "settled" : piece.item.stage === "merged"; }
   /** Every piece of work on the record, in the order it lands: the queue, then the planned work. */
   function pieces(doc) {
     var queue = list(doc.state.queue).filter(isObject).slice().sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
@@ -419,7 +422,10 @@
   }
   function stopKind(piece, nowSubject) {
     var item = piece.item;
-    if (piece.planned) { return item.stage === "planned" ? "later" : item.stage === "building" || item.stage === "review" ? "active" : "unknown"; }
+    if (piece.planned) {
+      if (item.stage === "settled") { return "merged"; }  // done, as a landed piece is, though it never entered the queue
+      return item.stage === "planned" ? "later" : item.stage === "building" || item.stage === "review" ? "active" : "unknown";
+    }
     if (item.stage === "merged") { return "merged"; }
     if (item.stage === "stopped") { return "held"; }
     if (IN_CHECKS[item.stage] || (nowSubject !== null && subjectOf(item) === nowSubject)) { return "now"; }
@@ -438,7 +444,10 @@
         return (checkTitle(check.title) || text(check.id)) + " " + (check.state === "timed_out" ? "timed out" : "failed") + (tests.length ? ": " + tests.join(", ") : "");
       });
   }
-  function stageKey(item) { return item.pending === true && item.stage === "queued" ? "pending" : text(item.stage); }
+  function stageKey(item) {
+    if (item.pending === true && item.stage === "queued") { return "pending"; }
+    return isObject(item.noChange) && item.stage === "review" ? "nochange" : text(item.stage);
+  }
   function stageWords(item) { return STAGE_WORDS[stageKey(item)] || "Stage not recognised"; }
   /**
    * The base re-run a piece waits on: its check failed and the queue is running the failing checks on the main line to
@@ -452,11 +461,11 @@
   var RERUN_WORDS = "Failed, waiting on the main line's rerun";
   function pieceWords(doc, item) { return rerunOf(doc, item) ? RERUN_WORDS : stageWords(item); }
   /** A piece that hadn't landed when its delivery closed isn't in any stage any more. */
-  function unlandedAtClose(doc, piece) { return Boolean(closedEntry(doc)) && (piece.planned || piece.item.stage !== "merged"); }
+  function unlandedAtClose(doc, piece) { return Boolean(closedEntry(doc)) && !isLanded(piece); }
   // Each stage's mark, in the page's one grammar: circles for how far a piece has got, a hollow diamond for a hand-over
   // waiting on the lead, a triangle for a stop. The stylesheet draws the shape; a stage the page does not know gets none.
   var STAGE_MARKS = table({ planned: true, building: true, review: true, pending: true, queued: true, syncing: true, synced: true,
-    checking: true, checked: true, merging: true, merged: true, stopped: true });
+    checking: true, checked: true, merging: true, merged: true, stopped: true, settled: true, nochange: true });
   function stageIcon(item) {
     var key = stageKey(item);
     if (!STAGE_MARKS[key]) { return null; }
@@ -530,7 +539,7 @@
   /** Landed pieces out of everything meant to land: a closed delivery counts plan units that never reached the line, and not ones the plan removed. */
   function closedTally(all) {
     var meant = all.filter(function (piece) { return !removedFromPlan(piece); });
-    var landed = meant.filter(function (piece) { return !piece.planned && piece.item.stage === "merged"; }).length;
+    var landed = meant.filter(isLanded).length;
     var missing = plan ? liveUnits().filter(function (unit) { return !all.some(function (piece) { return piece.item.subject === unit.subject; }); }).length : 0;
     return { landed: landed, total: meant.length + missing, placed: meant.length };
   }
@@ -544,7 +553,7 @@
     if (!card.hidden && cardTarget && !cardTarget.isConnected) { hideCard(); }
     var inner = parts.now;
     var meta = isObject(doc.state.meta) ? doc.state.meta : {};
-    var landed = all.filter(function (piece) { return !piece.planned && piece.item.stage === "merged"; }).length;
+    var landed = all.filter(isLanded).length;
     var title = el("h1", "title");
     var closed = closedEntry(doc);
     var tally = closed ? closedTally(all) : null;
@@ -1170,7 +1179,7 @@
     var state = doc.state;
     // As the close reads it: a piece the plan removed holds nothing.
     var kept = function (entry) { return isObject(entry) && !removedFromPlan({ item: entry }); };
-    var met = !list(state.planned).some(kept)
+    var met = !list(state.planned).some(function (entry) { return kept(entry) && entry.stage !== "settled"; })
       && list(state.queue).filter(kept).every(function (item) { return item.stage === "merged"; })
       && list(state.finish).filter(isObject).every(function (line) { return line.met === true; })
       && list(state.lanes).filter(isObject).every(function (lane) { return lane.state === "idle" || lane.state === "done"; });
@@ -1284,7 +1293,7 @@
     svg.setAttribute("viewBox", "0 0 " + MERGE_WIDTH + " " + height);
     svg.setAttribute("width", String(MERGE_WIDTH));
     svg.setAttribute("height", String(height));
-    var landed = all.filter(function (piece) { return !piece.planned && piece.item.stage === "merged"; }).length;
+    var landed = all.filter(isLanded).length;
     var finish = list(doc.state.finish).filter(isObject);
     var met = finish.filter(function (line) { return line.met === true; }).length;
     svg.setAttribute("role", "img");
@@ -1338,15 +1347,15 @@
       var items = all.filter(function (piece) { return (piece.item.lane || "") === lane; });
       var row = el("div", "line");
       row.style.setProperty("--c", colours[lane]);
-      var landedHere = items.filter(function (piece) { return !piece.planned && piece.item.stage === "merged"; }).length;
+      var landedHere = items.filter(isLanded).length;
       // The lane's rule is solid up to its last landed stop and faint after it; a lane that landed everything is solid to the turn.
       var lastLanded = -1;
-      items.forEach(function (piece, i) { if (!piece.planned && piece.item.stage === "merged") { lastLanded = i; } });
+      items.forEach(function (piece, i) { if (isLanded(piece)) { lastLanded = i; } });
       var solid = landedHere === items.length ? 100 : lastLanded < 0 ? 0 : 100 - (items.length - 1 - lastLanded + 0.5) * 100 / most;
       ends.push({ colour: colours[lane], done: landedHere === items.length });
       add(row, add(el("div", "name"), el("b", null, lane ? names[lane] || lane : noLane(doc)), landedHere + " of " + items.length + " landed"));
       var stops = el("div", "stops");
-      var merged = function (k) { return k >= 0 && k < items.length && !items[k].planned && items[k].item.stage === "merged"; };
+      var merged = function (k) { return k >= 0 && k < items.length && isLanded(items[k]); };
       items.forEach(function (piece, i) {
         var kind = unlandedAtClose(doc, piece) ? "unlanded" : stopKind(piece, nowSubject);
         var key = subjectOf(piece.item);
@@ -1414,6 +1423,12 @@
       label = "Started"; basis = "Recorded work assignment"; event = last("lane.assigned");
       at = event ? event.at : (handedIndex < 0 ? stats.assignedAt : null);
     }
+    else if (item.stage === "settled") {
+      label = "Closed"; basis = "Recorded acceptance of the no-change hand-off";
+      at = isObject(item.noChange) ? text(item.noChange.settledAt) || null : null;
+    } else if (item.stage === "review" && isObject(item.noChange)) {
+      label = "Handed over"; basis = "Recorded no-change hand-off"; at = text(item.noChange.handedAt) || null;
+    }
     else if (item.stage === "review") {
       label = "In review since"; basis = "Recorded review round start";
       event = last("review.round"); at = event && isObject(event.review) ? event.review.startedAt : null;
@@ -1439,7 +1454,7 @@
     } else if (item.stage === "merging" || item.stage === "syncing" || item.stage === "synced") {
       label = "Time"; basis = "No durable transition time recorded";
     } else { return null; }
-    if (event && item.stage !== "review") { at = eventTime(event); }
+    if (event && item.stage !== "review" && item.stage !== "settled") { at = eventTime(event); }
     return { label: label, basis: basis, at: at };
   }
 
@@ -1473,7 +1488,7 @@
     add(stage, unlanded ? "Not landed" : pieceWords(doc, item));
     if (timing) {
       var relative = spoken(timing.at);
-      var when = el("span", "d-stage-time", (item.stage === "merged" ? (relative ? " " + relative : " · time unknown")
+      var when = el("span", "d-stage-time", (item.stage === "merged" || item.stage === "settled" ? (relative ? " " + relative : " · time unknown")
         : " · " + timing.label + (relative ? " " + relative : (timing.label === "Time" ? " unknown" : " · time unknown"))));
       var exact = timing.basis + ": " + (relative ? timing.at : "unknown");
       when.setAttribute("aria-label", exact);
@@ -1491,6 +1506,10 @@
     var tickets = isObject(doc.state.tickets) ? doc.state.tickets : {};
     if (isObject(tickets[item.subject]) && text(tickets[item.subject].summary)) { nodes.push(el("div", "d2", text(tickets[item.subject].summary))); }
     if (item.stage === "stopped") { failures(item).forEach(function (why) { nodes.push(el("div", "d3", why)); }); }
+    if (piece.planned && isObject(item.noChange) && text(item.noChange.evidence)) {
+      nodes.push(el("div", "d2", "No change needed. Evidence, run at the main line's " + text(item.noChange.baseHead).slice(0, 10)
+        + ": " + text(item.noChange.evidence)));
+    }
     var leadInputs = list(item.leadInputs).map(text).filter(Boolean);
     if (leadInputs.length && !unlanded) { nodes.push(el("div", "d2", "Needs the lead first: " + leadInputs.join(", "))); }
     var estimate = isObject(doc.estimates) && isObject(doc.estimates[item.subject]) ? doc.estimates[item.subject] : null;
@@ -1735,7 +1754,7 @@
   function drawLeft(doc, all) {
     var inner = parts.left;
     var colours = laneColours(doc, all);
-    var open = all.filter(function (piece) { return piece.planned || piece.item.stage !== "merged"; });
+    var open = all.filter(function (piece) { return !isLanded(piece); });
     var closedOut = closedEntry(doc);
     var tally = closedOut ? closedTally(all) : { landed: all.length - open.length, total: all.length, placed: all.length };
     var left = tally.total - tally.landed;
@@ -1755,7 +1774,7 @@
       all.forEach(function (piece) {
         if (closedOut && removedFromPlan(piece)) { return; }
         var key = text(piece.item.subject);
-        var isOpen = piece.planned || piece.item.stage !== "merged";
+        var isOpen = !isLanded(piece);
         nowOpen[key] = isOpen;
         // A dot that just closed lights up in its lane's colour, then settles to the landed green.
         var closed = !isOpen && wasOpen[key] === true && !reduced();
@@ -1889,8 +1908,13 @@
   }
 
   /** One owed proof of a unit: { state: done | waived | stale | open | todo | none, words, reason? }. */
+  function settledEntry(doc, subject) {
+    return list(doc.state.planned).filter(function (entry) { return isObject(entry) && subjectOf(entry) === subject && entry.stage === "settled"; })[0] || null;
+  }
   function proofOf(doc, unit, kind) {
     var subject = text(unit.subject);
+    // Closed with no change needed: every proof it owes is the lead's accepted evidence, as the close counts it.
+    if (settledEntry(doc, subject)) { return { state: "done", words: "closed, no change needed" }; }
     var item = queueItem(doc, subject);
     if (kindSource(kind) === "producer") {
       var entry = own(own(plan.evidence, subject), kind);
@@ -1925,7 +1949,8 @@
       var waived = owed.some(function (kind) { return states[kind].state === "waived"; });
       var next = owed.filter(function (kind) { return states[kind].state !== "done" && states[kind].state !== "waived"; })[0] || null;
       proofs[subject] = { unit: unit, owed: owed, states: states, proven: proven, waived: waived, next: next,
-        handed: Boolean(queueItem(doc, subject)), review: states.review || proofOf(doc, unit, "review") };
+        handed: Boolean(queueItem(doc, subject)), settled: Boolean(settledEntry(doc, subject)),
+        review: states.review || proofOf(doc, unit, "review") };
     });
     return proofs;
   }
@@ -2119,6 +2144,7 @@
   }
   /** Where a unit stands in one phrase: proven, or whether it merged and how many proofs are still open. */
   function unitStanding(proof) {
+    if (proof.settled) { return "Closed, no change needed"; }
     if (proof.proven) { return proof.waived ? "Proven, with a waiver" : "Proven"; }
     var open = proof.owed.filter(function (kind) { return proof.states[kind].state !== "done" && proof.states[kind].state !== "waived"; });
     return (proof.owed.indexOf("merged") >= 0 && proof.states.merged.state === "done" ? "Merged, " : "") + open.length + " open";

@@ -3369,10 +3369,51 @@ def review_gate(args) -> None:
     print(f"{conf['author']} review of {args.head[:10]} at {review['at']} is current: {states}")
 
 
+def no_change_handoff(c, key: str, lane: str, args) -> None:
+    """A story whose criteria already hold on the base: handed off with the lane's evidence and the base head it ran
+    at, with no branch, change request or review round. It never enters the merge queue, and nothing is committed."""
+    if args.pr or args.findings or args.blocked or args.pr_review_triage:
+        raise Stop("--no-change hands off no change: it takes --evidence alone, no --pr, --findings, --blocked or "
+                   "--pr-review-triage")
+    if not args.evidence:
+        raise Stop("--no-change needs --evidence: the tests or commands, run at the base head, that show the story's "
+                   "criteria already hold (text, or @FILE)")
+    evidence = args.evidence
+    if evidence.startswith("@"):
+        try:
+            evidence = Path(evidence[1:]).read_text()
+        except OSError as error:
+            raise Stop(f"can't read the evidence file {evidence[1:]}: {error}")
+    evidence = evidence.strip()
+    head = clean_head()
+    git("fetch", "-q", c.remote, c.base_branch)
+    if not is_ancestor(head, c.base_ref):
+        raise Stop(f"{head[:10]} isn't on {c.base_ref}: this checkout holds a change, so hand it off with --pr, or run "
+                   f"the evidence on the base")
+    state_tool("handoff", "--no-change", "--lane", lane, "--subject", key, "--base-head", head,
+               "--evidence-text", evidence)
+    post = f"hand-off: no change needed, its evidence run at {c.base_branch} {head[:10]}: {evidence}"
+    print("\n".join([
+        f"**Hand-off: {key}** ({c.label(key)}, {lane})",
+        "- candidate: none, no change needed (it never enters the merge queue)",
+        f"- base head the evidence ran at: `{head}`",
+        f"- evidence: {evidence}",
+        "- review rounds: none",
+        "- lead inputs: none",
+    ]))
+    print(f"\nTracker post (your story): {post}")
+
+
 def handoff(args) -> None:
     c = cfg()
     key = c.require(args.key)
     lane = c.lane_of(key)
+    if args.no_change:
+        no_change_handoff(c, key, lane, args)
+        return
+    if not args.pr:
+        raise Stop("a hand-off needs --pr, the story's open PR; a story that needs no change hands off with "
+                   "--no-change --evidence")
     folder = review_dir(key)
     head = clean_head()
     pushed(key, head)
@@ -5249,6 +5290,41 @@ def lead_assign(args) -> None:
           "lead. The lead checks the hand-off and tells you when to start your next story.")
 
 
+def accept_no_change(c, key: str, entry: dict) -> None:
+    """Accept a no-change hand-off: its evidence ran at a head the base still holds, and names every one of the story's
+    criteria. The record then holds the story settled: never queued, never removed, counted as done."""
+    if entry["stage"] == "settled":
+        raise Stop(f"{key} is already settled with no change")
+    criteria = [item["id"] for item in c.stories[key].get("criteria", [])]
+    if not criteria:
+        raise Stop(f"{key} has no criteria, so its evidence can't be checked against them; fix: record its criteria "
+                   f"first (lead-plan change --kind added --subjects {key} --criterion ID --text TEXT --why W), then "
+                   "accept it")
+    base_head = entry["noChange"]["baseHead"]
+    git("fetch", "-q", c.remote, c.base_branch)
+    problems = []
+    if not is_ancestor(base_head, c.base_ref):
+        problems.append(f"the evidence ran at {base_head[:10]}, which {c.base_ref} doesn't hold")
+    evidence = entry["noChange"]["evidence"]
+    missing = [ident for ident in criteria if not re.search(rf"(?<![\w.-]){re.escape(ident)}(?![\w-]|\.[\w-])", evidence)]
+    if missing:
+        problems.append(f"the evidence names no proof of criterion {', '.join(missing)}; the lane hands it off again "
+                        "with evidence naming every criterion by id")
+    if problems:
+        print(f"NOT accepted: {key}")
+        for problem in problems:
+            print(f"  - {problem}")
+        sys.exit(1)
+    state_tool("handoff", "--accept", key)
+    append_log("acceptance", key, {"head": base_head, "noChange": True, "ready": False, "blocked": {}})
+    state_tool("journal", "--kind", "decision.recorded", "--subject", key, "--summary",
+               f"No-change hand-off checked as a claim: its evidence ran at {base_head[:10]}, which {c.base_branch} "
+               f"holds, and names each of its criteria ({', '.join(criteria)}). Settled with no change needed; no base "
+               "commit is made.")
+    rebuild_plan(c)
+    print(f"accepted {key}: settled with no change needed")
+
+
 def lead_accept(args) -> None:
     c = cfg()
     if args.requeue:
@@ -5259,6 +5335,10 @@ def lead_accept(args) -> None:
     key = c.require(args.key)
     doc = load_state()
     item = next((q for q in doc["state"]["queue"] if q["subject"] == key), None)
+    waiting = next((p for p in doc["state"].get("planned", []) if p["subject"] == key and p.get("noChange")), None)
+    if not item and waiting:
+        accept_no_change(c, key, waiting)
+        return
     if not item:
         raise Stop(f"{key} is not in the queue; the lane has not handed it off")
     problems, decisions = [], []
@@ -6006,6 +6086,10 @@ def lane_moved_off(doc: dict, item: dict, words: dict | None = None) -> bool:
         return True
     merged = max((e["id"] for e in doc["journal"] if e["kind"] == "candidate.merged" and e.get("subject") == item["subject"]),
                  default=None)
+    if merged is None and item.get("stage") == "settled":
+        # Settled with no change, it never merged: its last hand-off is where the lane left it.
+        merged = max((e["id"] for e in doc["journal"] if e["kind"] == "candidate.handed"
+                      and e.get("subject") == item["subject"]), default=None)
     later = [e for e in doc["journal"] if e["kind"] == "lane.assigned" and e.get("lane") == item["lane"]
              and merged is not None and e["id"] > merged and e.get("subject") != item["subject"]]
     return bool(later)
@@ -6041,6 +6125,13 @@ def cleanup_merged(c, doc: dict, words: dict | None = None) -> list[str]:
         status, done, left = clean_story(item["subject"])
         if status not in ("nothing", "waiting"):
             said.append(f"{item['subject']}: {status}" + "".join(f"; {line}" for line in left))
+    # A story settled with no change leaves its lane's checkout too, once the lane has moved off it.
+    for entry in doc["state"].get("planned", []):
+        if entry["stage"] != "settled" or entry["subject"] not in c.stories or not lane_moved_off(doc, entry, words):
+            continue
+        status, done, left = clean_story(entry["subject"])
+        if status not in ("nothing", "waiting"):
+            said.append(f"{entry['subject']}: {status}" + "".join(f"; {line}" for line in left))
     return said
 
 
@@ -6048,6 +6139,8 @@ def proof_state(c, plan: dict, doc: dict, unit: dict, kind: str) -> str:
     """A unit's proof, as the line map judges it: a producer proof from the plan's evidence at the queued head; handed,
     merged and review from the record, review as the lead's acceptance at the queued head."""
     subject = unit["subject"]
+    if any(entry["subject"] == subject and entry["stage"] == "settled" for entry in doc["state"].get("planned", [])):
+        return "done"  # closed with no change needed: every proof it owes is the lead's accepted evidence
     item = next((entry for entry in doc["state"]["queue"] if entry["subject"] == subject), None)
     source = next((k.get("source") for k in plan.get("proofKinds", []) if k.get("id") == kind), None)
     if source == "producer":
@@ -6322,7 +6415,7 @@ def close_holds(c, doc: dict, needs: list[dict]) -> list[str]:
     """What holds the close: the close condition, read as the reasons it doesn't hold yet."""
     state, removed = doc["state"], removed_subjects(c)
     holds = []
-    planned = [p["subject"] for p in state.get("planned", []) if p["subject"] not in removed]
+    planned = [p["subject"] for p in state.get("planned", []) if p["subject"] not in removed and p["stage"] != "settled"]
     if planned:
         holds.append(f"not handed off: {', '.join(planned)}")
     unmerged = [q["subject"] for q in state["queue"] if q["stage"] != "merged" and q["subject"] not in removed]
@@ -7010,6 +7103,26 @@ class Supervisor:
         self.address: str | None = None
         self.handle = None
         self.started = now()
+        # Why it stopped serving, once what it serves is gone: then it exits instead of passing on over nothing.
+        self.lost: str | None = None
+
+    def gone(self) -> str | None:
+        """What it serves that is no longer there: its record (the record's state file, which the state tool only ever
+        replaces whole, so a folder a removal left behind, or one a writer made again, doesn't count), or the install
+        it runs from (this file, inside the generation)."""
+        if not (self.c.state / "state.json").is_file():
+            return f"its record {self.c.state} is gone"
+        if not Path(__file__).exists():
+            return f"its install {GENERATION} is gone"
+        return None
+
+    def lose(self) -> bool:
+        """Whether it has lost what it serves; the first time, it says so in its log, which stays open."""
+        if self.lost is None:
+            self.lost = self.gone()
+            if self.lost:
+                print(f"{now()} supervisor: stopping: {self.lost}", flush=True)
+        return self.lost is not None
 
     def write_lock(self) -> None:
         self.handle.seek(0)
@@ -7126,6 +7239,8 @@ class Supervisor:
                  ("publish", lambda: render_views(c, only="publishers")), ("needs", derive),
                  ("render", lambda: render_views(c, only="renderers")), ("latest", lambda: str(copy_latest(c))))
         for name, step in steps:
+            if self.lose():
+                return False
             try:
                 entry[name] = step()
             except (Stop, ValueError, OSError, subprocess.SubprocessError) as error:
@@ -7147,6 +7262,8 @@ class Supervisor:
                 render_views(c)
         except (Stop, ValueError, OSError, subprocess.SubprocessError) as error:
             entry["close"] = f"failed: {error}"
+        if self.lose():
+            return False
         entry["finishedAt"] = now()
         append_log("supervisor", c.delivery, entry)
         return closed
@@ -7182,21 +7299,25 @@ class Supervisor:
             number = len(read_log("supervisor", c.delivery))
             while True:
                 number += 1
-                if self.one_pass(number) or self.once or self.stop_asked():
+                if self.one_pass(number) or self.once or self.stop_asked() or self.lose():
                     return
                 deadline = time.monotonic() + supervisor_pass_seconds(c)
                 while time.monotonic() < deadline and not self.stop_asked():
+                    if self.lose():
+                        return
                     self.keep_alive()
                     time.sleep(0.2)
                 if self.stop_asked():
                     return
         finally:
             self.stop_children()
-            # Drawn and copied once more, so neither the line map nor `latest` keeps the last running list.
-            with contextlib.suppress(OSError, Stop, subprocess.SubprocessError):
-                write_needs(c, None, len(read_log("supervisor", c.delivery)), time.monotonic())
-                render_views(c, only="renderers")
-                copy_latest(c)
+            # Drawn and copied once more, so neither the line map nor `latest` keeps the last running list; not when
+            # the record or install is gone, which would only write a record back that no one is serving.
+            if not self.lost:
+                with contextlib.suppress(OSError, Stop, subprocess.SubprocessError):
+                    write_needs(c, None, len(read_log("supervisor", c.delivery)), time.monotonic())
+                    render_views(c, only="renderers")
+                    copy_latest(c)
             fcntl.flock(self.handle, fcntl.LOCK_UN)
             self.handle.close()
 
@@ -8232,7 +8353,10 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(fn=pr_review_current)
     p = command(sub, "pr-review"); p.add_argument("key"); p.add_argument("--wait", action="store_true")
     p.set_defaults(fn=pr_review)
-    p = command(sub, "handoff"); p.add_argument("key"); p.add_argument("--pr", required=True)
+    p = command(sub, "handoff"); p.add_argument("key"); p.add_argument("--pr")
+    p.add_argument("--no-change", action="store_true", help="the story's criteria already hold on the base: hand it "
+                   "off with --evidence, no branch, PR or review")
+    p.add_argument("--evidence", help="with --no-change: what shows the criteria already hold, as text or @FILE")
     p.add_argument("--pr-review-triage")
     p.add_argument("--findings"); p.add_argument("--blocked", action="append", default=[]); p.set_defaults(fn=handoff)
     p = command(sub, "lead-hints", help="print the delivery's work-hints/1: each story's plan files and its after keys")

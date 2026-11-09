@@ -50,7 +50,7 @@ Two lanes. Lane 1 holds the run-delivery chain. Lane 2 holds the tracker module 
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | V26-3286, V26-3273 | `skills/run-delivery/`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_plan_review.py`, `docs/solutions/`, `provenance.lock.json` for `run_delivery.py`'s digest, and `catalog.json` and `profiles/*.json` only if an output is added |
+| 1 | 1 | V26-3286, V26-3273, V26-3325, V26-3324 | `skills/run-delivery/`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_plan_review.py`, `docs/solutions/`, `provenance.lock.json` for `run_delivery.py`'s digest, and `catalog.json` and `profiles/*.json` only if an output is added |
 | 1 | 2 | V26-3274, V26-3292, V26-3312, V26-3316 | `tests/test_run_delivery_tracker.py`, `tests/test_own_deliveries.py`, `tests/test_delivery_views_render.py` |
 
 **Moving ownership.** `provenance.lock.json` belongs to lane 1, the only lane that changes a listed output. If lane 2 finds it needs a file
@@ -137,6 +137,23 @@ reconcile's, with a row in `tests/test_orchestration_state.py` that fails with t
 second defect the diagnosis found, `stop_supervisors`' `rglob` walk raising mid-walk and leaking a supervisor, is V26-3273's. Files: decided by the diagnosis. Those under lane 1's
 `owns` (`tests/test_run_delivery.py`, `skills/run-delivery/`) move to lane 2 only through the lead, once lane 1's stories on them have
 merged. Sensors: `RunDeliveryAdoptionGuideTests`, the adoption-guide corpus pins.
+
+### V26-3324. In-process main() tests print a live delivery's supervisor status and take its lock
+
+Lane 1, after V26-3273 merges (lead's addition, 2026-11-09, under the no-deferrals ruling). V26-3267's lead reported, and lane 1
+characterized, that in-process `main()` tests in `tests/test_run_delivery.py` reach a live delivery through `supervisor_line(cfg())`, whose
+`cfg()` resolves the repository from the test process's working directory and caches it in the module-global `CFG`. `read_lock` can also
+briefly take a live supervisor's lock. The fix keeps every in-process call inside its case, and a guard row run from a live-looking
+checkout with a planted delivery and held lock proves it, red before and green after. It also names and fixes the run's un-waited Popen
+(the ResourceWarning), and says whether any product path can reach a delivery outside its repository. Files: lane 1's. Sensors: both
+run-delivery test modules, under `-W error::ResourceWarning` from a planted live checkout.
+
+### V26-3325. Remove the ticket ids from the detached-supervisors solution note
+
+Lane 1, first, ahead of V26-3324 (lead's addition, 2026-11-09: `main` broke at V26-3273's merge, because its note names ticket ids and
+the lead's narrow selection skipped the corpus pin). Sensor-only: reword the note's id lines, keeping the lessons. Its queue selection is
+`tests.test_linear_qualification`, plus validate-registry and the provenance check. Files: that note, and `provenance.lock.json` if it lists
+the note. Sensors: `tests.test_linear_qualification`, `scripts/validate-registry.py`.
 
 ## Execution posture
 

@@ -16,6 +16,7 @@ their own signal handlers, working directory and module state.
 from __future__ import annotations
 
 import argparse
+import atexit
 import base64
 import contextlib
 import datetime
@@ -379,6 +380,7 @@ def host_terms(text: str) -> list[str]:
 class Fixture:
     def __init__(self, generation: Path, receipt: Path):
         self.tmp = Path(tempfile.mkdtemp(prefix="run-delivery-characterization-"))
+        watch_case(self.tmp)
         self.origin = self.tmp / "origin.git"
         self.main = self.tmp / "main"
         self.port = free_port()
@@ -465,6 +467,7 @@ class Fixture:
         stop_supervisors(self.tmp)
         self.stop_in_app()
         shutil.rmtree(self.tmp, ignore_errors=True)
+        forget_case(self.tmp)
 
     def stop_in_app(self) -> None:
         """Stop what a killed in-app holder left running. Its lease still names the groups it started, and taking the
@@ -482,19 +485,45 @@ class Fixture:
             time.sleep(0.1)
 
 
-def stop_supervisors(root: Path) -> None:
-    """Stop any supervisor a case started under this folder, and what a killed one left: a held lock's recorded pid
-    leads its group, and a lock nobody holds still names the group its children run in. Only a child still in that
-    group is the case's own."""
-    for lock in root.rglob("*.supervisor.lock"):
-        with open(lock, "a+") as probe:
+def locks_under(root: Path, suffix: str) -> list[Path]:
+    """The lock files under a case's folder. The walk goes on past a folder removed while it walks, as the merge
+    queue removes its work checkouts whenever it likes."""
+    found = []
+    for folder, _, files in os.walk(root, onerror=lambda error: None):
+        found += [Path(folder) / name for name in files if name.endswith(suffix)]
+    return found
+
+
+def lock_record(lock: Path) -> tuple[bool, dict] | None:
+    """(whether a process holds the lock, what it records), or None once the lock is gone. Opened to read, so a lock
+    removed meanwhile is never made again."""
+    try:
+        with open(lock, "rb") as probe:
             try:
                 fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 fcntl.flock(probe, fcntl.LOCK_UN)
                 held = False
             except BlockingIOError:
                 held = True
-        recorded = json.loads(lock.read_text() or "{}")
+            text = probe.read().decode(errors="replace")
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    try:
+        recorded = json.loads(text or "{}")
+    except ValueError:  # a lock being written
+        recorded = {}
+    return held, recorded if isinstance(recorded, dict) else {}
+
+
+def stop_supervisors(root: Path) -> None:
+    """Stop any supervisor a case started under this folder, and what a killed one left: a held lock's recorded pid
+    leads its group, and a lock nobody holds still names the group its children run in. Only a child still in that
+    group is the case's own."""
+    for lock in locks_under(root, ".supervisor.lock"):
+        read = lock_record(lock)
+        if read is None:
+            continue
+        held, recorded = read
         pid = recorded.get("pid")
         if not isinstance(pid, int) or pid <= 1:
             continue
@@ -508,18 +537,59 @@ def stop_supervisors(root: Path) -> None:
                 os.killpg(pid, signal.SIGKILL)
     # A post-merge fullHealth run leads a session of its own, so it outlives its supervisor: stop it while it holds its
     # lock, and only then.
-    for lock in root.rglob("*.full-health.lock"):
-        with open(lock, "a+") as probe:
-            try:
-                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                fcntl.flock(probe, fcntl.LOCK_UN)
-                continue
-            except BlockingIOError:
-                pass
-        pid = json.loads(lock.read_text() or "{}").get("pid")
+    for lock in locks_under(root, ".full-health.lock"):
+        read = lock_record(lock)
+        if read is None or not read[0]:
+            continue
+        pid = read[1].get("pid")
         if isinstance(pid, int) and pid > 1:
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(pid, signal.SIGKILL)
+
+
+# The case folders whose supervisors are still this process's to stop. A supervisor runs in a session of its own,
+# outside the test runner's process group, so when the runner stops a worker (SIGTERM, a grace, then SIGKILL) only
+# the worker itself can stop it: on SIGTERM or SIGHUP, and at exit, it stops every live case's supervisors first.
+LIVE_CASES: list[Path] = []
+_INTERRUPT_HANDLERS: dict[int, object] = {}
+_WATCHING: list[bool] = []  # set once the handlers and the exit hook are in place
+
+
+def stop_live_cases() -> None:
+    for folder in list(LIVE_CASES):
+        with contextlib.suppress(Exception):
+            stop_supervisors(folder)
+
+
+def _interrupted(signum, frame) -> None:
+    stop_live_cases()
+    earlier = _INTERRUPT_HANDLERS.get(signum, signal.SIG_DFL)
+    if callable(earlier):
+        earlier(signum, frame)
+        return
+    signal.signal(signum, signal.SIG_DFL)
+    os.kill(os.getpid(), signum)  # then end as the signal would have
+
+
+def watch_case(folder: Path) -> None:
+    """Stop this case's supervisors if this process is interrupted or exits before the case's own cleanup does. The
+    first call, from the main thread, puts the handlers and the exit hook in place, once; a signal this process
+    ignores stays ignored."""
+    if not _WATCHING and threading.current_thread() is threading.main_thread():
+        _WATCHING.append(True)
+        for signum in (signal.SIGTERM, signal.SIGHUP):
+            earlier = signal.getsignal(signum)
+            if earlier is signal.SIG_IGN:
+                continue
+            _INTERRUPT_HANDLERS[signum] = earlier
+            signal.signal(signum, _interrupted)
+        atexit.register(stop_live_cases)
+    LIVE_CASES.append(folder)
+
+
+def forget_case(folder: Path) -> None:
+    with contextlib.suppress(ValueError):
+        LIVE_CASES.remove(folder)
 
 
 def group_alive(group: int) -> bool:
@@ -3003,7 +3073,8 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         left = [line for line in out.splitlines() if line.startswith("  left: ")]
         self.assertEqual(code, 1, out)
         self.assertEqual(left, ["  left: the in-app lease is held (app-check pid 1 since then); gave up after 0s"], out)
-        self.assertNotIn("kill", out, "a held lease's server got a kill hint")
+        # The hint's own form, `kill <pid>`: the word alone also sits in paths, such as a checkout of agent-skills.
+        self.assertNotRegex(out, r"\bkill \d", "a held lease's server got a kill hint")
         self.assertNotIn("is free", out, "a held lease was reported free")
         self.assertIsNone(listener.poll(), "lead-close stopped the server a live check holds")
 
@@ -4759,6 +4830,154 @@ class RunDeliveryPlanTests(unittest.TestCase):
             self.assertEqual((code, message in out), (2, True), out)
             self.assertEqual((path.read_bytes(), self.written(fx), sh("git", "rev-parse", "HEAD", cwd=m).stdout), before, argv)
             self.assertEqual(sh("git", "status", "--porcelain", cwd=m).stdout, "", argv)
+
+    def no_change_lane(self) -> tuple[Fixture, Path, Path]:
+        """FX-2, whose two criteria already hold, assigned and started in its lane's checkout from the base."""
+        fx = self.fixture()
+        path = plan_delivery(fx)
+        m = fx.main
+        fx.flow("lead-init", cwd=m)
+        code, out = fx.flow("lead-assign", "FX-2", "--lane", "lane-1", "--title", "Lane 1", cwd=m)
+        self.assertEqual(code, 0, out)
+        return fx, path, fx.lane("FX-2")
+
+    def base(self, fx: Fixture) -> str:
+        return sh("git", "rev-parse", "origin/feature/FX-1", cwd=fx.main).stdout.strip()
+
+    def test_a_story_that_needs_no_change_is_handed_off_and_settled_with_no_branch_pr_or_base_commit(self) -> None:
+        fx, path, wt = self.no_change_lane()
+        m = fx.main
+        before = self.base(fx)
+        code, out = fx.flow("handoff", "FX-2", "--no-change", "--evidence",
+                            "one-loads: test_one_loads passes at the base; one-fails: test_one_fails passes", cwd=wt)
+        self.assertEqual(code, 0, out)
+        self.assertIn("candidate: none, no change needed", out)
+        self.assertIn(f"base head the evidence ran at: `{before}`", out)
+        record = self.record(fx)
+        self.assertEqual(record["state"]["queue"], [], "a no-change hand-off entered the merge queue")
+        entry = next(p for p in record["state"]["planned"] if p["subject"] == "FX-2")
+        self.assertEqual((entry["stage"], entry["noChange"]["baseHead"]), ("review", before))
+        # No branch was pushed, no change request opened.
+        self.assertEqual(sh("git", "ls-remote", "--heads", "origin", "feature/FX-2", cwd=m).stdout, "")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertIn("accepted FX-2: settled with no change needed", out)
+        record = self.record(fx)
+        entry = next(p for p in record["state"]["planned"] if p["subject"] == "FX-2")
+        self.assertEqual(entry["stage"], "settled")
+        self.assertEqual(record["state"]["queue"], [])
+        self.assertEqual(self.base(fx), before, "a base commit was made")
+        self.assertEqual(sh("git", "ls-remote", "origin", "feature/FX-1", cwd=m).stdout.split()[0], before)
+        # The plan keeps it, not removed, and counts every proof it owes done, as the line map and finish lines do.
+        plan = self.plan(fx)
+        unit = next(u for u in plan["units"] if u["subject"] == "FX-2")
+        self.assertFalse(unit.get("removed", False))
+        states = {kind: fx.call("proof_state", None, plan, self.record(fx), unit, kind, cwd=m, delivery="FX-1")
+                  for kind in unit["proofs"]}
+        self.assertEqual(set(states.values()), {"done"}, states)
+
+    def test_a_base_that_moved_after_the_hand_off_still_settles_it(self) -> None:
+        fx, path, wt = self.no_change_lane()
+        m = fx.main
+        code, out = fx.flow("handoff", "FX-2", "--no-change", "--evidence", "one-loads and one-fails hold", cwd=wt)
+        self.assertEqual(code, 0, out)
+        handed = self.base(fx)
+        # Another clone moves the base, so the lead's checkout knows of it only once lead-accept fetches.
+        other = fx.tmp / "other-clone"
+        origin = sh("git", "remote", "get-url", "origin", cwd=m).stdout.strip()
+        sh("git", "clone", "-q", "--branch", "feature/FX-1", origin, other)
+        (other / "docs/later.md").write_text("later\n")
+        commit(other, "FX-1: the base moves on")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=other)
+        self.assertEqual(self.base(fx), handed, "the lead's checkout already knew the base had moved")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertNotEqual(self.base(fx), handed, "lead-accept judged the hand-off against a base it never fetched")
+        self.assertEqual(next(p for p in self.record(fx)["state"]["planned"] if p["subject"] == "FX-2")["stage"], "settled")
+
+    def test_a_no_change_hand_off_from_a_head_the_base_doesnt_hold_is_refused(self) -> None:
+        fx, path, wt = self.no_change_lane()
+        m = fx.main
+        # The lane's checkout holds a change: that is a hand-off with a PR.
+        (wt / "src/one.txt").write_text("changed\n")
+        commit(wt, "FX-2: a change")
+        code, out = fx.flow("handoff", "FX-2", "--no-change", "--evidence", "one-loads and one-fails hold", cwd=wt)
+        self.assertEqual(code, 2, out)
+        self.assertIn("this checkout holds a change, so hand it off with --pr", out)
+        self.assertEqual(next(p for p in self.record(fx)["state"]["planned"] if p["subject"] == "FX-2")["stage"], "planned")
+        # The lead refuses evidence run at a head the base doesn't hold.
+        stray = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+        sh(sys.executable, "-B", fx.release / "skills/orchestrate-work/scripts/delivery_state.py", "--dir", fx.tmp / "record",
+           "handoff", "--no-change", "--lane", "lane-1", "--subject", "FX-2", "--base-head", stray, "--evidence-text",
+           "one-loads and one-fails hold")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 1, out)
+        self.assertIn(f"NOT accepted: FX-2", out)
+        self.assertIn(f"the evidence ran at {stray[:10]}, which origin/feature/FX-1 doesn't hold", out)
+        self.assertNotEqual(next(p for p in self.record(fx)["state"]["planned"] if p["subject"] == "FX-2")["stage"], "settled")
+
+    def test_the_lead_settles_no_change_evidence_only_when_it_names_every_criterion(self) -> None:
+        fx, path, wt = self.no_change_lane()
+        m = fx.main
+        code, out = fx.flow("handoff", "FX-2", "--no-change", "--evidence", "one-loads: test_one_loads passes", cwd=wt)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 1, out)
+        self.assertIn("the evidence names no proof of criterion one-fails", out)
+        # Nor does a longer token that only holds it.
+        for longer in ("one-fails.extra", "one-failsafe", "not-one-fails-yet", "xone-fails"):
+            with self.subTest(longer=longer):
+                code, out = fx.flow("handoff", "FX-2", "--no-change", "--evidence", f"one-loads holds; {longer} holds", cwd=wt)
+                self.assertEqual(code, 0, out)
+                code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+                self.assertEqual(code, 1, out)
+                self.assertIn("the evidence names no proof of criterion one-fails", out)
+        self.assertNotIn("one-loads,", out)
+        self.assertEqual(next(p for p in self.record(fx)["state"]["planned"] if p["subject"] == "FX-2")["stage"], "review")
+        # Handed off again, from a file, naming both: accepted.
+        evidence = fx.tmp / "evidence.md"
+        # A sentence may end on a criterion id: its full stop isn't part of the id.
+        evidence.write_text("one-loads: test_one_loads passes\ntest_one_fails proves one-fails.\n")
+        code, out = fx.flow("handoff", "FX-2", "--no-change", "--evidence", f"@{evidence}", cwd=wt)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 0, out)
+        code, again = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 2, again)
+        self.assertIn("FX-2 is already settled with no change", again)
+        self.assertEqual(next(p for p in self.record(fx)["state"]["planned"] if p["subject"] == "FX-2")["noChange"]["evidence"],
+                         "one-loads: test_one_loads passes\ntest_one_fails proves one-fails.")
+
+    def test_a_no_change_story_with_no_criteria_is_refused_naming_it_and_the_fix(self) -> None:
+        fx = self.fixture()
+        path = plan_delivery(fx)
+        m = fx.main
+        d = json.loads(path.read_text())
+        del d["stories"]["FX-3"]["criteria"]
+        d["finish"][0]["covers"]["criteria"] = ["one-loads", "one-fails"]
+        path.write_text(json.dumps(d, indent=2))
+        commit(m, "FX-1: FX-3 has no criteria")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        fx.flow("lead-init", cwd=m)
+        fx.flow("lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2", cwd=m)
+        wt = fx.lane("FX-3")
+        code, out = fx.flow("handoff", "FX-3", "--no-change", "--evidence", "it holds", cwd=wt)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-accept", "FX-3", cwd=m)
+        self.assertEqual(code, 2, out)
+        self.assertIn("FX-3 has no criteria", out)
+        self.assertIn("fix: record its criteria first", out)
+
+    def test_a_no_change_hand_off_takes_its_evidence_and_nothing_a_change_carries(self) -> None:
+        fx, path, wt = self.no_change_lane()
+        for argv, words in ((["--no-change"], "--no-change needs --evidence"),
+                            (["--no-change", "--evidence", "x", "--pr", "https://forge.test/pr/1"], "no --pr"),
+                            ([], "a hand-off needs --pr")):
+            with self.subTest(argv=argv):
+                code, out = fx.flow("handoff", "FX-2", *argv, cwd=wt)
+                self.assertEqual(code, 2, out)
+                self.assertIn(words, out)
+        self.assertEqual(next(p for p in self.record(fx)["state"]["planned"] if p["subject"] == "FX-2")["stage"], "planned")
 
     def test_lead_assign_rebuilds_for_a_story_it_registers(self) -> None:
         fx = self.fixture()
@@ -6571,8 +6790,10 @@ class RunDeliveryAdoptionGuideTests(unittest.TestCase):
     def test_the_guide_takes_an_empty_repository_to_a_closed_delivery(self) -> None:
         root = Path(tempfile.mkdtemp(prefix="run-delivery-adopter-"))
         self.addCleanup(shutil.rmtree, root, True)
+        self.addCleanup(forget_case, root)
         # Registered after the folder's removal, so it runs first: a failed case stops the supervisor it started.
         self.addCleanup(stop_supervisors, root)
+        watch_case(root)  # and an interrupted one, too
         fakes, home, bin_dir = root / "fakes", root / "home", root / "bin"
         for folder in (fakes, home, bin_dir):
             folder.mkdir()

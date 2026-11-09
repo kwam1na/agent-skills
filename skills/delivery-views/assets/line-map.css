@@ -246,6 +246,8 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .d-stage-icon.is-building, .d-stage-icon.is-review { margin: 0 11px 0 5px; }
 .d-stage-icon.is-building::after, .d-stage-icon.is-review::after { content: ""; position: absolute; inset: -5px; border-radius: 50%; border: 1.5px solid var(--ink); opacity: .3; }
 .d-stage-icon.is-pending { border-radius: 2px; transform: rotate(45deg) scale(.72); }
+.d-stage-icon.is-nochange { border-radius: 2px; transform: rotate(45deg) scale(.72); }
+.d-stage-icon.is-settled { background: var(--ink); }
 .d-stage-icon.is-queued { background: linear-gradient(90deg, var(--ink) 50%, transparent 50%); }
 .d-stage-icon.is-syncing, .d-stage-icon.is-synced, .d-stage-icon.is-checking, .d-stage-icon.is-checked, .d-stage-icon.is-merging {
   border-color: color-mix(in oklab, var(--ink) 22%, transparent); border-top-color: var(--ink); border-right-color: var(--ink); }
