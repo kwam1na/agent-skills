@@ -3871,10 +3871,10 @@ def plan_delivery(fx: Fixture) -> Path:
 
 
 THIS_PLAN = "docs/plans/2026-11-09-lead-hand-work.md"
-# This delivery's own plan (V26-3250), as its stories' `after` keys and its lanes' lowest-tier rows say, written out
-# here so that nothing the lead's ownership moves rewrite is read.
-THIS_PLAN_AFTER = {"V26-3276": [], "V26-3259": [], "V26-3256": ["V26-3276", "V26-3259"], "V26-3263": ["V26-3256"],
-                   "V26-3257": ["V26-3263"], "V26-3310": ["V26-3257"], "V26-3309": ["V26-3257", "V26-3259"]}
+# The delivery this repository runs from that plan, as its stories' `after` keys and its lanes' lowest-tier rows say,
+# written out here so that nothing the lead's ownership moves rewrite is read. Stories are numbered under the
+# delivery's own key prefix, so the corpus names no tracker key.
+THIS_PLAN_AFTER = {3276: [], 3259: [], 3256: [3276, 3259], 3263: [3256], 3257: [3263], 3310: [3257], 3309: [3257, 3259]}
 THIS_PLAN_OWNS = {
     "lane-1": ["skills/run-delivery/*", "tests/test_run_delivery.py", "tests/test_run_delivery_supervisor.py",
                "tests/test_run_delivery_plan_review.py", "tests/test_run_delivery_tracker.py", "skills/plan-work/*",
@@ -3918,7 +3918,13 @@ class RunDeliveryPlanFormatTests(unittest.TestCase):
         return code, out, json.loads(path.read_text()) if path.exists() else None
 
     def test_this_deliverys_plan_drafts_its_committed_lanes_criteria_order_and_owns(self) -> None:
-        committed = json.loads(sh("git", "show", "HEAD:.agents/deliveries/V26-3250.json", cwd=ROOT).stdout)["stories"]
+        listed = sh("git", "ls-tree", "--name-only", "HEAD", ".agents/deliveries/", cwd=ROOT).stdout.split()
+        files = [json.loads(sh("git", "show", f"HEAD:{name}", cwd=ROOT).stdout) for name in listed if name.endswith(".json")]
+        delivery = next(d for d in files if d.get("plan") == THIS_PLAN)
+        prefix = delivery["delivery"].rsplit("-", 1)[0]
+        named = lambda n: f"{prefix}-{n}"
+        after = {named(n): [named(k) for k in keys] for n, keys in THIS_PLAN_AFTER.items()}
+        committed = delivery["stories"]
         # The tracker snapshot carries each item's criteria, as the snapshot producer reads them from the item.
         items = [{"subject": key, "title": story["title"], "state": "backlog",
                   "criteria": [criterion["text"] for criterion in story.get("criteria", [])]}
@@ -3927,7 +3933,7 @@ class RunDeliveryPlanFormatTests(unittest.TestCase):
         snapshot = tracker.tmp / "tracker.json"
         snapshot.write_text(json.dumps({"takenAt": "2026-11-09T00:00:00Z", "source": "tracker", "items": items}))
         code, out, drafted = self.setup(tracker, (ROOT / THIS_PLAN).read_text(encoding="utf-8"),
-                                        "--tracker-snapshot", str(snapshot), key="V26-3250")
+                                        "--tracker-snapshot", str(snapshot), key=delivery["delivery"])
         self.assertEqual(code, 0, out)
         stories = drafted["stories"]
         self.assertLessEqual(set(committed), set(stories), out)
@@ -3936,8 +3942,8 @@ class RunDeliveryPlanFormatTests(unittest.TestCase):
                 self.assertEqual(stories[key]["lane"], story["lane"])
                 self.assertEqual([c["text"] for c in stories[key].get("criteria", [])],
                                  [c["text"] for c in story.get("criteria", [])])
-                self.assertEqual(stories[key].get("after", []), story.get("after", THIS_PLAN_AFTER[key]))
-                self.assertEqual(stories[key].get("after", []), THIS_PLAN_AFTER[key])
+                self.assertEqual(stories[key].get("after", []), story.get("after", after[key]))
+                self.assertEqual(stories[key].get("after", []), after[key])
         self.assertEqual({lane: entry["owns"] for lane, entry in drafted["lanes"].items()}, THIS_PLAN_OWNS)
         self.assertNotIn("unassigned", out)
         self.assertNotIn("drafted no", out)
