@@ -47,7 +47,7 @@
       "criteria": [
         {
           "id": "v26-3162-done",
-          "text": "The harness resolver reads only from a repository root per Decision 4: subdirectory, nested repository, submodule, untracked gitfile and a standalone bare clone under an emulated pre-2.38 git gate with posture_unreadable; clone roots and linked worktrees, nested or symlinked, read focused. It carries Decision 1's depth bound and kills the named mutants. The harness PR is merged, product-runtime/ is built from runtime/0.8.2 with Decision 3's three records, and the built-product rows pass with their red runs"
+          "text": "The harness resolver reads only from a repository root per Decision 4: subdirectory, nested repository, submodule, untracked gitfile and a standalone bare clone under an emulated pre-2.38 git gate with posture_unreadable; clone roots and linked worktrees, nested or symlinked, read focused. It carries Decision 1's depth bound and kills the named mutants. The harness PR is merged, product-runtime/ is built from runtime/0.8.3 with Decision 3's three records, and the built-product rows pass with their red runs"
         }
       ]
     },
