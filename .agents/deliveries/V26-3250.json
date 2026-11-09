@@ -38,7 +38,8 @@
         "tests/test_delivery_views_snapshots.py",
         "tests/delivery_views_page/*",
         "tests/fixtures/delivery-views/*",
-        "docs/solutions/*"
+        "docs/solutions/*",
+        "provenance.lock.json"
       ]
     }
   },
