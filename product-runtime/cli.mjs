@@ -232,7 +232,8 @@ import path12 from "node:path";
 
 // packages/cli/src/check-snapshot.ts
 import { spawn } from "node:child_process";
-import { chmod, lstat, mkdir, mkdtemp, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { chmod, lstat, mkdir, mkdtemp, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path3 from "node:path";
 import { candidateTreeSourceReader, capturePhysicalSource, createExecPort, isPhysicalSourceDefinition, physicalSourceOutputOverlap } from "./kernel.mjs";
@@ -448,8 +449,68 @@ function phaseMeter(onPhase) {
     }
   };
 }
+var trash = () => path3.join(tmpdir(), `delivery-harness-trash-${process.getuid?.() ?? "user"}`);
+async function ownTrash(create) {
+  const dir = trash();
+  try {
+    if (create) await mkdir(dir, { mode: 448 }).catch((error) => {
+      if (error.code !== "EEXIST") throw error;
+    });
+    const found = await lstat(dir);
+    return found.isDirectory() && found.uid === process.getuid?.() && (found.mode & 63) === 0 ? dir : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function deleteDetached(paths) {
+  for (let at = 0; at < paths.length; at += 256) {
+    try {
+      const child = spawn("/bin/rm", ["-rf", "--", ...paths.slice(at, at + 256)], { detached: true, stdio: "ignore" });
+      child.on("error", () => {
+      });
+      child.unref();
+    } catch {
+    }
+  }
+}
+function ownerAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+}
+async function sweepRemovedTrees() {
+  if (process.platform === "win32") return;
+  const dir = await ownTrash(false);
+  if (!dir) return;
+  const entries = await readdir(dir).catch(() => []);
+  deleteDetached(entries.filter((entry) => {
+    const pid = Number(/^(\d+)-/.exec(entry)?.[1]);
+    return !Number.isSafeInteger(pid) || pid <= 0 || !ownerAlive(pid);
+  }).map((entry) => path3.join(dir, entry)));
+}
 async function removeTrees(directories) {
-  const removed = await Promise.allSettled(directories.map((dir) => rm(dir, { recursive: true, force: true })));
+  const moved = [];
+  const into = process.platform === "win32" ? void 0 : await ownTrash(true);
+  const removed = await Promise.allSettled(directories.map(async (dir) => {
+    if (into) {
+      try {
+        const [from, to] = await Promise.all([stat(path3.dirname(dir)), stat(into)]);
+        if (from.dev === to.dev) {
+          const target = path3.join(into, `${process.pid}-${randomUUID()}`);
+          await rename(dir, target);
+          moved.push(target);
+          return;
+        }
+      } catch (error) {
+        if (error.code === "ENOENT" && await lstat(dir).then(() => false, (gone) => gone.code === "ENOENT")) return;
+      }
+    }
+    await rm(dir, { recursive: true, force: true });
+  }));
+  deleteDetached(moved);
   if (removed.some((result) => result.status === "rejected")) throw new CheckSnapshotError("check_snapshot_cleanup_failed", "Cannot remove the owned execution snapshot after retaining evidence.");
 }
 async function cloneTree(method, source, destination, deadline, signal) {
@@ -903,7 +964,7 @@ async function captureScopedCandidate(options) {
 
 // packages/cli/src/boundary.ts
 import path5 from "node:path";
-import { randomUUID as randomUUID2 } from "node:crypto";
+import { randomUUID as randomUUID3 } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import {
   BlockedError as BlockedError2,
@@ -929,7 +990,7 @@ import {
 } from "./kernel.mjs";
 
 // packages/cli/src/command-activity.ts
-import { randomUUID } from "node:crypto";
+import { randomUUID as randomUUID2 } from "node:crypto";
 var absent = { needsCandidate: false, start: async () => {
 }, prompt: (prompt) => prompt, finish: async () => {
 } };
@@ -959,7 +1020,7 @@ async function beginCommandObservation(cwd, command) {
     const history = await store.read(runId);
     if (!history.ok) return absent;
     const version = history.events[0]?.version ?? "run-event/1";
-    const attemptId = `command-${randomUUID()}`;
+    const attemptId = `command-${randomUUID2()}`;
     const activityId = attemptId;
     let candidateTreeSha;
     async function emit(kind, payload) {
@@ -970,7 +1031,7 @@ async function beginCommandObservation(cwd, command) {
           kind,
           role: "cli",
           version,
-          ...version === "run-event/2" ? { eventId: randomUUID() } : {},
+          ...version === "run-event/2" ? { eventId: randomUUID2() } : {},
           payload
         }));
       } catch {
@@ -990,7 +1051,7 @@ async function beginCommandObservation(cwd, command) {
       prompt(prompt) {
         return async (decision, obligations) => {
           if (version !== "run-event/2" || candidateTreeSha === void 0) return prompt(decision, obligations);
-          const waitId = `wait-${randomUUID()}`;
+          const waitId = `wait-${randomUUID2()}`;
           const scope = "This command invocation and the waiver decision's candidate and obligations only; this observation grants no authority.";
           await activity("waiting", "Respond to the native waiver prompt.");
           await emit("wait.started", { ...binding(), waitId, owner: "operator", waitingOn: "human", reason: "The executing command opened its native waiver prompt.", nextAction: "Answer the native prompt.", scope });
@@ -1225,7 +1286,8 @@ async function runConfiguredCommand(descriptor, args, runtime, observeSuccess, o
         const provider = config.providers.find((registration) => registration.id === providerId);
         if (provider?.command === void 0) return void 0;
         const command = provider.command;
-        const requestId = randomUUID2();
+        const inherited = provider.inheritDescriptors;
+        const requestId = randomUUID3();
         const allocation = await artifacts.allocateRunRoot({ providerId, runId: requestId });
         if (!allocation.ok) {
           throw new BlockedError2([
@@ -1253,12 +1315,19 @@ async function runConfiguredCommand(descriptor, args, runtime, observeSuccess, o
             {
               providerId,
               requestId,
-              idempotencyKey: randomUUID2(),
+              idempotencyKey: randomUUID3(),
               payload: { ...payload, runId: requestId, runRoot: allocation.runRoot.path },
               requiresEvidence
             },
             {
-              open: () => runtime.openProviderRail === void 0 ? openProviderRailProcess({ command, cwd: runtime.cwd, env: { ...runtime.env } }) : runtime.openProviderRail({ providerId, command, cwd: runtime.cwd, env: runtime.env }),
+              // One call, so the test seam is given exactly what the real launch is.
+              open: () => (runtime.openProviderRail ?? openProviderRailProcess)({
+                providerId,
+                command,
+                cwd: runtime.cwd,
+                env: { ...runtime.env },
+                ...inherited ? { inheritDescriptors: inherited } : {}
+              }),
               publishManifest: (manifestPath) => submitManifest(
                 { rootDir: runtime.cwd, config, manifestPath },
                 {
@@ -1269,7 +1338,7 @@ async function runConfiguredCommand(descriptor, args, runtime, observeSuccess, o
                 }
               ),
               signal: runtime.signal ?? interruptController?.signal,
-              cancellationId: randomUUID2()
+              cancellationId: randomUUID3()
             }
           );
         } finally {
@@ -1327,7 +1396,7 @@ async function runConfiguredCommand(descriptor, args, runtime, observeSuccess, o
 }
 
 // packages/cli/src/review-evidence.ts
-import { randomUUID as randomUUID3 } from "node:crypto";
+import { randomUUID as randomUUID4 } from "node:crypto";
 import { mkdir as mkdir2, writeFile as writeFile2 } from "node:fs/promises";
 import path6 from "node:path";
 import {
@@ -1420,7 +1489,7 @@ async function emitReviewEvidence(context, original, document) {
     id: binding.providerId,
     version: EMITTER_VERSION,
     // One emitter run is one evaluated pass over this candidate.
-    runId: `r-${randomUUID3()}`,
+    runId: `r-${randomUUID4()}`,
     finalPassId: outcome2.finalPassId ?? "pass-1"
   };
   const reviewed = original;
@@ -1513,8 +1582,8 @@ async function emitReviewEvidence(context, original, document) {
 }
 
 // packages/cli/src/scoped-checks.ts
-import { randomUUID as randomUUID5 } from "node:crypto";
-import { access, mkdir as mkdir4, readFile as readFile3, realpath as realpath2, rename as rename2, rm as rm3, stat, writeFile as writeFile4 } from "node:fs/promises";
+import { randomUUID as randomUUID6 } from "node:crypto";
+import { access, mkdir as mkdir4, readFile as readFile3, realpath as realpath2, rename as rename2, rm as rm3, stat as stat2, writeFile as writeFile4 } from "node:fs/promises";
 import path8 from "node:path";
 import {
   deliveryRecordPathFor as deliveryRecordPathFor2,
@@ -1545,8 +1614,8 @@ import {
 } from "./kernel.mjs";
 
 // packages/cli/src/scoped-attempts.ts
-import { randomUUID as randomUUID4 } from "node:crypto";
-import { link, mkdir as mkdir3, readFile as readFile2, readdir, unlink, writeFile as writeFile3 } from "node:fs/promises";
+import { randomUUID as randomUUID5 } from "node:crypto";
+import { link, mkdir as mkdir3, readFile as readFile2, readdir as readdir2, unlink, writeFile as writeFile3 } from "node:fs/promises";
 import path7 from "node:path";
 import { digestCanonical as digestCanonical2, validateResourceApplicabilityProjection } from "./kernel.mjs";
 var corrupt = () => new CheckSnapshotError("check_attempt_corrupt", "Scoped check attempt history is missing, corrupt or inconsistent.");
@@ -1583,7 +1652,7 @@ var AttemptStore = class {
   async generations() {
     let names;
     try {
-      names = await readdir(this.root);
+      names = await readdir2(this.root);
     } catch (error) {
       if (error.code === "ENOENT") return [];
       throw error;
@@ -1606,13 +1675,13 @@ var AttemptStore = class {
         }
         throw error;
       }
-      const attempt = { ...input, generation, attemptId: randomUUID4(), status: "running" };
+      const attempt = { ...input, generation, attemptId: randomUUID5(), status: "running" };
       await this.publish(path7.join(dir, "running.json"), { attempt, ...options.executionHeadSha !== void 0 ? { executionHeadSha: options.executionHeadSha } : {} });
       return attempt;
     }
   }
   async publish(target, entry) {
-    const temp = `${target}.${randomUUID4()}.tmp`;
+    const temp = `${target}.${randomUUID5()}.tmp`;
     try {
       await writeFile3(temp, JSON.stringify({ digest: digestCanonical2(entry), entry }), { flag: "wx", mode: 384 });
       await link(temp, target);
@@ -1910,6 +1979,20 @@ function scopedDependencyDiagnostic(result, durationMs, secrets) {
 function scopedCandidate(candidate) {
   return { treeSha: candidate.treeSha, deliverableDigest: candidate.deliverable.digest, identityToken: candidate.deliverable.identity, baseRef: candidate.base.ref, baseTipSha: candidate.base.tipSha, mergeBaseSha: candidate.base.mergeBaseSha, workspaceId: candidate.workspaceId };
 }
+var hostToolDigests = /* @__PURE__ */ new Map();
+async function hostToolDigest(file, readBytes = readFile3) {
+  const before = await stat2(file);
+  const key = JSON.stringify([before.dev, before.ino, before.size, before.mtimeMs, before.ctimeMs]);
+  let digest = hostToolDigests.get(key);
+  if (!digest) {
+    digest = readBytes(file).then((bytes) => sha256Hex3(bytes));
+    hostToolDigests.set(key, digest);
+    digest.catch(() => {
+      if (hostToolDigests.get(key) === digest) hostToolDigests.delete(key);
+    });
+  }
+  return { sha256: await digest, mode: before.mode & 73 };
+}
 async function executableIdentity(command, root, searchPath, cwd, read) {
   if (command.includes(path8.sep) && !path8.isAbsolute(command)) {
     const file = path8.posix.normalize(path8.posix.join(cwd, command));
@@ -1927,7 +2010,8 @@ async function executableIdentity(command, root, searchPath, cwd, read) {
     }
     const relative = path8.relative(await realpath2(root), await realpath2(file));
     if (relative !== ".." && !relative.startsWith(`..${path8.sep}`) && !path8.isAbsolute(relative)) throw new CheckSnapshotError("check_runtime_author_path", "Repository execution tools must use a relative command so they run from the private prepared tree.");
-    return { command, sha256: sha256Hex3(await readFile3(file)), mode: (await stat(file)).mode & 73 };
+    const { sha256, mode } = await hostToolDigest(file);
+    return { command, sha256, mode };
   }
   throw new CheckSnapshotError("check_runtime_unavailable", "A declared execution tool cannot be resolved and bound.");
 }
@@ -2022,7 +2106,7 @@ var ScopedChecks = class _ScopedChecks {
   identities = /* @__PURE__ */ new Map();
   executionIdentities = /* @__PURE__ */ new Map();
   observations = /* @__PURE__ */ new Map();
-  runId = randomUUID5();
+  runId = randomUUID6();
   submissions = [];
   context;
   candidate;
@@ -2073,6 +2157,7 @@ var ScopedChecks = class _ScopedChecks {
   static async create(context, candidate) {
     const providers = scopedProviders(context);
     if (!providers.length) return void 0;
+    void sweepRemovedTrees().catch(() => void 0);
     const session = new _ScopedChecks(context, candidate);
     const storage = await resolveRecordStorage5(context.rootDir, { storageNamespace: context.config.storageNamespace, leaf: "scoped-attempts" });
     const { inventory, read } = await preparedSource(context, candidate);
@@ -2470,7 +2555,7 @@ var ScopedChecks = class _ScopedChecks {
     let temporary;
     try {
       const file = await this.timingPath(key);
-      temporary = `${file}.${randomUUID5()}`;
+      temporary = `${file}.${randomUUID6()}`;
       await mkdir4(path8.dirname(file), { recursive: true, mode: 448 });
       await writeFile4(temporary, `${JSON.stringify({ version: "scoped-setup-timing/1", buildMs: Math.round(buildMs) })}
 `);
@@ -2668,7 +2753,7 @@ var ScopedChecks = class _ScopedChecks {
     const origin = (await this.locked(() => this.stores.get(providerId).read())).at(-1);
     if (!binding || !origin?.payload?.resourceApplicability || digestCanonical5(origin.payload.resourceApplicability.origin) !== binding.originDigest)
       throw new CheckSnapshotError("check_attempt_superseded", "Native resource origin changed before applicability publication.");
-    const runId = randomUUID5(), finalPassId = "applicability-1", c = this.candidate;
+    const runId = randomUUID6(), finalPassId = "applicability-1", c = this.candidate;
     const allocation = await this.context.artifacts.allocateRunRoot({ providerId, runId });
     if (!allocation.ok) throw new CheckSnapshotError("check_artifact_unavailable", "Cannot allocate resource applicability evidence.");
     const artifacts = [];
@@ -2901,7 +2986,7 @@ ${error.code}`.slice(-4e3) } : {}
 };
 
 // packages/cli/src/declared-checks.ts
-import { randomUUID as randomUUID6 } from "node:crypto";
+import { randomUUID as randomUUID7 } from "node:crypto";
 import path9 from "node:path";
 import { captureCheckBindings as captureCheckBindings2, captureCheckOutputSnapshots as captureCheckOutputSnapshots2, digestCanonical as digestCanonical6, classifyCandidateDrift, computeCheckWiringFingerprint, createBlocker as createBlocker3, createExecPort as createExecPort4, sha256Hex as sha256Hex4, submitManifest as submitManifest3 } from "./kernel.mjs";
 async function runDeclaredCheck(context, provider, obligationIds, before, scoped = {}) {
@@ -2936,7 +3021,7 @@ ${result.stderr}`.slice(-4e3)}`);
   if (classifyCandidateDrift(before, captured.candidate).length || start.candidate.headSha !== captured.candidate.headSha || fingerprint !== await computeCheckWiringFingerprint(context.rootDir, context.config, wiring.storageOptions)) return fail("check_candidate_changed", "The candidate, base or wiring changed while the check ran.");
   const binding = (await captureCheckBindings2(context.rootDir, context.config, captured.candidate, { ...wiring.storageOptions, ...scoped }))[provider.id];
   if (binding === void 0) return fail("check_output_missing", `Declared check ${provider.id} has a missing, unreadable, oversized or escaped output.`);
-  const runId = randomUUID6(), finalPassId = "pass-1";
+  const runId = randomUUID7(), finalPassId = "pass-1";
   const allocation = await context.artifacts.allocateRunRoot({ providerId: provider.id, runId });
   if (!allocation.ok) return fail("check_artifact_unavailable", "Cannot allocate the declared check evidence root.");
   const snapshots = await captureCheckOutputSnapshots2(context.rootDir, check.outputs ?? []);
@@ -3367,10 +3452,10 @@ import {
 import path11 from "node:path";
 
 // packages/cli/src/record-retention.ts
-import { createHash, randomUUID as randomUUID7 } from "node:crypto";
+import { createHash, randomUUID as randomUUID8 } from "node:crypto";
 import { execFile as execFile2 } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
-import { chmod as chmod2, lstat as lstat2, mkdir as mkdir5, open, readFile as readFile4, readdir as readdir2, rename as rename3, unlink as unlink2 } from "node:fs/promises";
+import { chmod as chmod2, lstat as lstat2, mkdir as mkdir5, open, readFile as readFile4, readdir as readdir3, rename as rename3, unlink as unlink2 } from "node:fs/promises";
 import path10 from "node:path";
 import { promisify as promisify2 } from "node:util";
 import {
@@ -3415,7 +3500,7 @@ function parseLedger(value2, expectedName) {
 }
 async function readLedgers(storageDir) {
   const ledgers = /* @__PURE__ */ new Map();
-  for (const name of await readdir2(storageDir).catch((error) => {
+  for (const name of await readdir3(storageDir).catch((error) => {
     if (error.code === "ENOENT") return [];
     throw error;
   })) {
@@ -3450,7 +3535,7 @@ async function readLedgers(storageDir) {
 async function writeLedger(ledgerPath, ledger) {
   await mkdir5(path10.dirname(ledgerPath), { recursive: true, mode: 448 });
   await chmod2(path10.dirname(ledgerPath), 448);
-  const temporary = `${ledgerPath}.tmp-${randomUUID7()}`;
+  const temporary = `${ledgerPath}.tmp-${randomUUID8()}`;
   const handle = await open(temporary, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL, 384);
   try {
     await handle.writeFile(`${JSON.stringify(ledger)}
@@ -4474,7 +4559,7 @@ Operations: ${MAINTAIN_OPERATIONS.join(" | ")}`,
 
 // packages/cli/src/commands/managed.ts
 import { execFile as execFile4 } from "node:child_process";
-import { readFile as readFile7, readdir as readdir3, realpath as realpath3 } from "node:fs/promises";
+import { readFile as readFile7, readdir as readdir4, realpath as realpath3 } from "node:fs/promises";
 import path14 from "node:path";
 import {
   FACADE_OPERATIONS,
@@ -4546,7 +4631,7 @@ async function resolveInstallation(context) {
   }
   let deliveries;
   try {
-    deliveries = (await readdir3(path14.join(namespace, "deliveries"), { withFileTypes: true })).filter((candidate) => candidate.isDirectory()).map((candidate) => candidate.name).sort();
+    deliveries = (await readdir4(path14.join(namespace, "deliveries"), { withFileTypes: true })).filter((candidate) => candidate.isDirectory()).map((candidate) => candidate.name).sort();
   } catch {
     deliveries = [];
   }
@@ -5484,11 +5569,11 @@ var blocked3 = (reason) => ({
 async function readArchiveFile(file) {
   const h = await open2(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
-    const stat3 = await h.stat();
-    if (!stat3.isFile() || stat3.size > MAX_PORTABLE_RECORD_BYTES3)
+    const stat4 = await h.stat();
+    if (!stat4.isFile() || stat4.size > MAX_PORTABLE_RECORD_BYTES3)
       throw Error("archive must be a regular file no larger than 16 MiB");
     const buffer = Buffer.alloc(
-      Math.min(stat3.size + 1, MAX_PORTABLE_RECORD_BYTES3 + 1)
+      Math.min(stat4.size + 1, MAX_PORTABLE_RECORD_BYTES3 + 1)
     );
     let offset = 0;
     while (offset < buffer.length) {
@@ -5496,7 +5581,7 @@ async function readArchiveFile(file) {
       if (!read.bytesRead) break;
       offset += read.bytesRead;
     }
-    if (offset !== stat3.size || offset > MAX_PORTABLE_RECORD_BYTES3)
+    if (offset !== stat4.size || offset > MAX_PORTABLE_RECORD_BYTES3)
       throw Error("archive changed size while reading");
     return buffer.subarray(0, offset).toString("utf8");
   } finally {
@@ -6150,7 +6235,7 @@ async function runArtifactCommand(context, command, args) {
 }
 
 // packages/cli/src/commands/runs.ts
-import { stat as stat2 } from "node:fs/promises";
+import { stat as stat3 } from "node:fs/promises";
 import path18 from "node:path";
 import {
   RUN_EVENT_KINDS,
@@ -7150,7 +7235,7 @@ ${USAGE6}` });
 }
 async function sizeOf(runsDir, runId) {
   try {
-    return (await stat2(path18.join(runsDir, `${runId}.jsonl`))).size;
+    return (await stat3(path18.join(runsDir, `${runId}.jsonl`))).size;
   } catch {
     return 0;
   }

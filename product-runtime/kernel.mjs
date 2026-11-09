@@ -4641,6 +4641,7 @@ var PATH_MATCHER_KINDS = ["prefix", "glob"];
 var DEFAULT_STORAGE_NAMESPACE = "delivery-harness/";
 var DEFAULT_BASE_REF = "origin/main";
 var DEFAULT_BASE_MOVEMENT_POLICY = "stale";
+var INHERITABLE_DESCRIPTORS = [3, 4];
 function isPhysicalSourceDefinition(value) {
   if (!isRecord(value) || Object.keys(value).sort().join(",") !== "absentInputs,files,version" || value["version"] !== "physical-source/1") return false;
   const files = value["files"], absent = value["absentInputs"];
@@ -5159,7 +5160,7 @@ function readShape(findings2, input) {
           sound = false;
           return;
         }
-        checkClosed(findings2, at, entry3, ["id", "findingCodes", "command", "check"]);
+        checkClosed(findings2, at, entry3, ["id", "findingCodes", "command", "check", "inheritDescriptors"]);
         const id = readString(findings2, `${at}.id`, entry3["id"], { pattern: ID_PATTERN, describe: "a provider id" });
         const findingCodes = readStringArray(findings2, `${at}.findingCodes`, entry3["findingCodes"], {
           pattern: FINDING_CODE_PATTERN,
@@ -5213,8 +5214,16 @@ function readShape(findings2, input) {
             }
           }
         }
+        let inheritDescriptors;
+        if (entry3["inheritDescriptors"] !== void 0) {
+          const value = entry3["inheritDescriptors"];
+          if (command === void 0 || !Array.isArray(value) || value.length === 0 || !Array.from(value).every((fd, index3) => INHERITABLE_DESCRIPTORS.includes(fd) && (index3 === 0 || fd > value[index3 - 1]))) {
+            findings2.add("config_invalid_member", `${at}.inheritDescriptors`, "requires a provider command and ascending unique descriptors from 3 and 4");
+            sound = false;
+          } else inheritDescriptors = value;
+        }
         if (id === void 0 || findingCodes === void 0) sound = false;
-        else registrations.push({ id, findingCodes, ...command === void 0 ? {} : { command }, ...check === void 0 ? {} : { check } });
+        else registrations.push({ id, findingCodes, ...command === void 0 ? {} : { command }, ...check === void 0 ? {} : { check }, ...inheritDescriptors === void 0 ? {} : { inheritDescriptors } });
       });
       if (sound) providers = registrations;
     }
@@ -5818,15 +5827,12 @@ function scrubbedEnvironment() {
   }
   return { ...environment, ...GIT_ENVIRONMENT_OVERRIDES };
 }
-var runGitCommand = (command, options) => collectGitCommand(command, options, false);
-function runGitCommandBytes(command, options) {
-  return collectGitCommand(command, { ...options, captureBytes: true }, true);
-}
-function collectGitCommand(command, options, rawBytes) {
+var runGitCommand = (command, options) => collectGitCommand(command, options);
+function collectGitCommand(command, options) {
   return new Promise((resolve) => {
     const [executable, ...args] = command;
     if (executable === void 0) {
-      resolve(rawBytes ? { exitCode: -1, stdout: Buffer.alloc(0), stderr: "no command was given" } : { exitCode: -1, stdout: "", stderr: "no command was given" });
+      resolve({ exitCode: -1, stdout: "", stderr: "no command was given" });
       return;
     }
     const child = spawn(executable, args, {
@@ -5849,7 +5855,7 @@ function collectGitCommand(command, options, rawBytes) {
       stderr += chunk;
     });
     child.once("error", (error) => {
-      resolve(rawBytes ? { exitCode: -1, stdout: Buffer.alloc(0), stderr: error.message } : { exitCode: -1, stdout, stderr: error.message });
+      resolve({ exitCode: -1, stdout, stderr: error.message });
     });
     if (options.stdin !== void 0) {
       child.stdin.once("error", (error) => {
@@ -5860,10 +5866,6 @@ function collectGitCommand(command, options, rawBytes) {
     }
     child.once("close", (code) => {
       const bytes = options.captureBytes ? Buffer.concat(chunks) : void 0;
-      if (rawBytes) {
-        resolve({ exitCode: inputError === void 0 ? code ?? -1 : -1, stdout: bytes, stderr: inputError ?? stderr });
-        return;
-      }
       resolve({ exitCode: inputError === void 0 ? code ?? -1 : -1, stdout: bytes?.toString("utf8") ?? stdout, stderr: inputError ?? stderr, ...bytes === void 0 ? {} : { stdoutBase64: bytes.toString("base64") } });
     });
   });
@@ -16317,10 +16319,10 @@ import path21 from "node:path";
 
 // packages/kernel/src/host/exec-port.ts
 import { execFile as execFile3, spawn as spawn5 } from "node:child_process";
-function createExecPort() {
+function createExecPort(options = {}) {
   return {
     run(invocation) {
-      if (process.platform !== "win32") return runProcessGroup(invocation);
+      if (process.platform !== "win32") return runProcessGroup(invocation, options.groupKill ?? nativeGroupKill);
       return new Promise((resolve) => {
         execFile3(
           invocation.command,
@@ -16347,7 +16349,56 @@ function createExecPort() {
     }
   };
 }
-function runProcessGroup(invocation) {
+var ESRCH = 3;
+function groupStopped(rc, errno) {
+  return rc === 0 || errno === ESRCH;
+}
+function libcGroupKill(kill, readErrno) {
+  return (pid) => kill(-pid, 9) === 0 || groupStopped(-1, readErrno());
+}
+var nativeGroupKillOnce;
+function nativeGroupKill() {
+  return nativeGroupKillOnce ??= (async () => {
+    if (!("Bun" in globalThis) || process.platform !== "darwin" && process.platform !== "linux") return null;
+    try {
+      const ffiModule = "bun:ffi";
+      const { dlopen, FFIType, read } = await import(ffiModule);
+      const errnoSymbol = process.platform === "darwin" ? "__error" : "__errno_location";
+      const libc = dlopen(process.platform === "darwin" ? "libc.dylib" : "libc.so.6", {
+        kill: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
+        [errnoSymbol]: { args: [], returns: FFIType.ptr }
+      });
+      const kill = libc.symbols["kill"];
+      const errno = libc.symbols[errnoSymbol];
+      return libcGroupKill(kill, () => read.i32(errno(), 0));
+    } catch {
+      return null;
+    }
+  })();
+}
+var LAUNCH_FAILURES = /* @__PURE__ */ new Set(["EAGAIN", "EMFILE", "ENFILE", "ENOMEM"]);
+var UTILITY_RETRY_DELAYS_MS = [0, 50, 100, 250, 500];
+async function killGroupWithUtility(pid) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await new Promise((resolve, reject2) => {
+        execFile3("/bin/kill", ["-KILL", "--", `-${pid}`], {
+          timeout: 1e3,
+          maxBuffer: 16 * 1024,
+          env: { PATH: "/usr/bin:/bin", LC_ALL: "C" }
+        }, (error, _stdout, stderr) => {
+          if (error && !stderr.includes("No such process")) reject2(Object.assign(error, { launched: typeof error.code !== "string" || !LAUNCH_FAILURES.has(error.code) }));
+          else resolve();
+        });
+      });
+      return;
+    } catch (error) {
+      if (error.launched === true || attempt + 1 >= UTILITY_RETRY_DELAYS_MS.length) throw error;
+      await new Promise((resolve) => setTimeout(resolve, UTILITY_RETRY_DELAYS_MS[attempt + 1]));
+    }
+  }
+}
+function runProcessGroup(invocation, groupKill) {
   if (invocation.signal?.aborted) return Promise.resolve({ code: 1, stdout: "", stderr: "", errorCode: "ABORT_ERR" });
   return new Promise((resolve) => {
     const child = spawn5(invocation.command, [...invocation.args], {
@@ -16370,16 +16421,13 @@ function runProcessGroup(invocation) {
           process.kill(-child.pid, "SIGKILL");
         } catch (error) {
           if (error.code !== "ERR_OUT_OF_RANGE") throw error;
-          await new Promise((resolve2, reject2) => {
-            execFile3("/bin/kill", ["-KILL", "--", `-${child.pid}`], {
-              timeout: 1e3,
-              maxBuffer: 16 * 1024,
-              env: { PATH: "/usr/bin:/bin", LC_ALL: "C" }
-            }, (error2, _stdout, stderr) => {
-              if (error2 && !stderr.includes("No such process")) reject2(error2);
-              else resolve2();
-            });
-          });
+          const native = await groupKill();
+          let stopped = false;
+          try {
+            stopped = native?.(child.pid) === true;
+          } catch {
+          }
+          if (!stopped) await killGroupWithUtility(child.pid);
         }
       } catch (error) {
         if (error.code !== "ESRCH" && error.errno !== 3) {
@@ -18389,6 +18437,7 @@ async function reconstructResourceApplicability(config, provider2, candidate2, p
 init_digest();
 import path23 from "node:path";
 import { createHash as createHash4 } from "node:crypto";
+import { spawn as spawn6 } from "node:child_process";
 async function candidateTreeEvidenceReader(rootDir, treeSha2, run = runGitCommand) {
   return candidateTreeReader(rootDir, treeSha2, run, MAX_PORTABLE_ARTIFACT_BYTES);
 }
@@ -18416,52 +18465,94 @@ async function candidateTreeReader(rootDir, treeSha2, run, maxBytes, directoryLi
     const bytes = result2.stdoutBase64 === void 0 ? Buffer.from(result2.stdout, "utf8") : Buffer.from(result2.stdoutBase64, "base64");
     return verifyObject(sha, type, bytes);
   };
-  const queued = [];
-  let active = 0, scheduled = false;
-  const schedule = () => {
-    if (scheduled || active >= 4 || !queued.length) return;
-    scheduled = true;
-    queueMicrotask(() => {
-      scheduled = false;
-      while (active < 4 && queued.length) {
-        const batch = queued.splice(0, 8);
-        active++;
-        void flush(batch);
-      }
-    });
+  let current;
+  const fail7 = (child, error) => {
+    if (child.closed) return;
+    child.closed = true;
+    if (current === child) current = void 0;
+    child.git.kill("SIGKILL");
+    for (const request of child.written.splice(0)) request.reject(error);
   };
-  const flush = async (batch) => {
+  const failure = (message) => {
     try {
-      const result2 = await runGitCommandBytes(["git", "cat-file", "--batch"], {
-        cwd: rootDir,
-        stdin: batch.map((request) => `${request.sha}
-`).join("")
-      });
-      if (result2.exitCode !== 0) refusal4("A target-tree evidence input cannot be read.");
-      const output = result2.stdout, values = [];
-      let offset = 0;
-      for (const request of batch) {
-        const end = output.indexOf(10, offset);
-        if (end < offset || end - offset > 128) refusal4("A target-tree object batch has an invalid header.");
-        const header = /^([a-f0-9]{40}(?:[a-f0-9]{24})?) (blob|tree) (0|[1-9][0-9]*)$/.exec(output.subarray(offset, end).toString("utf8"));
-        if (!header || header[1] !== request.sha || header[2] !== request.type) refusal4("A target-tree object batch has an invalid identity or type.");
-        const size = Number(header[3]), start = end + 1, finish2 = start + size;
-        if (!Number.isSafeInteger(size) || !Number.isSafeInteger(finish2) || finish2 >= output.length || output[finish2] !== 10) refusal4("A target-tree object batch has invalid or truncated bytes.");
-        values.push(verifyObject(request.sha, request.type, Buffer.from(output.subarray(start, finish2))));
-        offset = finish2 + 1;
-      }
-      if (offset !== output.length) refusal4("A target-tree object batch has unexpected trailing bytes.");
-      batch.forEach((request, index2) => request.resolve(values[index2]));
+      return refusal4(message);
     } catch (error) {
-      batch.forEach((request) => request.reject(error));
-    } finally {
-      active--;
-      schedule();
+      return error;
     }
   };
+  const settle = (child) => {
+    if (child.written.length || child.closed) return;
+    if (current === child) current = void 0;
+    child.git.stdin.end();
+  };
+  const take = (child, length) => {
+    const joined = child.chunks.length === 1 ? child.chunks[0] : Buffer.concat(child.chunks, child.buffered);
+    child.chunks = joined.length > length ? [joined.subarray(length)] : [];
+    child.buffered = joined.length - length;
+    return joined.subarray(0, length);
+  };
+  const parse = (child) => {
+    while (!child.closed && child.written.length) {
+      if (child.awaiting !== void 0 && child.buffered < child.awaiting) return;
+      const request = child.written[0];
+      const head = child.chunks.length === 1 ? child.chunks[0] : Buffer.concat(child.chunks, child.buffered);
+      child.chunks = head.length ? [head] : [];
+      const end = head.indexOf(10);
+      if (end < 0 ? head.length > 128 : end > 128) return fail7(child, failure("A target-tree object batch has an invalid header."));
+      if (end < 0) return;
+      const line = head.subarray(0, end).toString("utf8");
+      if (line === `${request.sha} missing` || line === `${request.sha} ambiguous`) {
+        take(child, end + 1);
+        child.written.shift();
+        request.reject(failure("A target-tree input is missing or oversized."));
+        continue;
+      }
+      const header = /^([a-f0-9]{40}(?:[a-f0-9]{24})?) (blob|tree) (0|[1-9][0-9]*)$/.exec(line);
+      if (!header || header[1] !== request.sha || header[2] !== request.type) return fail7(child, failure("A target-tree object batch has an invalid identity or type."));
+      const size = Number(header[3]);
+      if (!Number.isSafeInteger(size) || !Number.isSafeInteger(end + size + 2)) return fail7(child, failure("A target-tree object batch has invalid or truncated bytes."));
+      if (child.buffered < end + size + 2) {
+        child.awaiting = end + size + 2;
+        return;
+      }
+      child.awaiting = void 0;
+      const frame = take(child, end + size + 2);
+      if (frame[end + size + 1] !== 10) return fail7(child, failure("A target-tree object batch has invalid or truncated bytes."));
+      let bytes;
+      try {
+        bytes = verifyObject(request.sha, request.type, Buffer.from(frame.subarray(end + 1, end + 1 + size)));
+      } catch (error) {
+        return fail7(child, error);
+      }
+      child.written.shift();
+      request.resolve(bytes);
+    }
+    if (!child.closed && child.buffered) return fail7(child, failure("A target-tree object batch has unexpected trailing bytes."));
+    setImmediate(() => settle(child));
+  };
+  const start = () => {
+    const git = spawn6("git", ["cat-file", "--batch"], { cwd: rootDir, env: scrubbedEnvironment(), stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
+    const child = { git, written: [], chunks: [], buffered: 0, closed: false };
+    git.stdout.on("data", (chunk) => {
+      if (child.closed) return;
+      child.chunks.push(chunk);
+      child.buffered += chunk.length;
+      parse(child);
+    });
+    git.once("error", () => fail7(child, failure("A target-tree evidence input cannot be read.")));
+    git.stdin.once("error", () => fail7(child, failure("A target-tree evidence input cannot be read.")));
+    git.once("close", () => {
+      if (child.written.length) return fail7(child, failure("A target-tree evidence input cannot be read."));
+      child.closed = true;
+      if (current === child) current = void 0;
+    });
+    return child;
+  };
   const loadNativeObject = (sha, type) => new Promise((resolve2, reject2) => {
-    queued.push({ sha, type, resolve: resolve2, reject: reject2 });
-    schedule();
+    const child = current ??= start();
+    child.written.push({ sha, type, resolve: resolve2, reject: reject2 });
+    child.git.stdin.write(`${sha}
+`);
   });
   const readObject = (sha, type = "blob") => {
     const key = `${type}:${sha}`;
@@ -18476,10 +18567,10 @@ async function candidateTreeReader(rootDir, treeSha2, run, maxBytes, directoryLi
   };
   const resolve = async (requested) => {
     if (!isSafeRelativePath(requested)) refusal4("An evidence input is not a safe repository-relative path.");
-    let current = requested;
+    let current2 = requested;
     const links = [];
     for (let depth = 0; depth < 32; depth += 1) {
-      const segments = current.split("/");
+      const segments = current2.split("/");
       let redirected = false;
       for (let index2 = 0; index2 < segments.length; index2 += 1) {
         const prefix = segments.slice(0, index2 + 1).join("/");
@@ -18488,13 +18579,13 @@ async function candidateTreeReader(rootDir, treeSha2, run, maxBytes, directoryLi
         const target = (await readObject(entry4.objectSha)).toString("utf8");
         links.push({ path: prefix, target });
         if (path23.posix.isAbsolute(target) || target.includes("\\") || target.includes("\0")) refusal4("An evidence input symlink escapes the repository.");
-        current = path23.posix.normalize(path23.posix.join(path23.posix.dirname(prefix), target, ...segments.slice(index2 + 1)));
-        if (!isSafeRelativePath(current)) refusal4("An evidence input symlink escapes the repository.");
+        current2 = path23.posix.normalize(path23.posix.join(path23.posix.dirname(prefix), target, ...segments.slice(index2 + 1)));
+        if (!isSafeRelativePath(current2)) refusal4("An evidence input symlink escapes the repository.");
         redirected = true;
         break;
       }
       if (redirected) continue;
-      const entry3 = entries.get(current);
+      const entry3 = entries.get(current2);
       if (entry3 === void 0) return { entry: entry3, links };
       if (entry3.mode === "040000" && directoryLinks) {
         return { entry: entries.get(requested)?.mode === "120000" ? entry3 : void 0, links };
@@ -23055,7 +23146,8 @@ async function captureFor(rootDir, config, run, runGit) {
 
 // packages/kernel/src/provider-rails.ts
 init_canonical();
-import { spawn as spawn6 } from "node:child_process";
+import { spawn as spawn7 } from "node:child_process";
+import { fstatSync } from "node:fs";
 import { createInterface } from "node:readline";
 var DELIVERY_PROVIDER_RAILS_VERSION = "delivery-provider-rails/1";
 function isObject(value) {
@@ -23189,6 +23281,39 @@ function consumeProviderRailMessages(messages, options = {}) {
   for (const message of options.afterInterruption ?? []) accept(message);
   return { status, acceptedCount, duplicateCount, rejectedCount, events, terminal: terminal2 };
 }
+var INHERITED_DESCRIPTORS_ENV = "DELIVERY_HARNESS_INHERITED_DESCRIPTORS";
+function channelIdentity(fd) {
+  try {
+    const stat7 = fstatSync(fd, { bigint: true });
+    return stat7.isFIFO() || stat7.isSocket() ? descriptorIdentity(stat7) : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function descriptorIdentity(stat7) {
+  const exact2 = (value) => typeof value === "bigint" ? BigInt.asUintN(64, value) : Number.isSafeInteger(value) ? BigInt.asUintN(64, BigInt(value)) : void 0;
+  const dev = exact2(stat7.dev);
+  const ino = exact2(stat7.ino);
+  return dev === void 0 || ino === void 0 ? void 0 : `${dev}:${ino}`;
+}
+function providerRailLaunch(declared = [], env = {}, identify = channelIdentity) {
+  const vouched = /* @__PURE__ */ new Map();
+  for (const entry3 of (env[INHERITED_DESCRIPTORS_ENV] ?? "").split(",")) {
+    const match = /^\s*([34]):(\d+:\d+)\s*$/.exec(entry3);
+    if (match && !vouched.has(Number(match[1]))) vouched.set(Number(match[1]), match[2]);
+  }
+  const stdio = ["pipe", "pipe", "pipe"];
+  const passed = [];
+  for (let fd = 3; fd <= Math.max(2, ...declared); fd++) {
+    const identity = declared.includes(fd) && vouched.has(fd) ? identify(fd) : void 0;
+    if (identity !== void 0 && identity === vouched.get(fd)) {
+      stdio.push(fd);
+      passed.push(`${fd}:${identity}`);
+    } else stdio.push("ignore");
+  }
+  const { [INHERITED_DESCRIPTORS_ENV]: _vouched, ...rest } = env;
+  return { stdio, env: passed.length ? { ...rest, [INHERITED_DESCRIPTORS_ENV]: passed.join(",") } : rest };
+}
 var DEFAULT_PROVIDER_RAIL_DEADLINE_MS = 10 * 6e4;
 var DEFAULT_TERMINATION_GRACE_MS = 1e3;
 var RailLifecycleEnded = class extends Error {
@@ -23251,10 +23376,11 @@ async function settlesWithin(operation, milliseconds) {
 }
 function openProviderRailProcess(input) {
   const [executable, ...args] = input.command;
-  const child = spawn6(executable, args, {
+  const launch = providerRailLaunch(input.inheritDescriptors, input.env);
+  const child = spawn7(executable, args, {
     cwd: input.cwd,
-    env: input.env,
-    stdio: ["pipe", "pipe", "pipe"],
+    env: launch.env,
+    stdio: launch.stdio,
     shell: false
   });
   child.stdin.on("error", () => {
@@ -23569,7 +23695,8 @@ async function collectLiveProviderResults(input) {
       if (input.signal?.aborted) {
         return { liveResults: [], blockers: [refusal3("live_provider_cancelled", "Live verification was cancelled.")] };
       }
-      const command = input.config.providers.find((provider2) => provider2.id === providerId2)?.command;
+      const registration = input.config.providers.find((provider2) => provider2.id === providerId2);
+      const command = registration?.command;
       if (command === void 0) continue;
       const requestId = randomUUID5();
       const result2 = await invokeProviderRail({
@@ -23584,7 +23711,13 @@ async function collectLiveProviderResults(input) {
           candidate: before.candidate
         }
       }, {
-        open: () => openProviderRailProcess({ command, cwd: input.rootDir, env: input.env }),
+        // The provider's own declaration, as at the gate and record boundary.
+        open: () => openProviderRailProcess({
+          command,
+          cwd: input.rootDir,
+          env: input.env,
+          ...registration?.inheritDescriptors ? { inheritDescriptors: registration.inheritDescriptors } : {}
+        }),
         ...input.signal === void 0 ? {} : { signal: input.signal }
       });
       if (result2.kind === "success") {
@@ -24006,6 +24139,8 @@ export {
   HOST_INTERCEPTION_SCENARIOS,
   IDENTITY_DOMAIN,
   IDENTITY_FINDING_CODES,
+  INHERITABLE_DESCRIPTORS,
+  INHERITED_DESCRIPTORS_ENV,
   INSTALLED_DATA_LIMITS,
   INSTALL_RECEIPT_SPEC,
   INTAKE_STATES,
@@ -24177,6 +24312,7 @@ export {
   capturePortableVerificationInputs,
   captureRunArtifact,
   captureScopedCheckInputs,
+  channelIdentity,
   checkActionAuthorization,
   checkBoundPolicy,
   checkClaimAuthorized,
@@ -24257,6 +24393,7 @@ export {
   deriveDeliveryRecordPath,
   deriveTelemetry,
   describeRunEventPayload,
+  descriptorIdentity,
   digestCanonical,
   digestDeliverableEntries,
   digestsEqual,
@@ -24357,6 +24494,7 @@ export {
   projectRunActivities,
   projectShippedPersonas,
   projectionConsumptionObservationFile,
+  providerRailLaunch,
   publishPreparationReceipt,
   publishRecord,
   qualifyReviewAttempts,
