@@ -873,6 +873,20 @@ class StatsViewTests(unittest.TestCase):
         one = {**self.document(), "stats": {"change-1": {**self.document()["stats"]["change-1"], "rounds": 1}}}
         self.assertIn("· 1 round, findings", render_state.render_markdown(one))
 
+    def test_the_markdown_view_shows_a_story_settled_with_no_change_and_its_evidence(self) -> None:
+        document = self.document()
+        no_change = {"evidence": "one-loads: test_one_loads passes", "baseHead": HEAD_A, "handedAt": "2026-10-21T09:00:00Z"}
+        document["state"]["planned"] = [
+            {"subject": "done-1", "title": "Done one", "lane": "lane-1", "stage": "settled",
+             "noChange": {**no_change, "settledAt": "2026-10-21T10:00:00Z"}},
+            {"subject": "done-2", "title": "Done two", "lane": "lane-1", "stage": "review", "noChange": no_change}]
+        planned = render_state.render_markdown(document)
+        planned = planned[planned.index("## Planned"):planned.index("## Lanes")]
+        self.assertIn("- done-1: Done one, closed, no change needed · lane lane-1", planned)
+        self.assertIn("- done-2: Done two, handed off, no change needed, waiting for the lead · lane lane-1", planned)
+        shown = render_state._markdown_text(f"Evidence, run at base {HEAD_A[:10]}: one-loads: test_one_loads passes")
+        self.assertEqual(planned.count(f"\n  - {shown}"), 2, planned)
+
     def test_a_document_without_stats_or_planned_work_still_renders(self) -> None:
         state = {key: value for key, value in FIXED_STATE.items() if key != "planned"}
         view = render_state.render_markdown({"state": state, "journal": FIXED_JOURNAL})
@@ -2525,6 +2539,16 @@ setTimeout(async () => {
         for subject, found in stats.items():
             with self.subTest(subject=subject):
                 self.assertIn(render_state._stats_text(found), shown["text"])
+
+    def test_the_page_shows_a_story_settled_with_no_change_and_its_evidence_as_the_markdown_view_does(self) -> None:
+        document = copy.deepcopy(self.document)
+        document["state"]["planned"] = [{"subject": "done-1", "title": "Done one", "lane": "lane-1", "stage": "settled",
+                                         "noChange": {"evidence": "one-loads: test_one_loads passes", "baseHead": HEAD_A,
+                                                      "handedAt": "2026-10-21T09:00:00Z",
+                                                      "settledAt": "2026-10-21T10:00:00Z"}}]
+        shown = self.run_page({}, document)
+        self.assertIn("closed, no change needed", shown["text"])
+        self.assertIn(f"Evidence, run at base {HEAD_A[:10]}: one-loads: test_one_loads passes", shown["text"])
 
     def test_a_live_document_without_stats_or_planned_work_is_still_shown(self) -> None:
         live = self.live_document("Live without stats")

@@ -1019,6 +1019,74 @@ def handoff(
     return item  # type: ignore[return-value]
 
 
+NO_CHANGE_EVIDENCE = 4000
+
+
+def no_change_handoff(directory: Path, *, lane: str, subject: str, base_head: str, evidence: str) -> dict:
+    """A lane hands off work whose criteria already hold on the base, with no change: it never enters the queue.
+
+    The planned entry keeps its place, in review, carrying ``noChange``: the
+    lane's evidence and the base head it ran at. With the lead's acceptance
+    required, it waits for ``handoff --accept``; otherwise it is settled now.
+    """
+    if not isinstance(evidence, str) or not evidence.strip() or len(evidence) > NO_CHANGE_EVIDENCE:
+        raise StateError("handoff_invalid", f"--evidence-text is the evidence, 1 to {NO_CHANGE_EVIDENCE} characters")
+    if not isinstance(base_head, str) or not re.fullmatch(r"[0-9a-f]{40}([0-9a-f]{24})?", base_head):
+        raise StateError("handoff_invalid", "--base-head is the full commit the evidence ran at")
+
+    def change(state: dict) -> dict:
+        if lane not in [entry["id"] for entry in state["lanes"]]:
+            raise StateError("writer_not_owned", f"there is no lane {lane}")
+        if any(item["subject"] == subject for item in state["queue"]):
+            raise StateError("handoff_invalid", f"{subject} is already in the queue; a change was handed off")
+        planned = next((entry for entry in state.get("planned", []) if entry["subject"] == subject), None)
+        if planned is None:
+            raise StateError("subject_unknown", f"{subject} is not planned")
+        if planned["lane"] != lane:
+            raise StateError("writer_not_owned", f"{subject} is planned in {planned['lane']}, not {lane}")
+        if planned["stage"] == "settled":
+            raise StateError("handoff_invalid", f"{subject} is already settled with no change")
+        planned["noChange"] = {"evidence": evidence, "baseHead": base_head, "handedAt": now()}
+        planned["stage"] = "review"
+        _set_lane_state(state, lane, "handed")
+        if not state["meta"].get("handoffsNeedAcceptance"):
+            planned["stage"] = "settled"
+            planned["noChange"]["settledAt"] = planned["noChange"]["handedAt"]
+            _rest_if_free(state, lane)
+        for entry in state["lanes"]:
+            if entry["id"] == lane:
+                _end_queue_wait(entry)
+                if not entry["waitingOn"]:
+                    entry.pop("waitingBy", None)
+                entry.pop("restedFrom", None)
+        return copy.deepcopy(planned)
+
+    _, entry = _tool_write(directory, change)
+    settled = entry["stage"] == "settled"
+    append_journal(directory, kind="candidate.handed", lane=lane, subject=subject,
+                   summary=f"{lane} handed {subject} with no change needed, its evidence run at base {base_head[:10]}"
+                           + ("; settled" if settled else "; waiting for the lead to accept it"))
+    return entry
+
+
+def _rest_if_free(state: dict, lane: str | None) -> None:
+    """A lane whose story settled with no change, holding no other open work, is idle, as one is after a merge."""
+    if lane is None:
+        return
+    busy = [entry for entry in state.get("planned", []) if entry["lane"] == lane and entry["stage"] != "settled"]
+    busy += [item for item in state["queue"] if item["lane"] == lane and item["stage"] not in ("merged", "stopped")]
+    if not busy:
+        _set_lane_state(state, lane, "idle")
+
+
+def _pending_no_change(state: dict, subject: str) -> dict | None:
+    """The planned entry of a no-change hand-off waiting for the lead, or None."""
+    entry = next((item for item in state.get("planned", []) if item["subject"] == subject), None)
+    if entry is not None and entry.get("noChange") and entry["stage"] != "settled":
+        return entry
+    return None
+
+
 def _pending(state: dict, subject: str) -> dict:
     item = next((entry for entry in state["queue"] if entry["subject"] == subject), None)
     # A merged item an earlier version left carrying the flag has no hand-off left to accept or reject.
@@ -1031,12 +1099,21 @@ def accept_handoff(directory: Path, subject: str) -> dict:
     """The lead accepts a waiting hand-off; the runner may now take it."""
 
     def change(state: dict) -> dict:
+        waiting = _pending_no_change(state, subject)
+        if waiting is not None:
+            # Settled, not removed: it stays in the record, counted as done, and never enters the queue.
+            waiting["stage"] = "settled"
+            waiting["noChange"]["settledAt"] = now()
+            _rest_if_free(state, waiting["lane"])
+            return copy.deepcopy(waiting)
         item = _pending(state, subject)
         item.pop("pending")
         return copy.deepcopy(item)
 
     _, item = _tool_write(directory, change)
-    append_journal(directory, kind="decision.recorded", subject=subject, summary=f"Accepted the hand-off of {subject}")
+    said = (f"Accepted the hand-off of {subject}: settled with no change needed" if item.get("stage") == "settled"
+            else f"Accepted the hand-off of {subject}")
+    append_journal(directory, kind="decision.recorded", subject=subject, summary=said)
     return item  # type: ignore[return-value]
 
 
@@ -1044,6 +1121,14 @@ def reject_handoff(directory: Path, subject: str, reason: str) -> dict:
     """The lead rejects a waiting hand-off; the work goes back to its lane as planned."""
 
     def change(state: dict) -> dict:
+        waiting = _pending_no_change(state, subject)
+        if waiting is not None:
+            # Back to its lane, building, without the evidence the lead didn't accept.
+            del waiting["noChange"]
+            waiting["stage"] = "building"
+            if waiting["lane"] is not None:
+                _set_lane_state(state, waiting["lane"], "working")
+            return copy.deepcopy(waiting)
         item = _pending(state, subject)
         state["queue"] = [entry for entry in state["queue"] if entry["subject"] != subject]
         back = {"subject": subject, "title": item["title"], "lane": item["lane"], "stage": "review"}
@@ -2508,6 +2593,8 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
                         change(subject, "started in the tracker but not in the record: added as planned work, building")
                     elif word == "completed":
                         report(subject, "completed in the tracker but never recorded")
+                elif planned(subject) and planned(subject)["stage"] == "settled":
+                    pass  # closed with no change needed: whatever the tracker says, the record holds it settled
                 elif word == "started" and not known:
                     report(subject, "a follow-up the tracker now shows started: assign it a lane")
                 elif word == "started" and planned(subject) and planned(subject)["stage"] == "planned":
@@ -4096,6 +4183,15 @@ def _handoff_command(args: argparse.Namespace) -> dict:
         if not args.reason:
             raise StateError("handoff_invalid", "say why with --reason")
         return reject_handoff(args.dir, args.reject, args.reason)
+    if args.no_change:
+        missing = [name for name in ("lane", "subject", "base_head", "evidence_text") if not getattr(args, name)]
+        if missing:
+            raise StateError("handoff_invalid", "a no-change hand-off needs "
+                             + ", ".join("--" + name.replace("_", "-") for name in missing))
+        if args.head or args.change_request or args.evidence:
+            raise StateError("handoff_invalid", "a no-change hand-off has no --head, --change-request or --evidence")
+        return no_change_handoff(args.dir, lane=args.lane, subject=args.subject, base_head=args.base_head,
+                                 evidence=args.evidence_text)
     missing = [name for name in ("lane", "subject", "head", "change_request") if not getattr(args, name)]
     if missing:
         raise StateError("handoff_invalid", "a hand-off needs " + ", ".join("--" + name.replace("_", "-") for name in missing))
@@ -4444,6 +4540,10 @@ def main(argv: list[str] | None = None) -> int:
     hand.add_argument("--run", help="the id of the run that built the work; kept from before when left out")
     hand.add_argument("--evidence", action="append",
                       help="the lane's evidence of a reusable check's run, as merge_queue.py evidence prints it; once a check")
+    hand.add_argument("--no-change", action="store_true",
+                      help="the work needs no change: its criteria already hold on the base; it never enters the queue")
+    hand.add_argument("--base-head", help="with --no-change: the base commit the evidence ran at")
+    hand.add_argument("--evidence-text", help="with --no-change: what shows the criteria already hold")
     chosen = commands.add_parser("select", help="the lead records the checks a candidate runs at its reviewed head")
     chosen.add_argument("--subject", required=True)
     chosen.add_argument("--binding", type=Path, help="the repository binding, with selection.lead true")

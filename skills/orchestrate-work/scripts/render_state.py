@@ -221,6 +221,19 @@ def _markdown_number(value: object) -> str:
     return f"{_markdown_text(value)}\\."
 
 
+def _planned_words(item: dict) -> str:
+    """Where planned work stands: a story settled with no change is closed, and one handed off so waits for the lead."""
+    if item.get("stage") == "settled":
+        return "closed, no change needed"
+    if isinstance(item.get("noChange"), dict):
+        return "handed off, no change needed, waiting for the lead"
+    return str(item.get("stage"))
+
+
+def _no_change_text(no_change: dict) -> str:
+    return f"Evidence, run at base {str(no_change.get('baseHead', ''))[:10]}: {no_change.get('evidence', '')}"
+
+
 def _markdown_section(title: str, rows: list[str], empty: str) -> list[str]:
     return [f"## {title}", "", *(rows or [empty]), ""]
 
@@ -412,9 +425,11 @@ def render_markdown(document: dict) -> str:
     rows = []
     for item in state.get("planned", []):
         title, summary = ticket((item["subject"],), item["title"])
-        rows.append(f"- {_markdown_text(item['subject'])}: {_markdown_text(title)}, {_markdown_text(item['stage'])}"
+        rows.append(f"- {_markdown_text(item['subject'])}: {_markdown_text(title)}, {_markdown_text(_planned_words(item))}"
                     f" · lane {_markdown_text(item['lane'])}{change_request(item)}")
         rows.extend(summary_row(summary, "  "))
+        if isinstance(item.get("noChange"), dict):
+            rows.append(f"  - {_markdown_text(_no_change_text(item['noChange']))}")
         rows.extend(stats_row(item, "  "))
     lines += _markdown_section("Planned", rows, "Nothing planned outside the queue.")
 
@@ -749,8 +764,16 @@ _PAGE_PROGRAM = """
     parts.push(el("h2", "Planned"));
     parts.push(list("ul", isArray(state.planned) ? state.planned : [], "Nothing planned outside the queue.", function (item) {
       var known = ticket([item.subject], item.title);
-      return withStats(row(show(item.subject) + ": " + show(known.title), "Lane " + show(item.lane) + changeRequest(item),
-        item.stage, known.summary), item);
+      var noChange = isObject(item.noChange) ? item.noChange : null;
+      var words = item.stage === "settled" ? "closed, no change needed"
+        : noChange ? "handed off, no change needed, waiting for the lead" : item.stage;
+      var entry = withStats(row(show(item.subject) + ": " + show(known.title), "Lane " + show(item.lane) + changeRequest(item),
+        words, known.summary), item);
+      if (noChange) {
+        entry.appendChild(el("div", "Evidence, run at base " + show(String(noChange.baseHead || "").slice(0, 10)) + ": " +
+          show(noChange.evidence), "detail"));
+      }
+      return entry;
     }));
 
     parts.push(el("h2", "Lanes"));

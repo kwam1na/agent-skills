@@ -3159,6 +3159,119 @@ def planned(subject: str, lane_id: str | None = "lane-1") -> dict:
     return {"subject": subject, "title": f"Work {subject}", "lane": lane_id, "stage": "review"}
 
 
+class NoChangeHandoffTests(unittest.TestCase):
+    """A story whose criteria already hold hands off with no change: it never enters the queue, and once the lead
+    accepts it the record holds it settled, never removed."""
+
+    BASE = "a" * 40
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.directory = Path(self.temporary.name) / "state"
+        state_tool.init(self.directory, "Epic underway")
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer="lead", version=version, changes={
+            "meta": {"handoffsNeedAcceptance": True},
+            "lanes": [lane("lane-1"), lane("lane-2")],
+            "planned": [{"subject": "done-already", "title": "Already done", "lane": "lane-1", "stage": "building"},
+                        {"subject": "other", "title": "Other", "lane": "lane-2", "stage": "planned"}]})
+
+    def hand(self, *extra: str, subject: str = "done-already", lane_id: str = "lane-1") -> tuple[int, dict]:
+        return run_tool(self.directory, "handoff", "--no-change", "--lane", lane_id, "--subject", subject,
+                        "--base-head", self.BASE, "--evidence-text", "test_x passes at the base: done-already-1", *extra)
+
+    def entry(self, subject: str = "done-already") -> dict:
+        return next(item for item in state_tool.show(self.directory)["state"]["planned"] if item["subject"] == subject)
+
+    def test_a_no_change_hand_off_waits_for_the_lead_then_settles_and_never_queues(self) -> None:
+        code, result = self.hand()
+        self.assertEqual(code, 0, result)
+        entry = self.entry()
+        self.assertEqual(entry["stage"], "review")
+        self.assertEqual({k: entry["noChange"][k] for k in ("evidence", "baseHead")},
+                         {"evidence": "test_x passes at the base: done-already-1", "baseHead": self.BASE})
+        self.assertNotIn("settledAt", entry["noChange"])
+        document = state_tool.show(self.directory)
+        self.assertEqual(document["state"]["queue"], [])
+        self.assertEqual(next(item for item in document["state"]["lanes"] if item["id"] == "lane-1")["state"], "handed")
+        handed = [e for e in document["journal"] if e["kind"] == "candidate.handed"]
+        self.assertEqual(len(handed), 1)
+        self.assertIn("with no change needed", handed[0]["summary"])
+        self.assertIn("waiting for the lead", handed[0]["summary"])
+        code, result = run_tool(self.directory, "handoff", "--accept", "done-already")
+        self.assertEqual(code, 0, result)
+        entry = self.entry()
+        self.assertEqual(entry["stage"], "settled")
+        self.assertIn("settledAt", entry["noChange"])
+        document = state_tool.show(self.directory)
+        self.assertEqual(document["state"]["queue"], [], "a settled story entered the queue")
+        self.assertIn("done-already", [item["subject"] for item in document["state"]["planned"]], "settled, not removed")
+        self.assertEqual(next(item for item in document["state"]["lanes"] if item["id"] == "lane-1")["state"], "idle",
+                         "a lane with nothing else open rests once its story settles")
+        self.assertIn("settled with no change needed", document["journal"][-1]["summary"])
+        # Settled once: neither handed off nor accepted again.
+        code, result = self.hand()
+        self.assertEqual((code, result.get("code")), (1, "handoff_invalid"), result)
+        code, result = run_tool(self.directory, "handoff", "--accept", "done-already")
+        self.assertNotEqual(code, 0, result)
+
+    def test_the_lead_rejecting_a_no_change_hand_off_sends_it_back_building_without_its_evidence(self) -> None:
+        self.assertEqual(self.hand()[0], 0)
+        code, result = run_tool(self.directory, "handoff", "--reject", "done-already", "--reason", "one criterion fails")
+        self.assertEqual(code, 0, result)
+        entry = self.entry()
+        self.assertEqual(entry["stage"], "building")
+        self.assertNotIn("noChange", entry)
+        lanes = state_tool.show(self.directory)["state"]["lanes"]
+        self.assertEqual(next(item for item in lanes if item["id"] == "lane-1")["state"], "working")
+
+    def test_without_the_leads_acceptance_required_it_settles_at_once(self) -> None:
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer="lead", version=version, changes={"meta": {"handoffsNeedAcceptance": False}})
+        code, result = self.hand()
+        self.assertEqual(code, 0, result)
+        self.assertEqual(self.entry()["stage"], "settled")
+        self.assertIn("; settled", state_tool.show(self.directory)["journal"][-1]["summary"])
+
+    def test_a_no_change_hand_off_it_cant_take_is_refused_and_writes_nothing(self) -> None:
+        before = state_tool.show(self.directory)["state"]
+        for argv, words in (
+                (["handoff", "--no-change", "--lane", "lane-1", "--subject", "done-already", "--base-head", self.BASE],
+                 "--evidence-text"),
+                (["handoff", "--no-change", "--lane", "lane-1", "--subject", "done-already", "--base-head", "abc",
+                  "--evidence-text", "x"], "--base-head is the full commit"),
+                (["handoff", "--no-change", "--lane", "lane-1", "--subject", "done-already", "--base-head", self.BASE,
+                  "--evidence-text", "   "], "1 to 4000 characters"),
+                (["handoff", "--no-change", "--lane", "lane-1", "--subject", "done-already", "--base-head", self.BASE,
+                  "--evidence-text", "x" * 4001], "1 to 4000 characters"),
+                (["handoff", "--no-change", "--lane", "lane-1", "--subject", "done-already", "--base-head", self.BASE,
+                  "--evidence-text", "x", "--head", self.BASE], "no --head, --change-request or --evidence"),
+                (["handoff", "--no-change", "--lane", "lane-1", "--subject", "other", "--base-head", self.BASE,
+                  "--evidence-text", "x"], "planned in lane-2, not lane-1"),
+                (["handoff", "--no-change", "--lane", "lane-1", "--subject", "nobody", "--base-head", self.BASE,
+                  "--evidence-text", "x"], "is not planned")):
+            with self.subTest(words=words):
+                code, result = run_tool(self.directory, *argv)
+                self.assertEqual(code, 1, result)
+                self.assertIn(words, result["error"])
+                self.assertEqual(state_tool.show(self.directory)["state"], before)
+
+    def test_reconcile_leaves_a_settled_story_alone_whatever_the_tracker_says(self) -> None:
+        self.hand()
+        run_tool(self.directory, "handoff", "--accept", "done-already")
+        before = self.entry()
+        for word in ("completed", "canceled", "backlog", "started"):
+            with self.subTest(word=word):
+                snapshot = Path(self.temporary.name) / "tracker.json"
+                snapshot.write_text(json.dumps({"takenAt": taken(), "source": "tracker", "items": [
+                    {"subject": "done-already", "state": word}, {"subject": "other", "state": "backlog"}]}))
+                code, result = run_tool(self.directory, "reconcile", "--snapshot", str(snapshot))
+                self.assertEqual(code, 0, result)
+                self.assertFalse([r for r in result.get("reports", []) if r.get("subject") == "done-already"], result)
+                self.assertEqual(self.entry(), before)
+
+
 class RunnerHoldTests(unittest.TestCase):
     """The runner may hold serving when its setup breaks; only the lead changes or clears a hold."""
 

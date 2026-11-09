@@ -455,6 +455,12 @@ If a lens asks for changes, the lane fixes them, commits, runs the gates again a
 inside its turn for reviewers, gates and the pipeline, and ends the turn only to hand off, to report itself blocked, or
 to ask the lead: the message `handoff` prints is its report.
 
+A story whose criteria already hold on the base needs no change, so the lane has no branch to push and no round to
+review. It runs the tests or commands that show each criterion holds, in its checkout at the base, and hands off with
+that evidence instead, naming each criterion by its id: `handoff <story-key> --no-change --evidence TEXT` (or
+`--evidence @FILE`). The record keeps the evidence and the base head it ran at, and the story never enters the merge
+queue.
+
 ### Accept
 
 Check the hand-off's claims. `lead-accept` verifies the head, the change request, the rounds and their evidence, the
@@ -464,6 +470,11 @@ to the queue the supervisor keeps running:
 ```sh example repo
 python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lead-accept <story-key>
 ```
+
+On a no-change hand-off, `lead-accept` checks that the base still holds the head the evidence ran at (the base may have
+moved on since) and that the evidence names every one of the story's criteria by id, refusing with the ids it misses.
+A story with no criteria is refused until you record them. Then it settles the story: the record keeps it, closed with
+no change needed, the close and the finish lines count it, and nothing is committed to the base.
 
 When the repository's merge step refuses a draft (`forge.mergeNeedsReady`), the delivery's `authority` grants
 `readyPullRequests`, and `lead-accept` marks the draft ready before the queue may take it; a failed ready leaves the

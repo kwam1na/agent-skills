@@ -991,6 +991,39 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertEqual(states, {"left": "done", "done": "done", "waits": "open", "taken": "done", "stopped": "open",
                                   "absent": "open"})
 
+    def test_a_story_settled_with_no_change_counts_for_the_close_and_the_stories_finish_line(self) -> None:
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        self.addCleanup(stop_supervisors, fx.tmp)
+        path = plan_delivery(fx, supervised(fx))
+        d = json.loads(path.read_text())
+        d["finish"] = [{"id": "stories", "label": "Every story", "text": "Each item merged, or closed with a recorded reason",
+                        "covers": {"criteria": "all", "proofs": ["review", "merged"]}}]
+        path.write_text(json.dumps(d, indent=2))
+        commit(fx.main, "FX-1: the stories finish line")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+        code, out = fx.flow("lead-init", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-assign", "FX-2", "--lane", "lane-1", "--title", "lane-1", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        wt = fx.lane("FX-2")
+        code, out = fx.flow("handoff", "FX-2", "--no-change", "--evidence",
+                            "one-loads: test_one_loads passes; one-fails: test_one_fails passes", cwd=wt)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        held = self.once(fx)["closeHeldBy"]
+        self.assertFalse([hold for hold in held if "FX-2" in hold], f"the settled story still holds the close: {held}")
+        self.assertIn("not handed off: FX-3", held)
+        self.assertFalse(wt.exists(), "the settled story's checkout outlived its lane moving off it")
+        self.merged(fx, "FX-3", "lane-2")
+        state_tool(fx, "focus", "--lane", "lane-2", "--text", "done", "--state", "done")
+        last = self.once(fx)
+        self.assertEqual([e["subject"] for e in kinds(fx, "finish.met")], ["stories"], last)
+        self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)
+        settled = next(p for p in record(fx)["state"]["planned"] if p["subject"] == "FX-2")
+        self.assertEqual(settled["stage"], "settled", "the close removed the settled story from the record")
+
     def closable(self, fx: Fixture) -> None:
         """No finish lines, FX-2 merged, its lane done, FX-3 removed: nothing holds the close."""
         path = fx.main / ".agents/deliveries/FX-1.json"
