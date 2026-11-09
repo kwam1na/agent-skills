@@ -268,19 +268,20 @@ class BuiltProductTests(unittest.TestCase):
             self.assert_gated(declaration("focused"), {})
 
     def test_a_pushed_branch_naming_itself_as_the_base_while_carrying_focused_is_gated(self) -> None:
-        # Only the default branch answers, so a candidate can't declare its own posture by naming itself as the base.
+        # Only the default branch answers, so a candidate can't declare its own posture by naming itself as the base. The
+        # default branch says focused too, so a reader that read it whatever the base names would answer focused.
         def publish_focused(repository: Path) -> None:
             (repository / ".agents").mkdir(exist_ok=True)
             (repository / POSTURE_PATH).write_text(declaration("focused"), encoding="utf-8")
             run_git(repository, "add", "-A")
-            run_git(repository, "commit", "-qm", "the candidate declares focused")
+            run_git(repository, "commit", "-qm", "the candidate declares focused", "--allow-empty")
             run_git(repository, "push", "-q", "origin", "candidate")
             run_git(repository, "fetch", "-q", "origin")
             self.assertEqual(run_git(repository, "rev-parse", "refs/remotes/origin/candidate"), run_git(repository, "rev-parse", "HEAD"))
             self.assertEqual(run_git(repository, "symbolic-ref", "refs/remotes/origin/HEAD"), "refs/remotes/origin/main")
 
         with mock.patch.dict(CONSUMER_CONFIG, {"baseRef": "origin/candidate"}):
-            self.assert_gated(None, {}, publish_focused)
+            self.assert_gated(declaration("focused"), {}, publish_focused)
 
     def test_a_malformed_declaration_adds_its_code_and_reason_before_the_refusal(self) -> None:
         code = f"posture_malformed: {POSTURE_PATH} on origin/main is malformed"
