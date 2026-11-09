@@ -331,7 +331,9 @@ class BuiltProductTests(unittest.TestCase):
             alone = Path(folder) / "alone"
             run_git(Path(folder), "clone", "-q", str(remote), str(alone))
             run_git(alone, "remote", "set-head", "origin", "main")
-            self.assertEqual(self.installed_cli(repository, alone, "verify").returncode, 0)
+            control = self.installed_cli(repository, alone, "verify")
+            self.assertEqual(control.returncode, 0, control.stdout + control.stderr)
+            self.assertEqual(control.stdout, self.focused_outcome(alone))
             self.assert_refused_outside_root(self.installed_cli(repository, nested, "verify"), nested.resolve())
 
     def test_verify_from_an_initialised_submodule_whose_origin_declares_focused_is_gated(self) -> None:
