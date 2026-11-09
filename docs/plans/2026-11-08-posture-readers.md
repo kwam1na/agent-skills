@@ -43,16 +43,16 @@ ownership, order, and how this delivery runs beside V26-3304, which is live on t
    string and `\\"` does. Malformed text of any depth is still `posture_malformed`. The shared vectors, each a valid `focused` declaration
    around the case:
    - one member nested 64 deep: accepted; 65 deep: malformed; 1500 deep (the ticket's case): malformed;
-   - the deepest nesting a 64 KiB blob can hold (about 32,000 levels, under the size bound): malformed, which pins "refuses before it
-     parses" against a reader that parses then walks;
-   - 65 or more sibling arrays at depth 2: accepted;
-   - two sibling members, one nesting arrays and one nesting objects, each 64 deep: accepted;
+   - the deepest nesting a 64 KiB blob can hold (about 32,000 levels, under the size bound): malformed. This pins agreement on the answer
+     at the extreme, not the order of operations: a reader that parses and then walks can give the same answer;
+   - 65 or more sibling arrays at depth 2: accepted; 65 or more sibling objects at depth 2: accepted;
+   - two sibling members, the one nesting objects first and the one nesting arrays second, each 64 deep: accepted;
    - a string holding 65 `[` with no backslash: accepted; a string holding closing brackets at depth 64: accepted;
    - a string holding an escaped quote followed by 65 `[`: accepted;
    - a string ending in an escaped backslash (`"r\\"`) followed by a member nested 65 deep: malformed.
 
-   Each reader's red runs are recorded against three mutants: a counter that never decrements, a scanner that ignores escapes, and one that
-   treats a quote as escaped whenever a backslash precedes it.
+   Each reader's red runs are recorded against five mutants: a counter that never decrements, one that decrements only on `]`, one that
+   decrements only on `}`, a scanner that ignores escapes, and one that treats a quote as escaped whenever a backslash precedes it.
 2. **One harness change, one runtime build.** V26-3162's root rule and the JavaScript half of Decision 1 land in one pull request to the
    harness's `main`, which bumps the kernel and CLI packages to 0.8.2. The lead merges it once reviewed. So V26-3162's story carries the
    resolver half of V26-3163, and V26-3163's story here carries the Python half, the vectors and the wording pin.
@@ -70,7 +70,8 @@ ownership, order, and how this delivery runs beside V26-3304, which is live on t
      `safe.bareRepository` says or whichever git is installed.
    - `git rev-parse --show-superproject-working-tree` prints nothing, so an initialised submodule gates.
    - The directory's parent is not inside a work tree (`git -C <dir>/.. rev-parse --is-inside-work-tree` doesn't print `true`), or it is,
-     and that enclosing work tree's `--git-common-dir` is the directory's own. That gates a real nested repository and an untracked gitfile
+     and that enclosing work tree's `--git-common-dir` is the directory's own, both resolved to absolute paths before they are compared
+     (git prints it relative from a subdirectory). That gates a real nested repository and an untracked gitfile
      pointing at another repository. It keeps a linked worktree nested in its own main checkout resolving, as lane checkouts at
      `.orchestration/lanes/<id>` and Athena's `.worktrees/<id>` are, and those read the same `origin` as the root.
 
@@ -126,9 +127,11 @@ Lane 1, tier 1, not blocked. Test-first, per the item. In the harness, the resol
 - From a subdirectory of the root, a real nested repository whose `origin` declares `focused`, an initialised submodule whose `origin`
   declares `focused`, and an untracked gitfile in a subdirectory pointing at a repository declaring `focused`: each `gate` with
   `posture_unreadable`, with the root's base declaring `focused` too, so neither a root read nor a nested read would gate.
-- From inside an embedded bare repository in the tree whose refs declare `focused`, run with `GIT_CONFIG_GLOBAL=/dev/null` and
-  `-c safe.bareRepository=all` so git's own refusal can't decide it: `gate` with `posture_unreadable`. Red run with the show-toplevel
-  failure branch mutated to carry on.
+- From inside an embedded bare repository in the tree whose refs declare `focused`, under a git that emulates one before 2.38: a `git`
+  wrapper ahead of the real one on `PATH` drops the resolver's `-c safe.bareRepository=explicit` pair from its arguments and runs the real
+  git with `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_NOSYSTEM=1`. The row first confirms that, under the wrapper, the bare repository's
+  `rev-parse --verify refs/remotes/origin/main` succeeds, then asserts `gate` with `posture_unreadable`. Red run under the wrapper with the
+  show-toplevel failure branch mutated to carry on. The same row without the wrapper gates too, by git's own refusal.
 - Allowed, with the base declaring `focused`, read from each one's own root: a normal clone whose parent is no work tree; a linked worktree
   made with `git worktree add` outside its main checkout; and one nested under its main checkout at `.orchestration/lanes/<id>`. Each reads
   `focused` with no code. The nested worktree's red runs are recorded against two mutants: refusing whenever `.git` is a file, and refusing
@@ -141,10 +144,12 @@ Lane 1, tier 1, not blocked. Test-first, per the item. In the harness, the resol
 Evidence on the harness follows V26-3124's: `npm run typecheck`, `npm run sensor`, `npm run sensor:cli` and `npx vitest run` as separate
 steps on `main` before the work and on the pull request, compared per test, with no new failure and the new scenarios passing by name; and
 the same on `runtime/0.8.2` against `v0.8.1`. Here, the build per Decision 3, the literal `0.8.2` pin in `tests/test_product_release.py`,
-`tests/test_cut_release.py`'s version from the descriptor, and built-product rows in `tests/test_delivery_posture_vectors.py`. In the
-first, the consumer root's base and a nested repository's `origin` both declare `focused`. The built CLI's `verify`, run from the nested
-repository's directory, is gated, and its stderr carries the `posture_unreadable` line ahead of the command's blocker. Its red run is
-recorded against a mutant that normalises the directory to `--show-toplevel` before resolving. In the second, `verify` run from a linked
+`tests/test_cut_release.py`'s version from the descriptor, and three built-product rows in `tests/test_delivery_posture_vectors.py`, each
+with the consumer root's base declaring `focused`. In the first, `verify` is given a plain subdirectory of the root, with no repository of
+its own: it is gated, and its stderr carries the `posture_unreadable` line ahead of the command's blocker. Its red run is recorded against a
+mutant that normalises the directory to `--show-toplevel` before resolving. In the second, a nested repository's `origin` declares
+`focused` as well, and `verify` run from the nested repository's directory is gated the same way. Its red run is recorded against a mutant
+that drops the parent-work-tree condition. In the third, `verify` run from a linked
 worktree nested under the consumer's root, with its base declaring `focused`, exits 0 with the `focused` outcome. The vector file runs
 against the built runtime's export. The deep-nesting vectors go into the vector file in V26-3163, not here, so the vector test stays green
 on both readers at this merge. Sensors: the harness's steps above; here `tests/test_delivery_posture_vectors.py`,
