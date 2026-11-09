@@ -22,11 +22,7 @@
         "tests/test_run_delivery_tracker.py",
         "skills/plan-work/*",
         "catalog.json",
-        "profiles/*"
-      ]
-    },
-    "lane-2": {
-      "owns": [
+        "profiles/*",
         "skills/orchestrate-work/*",
         "tests/test_orchestration_state.py",
         "tests/test_orchestration_render.py",
@@ -38,7 +34,15 @@
         "tests/test_delivery_views_snapshots.py",
         "tests/delivery_views_page/*",
         "tests/fixtures/delivery-views/*",
-        "docs/solutions/*"
+        "docs/solutions/*",
+        "provenance.lock.json"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        ".agents/orchestration.json",
+        "tests/test_own_deliveries.py",
+        "docs/own-deliveries.md"
       ]
     }
   },
