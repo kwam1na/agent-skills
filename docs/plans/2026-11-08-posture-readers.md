@@ -24,7 +24,7 @@ ownership, order, and how this delivery runs beside V26-3304, which is live on t
 
 ## Out of scope
 
-- Cutting or applying a release. The 0.8.3 runtime and the reader changes ship with the next batch release.
+- Cutting or applying a release. The reader changes ship with the next batch release, beside the 0.8.3 runtime already on `main`.
 - The other backlog epics: lead hand-work (V26-3250), release safety (V26-3266), the harness runtime (V26-3268), and the suite work live
   in V26-3304.
 - Commits on the harness's `main` after `v0.8.2` that belong to other work. They stay out of the runtime this delivery ships.
@@ -55,14 +55,12 @@ ownership, order, and how this delivery runs beside V26-3304, which is live on t
 2. **One harness change, one runtime build.** V26-3162's root rule and the JavaScript half of Decision 1 land in one pull request to the
    harness's `main`, which bumps the kernel and CLI packages to 0.8.3. The lead merges it once reviewed. So V26-3162's story carries the
    resolver half of V26-3163, and V26-3163's story here carries the Python half, the vectors and the wording pin.
-3. **The runtime is built on the last harness release.** `product-runtime/` is rebuilt with `npm run product:build-runtime` from a clean
-   checkout of a harness branch `runtime/0.8.3`: `v0.8.2`'s commit plus the merged change cherry-picked. The build's change request and
-   `docs/product-generation.md` name the commit it was built from, next to the runtime's digests, and say that 0.8.3 carries 0.8.2's
-   warm-base prewarm (#200). (Plan change, 2026-11-09: V26-3294 released #200 as the tagged `v0.8.2` after this plan was approved, so 0.8.2
-   is taken and #200 is no longer unfinished work; the change ships as 0.8.3 on top of it.) Nothing after `v0.8.2` but the cherry-pick
-   ships. The build's evidence proves that three ways: `git log --format=%H v0.8.2..runtime/0.8.3` lists only the cherry-picked commit,
-   and its diff equals the merged pull request's; a second clean build from `runtime/0.8.3` reproduces `product-runtime/` byte for byte;
-   and a build from `v0.8.1` plus the cherry-pick does not, the planted failure that shows the comparison can fail.
+3. **The runtime is the harness's own 0.8.3 release.** (Plan change, 2026-11-09, the second for this decision.) After #202 merged,
+   V26-3297 tagged harness `v0.8.3` at `ea77cdc`, which carries #202 with #203–#206, and shipped its build to `main` here as #280. So
+   V26-3162 builds no runtime of its own: a second build also declaring 0.8.3 is the trap this decision exists to avoid. The story's
+   evidence proves the runtime on `main` carries the change in two records: a clean `npm run product:build-runtime` from `v0.8.3`
+   reproduces `main`'s `product-runtime/` byte for byte, and `git merge-base --is-ancestor 42f3789 v0.8.3` succeeds. The harness branch
+   `runtime/0.8.3` that lane 1 cut before the tag existed (`v0.8.2` plus `42f3789`) ships nowhere.
 4. **Repository root only.** The resolver resolves only when all three hold for the directory it was given; otherwise it is `gate` with
    `posture_unreadable`, naming the directory:
    - `git rev-parse --show-toplevel` succeeds and prints that directory. Inside a bare repository it fails, so a bare layout gates whatever
@@ -109,7 +107,7 @@ Two lanes.
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | V26-3162 | the harness change and `runtime/0.8.3`; here `product-runtime/`, `docs/product-generation.md`, `README.md`, `tests/test_product_release.py`, `tests/test_product_descriptors.py`, `tests/test_product_launcher.py`, `tests/test_cut_release.py`, `tests/built_product.py`, `tests/test_delivery_posture_vectors.py`, `tests/fixtures/delivery-posture-vectors.json` |
+| 1 | 1 | V26-3162 | the harness change; here `product-runtime/`, `docs/product-generation.md`, `README.md`, `tests/test_product_release.py`, `tests/test_product_descriptors.py`, `tests/test_product_launcher.py`, `tests/test_cut_release.py`, `tests/built_product.py`, `tests/test_delivery_posture_vectors.py`, `tests/fixtures/delivery-posture-vectors.json` |
 | 1 | 2 | V26-3174, then V26-3163 | `skills/run-delivery/`, `skills/orchestrate-work/SKILL.md`, `skills/orchestrate-work/references/orchestration-guide.md`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `provenance.lock.json`, `docs/solutions/` |
 
 **Moving ownership.** When V26-3162 merges, the lead moves `tests/test_delivery_posture_vectors.py`, `tests/fixtures/delivery-posture-vectors.json`,
@@ -144,9 +142,8 @@ Lane 1, tier 1, not blocked. Test-first, per the item. In the harness, the resol
 - `--no-auto-maintenance` and `--no-recurse-submodules` each removed from the fetch: a test fails.
 - Every depth vector Decision 1 lists, with the red runs it names for the JavaScript reader.
 Evidence on the harness follows V26-3124's: `npm run typecheck`, `npm run sensor`, `npm run sensor:cli` and `npx vitest run` as separate
-steps on `main` before the work and on the pull request, compared per test, with no new failure and the new scenarios passing by name; and
-the same on `runtime/0.8.3` against `v0.8.2`. Here, the build per Decision 3, the literal `0.8.3` pin in `tests/test_product_release.py`,
-`tests/test_cut_release.py`'s version from the descriptor, and three built-product rows in `tests/test_delivery_posture_vectors.py`, each
+steps on `main` before the work and on the pull request, compared per test, with no new failure and the new scenarios passing by name. Here, against
+the 0.8.3 runtime on `main` (Decision 3), three built-product rows in `tests/test_delivery_posture_vectors.py`, each
 with the consumer root's base declaring `focused`. In the first, `verify` is given a plain subdirectory of the root, with no repository of
 its own: it is gated, and its stderr carries the `posture_unreadable` line ahead of the command's blocker. Its red run is recorded against a
 mutant that normalises the directory to `--show-toplevel` before resolving. In the second, a nested repository's `origin` declares
@@ -156,8 +153,7 @@ worktree nested under the consumer's root, with its base declaring `focused`, ex
 against the built runtime's export. The deep-nesting vectors go into the vector file in V26-3163, not here, so the vector test stays green
 on both readers at this merge. Sensors: the harness's steps above; here `tests/test_delivery_posture_vectors.py`,
 `tests/test_product_release.py`, `tests/test_cut_release.py`, `tests/test_product_descriptors.py`, `scripts/validate-registry.py`.
-The hand-off carries Decision 3's three build records. Adoption notes: `docs/product-generation.md` names the build commit, its digests and
-what 0.8.3 adds.
+The hand-off carries Decision 3's two records.
 
 ### V26-3174. Triage the deferred review findings from the delivery posture work
 
@@ -191,7 +187,7 @@ head, and the lead runs the full suite on macOS with Python 3.11 at the close.
 ## Approval handoffs
 
 - The plan itself, before `lead-setup`.
-- Merging the harness pull request and pushing `runtime/0.8.3`, both outside this repository's queue. The operator granted the lead these
+- Merging the harness pull request, outside this repository's queue. The operator granted the lead these
   approvals for this delivery on 2026-11-08.
 
 ## Tracking

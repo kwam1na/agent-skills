@@ -4727,6 +4727,53 @@ class NextTests(unittest.TestCase):
             self.assertTrue(item["reason"].startswith(item["subject"] + ":"), item)
         self.assertEqual([item["rank"] for item in ranked], list(range(1, len(ranked) + 1)))
 
+    def test_the_hints_blockers_rank_work_after_its_open_dependency_when_the_tracker_has_no_blocked_by(self) -> None:
+        # The tracker knows no order: nothing carries blockedBy. The plan's order reaches next only through the hints.
+        snapshot = self.snapshot([{"subject": "fix-a", "state": "backlog"}, {"subject": "fix-b", "state": "backlog"},
+                                  {"subject": "busy", "state": "started"}])
+        unordered = {"fix-a": {"files": ["docs/a.md"], "priority": 1}, "fix-b": {"files": ["docs/b.md"], "priority": 2}}
+        order = [item["subject"] for item in self.ranked(snapshot, self.hints(unordered))]
+        self.assertLess(order.index("fix-a"), order.index("fix-b"), "without the plan's order, priority decides")
+        ordered = {**unordered, "fix-a": {**unordered["fix-a"], "blockers": ["busy"]}}
+        ranked = self.ranked(snapshot, self.hints(ordered))
+        order = [item["subject"] for item in ranked]
+        self.assertLess(order.index("fix-b"), order.index("fix-a"), "work after an open dependency ranks after the rest")
+        fix_a = next(item for item in ranked if item["subject"] == "fix-a")
+        self.assertTrue(fix_a["blocked"])
+        self.assertIn("blocked by busy", fix_a["reason"])
+        # A blocker both the tracker and the hints name is named once.
+        both = self.snapshot([{"subject": "fix-a", "state": "backlog", "blockedBy": ["busy"]},
+                              {"subject": "busy", "state": "started"}])
+        reason = next(item for item in self.ranked(both, self.hints(ordered)) if item["subject"] == "fix-a")["reason"]
+        self.assertEqual(reason.count("busy"), 1, reason)
+
+    def test_a_hints_dependency_merged_in_the_record_or_completed_in_the_tracker_blocks_no_more(self) -> None:
+        for label, dependency, extra in (("merged in the record", "landed", []),
+                                         ("completed in the tracker", "done-ticket",
+                                          [{"subject": "done-ticket", "state": "completed"}])):
+            with self.subTest(label):
+                snapshot = self.snapshot([{"subject": "fix-a", "state": "backlog"},
+                                          {"subject": "fix-b", "state": "backlog"},
+                                          {"subject": "busy", "state": "started"}, *extra])
+                # fix-a's dependency is done; fix-b's is still open, and fix-b has the higher priority.
+                ranked = self.ranked(snapshot, self.hints({
+                    "fix-a": {"files": ["docs/a.md"], "priority": 3, "blockers": [dependency]},
+                    "fix-b": {"files": ["docs/b.md"], "priority": 1, "blockers": ["busy"]}}))
+                order = [item["subject"] for item in ranked]
+                self.assertLess(order.index("fix-a"), order.index("fix-b"), ranked)
+                fix_a = next(item for item in ranked if item["subject"] == "fix-a")
+                self.assertFalse(fix_a["blocked"])
+                self.assertIn("unblocked", fix_a["reason"])
+
+    def test_hints_blockers_are_a_list_of_subjects(self) -> None:
+        snapshot = self.snapshot([{"subject": "fix-a", "state": "backlog"}])
+        for blockers in ("busy", [""], [7]):
+            with self.subTest(blockers=blockers):
+                code, result = run_tool(self.directory, "next", "--lane", "lane-1", "--snapshot", snapshot,
+                                        "--hints", self.hints({"fix-a": {"blockers": blockers}}))
+                self.assertNotEqual(code, 0, result)
+                self.assertIn("blockers", json.dumps(result))
+
     def test_a_blocked_item_is_never_first_even_alone_with_the_highest_priority(self) -> None:
         snapshot = self.snapshot([{"subject": "free", "state": "backlog", "blockedBy": ["outside"]},
                                   {"subject": "fix-a", "state": "backlog"}])
