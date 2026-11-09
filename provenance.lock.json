@@ -238,7 +238,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/snapshot.py",
-          "sha256": "381c7be226e2aa26e40345a136667340539bf825be6b79fbe31ecf1852e75171"
+          "sha256": "7d807e09bafc61dbadf1223435e3cf52540b4367f9c65cc63a9532029551a3bc"
         },
         {
           "path": "skills/delivery-views/scripts/views_common.py",
@@ -469,19 +469,19 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "7d48f4287da2988fa819536d65f4b499337dd8566e9f248095da4cc475925297"
+          "sha256": "ce3e2d3882e6c7d6c3748b01e3f716c617ba6f019157fbf6a9de0599ea518358"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "847a123dc28e13822f53607db50bbc897e9d7136614bde0eb3e76ae121b588b8"
+          "sha256": "3e4789a2c583bf2ba56457fa74b351fe2ef61788e904504da099b4753874a1d5"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
-          "sha256": "bc0595f49a600fb098a573c5728c51c95022160b09caac0dbd70ee75c749df36"
+          "sha256": "f460facb5931377bb54e6bdfa56cf6f036f68159d2c4dc8ae0703db9e166b633"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "0c4cfae2e1aad9662af010022343b2b612da177687acd21da92f97c528a3c4f9"
+          "sha256": "7dab1de98d30f54988343c464251f781ba123c28a5128d11dc532cb3010ad17a"
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",
@@ -968,7 +968,7 @@
       "outputs": [
         {
           "path": "skills/plan-work/SKILL.md",
-          "sha256": "7f89f2d80f11b92284fde3092314c4c9253d7c37faf2cd3bd1d64519cc740d76"
+          "sha256": "da928f915c8c2e24663eaf0b997f3b1b133df60f196c3ed2c4609e12586fc821"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -1018,7 +1018,7 @@
       "outputs": [
         {
           "path": "skills/run-delivery/SKILL.md",
-          "sha256": "a1da5ac979d82c134765cbd0d3c0ee9dacf289a8fadebf596cbd6679b6a4b13b"
+          "sha256": "c99ddb7702a1873fa64e7a79761f9a73698e3de535cb9614c3f7a0cd639756f5"
         },
         {
           "path": "skills/run-delivery/adapters/forge_bitbucket.py",
@@ -1038,7 +1038,7 @@
         },
         {
           "path": "skills/run-delivery/references/adopting.md",
-          "sha256": "ec9f29c911ccf07214bb73b924f7d6c2f2c550935e641b7ea8a17bfb35840dee"
+          "sha256": "fb407c54fcc3721b4a13253a71c5b5aa7e4f09f6bf3d594f2bf984b7e4fe1bff"
         },
         {
           "path": "skills/run-delivery/references/config.md",
@@ -1046,7 +1046,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "bc1fcf8b0be7d414aa7ad6969e1de168ebff60e976d50ae2d0ce81ceed05e13a"
+          "sha256": "105ec81422088cb9426190ff4c75b837fcf94b5dffa86ca2a867038b0ddf7657"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",

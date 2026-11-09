@@ -2765,6 +2765,14 @@
                   ]
                 }
               ]
+            },
+            "blockers": {
+              "description": "The subjects this item comes after, from the plan's order (run-delivery's lead-hints passes the delivery file's after keys). next reads them beside the tracker's blockedBy: one stops blocking once the record holds it merged, or the tracker snapshot holds it completed or canceled.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
             }
           }
         }
@@ -2855,6 +2863,15 @@
               "type": "array",
               "items": {
                 "$ref": "#/$defs/name"
+              }
+            },
+            "criteria": {
+              "description": "Tracker snapshots only, optional: the item's acceptance criteria, each one line of plain text, in the order its Acceptance Criteria section lists them, at most 50; the snapshot's maker shortens one longer than 600 characters. Absent when the item has no such section. lead-setup drafts a story's criteria from it.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 600
               }
             },
             "mergedAt": {
