@@ -5711,6 +5711,34 @@ class RunDeliveryLeadWorktreeTests(unittest.TestCase):
         self.assertEqual(on_base["approvals"][0]["state"], "waiting")
         self.assertEqual(self.pushed(fx, out, lead)["approvals"][0]["state"], "done")
 
+    def test_with_two_deliveries_open_a_lead_worktree_names_its_delivery_and_is_never_handed_another(self) -> None:
+        fx, lead, path = self.fixture()
+        m = fx.main
+        # A second delivery on the same base, open too: its file reaches the lead's worktree with the base.
+        other = json.loads((m / ".agents/deliveries/FX-1.json").read_text())
+        (m / ".agents/deliveries/FX-9.json").write_text(json.dumps({**other, "delivery": "FX-9"}, indent=2))
+        commit(m, "FX-9: a second delivery")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        sh("git", "fetch", "-q", "origin", cwd=lead)
+        sh("git", "merge", "-q", "--ff-only", "origin/feature/FX-1", cwd=lead)
+        # Neither record is open in the worktree and lead/FX-1 is no story branch, so without --delivery it refuses,
+        # naming both, rather than taking one, and writes nothing.
+        code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "done", "--who", "the operator", cwd=lead)
+        self.assertEqual(code, 2, out)
+        self.assertIn("FX-1, FX-9 aren't known to be closed", out)
+        self.assertIn("pass --delivery KEY", out)
+        self.assertEqual(sh("git", "status", "--porcelain", cwd=lead).stdout, "")
+        self.assertEqual(json.loads(path.read_text())["approvals"][0]["state"], "waiting")
+        # Named, it records FX-1's approval in FX-1's file only.
+        code, out = fx.flow("--delivery", "FX-1", "lead-plan", "approval", "approval-1", "--state", "done", "--who",
+                            "the operator", cwd=lead)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(sh("git", "show", "--name-only", "--format=", "HEAD", cwd=lead).stdout.split(),
+                         [".agents/deliveries/FX-1.json"])
+        self.assertEqual(self.pushed(fx, out, lead)["approvals"][0]["state"], "done")
+        on_base = json.loads(sh("git", "show", "origin/feature/FX-1:.agents/deliveries/FX-9.json", cwd=lead).stdout)
+        self.assertEqual(on_base["approvals"][0]["state"], "waiting")
+
     def test_a_change_from_a_lead_worktree_at_the_base_tip_commits_there_and_reaches_the_base(self) -> None:
         fx, lead, path = self.fixture()
         code, out = fx.flow("lead-plan", "change", "--kind", "relaxed", "--subjects", "FX-2", "--criterion", "one-fails",
