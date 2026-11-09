@@ -17,7 +17,8 @@ ownership, and how the work reaches `main`.
   snapshot before the run and another after it. The after snapshot holds no new `run_delivery.py`, `render_state.py`, `merge_queue.py` or
   fixture-server process whose command line names an `FX-` fixture key or a path under the run's temporary folder. The delivery's own
   supervisor, and any other real delivery's processes, are left out by that rule, never case by case.
-- Every deferral has an open follow-up item filed under the epic, and the epic and its items are closed with this evidence.
+- No finding is deferred (operator ruling, 2026-11-08): every finding any review in this delivery raises, at any severity, is fixed in
+  the story that found it, and no follow-up item is filed for it. The epic and its items are closed with this evidence.
 
 ## Out of scope
 
