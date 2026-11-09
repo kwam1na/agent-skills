@@ -3860,6 +3860,13 @@ def lead_plan(args) -> None:
     log = read_plan_log(c)
     if not plan_declared(c) and not any(entry["type"] == "snapshot" for entry in log):
         raise Stop(f"{c.delivery_where} declares no criteria, so the plan chapter is off; add criteria to its stories first")
+    # Its rebuild registers any story added since, so a story registration would refuse is refused before anything
+    # is written; one this change removes needs no reason.
+    if (c.state / "state.json").exists():
+        removing = set(args.subjects or []) if args.action == "change" and args.kind == "removed" else set()
+        problems = unreasoned_problems(c, [key for key in unregistered(c, load_state()["state"]) if key not in removing])
+        if problems:
+            raise unreasoned_refusal(c, problems)
     if args.action == "why":
         with plan_lock(c):
             log = read_plan_log(c)
@@ -4823,10 +4830,64 @@ def planned_entry(c, key: str) -> dict:
             "lane": s["lane"], "stage": "planned"}
 
 
+class Unreasoned(Stop):
+    """Registration refused: a story added after the plan froze, with no `why` for its `added` change."""
+
+
+def unregistered(c, state: dict) -> list[str]:
+    """The delivery file's stories the record doesn't hold yet. A record holding no work at all is lead-init's to
+    fill, so it has none."""
+    if not state.get("planned") and not state.get("queue"):
+        return []
+    held = {item["subject"] for item in [*state["queue"], *state.get("planned", [])]}
+    return [key for key in c.stories if key not in held]
+
+
+def records_changes(c) -> bool:
+    """Registration records an `added` change once the plan chapter is on or its snapshot is kept."""
+    return plan_declared(c) or any(entry["type"] == "snapshot" for entry in read_plan_log(c))
+
+
+def story_why_problem(c, key: str) -> str | None:
+    """What is wrong with a story's `why`, as its `added` change would carry it; None when it can carry it."""
+    why = c.stories[key].get("why")
+    if why is None:
+        return "has no `why`"
+    views = plan_validator(c)
+    try:
+        views._text(why, "why", views.PLAN_TEXT)
+    except views.ConfigError as error:
+        return f"has a `why` the plan can't carry ({str(error).removeprefix('why: ')})"
+    return None
+
+
+def unreasoned_problems(c, keys: list[str]) -> list[str]:
+    if not keys or not records_changes(c):
+        return []
+    return [f"{key} {problem}" for key in keys if (problem := story_why_problem(c, key))]
+
+
+def unreasoned_refusal(c, problems: list[str]) -> Unreasoned:
+    return Unreasoned(
+        f"{'; '.join(problems)}: a story added to {c.delivery_where} after the plan froze at lead-init is registered "
+        "only with its reason; fix: give it a `why` there, one line saying why it joins the delivery, which its "
+        "`added` change carries, commit and push the delivery file, then run this again. Nothing was registered")
+
+
+def check_registrable(c) -> None:
+    """Refuse, before anything is written, while registration would refuse a story added without its reason."""
+    if not (c.state / "state.json").exists():
+        return
+    problems = unreasoned_problems(c, unregistered(c, load_state()["state"]))
+    if problems:
+        raise unreasoned_refusal(c, problems)
+
+
 def register_stories(c) -> list[str]:
     """Stories added to the delivery after lead-init join the record as planned work, so the live view shows them
     before they're assigned. One the tracker reconcile already filed as a follow-up moves out of the follow-ups.
-    Returns the keys added; a delivery not yet initialized is left to lead-init."""
+    Each one's `added` change carries the `why` its story gives in the delivery file; a story with none is refused,
+    with nothing registered. Returns the keys added; a delivery not yet initialized is left to lead-init."""
     if not (c.state / "state.json").exists():
         return []
     added: list[str] = []
@@ -4834,12 +4895,12 @@ def register_stories(c) -> list[str]:
     def compute(doc: dict) -> dict | None:
         state = doc["state"]
         added.clear()
-        if not state.get("planned") and not state.get("queue"):
-            return None
-        held = {item["subject"] for item in [*state["queue"], *state.get("planned", [])]}
-        added.extend(key for key in c.stories if key not in held)
+        added.extend(unregistered(c, state))
         if not added:
             return None
+        problems = unreasoned_problems(c, added)
+        if problems:
+            raise unreasoned_refusal(c, problems)
         followups = [f for f in state["followups"] if f["id"] not in added and f.get("reference") not in added]
         return {"planned": [*state.get("planned", []), *(planned_entry(c, key) for key in added)], "followups": followups}
     if patch_from(compute, "the stories added to the delivery") is None:
@@ -4847,11 +4908,13 @@ def register_stories(c) -> list[str]:
     for key in added:
         state_tool("journal", "--kind", "decision.recorded", "--subject", key, "--summary",
                    f"{key} added to the delivery as planned work for {c.lane_of(key)}")
-    if any(entry["type"] == "snapshot" for entry in read_plan_log(c)) or plan_declared(c):
+    if records_changes(c):
         for key in added:
-            # Its reason is the lead's to give, with lead-plan why; until then the plan flags it.
-            record_plan_change(c, {"kind": "added", "subjects": [key], "by": "lead", "title": c.stories[key]["title"],
-                                   "source": "registration"})
+            change = {"kind": "added", "subjects": [key], "by": "lead", "title": c.stories[key]["title"],
+                      "source": "registration"}
+            if "why" in c.stories[key]:
+                change["why"] = c.stories[key]["why"]
+            record_plan_change(c, change)
     return added
 
 
@@ -5132,7 +5195,12 @@ def lead_accept(args) -> None:
                 f"{c.base_branch}, {len(set(numbers))} round(s) journaled, last approved by every lens, review evidence "
                 f"captured at that head, files within {c.lane_of(key)}'s, gates and in-app evidence current.")
                + (" " + "; ".join(decisions) + "." if decisions else ""))
-    rebuild_plan(c)
+    # Accepted already: a plan its registration can't rebuild now (a story added without its reason) says why, and
+    # the next rebuild catches up.
+    try:
+        rebuild_plan(c)
+    except Unreasoned as error:
+        print(f"plan: not rebuilt: {error}")
     print(f"accepted {key} after its merge" if merged else f"accepted {key}; the runner may take it")
     if needs_video(key):
         print("  once it merges: lead-evidence page, republish the page (same address), lead-evidence published --url, "
@@ -5336,9 +5404,16 @@ def reconcile_once() -> list[str]:
     states = json.loads(binding.read_text()).get("state", {}) if binding.exists() else {}
     folder = c.state.parent / "snapshots"
     folder.mkdir(parents=True, exist_ok=True)
-    # First, so a story just added to the delivery is planned work, not a follow-up, when the tracker lists it.
-    added = register_stories(c)
+    # First, so a story just added to the delivery is planned work, not a follow-up, when the tracker lists it. A story
+    # registration refuses stays unregistered, and the sweep goes on without it.
+    refused = None
+    try:
+        added = register_stories(c)
+    except Unreasoned as error:
+        added, refused = [], error
     lines = [f"registered {', '.join(added)} as planned work"] if added else []
+    if refused:
+        lines.append(f"registration refused: {refused}")
     for name in ("forgeSnapshot", "trackerSnapshot"):
         spec = states.get(name)
         if not spec:
@@ -5359,7 +5434,7 @@ def reconcile_once() -> list[str]:
         summary = re.search(r'"summary":\s*"([^"]*)"', done.stdout or "")
         lines.append(f"{name}: " + (summary.group(1) if summary else (done.stderr or done.stdout).strip()[-200:]))
         lines += [f"{name}: {line}" for line in reconcile_report_lines(done.stdout)]
-    if plan_declared(c) or plan_log_path(c).exists():
+    if (plan_declared(c) or plan_log_path(c).exists()) and not refused:  # its rebuild would refuse the same story
         lines.append(rebuild_plan_quietly(c))
     return lines
 
@@ -5374,7 +5449,9 @@ def reconcile_report_lines(output: str | None) -> list[str]:
 
 
 def lead_reconcile(args) -> None:
-    """One reconcile sweep, by hand: the supervisor's every pass runs it."""
+    """One reconcile sweep, by hand: the supervisor's every pass runs it. By hand, a story registration would refuse
+    refuses the sweep, before anything is taken."""
+    check_registrable(cfg())
     print(now(), "; ".join(reconcile_once()), flush=True)
 
 
@@ -7366,6 +7443,7 @@ class Doctor:
             ("harness", "harness configuration", ("config", "generation", "node"), self.harness),
             ("delivery", "delivery file", ("config", "binding"), self.check_delivery),
             ("plan", "plan chapter", ("delivery",), self.check_plan),
+            ("plan-reasons", "added stories' reasons", ("delivery",), self.plan_reasons),
             ("plan-sections", "plan sections", ("delivery",), self.stories_planned),
             ("story-files", "story files", ("plan-sections",), self.story_files),
             ("readiness", "story readiness", ("delivery",), self.story_readiness),
@@ -7756,6 +7834,35 @@ class Doctor:
         criteria = sum(len(unit["criteria"]) for unit in plan["units"] if not unit.get("removed"))
         return "ok", (f"{criteria} criteria across {len(d.stories)} stories; the plan they make passes "
                       "delivery-views check-plan")
+
+    def plan_reasons(self):
+        """Every story the record holds as an `added` change has its reason, and none is waiting to be registered
+        without one."""
+        d = self.delivery
+        log = read_plan_log(d) if d.flow_log.exists() else []
+        whys = {entry["change"] for entry in log if entry["type"] == "why"}
+        # A story-level addition: a criterion added to a story carries its criteria, and is the plan chapter's own flag.
+        bare = [entry for entry in log if entry["type"] == "change" and entry["kind"] == "added"
+                and not entry.get("criteria") and not entry.get("why") and entry["id"] not in whys
+                and any(key in d.stories for key in entry["subjects"])]
+        waiting = []
+        if (d.state / "state.json").exists():
+            doc = json.loads(run([sys.executable, "-B", str(d.release / "skills/orchestrate-work/scripts/delivery_state.py"),
+                                  "--dir", str(d.state), "show"]).stdout)
+            waiting = unreasoned_problems(d, unregistered(d, doc["state"]))
+        problems = []
+        if bare:
+            problems.append("the record holds an `added` change with no reason: "
+                            + ", ".join(f"{entry['id']} adds {', '.join(entry['subjects'])}" for entry in bare) + "; fix: "
+                            + "; ".join(f"{flow_command()} lead-plan why {entry['id']} --why TEXT" for entry in bare))
+        if waiting:
+            problems.append(f"{'; '.join(waiting)}, so registration refuses it; fix: give it a `why` in "
+                            f"{d.delivery_where}, then commit and push it")
+        if problems:
+            return "wrong", "; ".join(problems)
+        if not log and not waiting and not plan_declared(d):
+            return self.not_applicable("no plan chapter, so no story is recorded as an added change")
+        return "ok", "every story added to the plan has its reason"
 
     def stories_planned(self):
         d = self.delivery

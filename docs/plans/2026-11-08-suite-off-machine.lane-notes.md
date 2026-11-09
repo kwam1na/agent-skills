@@ -25,8 +25,10 @@ around it.
 **Lane 1: V26-3286 first.** Reproduce the stray `supervisor:` lines and name the case before you change it. Never run a `lead-*`
 command, or a test module, from the main checkout: only from your story's own checkout.
 
-**Lane 2: V26-3274.** Record the stalled-lookup row's red run. Ask the lead to put the `full-matrix` label on your pull request so the
-macOS job runs on it, and include that job's timings for `tests.test_run_delivery_tracker` in your hand-off, beside the last `main` run's.
+**No waiting on CI (operator ruling, 2026-11-09).** No story waits on a CI job, macOS or otherwise: this machine is macOS, and the macOS
+job informs without gating. A hand-off's evidence is local: gates, the story's sensors, its red and green proofs, run under load where
+the story is about timing. A CI run still in progress at hand-off is named as information only. V26-3274's macOS timings, its one
+CI-measured criterion, are already recorded.
 
 **Shell.** Never set `TMPDIR` under a checkout. Stop only processes you started, by the pid you recorded, never by pattern with `pkill`
 or `killall`. Clear `skills/` bytecode before anything that builds a release.

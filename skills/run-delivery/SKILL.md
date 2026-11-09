@@ -187,9 +187,14 @@ merging, or marking a pull request ready.
    keys and the files each lane owns, and notes anything it couldn't. Check those against the plan, complete the rest
    (in-app requirements, finish lines, brief notes), commit it with the delivery's tooling, then `lead-init` and
    `lead-brief`.
-   To add a story mid-delivery, add it to that file (and the plan), commit and push, then run `lead-brief`. It, the
-   `lead-reconcile` sweep and `lead-assign` all enter a story the record doesn't hold as planned work for its lane,
-   moving it out of the follow-ups if the tracker reconcile filed it there, so the live view shows it straight away.
+   To add a story mid-delivery, add it to that file (and the plan) with a `why`, one line saying why it joins the
+   delivery, commit and push, then run `lead-brief`. It, the `lead-reconcile` sweep and `lead-assign` all enter a story
+   the record doesn't hold as planned work for its lane, moving it out of the follow-ups if the tracker reconcile filed
+   it there, so the live view shows it straight away, and the plan records it as an `added` change carrying that
+   `why`. A story added after `lead-init` froze the plan with no `why` is refused, by name and with the fix, and
+   nothing is registered; the supervisor's sweep leaves it unregistered and says so. A story already in the file at
+   `lead-init` is part of the frozen plan and needs none. `doctor --delivery` names a story waiting without its `why`,
+   and an `added` change a record already holds with no reason, until `lead-plan why` records one.
 
 ## Adapters
 

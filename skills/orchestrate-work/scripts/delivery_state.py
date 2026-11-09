@@ -75,6 +75,8 @@ SNAPSHOT_MAX_AGE_SECONDS = 900.0
 # How far ahead of this machine a snapshot's clock may run before it is refused.
 SNAPSHOT_CLOCK_SKEW_SECONDS = 60.0
 RECONCILE_ATTEMPTS = 5
+# How many times a lane's focus write reads a record that moved under it again before it is refused.
+FOCUS_ATTEMPTS = 5
 STATE_VERSION = "delivery-state/1"
 WRITERS = ("lead", "runner", "lane")
 # What a lane writes about itself, through the tool.
@@ -1356,16 +1358,28 @@ def select_checks(directory: Path, subject: str, *, binding: dict, head: str | N
 
 
 def set_focus(directory: Path, lane: str, text: str, *, state: str | None = None,
-              waiting_on: object = ...) -> dict:
-    """A lane says what it is doing, as itself."""
+              waiting_on: object = ..., between_read_and_write: Callable[[], None] | None = None) -> dict:
+    """A lane says what it is doing, as itself.
+
+    The lane's fields are its own, so a record another writer moved meanwhile is read again and the focus applied to
+    it, a bounded number of times; the lane's checks run under the lock on each attempt. ``between_read_and_write`` is
+    ``patch``'s seam, for concurrency tests.
+    """
     changes: dict = {"focus": text}
     if state is not None:
         changes["state"] = state
     # waitingOn is set exactly: a merge patch would read None as removing it, and the record requires it.
     assignments = {} if waiting_on is ... else {"/waitingOn": waiting_on}
-    current = read_state(directory)
-    return patch(directory, writer="lane", lane=lane, version=current["version"], changes=changes,
-                 selector=f"lanes[id={lane}]", assignments=assignments)
+    for attempt in range(1, FOCUS_ATTEMPTS + 1):
+        current = read_state(directory)
+        try:
+            return patch(directory, writer="lane", lane=lane, version=current["version"], changes=changes,
+                         selector=f"lanes[id={lane}]", assignments=assignments,
+                         between_read_and_write=between_read_and_write)
+        except StateError as error:
+            if error.code != "version_stale" or attempt == FOCUS_ATTEMPTS:
+                raise
+    raise AssertionError("unreachable")
 
 
 def bind_run(directory: Path, *, lane: str, subject: str, run: str) -> dict:
