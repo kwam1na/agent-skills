@@ -2284,9 +2284,12 @@ def run_in_app(dist: Path, spec: dict, passthrough: list[str], owner: str, lock_
     """Serve `dist` and run one check spec against it, under the in-app lease. Returns the check's report."""
     ia = need_in_app()
     port = ia["port"]
-    lease = Lease(Path(expand(ia["lock"])), port, owner, lock_wait or ia.get("lockWaitSeconds", 480))
+    lock = Path(expand(ia["lock"]))
+    lease = Lease(lock, port, owner, lock_wait or ia.get("lockWaitSeconds", 480))
     server = check = None
-    spec_file = Path(tempfile.mkstemp(suffix=".json")[1])
+    # Beside the lease's lock, under the lease: one holder at a time writes it, so a holder that is killed before it
+    # can remove it leaves one file the next holder overwrites, never a file per check in the system's temp folder.
+    spec_file = lock.with_name(lock.name + ".spec.json")
     try:
         spec_file.write_text(json.dumps(spec))
         if port_open(port):
@@ -2317,8 +2320,8 @@ def run_in_app(dist: Path, spec: dict, passthrough: list[str], owner: str, lock_
     finally:
         for proc in (check, server):  # wait for both to exit before the lease is released
             stop_group(proc)
+        spec_file.unlink(missing_ok=True)  # still under the lease: once it is released, the path is the next holder's
         lease.close()
-        spec_file.unlink(missing_ok=True)
     return report
 
 
@@ -3860,6 +3863,13 @@ def lead_plan(args) -> None:
     log = read_plan_log(c)
     if not plan_declared(c) and not any(entry["type"] == "snapshot" for entry in log):
         raise Stop(f"{c.delivery_where} declares no criteria, so the plan chapter is off; add criteria to its stories first")
+    # Its rebuild registers any story added since, so a story registration would refuse is refused before anything
+    # is written; one this change removes needs no reason.
+    if (c.state / "state.json").exists():
+        removing = set(args.subjects or []) if args.action == "change" and args.kind == "removed" else set()
+        problems = unreasoned_problems(c, [key for key in unregistered(c, load_state()["state"]) if key not in removing])
+        if problems:
+            raise unreasoned_refusal(c, problems)
     if args.action == "why":
         with plan_lock(c):
             log = read_plan_log(c)
@@ -3887,12 +3897,38 @@ def lead_plan(args) -> None:
     for key in ("title", "ref"):
         if getattr(args, key):
             change[key] = getattr(args, key)
+    new_story = args.kind == "added" and len(change["subjects"]) == 1 and change["subjects"][0] not in stories
     unknown = [key for key in change["subjects"] if key not in stories]
-    if unknown:
+    if unknown and not new_story:
         raise Stop(f"{', '.join(unknown)} isn't a story of {c.delivery}")
     planned_after = None
     record_finish = None
-    if args.kind in ("added", "changed", "relaxed"):
+    plan_text = None
+    if new_story:
+        # The whole story in one change: its plan heading, its delivery-file story carrying the reason its `added`
+        # change gives, and its planned entry, so registration has nothing left to refuse.
+        key = change["subjects"][0]
+        if not args.title or not args.text or not args.lane:
+            raise Stop(f"{key} isn't a story of {c.delivery} yet: --kind added adds it whole with --title, --text (its "
+                       "first criterion) and --lane, with --after for the stories it comes after")
+        if args.lane not in c.lanes:
+            raise Stop(f"--lane {args.lane} isn't a lane of {c.delivery}: {', '.join(c.lanes)}")
+        after = args.after or []
+        strangers = [other for other in after if other not in stories]
+        if strangers:
+            raise Stop(f"--after {', '.join(strangers)} isn't a story of {c.delivery}")
+        problem = why_problem(c, args.why)
+        if problem:
+            raise Stop(f"{key} {problem}: --why is one line saying why it joins the delivery")
+        ident = args.criterion or f"{key.lower()}-1"
+        if ident in [item["id"] for story in stories.values() for item in story.get("criteria", [])]:
+            raise Stop(f"criterion {ident} already exists")
+        stories[key] = {"title": args.title, "lane": args.lane, "why": args.why,
+                        "criteria": [{"id": ident, "text": args.text}], **({"after": after} if after else {})}
+        current = (c.root / c.plan).read_text()
+        if story_section(plan_sections(current), key) is None:
+            plan_text = plan_with_story(current, key, args.title, args.lane, after, args.why)
+    elif args.kind in ("added", "changed", "relaxed"):
         if len(change["subjects"]) != 1 or not args.criterion or args.text is None:
             raise Stop(f"--kind {args.kind} takes one story in --subjects, --criterion and --text")
         criteria = stories[change["subjects"][0]].setdefault("criteria", [])
@@ -3943,26 +3979,45 @@ def lead_plan(args) -> None:
         if (c.state / "state.json").exists() and not any(entry["type"] == "snapshot" for entry in read_plan_log(c)):
             write_snapshot(c, late=True)
         original = c.delivery_path.read_text()
+        plan_path = c.root / c.plan
+        plan_original = plan_path.read_text() if plan_text is not None else None
         c.delivery_path.write_text(json.dumps(raw, indent=2) + "\n")
+        if plan_text is not None:
+            plan_path.write_text(plan_text)
         try:
             c.load_delivery(c.delivery)
             check_plan(build_plan(c, read_plan_log(c) or [snapshot_entry(c, late=True)]), c)
         except Stop:
             c.delivery_path.write_text(original)
+            if plan_original is not None:
+                plan_path.write_text(plan_original)
             c.load_delivery(c.delivery)
             raise
-        git("add", str(c.delivery_path), cwd=root)
+        git("add", str(c.delivery_path), *([str(plan_path)] if plan_text is not None else []), cwd=root)
         entry = record_plan_change(c, change)
-        git("commit", "-q", "-m", f"{c.delivery}: plan change {entry['id']} ({args.kind} "
+        git("commit", "-q", "-m", f"{c.delivery}: plan change {entry['id']} ({'added story' if new_story else args.kind} "
             f"{', '.join(change['subjects']) or change.get('finish', '')})".rstrip(), cwd=root)
         if planned_after is not None:  # as it stands now: a story registered since the check above stays planned
             patch_from(lambda doc: {"planned": [p for p in doc["state"].get("planned", [])
                                                 if p["subject"] not in change["subjects"]]}, "the plan change's planned work")
         if record_finish is not None:
             patch_from(lambda doc: {"finish": [*doc["state"]["finish"], record_finish]}, "the new finish line")
+        if new_story and (c.state / "state.json").exists():
+            # Planned here, so the rebuild's registration finds it held and records no second `added` change.
+            key = change["subjects"][0]
+            patched = patch_from(lambda doc: None if any(item["subject"] == key for item in
+                                                        [*doc["state"]["queue"], *doc["state"].get("planned", [])])
+                                 else {"planned": [*doc["state"].get("planned", []), planned_entry(c, key)],
+                                       "followups": [f for f in doc["state"]["followups"]
+                                                     if key not in (f["id"], f.get("reference"))]},
+                                 "the added story's planned work")
+            if patched is not None:
+                state_tool("journal", "--kind", "decision.recorded", "--subject", key, "--summary",
+                           f"{key} added to the delivery as planned work for {c.lane_of(key)}")
         rebuild_plan(c, mark=True)
     print(f"recorded {entry['id']}: {args.kind} {', '.join(change['subjects']) or change.get('finish', '')}".rstrip())
-    print(f"committed the delivery file; push it so lanes see it: git push {c.remote} HEAD:{c.base_branch}")
+    print(f"committed the delivery file{' and the plan' if plan_text is not None else ''}; push it so lanes see it: "
+          f"git push {c.remote} HEAD:{c.base_branch}")
 
 
 def plan_approval(c, raw: dict, args) -> None:
@@ -4419,13 +4474,30 @@ def lead_setup(args) -> None:
     existing = json.loads(path.read_text()) if path.exists() else None
     grant = lanes_grant(args, existing)
     plan = c.root / args.plan
-    pattern = re.compile(args.pattern, re.M)
+    text = plan.read_text()
+    pattern = re.compile(args.pattern or STORY_HEADING, re.M)
     if "key" not in pattern.groupindex or "title" not in pattern.groupindex:
         raise Stop("the pattern must name groups `key` and `title` (and may name `label` and `pinned`)")
-    stories = {}
-    for m in pattern.finditer(plan.read_text()):
+    sections = plan_sections(text)
+    # The plan format's headings are read under its `## Stories`; a pattern of the lead's own reads the whole plan.
+    scope = next((body for level, title, body in sections if level == 2 and title == "Stories"), None) \
+        if args.pattern is None else None
+    stories, read = {}, {}
+    notes = []
+    for m in pattern.finditer(scope if scope is not None else text):
         g = m.groupdict()
         story = {"title": g["title"].strip(), "lane": "unassigned"}
+        heading = m.group(0).strip()
+        section = next((body for _, _, body in sections if body.startswith(heading)), "")
+        found = story_plan(section)
+        if found is None:
+            notes.append(f"plan story {g['key']}'s section doesn't open with its lane sentence (\"Lane N, tier T, not "
+                         "blocked.\" or \"Lane N, tier T, after KEY.\"): left it unassigned")
+        else:
+            story["lane"] = found["lane"]
+            if found["after"]:
+                story["after"] = found["after"]
+            read[g["key"]] = found
         if g.get("label"):
             story["label"] = g["label"]
         if g.get("pinned"):
@@ -4437,18 +4509,34 @@ def lead_setup(args) -> None:
         stories[g["key"]] = story
     if not stories:
         raise Stop(f"the pattern matched no heading in {args.plan}")
-    notes = []
-    if args.tracker_snapshot:
-        items = json.loads(Path(args.tracker_snapshot).read_text()).get("items", [])
-        tracked = {i["subject"]: i for i in items if i["subject"] != key and i.get("state") != "canceled"}
+    for subject, found in read.items():
+        unknown = [after for after in found["after"] if after not in stories]
+        if unknown:
+            notes.append(f"plan story {subject} comes after {', '.join(unknown)}, which the plan has no story for")
+    lanes, missing = units_owns(text)
+    if missing:
+        notes.append(missing)
+    for lane in sorted({story["lane"] for story in stories.values() if story["lane"] != "unassigned"} - set(lanes)):
+        notes.append(f"{lane} has stories but no row in the plan's '{UNITS_SECTION}' table: drafted it owning nothing")
+        lanes[lane] = []
+    snapshot, said = setup_tracker_snapshot(c, args, key)
+    if said:
+        notes.append(said)
+    if snapshot is not None:
+        tracked = {i["subject"]: i for i in snapshot if i["subject"] != key and i.get("state") != "canceled"}
         for subject, item in tracked.items():
             if subject not in stories:
                 notes.append(f"tracker item {subject} ({item.get('title')}) has no plan heading; add it or cancel it")
-        for subject in stories:
+        for subject, story in stories.items():
             if subject not in tracked:
                 notes.append(f"plan story {subject} has no tracker item")
+            elif tracked[subject].get("criteria"):
+                story["criteria"] = [{"id": f"{subject.lower()}-{n}", "text": criterion}
+                                     for n, criterion in enumerate(tracked[subject]["criteria"], start=1)]
+            else:
+                notes.append(f"plan story {subject}'s tracker item has no Acceptance Criteria section: drafted no "
+                             "criteria for it")
     drafted = {}
-    sections = plan_sections(plan.read_text())
     for field, name, noun in (("approvals", args.approvals_section, "approvals"),
                             ("outOfScope", args.out_of_scope_section, "out-of-scope items")):
         if not name:
@@ -4492,7 +4580,7 @@ def lead_setup(args) -> None:
         "laneBrief": str(Path(args.plan).with_suffix("")) + ".lane-brief.md",
         "brief": {"notes": None},
         "context": {"sections": args.context_section or []},
-        "lanes": {},
+        "lanes": {lane: {"owns": owns} for lane, owns in lanes.items()},
         "stories": stories,
         "finish": [EVIDENCE_FINISH] if any(st.get("evidence") == "video" for st in stories.values()) else [],
         **({"authority": grant} if grant else {}),
@@ -4515,10 +4603,55 @@ def lead_setup(args) -> None:
                      f"already made reads as made: {', '.join(loose)}")
     if adoptable:
         print(adopt_plan_review(c, adoptable, key))
-    print("next: give each story its lane, list the lanes and the files each owns, set inApp requirements, the finish "
-          "lines and the brief notes (all from the approved plan), then lead-init and lead-brief")
+    print("next: check each story's lane, criteria and order and the lanes' owns against the approved plan, fill in "
+          "what the notes below name, set inApp requirements, the finish lines and the brief notes, then lead-init and "
+          "lead-brief")
     for n in notes:
         print(f"  note: {n}")
+
+
+def lead_hints(args) -> None:
+    """Print the delivery's work-hints/1 for orchestrate-work's `next`: each story's files, from its plan section's
+    `Files:` sentence, and its blockers, the `after` keys its delivery-file story holds. A binding names this command
+    as its state.workHints, so `next` reads the plan's order without the tracker."""
+    c = cfg()
+    sections = plan_sections(c.shelf.text(c.plan) or "")
+    items = {}
+    for key, story in c.stories.items():
+        section = story_section(sections, key) or ""
+        hint = {}
+        files = section_files(section)
+        if files:
+            hint["files"] = files
+        if story.get("after"):
+            hint["blockers"] = list(story["after"])
+        items[key] = hint
+    print(json.dumps({"items": items}, indent=2))
+
+
+def setup_tracker_snapshot(c, args, key: str) -> tuple[list[dict] | None, str | None]:
+    """The tracker snapshot lead-setup drafts criteria from, as its items: the --tracker-snapshot file, else the
+    binding's trackerSnapshot command run for the delivery's own key. None, with why, when there is neither or the
+    command fails."""
+    if args.tracker_snapshot:
+        return json.loads(Path(args.tracker_snapshot).read_text()).get("items", []), None
+    spec = (c.binding.get("state") or {}).get("trackerSnapshot")
+    if not spec:
+        return None, ("no tracker snapshot (pass --tracker-snapshot, or declare the binding's state.trackerSnapshot): "
+                      "drafted no story's criteria")
+    argv = expand_argv(spec["argv"], stateDirectory=str(c.main / c.state_rel), parent=key)
+    try:
+        taken = run(argv, cwd=c.root, check=False, timeout=int(spec.get("timeoutSeconds", 60)))
+    except subprocess.TimeoutExpired:
+        return None, "the binding's tracker snapshot timed out: drafted no story's criteria"
+    if taken.returncode != 0:
+        return None, (f"the binding's tracker snapshot failed ({taken.returncode}: "
+                      f"{(taken.stderr or taken.stdout).strip()[-200:]}): drafted no story's criteria")
+    try:
+        items = json.loads(taken.stdout).get("items", [])
+    except (ValueError, AttributeError):
+        return None, "the binding's tracker snapshot printed no snapshot: drafted no story's criteria"
+    return items, None
 
 
 def review_when_note(c, answer: str | None, notes: list[str]) -> None:
@@ -4551,6 +4684,113 @@ def add_tracker_publisher(c) -> str | None:
     publishers.append(entry)
     c.binding_path.write_text(json.dumps(binding, indent=2) + "\n")
     return entry["id"]
+
+
+# The plan format lead-setup reads (plan-work's SKILL.md documents it, with an example): a story is a `### KEY. Title`
+# heading under `## Stories`, whose section opens with its lane sentence and may hold a `Files:` sentence, and the
+# `## Units and order` table gives each lane's files.
+PLAN_KEY = r"[A-Z][A-Z0-9]*-[0-9]+"
+STORY_HEADING = rf"^### (?P<key>{PLAN_KEY})\. (?P<title>.+)$"
+LANE_SENTENCE = re.compile(rf"Lane ([0-9]+), tier ([0-9]+), (?:not blocked|after ({PLAN_KEY}(?:, {PLAN_KEY})*"
+                           rf"(?: and {PLAN_KEY})?))\.(?=\s|$)")
+UNITS_SECTION = "Units and order"
+UNITS_COLUMNS = ("Tier", "Lane", "Items, in order", "Owns")
+
+
+def plan_paths(text: str) -> list[str]:
+    """The backticked repository paths in a plan's `Files:` sentence or `Owns` cell, in order, each once; a folder
+    (ending in /) becomes the glob of everything under it."""
+    paths = []
+    for token in re.findall(r"`([^`\n]+)`", text):
+        token = token.strip()
+        path = token + "*" if token.endswith("/") else token
+        if path not in paths:
+            paths.append(path)
+    return paths
+
+
+def plan_sentence(text: str, opening: str) -> str | None:
+    """The sentence of `text` (one line, whitespace folded) that starts with `opening`, without it and its full stop;
+    a full stop inside backticks, as in a file name, ends no sentence."""
+    found = re.search(rf"(?:^|(?<=[.:] )){re.escape(opening)}", text)
+    if found is None:
+        return None
+    rest = text[found.end():]
+    masked = re.sub(r"`[^`]*`", lambda m: "x" * len(m.group()), rest)
+    end = re.search(r"\.(?=\s|$)", masked)
+    return rest[:end.start()] if end else rest
+
+
+def section_body(section: str) -> str:
+    """A plan section's text after its heading, as one line with its whitespace folded."""
+    return " ".join(section.split("\n", 1)[1].split()) if "\n" in section else ""
+
+
+def section_files(section: str) -> list[str]:
+    """The paths a story's plan section lists in its `Files:` sentence; none without one."""
+    files = plan_sentence(section_body(section), "Files:")
+    return plan_paths(files) if files is not None else []
+
+
+def story_plan(section: str) -> dict | None:
+    """A story's lane, tier and `after` keys from its plan section (heading included); None when the section doesn't
+    open with its lane sentence."""
+    found = LANE_SENTENCE.match(section_body(section))
+    if found is None:
+        return None
+    lane, tier, keys = found.groups()
+    return {"lane": f"lane-{int(lane)}", "tier": int(tier), "after": re.findall(PLAN_KEY, keys or "")}
+
+
+def units_rows(text: str) -> tuple[list[tuple[int, str, list[str]]] | None, str | None]:
+    """The plan's `Units and order` table as (tier, lane, owns) rows, or None with what's missing."""
+    body = next((b for level, title, b in plan_sections(text) if level == 2 and title == UNITS_SECTION), None)
+    if body is None:
+        return None, f"the plan has no '{UNITS_SECTION}' section"
+    rows = [[cell.strip() for cell in line.strip().strip("|").split("|")] for line in body.splitlines()
+            if line.strip().startswith("|")]
+    if not rows or any(name not in rows[0] for name in UNITS_COLUMNS):
+        return None, f"the plan's '{UNITS_SECTION}' section holds no table with the columns {', '.join(UNITS_COLUMNS)}"
+    at = {name: rows[0].index(name) for name in UNITS_COLUMNS}
+    found = []
+    for row in rows[1:]:
+        if len(row) < len(rows[0]) or set("".join(row)) <= set("-: "):
+            continue
+        tier, lane = re.fullmatch(r"[0-9]+", row[at["Tier"]]), re.fullmatch(r"(?:Lane )?([0-9]+)", row[at["Lane"]])
+        if tier is not None and lane is not None:
+            found.append((int(tier.group()), f"lane-{int(lane.group(1))}", plan_paths(row[at["Owns"]])))
+    return found, None
+
+
+def units_owns(text: str) -> tuple[dict[str, list[str]], str | None]:
+    """Each lane's `owns` from the plan's `Units and order` table, read from its lowest-tier row; a later row lists
+    only what the lane gains when an earlier item merges, which the lead applies then. With what's missing, if any."""
+    rows, missing = units_rows(text)
+    if rows is None:
+        return {}, f"{missing}: drafted no lane's owns"
+    lowest: dict[str, tuple[int, list[str]]] = {}
+    for tier, lane, owns in rows:
+        if lane not in lowest or tier < lowest[lane][0]:
+            lowest[lane] = (tier, owns)
+    return {name: owns for name, (_, owns) in sorted(lowest.items())}, None
+
+
+def plan_with_story(text: str, key: str, title: str, lane: str, after: list[str], why: str) -> str:
+    """The plan with a story added mid-delivery: its `### KEY. Title` heading at the end of `## Stories` (or of the
+    plan, without one), its lane sentence in plan-work's format at the lane's latest tier, and its reason."""
+    rows, _ = units_rows(text)
+    tier = max((row_tier for row_tier, row_lane, _ in rows or [] if row_lane == lane), default=1)
+    number = re.fullmatch(r"lane-([0-9]+)", lane)
+    order = ("not blocked" if not after else "after " + (after[0] if len(after) == 1 else
+                                                         ", ".join(after[:-1]) + " and " + after[-1]))
+    opening = f"Lane {number.group(1)}, tier {tier}, {order}. " if number else ""
+    section = f"### {key}. {title}\n\n{opening}Added mid-delivery: {why}\n"
+    body = next((body for level, heading, body in plan_sections(text) if level == 2 and heading == "Stories"), None)
+    if body is None:
+        return text.rstrip("\n") + "\n\n" + section
+    end = text.index(body) + len(body)
+    rest = text[end:].lstrip("\n")
+    return text[:end] + "\n\n" + section + ("\n" + rest if rest else "")
 
 
 def plan_list_items(body: str) -> list[str]:
@@ -4664,23 +4904,88 @@ def planned_entry(c, key: str) -> dict:
             "lane": s["lane"], "stage": "planned"}
 
 
+class Unreasoned(Stop):
+    """Registration refused: a story added after the plan froze, with no `why` for its `added` change."""
+
+
+def unregistered(c, state: dict) -> list[str]:
+    """The delivery file's stories the record doesn't hold yet. A record holding no work at all is lead-init's to
+    fill, so it has none."""
+    if not state.get("planned") and not state.get("queue"):
+        return []
+    held = {item["subject"] for item in [*state["queue"], *state.get("planned", [])]}
+    return [key for key in c.stories if key not in held]
+
+
+def records_changes(c) -> bool:
+    """Registration records an `added` change once the plan chapter is on or its snapshot is kept."""
+    return plan_declared(c) or any(entry["type"] == "snapshot" for entry in read_plan_log(c))
+
+
+def story_why_problem(c, key: str) -> str | None:
+    """What is wrong with a story's `why`, as its `added` change would carry it; None when it can carry it."""
+    return why_problem(c, c.stories[key].get("why"))
+
+
+def why_problem(c, why: object) -> str | None:
+    """What is wrong with a `why` as an `added` change would carry it; None when the plan can carry it."""
+    if why is None:
+        return "has no `why`"
+    views = plan_validator(c)
+    try:
+        views._text(why, "why", views.PLAN_TEXT)
+    except views.ConfigError as error:
+        return f"has a `why` the plan can't carry ({str(error).removeprefix('why: ')})"
+    return None
+
+
+def unreasoned_problems(c, keys: list[str]) -> list[str]:
+    if not keys or not records_changes(c):
+        return []
+    return [f"{key} {problem}" for key in keys if (problem := story_why_problem(c, key))]
+
+
+def unreasoned_refusal(c, problems: list[str]) -> Unreasoned:
+    return Unreasoned(
+        f"{'; '.join(problems)}: a story added to {c.delivery_where} after the plan froze at lead-init is registered "
+        "only with its reason; fix: give it a `why` there, one line saying why it joins the delivery, which its "
+        "`added` change carries, commit and push the delivery file, then run this again. Nothing was registered")
+
+
+def check_registrable(c) -> None:
+    """Refuse, before anything is written, while registration would refuse a story added without its reason."""
+    if not (c.state / "state.json").exists():
+        return
+    problems = unreasoned_problems(c, unregistered(c, load_state()["state"]))
+    if problems:
+        raise unreasoned_refusal(c, problems)
+
+
 def register_stories(c) -> list[str]:
     """Stories added to the delivery after lead-init join the record as planned work, so the live view shows them
     before they're assigned. One the tracker reconcile already filed as a follow-up moves out of the follow-ups.
-    Returns the keys added; a delivery not yet initialized is left to lead-init."""
+    Each one's `added` change carries the `why` its story gives in the delivery file; a story with none is refused,
+    with nothing registered. Returns the keys added; a delivery not yet initialized is left to lead-init."""
     if not (c.state / "state.json").exists():
         return []
+    # Under the plan's lock: lead-plan's whole-story add writes the delivery file before it plans the story, and a
+    # sweep registering it in between would record its `added` change a second time.
+    with plan_lock(c):
+        return _register_stories(c)
+
+
+def _register_stories(c) -> list[str]:
     added: list[str] = []
 
     def compute(doc: dict) -> dict | None:
         state = doc["state"]
         added.clear()
-        if not state.get("planned") and not state.get("queue"):
-            return None
-        held = {item["subject"] for item in [*state["queue"], *state.get("planned", [])]}
-        added.extend(key for key in c.stories if key not in held)
+        added.extend(unregistered(c, state))
         if not added:
             return None
+        problems = unreasoned_problems(c, added)
+        if problems:
+            raise unreasoned_refusal(c, problems)
         followups = [f for f in state["followups"] if f["id"] not in added and f.get("reference") not in added]
         return {"planned": [*state.get("planned", []), *(planned_entry(c, key) for key in added)], "followups": followups}
     if patch_from(compute, "the stories added to the delivery") is None:
@@ -4688,11 +4993,13 @@ def register_stories(c) -> list[str]:
     for key in added:
         state_tool("journal", "--kind", "decision.recorded", "--subject", key, "--summary",
                    f"{key} added to the delivery as planned work for {c.lane_of(key)}")
-    if any(entry["type"] == "snapshot" for entry in read_plan_log(c)) or plan_declared(c):
+    if records_changes(c):
         for key in added:
-            # Its reason is the lead's to give, with lead-plan why; until then the plan flags it.
-            record_plan_change(c, {"kind": "added", "subjects": [key], "by": "lead", "title": c.stories[key]["title"],
-                                   "source": "registration"})
+            change = {"kind": "added", "subjects": [key], "by": "lead", "title": c.stories[key]["title"],
+                      "source": "registration"}
+            if "why" in c.stories[key]:
+                change["why"] = c.stories[key]["why"]
+            record_plan_change(c, change)
     return added
 
 
@@ -4973,7 +5280,12 @@ def lead_accept(args) -> None:
                 f"{c.base_branch}, {len(set(numbers))} round(s) journaled, last approved by every lens, review evidence "
                 f"captured at that head, files within {c.lane_of(key)}'s, gates and in-app evidence current.")
                + (" " + "; ".join(decisions) + "." if decisions else ""))
-    rebuild_plan(c)
+    # Accepted already: a plan its registration can't rebuild now (a story added without its reason) says why, and
+    # the next rebuild catches up.
+    try:
+        rebuild_plan(c)
+    except Unreasoned as error:
+        print(f"plan: not rebuilt: {error}")
     print(f"accepted {key} after its merge" if merged else f"accepted {key}; the runner may take it")
     if needs_video(key):
         print("  once it merges: lead-evidence page, republish the page (same address), lead-evidence published --url, "
@@ -5177,9 +5489,16 @@ def reconcile_once() -> list[str]:
     states = json.loads(binding.read_text()).get("state", {}) if binding.exists() else {}
     folder = c.state.parent / "snapshots"
     folder.mkdir(parents=True, exist_ok=True)
-    # First, so a story just added to the delivery is planned work, not a follow-up, when the tracker lists it.
-    added = register_stories(c)
+    # First, so a story just added to the delivery is planned work, not a follow-up, when the tracker lists it. A story
+    # registration refuses stays unregistered, and the sweep goes on without it.
+    refused = None
+    try:
+        added = register_stories(c)
+    except Unreasoned as error:
+        added, refused = [], error
     lines = [f"registered {', '.join(added)} as planned work"] if added else []
+    if refused:
+        lines.append(f"registration refused: {refused}")
     for name in ("forgeSnapshot", "trackerSnapshot"):
         spec = states.get(name)
         if not spec:
@@ -5200,7 +5519,7 @@ def reconcile_once() -> list[str]:
         summary = re.search(r'"summary":\s*"([^"]*)"', done.stdout or "")
         lines.append(f"{name}: " + (summary.group(1) if summary else (done.stderr or done.stdout).strip()[-200:]))
         lines += [f"{name}: {line}" for line in reconcile_report_lines(done.stdout)]
-    if plan_declared(c) or plan_log_path(c).exists():
+    if (plan_declared(c) or plan_log_path(c).exists()) and not refused:  # its rebuild would refuse the same story
         lines.append(rebuild_plan_quietly(c))
     return lines
 
@@ -5215,7 +5534,9 @@ def reconcile_report_lines(output: str | None) -> list[str]:
 
 
 def lead_reconcile(args) -> None:
-    """One reconcile sweep, by hand: the supervisor's every pass runs it."""
+    """One reconcile sweep, by hand: the supervisor's every pass runs it. By hand, a story registration would refuse
+    refuses the sweep, before anything is taken."""
+    check_registrable(cfg())
     print(now(), "; ".join(reconcile_once()), flush=True)
 
 
@@ -7207,6 +7528,7 @@ class Doctor:
             ("harness", "harness configuration", ("config", "generation", "node"), self.harness),
             ("delivery", "delivery file", ("config", "binding"), self.check_delivery),
             ("plan", "plan chapter", ("delivery",), self.check_plan),
+            ("plan-reasons", "added stories' reasons", ("delivery",), self.plan_reasons),
             ("plan-sections", "plan sections", ("delivery",), self.stories_planned),
             ("story-files", "story files", ("plan-sections",), self.story_files),
             ("readiness", "story readiness", ("delivery",), self.story_readiness),
@@ -7598,6 +7920,35 @@ class Doctor:
         return "ok", (f"{criteria} criteria across {len(d.stories)} stories; the plan they make passes "
                       "delivery-views check-plan")
 
+    def plan_reasons(self):
+        """Every story the record holds as an `added` change has its reason, and none is waiting to be registered
+        without one."""
+        d = self.delivery
+        log = read_plan_log(d) if d.flow_log.exists() else []
+        whys = {entry["change"] for entry in log if entry["type"] == "why"}
+        # A story-level addition: a criterion added to a story carries its criteria, and is the plan chapter's own flag.
+        bare = [entry for entry in log if entry["type"] == "change" and entry["kind"] == "added"
+                and not entry.get("criteria") and not entry.get("why") and entry["id"] not in whys
+                and any(key in d.stories for key in entry["subjects"])]
+        waiting = []
+        if (d.state / "state.json").exists():
+            doc = json.loads(run([sys.executable, "-B", str(d.release / "skills/orchestrate-work/scripts/delivery_state.py"),
+                                  "--dir", str(d.state), "show"]).stdout)
+            waiting = unreasoned_problems(d, unregistered(d, doc["state"]))
+        problems = []
+        if bare:
+            problems.append("the record holds an `added` change with no reason: "
+                            + ", ".join(f"{entry['id']} adds {', '.join(entry['subjects'])}" for entry in bare) + "; fix: "
+                            + "; ".join(f"{flow_command()} lead-plan why {entry['id']} --why TEXT" for entry in bare))
+        if waiting:
+            problems.append(f"{'; '.join(waiting)}, so registration refuses it; fix: give it a `why` in "
+                            f"{d.delivery_where}, then commit and push it")
+        if problems:
+            return "wrong", "; ".join(problems)
+        if not log and not waiting and not plan_declared(d):
+            return self.not_applicable("no plan chapter, so no story is recorded as an added change")
+        return "ok", "every story added to the plan has its reason"
+
     def stories_planned(self):
         d = self.delivery
         problems = plan_problems(d, list(d.stories))
@@ -7780,8 +8131,12 @@ def main(argv: list[str] | None = None) -> None:
     p = command(sub, "handoff"); p.add_argument("key"); p.add_argument("--pr", required=True)
     p.add_argument("--pr-review-triage")
     p.add_argument("--findings"); p.add_argument("--blocked", action="append", default=[]); p.set_defaults(fn=handoff)
+    p = command(sub, "lead-hints", help="print the delivery's work-hints/1: each story's plan files and its after keys")
+    p.set_defaults(fn=lead_hints)
     p = command(sub, "lead-setup"); p.add_argument("key"); p.add_argument("--plan", required=True)
-    p.add_argument("--base", help="default: the binding's base.ref"); p.add_argument("--pattern", required=True); p.add_argument("--headline")
+    p.add_argument("--base", help="default: the binding's base.ref"); p.add_argument("--headline")
+    p.add_argument("--pattern", help="a regex naming groups key and title for each story heading; default: the plan "
+                   "format's `### KEY. Title` under `## Stories`")
     p.add_argument("--tracker-snapshot"); p.add_argument("--ship-from"); p.add_argument("--ship-path", action="append")
     p.add_argument("--context-section", action="append"); p.add_argument("--force", action="store_true")
     p.add_argument("--approvals-section", help="draft approvals from this plan section's list")
@@ -7841,6 +8196,8 @@ def main(argv: list[str] | None = None) -> None:
     q.add_argument("--finish", help="finish: the line's id"); q.add_argument("--covers", help="finish: its covers, as JSON")
     q.add_argument("--label", help="finish: a new line's label"); q.add_argument("--why", required=True)
     q.add_argument("--by", default="lead"); q.add_argument("--ref"); q.add_argument("--title")
+    q.add_argument("--lane", help="added, for a story not yet in the delivery: its lane")
+    q.add_argument("--after", nargs="*", help="added, for a story not yet in the delivery: the stories it comes after")
     q.set_defaults(fn=lead_plan)
     q = command(plan_commands, "approval", help="mark one approval done or waiting, and commit the delivery file")
     q.add_argument("id"); q.add_argument("--state", required=True, choices=["done", "waiting"]); q.add_argument("--who")

@@ -181,16 +181,24 @@ Setting `PYTHONDONTWRITEBYTECODE=1` for the suite stops it being written.
 ### Where the stored runtime comes from
 
 `product-runtime/` is the build output of `kwam1na/agent-delivery-harness`, now at
-`v26-technologies/agent-delivery-harness`. It declares 0.8.1 and was built with
+`v26-technologies/agent-delivery-harness`. It declares 0.8.3 and was built with
 `npm run product:build-runtime` from a clean checkout of
-`18e83c90fec353f96cf93775203541cf9062b9de`, that repository's `main` at the merge of its
-0.8.1 version bump, which the `v0.8.1` tag names. Like the 0.8.0 runtime before it, it is
-`main` itself. Over 0.8.0 it adds shallow snapshot materialization: a scoped check's snapshot
-fetches only the history from the candidate's merge-base to each tip, or the pinned commits
-alone when the check sees no Git, and keeps the whole history only where a side branch
-forked below the merge-base or the distance cannot be measured.
+`ea77cdc73a3a29277e4c95498845f80c3838a32f`, that repository's `main` at the merge of
+its last 0.8.3 change, which the `v0.8.3` tag names. Like the runtimes before it, it is
+`main` itself. Over 0.8.2, it:
 
-`HARNESS_VERSION` 0.8.1 is part of every preparation fingerprint, so it invalidates
+- moves finished snapshot trees into a private per-user trash and deletes them in a
+  detached process, instead of removing them while the gate waits;
+- reads each burst of source objects through one long-lived `git cat-file --batch`
+  child, verifying every frame against the object it asked for;
+- hashes each host tool once per process;
+- reads the delivery posture only from the repository root, and bounds its depth;
+- lets a rail provider inherit exactly the descriptors it declares;
+- kills a check's process group through libc on Bun.
+
+Over 0.8.1, 0.8.2 prewarmed each scoped check setup's warm base in critical-path order.
+
+`HARNESS_VERSION` 0.8.3 is part of every preparation fingerprint, so it invalidates
 receipts prepared by an earlier runtime: an adopter's in-flight deliveries prepare again
 after applying it.
 

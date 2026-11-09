@@ -184,6 +184,33 @@ class JiraTests(SnapshotCase):
         self.assertNotIn("status", items["APP-12"])
         self.assertNotIn("offeredTransitions", items["APP-12"])
 
+    def test_an_issue_s_acceptance_criteria_section_is_its_criteria(self) -> None:
+        pages = copy.deepcopy(JIRA)
+        paragraph = lambda text: {"type": "paragraph", "content": [{"type": "text", "text": text}]}
+        heading = lambda text: {"type": "heading", "attrs": {"level": 2}, "content": [{"type": "text", "text": text}]}
+        item = lambda *parts: {"type": "listItem", "content": [paragraph(part) for part in parts]}
+        pages["page-1"]["issues"][0]["fields"]["description"] = {"type": "doc", "version": 1, "content": [
+            heading("Summary"), paragraph("Shared config."),
+            heading("Acceptance Criteria"),
+            {"type": "orderedList", "content": [item("Set up from a plan, every story has a lane."),
+                                                item("next orders a blocked story", "after its dependencies.")]},
+            heading("Execution Posture"), paragraph("test-first")]}
+        # An issue whose description has no such section carries no criteria.
+        pages["page-1"]["issues"][1]["fields"]["description"] = {"type": "doc", "version": 1, "content": [
+            heading("Summary"), paragraph("Only a summary.")]}
+        # One whose section holds only paragraphs yields them, up to the next heading.
+        pages["page-2"]["issues"][0]["fields"]["description"] = {"type": "doc", "version": 1, "content": [
+            heading("Acceptance Criteria"), paragraph("The view loads."), paragraph("It says when it fails."),
+            heading("Notes"), paragraph("Not a criterion.")]}
+        transport = Transport((SEARCH, 200, pages["page-1"]), (SEARCH, 200, pages["page-2"]))
+        code, out, _ = self.run_kind(JIRA_ARGS, transport, JIRA_ENV)
+        self.assertEqual(code, 0)
+        items = {entry["subject"]: entry for entry in self.checked(out, parent="APP-10")["items"]}
+        self.assertEqual(items["APP-11"]["criteria"], ["Set up from a plan, every story has a lane.",
+                                                       "next orders a blocked story after its dependencies."])
+        self.assertNotIn("criteria", items["APP-12"])
+        self.assertEqual(items["APP-13"]["criteria"], ["The view loads.", "It says when it fails."])
+
     def test_a_done_status_not_listed_as_canceled_is_completed(self) -> None:
         code, out, _ = self.run_kind(JIRA_ARGS, self.pages(), JIRA_ENV)
         self.assertEqual(code, 0)
@@ -650,6 +677,47 @@ class LinearTests(SnapshotCase):
         # The sentence cut is measured in UTF-16 units: 60 emoji are 120 of them.
         long = "\U0001F600" * 60 + ". " + "y" * 1100
         self.assertEqual(snapshot.summary_of("## Summary\n" + long), "\U0001F600" * 60 + ".")
+
+    def test_a_child_s_acceptance_criteria_section_is_its_criteria(self) -> None:
+        pages = copy.deepcopy(LINEAR)
+        nodes = pages["page-1"]["data"]["issue"]["children"]["nodes"]
+        nodes[0]["description"] = ("## Summary\n\nShared config.\n\n## Acceptance Criteria\n\n"
+                                   "1. Set up from a plan, every story has a lane.\n"
+                                   "2. `next` orders a blocked story\n   after its dependencies.\n"
+                                   "3. One command adds a story, which `lead-assign` then accepts.\n\n"
+                                   "## Execution Posture\n\ntest-first\n")
+        nodes[1]["description"] = "## Summary\n\nNo criteria here.\n"
+        transport = Transport((GRAPHQL, 200, pages["page-1"]), (GRAPHQL, 200, pages["page-2"]))
+        code, out, _ = self.run_kind(LINEAR_ARGS, transport, LINEAR_ENV)
+        self.assertEqual(code, 0)
+        items = {entry["subject"]: entry for entry in self.checked(out, parent="ENG-100")["items"]}
+        self.assertEqual(items[nodes[0]["identifier"]]["criteria"], [
+            "Set up from a plan, every story has a lane.", "next orders a blocked story after its dependencies.",
+            "One command adds a story, which lead-assign then accepts."])
+        self.assertNotIn("criteria", items[nodes[1]["identifier"]])
+
+    def test_criteria_read_the_section_s_list_or_else_its_paragraphs_within_their_bounds(self) -> None:
+        cases = (
+            ("## Acceptance Criteria\n- one\n- two\n  continued\n\n- three", ["one", "two continued", "three"]),
+            ("### Acceptance criteria:\n1) [linked](https://x.test) **one**", ["linked one"]),
+            ("## Acceptance Criteria\nFirst paragraph\nwraps.\n\nSecond.", ["First paragraph wraps.", "Second."]),
+            ("## Acceptance Criteria\n\n## Next\n- not these", None),
+            ("```\n## Acceptance Criteria\n- fenced\n```", None),
+            ("## Summary\n- no section", None),
+            (None, None),
+        )
+        for description, expected in cases:
+            with self.subTest(description=description):
+                self.assertEqual(snapshot.criteria_of(description), expected)
+        many = snapshot.criteria_of("## Acceptance Criteria\n" + "".join(f"- c{n}\n" for n in range(60)))
+        self.assertEqual(many, [f"c{n}" for n in range(50)])
+        long = snapshot.criteria_of("## Acceptance Criteria\n- " + "x" * 700)
+        self.assertEqual((len(long[0]), long[0][-1]), (600, "…"))
+        # The snapshot's shape holds them, and refuses one over its bound.
+        document = {"takenAt": NOW, "source": "tracker",
+                    "items": [{"subject": "ENG-1", "state": "backlog", "criteria": ["x" * 601]}]}
+        with self.assertRaises(delivery_state.StateError):
+            delivery_state.check_snapshot(document, "snapshot", 1e10)
 
     def test_a_reflected_key_is_redacted_in_any_form(self) -> None:
         reflected = {"errors": [{"message": f"bad key {LINEAR_ENV['LINEAR_API_KEY']} or lin_api_someotherkey9"}]}

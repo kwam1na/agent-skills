@@ -27,7 +27,7 @@ it through the state tool, then render the views.
 - **Ownership is enforced.** The lead adds each handed candidate to `queue[]`
   as `queued`, with `syncedHead` null and `checks` empty. Only the runner
   writes `stage`, `syncedHead`, `checks`, `checkSelection`, `meta.baseHead`,
-  `meta.releasedHead` and `meta.checking`; a lead attempt is refused with
+  `meta.releasedHead`, `meta.checking` and `meta.baseReruns`; a lead attempt is refused with
   `field_not_owned`. Only the `select` command writes a queue element's
   `leadSelection`.
 - **Planned work and change requests are the lead's.** The optional
@@ -224,8 +224,9 @@ supervisor's.
   once, not batched behind unrelated work or held for a convenient moment.
 - When the binding sets `selection.lead`, you may choose a candidate's checks
   from its diff instead of the provider: run `select --subject <s> --binding
-  <binding> --head <reviewed head> --checks <json> --reason "<why>"`, after
-  the hand-off and before the runner takes it. See "Lead-selected checks"
+  <binding> --head <reviewed head> --checks <ids or json> --reason "<why>"`,
+  after the hand-off and before the runner takes it. Under a binding with a
+  catalogue, `--checks run-delivery,corpus-guards` names checks by id. See "Lead-selected checks"
   for when to, and what it costs. `select --subject <s> --clear` gives the
   choice back to the provider.
 - Reassign the lane (step 3) once it has handed off: its `lanes[]` element
@@ -980,7 +981,7 @@ it is not a freshness proof or permission to skip any admission check.
 | `checkOutput` | Optional. `{failurePattern}`: a regular expression with a named group `id` and an optional named group `message`, matched line by line against a failed check's output. Each match is a failing test or step, shown in the record, the journal and the views. |
 | `flakes` | Optional. Known flakes, each `{check, tests?, ref}`: the check's id, the regular expressions its flaky failure ids match in full (leave `tests` out when the whole check is flaky), and the reference that tracks the flake. See "Flakes and retries". |
 | `parallelChecks` | Optional. How many checks marked `parallelSafe` may run at once; 1 when absent. A check without `parallelSafe` always runs alone. |
-| `selection` | Optional. `{lead, refusalStops?}`: `lead: true` lets the lead choose a candidate's checks with the state tool's `select` command, in place of the provider's answer and `fallback`. `refusalStops: true`, which needs `lead: true`, makes a provider that exits non-zero stop the candidate with `provider_refused` instead of widening to `fallback`. Each is off when absent, so every candidate is checked as before. See "Lead-selected checks". |
+| `selection` | Optional. `{lead, refusalStops?, catalogue?, guards?, readers?}`: `lead: true` lets the lead choose a candidate's checks with the state tool's `select` command, in place of the provider's answer and `fallback`. `refusalStops: true`, which needs `lead: true`, makes a provider that exits non-zero stop the candidate with `provider_refused` instead of widening to `fallback`. `catalogue` names checks the lead selects by id, `guards` lists catalogue ids added to every lead selection, and `readers` maps paths to the catalogue checks that read them. Each is off when absent, so every candidate is checked as before. See "Lead-selected checks" and "The check catalogue". |
 | `reusableChecks` | Optional. Ids of the binding's own checks (`alwaysRun` or `fallback`) the runner may reuse from a lane's hand-off evidence instead of running them again. Each may use no placeholder but `{treeSha}`, and no binding check may name it as a prerequisite. None when absent, so nothing is reused until you opt in. See "Reused checks". |
 | `batch` | Optional. `{culpritSearch}`: how `batch` finds the member that failed a batch's checks, `bisect` (the default, fewest check runs) or `serial` (each prefix in order). |
 | `environment` | Variables set for every argv the runner runs. It must not set `GIT_LITERAL_PATHSPECS`, `GIT_GLOB_PATHSPECS`, `GIT_NOGLOB_PATHSPECS` or `GIT_ICASE_PATHSPECS`, which would change the paths the workRoot checks match; these names are matched without case. The runner drops an inherited setting of them before running git or any declared argv; a profile's environment may still set them for its checks. |
@@ -990,7 +991,7 @@ it is not a freshness proof or permission to skip any admission check.
 | `fullHealth` | The argv for the post-merge tier: run by the supervisor after each merge or batch, and at close-out only when no run at the final head has happened. Required, and not run while the base declares the `focused` posture. |
 | `fullHealthTimeoutSeconds` | Optional. The seconds one `fullHealth` run may take, a positive integer of at most 2147483; `checkTimeoutSeconds` when absent. `checkTimeoutCeiling` doesn't bound it, since it bounds the queue's checks and the post-merge tier is not one of them. |
 | `leases` | Each lease's `id`, `description` and `defaultHolder`, plus optional `materialize` and `withdraw` argv. |
-| `state` | `{directory, renderers, publishers, snapshotMaxAgeSeconds?, trackerSnapshot?, forgeSnapshot?, refreshSeconds?, workHints?, liveHome?}`. `liveHome` is the id of a declared argv renderer whose HTML view the live server serves at its front page, with the live store injected as at `/view/<output>`; the view must carry `<meta name="delivery-state-live">`. Without it the front page is the built-in static page. A `liveHome` that names a built-in renderer, an unknown id, or a view whose output is not an HTML file is refused. `trackerSnapshot`, `{argv, timeoutSeconds?}`, is the repository's command that prints the delivery's `work-snapshot/1` tracker snapshot; `{parent}` in its argv is the record's `meta.trackerParent`, and `{stateDirectory}` in it, or in a renderer's, a publisher's or `workHints` argv, is the resolved state directory the command runs for, so a repository that keeps several records reads the one being served rather than the one its binding names; the command owns whatever access it needs. `forgeSnapshot`, the same shape, prints the forge snapshot of the delivery's change requests; this workflow ships no forge or tracker client, so both are the repository's own, or the ready-made commands described below. `serve` runs them from the repository's checkout every `refreshSeconds`, 180 when absent and at most 86400, and 0 turns that off; it does not start on a block or interval it cannot use. Each command's stdout is read until it exits, plus a two-second drain: output that a process it leaves behind writes later is not read, and output written during the drain can spoil the snapshot. Each runs in its own process group with a per-run marker in its environment; afterwards, interrupted or not, the state tool stops what is left in that group or carries the marker, never the caller or its parents, pid 1, another user's process or one that started before the run, and stops nothing when it cannot read the process table. A child that clears its environment, or whose environment the system hides, such as some system binaries on macOS, survives. On Windows only the command itself is stopped, and only when it overran or was interrupted. `directory` is relative to the repository root unless absolute. Each renderer is `{id, builtin, output}` or `{id, argv, output}`, never both, with an optional `timeoutSeconds`; `output` is a relative path inside the state directory. Each publisher is `{id, argv}`, with an optional `timeoutSeconds`, or `{id, kind: "host"}`, which writes an outbox for the lead to publish; at most one publisher is a host publisher. `workHints`, `{argv, timeoutSeconds?}`, is the repository's command that prints a `work-hints/1` document of each item's files and priority for `next`, run the same way. `snapshotMaxAgeSeconds`, a whole number of seconds, is how old a forge or tracker snapshot may be before `reconcile` refuses it, 900 when absent. After each of its state writes the runner passes this member to the render wrapper; when it is valid and declares no renderer and no publisher, the runner starts no wrapper, and reads the record itself instead, noting a failure as the wrapper would. |
+| `state` | `{directory, renderers, publishers, snapshotMaxAgeSeconds?, trackerSnapshot?, forgeSnapshot?, refreshSeconds?, workHints?, liveHome?}`. `liveHome` is the id of a declared argv renderer whose HTML view the live server serves at its front page, with the live store injected as at `/view/<output>`; the view must carry `<meta name="delivery-state-live">`. Without it the front page is the built-in static page. A `liveHome` that names a built-in renderer, an unknown id, or a view whose output is not an HTML file is refused. `trackerSnapshot`, `{argv, timeoutSeconds?}`, is the repository's command that prints the delivery's `work-snapshot/1` tracker snapshot; `{parent}` in its argv is the record's `meta.trackerParent`, and `{stateDirectory}` in it, or in a renderer's, a publisher's or `workHints` argv, is the resolved state directory the command runs for, so a repository that keeps several records reads the one being served rather than the one its binding names; the command owns whatever access it needs. `forgeSnapshot`, the same shape, prints the forge snapshot of the delivery's change requests; this workflow ships no forge or tracker client, so both are the repository's own, or the ready-made commands described below. `serve` runs them from the repository's checkout every `refreshSeconds`, 180 when absent and at most 86400, and 0 turns that off; it does not start on a block or interval it cannot use. Each command's stdout is read until it exits, plus a two-second drain: output that a process it leaves behind writes later is not read, and output written during the drain can spoil the snapshot. Each runs in its own process group with a per-run marker in its environment; afterwards, interrupted or not, the state tool stops what is left in that group or carries the marker, never the caller or its parents, pid 1, another user's process or one that started before the run, and stops nothing when it cannot read the process table. A child that clears its environment, or whose environment the system hides, such as some system binaries on macOS, survives. On Windows only the command itself is stopped, and only when it overran or was interrupted. `directory` is relative to the repository root unless absolute. Each renderer is `{id, builtin, output}` or `{id, argv, output}`, never both, with an optional `timeoutSeconds`; `output` is a relative path inside the state directory. Each publisher is `{id, argv}`, with an optional `timeoutSeconds`, or `{id, kind: "host"}`, which writes an outbox for the lead to publish; at most one publisher is a host publisher. `workHints`, `{argv, timeoutSeconds?}`, is the repository's command that prints a `work-hints/1` document of each item's files, priority and `blockers` (the subjects it comes after in the plan's order, read beside the tracker's `blockedBy`) for `next`, run the same way; run-delivery's `lead-hints` is one. `snapshotMaxAgeSeconds`, a whole number of seconds, is how old a forge or tracker snapshot may be before `reconcile` refuses it, 900 when absent. After each of its state writes the runner passes this member to the render wrapper; when it is valid and declares no renderer and no publisher, the runner starts no wrapper, and reads the record itself instead, noting a failure as the wrapper would. |
 
 Ready-made views and snapshot commands ship in the separate `delivery-views`
 skill, for a profile that includes it: a live line map and a delivery history
@@ -1100,7 +1101,8 @@ It is off unless the binding sets `selection: {"lead": true}`.
   profile, a timeout above the ceiling, a `cwd` outside the checkout, and
   prerequisites outside the list or in a cycle. Only `select` writes
   `leadSelection`: a patch that changes it, yours or the runner's, is
-  refused. `select --subject <s> --clear` drops it.
+  refused. `select --subject <s> --clear` drops it. Under a binding with a
+  catalogue, `--checks` also takes catalogue ids; see "The check catalogue".
 - **Use.** While the binding allows it and the selection names the
   candidate's reviewed head, the runner checks the candidate with the lead's
   checks plus `alwaysRun`; no provider runs and `fallback` is not added. A
@@ -1140,6 +1142,57 @@ It is off unless the binding sets `selection: {"lead": true}`.
   provider that times out or answers malformed still widens. A refusal of a
   batch's checks stops every member, since the provider answered for their
   combined diff: select each, or re-queue them to run alone.
+
+### The check catalogue
+
+Spelling out full check entries for every selection is slow, and a selection
+keyed to the files a story touches misses the tests and fixtures that read
+those files' output. Three optional members of the binding's `selection` make
+a selection cheaper to write and harder to get wrong. None changes a binding
+or a selection that leaves it out.
+
+- **Catalogue.** `selection.catalogue` lists checks, each shaped like an
+  `alwaysRun` entry, with an id no `alwaysRun` or `fallback` check uses and
+  prerequisites only among the catalogue's own ids. `select --checks
+  run-delivery,corpus-guards` takes comma-separated catalogue ids, and
+  `--checks -` reads them, or a JSON list, from stdin. Each id resolves to its
+  catalogue entry, bringing its prerequisites with it, and an unknown id is
+  refused with `select_invalid`, naming it and the catalogue's ids. A JSON list
+  as before still selects exactly what it lists; a string in it is a catalogue
+  id. What `leadSelection` records is the resolved full entries, so the runner
+  checks a selection by ids exactly as one by full entries.
+- **Guards.** `selection.guards` lists catalogue ids added to every lead
+  selection, whatever it names, including a JSON list that names no catalogue
+  id and an empty one: a repository's corpus and qualification tests, say. A
+  guard the lead names itself is selected once; a full entry of the same id
+  defined differently is refused. The runner adds, with a note, any guard a
+  recorded selection lacks, such as one recorded before the binding named it.
+- **Readers.** `selection.readers` is a list of `{paths, checks}`: when the
+  candidate's diff from the base changes a path matching one of `paths` (a
+  rename counts both of its paths), its `checks`, catalogue ids, join the
+  selection. Name every reader of a file here, the captured fixtures written
+  against a schema included, rather than inferring them from what a test
+  mentions: a test that only names the file is not a reader unless the binding
+  says so. `select` reads the diff from `--repo`, the current directory when
+  left out, against the base's remote-tracking ref there (or `--base-head`),
+  and refuses rather than skips the readers when it can't. Fetch the base
+  first.
+- **What was added.** The `check.selected` entry names each check added
+  beyond what you named, and why: a guard, a prerequisite, or the changed path
+  it reads.
+- **The base-head warning.** `select` prints `baseHead`, `warnings` and
+  `notes` beside the item. It warns, naming the check and the head, when the
+  latest of `meta.baseReruns` for a selected check at the current base head
+  failed: the base may fail it too, and the candidate would stop as
+  `base_broken`. A passing latest re-run there says nothing. A failure at an
+  older base head, or of a check you didn't select, says nothing. A head this
+  delivery's queue never re-ran a check on, such as one another delivery's
+  merge made, gives no warning, and a note says that nothing is known there.
+- **Checked.** The runner refuses a binding whose catalogue repeats an id,
+  reuses a binding check's id, names a prerequisite outside it, forms a cycle,
+  names an unknown profile or exceeds the ceiling, or whose guards or readers
+  name an id outside it or a reader with no path or check. `select` refuses
+  such a binding with `binding_invalid`.
 
 ### Lead inputs and leases
 
@@ -1229,7 +1282,11 @@ binding declares may change.
   broken base, and a test that fails only beside others could pass there alone.
   The re-run's output is kept under `logs/` beside the candidate's, and the
   queue row's check carries it as `baseRerun`, with the failing tests the
-  binding's failure pattern finds in it. A declared flake failing there is
+  binding's failure pattern finds in it. Each re-run that reaches a verdict
+  also joins `meta.baseReruns`, newest last and at most 100: the check's id,
+  the base head the re-run checked out, `passed` or `failed`, and the
+  candidate it ran for. Those outlive the row's checks, which a re-queue
+  clears, and `select` reads them (see "The check catalogue"). A declared flake failing there is
   retried once, as on the candidate, before it can read as a broken base. A
   `base_broken` stop and its `base.broken` entry name the check, its failing
   tests and the re-run's log, in the words `check.failed` uses for the

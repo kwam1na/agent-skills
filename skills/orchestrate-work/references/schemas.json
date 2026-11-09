@@ -201,6 +201,41 @@
               }
             }
           },
+          "baseReruns": {
+            "description": "Runner-owned: the latest base re-runs the queue judged, newest last, at most 100: each check's id, the base head the re-run checked out, its verdict, and the candidate it was re-run for. select warns when a selected check's latest re-run at the current base head failed. Absent until the first.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "check",
+                "baseHead",
+                "result",
+                "subject",
+                "recordedAt"
+              ],
+              "properties": {
+                "check": {
+                  "$ref": "#/$defs/name"
+                },
+                "baseHead": {
+                  "$ref": "#/$defs/commit"
+                },
+                "result": {
+                  "enum": [
+                    "passed",
+                    "failed"
+                  ]
+                },
+                "subject": {
+                  "$ref": "#/$defs/name"
+                },
+                "recordedAt": {
+                  "$ref": "#/$defs/timestamp"
+                }
+              }
+            }
+          },
           "hold": {
             "description": "Set by the lead to pause the runner's serve mode; absent or null lets it run.",
             "anyOf": [
@@ -2150,7 +2185,7 @@
         }
       },
       "selection": {
-        "description": "Optional. lead: true lets the lead choose a candidate's checks from its diff with the state tool's select command; the runner then runs the lead's selection and alwaysRun instead of the provider's answer and fallback, while the selection is for the candidate's reviewed head. A candidate without one is checked as before. Off when absent. refusalStops: true, which needs lead: true, makes a provider that exits non-zero stop the candidate as provider_refused instead of widening to fallback: no check runs, and the candidate is held, never merged, until the lead's selection for its reviewed head lets it be checked. Off when absent.",
+        "description": "Optional. lead: true lets the lead choose a candidate's checks from its diff with the state tool's select command; the runner then runs the lead's selection and alwaysRun instead of the provider's answer and fallback, while the selection is for the candidate's reviewed head. A candidate without one is checked as before. Off when absent. refusalStops: true, which needs lead: true, makes a provider that exits non-zero stop the candidate as provider_refused instead of widening to fallback: no check runs, and the candidate is held, never merged, until the lead's selection for its reviewed head lets it be checked. Off when absent. catalogue, guards and readers make the lead's selections cheaper to write: select --checks takes catalogue ids, comma-separated, as well as a JSON list of full entries; every guard is added to each lead selection; and a candidate changing a file a readers entry names gets that entry's checks. Each is optional and changes nothing when absent.",
         "type": "object",
         "additionalProperties": false,
         "required": [
@@ -2162,6 +2197,47 @@
           },
           "refusalStops": {
             "type": "boolean"
+          },
+          "catalogue": {
+            "description": "Named checks the lead selects by id. Each has the shape of an alwaysRun entry, an id no alwaysRun or fallback check uses, and prerequisites only among the catalogue's own ids. select resolves an id to its entry here, with its prerequisites, and refuses an unknown id, naming it.",
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/check"
+            }
+          },
+          "guards": {
+            "description": "Catalogue ids added to every lead selection, whatever it names, such as a repository's corpus and qualification tests.",
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/name"
+            }
+          },
+          "readers": {
+            "description": "What reads a file, named here rather than inferred from what a test mentions. A lead selection for a candidate whose diff from the base changes a path matching paths includes checks, catalogue ids, such as every reader of a schema and the captured fixtures written to it.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "paths",
+                "checks"
+              ],
+              "properties": {
+                "paths": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/path"
+                  },
+                  "description": "At least one; checked beyond this shape."
+                },
+                "checks": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/name"
+                  }
+                }
+              }
+            }
           }
         }
       },
@@ -2689,6 +2765,14 @@
                   ]
                 }
               ]
+            },
+            "blockers": {
+              "description": "The subjects this item comes after, from the plan's order (run-delivery's lead-hints passes the delivery file's after keys). next reads them beside the tracker's blockedBy: one stops blocking once the record holds it merged, or the tracker snapshot holds it completed or canceled.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
             }
           }
         }
@@ -2779,6 +2863,15 @@
               "type": "array",
               "items": {
                 "$ref": "#/$defs/name"
+              }
+            },
+            "criteria": {
+              "description": "Tracker snapshots only, optional: the item's acceptance criteria, each one line of plain text, in the order its Acceptance Criteria section lists them, at most 50; the snapshot's maker shortens one longer than 600 characters. Absent when the item has no such section. lead-setup drafts a story's criteria from it.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 600
               }
             },
             "mergedAt": {

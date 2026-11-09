@@ -340,6 +340,9 @@ def jira_snapshot(args: argparse.Namespace, environ: dict, transport: Transport,
             summary = _shorten(flatten_adf(description))
             if summary:
                 item["summary"] = summary
+            criteria = criteria_of_adf(description)
+            if criteria is not None:
+                item["criteria"] = criteria
         blockers = []
         links = fields.get("issuelinks")
         if not isinstance(links, list):
@@ -571,6 +574,85 @@ def summary_of(description: object) -> str | None:
     return text[:SUMMARY_LIMIT - 1] + "…"
 
 
+# An item's acceptance criteria: at most this many, each at most this long, as work-snapshot/1 holds them.
+CRITERIA_LIMIT, CRITERION_LIMIT = 50, 600
+CRITERIA_HEADING = re.compile(f"^#{{2,3}}[{JS_SPACE}]*Acceptance[{JS_SPACE}]+Criteria[{JS_SPACE}]*:?$", re.IGNORECASE | re.ASCII)
+LIST_MARKER = re.compile(f"^[{JS_SPACE}]*(?:[-*+]|[0-9]+[.)])[{JS_SPACE}]+")
+
+
+def _criterion(text: str) -> str | None:
+    """One criterion as plain text on one line, with the summary's markup removed, shortened past its bound."""
+    text = re.sub(r"</?[A-Za-z][^>]*>", "", text[:8 * CRITERION_LIMIT])
+    text = re.sub(f"!?\\[((?:[^[\\]]|\\[[^\\]]*\\])+)\\]\\((?:[^(){JS_SPACE}]|\\([^()]*\\))*\\)", r"\1", text)
+    text = re.sub(r"`|\*\*|(?<!\w)_|_(?!\w)", "", text, flags=re.ASCII)
+    text = re.sub(f"[{JS_SPACE}]+", " ", text).strip(JS_SPACE_CHARS)
+    if not text:
+        return None
+    return text if len(text) <= CRITERION_LIMIT else text[:CRITERION_LIMIT - 1].rstrip() + "…"
+
+
+def _criteria(entries: list[str]) -> list[str] | None:
+    found = [criterion for entry in entries if (criterion := _criterion(entry))]
+    return found[:CRITERIA_LIMIT] or None
+
+
+def criteria_of(description: object) -> list[str] | None:
+    """A ticket's acceptance criteria: each item of the list under its "## Acceptance Criteria" heading, in order,
+    or each paragraph there when it holds no list; None when there is no such heading or it holds nothing."""
+    lines = (description if isinstance(description, str) else "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    fenced, heading = False, -1
+    for index, line in enumerate(lines):
+        if re.match(f"^[{JS_SPACE}]*(```|~~~)", line):
+            fenced = not fenced
+        if not fenced and CRITERIA_HEADING.match(line.strip(JS_SPACE_CHARS)):
+            heading = index
+            break
+    if heading < 0:
+        return None
+    items: list[list[str]] = []
+    paragraphs: list[list[str]] = [[]]
+    listed = False
+    for line in lines[heading + 1:]:
+        bare = line.strip(JS_SPACE_CHARS)
+        if re.match(f"^#{{1,6}}[{JS_SPACE}]", bare):
+            break
+        if not bare:
+            if paragraphs[-1]:
+                paragraphs.append([])
+            continue
+        if LIST_MARKER.match(line):
+            listed = True
+            items.append([LIST_MARKER.sub("", line, count=1)])
+        elif listed and items:
+            items[-1].append(line)  # a list item's continuation line
+        else:
+            paragraphs[-1].append(line)
+    return _criteria([" ".join(item) for item in items] if listed else [" ".join(lines) for lines in paragraphs])
+
+
+def criteria_of_adf(document: object) -> list[str] | None:
+    """The same from an Atlassian Document Format description: the list items, or else the paragraphs, between an
+    "Acceptance Criteria" heading and the next heading."""
+    blocks = document.get("content") if isinstance(document, dict) else None
+    if not isinstance(blocks, list):
+        return None
+    start = next((index for index, block in enumerate(blocks)
+                  if isinstance(block, dict) and block.get("type") == "heading"
+                  and CRITERIA_HEADING.match("## " + flatten_adf(block).strip())), None)
+    if start is None:
+        return None
+    items, paragraphs = [], []
+    for block in blocks[start + 1:]:
+        if not isinstance(block, dict) or block.get("type") == "heading":
+            break
+        if block.get("type") in ("orderedList", "bulletList"):
+            items += [" ".join(flatten_adf(item).split("\n")) for item in block.get("content") or []
+                      if isinstance(item, dict) and item.get("type") == "listItem"]
+        elif block.get("type") == "paragraph":
+            paragraphs.append(" ".join(flatten_adf(block).split("\n")))
+    return _criteria(items or paragraphs)
+
+
 def linear_snapshot(args: argparse.Namespace, environ: dict, transport: Transport, deadline: float,
                     clock: Callable[[], float], sleep: Callable[[float], None]) -> dict:
     # A personal key goes in the Authorization header as it is.
@@ -621,6 +703,9 @@ def linear_snapshot(args: argparse.Namespace, environ: dict, transport: Transpor
                 summary = summary_of(node.get("description"))
                 if summary is not None:
                     item["summary"] = summary
+                criteria = criteria_of(node.get("description"))
+                if criteria is not None:
+                    item["criteria"] = criteria
                 item["state"] = state
                 if blockers:
                     item["blockedBy"] = blockers
