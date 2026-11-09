@@ -4505,10 +4505,14 @@ class RunDeliveryPlanTests(unittest.TestCase):
         # The exemption is the removed story's alone: another added without its reason still refuses the removal.
         add_story(fx, path, "FX-5")
         add_story(fx, path, "FX-6")
+        before = (sh("git", "rev-parse", "HEAD", cwd=m).stdout, path.read_bytes(), self.held(fx))
         code, out = fx.flow("lead-plan", "change", "--kind", "removed", "--subjects", "FX-5", "--why", "Dropped.", cwd=m)
         self.assertEqual(code, 2, out)
         self.assertIn("FX-6 has no `why`", out)
         self.assertNotIn("FX-5 has no `why`", out)
+        # Refused before anything is written: no commit, no edit to the delivery file, nothing in the record or the log.
+        self.assertEqual((sh("git", "rev-parse", "HEAD", cwd=m).stdout, path.read_bytes(), self.held(fx)), before)
+        self.assertEqual(sh("git", "status", "--porcelain", cwd=m).stdout, "")
 
     def test_every_registering_command_copies_the_stories_why_into_its_added_change(self) -> None:
         for argv in (["lead-brief"], ["lead-reconcile"], ["lead-assign", "FX-4", "--lane", "lane-1", "--title", "Lane 1"]):
