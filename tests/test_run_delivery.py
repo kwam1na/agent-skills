@@ -3937,6 +3937,214 @@ def plan_delivery(fx: Fixture, path: Path | None = None) -> Path:
     return path
 
 
+THIS_PLAN = "docs/plans/2026-11-09-lead-hand-work.md"
+# The delivery this repository runs from that plan, as its stories' `after` keys and its lanes' lowest-tier rows say,
+# written out here so that nothing the lead's ownership moves rewrite is read. Stories are numbered under the
+# delivery's own key prefix, so the corpus names no tracker key.
+THIS_PLAN_AFTER = {3276: [], 3259: [], 3256: [3276, 3259], 3263: [3256], 3257: [3263], 3310: [3257], 3309: [3257, 3259]}
+THIS_PLAN_OWNS = {
+    "lane-1": ["skills/run-delivery/*", "tests/test_run_delivery.py", "tests/test_run_delivery_supervisor.py",
+               "tests/test_run_delivery_plan_review.py", "tests/test_run_delivery_tracker.py", "skills/plan-work/*",
+               "docs/solutions/*", "catalog.json", "profiles/*"],
+    "lane-2": ["skills/orchestrate-work/*", "tests/test_orchestration_state.py", "tests/test_orchestration_render.py",
+               "tests/test_merge_queue.py", "tests/test_lead_wait.py", "tests/test_registry.py", "skills/delivery-views/*",
+               "tests/test_delivery_views_page.py", "tests/test_delivery_views_snapshots.py", "tests/delivery_views_page/*",
+               "tests/fixtures/delivery-views/*"],
+}
+
+
+def plan_format_example() -> str:
+    """The plan-format example plan-work's SKILL.md documents."""
+    text = (ROOT / "skills/plan-work/SKILL.md").read_text(encoding="utf-8")
+    found = re.findall(r"^```markdown example plan-format\n(.*?)^```$", text, re.MULTILINE | re.DOTALL)
+    assert len(found) == 1, "plan-work's SKILL.md documents one plan-format example"
+    return found[0]
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class RunDeliveryPlanFormatTests(unittest.TestCase):
+    """lead-setup drafts each story's lane, criteria and order and the lanes' owns from a plan in plan-work's
+    format, and lead-hints passes the order on to orchestrate-work's next."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        for name, value in vars(installed_release()).items():
+            setattr(cls, name, value)
+
+    def fixture(self) -> Fixture:
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        return fx
+
+    def setup(self, fx: Fixture, plan: str, *extra: str, key: str = "EX-1") -> tuple[int, str, dict | None]:
+        (fx.main / "docs/format-plan.md").write_text(plan)
+        commit(fx.main, f"{key}: the plan")
+        code, out = fx.flow("lead-setup", key, "--plan", "docs/format-plan.md", "--base", "feature/FX-1",
+                            "--no-authority", *extra, cwd=fx.main)
+        path = fx.main / f".agents/deliveries/{key}.json"
+        return code, out, json.loads(path.read_text()) if path.exists() else None
+
+    def test_this_deliverys_plan_drafts_its_committed_lanes_criteria_order_and_owns(self) -> None:
+        listed = sh("git", "ls-tree", "--name-only", "HEAD", ".agents/deliveries/", cwd=ROOT).stdout.split()
+        files = [json.loads(sh("git", "show", f"HEAD:{name}", cwd=ROOT).stdout) for name in listed if name.endswith(".json")]
+        delivery = next(d for d in files if d.get("plan") == THIS_PLAN)
+        prefix = delivery["delivery"].rsplit("-", 1)[0]
+        named = lambda n: f"{prefix}-{n}"
+        after = {named(n): [named(k) for k in keys] for n, keys in THIS_PLAN_AFTER.items()}
+        committed = delivery["stories"]
+        # The tracker snapshot carries each item's criteria, as the snapshot producer reads them from the item.
+        items = [{"subject": key, "title": story["title"], "state": "backlog",
+                  "criteria": [criterion["text"] for criterion in story.get("criteria", [])]}
+                 for key, story in committed.items()]
+        tracker = self.fixture()
+        snapshot = tracker.tmp / "tracker.json"
+        snapshot.write_text(json.dumps({"takenAt": "2026-11-09T00:00:00Z", "source": "tracker", "items": items}))
+        code, out, drafted = self.setup(tracker, (ROOT / THIS_PLAN).read_text(encoding="utf-8"),
+                                        "--tracker-snapshot", str(snapshot), key=delivery["delivery"])
+        self.assertEqual(code, 0, out)
+        stories = drafted["stories"]
+        self.assertLessEqual(set(committed), set(stories), out)
+        for key, story in committed.items():
+            with self.subTest(key):
+                self.assertEqual(stories[key]["lane"], story["lane"])
+                self.assertEqual([c["text"] for c in stories[key].get("criteria", [])],
+                                 [c["text"] for c in story.get("criteria", [])])
+                # A story added since the row was written isn't in its table: its delivery-file story holds its keys.
+                expected = after.get(key, story.get("after", []))
+                self.assertEqual(stories[key].get("after", []), story.get("after", expected))
+                self.assertEqual(stories[key].get("after", []), expected)
+        self.assertEqual({lane: entry["owns"] for lane, entry in drafted["lanes"].items()}, THIS_PLAN_OWNS)
+        self.assertNotIn("unassigned", out)
+        self.assertNotIn("drafted no", out)
+
+    def test_plan_works_example_drafts_every_story_with_no_hand_edit(self) -> None:
+        fx = self.fixture()
+        code, out, drafted = self.setup(fx, plan_format_example())
+        self.assertEqual(code, 0, out)
+        self.assertEqual({key: (story["lane"], story.get("after", [])) for key, story in drafted["stories"].items()},
+                         {"EX-2": ("lane-1", []), "EX-3": ("lane-2", ["EX-2"]), "EX-4": ("lane-2", ["EX-2", "EX-3"])})
+        self.assertEqual({key: story["title"] for key, story in drafted["stories"].items()},
+                         {"EX-2": "Serve the greeting from the API", "EX-3": "Show the greeting on the front page",
+                          "EX-4": "Greet a returning visitor by name"})
+        # Each lane's lowest-tier row: lane-2's tier-2 row is what it gains later, not its owns.
+        self.assertEqual(drafted["lanes"], {"lane-1": {"owns": ["src/api/*", "tests/test_api.py"]},
+                                            "lane-2": {"owns": ["src/web/*", "tests/test_web.py"]}})
+        # With no tracker snapshot, no story has criteria, and lead-setup says so.
+        self.assertTrue(all("criteria" not in story for story in drafted["stories"].values()), drafted)
+        self.assertIn("note: no tracker snapshot (pass --tracker-snapshot, or declare the binding's "
+                      "state.trackerSnapshot): drafted no story's criteria", out)
+
+    def test_a_section_with_no_lane_sentence_leaves_its_story_unassigned_and_says_so(self) -> None:
+        fx = self.fixture()
+        plan = plan_format_example().replace("Lane 2, tier 1, after EX-2. Test-first.", "Test-first.")
+        code, out, drafted = self.setup(fx, plan)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(drafted["stories"]["EX-3"]["lane"], "unassigned")
+        self.assertNotIn("after", drafted["stories"]["EX-3"])
+        self.assertIn("note: plan story EX-3's section doesn't open with its lane sentence", out)
+        self.assertIn("left it unassigned", out)
+        self.assertEqual(drafted["stories"]["EX-2"]["lane"], "lane-1")
+
+    def test_only_headings_under_stories_are_stories_and_a_lanes_lowest_tier_row_wins_in_any_order(self) -> None:
+        fx = self.fixture()
+        example = plan_format_example()
+        # A story heading outside `## Stories` drafts nothing, and a table listing lane-2's tier-2 row first still
+        # drafts its tier-1 owns.
+        plan = (example.replace("| 1 | 2 | EX-3 | `src/web/`, `tests/test_web.py` |\n| 2 | 2 | EX-4 | `src/api/` |",
+                                "| 2 | 2 | EX-4 | `src/api/` |\n| 1 | 2 | EX-3 | `src/web/`, `tests/test_web.py` |")
+                .replace("## Stories", "### EX-9. Not a story\n\nLane 1, tier 1, not blocked.\n\n## Stories"))
+        self.assertNotEqual(plan, example)
+        self.assertIn("| 2 | 2 | EX-4 | `src/api/` |\n| 1 | 2 | EX-3", plan)
+        code, out, drafted = self.setup(fx, plan)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(sorted(drafted["stories"]), ["EX-2", "EX-3", "EX-4"])
+        self.assertEqual(drafted["lanes"]["lane-2"], {"owns": ["src/web/*", "tests/test_web.py"]})
+
+    def test_the_lane_sentence_counts_only_as_its_sections_opening_sentence(self) -> None:
+        fx = self.fixture()
+        plan = plan_format_example().replace("Lane 2, tier 1, after EX-2. Test-first.", "Test-first. Lane 2, tier 1, after EX-2.")
+        code, out, drafted = self.setup(fx, plan)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(drafted["stories"]["EX-3"]["lane"], "unassigned")
+        self.assertIn("note: plan story EX-3's section doesn't open with its lane sentence", out)
+
+    def test_lead_setup_notes_a_lane_with_no_units_row_and_an_after_key_with_no_story(self) -> None:
+        fx = self.fixture()
+        plan = plan_format_example().replace("Lane 2, tier 2, after EX-2 and EX-3.", "Lane 3, tier 1, after EX-9.")
+        code, out, drafted = self.setup(fx, plan)
+        self.assertEqual(code, 0, out)
+        self.assertEqual((drafted["stories"]["EX-4"]["lane"], drafted["stories"]["EX-4"]["after"]), ("lane-3", ["EX-9"]))
+        self.assertEqual(drafted["lanes"]["lane-3"], {"owns": []})
+        self.assertIn("note: plan story EX-4 comes after EX-9, which the plan has no story for", out)
+        self.assertIn("note: lane-3 has stories but no row in the plan's 'Units and order' table: drafted it owning "
+                      "nothing", out)
+
+    def test_criteria_come_from_the_tracker_snapshot_and_a_story_without_any_is_named(self) -> None:
+        fx = self.fixture()
+        snapshot = fx.tmp / "tracker.json"
+        snapshot.write_text(json.dumps({"takenAt": "2026-11-09T00:00:00Z", "source": "tracker", "items": [
+            {"subject": "EX-2", "state": "backlog", "criteria": ["The API serves it", "It says when it fails"]},
+            {"subject": "EX-3", "state": "backlog"},
+            {"subject": "EX-4", "state": "backlog", "criteria": []}]}))
+        code, out, drafted = self.setup(fx, plan_format_example(), "--tracker-snapshot", str(snapshot))
+        self.assertEqual(code, 0, out)
+        self.assertEqual(drafted["stories"]["EX-2"]["criteria"], [{"id": "ex-2-1", "text": "The API serves it"},
+                                                                 {"id": "ex-2-2", "text": "It says when it fails"}])
+        for key in ("EX-3", "EX-4"):
+            self.assertNotIn("criteria", drafted["stories"][key])
+            self.assertIn(f"note: plan story {key}'s tracker item has no Acceptance Criteria section", out)
+        # The binding's own tracker snapshot, run for the delivery, when no file is given.
+        binding = fx.main / ".agents/orchestration.json"
+        document = json.loads(binding.read_text()) if binding.exists() else {}
+        # The command runs for the delivery's own key: it prints the snapshot only when {parent} is EX-1.
+        argv = ["sh", "-c", 'test "$1" = EX-1 && cat "$2"', "sh", "{parent}", str(snapshot)]
+        rerun = lambda: fx.flow("lead-setup", "EX-1", "--plan", "docs/format-plan.md", "--base", "feature/FX-1",
+                                "--no-authority", "--force", cwd=fx.main)
+        document.setdefault("state", {})["trackerSnapshot"] = {"argv": argv}
+        binding.write_text(json.dumps(document, indent=2))
+        commit(fx.main, "EX-1: the binding's tracker snapshot")
+        code, out = rerun()
+        self.assertEqual(code, 0, out)
+        drafted = json.loads((fx.main / ".agents/deliveries/EX-1.json").read_text())
+        self.assertEqual([c["id"] for c in drafted["stories"]["EX-2"]["criteria"]], ["ex-2-1", "ex-2-2"])
+        self.assertNotIn("no tracker snapshot", out)
+        # When the command fails or prints no snapshot, lead-setup says so and drafts no criteria.
+        for failing, words in ((["sh", "-c", "echo boom >&2; exit 3"], "the binding's tracker snapshot failed (3: boom)"),
+                               (["echo", "not json"], "the binding's tracker snapshot printed no snapshot")):
+            with self.subTest(failing=failing):
+                document["state"]["trackerSnapshot"] = {"argv": failing}
+                binding.write_text(json.dumps(document, indent=2))
+                commit(fx.main, "EX-1: a failing tracker snapshot")
+                code, out = rerun()
+                self.assertEqual(code, 0, out)
+                self.assertIn(f"note: {words}: drafted no story's criteria", out)
+                drafted = json.loads((fx.main / ".agents/deliveries/EX-1.json").read_text())
+                self.assertTrue(all("criteria" not in story for story in drafted["stories"].values()), drafted)
+
+    def test_lead_hints_passes_each_storys_after_keys_and_plan_files_as_work_hints(self) -> None:
+        fx = self.fixture()
+        code, out, drafted = self.setup(fx, plan_format_example())
+        self.assertEqual(code, 0, out)
+        path = fx.main / ".agents/deliveries/EX-1.json"
+        drafted["stateDirectory"] = str(fx.tmp / "record-ex")
+        path.write_text(json.dumps(drafted, indent=2))
+        commit(fx.main, "EX-1: delivery")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+        code, out = fx.flow("--delivery", "EX-1", "lead-hints", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        hints = json.loads(out)
+        self.assertEqual(hints, {"items": {
+            "EX-2": {"files": ["src/api/greeting.py", "tests/test_api.py"]},
+            "EX-3": {"files": ["src/web/front.py", "src/web/templates/*", "tests/test_web.py"], "blockers": ["EX-2"]},
+            "EX-4": {"files": ["src/api/visitor.py"], "blockers": ["EX-2", "EX-3"]}}})
+        # It is a work-hints/1 the release's next reads.
+        checked = subprocess.run(
+            [sys.executable, "-B", "-c", "import json, sys; sys.path.insert(0, sys.argv[1]); import delivery_state; "
+             "delivery_state.check_hints(json.loads(sys.argv[2]), 'hints'); print('ok')",
+             str(fx.release / "skills/orchestrate-work/scripts"), out], capture_output=True, text=True)
+        self.assertEqual(checked.stdout.strip(), "ok", checked.stderr)
+
+
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
 class RunDeliveryPlanTests(unittest.TestCase):
     """The plan chapter's producer: plan.json from the delivery file, the changes log and the lead-side flow logs,
@@ -4542,6 +4750,143 @@ class RunDeliveryPlanTests(unittest.TestCase):
         self.assertIn("registered FX-4", out)
         self.assertEqual([(c["kind"], c["subjects"], c.get("why"), c.get("source")) for c in self.plan(fx)["changes"]],
                          [("added", ["FX-4"], "A lane found the gap.", "registration")])
+
+    def test_lead_plan_adds_a_whole_story_in_one_command_which_lead_assign_then_accepts(self) -> None:
+        fx = self.fixture()
+        path = plan_delivery(fx)
+        m = fx.main
+        fx.flow("lead-init", cwd=m)
+        # The tracker reconcile already filed the ticket as a follow-up: the add moves it out.
+        state_script = fx.release / "skills/orchestrate-work/scripts/delivery_state.py"
+        version = self.record(fx)["state"]["version"]
+        sh(sys.executable, "-B", state_script, "--dir", fx.tmp / "record", "patch", "--writer", "lead", "--version",
+           version, "--patch", json.dumps({"followups": [{"id": "FX-4", "title": "four", "reference": "FX-4"},
+                                                         {"id": "FX-8", "title": "eight", "reference": "FX-8"}]}))
+        head = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
+        code, out = fx.flow("lead-plan", "change", "--kind", "added", "--subjects", "FX-4", "--title", "Thing four",
+                            "--text", "Thing four works", "--why", "A lane found the gap.", "--lane", "lane-1",
+                            "--after", "FX-2", cwd=m)
+        self.assertEqual(code, 0, out)
+        # One commit holds the delivery-file story, with its reason, and the plan's heading.
+        self.assertEqual(sh("git", "rev-list", "--count", f"{head}..HEAD", cwd=m).stdout.strip(), "1")
+        self.assertEqual(sorted(sh("git", "show", "--name-only", "--format=", "HEAD", cwd=m).stdout.split()),
+                         sorted([".agents/deliveries/FX-1.json", "docs/plan.md"]))
+        self.assertEqual(sh("git", "status", "--porcelain", cwd=m).stdout, "")
+        self.assertEqual(json.loads(path.read_text())["stories"]["FX-4"], {
+            "title": "Thing four", "lane": "lane-1", "why": "A lane found the gap.",
+            "criteria": [{"id": "fx-4-1", "text": "Thing four works"}], "after": ["FX-2"]})
+        plan = (m / "docs/plan.md").read_text()
+        self.assertIn("### FX-4. Thing four\n\nLane 1, tier 1, after FX-2. Added mid-delivery: A lane found the gap.\n",
+                      plan)
+        # The planned entry, and one `added` change with its reason: registration finds the story held.
+        self.assertIn({"subject": "FX-4", "title": "Thing four", "lane": "lane-1", "stage": "planned"},
+                      self.record(fx)["state"]["planned"])
+        self.assertEqual([f["id"] for f in self.record(fx)["state"]["followups"]], ["FX-8"],
+                         "the added story is still a follow-up, or another follow-up went with it")
+        changes = lambda: [(c["kind"], c["subjects"], c.get("why"), c["source"]) for c in self.plan(fx)["changes"]]
+        self.assertEqual(changes(), [("added", ["FX-4"], "A lane found the gap.", "lead-plan")])
+        self.assertEqual(self.plan(fx)["units"][-1]["criteria"], [{"id": "fx-4-1", "text": "Thing four works"}])
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        for argv in (["lead-assign", "FX-4", "--lane", "lane-1", "--title", "Lane 1"], ["lead-brief"], ["lead-reconcile"]):
+            code, out = fx.flow(*argv, cwd=m)
+            self.assertEqual(code, 0, f"{argv[0]}: {out}")
+            self.assertNotIn("has no `why`", out)
+        self.assertEqual(changes(), [("added", ["FX-4"], "A lane found the gap.", "lead-plan")],
+                         "registration recorded the story a second time")
+        added = [e for e in self.record(fx)["journal"]
+                 if e.get("subject") == "FX-4" and "added to the delivery as planned work" in e["summary"]]
+        self.assertEqual(len(added), 1, added)
+
+    def test_registration_waits_for_the_plans_lock_so_a_whole_story_add_is_never_registered_twice(self) -> None:
+        fx = self.fixture()
+        path = plan_delivery(fx)
+        m = fx.main
+        fx.flow("lead-init", cwd=m)
+        # As lead-plan's add leaves it mid-way: the story in the delivery file, not yet planned, the lock held.
+        add_story(fx, path, "FX-4", why="A lane found the gap.")
+        lock = fx.tmp / "flow-log/plan.lock"
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        with open(lock, "a+") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            sweep = subprocess.Popen([sys.executable, "-B", str(fx.tool), "lead-brief"], cwd=m, env=fx.env,
+                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            self.addCleanup(lambda: sweep.poll() is None and (sweep.kill(), sweep.wait()))
+            # Not a fixed wait, which a slow machine could outrun: the sweep is seen holding the lock file open, waiting
+            # on it, before anything is asserted. Without the lock it opens the file only to record its change, after
+            # it has already planned the story.
+            deadline = time.monotonic() + 120
+            while time.monotonic() < deadline and sweep.poll() is None:
+                holders = subprocess.run(["lsof", "-t", str(lock)], capture_output=True, text=True).stdout.split()
+                if str(sweep.pid) in holders:
+                    break
+                time.sleep(0.2)
+            else:
+                self.fail("the sweep never reached the plan's lock")
+            self.assertIsNone(sweep.poll(), "registration ran without the plan's lock")
+            self.assertNotIn("FX-4", [p["subject"] for p in self.record(fx)["state"]["planned"]],
+                             "registration planned the story while the lock was held")
+            fcntl.flock(held, fcntl.LOCK_UN)
+        out, _ = sweep.communicate(timeout=300)
+        self.assertEqual(sweep.returncode, 0, out)
+        self.assertIn("registered FX-4", out)
+        self.assertEqual([(c["kind"], c["subjects"]) for c in self.plan(fx)["changes"]], [("added", ["FX-4"])])
+
+    def test_lead_plans_added_heading_takes_the_lanes_latest_tier_and_never_repeats_one(self) -> None:
+        fx = self.fixture()
+        path = plan_delivery(fx)
+        m = fx.main
+        plan = m / "docs/plan.md"
+        plan.write_text(plan.read_text() + "\n## Units and order\n\n| Tier | Lane | Items, in order | Owns |\n"
+                        "| --- | --- | --- | --- |\n| 1 | 1 | FX-2 | `src/one.txt` |\n| 2 | 1 | FX-4 | `src/four.txt` |\n"
+                        "\n### FX-5. Thing five\n\nWritten by the lead before the add.\n")
+        commit(m, "FX-1: units and a heading for FX-5")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        fx.flow("lead-init", cwd=m)
+        add = lambda key, title: fx.flow("lead-plan", "change", "--kind", "added", "--subjects", key, "--title", title,
+                                         "--text", f"{title} works", "--why", "Found mid-way.", "--lane", "lane-1", cwd=m)
+        code, out = add("FX-4", "Thing four")
+        self.assertEqual(code, 0, out)
+        self.assertIn("### FX-4. Thing four\n\nLane 1, tier 2, not blocked. Added mid-delivery: Found mid-way.\n",
+                      plan.read_text())
+        code, out = add("FX-5", "Thing five")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(plan.read_text().count("### FX-5."), 1, "a heading the plan already held was written again")
+        self.assertEqual(sh("git", "show", "--name-only", "--format=", "HEAD", cwd=m).stdout.split(),
+                         [".agents/deliveries/FX-1.json"])
+        self.assertEqual(json.loads(path.read_text())["stories"]["FX-5"]["why"], "Found mid-way.")
+
+    def test_lead_plan_refuses_a_whole_story_it_cant_add_and_writes_nothing(self) -> None:
+        fx = self.fixture()
+        path = plan_delivery(fx)
+        m = fx.main
+        fx.flow("lead-init", cwd=m)
+        story = ["lead-plan", "change", "--kind", "added", "--subjects", "FX-4", "--title", "Thing four", "--text", "It works"]
+        before = lambda: (sh("git", "rev-parse", "HEAD", cwd=m).stdout, path.read_bytes(), (m / "docs/plan.md").read_bytes(),
+                          self.held(fx))
+        held = before()
+        for argv, words in (
+                ([*story, "--lane", "lane-1"], "the following arguments are required: --why"),
+                ([*story, "--why", "W"], "--kind added adds it whole with --title, --text (its first criterion) and --lane"),
+                ([*story, "--why", "W", "--lane", "lane-9"], "--lane lane-9 isn't a lane of FX-1"),
+                ([*story, "--why", "W", "--lane", "lane-1", "--after", "FX-8"], "--after FX-8 isn't a story of FX-1"),
+                ([*story, "--why", "W", "--lane", "lane-1", "--criterion", "one-loads"], "criterion one-loads already exists"),
+                ([*story, "--why", "", "--lane", "lane-1"], "FX-4 has a `why` the plan can't carry"),
+                (["lead-plan", "change", "--kind", "relaxed", "--subjects", "FX-4", "--criterion", "x", "--text", "y",
+                  "--why", "W"], "FX-4 isn't a story of FX-1")):
+            with self.subTest(argv=argv):
+                code, out = fx.flow(*argv, cwd=m)
+                self.assertEqual(code, 2, out)
+                self.assertIn(words, out)
+                self.assertEqual(before(), held)
+                self.assertEqual(sh("git", "status", "--porcelain", cwd=m).stdout, "")
+        # Built on registration's refusal: while a story added by hand waits without its reason, the add refuses too,
+        # naming that story, and writes nothing.
+        add_story(fx, path, "FX-5")
+        held = before()
+        code, out = fx.flow(*story, "--why", "W", "--lane", "lane-1", cwd=m)
+        self.assertEqual(code, 2, out)
+        self.assertIn("FX-5 has no `why`", out)
+        self.assertEqual(before(), held)
 
     def test_lead_plan_removes_a_story_added_without_a_why_and_records_no_added_change_for_it(self) -> None:
         fx = self.fixture()

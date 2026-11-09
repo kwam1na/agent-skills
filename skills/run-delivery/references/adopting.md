@@ -314,8 +314,23 @@ python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lea
 (`push`, `draftPullRequests`, or both) and `--granted-by` who allowed it. `--no-authority` says lanes get none and hand
 their branches to the lead.
 
-Complete it from the plan: the lanes and the files each owns, each story's lane and the in-app checks its hand-off
-needs (`"loaded"` here: one passing check of the running app), the finish lines, and where the record lives.
+A plan in plan-work's format (its SKILL.md, "Plan Format for a Delivery", has the grammar and an example) needs no
+`--pattern`: each `### KEY. Title` under `## Stories` is a story. Its section's opening sentence, `Lane N, tier T, not
+blocked.` or `Lane N, tier T, after KEY.`, gives its lane, `lane-N`, and its `after` keys. The `Units and order`
+table's lowest-tier row for each lane gives that lane's `owns`, a folder `dir/` becoming `dir/*`. Each story's criteria
+come from its tracker item's Acceptance Criteria section, which the tracker snapshot carries: `--tracker-snapshot F`,
+or else the binding's `state.trackerSnapshot`, run for the delivery's key. `lead-setup` notes each story it left
+unassigned, each lane it found no row for, and each story it drafted no criteria for, and why.
+
+The `after` keys are the plan's order. `next` reads them without the tracker once the binding names `lead-hints` as
+its `state.workHints`, with the argv `python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py
+--delivery {parent} lead-hints`. It prints each story's `Files:` paths as its files and its `after` keys as its
+blockers. A blocker stops blocking once the record holds it merged, or the tracker snapshot holds it completed or
+canceled.
+
+Complete the rest from the plan: the in-app checks each story's hand-off needs (`"loaded"` here: one passing check of
+the running app), the finish lines, and where the record lives. A plan in another format leaves the lanes, each story's
+lane and the files each lane owns to you.
 
 Criteria turn on the live view's plan chapter, which shows whether the work is still what was agreed and what proves
 it; the finish line's `label` and `covers` and the `outcome` shape it. Every key is optional; a delivery file with no
@@ -389,7 +404,7 @@ checked, and why.
 Once the delivery has started, change the plan's criteria and finish lines only through `lead-plan change`. It records
 what the plan said before and after and why, edits the delivery file, and commits it; it never pushes, and it refuses
 on a checkout with uncommitted changes or one behind the base. `--kind changed` or `relaxed` rewords a criterion,
-`added` adds one to a story, `removed` takes stories out of the delivery (the plan keeps them, marked removed), and
+`added` adds one to a story (or, for a key the delivery doesn't hold yet, the whole story, below), `removed` takes stories out of the delivery (the plan keeps them, marked removed), and
 `finish` changes or adds a finish line's `covers`. Push the commit so lanes see it:
 
 ```sh example repo
@@ -398,7 +413,16 @@ python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lea
 git push -q origin main
 ```
 
-To add a story mid-delivery, add it to the delivery file and the plan with a `why`, one line saying why it joins the
+To add a story mid-delivery, one command does it all: `lead-plan change --kind added --subjects <new-key> --title T
+--text C --why W --lane L [--after KEY ...]`. It adds the story's `### KEY. Title` heading to the plan's
+`## Stories`, opening with its lane sentence. It adds the delivery-file story with its `why`, its first criterion
+`C` (id `<key>-1`, or `--criterion`) and its `after` keys. Then it records one `added` change carrying `W`, commits
+the delivery file and the plan together, and enters the story as planned work, so `lead-assign` accepts it once you
+push. Without `--why` it refuses, as it does with a `why` the plan can't carry, an unknown lane or `--after` key, or
+a criterion id already taken, and it writes nothing. On a key the delivery already holds, `--kind added` adds a
+criterion to that story instead.
+
+By hand instead: add the story to the delivery file and the plan with a `why`, one line saying why it joins the
 delivery, then commit and push. `lead-brief`, `lead-reconcile` or `lead-assign` registers it as planned work, and the
 plan records it as an `added` change carrying that `why`, such as `"why": "Review found the gap it closes"` beside
 the story's `title` and `lane`.
