@@ -56,6 +56,7 @@ import socket
 import subprocess
 import tempfile
 import time
+import warnings
 from collections.abc import Callable
 from pathlib import Path
 
@@ -143,8 +144,9 @@ def repo() -> Path:
     return Path(git("rev-parse", "--show-toplevel"))
 
 
-def main_checkout() -> Path:
-    return Path(git("rev-parse", "--path-format=absolute", "--git-common-dir")).parent
+def main_checkout(cwd: Path | None = None) -> Path:
+    """The main checkout of the repository at `cwd`, or at the working directory when no folder is given."""
+    return Path(git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=cwd)).parent
 
 
 def clean_head(cwd: Path | None = None) -> str:
@@ -398,7 +400,9 @@ class Config:
 
     def __init__(self, root: Path, delivery: str | None = None, need_delivery: bool = True, tolerant: bool = False,
                  pick: bool = True):
-        self.root, self.main = root, main_checkout()
+        # Its main checkout and, below, its branch are the root's own, never the working directory's: a configuration
+        # built for one repository from inside another resolves that repository's deliveries, and no other's.
+        self.root, self.main = root, main_checkout(root)
         self.sources: dict[str, str] = {}
         self.conflicts: list[str] = []
         self.shelf = shelf_for(root)
@@ -565,7 +569,7 @@ class Config:
         keys = self.delivery_keys()
         if len(keys) == 1:
             return keys[0]
-        branch = git("rev-parse", "--abbrev-ref", "HEAD", check=False)
+        branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=self.root, check=False)
         matches = []
         for key in keys:
             d = self.shelf.json(f"{self.deliveries_rel}/{key}.json") or {}
@@ -2196,7 +2200,9 @@ class Lease:
             except BlockingIOError:
                 if time.time() > deadline:
                     self.file.seek(0)
-                    raise Stop(f"the in-app lease is held ({self.file.read().strip() or 'unknown holder'}); gave up after {wait}s")
+                    holder = self.file.read().strip() or "unknown holder"
+                    self.file.close()  # a lease given up holds nothing, not even its file
+                    raise Stop(f"the in-app lease is held ({holder}); gave up after {wait}s")
                 time.sleep(min(3, max(0.1, wait / 10)))
         self.file.seek(0)
         for group in re.findall(r"pgid (\d+)", self.file.read()):  # we hold the lock, so their owner is gone
@@ -5872,14 +5878,21 @@ def start_supervisor(c) -> str:
         proc = subprocess.Popen(argv, cwd=c.root, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
                                 start_new_session=True)
     deadline = time.monotonic() + SUPERVISOR_WAIT_SECONDS
-    while time.monotonic() < deadline:
-        held, recorded = read_lock(supervisor_lock_path(c))
-        if held and recorded.get("pid") == proc.pid and recorded.get("address"):
-            return recorded["address"]
-        if proc.poll() is not None:
-            raise Stop(f"the supervisor stopped as it started: {log.read_text()[-600:].strip()}; its log is {log}")
-        time.sleep(0.1)
-    raise Stop(f"the supervisor didn't start within {SUPERVISOR_WAIT_SECONDS}s; its log is {log}")
+    try:
+        while time.monotonic() < deadline:
+            held, recorded = read_lock(supervisor_lock_path(c))
+            if held and recorded.get("pid") == proc.pid and recorded.get("address"):
+                return recorded["address"]
+            if proc.poll() is not None:
+                raise Stop(f"the supervisor stopped as it started: {log.read_text()[-600:].strip()}; its log is {log}")
+            time.sleep(0.1)
+        raise Stop(f"the supervisor didn't start within {SUPERVISOR_WAIT_SECONDS}s; its log is {log}")
+    finally:
+        # The supervisor is started to outlive this command, which never waits for it, so the handle is let go here:
+        # without this, dropping it later warns that the subprocess "is still running".
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ResourceWarning)
+            del proc
 
 
 def stop_orphans(c) -> list[str]:
@@ -8185,7 +8198,10 @@ def doctor(args) -> None:
 # -- entry ---------------------------------------------------------------------------------
 
 def main(argv: list[str] | None = None) -> None:
-    global DELIVERY_ARG
+    global CFG, DELIVERY_ARG
+    # Each call resolves its own configuration: none an earlier call in this process left, for another repository or
+    # delivery, is this one's.
+    CFG = None
     parser = argparse.ArgumentParser(prog="run_delivery.py", description=__doc__.split("\n\n")[0], allow_abbrev=False)
     parser.add_argument("--delivery", help="the delivery key, when the repository has several")
     sub = parser.add_subparsers(dest="command", required=True)
