@@ -254,6 +254,10 @@ current list holds the close, and otherwise doesn't show.
 Record proofs are derived in the page from every record it draws, embedded or
 pushed, by the same lookups The line uses:
 
+- A unit whose planned element is `settled`, closed with no change needed, has
+  every proof it owes done, and reads "Closed, no change needed", its card
+  showing the evidence and the base head it ran at. It counts as landed. One
+  handed off with no change and waiting for the lead reads as handed over.
 - **`handed`** is done when a queue item exists for the subject, its stage is
   not `stopped`, and it is not pending acceptance.
 - **`merged`** is done when the queue item's stage is `merged`. A hand-off after

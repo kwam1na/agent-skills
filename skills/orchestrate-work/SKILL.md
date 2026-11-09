@@ -80,6 +80,9 @@ file that is malformed or can't be read runs `fullHealth` and holds the close on
   it gives in `queue[i].evidence`, which only a hand-off writes. Every write goes
   through the state tool, which checks the declared writer against this
   ownership and refuses anything else with `writer_not_owned` for a lane.
+  A story whose criteria already hold needs no change: the lane's
+  `handoff --no-change` moves its planned work to `review` with its evidence,
+  for the lead to settle, and it never enters the queue.
 
 ## Lead authority
 
@@ -190,7 +193,7 @@ ending in `/` or globs; the `changedFiles` its change actually touches, once
 it has one, used in their place; its `priority`, 1 the most urgent to 4, or
 null; and its `blockers`, the subjects it comes after in the plan's order, so
 the order holds when the tracker has none. A blocker stops blocking once the
-record holds it merged, or the snapshot holds it completed or canceled. The repository's own command produces it when the binding declares
+record holds it merged or settled with no change needed, or the snapshot holds it completed or canceled. The repository's own command produces it when the binding declares
 `state.workHints`, `{argv, timeoutSeconds?}`, run like `trackerSnapshot` with
 `{parent}`; how it learns files and priorities is the repository's choice. A
 `--hints` file is the fallback when the binding declares no command or the
