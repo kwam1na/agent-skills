@@ -181,16 +181,16 @@ Setting `PYTHONDONTWRITEBYTECODE=1` for the suite stops it being written.
 ### Where the stored runtime comes from
 
 `product-runtime/` is the build output of `kwam1na/agent-delivery-harness`, now at
-`v26-technologies/agent-delivery-harness`. It declares 0.8.1 and was built with
+`v26-technologies/agent-delivery-harness`. It declares 0.8.2 and was built with
 `npm run product:build-runtime` from a clean checkout of
-`18e83c90fec353f96cf93775203541cf9062b9de`, that repository's `main` at the merge of its
-0.8.1 version bump, which the `v0.8.1` tag names. Like the 0.8.0 runtime before it, it is
-`main` itself. Over 0.8.0 it adds shallow snapshot materialization: a scoped check's snapshot
-fetches only the history from the candidate's merge-base to each tip, or the pinned commits
-alone when the check sees no Git, and keeps the whole history only where a side branch
-forked below the merge-base or the distance cannot be measured.
+`f93afd7c1dfae9208106da34633aaacdf1bfc5ba`, that repository's `main` at the merge of its
+0.8.2 version bump, which the `v0.8.2` tag names. Like the runtimes before it, it is
+`main` itself. Over 0.8.1, it prewarms each scoped check setup's warm base before any check takes a
+worker, one setup at a time, and orders them by each setup's own critical path. A worker takes a check
+only once its base has settled. Clones run one at a time, the longest-expected check's first. Over
+0.8.0, 0.8.1 added shallow snapshot materialization.
 
-`HARNESS_VERSION` 0.8.1 is part of every preparation fingerprint, so it invalidates
+`HARNESS_VERSION` 0.8.2 is part of every preparation fingerprint, so it invalidates
 receipts prepared by an earlier runtime: an adopter's in-flight deliveries prepare again
 after applying it.
 

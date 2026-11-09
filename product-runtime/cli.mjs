@@ -1514,7 +1514,7 @@ async function emitReviewEvidence(context, original, document) {
 
 // packages/cli/src/scoped-checks.ts
 import { randomUUID as randomUUID5 } from "node:crypto";
-import { access, mkdir as mkdir4, readFile as readFile3, realpath as realpath2, rm as rm3, stat } from "node:fs/promises";
+import { access, mkdir as mkdir4, readFile as readFile3, realpath as realpath2, rename as rename2, rm as rm3, stat, writeFile as writeFile4 } from "node:fs/promises";
 import path8 from "node:path";
 import {
   deliveryRecordPathFor as deliveryRecordPathFor2,
@@ -1961,6 +1961,25 @@ function oneAtATime() {
     return result;
   };
 }
+function highestFirst() {
+  const waiting = [];
+  let busy = false;
+  const next = () => {
+    if (busy || waiting.length === 0) return;
+    const index = waiting.reduce((best, entry, i) => entry.priority > waiting[best].priority ? i : best, 0);
+    busy = true;
+    waiting.splice(index, 1)[0].start();
+  };
+  return (priority, task) => new Promise((resolve, reject) => {
+    waiting.push({ priority, start: () => {
+      task().then(resolve, reject).finally(() => {
+        busy = false;
+        next();
+      });
+    } });
+    next();
+  });
+}
 var ScopedChecks = class _ScopedChecks {
   /** `scopedExecution.concurrency` workers, each owning its snapshots; the first is the serial lane. */
   workers;
@@ -1978,6 +1997,16 @@ var ScopedChecks = class _ScopedChecks {
   /** With more than one worker: one read-only warm base per setup key, which no command runs in. Each
    * worker takes a copy-on-write clone of it; without cloning each worker builds its own, as before. */
   bases = /* @__PURE__ */ new Map();
+  /** Each base's settlement, after which its entry is current: a failed setup has left `bases`. */
+  settling = /* @__PURE__ */ new WeakMap();
+  settled = /* @__PURE__ */ new WeakSet();
+  /** Stops the bases `prewarm` started, which no attempt owns, once no check can need one still setting up. */
+  prewarming = new AbortController();
+  /** Prewarmed bases not yet taken as a worker's own tree, which a path-bound one becomes. */
+  prewarmedBases = /* @__PURE__ */ new WeakSet();
+  /** Concurrent copy-on-write clones of one large tree each take several times as long as one alone, so
+   * they run one at a time, the check expected to run longest first. */
+  cloningOne = highestFirst();
   cloning;
   /** Profiles whose checks a tree has run and verified since it was made: their outputs may be in it. */
   ranOutputs = /* @__PURE__ */ new WeakMap();
@@ -2139,13 +2168,22 @@ var ScopedChecks = class _ScopedChecks {
    * duration less that attempt's own dependency setup; never-timed checks follow timed ones and ties keep
    * declaration order. Checks then run one dependency setup at a time, in the order each setup first
    * appears, so each setup installs once. */
+  /** A check's most recent passed or failed attempt's duration less that attempt's own dependency setup, any
+   * wait for another's warm base, and its clone with that clone's queue; undefined for a never-timed check. */
+  async lastCost(id) {
+    const last = (await this.stores.get(id).read()).filter((r) => r.attempt.status === "passed" || r.attempt.status === "failed").at(-1)?.payload;
+    const waited = last?.diagnostic?.setup?.phases.filter((p) => p.phase === "warm-base-wait" || p.phase === "clone").reduce((sum, p) => sum + p.durationMs, 0) ?? 0;
+    return last?.durationMs === void 0 ? void 0 : last.durationMs - (last.diagnostic?.dependency?.durationMs ?? 0) - waited;
+  }
+  /** How long each check is expected to run: its last cost, or, never timed, its declared `timeoutMs`. */
+  async expectedCosts(ids) {
+    const costs = /* @__PURE__ */ new Map();
+    for (const id of ids) costs.set(id, await this.lastCost(id) ?? this.context.config.providers.find((p) => p.id === id)?.check?.timeoutMs ?? 0);
+    return costs;
+  }
   async cheapestFirst(ids) {
     const cost = /* @__PURE__ */ new Map();
-    for (const id of ids) {
-      const last = (await this.stores.get(id).read()).filter((r) => r.attempt.status === "passed" || r.attempt.status === "failed").at(-1)?.payload;
-      const waited = last?.diagnostic?.setup?.phases.filter((p) => p.phase === "warm-base-wait").reduce((sum, p) => sum + p.durationMs, 0) ?? 0;
-      cost.set(id, last?.durationMs === void 0 ? Infinity : last.durationMs - (last.diagnostic?.dependency?.durationMs ?? 0) - waited);
-    }
+    for (const id of ids) cost.set(id, await this.lastCost(id) ?? Infinity);
     const [first, ...rest] = ids;
     if (first === void 0) return [];
     const byCost = [first, ...rest.sort((a, b) => cost.get(a) === cost.get(b) ? 0 : cost.get(a) < cost.get(b) ? -1 : 1)];
@@ -2157,26 +2195,94 @@ var ScopedChecks = class _ScopedChecks {
    * snapshots, so two checks never share one at once. A worker prints a check's lines together when it
    * finishes; a single worker prints them as they come. After a check throws no new id starts, the running
    * ones finish, and the first failure in `ids` order is thrown.
+   *
+   * A worker takes the first remaining id whose warm base is not still setting up, so no check's setup waits
+   * on a base being built; while every remaining id's base is, the worker waits for one to settle before
+   * taking a check. Once `halted`, the remaining ids are taken in order without waiting. With `expected`, a
+   * worker takes the startable id expected to run longest instead, and its clone queues by that cost, so
+   * the critical path gets its base, clone and worker first.
    */
-  async pool(ids, run) {
-    const failures = /* @__PURE__ */ new Map();
-    let next = 0;
-    await Promise.all(this.workers.map(async (snapshots) => {
-      while (next < ids.length && failures.size === 0) {
-        const id = ids[next++], lines = [];
-        try {
-          await run(id, this.concurrency === 1 ? this.serial : { snapshots, write: (text2) => {
-            lines.push(text2);
-          } });
-        } catch (error) {
-          failures.set(id, error);
-        } finally {
-          for (const line of lines) this.context.write(line);
+  async pool(ids, run, halted = () => false, expected) {
+    const failures = /* @__PURE__ */ new Map(), remaining = [...ids];
+    const sleepers = /* @__PURE__ */ new Set();
+    const woken = () => new Promise((resolve) => {
+      sleepers.add(resolve);
+    });
+    const waker = () => {
+      for (const sleeper of [...sleepers]) sleeper();
+      sleepers.clear();
+    };
+    this.poolWakers.add(waker);
+    const take = async () => {
+      for (; ; ) {
+        if (failures.size > 0 || remaining.length === 0) return void 0;
+        const index = halted() ? 0 : remaining.reduce((best, id, i) => !this.startable(id) ? best : best < 0 || (expected?.get(id) ?? 0) > (expected?.get(remaining[best]) ?? 0) ? i : best, -1);
+        if (index >= 0) {
+          const id = remaining.splice(index, 1)[0];
+          this.claim(id);
+          return id;
         }
+        await Promise.race([woken(), ...remaining.flatMap((id) => {
+          const key = this.keyOf(id), base = this.bases.get(key);
+          return base ? [this.settling.get(base)] : this.claims.has(key) ? [this.claims.get(key).released] : [];
+        })]);
       }
-    }));
+    };
+    try {
+      await Promise.all(this.workers.map(async (snapshots) => {
+        for (let id = await take(); id !== void 0; id = await take()) {
+          const lines = [];
+          try {
+            await run(id, this.concurrency === 1 ? this.serial : { snapshots, write: (text2) => {
+              lines.push(text2);
+            }, priority: expected?.get(id) ?? 0 });
+          } catch (error) {
+            failures.set(id, error);
+            this.wakePools();
+          } finally {
+            this.release(this.keyOf(id), id);
+            for (const line of lines) this.context.write(line);
+          }
+        }
+      }));
+    } finally {
+      this.poolWakers.delete(waker);
+    }
     const failed = ids.find((id) => failures.has(id));
     if (failed !== void 0) throw failures.get(failed);
+  }
+  poolWakers = /* @__PURE__ */ new Set();
+  wakePools() {
+    for (const wake of [...this.poolWakers]) wake();
+  }
+  keyOf(id) {
+    return setupKey(this.profileOf(id), this.context.config.providers.find((p) => p.id === id)?.check?.physicalSource);
+  }
+  /** A base for this id's setup key whose setup has settled, or no base and no check about to set one up. */
+  startable(id) {
+    const key = this.keyOf(id), base = this.bases.get(key);
+    return base === void 0 ? !this.claims.has(key) : this.settled.has(base);
+  }
+  /** While bases are shared, a check taken for a key with no base holds the key until its setup has started
+   * one (or it finished), so a second check of that key waits outside its attempt rather than on that build. */
+  claims = /* @__PURE__ */ new Map();
+  sharing = false;
+  claim(id) {
+    const key = this.keyOf(id);
+    if (!this.sharing || this.bases.has(key) || this.claims.has(key)) return;
+    let release = () => {
+    };
+    const released = new Promise((resolve) => {
+      release = resolve;
+    });
+    this.claims.set(key, { owner: id, released, release });
+  }
+  /** Ends the key's claim: once a base exists, whoever holds it; when a check finishes, only its own. */
+  release(key, owner) {
+    const claim = this.claims.get(key);
+    if (!claim || owner !== void 0 && claim.owner !== owner) return;
+    this.claims.delete(key);
+    claim.release();
   }
   /** Stops at the first failure: a failed mechanical check publishes no receipt. */
   async satisfyMechanical() {
@@ -2190,7 +2296,14 @@ var ScopedChecks = class _ScopedChecks {
       const provider = this.context.config.providers.find((p) => p.id === id);
       await this.execute(provider, this.context.config.obligations.filter((o) => o.providers.includes(id)).map((o) => o.id), true, lane);
     };
+    const executing = async (some) => {
+      const out = [];
+      for (const id of some) if ((await this.selected(id))?.attempt.status !== "passed") out.push(id);
+      return out;
+    };
+    await this.prewarm(await executing(ids.slice(0, 1)));
     await this.pool(ids.slice(0, 1), satisfy);
+    await this.prewarm(await executing(ids.slice(1)));
     await this.pool(ids.slice(1), satisfy);
   }
   /**
@@ -2221,17 +2334,21 @@ var ScopedChecks = class _ScopedChecks {
         if (failFast && firstFailure === void 0) {
           firstFailure = id;
           for (const [other, controller] of running) if (other !== id) controller.abort();
+          this.wakePools();
         }
       } finally {
         running.delete(id);
       }
     };
+    const halted = () => firstFailure !== void 0;
+    const expected = await this.expectedCosts(requests.map((r) => r.provider.id));
     const resource = requests.find((r) => this.acceptsApplicability(r.provider, r.obligationIds));
+    const serialIds = resource ? [.../* @__PURE__ */ new Set([requests[0].provider.id, resource.provider.id])] : [];
+    await this.prewarm(requests.map((r) => r.provider.id), expected, serialIds);
     if (resource) {
-      const serialIds = [.../* @__PURE__ */ new Set([requests[0].provider.id, resource.provider.id])];
       for (const id of serialIds) await run(id, this.serial);
-      await this.pool(requests.map((r) => r.provider.id).filter((id) => !serialIds.includes(id)), run);
-    } else await this.pool(requests.map((r) => r.provider.id), run);
+      await this.pool(requests.map((r) => r.provider.id).filter((id) => !serialIds.includes(id)), run, halted, expected);
+    } else await this.pool(requests.map((r) => r.provider.id), run, halted, expected);
     if (firstFailure !== void 0) await this.cancelUnstarted(unstarted, firstFailure);
     return requests.flatMap((r) => failures.has(r.provider.id) ? [failures.get(r.provider.id)] : []);
   }
@@ -2255,10 +2372,118 @@ var ScopedChecks = class _ScopedChecks {
   /** One acquisition path preserves setup sharing, output ownership and worker isolation. A worker's tree
    * for a setup key is built here, cloned from the warm base, or retained from its previous check.
    * `onSetup` hears how the tree is being got before any setup runs, so a failed setup is attributed. */
+  /** Every scoped check's profile sharing this setup may write its own outputs in the shared tree;
+   * only those profiles passed the overlap refusal in create(). */
+  sharedOutputsFor(key) {
+    return [...new Set(this.context.config.scopedExecution.profiles.filter((p) => this.context.config.providers.some((q) => q.check?.scope?.profile === p.id && setupKey(p, q.check.physicalSource) === key)).flatMap((p) => p.mutableOutputs))];
+  }
+  buildSnapshot(profile, physicalSource, onPhase, dependencyResult, signal = this.context.signal) {
+    return createCheckSnapshot({
+      rootDir: this.context.rootDir,
+      candidate: this.candidate,
+      outputs: this.sharedOutputsFor(setupKey(profile, physicalSource)),
+      gitContext: profile.gitContext ?? "full",
+      environment: { PATH: this.context.env["PATH"] ?? process.env["PATH"] ?? "/usr/bin:/bin" },
+      ...physicalSource ? { physicalSource } : {},
+      ...profile.dependencies ? { dependencies: profile.dependencies } : {},
+      ...signal ? { signal } : {},
+      onPhase,
+      ...dependencyResult ? { onDependencyResult: dependencyResult } : {}
+    });
+  }
+  /** Shares `base` for its setup key. A failed setup is not shared: it leaves `bases` as it settles, and the
+   * next check of this key sets up again, as it would on its own worker. */
+  shareBase(key, base) {
+    this.bases.set(key, base);
+    this.settling.set(base, base.then(() => {
+      this.settled.add(base);
+    }, () => {
+      this.settled.add(base);
+      if (this.bases.get(key) === base) this.bases.delete(key);
+    }));
+  }
+  /**
+   * Sets up the warm base of each setup key among `ids` that has none yet, so the checks that clone it neither
+   * build it nor wait for another check to. Bases set up one at a time: concurrent dependency installs on one
+   * machine each take about twice as long, so a key's base is ready soonest on its own. With `expected`, the
+   * keys of `leading` go first, in that order, and then the key whose own critical path is longest: its last
+   * recorded build plus the longest expected check that needs it. Without it, the order of `ids`. Every key
+   * is registered at once, so no worker takes its checks before its base settles. No attempt owns this setup:
+   * a check cloning the base records it as reused and carries no dependency result, and a failed one leaves
+   * no base, so the check that next needs its key sets up itself and owns that result. Only with cloning:
+   * without it each worker builds its own tree, as before.
+   */
+  async prewarm(ids, expected, leading = []) {
+    if (this.concurrency === 1 || !await (this.cloning ??= snapshotCloneMethod())) return;
+    this.sharing = true;
+    const signal = this.context.signal ? AbortSignal.any([this.context.signal, this.prewarming.signal]) : this.prewarming.signal;
+    const keyed = /* @__PURE__ */ new Map();
+    for (const [order, id] of ids.entries()) {
+      const key = this.keyOf(id), check = expected?.get(id) ?? 0, seen = keyed.get(key);
+      if (this.bases.has(key)) continue;
+      if (!seen) keyed.set(key, { id, check, order });
+      else if (check > seen.check) keyed.set(key, { id, check, order: seen.order });
+    }
+    const rank = (key) => {
+      const index = leading.findIndex((id) => this.keyOf(id) === key);
+      return index < 0 ? leading.length : index;
+    };
+    const critical = /* @__PURE__ */ new Map();
+    for (const [key, { check }] of keyed) critical.set(key, expected ? await this.lastBuild(key) + check : 0);
+    const keys = [...keyed].sort(([a, x], [b, y]) => rank(a) - rank(b) || critical.get(b) - critical.get(a) || x.order - y.order);
+    for (const [key, { id }] of keys) {
+      const profile = this.profileOf(id), physicalSource = this.context.config.providers.find((p) => p.id === id)?.check?.physicalSource;
+      const previous = this.prewarmTail;
+      const base = (async () => {
+        await previous;
+        const started = performance.now();
+        const snapshot = await this.buildSnapshot(profile, physicalSource, (phase, durationMs) => this.context.write(`prewarm ${profile.id}: ${phase} ${Math.round(durationMs)}ms`), void 0, signal);
+        this.timingWrites.push(this.recordBuild(key, performance.now() - started));
+        return snapshot;
+      })();
+      this.prewarmTail = base.then(() => void 0, () => void 0);
+      this.prewarmedBases.add(base);
+      this.shareBase(key, base);
+      base.catch((error) => {
+        if (!this.prewarming.signal.aborted) this.context.write(`prewarm ${profile.id}: setup failed (${error instanceof CheckSnapshotError ? error.code : "unclassified"}); its first check sets up itself`);
+      });
+    }
+  }
+  /** Where the last successful prewarm of each setup key's base is timed, resolved once a session. Ordering
+   * only: no admission, gate or record reads it, and a missing or unreadable timing counts as no build time.
+   * A check-owned build is not timed: it follows a failed prewarm and may share the machine with the chain. */
+  timings;
+  timingWrites = [];
+  async timingPath(key) {
+    const dir = await (this.timings ??= resolveRecordStorage5(this.context.rootDir, { storageNamespace: this.context.config.storageNamespace, leaf: "scoped-setup-timings" }).then((storage) => storage.storageDir));
+    return path8.join(dir, `${digestCanonical5({ gate: this.context.config.gateId, setup: key })}.json`);
+  }
+  async lastBuild(key) {
+    try {
+      const timing = JSON.parse(await readFile3(await this.timingPath(key), "utf8"));
+      return timing.version === "scoped-setup-timing/1" && typeof timing.buildMs === "number" && Number.isFinite(timing.buildMs) && timing.buildMs >= 0 ? timing.buildMs : 0;
+    } catch {
+      return 0;
+    }
+  }
+  async recordBuild(key, buildMs) {
+    let temporary;
+    try {
+      const file = await this.timingPath(key);
+      temporary = `${file}.${randomUUID5()}`;
+      await mkdir4(path8.dirname(file), { recursive: true, mode: 448 });
+      await writeFile4(temporary, `${JSON.stringify({ version: "scoped-setup-timing/1", buildMs: Math.round(buildMs) })}
+`);
+      await rename2(temporary, file);
+    } catch {
+      if (temporary) await rm3(temporary, { force: true }).catch(() => void 0);
+    }
+  }
+  prewarmTail = Promise.resolve();
   async acquireSnapshot(profile, lane, onDependencyResult, physicalSource, onSetup = () => {
   }) {
     const key = setupKey(profile, physicalSource);
-    const sharedOutputs = [...new Set(this.context.config.scopedExecution.profiles.filter((p) => this.context.config.providers.some((q) => q.check?.scope?.profile === p.id && setupKey(p, q.check.physicalSource) === key)).flatMap((p) => p.mutableOutputs))];
+    const sharedOutputs = this.sharedOutputsFor(key);
     const method = this.concurrency === 1 ? void 0 : await (this.cloning ??= snapshotCloneMethod());
     const acquired = (snapshot, setup) => {
       lane.snapshots.set(key, snapshot);
@@ -2276,30 +2501,16 @@ var ScopedChecks = class _ScopedChecks {
       if (write) write(phase, durationMs);
       else lane.write(`snapshot ${profile.id}: bootstrap ${phase} ${Math.round(durationMs)}ms`);
     };
-    const build = (dependencyResult) => createCheckSnapshot({
-      rootDir: this.context.rootDir,
-      candidate: this.candidate,
-      outputs: sharedOutputs,
-      gitContext: profile.gitContext ?? "full",
-      environment: { PATH: this.context.env["PATH"] ?? process.env["PATH"] ?? "/usr/bin:/bin" },
-      ...physicalSource ? { physicalSource } : {},
-      ...profile.dependencies ? { dependencies: profile.dependencies } : {},
-      ...this.context.signal ? { signal: this.context.signal } : {},
-      onPhase,
-      ...dependencyResult ? { onDependencyResult: dependencyResult } : {}
-    });
+    const build = (dependencyResult) => this.buildSnapshot(profile, physicalSource, onPhase, dependencyResult);
     let executed = false, clone = this.concurrency === 1 ? "not-used" : "unavailable";
     if (method) {
       let base = this.bases.get(key);
       if (!base) {
         executed = true;
         base = build(onDependencyResult);
-        this.bases.set(key, base);
-        const failed = base;
-        failed.catch(() => {
-          if (this.bases.get(key) === failed) this.bases.delete(key);
-        });
+        this.shareBase(key, base);
       }
+      this.release(key);
       onSetup({ action: executed ? "executed" : "reused", snapshot: "cloned", clone: method });
       const waiting = performance.now();
       let warm;
@@ -2314,9 +2525,15 @@ var ScopedChecks = class _ScopedChecks {
         clone = "path-bound";
         lane.write(`snapshot ${profile.id}: setup wrote its own path into the tree; each worker builds its own`);
         if (executed) return acquired(warm, { action: "executed", snapshot: "built", clone });
+        if (this.prewarmedBases.delete(base)) return acquired(warm, { action: "reused", snapshot: "built", clone });
       } else if (warm) {
+        const queued = performance.now(), source = warm;
+        const cloned = () => this.cloningOne(lane.priority ?? 0, () => {
+          const wait = performance.now() - queued;
+          return source.clone(method, (phase, durationMs) => onPhase(phase, phase === "clone" ? durationMs + wait : durationMs));
+        });
         try {
-          return acquired(await warm.clone(method, onPhase), { action: executed ? "executed" : "reused", snapshot: "cloned", clone: method });
+          return acquired(await cloned(), { action: executed ? "executed" : "reused", snapshot: "cloned", clone: method });
         } catch (error) {
           if (!(error instanceof CheckSnapshotError) || this.context.signal?.aborted) throw error;
           lane.write(`snapshot ${profile.id}: clone unavailable; ${error.code}`);
@@ -2671,6 +2888,8 @@ ${error.code}`.slice(-4e3) } : {}
     this.cleanupStarted = true;
     await this.closeCapturePhase();
     await Promise.all(this.executionTails.values());
+    this.prewarming.abort();
+    await Promise.all(this.timingWrites);
     for (const snapshots of this.workers) {
       for (const snapshot of snapshots.values()) await snapshot.cleanup();
       snapshots.clear();
@@ -3151,7 +3370,7 @@ import path11 from "node:path";
 import { createHash, randomUUID as randomUUID7 } from "node:crypto";
 import { execFile as execFile2 } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
-import { chmod as chmod2, lstat as lstat2, mkdir as mkdir5, open, readFile as readFile4, readdir as readdir2, rename as rename2, unlink as unlink2 } from "node:fs/promises";
+import { chmod as chmod2, lstat as lstat2, mkdir as mkdir5, open, readFile as readFile4, readdir as readdir2, rename as rename3, unlink as unlink2 } from "node:fs/promises";
 import path10 from "node:path";
 import { promisify as promisify2 } from "node:util";
 import {
@@ -3241,7 +3460,7 @@ async function writeLedger(ledgerPath, ledger) {
   } finally {
     await handle.close();
   }
-  await rename2(temporary, ledgerPath);
+  await rename3(temporary, ledgerPath);
 }
 async function verifyWorkingRecord(rootDir, entry) {
   const absolute = path10.join(rootDir, entry.relativePath);
