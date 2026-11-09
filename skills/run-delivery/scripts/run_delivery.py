@@ -577,12 +577,16 @@ class Config:
         return (self.state_of(key, d).parent / "flow-log" / f"{key}.closed.json").exists()
 
     def open_here(self, key: str, d: dict) -> bool:
-        """Whether the delivery's record is open in this checkout: it is kept under it, holds state.json, and isn't
-        closed. A record that names its tracker parent must name this delivery."""
-        state = self.state_of(key, d)
+        """Whether the delivery's record is open in this checkout: it is kept under it, and not in a checkout nested
+        inside it (a lead's under the lanes folder, say), holds state.json, and isn't closed. A record that names its
+        tracker parent must name this delivery."""
+        state, root = self.state_of(key, d).resolve(), self.root.resolve()
         try:
-            state.resolve().relative_to(self.root.resolve())
+            state.relative_to(root)
         except ValueError:
+            return False
+        if any((folder / ".git").exists() for folder in [state, *state.parents] if folder != root and
+               folder.is_relative_to(root)):
             return False
         if not (state / "state.json").is_file() or self.closed_here(key, d):
             return False
@@ -612,9 +616,9 @@ class Config:
 
     def not_known_closed(self, files: dict[str, dict]) -> list[str]:
         """The deliveries not known to be closed: no closed.json here, and no tracker snapshot showing the parent
-        closed. The tracker is asked only when more than one is left."""
+        closed. The tracker is asked whenever there is more than one delivery file."""
         left = [key for key, d in files.items() if not self.closed_here(key, d)]
-        if len(left) > 1:
+        if len(files) > 1:
             left = [key for key in left if not self.tracker_closed(key, files[key])]
         return left
 
@@ -4027,6 +4031,7 @@ def lead_plan(args) -> None:
     planned_after = None
     record_finish = None
     reword_finish = None
+    wording = None  # a finish line's (before, after) wording, recorded as its own change when its covers change too
     plan_text = None
     if new_story:
         # The whole story in one change: its plan heading, its delivery-file story carrying the reason its `added`
@@ -4101,9 +4106,11 @@ def lead_plan(args) -> None:
             reworded = args.text is not None and args.text != line["text"]
             if not reworded and covers == plan_covers(line):
                 raise Stop(f"finish line {args.finish} already reads so and covers that: nothing to change")
-            # What changed is recorded: what it covers, or, when only its wording moved, the wording.
-            if covers != plan_covers(line) or not reworded:
+            # What changed is recorded: what it covers, and its wording when that moved, as a change of its own.
+            if covers != plan_covers(line):
                 change.update(before=plan_covers(line), after=covers)
+                if reworded:
+                    wording = (line["text"], args.text)
             else:
                 change.update(before=line["text"], after=args.text)
             if reworded:
@@ -4132,7 +4139,10 @@ def lead_plan(args) -> None:
             raise
         git("add", str(c.delivery_path), *([str(plan_path)] if plan_text is not None else []), cwd=root)
         entry = record_plan_change(c, change)
-        git("commit", "-q", "-m", f"{c.delivery}: plan change {entry['id']} ({'added story' if new_story else args.kind} "
+        ids = entry["id"]
+        if wording is not None:
+            ids += f" and {record_plan_change(c, {**change, 'before': wording[0], 'after': wording[1]})['id']}"
+        git("commit", "-q", "-m", f"{c.delivery}: plan change {ids} ({'added story' if new_story else args.kind} "
             f"{', '.join(change['subjects']) or change.get('finish', '')})".rstrip(), cwd=root)
         if planned_after is not None:  # as it stands now: a story registered since the check above stays planned
             patch_from(lambda doc: {"planned": [p for p in doc["state"].get("planned", [])
@@ -4157,7 +4167,7 @@ def lead_plan(args) -> None:
                 state_tool("journal", "--kind", "decision.recorded", "--subject", key, "--summary",
                            f"{key} added to the delivery as planned work for {c.lane_of(key)}")
         rebuild_plan(c, mark=True)
-    print(f"recorded {entry['id']}: {args.kind} {', '.join(change['subjects']) or change.get('finish', '')}".rstrip())
+    print(f"recorded {ids}: {args.kind} {', '.join(change['subjects']) or change.get('finish', '')}".rstrip())
     print(f"committed the delivery file{' and the plan' if plan_text is not None else ''}; push it so lanes see it: "
           f"git push {c.remote} HEAD:{c.base_branch}")
 

@@ -374,8 +374,8 @@ Commit it, check the delivery, create the record and write the lane brief. `lead
 repeats it.
 
 A command with no `--delivery` finds its delivery once `.agents/deliveries/` holds more than one file: the delivery
-whose record is open in this checkout; else the one whose story branch this checkout is on; else the only delivery not
-known to be closed. A delivery is known to be closed when this machine's flow log holds its `closed.json`, or when the
+whose record is open in this checkout (not in a checkout nested inside it, such as a lead's under the lanes folder);
+else the one whose story branch this checkout is on; else the only delivery not known to be closed. A delivery is known to be closed when this machine's flow log holds its `closed.json`, or when the
 binding's `trackerSnapshot`, run with `{parent}` as its key, shows its parent completed or canceled, so a delivery closed
 from another checkout counts too. A snapshot that fails, or no tracker, leaves it not known to be closed. With none or
 several left it refuses, naming each delivery not known to be closed. A `--delivery` whose file is missing is refused
@@ -416,7 +416,8 @@ what the plan said before and after and why, edits the delivery file, and commit
 on a checkout with uncommitted changes or one behind the base. `--kind changed` or `relaxed` rewords a criterion,
 `added` adds one to a story (or, for a key the delivery doesn't hold yet, the whole story, below), `removed` takes stories out of the delivery (the plan keeps them, marked removed), and
 `finish` changes or adds a finish line's `covers`, and with `--text` its wording; an existing line's `--text` alone
-rewords it and keeps what it covers. Push the commit so lanes see it:
+rewords it and keeps what it covers. A change of both records two changes, what it covers and then its wording, so
+the plan keeps each before and after. Push the commit so lanes see it:
 
 ```sh example repo
 python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lead-plan change --kind relaxed --subjects <story-key> --criterion greeting-shown --text "The front page shows a greeting" --why "The operator accepted any greeting"

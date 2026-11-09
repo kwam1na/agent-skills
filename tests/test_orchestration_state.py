@@ -5310,10 +5310,10 @@ class PublicationTests(unittest.TestCase):
         code, acked = run_tool(self.directory, "ack")
         self.assertEqual(code, 0, acked)
         self.assertEqual((acked["published"]["version"], acked["published"]["journalThrough"]), (published, 2))
-        # Either one left out is the outbox's.
+        # Either one left out is the outbox's, and the one given is kept, even where it differs from the outbox's.
         self.outbox(record, 3)
-        code, acked = run_tool(self.directory, "ack", "--through", "3")
-        self.assertEqual((code, acked["published"]["version"], acked["published"]["journalThrough"]), (0, record, 3), acked)
+        code, acked = run_tool(self.directory, "ack", "--through", "2")
+        self.assertEqual((code, acked["published"]["version"], acked["published"]["journalThrough"]), (0, record, 2), acked)
         # Any refusal names what the outbox holds.
         code, refused = run_tool(self.directory, "ack", "--version", "1", "--through", "3")
         self.assertEqual((code, refused["code"]), (1, "ack_invalid"), refused)

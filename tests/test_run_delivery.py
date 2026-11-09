@@ -4439,15 +4439,20 @@ class RunDeliveryPlanTests(unittest.TestCase):
         self.assertEqual([(entry["id"], entry["text"]) for entry in plan["finish"]], [("acs", "Every criterion is met")])
         change = plan["changes"][-1]
         self.assertEqual((change["kind"], change["before"], change["after"]), ("finish", "AC1-AC2 met", "Every criterion is met"))
-        # With new covers too, the line is reworded and the change records what it covers.
+        # With new covers too, the line is reworded and two changes record it: what it covers, then its wording.
         narrower = {"criteria": ["one-loads"], "proofs": ["merged"]}
+        count = len(self.plan(fx)["changes"])
         code, out = fx.flow("lead-plan", "change", "--kind", "finish", "--finish", "acs", "--text", "One loads",
                             "--covers", json.dumps(narrower), "--why", "Narrowed.", cwd=m)
         self.assertEqual(code, 0, out)
         self.assertEqual(json.loads(path.read_text())["finish"][0]["text"], "One loads")
         self.assertEqual(self.record(fx)["state"]["finish"][0]["text"], "One loads")
-        change = self.plan(fx)["changes"][-1]
-        self.assertEqual((change["before"], change["after"]), (covers, narrower))
+        changes = self.plan(fx)["changes"]
+        self.assertEqual(len(changes), count + 2, changes)
+        self.assertEqual([(change["kind"], change["before"], change["after"], change["why"]) for change in changes[-2:]],
+                         [("finish", covers, narrower, "Narrowed."),
+                          ("finish", "Every criterion is met", "One loads", "Narrowed.")])
+        self.assertIn(f"recorded {changes[-2]['id']} and {changes[-1]['id']}", out)
         # The same wording and covers again changes nothing, and is refused with nothing written.
         before = (path.read_text(), len(self.plan(fx)["changes"]))
         code, out = fx.flow("lead-plan", "change", "--kind", "finish", "--finish", "acs", "--text", "One loads",
@@ -5523,6 +5528,52 @@ class RunDeliveryDefaultDeliveryTests(unittest.TestCase):
         code, out = fx.flow("lead-hints", cwd=wt)
         self.assertEqual(code, 0, out)
         self.assertEqual(list(json.JSONDecoder().raw_decode(out)[0]["items"]), ["FX-6"])
+
+    def test_the_record_open_here_comes_before_the_only_delivery_not_known_to_be_closed(self) -> None:
+        # FX-5's parent is completed but its record is still open here, with no lead-close yet: the record decides,
+        # though FX-1 is the only delivery not known to be closed.
+        fx = self.fixture({"FX-1": "started", "FX-5": "completed"})
+        code, out, stories = self.picked(fx)
+        self.assertEqual((code, stories), (0, ["FX-2", "FX-3"]), out)
+        m = fx.main
+        path = m / ".agents/deliveries/FX-5.json"
+        d = json.loads(path.read_text())
+        d["stateDirectory"] = ".orchestration/state-5"  # inside this checkout
+        path.write_text(json.dumps(d, indent=2))
+        commit(m, "FX-5: its record in the lead's checkout")
+        tool = fx.release / "skills/orchestrate-work/scripts/delivery_state.py"
+        sh(sys.executable, "-B", tool, "--dir", m / ".orchestration/state-5", "init", "--headline", "FX-5")
+        code, out, stories = self.picked(fx)
+        self.assertEqual((code, stories), (0, ["FX-6"]), out)
+
+    def test_a_record_open_in_a_checkout_nested_inside_this_one_is_not_open_here(self) -> None:
+        fx = self.fixture({"FX-1": "started", "FX-5": "started"})
+        m = fx.main
+        lead = m / "leads/FX-5"  # FX-5's lead checkout, nested in this one as a lane's is under the lanes folder
+        path = m / ".agents/deliveries/FX-5.json"
+        d = json.loads(path.read_text())
+        d["stateDirectory"] = str(lead / ".orchestration/state")
+        path.write_text(json.dumps(d, indent=2))
+        commit(m, "FX-5: its record in its own lead checkout")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        sh("git", "worktree", "add", "-q", "--no-track", "-b", "lead-5", lead, "origin/feature/FX-1", cwd=m)
+        tool = fx.release / "skills/orchestrate-work/scripts/delivery_state.py"
+        sh(sys.executable, "-B", tool, "--dir", lead / ".orchestration/state", "init", "--headline", "FX-5")
+        # From the enclosing checkout, the record is the nested checkout's, not this one's.
+        code, out, _ = self.picked(fx)
+        self.assertEqual(code, 2, out)
+        self.assertIn("FX-1, FX-5 aren't known to be closed, and no record of theirs is open here", out)
+        # From the lead checkout itself, it is open here.
+        code, out = fx.flow("lead-hints", cwd=lead)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(list(json.JSONDecoder().raw_decode(out)[0]["items"]), ["FX-6"])
+
+    def test_the_only_delivery_left_after_those_closed_here_is_refused_when_its_parent_is_closed(self) -> None:
+        fx = self.fixture({"FX-1": "started", "FX-5": "completed"})
+        self.closed_here(fx, "FX-1")
+        code, out, _ = self.picked(fx)
+        self.assertEqual(code, 2, out)
+        self.assertIn("deliveries FX-1, FX-5, none of them open", out)
 
     def test_a_snapshot_command_that_fails_leaves_its_delivery_not_known_to_be_closed(self) -> None:
         fx = self.fixture({"FX-1": "fail", "FX-5": "started"})
