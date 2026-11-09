@@ -167,6 +167,7 @@ interface CliRuntime {
         readonly command: readonly [string, ...string[]];
         readonly cwd: string;
         readonly env: EnvSnapshot;
+        readonly inheritDescriptors?: readonly (3 | 4)[];
     }) => Promise<ProviderRailSession>;
 }
 declare function commandBlocker(input: {

@@ -181,16 +181,24 @@ Setting `PYTHONDONTWRITEBYTECODE=1` for the suite stops it being written.
 ### Where the stored runtime comes from
 
 `product-runtime/` is the build output of `kwam1na/agent-delivery-harness`, now at
-`v26-technologies/agent-delivery-harness`. It declares 0.8.2 and was built with
+`v26-technologies/agent-delivery-harness`. It declares 0.8.3 and was built with
 `npm run product:build-runtime` from a clean checkout of
-`f93afd7c1dfae9208106da34633aaacdf1bfc5ba`, that repository's `main` at the merge of its
-0.8.2 version bump, which the `v0.8.2` tag names. Like the runtimes before it, it is
-`main` itself. Over 0.8.1, it prewarms each scoped check setup's warm base before any check takes a
-worker, one setup at a time, and orders them by each setup's own critical path. A worker takes a check
-only once its base has settled. Clones run one at a time, the longest-expected check's first. Over
-0.8.0, 0.8.1 added shallow snapshot materialization.
+`ea77cdc73a3a29277e4c95498845f80c3838a32f`, that repository's `main` at the merge of
+its last 0.8.3 change, which the `v0.8.3` tag names. Like the runtimes before it, it is
+`main` itself. Over 0.8.2, it:
 
-`HARNESS_VERSION` 0.8.2 is part of every preparation fingerprint, so it invalidates
+- moves finished snapshot trees into a private per-user trash and deletes them in a
+  detached process, instead of removing them while the gate waits;
+- reads each burst of source objects through one long-lived `git cat-file --batch`
+  child, verifying every frame against the object it asked for;
+- hashes each host tool once per process;
+- reads the delivery posture only from the repository root;
+- lets a rail provider inherit exactly the descriptors it declares;
+- kills a check's process group through libc on Bun.
+
+Over 0.8.1, 0.8.2 prewarmed each scoped check setup's warm base in critical-path order.
+
+`HARNESS_VERSION` 0.8.3 is part of every preparation fingerprint, so it invalidates
 receipts prepared by an earlier runtime: an adopter's in-flight deliveries prepare again
 after applying it.
 
