@@ -137,6 +137,25 @@ class StandingBinding(unittest.TestCase):
         self.assertEqual(done.returncode, 1)
         self.assertIn("expected one open change request, found 2", done.stderr)
 
+    def test_the_lock_listing_is_pinned_and_prints_what_the_lock_lists(self) -> None:
+        # The merge queue regenerates a digest-only conflict in the lock and stops one where a candidate added or removed
+        # an output. It tells them apart only through this listing, so without it, or with one that lists nothing, a
+        # candidate's new outputs are dropped silently.
+        regenerable = json.loads((ROOT / ".agents/orchestration.json").read_text(encoding="utf-8"))["regenerable"]
+        self.assertIn("provenance.lock.json", regenerable["paths"])
+        entries = [entry for entry in regenerable.get("listings", []) if entry.get("path") == "provenance.lock.json"]
+        self.assertEqual(entries, [{"path": "provenance.lock.json",
+                                    "argv": ["python3", "-B", "scripts/update-provenance.py", "--list-outputs"]}])
+        # Run it as merge_queue.listed_outputs does: one committed version of the lock on stdin, from the root, with no
+        # file argument.
+        lock = _git(ROOT, "show", "HEAD:provenance.lock.json")
+        expected = sorted(output["path"] for entry in json.loads(lock)["entries"] for output in entry["outputs"])
+        self.assertGreater(len(expected), 1)
+        done = subprocess.run(entries[0]["argv"], cwd=ROOT, input=lock, capture_output=True, text=True, timeout=120,
+                              env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout), expected)
+
     def test_the_delivery_folders_are_ignored(self) -> None:
         for path in (".orchestration/lanes/x", ".orchestration/state/state.json", ".worktrees/x", ".claude/worktrees/x"):
             done = subprocess.run(["git", "check-ignore", "-q", "--no-index", path], cwd=ROOT)
