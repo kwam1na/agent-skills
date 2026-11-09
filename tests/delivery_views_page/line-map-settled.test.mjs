@@ -73,6 +73,11 @@ test("on an open delivery a settled story counts as landed everywhere the line m
   expect([...shown.app.querySelectorAll("#line .line .name")].map((name) => name.textContent)).toEqual(["Lane one2 of 2 landed"]);
   expect(shown.app.querySelector("svg[aria-label^='Every lane merges']").getAttribute("aria-label")).toContain("2 of 2 pieces landed");
   expect([...shown.app.querySelectorAll("#left .dots i")].map((dot) => dot.className)).toEqual(["", ""]);
+  // The rule between the merged stop and the settled one is drawn as both landed.
+  const segs = [...shown.app.querySelectorAll("#line .line .stops .seg")];
+  expect(segs.map((seg) => seg.querySelector(".stop-btn").getAttribute("data-subject"))).toEqual(["A", "S"]);
+  expect(segs[0].classList.contains("link-right")).toBe(true);
+  expect(segs[1].classList.contains("link-left")).toBe(true);
   // Its stop is drawn landed, and its card dates it from the lead's acceptance, not the hand-off.
   expect(shown.app.querySelector('.stop-btn[data-subject="S"]').className.trim()).toBe("stop-btn merged");
   expect(card.app.querySelector("#detail .d-stage-time").getAttribute("aria-label")).toContain("2026-10-30T11:00:00Z");
