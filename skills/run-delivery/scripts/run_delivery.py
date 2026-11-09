@@ -2188,6 +2188,8 @@ def port_busy(port: int) -> str:
             f"hold the lease, so app-check can't use the port: stop it (kill {pids}) and run again")
 
 
+# How long the serve has to start listening.
+SERVE_READY_SECONDS = 20
 # How long a serve that lost its port to another listener is given to exit, so its refusal can name the exit, or to
 # take the port once that listener lets it go.
 SERVE_SETTLE_SECONDS = 5
@@ -2212,7 +2214,8 @@ def start_serve(ia: dict, dist: Path, port: int, lease: "Lease") -> subprocess.P
                                   stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
     try:
         lease.track(server.pid)
-        for _ in range(100):
+        ready = time.monotonic() + SERVE_READY_SECONDS
+        while time.monotonic() < ready:
             if port_open(port) or server.poll() is not None:
                 break
             time.sleep(0.2)

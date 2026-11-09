@@ -6469,6 +6469,15 @@ sys.argv[0] = check
 runpy.run_path(check, run_name="__main__")
 '''
 
+# The tool's command line with a shorter wait for the serve to listen, so a case can see the wait run out.
+SHORT_READY_TOOL = r'''
+import sys
+sys.path.insert(0, sys.argv[1])
+import run_delivery as flow
+flow.SERVE_READY_SECONDS = float(sys.argv[2])
+flow.main(sys.argv[3:])
+'''
+
 # run_in_app, called as app-check calls it, on a stamped copy of the adapter fixture's page; prints the report.
 RUN_IN_APP = r'''
 import json, shutil, sys, tempfile
@@ -6476,6 +6485,8 @@ from pathlib import Path
 sys.path.insert(0, sys.argv[1])
 import run_delivery as flow
 flow.CFG = flow.Config(Path.cwd(), need_delivery=False)
+if len(sys.argv) > 2:
+    flow.SERVE_READY_SECONDS = float(sys.argv[2])
 with tempfile.TemporaryDirectory() as tmp:
     site = Path(tmp) / "site"
     shutil.copytree(flow.TOOL / "assets/adapter-fixture", site)
@@ -6529,9 +6540,13 @@ class ServeRaceTests(unittest.TestCase):
     def race_serve(self, role: str) -> list[str]:
         return [sys.executable, "-B", str(self.root / "race_serve.py"), role, "{port}", "{dir}", str(self.sync)]
 
-    def start(self, command: str, repo: Path) -> subprocess.Popen:
-        argv = ([sys.executable, "-B", str(ROOT / TOOL_RELATIVE), "adapter-test"] if command == "adapter-test"
-                else [sys.executable, "-B", "-c", RUN_IN_APP, str((ROOT / TOOL_RELATIVE).parent)])
+    def start(self, command: str, repo: Path, ready_seconds: float | None = None) -> subprocess.Popen:
+        tool, short = (ROOT / TOOL_RELATIVE).parent, [] if ready_seconds is None else [str(ready_seconds)]
+        if command == "adapter-test":
+            argv = ([sys.executable, "-B", str(ROOT / TOOL_RELATIVE), "adapter-test"] if not short
+                    else [sys.executable, "-B", "-c", SHORT_READY_TOOL, str(tool), *short, "adapter-test"])
+        else:
+            argv = [sys.executable, "-B", "-c", RUN_IN_APP, str(tool), *short]
         proc = subprocess.Popen(argv, cwd=repo, env=self.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
         self.procs.append(proc)
         return proc
@@ -6684,6 +6699,16 @@ class ServeRaceTests(unittest.TestCase):
         self.assertIn("a process this host can't name", loser[1])
         self.assert_refused_for_the_other_server(loser, "This run's serve exited with code 1")
 
+    def test_a_serve_still_running_that_never_listens_is_named(self) -> None:
+        serve = ["sh", "-c", "echo the serve is still starting >&2; exec sleep 60"]
+        for command in ("adapter-test", "run_in_app"):
+            with self.subTest(command=command):
+                code, out = self.finish(self.start(command, self.adopter(f"silent-{command}", serve), ready_seconds=1))
+                self.assertNotEqual(code, 0, out)
+                self.assertIn(f"the serve command didn't start listening on port {self.port}", out)
+                self.assertIn("the serve is still starting", out)
+                self.nothing_left_running()
+
     def test_a_serve_that_exits_without_listening_is_named(self) -> None:
         serve = ["sh", "-c", "echo the serve gave up >&2; exit 3"]
         for command in ("adapter-test", "run_in_app"):
@@ -6785,8 +6810,9 @@ class RunDeliveryAdoptionGuideTests(unittest.TestCase):
             conf["inApp"]["serve"]["argv"] = serve_argv(fakes / "static_serve.py")
             # Each case's lease is its own (its lock is under the case's HOME), so a fixed port would be shared by
             # every suite on the machine that reached this case at once, with nothing to keep them apart.
-            self.assertIsInstance(conf["inApp"]["port"], int)
-            conf["inApp"]["port"] = free_port()
+            declared = conf["inApp"]["port"]
+            self.assertIsInstance(declared, int)
+            conf["inApp"]["port"] = next(port for port in iter(free_port, None) if port != declared)
             used.add(GUIDE_SUBSTITUTIONS[8])
             self.assertTrue(listens_under_stalled_lookup(conf["inApp"]["serve"]["argv"], 5),
                             "the guide's serve waited for a stalled name lookup")
@@ -6797,6 +6823,8 @@ class RunDeliveryAdoptionGuideTests(unittest.TestCase):
             conf["supervisor"] = {"passSeconds": 1}
             used.add(GUIDE_SUBSTITUTIONS[7])
             body = json.dumps(conf, indent=2) + "\n"
+            self.assertNotEqual(json.loads(body)["inApp"]["port"], json.loads(block["body"])["inApp"]["port"],
+                                "the case runs on the guide's own port, which every suite on the machine shares")
         if path == ".agents/orchestration.json" and "<forge-owner>" in body:
             body = body.replace("<forge-owner>", "fixture").replace("<forge-name>", "repository")
             used.add(GUIDE_SUBSTITUTIONS[6])
