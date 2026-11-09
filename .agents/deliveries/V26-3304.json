@@ -1,0 +1,151 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3304",
+  "headline": "V26-3304: keep the test suite off the operator's machine",
+  "plan": "docs/plans/2026-11-08-suite-off-machine.md",
+  "laneBrief": "docs/plans/2026-11-08-suite-off-machine.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-08-suite-off-machine.lane-notes.md"
+  },
+  "context": {
+    "sections": [
+      "Decisions"
+    ]
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "skills/run-delivery/*",
+        "tests/test_run_delivery.py",
+        "tests/test_run_delivery_supervisor.py",
+        "tests/test_run_delivery_plan_review.py",
+        "docs/solutions/*",
+        "provenance.lock.json",
+        "catalog.json",
+        "profiles/*"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "tests/test_run_delivery_tracker.py",
+        "tests/test_own_deliveries.py"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3286": {
+      "title": "A test_run_delivery case runs a lead command against the real checkout's live delivery",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3286-done",
+          "text": "Every run_delivery.py invocation in the lane-1 test modules runs with an explicit fixture repository and state directory, the cleaned environment strips every variable Config or setting() reads; a guard row with its own worktree and planted delivery, variables set in os.environ before the Fixture is built, detects contact by content, mtime and marker, recorded red on the unfixed case and with the strip reverted, then green; the hand-off says whether a live record was ever written"
+        }
+      ]
+    },
+    "V26-3273": {
+      "title": "A test run leaves fixture lead-run supervisors spinning after it ends",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3273-done",
+          "text": "Each test that starts a supervisor stops it by recorded pid; an outlives row scans the process table while the case's folder exists, recorded red against the unfixed case; Supervisor.run exits when its state directory or its install disappears, proved by a state-removal row, an install-removal row on a per-case install, and a both-present control alive after more than one pass; the hand-off says whether a leak slows later tests"
+        }
+      ]
+    },
+    "V26-3274": {
+      "title": "Serve the remaining test HTTP servers without the 34 s name lookup on macOS",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3274-done",
+          "text": "FakeJira() built in-process under a 60 s stalled getfqdn returns and accepts a connection within 5 s, recorded red against the stock ThreadingHTTPServer; the hand-off carries the search of tests/ for every HTTP server start and macOS full-matrix timings before and after"
+        }
+      ]
+    },
+    "V26-3292": {
+      "title": "Pin this repository's regenerable.listings entry in its standing-binding tests",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3292-done",
+          "text": "A StandingBinding row asserts the exact regenerable.listings entry for provenance.lock.json, runs its argv on the committed lock's bytes on stdin as the queue does, and compares with an independently computed sorted list; red proved for entry removed, an argv printing [], and another script, the last two failing on the run assertion"
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "Every story",
+      "text": "Each item merged to main through the merge queue, or closed with a recorded reason",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "main-ci",
+      "label": "Main CI",
+      "text": "main's CI on the last merged commit passes on the Ubuntu job and cut-release, with the run linked",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the last merged commit, and a before/after process-table snapshot finds no new process naming an FX- key or the run's temporary folder",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "deferrals",
+      "label": "Deferrals",
+      "text": "Every deferral has an open follow-up item, filed under the epic",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "grantedBy": "the operator",
+    "grantedOn": "2026-11-08"
+  },
+  "approvals": [
+    {
+      "id": "approval-1",
+      "text": "The plan, approved by the operator on 2026-11-08 under a standing grant for this delivery, after three plan-review rounds.",
+      "state": "done",
+      "who": "the operator"
+    }
+  ],
+  "outOfScope": [
+    "The other backlog epics: lead hand-work (V26-3250), release safety (V26-3266), posture readers (V26-3267), and the harness runtime (V26-3268).",
+    "Cutting or applying a release. Nothing here changes a contract an adopter sees, and `run_delivery.py`'s exit on a lost state directory ships with the next batch release.",
+    "Servers the suite doesn't start itself. `render_state.py`'s `_LiveServer` and the run-delivery fixtures' in-app serve were fixed under V26-3232."
+  ],
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  },
+  "outcome": {
+    "summary": "The test suite stays inside its temporary folders and leaves nothing running.",
+    "text": "Four backlog items land on main: no test reaches the real checkout's live delivery, fixture supervisors are stopped by their tests and exit on their own once their state or install is gone, the fake Jira server skips the macOS name lookup, and this repository's regenerable.listings entry is pinned."
+  }
+}
