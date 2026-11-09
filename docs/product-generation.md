@@ -181,24 +181,24 @@ Setting `PYTHONDONTWRITEBYTECODE=1` for the suite stops it being written.
 ### Where the stored runtime comes from
 
 `product-runtime/` is the build output of `kwam1na/agent-delivery-harness`, now at
-`v26-technologies/agent-delivery-harness`. It declares 0.8.3 and was built with
+`v26-technologies/agent-delivery-harness`. It declares 0.8.4 and was built with
 `npm run product:build-runtime` from a clean checkout of
-`ea77cdc73a3a29277e4c95498845f80c3838a32f`, that repository's `main` at the merge of
-its last 0.8.3 change, which the `v0.8.3` tag names. Like the runtimes before it, it is
-`main` itself. Over 0.8.2, it:
+`e727adeda6454c41a0628a721a9fb15e0892499a`, that repository's `main` at the merge that the
+`v0.8.4` tag names. Like the runtimes before it, it is `main` itself. Over 0.8.3, the kernel
+loads Bun's FFI through a literal `import("bun:ffi")`, so an adopter's import scanner can bound
+it, and the runtime build refuses any bundle that loads code through a computed specifier, other
+than the CLI's one config loader. Only `kernel.mjs` and `kernel.d.mts` differ from 0.8.3.
 
-- moves finished snapshot trees into a private per-user trash and deletes them in a
-  detached process, instead of removing them while the gate waits;
-- reads each burst of source objects through one long-lived `git cat-file --batch`
-  child, verifying every frame against the object it asked for;
-- hashes each host tool once per process;
-- reads the delivery posture only from the repository root, and bounds its depth;
-- lets a rail provider inherit exactly the descriptors it declares;
-- kills a check's process group through libc on Bun.
+0.8.3 added, over 0.8.2:
 
-Over 0.8.1, 0.8.2 prewarmed each scoped check setup's warm base in critical-path order.
+- background snapshot cleanup into a private per-user trash;
+- the long-lived `git cat-file --batch` source reader, which verifies every frame;
+- the per-process host-tool memo;
+- the root-only, depth-bounded posture read;
+- declared rail descriptors;
+- the Bun libc group kill.
 
-`HARNESS_VERSION` 0.8.3 is part of every preparation fingerprint, so it invalidates
+`HARNESS_VERSION` 0.8.4 is part of every preparation fingerprint, so it invalidates
 receipts prepared by an earlier runtime: an adopter's in-flight deliveries prepare again
 after applying it.
 

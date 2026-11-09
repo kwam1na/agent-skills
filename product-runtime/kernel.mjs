@@ -8106,7 +8106,7 @@ function recordOutputConfiguration(config, deliverableDigest) {
 // packages/kernel/src/preparation.ts
 var PREPARATION_RECEIPT_SCHEMA_VERSION = 1;
 var PREPARATION_RECEIPT_LEAF = "preparation";
-var HARNESS_VERSION = "0.8.3";
+var HARNESS_VERSION = "0.8.4";
 var PREPARATION_FAILURE_CLASSES = ["missing", "invalid", "wiring_mismatch", "base_changed", "stale"];
 var DIRECTORY_MODE2 = 448;
 var RECEIPT_MODE = 384;
@@ -16361,8 +16361,7 @@ function nativeGroupKill() {
   return nativeGroupKillOnce ??= (async () => {
     if (!("Bun" in globalThis) || process.platform !== "darwin" && process.platform !== "linux") return null;
     try {
-      const ffiModule = "bun:ffi";
-      const { dlopen, FFIType, read } = await import(ffiModule);
+      const { dlopen, FFIType, read } = await import("bun:ffi");
       const errnoSymbol = process.platform === "darwin" ? "__error" : "__errno_location";
       const libc = dlopen(process.platform === "darwin" ? "libc.dylib" : "libc.so.6", {
         kill: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
