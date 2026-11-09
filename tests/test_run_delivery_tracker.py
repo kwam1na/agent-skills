@@ -18,6 +18,7 @@ import os
 import re
 import shutil
 import socket
+import socketserver
 import subprocess
 import sys
 import tempfile
@@ -86,6 +87,15 @@ def offered(store: dict, key: str) -> list[dict]:
             if (t["from"] is None and t["to"] != status) or (t["from"] is not None and status in t["from"])]
 
 
+class _Server(http.server.ThreadingHTTPServer):
+    # HTTPServer.server_bind looks up the address's host name before it listens; where reverse lookups go unanswered
+    # (macOS runners) that takes about 34 seconds per server. This one names its address without a lookup, as
+    # `STATIC_SERVE` in tests/test_run_delivery.py does.
+    def server_bind(self) -> None:
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
 class FakeJira:
     """Jira Cloud's REST API, as much as the adapter uses, on port 0."""
 
@@ -125,7 +135,7 @@ class FakeJira:
             def do_PUT(self) -> None:
                 self.handle_any("PUT")
 
-        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.server = _Server(("127.0.0.1", 0), Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.site = f"http://127.0.0.1:{self.server.server_address[1]}"
