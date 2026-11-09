@@ -7744,13 +7744,13 @@ def stop_and_reap(proc: subprocess.Popen) -> None:
 
 
 def alive_pid(pid: int) -> bool:
-    """Whether a process with this pid still runs (a zombie, which init reaps, counts as gone)."""
+    """Whether a process with this pid exists. A stopped leader's orphaned child is reaped by init, so a caller polls
+    for a bounded while rather than reading once."""
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
-    state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
-    return bool(state) and not state.startswith("Z")
+    return True
 
 
 def unreaped_cleanups(source: str) -> list[str]:
@@ -7947,6 +7947,7 @@ class InProcessCallsStayInTheirCaseTests(unittest.TestCase):
         child = int(leader.stdout.readline())
         self.addCleanup(lambda: alive_pid(child) and os.kill(child, signal.SIGKILL))
         self.assertEqual(os.getpgid(child), leader.pid, "the child isn't in the leader's group")
+        self.assertTrue(alive_pid(child), "alive_pid can't see the running child")
         stop_and_reap(leader)
         deadline = time.monotonic() + 5
         while alive_pid(child) and time.monotonic() < deadline:
