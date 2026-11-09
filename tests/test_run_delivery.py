@@ -3024,7 +3024,8 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         left = [line for line in out.splitlines() if line.startswith("  left: ")]
         self.assertEqual(code, 1, out)
         self.assertEqual(left, ["  left: the in-app lease is held (app-check pid 1 since then); gave up after 0s"], out)
-        self.assertNotIn("kill", out, "a held lease's server got a kill hint")
+        # The hint's own form, `kill <pid>`: the word alone also sits in paths, such as a checkout of agent-skills.
+        self.assertNotRegex(out, r"\bkill \d", "a held lease's server got a kill hint")
         self.assertNotIn("is free", out, "a held lease was reported free")
         self.assertIsNone(listener.poll(), "lead-close stopped the server a live check holds")
 
