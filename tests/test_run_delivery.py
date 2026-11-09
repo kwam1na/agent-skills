@@ -111,9 +111,10 @@ def free_port() -> int:
 
 
 def clean_environment() -> dict[str, str]:
-    """The test runner's environment, without anything the tool or the fake adapters read."""
+    """The test runner's environment, without anything the tool or the fake adapters read: a setting left in the
+    runner's shell, DELIVERY_STATE above all, would point a fixture's commands at a live delivery instead."""
     return {key: value for key, value in os.environ.items()
-            if not key.startswith(("DELIVERY_FLOW_", "RUN_DELIVERY_", "FAKE_FORGE_"))}
+            if key != "DELIVERY_STATE" and not key.startswith(("DELIVERY_FLOW_", "RUN_DELIVERY_", "FAKE_FORGE_"))}
 
 
 # -- running the tool ---------------------------------------------------------------------------------
@@ -628,7 +629,7 @@ def posture_vector_repo(vector: dict, folder: Path) -> tuple[Path, dict[str, str
         commit(author, "a local name that isn't the base")
         sh("git", "fetch", "-q", "--no-tags", author, "shadow:refs/heads/origin/main", cwd=clone)
         sh("git", "update-ref", "refs/tags/origin/main", "refs/heads/origin/main", cwd=clone)
-    env = dict(os.environ)
+    env = clean_environment()
     if "git" in vector:
         stubs = folder / "stubs"
         stubs.mkdir()
@@ -5584,12 +5585,12 @@ class RunDeliveryDoctorTests(unittest.TestCase):
 
     def test_usage_errors_and_windows_exit_2(self) -> None:
         done = subprocess.run([sys.executable, "-B", str(self.tool), "doctor", "--no-such-flag"], text=True,
-                              capture_output=True, env=clean_environment())
+                              capture_output=True, env=clean_environment(), cwd=tempfile.gettempdir())
         self.assertEqual(done.returncode, 2, done.stderr)
         script = ("import os, runpy, sys; os.name = 'nt'; sys.argv = [sys.argv[1], 'doctor']; "
                   "runpy.run_path(sys.argv[0], run_name='__main__')")
         done = subprocess.run([sys.executable, "-B", "-c", script, str(self.tool)], text=True, capture_output=True,
-                              env=clean_environment())
+                              env=clean_environment(), cwd=tempfile.gettempdir())
         self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
         self.assertIn("runs on POSIX hosts only", done.stderr)
         self.assertNotIn("Traceback", done.stderr)
@@ -5890,7 +5891,7 @@ class RunDeliveryAdoptionGuideTests(unittest.TestCase):
         # Commands named in prose, in backticks.
         skills = {s["id"] for s in json.loads((ROOT / "catalog.json").read_text(encoding="utf-8"))["skills"]}
         named |= set(re.findall(r"`((?:lead|app|review|pr)-[a-z-]+|adapter-test|handoff|doctor|ship)(?: [^`]*)?`", text)) - skills
-        help_text = sh(sys.executable, "-B", self.tool, "--help").stdout
+        help_text = sh(sys.executable, "-B", self.tool, "--help", cwd=tempfile.gettempdir(), env=clean_environment()).stdout
         commands = set(re.search(r"\{([a-z,-]+)\}", help_text).group(1).split(","))
         self.assertTrue(named)
         self.assertLessEqual(named, commands, f"the guide or skill text names commands the tool lacks: {named - commands}")
@@ -6810,6 +6811,124 @@ class LaneStartAndReadinessTests(unittest.TestCase):
         _, out = self.assign(fx)
         self.assertNotIn("isn't offered", out)
         self.assertNotIn("readiness", out.lower())
+
+
+# Every setting the tool's Config or setting() reads from the environment, current and earlier names alike. Each one
+# set in the test runner's own environment would point the fixtures' commands somewhere other than the fixture.
+TOOL_SETTINGS = ("DELIVERY_STATE", "RUN_DELIVERY_BASE", "RUN_DELIVERY_SUPERVISOR", "RUN_DELIVERY_CONFIG",
+                 "DELIVERY_FLOW_CONFIG", "RUN_DELIVERY_DELIVERY", "DELIVERY_FLOW_DELIVERY", "RUN_DELIVERY_LOCAL",
+                 "DELIVERY_FLOW_LOCAL")
+PLANTED_KEY = "PLANTED-9"
+PLANTED_MARKER = "planted-live-delivery-7f3c"
+
+
+def tree_snapshot(root: Path) -> dict[str, tuple[bytes, int]]:
+    """Every file under `root` outside git's own folders, by relative path: its bytes and its mtime."""
+    found = {}
+    for path in sorted(root.rglob("*")):
+        if ".git" in path.relative_to(root).parts or not path.is_file() or path.is_symlink():
+            continue
+        found[path.relative_to(root).as_posix()] = (path.read_bytes(), path.stat().st_mtime_ns)
+    return found
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class LiveDeliveryOutOfReachTests(unittest.TestCase):
+    """The module's lead commands never reach a live delivery: not the checkout the suite runs from, and not one the
+    runner's environment names."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        for name, value in vars(installed_release()).items():
+            setattr(cls, name, value)
+
+    def test_the_cleaned_environment_strips_every_setting_the_tool_reads(self) -> None:
+        source = (SKILL / "scripts/run_delivery.py").read_text()
+        read = set(re.findall(r'os\.environ(?:\.get\(|\[)"([A-Z_]+)"', source))
+        read |= set(re.findall(r'setting\("([A-Z_]+)"\)', source))
+        read |= {name for pair in re.findall(r'\(\s*"([A-Z_]+)",\s*"([A-Z_]+)"\s*\)', source) for name in pair}
+        read -= {"PATH"}  # the runner's own, which every case needs
+        self.assertLessEqual(read, set(TOOL_SETTINGS), "the tool reads a setting this list doesn't name")
+        self.assertEqual(set(TOOL_SETTINGS) - read, set(), "a listed setting the tool no longer reads")
+        with mock.patch.dict(os.environ, {name: PLANTED_MARKER for name in TOOL_SETTINGS}):
+            cleaned = clean_environment()
+        self.assertEqual(sorted(set(TOOL_SETTINGS) & set(cleaned)), [])
+
+    def plant(self) -> tuple[Path, Path, dict[str, str]]:
+        """A main checkout with a linked worktree, as a story's checkout is, holding a delivery of its own under
+        .agents/deliveries/ and .orchestration/ whose supervisor is running: (main, worktree, settings naming it)."""
+        folder = Path(tempfile.mkdtemp(prefix="run-delivery-planted-"))
+        self.addCleanup(shutil.rmtree, folder, True)
+        main = folder / "main"
+        main.mkdir()
+        sh("git", "init", "-q", "-b", "main", cwd=main)
+        quieten(main)
+        (main / ".gitignore").write_text(".orchestration/\nlanes/\n")
+        (main / ".agents/deliveries").mkdir(parents=True)
+        (main / ".agents/run-delivery.json").write_text(json.dumps({
+            "schemaVersion": "delivery-flow/1", "branchPattern": "claude/{key}", "laneCheckout": ".orchestration/lanes/{key}",
+            "tracker": {"issueUrl": f"https://{PLANTED_MARKER}.test/{{key}}"}}, indent=2) + "\n")
+        (main / f".agents/deliveries/{PLANTED_KEY}.json").write_text(json.dumps({
+            "schemaVersion": "delivery-flow-delivery/1", "delivery": PLANTED_MARKER, "baseBranch": "main",
+            "plan": f"docs/{PLANTED_MARKER}.md", "lanes": {"lane-1": {"owns": ["*"]}},
+            "stories": {"PLANTED-10": {"lane": "lane-1", "title": PLANTED_MARKER}}}, indent=2) + "\n")
+        commit(main, "a live delivery")
+        worktree = folder / "story"
+        sh("git", "worktree", "add", "-q", "-b", "claude/PLANTED-10", worktree, cwd=main)
+        live = main / f".orchestration/lanes/{PLANTED_KEY}/.orchestration"
+        state = live / "state"
+        sh(sys.executable, "-B", self.generation / "skills/orchestrate-work/scripts/delivery_state.py", "--dir", state,
+           "init", "--headline", PLANTED_MARKER, env=clean_environment())
+        # Its supervisor holds its lock, as a live one does; the pid is one no process has, so nothing can be stopped.
+        pid = 4_000_000
+        while True:
+            try:
+                os.kill(pid, 0)
+                pid += 1
+            except ProcessLookupError:
+                break
+            except PermissionError:
+                pid += 1
+        # Under its own key, and under the fixture's, which a command that took this state directory would look for.
+        (live / "flow-log").mkdir(parents=True)
+        for key in (PLANTED_KEY, "FX-1"):
+            lock = live / f"flow-log/{key}.supervisor.lock"
+            lock.write_text(json.dumps({"pid": pid, "address": f"http://{PLANTED_MARKER}.test/"}))
+            holder = open(lock, "a+")
+            fcntl.flock(holder, fcntl.LOCK_EX)
+            self.addCleanup(holder.close)
+        settings = {"DELIVERY_STATE": str(state), "RUN_DELIVERY_BASE": "main",
+                    "RUN_DELIVERY_CONFIG": str(main / ".agents/run-delivery.json"),
+                    "DELIVERY_FLOW_CONFIG": str(main / ".agents/run-delivery.json"),
+                    "RUN_DELIVERY_DELIVERY": PLANTED_KEY, "DELIVERY_FLOW_DELIVERY": PLANTED_KEY,
+                    "RUN_DELIVERY_LOCAL": "1", "DELIVERY_FLOW_LOCAL": "1", "RUN_DELIVERY_SUPERVISOR": "on"}
+        self.assertEqual(set(settings), set(TOOL_SETTINGS))
+        return main, worktree, settings
+
+    def test_the_lead_commands_run_from_a_story_checkout_never_reach_its_live_delivery(self) -> None:
+        main, worktree, settings = self.plant()
+        before = tree_snapshot(main)
+        self.assertIn(f".orchestration/lanes/{PLANTED_KEY}/.orchestration/state/state.json", before)
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(worktree)  # where the suite runs from: a story's own checkout of the live repository
+        # In the runner's own environment before the fixture is built, never passed to a command with env=.
+        with mock.patch.dict(os.environ, settings):
+            fx = Fixture(self.generation, self.receipt)
+            self.addCleanup(fx.close)
+            m = fx.main
+            outputs = {}
+            setup_delivery(fx)
+            for argv in (["lead-init"], ["lead-brief"], ["lead-assign", "FX-2", "--lane", "lane-1", "--title", "Lane 1"],
+                         ["lead-reconcile"], ["lead-run", "--once"]):
+                code, out = fx.flow(*argv, cwd=m)
+                outputs[argv[0]] = out
+                with self.subTest(command=argv[0]):
+                    self.assertEqual(code, 0, out)  # each ran its whole course, not refused before it looked
+                    self.assertNotIn(PLANTED_MARKER, out)
+                    self.assertNotIn(str(main), out)
+            self.assertIn(f"initialized {fx.tmp / 'record'}", outputs["lead-init"])
+            self.assertTrue((fx.tmp / "record/state.json").is_file())
+        self.assertEqual(tree_snapshot(main), before, "a lead command changed the live delivery's files")
 
 if __name__ == "__main__":
     unittest.main()
