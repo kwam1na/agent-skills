@@ -7734,12 +7734,12 @@ def fresh_tool(name: str) -> types.ModuleType:
     return tool
 
 
-def stop_and_reap(proc: subprocess.Popen, group: bool = True) -> None:
-    """Stop a process this case started, by the pid its Popen recorded (its whole group when it leads one), and wait
-    for it, so it neither runs on nor is left unreaped."""
+def stop_and_reap(proc: subprocess.Popen) -> None:
+    """Stop a process this case started in a session of its own, by the pid its Popen recorded (so its whole group),
+    and wait for it, so it neither runs on nor is left unreaped."""
     if proc.poll() is None:
         with contextlib.suppress(ProcessLookupError):
-            os.killpg(proc.pid, signal.SIGKILL) if group else proc.kill()
+            os.killpg(proc.pid, signal.SIGKILL)
     proc.wait()
 
 
@@ -7931,7 +7931,11 @@ class InProcessCallsStayInTheirCaseTests(unittest.TestCase):
         def released(reap: bool) -> list[str]:
             proc = subprocess.Popen(["sleep", "60"], start_new_session=True)
             if reap:
+                started = time.monotonic()
                 stop_and_reap(proc)
+                # Stopped, not waited out: it ends by the signal, long before its own minute is up.
+                self.assertLess(time.monotonic() - started, 5)
+                self.assertEqual(proc.returncode, -signal.SIGKILL)
             else:  # the form that warned: stopped, never waited for
                 os.killpg(proc.pid, signal.SIGKILL)
                 time.sleep(0.2)
