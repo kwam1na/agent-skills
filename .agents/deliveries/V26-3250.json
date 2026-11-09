@@ -1,0 +1,217 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3250",
+  "headline": "V26-3250: take the hand-work out of leading a delivery",
+  "plan": "docs/plans/2026-11-09-lead-hand-work.md",
+  "laneBrief": "docs/plans/2026-11-09-lead-hand-work.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-09-lead-hand-work.lane-notes.md"
+  },
+  "context": {
+    "sections": [
+      "Decisions"
+    ]
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "skills/run-delivery/*",
+        "tests/test_run_delivery.py",
+        "tests/test_run_delivery_supervisor.py",
+        "tests/test_run_delivery_plan_review.py",
+        "tests/test_run_delivery_tracker.py",
+        "skills/plan-work/*",
+        "docs/solutions/*",
+        "catalog.json",
+        "profiles/*"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "skills/orchestrate-work/*",
+        "tests/test_orchestration_state.py",
+        "tests/test_orchestration_render.py",
+        "tests/test_merge_queue.py",
+        "tests/test_lead_wait.py",
+        "tests/test_registry.py",
+        "skills/delivery-views/*",
+        "tests/test_delivery_views_page.py",
+        "tests/test_delivery_views_snapshots.py",
+        "tests/delivery_views_page/*",
+        "tests/fixtures/delivery-views/*"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3276": {
+      "title": "Don't register a story added mid-delivery without a reason",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3276-done",
+          "text": "Adding a story by the documented path records its why from the delivery file, or is refused naming its key; lead-brief, lead-reconcile and lead-assign each tried; a story present at lead-init needs none; doctor --delivery names a reason-less added change and is clean once lead-plan why records one"
+        }
+      ]
+    },
+    "V26-3259": {
+      "title": "Make the lead's check selections cheaper to write and harder to get wrong",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3259-done",
+          "text": "select --checks takes catalogue ids (unknown id refused), adds always-selected guards to every lead selection, includes the readers the binding maps to a changed schema and no unmapped test, keeps JSON-list selections valid; it warns per check only for a failing base re-run at the current base head, which the queue records with its head, pinned by passed, older-head, unselected and no-re-run rows"
+        }
+      ]
+    },
+    "V26-3256": {
+      "title": "Draft lanes, ownership, criteria and order from the plan at setup",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3256-done",
+          "text": "lead-setup drafts each story's lane, after keys and tracker criteria, and each lane's owns, from the plan grammar with no hand edits, compared with the committed delivery file and the plan's lowest-tier rows; the snapshot producer emits criteria; next orders a story after open dependencies and unblocks it once they merge or complete; lead-plan change --kind added --why adds a whole story that lead-assign accepts"
+        }
+      ]
+    },
+    "V26-3263": {
+      "title": "Let a lane close a story that needs no change, with its evidence",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3263-done",
+          "text": "handoff --no-change --evidence settles a story with no branch, PR or base commit; lead-accept refuses a head not on the base, evidence missing a criterion (naming it) and a story with no criteria, and accepts after the base moves; the close and stories finish line count it, next treats it as done, and render_state and the page show closed, no change needed"
+        }
+      ]
+    },
+    "V26-3257": {
+      "title": "Fix the lead commands' defaults, refusals and grants that cost round trips",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3257-done",
+          "text": "Each of the six points has a row that fails before its fix: the default delivery (open record, else the one not known closed by local closed.json or the tracker snapshot's parent state, else a refusal naming them), the missing-file refusal, readyPullRequests in lead-setup --authority but not the lanes' grants, finish --text, ack without --version, and one wait document per run"
+        }
+      ]
+    },
+    "V26-3309": {
+      "title": "Adopt the check catalogue and always-selected guards in this repository's binding",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3309-done",
+          "text": "After the lead tags and applies the next release candidate, this repository's binding declares the check catalogue and guards, a StandingBinding row pins them and runs select by id against the committed binding, doctor validates it, and docs/own-deliveries.md says the lead selects by catalogue id"
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "Every story",
+      "text": "Each item merged to main through the merge queue, or closed with a recorded reason",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "main-ci",
+      "label": "Main CI",
+      "text": "main's CI on the last merged commit passes on the Ubuntu job and cut-release, with the run linked",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the commit the release candidate is tagged on",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "release",
+      "label": "Release",
+      "text": "The next release candidate is tagged, published, verified and applied here, and the binding declares the check catalogue and its guards",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "epic-finish",
+      "label": "Epic finish line",
+      "text": "The ownership-commit and queue-hold clause is moved from V26-3250's finish line to V26-3307's, with a comment on both",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "no-deferrals",
+      "label": "No deferrals",
+      "text": "No finding any review in this delivery raised is deferred: each is fixed in the story that found it, and no follow-up item is filed",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "grantedBy": "the operator",
+    "grantedOn": "2026-11-08"
+  },
+  "approvals": [
+    {
+      "id": "approval-1",
+      "text": "The plan, approved under the operator's standing grant for this delivery on 2026-11-09, after four plan-review rounds.",
+      "state": "done",
+      "who": "the operator"
+    },
+    {
+      "id": "approval-2",
+      "text": "The release candidate's tag and its apply here (V26-3309), under the operator's grant for this delivery, agreed with the other running deliveries' leads.",
+      "state": "waiting"
+    },
+    {
+      "id": "approval-3",
+      "text": "The edit to the epic's finish line in Linear, under the same grant.",
+      "state": "waiting"
+    },
+    {
+      "id": "approval-4",
+      "text": "Nothing else is outward-facing beyond the merge queue's own merges, which the binding already authorizes.",
+      "state": "done",
+      "who": "the operator"
+    }
+  ],
+  "outOfScope": [
+    "The other backlog epics and the items they hold: release safety (V26-3266), posture readers (V26-3267), the harness runtime (V26-3268), and the related epics V26-3305, V26-3306 and V26-3307, with the items the epic's relations name that are theirs, V26-3251 and V26-3253 among them.",
+    "The items the epic lists as already tracked elsewhere: V26-3170, V26-3201, V26-3069 and V26-3070.",
+    "A final (non-candidate) release. V26-3309's candidate is promoted at a later batch boundary, as `docs/product-generation.md` says."
+  ],
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  },
+  "outcome": {
+    "summary": "Leading a delivery takes fewer hand edits, refusals and guesses.",
+    "text": "Setup drafts lanes, ownership, criteria and order from the plan; added stories carry a reason; a no-change story closes with evidence; lead commands default to the open delivery; and check selections are catalogue ids with guards, adopted in this repository's binding through a release candidate."
+  }
+}
