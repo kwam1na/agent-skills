@@ -1,0 +1,142 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "writtenBy": "run-delivery plan-review",
+  "plan": "docs/plans/2026-11-09-lead-hand-work.md",
+  "planSha256": "3ad6507f8bba9acd94207adf0fe5b11cebb081efa9ec08a7d0243aa026bcfb52",
+  "planCommit": "8037568e683ea0c7f1d3deb5b9e036ebefa2c889",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": [
+    "lens.outcome-correctness",
+    "lens.adversarial-testing"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "candidate": "d858305ce250c29432adce35a0f75fe73284e127",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-09T00:58:08.371364Z",
+      "finishedAt": "2026-11-09T01:01:13.790652Z",
+      "open": [
+        "outcome-correctness-r1-1",
+        "outcome-correctness-r1-2",
+        "outcome-correctness-r1-3",
+        "outcome-correctness-r1-4",
+        "adversarial-testing-r1-1",
+        "adversarial-testing-r1-2",
+        "adversarial-testing-r1-3",
+        "adversarial-testing-r1-4"
+      ]
+    },
+    {
+      "round": 2,
+      "candidate": "234a292d0c9f3070f8423f8c054fbf70fcfa2aa6",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-09T01:03:10.455451Z",
+      "finishedAt": "2026-11-09T01:05:48.630786Z",
+      "open": [
+        "outcome-correctness-r2-1",
+        "outcome-correctness-r2-2",
+        "adversarial-testing-r2-1",
+        "adversarial-testing-r2-2",
+        "adversarial-testing-r2-3",
+        "adversarial-testing-r2-4",
+        "adversarial-testing-r2-5"
+      ]
+    },
+    {
+      "round": 3,
+      "candidate": "417eaf55dc0d0b7a891615f0e46c2d3a3ac3f228",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-09T01:06:22.334148Z",
+      "finishedAt": "2026-11-09T01:08:16.899358Z",
+      "open": [
+        "outcome-correctness-r2-2",
+        "outcome-correctness-r3-1",
+        "adversarial-testing-r3-1"
+      ]
+    },
+    {
+      "round": 4,
+      "candidate": "8037568e683ea0c7f1d3deb5b9e036ebefa2c889",
+      "outcome": "aligned",
+      "startedAt": "2026-11-09T01:08:28.246585Z",
+      "finishedAt": "2026-11-09T01:09:20.555641Z",
+      "open": []
+    }
+  ],
+  "reviews": [
+    {
+      "lens": "lens.outcome-correctness",
+      "round": 4,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.outcome-correctness",
+        "subjectRef": "lead-hand-work.plan",
+        "candidateRef": "8037568e683ea0c7f1d3deb5b9e036ebefa2c889",
+        "round": 4,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [
+          {
+            "id": "outcome-correctness-r2-2",
+            "state": "fixed",
+            "resolution": "Fixed through outcome-correctness-r3-1. Decision 6 now names a closure source that any checkout can read: the tracker snapshot run with `{parent}` set to the delivery's own key, read through a new parent-state member. A failure falls back to 'not known to be closed', and the closed-elsewhere and canceled rows are driven by the producer's output."
+          },
+          {
+            "id": "outcome-correctness-r3-1",
+            "state": "fixed",
+            "resolution": "Adopted as written. Decision 6 runs the binding's trackerSnapshot once per delivery key, and `work-snapshot/1` gains an optional parent-state member that snapshot.py emits. A failed command or a missing tracker leaves the delivery 'not known to be closed'. V26-3257's Files and Sensors now include schemas.json, snapshot.py and tests/test_delivery_views_snapshots.py. There is a producer row for the parent's state, and the default-delivery rows (parent started, completed, canceled, and the command failing) are driven by the producer, not a hand-built snapshot."
+          }
+        ],
+        "evidence": [
+          "Reviewed tree SHA b240962d893b4e387e7c81a6d40817a0928b5bf1 at HEAD 8037568e683ea0c7f1d3deb5b9e036ebefa2c889. The start check (git rev-parse HEAD^{tree} equal, git status --porcelain empty) and the end check (same tree, 0 porcelain lines) both passed in /Users/kwamina/agent-skills/.orchestration/plan-review/lead-hand-work/checkouts/lens.outcome-correctness.",
+          "Delta reviewed: git diff 417eaf55dc0d0b7a891615f0e46c2d3a3ac3f228..8037568e683ea0c7f1d3deb5b9e036ebefa2c889. It changes only Decision 6 and V26-3257's rows, Files and Sensors in docs/plans/2026-11-09-lead-hand-work.md.",
+          "Carried findings re-checked: outcome-correctness-r2-2 and outcome-correctness-r3-1 are both fixed (see resolvedFindings).",
+          "Code read for this round, read-only: snapshot.py LINEAR_QUERY. It already queries `issue(id: $parent)` (createdAt), so emitting the parent's `state { type }` is a field added to an existing fetch. V26-3257 now owns snapshot.py and its test at tier 2 through the tier-2 row. No sensors, tests, mutants or processes were run, since a plan review runs no checks.",
+          "P3 note, not filed: Decision 6 says the parent issue is one that snapshot.py's 'Linear and Jira queries already fetch'. The Jira path searches `jql parent = KEY` and fetches only the children, so Jira needs one more GET of the parent issue. That GET is within snapshot.py, which is in V26-3257's Files, and this repository's tracker is Linear, so nothing fails. Smallest edit: drop 'and Jira', or say that Jira fetches the parent issue once.",
+          "Model class: claude-opus-5-5, run as a native subagent. The host exposes no progress or permission signals, which limited what I could report while running. Realization basis: host-convention.",
+          "Approval conditions: no findings are raised this round, so there are no proposed changes to judge."
+        ]
+      },
+      "resultSha256": "106c24433f1f69eaf076a371c9fc57f881be787b7f40dfb494c9074eb2247dbe"
+    },
+    {
+      "lens": "lens.adversarial-testing",
+      "round": 4,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.adversarial-testing",
+        "subjectRef": "lead-hand-work.plan",
+        "candidateRef": "8037568e683ea0c7f1d3deb5b9e036ebefa2c889",
+        "round": 4,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [
+          {
+            "id": "adversarial-testing-r3-1",
+            "state": "fixed",
+            "resolution": "Lines 193-195: the two-not-closed refusal row now has each delivery's parent started in its tracker snapshot, and the row asserts the refusal names both as not known to be closed. The optional canceled-parent row was added too (line 196), along with a row where a failing snapshot command leaves its delivery not known to be closed. The rows drive the snapshot through the producer's output rather than a hand-built one (lines 197-198). The approval condition is met as written, and the optional part is adopted as well."
+          }
+        ],
+        "evidence": [
+          "Reviewed tree SHA b240962d893b4e387e7c81a6d40817a0928b5bf1. Start check: HEAD 8037568e683ea0c7f1d3deb5b9e036ebefa2c889, HEAD^{tree} b240962d893b4e387e7c81a6d40817a0928b5bf1, git status --porcelain empty. End check: HEAD^{tree} b240962d893b4e387e7c81a6d40817a0928b5bf1, git status --porcelain empty.",
+          "Delta, derived myself with git diff 417eaf55dc0d0b7a891615f0e46c2d3a3ac3f228..8037568e683ea0c7f1d3deb5b9e036ebefa2c889: only docs/plans/2026-11-09-lead-hand-work.md changed, in Decision 6 (lines 72-76) and in V26-3257's default-delivery rows, files and sensors (lines 193-210).",
+          "Re-check of carried findings: adversarial-testing-r3-1 is fixed as its approval condition requires. Every round 1 and round 2 finding was already fixed, and the rows that fixed them are unchanged by this delta.",
+          "Model class: claude-opus-5-5, run as a native subagent. The host exposes no progress or permission signals, which limits what this round can report about its own run.",
+          "Realization basis: host-convention.",
+          "Scope: a plan review. No sensors were run, no test files were in scope, and no mutants were planted. Every mutation named here is a thought experiment against the plan's changed lines. Besides the plan, I read skills/delivery-views/scripts/snapshot.py's Linear query (around line 498) and Jira query (around line 292), as observation only, to check the claim in the delta that the parent issue is already fetched.",
+          "P2 (evidence only): line 74 says snapshot.py emits the parent's state 'from the parent issue its Linear and Jira queries already fetch'. That holds only in part. The Linear query reads issue(id: $parent) but selects only createdAt from it, so it needs `state { type }` added. The Jira query is a JQL search, `parent = KEY`, which returns only the children, so the parent issue is not fetched at all. Mutant: snapshot.py emits the parent state only on the Linear path. The planned producer row in tests/test_delivery_views_snapshots.py names no tracker kind, so a Linear-only row stays green and Jira deliveries are never known to be closed through the tracker. The failure is safe, because such a delivery stays 'not known to be closed' and the command refuses rather than picking the wrong delivery, so I put this in evidence rather than findings. Suggested fix: correct the sentence to say the Jira path must fetch the parent issue, and give the producer row one Linear case and one Jira case.",
+          "P2 (evidence only): the producer row asserts that snapshot.py 'emits the parent's state'. Mutant: emit one child's state, or a constant 'started', as the parent state. If the fixture's parent and children share a state, the row stays green. Suggested fix: the fixture's parent is completed while its children are started, and the row asserts the emitted parent state is completed.",
+          "Declined: none beyond the two evidence notes above. The new failing-command row pins the fallback branch, and the producer-driven rows observe the real surface.",
+          "Approval conditions: this round raises no findings, so there are none to resolve. Every carried finding is fixed."
+        ]
+      },
+      "resultSha256": "fe3d7d8113c62e6cb7b0034dbb80453dcfaa3751d937e888d1eb5df89297e8d6"
+    }
+  ],
+  "residualRisks": [
+    "4 review rounds; findings open after each round: 8, 7, 3, 0."
+  ]
+}

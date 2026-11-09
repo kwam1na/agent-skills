@@ -17,7 +17,8 @@ ownership, and how the work reaches `main`.
   snapshot before the run and another after it. The after snapshot holds no new `run_delivery.py`, `render_state.py`, `merge_queue.py` or
   fixture-server process whose command line names an `FX-` fixture key or a path under the run's temporary folder. The delivery's own
   supervisor, and any other real delivery's processes, are left out by that rule, never case by case.
-- Every deferral has an open follow-up item filed under the epic, and the epic and its items are closed with this evidence.
+- No finding is deferred (operator ruling, 2026-11-08): every finding any review in this delivery raises, at any severity, is fixed in
+  the story that found it, and no follow-up item is filed for it. The epic and its items are closed with this evidence.
 
 ## Out of scope
 
@@ -50,7 +51,7 @@ Two lanes. Lane 1 holds the run-delivery chain. Lane 2 holds the tracker module 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
 | 1 | 1 | V26-3286, V26-3273 | `skills/run-delivery/`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_plan_review.py`, `docs/solutions/`, `provenance.lock.json` for `run_delivery.py`'s digest, and `catalog.json` and `profiles/*.json` only if an output is added |
-| 1 | 2 | V26-3274, V26-3292 | `tests/test_run_delivery_tracker.py`, `tests/test_own_deliveries.py` |
+| 1 | 2 | V26-3274, V26-3292, V26-3312 | `tests/test_run_delivery_tracker.py`, `tests/test_own_deliveries.py`, `tests/test_delivery_views_render.py` |
 
 **Moving ownership.** `provenance.lock.json` belongs to lane 1, the only lane that changes a listed output. If lane 2 finds it needs a file
 outside its `owns`, it raises it with the lead before hand-off.
@@ -111,6 +112,16 @@ for `provenance.lock.json`, its path and argv. It runs that argv the way `merge_
 computed independently from the lock JSON's listed output paths, sorted, never through `update-provenance.py`'s own code. The row is proved
 red three ways: the entry removed, an argv that prints `[]`, and an argv naming another script. For the last two, the exact-entry literal is
 updated to match each mutated argv, so the failure lands on the run assertion, and each red run records which assertion failed. Files: `tests/test_own_deliveries.py`. Sensors: `tests/test_own_deliveries.py`, `scripts/validate-registry.py`.
+
+### V26-3312. Gate the run-deadline render test against the macOS wall-clock race
+
+Lane 2, after V26-3292 (lead's addition, 2026-11-08, under the no-deferrals ruling: found red on V26-3274's macOS full-matrix job,
+outside that story's diff). Characterization-first: reproduce `CollectRunsTests.test_runs_past_the_deadline_are_unavailable_and_stay_uncached`
+under load, or with a stall that models it, before changing it. The fix keeps the row's claim and doesn't loosen it. Either the suffix order
+is a promise `collect_runs` keeps under load and a row pins it, or the row asserts what the code does promise, and the hand-off says which.
+A mutation that drops the deadline handling fails it. Files: `tests/test_delivery_views_render.py`, and
+`skills/delivery-views/scripts/render.py` only through the lead, if the code breaks a promise. Sensors:
+`tests/test_delivery_views_render.py`, macOS CI with `full-matrix`.
 
 ## Execution posture
 

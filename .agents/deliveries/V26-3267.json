@@ -1,0 +1,162 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3267",
+  "headline": "V26-3267: make every delivery-posture reader agree",
+  "plan": "docs/plans/2026-11-08-posture-readers.md",
+  "laneBrief": "docs/plans/2026-11-08-posture-readers.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-08-posture-readers.lane-notes.md"
+  },
+  "context": {
+    "sections": [
+      "Decisions"
+    ]
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "product-runtime/*",
+        "docs/product-generation.md",
+        "README.md",
+        "tests/test_product_release.py",
+        "tests/test_product_descriptors.py",
+        "tests/test_product_launcher.py",
+        "tests/test_cut_release.py",
+        "tests/built_product.py",
+        "tests/test_delivery_posture_vectors.py",
+        "tests/fixtures/delivery-posture-vectors.json"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "skills/run-delivery/*",
+        "skills/orchestrate-work/SKILL.md",
+        "skills/orchestrate-work/references/orchestration-guide.md",
+        "tests/test_run_delivery.py",
+        "tests/test_run_delivery_supervisor.py",
+        "provenance.lock.json",
+        "docs/solutions/*"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3162": {
+      "title": "Read the delivery posture only from the repository root",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3162-done",
+          "text": "The harness resolver reads only from a repository root per Decision 4: subdirectory, nested repository, submodule, untracked gitfile and a standalone bare clone under an emulated pre-2.38 git gate with posture_unreadable; clone roots and linked worktrees, nested or symlinked, read focused. It carries Decision 1's depth bound and kills the named mutants. The harness PR is merged, product-runtime/ is built from runtime/0.8.2 with Decision 3's three records, and the built-product rows pass with their red runs"
+        }
+      ]
+    },
+    "V26-3174": {
+      "title": "Triage the deferred review findings from the delivery posture work",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3174-done",
+          "text": "Each of the 22 findings is fixed or dropped with a reason, listed in the hand-off with its outcome; every drop that names a mutation or unguarded branch carries the settling test's red run under that mutation; each new pin is proved red; nothing is filed"
+        }
+      ]
+    },
+    "V26-3163": {
+      "title": "Make both posture readers agree on deeply nested declarations",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3163-done",
+          "text": "posture_of_bytes measures depth per Decision 1 before parsing; every Decision 1 vector is in tests/fixtures/delivery-posture-vectors.json and both readers agree on all of them on Python 3.11 and 3.14 against the 0.8.2 runtime; red runs recorded against the unfixed reader and the five scanner mutants; the lead-resolve wording under focused is pinned in SKILL.md and references/config.md, proved red"
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "Every story",
+      "text": "Each item merged to main through the merge queue, or closed with a recorded reason; V26-3162's source merged to the harness's main",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "vectors",
+      "label": "Readers agree",
+      "text": "Both readers give the same posture, code and source on every vector in tests/fixtures/delivery-posture-vectors.json, on Python 3.11 and 3.14, against the built 0.8.2 runtime",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "main-ci",
+      "label": "Main CI",
+      "text": "main's CI on the last merged commit passes on the Ubuntu job and cut-release, with the run linked",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the last merged commit",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "no-deferrals",
+      "label": "No deferrals",
+      "text": "No finding any review raised is deferred or filed as a follow-up; each of V26-3174's 22 findings is fixed or dropped with a reason",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "grantedBy": "the operator",
+    "grantedOn": "2026-11-08"
+  },
+  "approvals": [
+    {
+      "id": "approval-1",
+      "text": "The plan, approved by the lead under the operator's standing grant for this delivery (2026-11-08), after five plan-review rounds.",
+      "state": "done",
+      "who": "the operator"
+    },
+    {
+      "id": "approval-2",
+      "text": "Merging the harness pull request and pushing `runtime/0.8.2`, both outside this repository's queue. The operator granted the lead these approvals for this delivery on 2026-11-08.",
+      "state": "waiting"
+    }
+  ],
+  "outOfScope": [
+    "Cutting or applying a release. The 0.8.2 runtime and the reader changes ship with the next batch release.",
+    "The other backlog epics: lead hand-work (V26-3250), release safety (V26-3266), the harness runtime (V26-3268), and the suite work live in V26-3304.",
+    "Commits on the harness's `main` after `v0.8.1` that belong to other work, such as V26-3294's warm-base prewarm (#200), still in progress under V26-3204. They stay out of the runtime this delivery ships.",
+    "Athena. It reads the posture through the exported resolver, so it picks up the fix with its next runtime update."
+  ],
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  },
+  "outcome": {
+    "summary": "Both delivery-posture readers give the same answer for the same bytes, from the repository root only.",
+    "text": "The harness resolver reads the posture only from a repository root and both readers bound nesting depth identically, proved by a shared vector set; the 22 deferred posture-review findings are fixed or dropped with a reason; the 0.8.2 runtime reaches main without unrelated harness work."
+  }
+}
