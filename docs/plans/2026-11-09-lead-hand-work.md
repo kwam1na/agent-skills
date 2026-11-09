@@ -70,8 +70,10 @@ the choices two items share, order, file ownership while two other deliveries ho
 6. **The default delivery (V26-3257).** A lead command with no `--delivery` takes, in this order: the delivery whose record is open in
    this checkout's state directory; else the only delivery file whose delivery isn't known to be closed; else it refuses, naming every
    delivery not known to be closed. A delivery is known to be closed when this checkout's flow log holds its `closed.json`, or, where the
-   binding declares a tracker snapshot, when the snapshot shows the delivery's own item completed or canceled. Any checkout can read the
-   second, so a delivery closed from another checkout counts as closed here.
+   binding declares a tracker snapshot, when that snapshot, run with `{parent}` filled by the delivery's own key, shows the parent
+   completed or canceled. `work-snapshot/1` gains an optional parent-state member, which `snapshot.py` emits from the parent issue its
+   Linear and Jira queries already fetch. When the command fails, or there is no tracker, the delivery stays not known to be closed. Any
+   checkout can read the second source, so a delivery closed from another checkout counts as closed here.
 7. **The check catalogue is additive (V26-3259).** `select --checks` takes comma-separated catalogue ids as well as today's JSON list, so
    existing selections and bindings stay valid. Always-selected guards are added to every lead selection. A schema's readers are named in
    the binding, never inferred from what a test mentions. The base-head warning is per check: the merge queue records the base head
@@ -189,9 +191,12 @@ no change needed" with the evidence, pinned in `render_state.py`'s output and in
 
 Lane 1, tier 2, after V26-3263. Test-first: each of the item's six points has a row that fails before its fix (Decisions 5 and 6). The
 default-delivery rows: one closed and one not-closed delivery file selects the not-closed one; two not-closed files and no record open
-here refuses, naming both as not known to be closed; two not-closed files with one record open here selects that one; and a delivery
-closed from another checkout, with its file on the base, no local `closed.json` and its item completed in the tracker snapshot, counts as
-closed, so the one other delivery is selected. A missing delivery file's refusal names the
+here, each with its parent started in its tracker snapshot, refuses, naming both as not known to be closed; two not-closed files with
+one record open here selects that one; a delivery closed from another checkout, with its file on the base, no local `closed.json` and its
+parent completed, counts as closed, so the one other delivery is selected; a parent canceled counts the same; and a snapshot command
+that fails leaves its delivery not known to be closed. These rows drive the tracker snapshot through the snapshot producer's output,
+not a hand-built snapshot. A row in `tests/test_delivery_views_snapshots.py` asserts the producer emits the parent's state, and the
+snapshot validates against `work-snapshot/1`. A missing delivery file's refusal names the
 open delivery and says when the argument looks like a story key. `lead-setup --authority push,draftPullRequests,readyPullRequests` writes
 all three, replacing the row that pins today's refusal. The brief's list of lane grants leaves `readyPullRequests` out, and `open-pr`
 leaves the pull request a draft under the grant, each pinned by a row. `lead-plan change --kind finish --text` updates the line's text.
@@ -199,9 +204,10 @@ leaves the pull request a draft under the grant, each pinned by a row. `lead-pla
 its output file held more than one document and makes one run write one document. If more than one is the design, it documents the stream
 and ships a reader that a row uses. Files: `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/templates/`,
 `skills/run-delivery/references/adopting.md`, `skills/orchestrate-work/scripts/delivery_state.py`,
-`skills/orchestrate-work/references/orchestration-guide.md`, `tests/test_run_delivery.py`, `tests/test_orchestration_state.py` and
-`tests/test_lead_wait.py`. Sensors: `tests/test_run_delivery.py`, `tests/test_orchestration_state.py`, `tests/test_lead_wait.py`,
-`scripts/validate-registry.py`.
+`skills/orchestrate-work/references/orchestration-guide.md`, `skills/orchestrate-work/references/schemas.json`,
+`skills/delivery-views/scripts/snapshot.py`, `tests/test_run_delivery.py`, `tests/test_orchestration_state.py`, `tests/test_lead_wait.py`
+and `tests/test_delivery_views_snapshots.py`. Sensors: `tests/test_run_delivery.py`, `tests/test_orchestration_state.py`,
+`tests/test_lead_wait.py`, `tests/test_delivery_views_snapshots.py`, `scripts/validate-registry.py`.
 
 ### V26-3309. Adopt the check catalogue and always-selected guards in this repository's binding
 
