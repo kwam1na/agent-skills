@@ -137,6 +137,41 @@ class StandingBinding(unittest.TestCase):
         self.assertEqual(done.returncode, 1)
         self.assertIn("expected one open change request, found 2", done.stderr)
 
+    def test_the_lock_listing_is_pinned_and_prints_what_the_lock_lists(self) -> None:
+        # The merge queue regenerates a digest-only conflict in the lock and stops one where a candidate added or removed
+        # an output. It tells them apart only through this listing, so without it, or with one that lists nothing, a
+        # candidate's new outputs are dropped silently.
+        binding = json.loads((ROOT / ".agents/orchestration.json").read_text(encoding="utf-8"))
+        regenerable = binding["regenerable"]
+        self.assertIn("provenance.lock.json", regenerable["paths"])
+        entries = [entry for entry in regenerable.get("listings", []) if entry.get("path") == "provenance.lock.json"]
+        self.assertEqual(entries, [{"path": "provenance.lock.json",
+                                    "argv": ["python3", "-B", "scripts/update-provenance.py", "--list-outputs"]}])
+
+        def listing(lock: str) -> list[str]:
+            # Run as merge_queue.listed_outputs does: one version of the lock on stdin, from the root, with no file
+            # argument, in the binding's environment over this one.
+            done = subprocess.run(entries[0]["argv"], cwd=ROOT, input=lock, capture_output=True, text=True, timeout=120,
+                                  env={**os.environ, **binding.get("environment", {})})
+            self.assertEqual(done.returncode, 0, done.stderr)
+            return json.loads(done.stdout)
+
+        def listed(lock: str) -> list[str]:  # what the lock JSON itself lists, sorted and once each
+            return sorted({output["path"] for entry in json.loads(lock)["entries"] for output in entry["outputs"]})
+
+        committed = _git(ROOT, "show", "HEAD:provenance.lock.json")
+        self.assertGreater(len(listed(committed)), 1)
+        self.assertEqual(listing(committed), listed(committed))
+        # A version that isn't the one on disk, as the merge base and a candidate aren't: the listing reads its stdin.
+        other = json.loads(committed)
+        dropped = other["entries"][0]["outputs"].pop()["path"]
+        added = "skills/fixture-only/ADDED.md"
+        other["entries"][-1]["outputs"].append({"path": added, "sha256": "0" * 64})
+        other = json.dumps(other, indent=2) + "\n"
+        self.assertNotIn(dropped, listed(other))
+        self.assertIn(added, listed(other))
+        self.assertEqual(listing(other), listed(other))
+
     def test_the_delivery_folders_are_ignored(self) -> None:
         for path in (".orchestration/lanes/x", ".orchestration/state/state.json", ".worktrees/x", ".claude/worktrees/x"):
             done = subprocess.run(["git", "check-ignore", "-q", "--no-index", path], cwd=ROOT)
