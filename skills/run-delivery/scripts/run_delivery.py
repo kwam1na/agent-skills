@@ -2935,8 +2935,8 @@ def require_authority(what: str) -> dict:
 def authority_text() -> str:
     c, granted = cfg(), authority()
     if not granted.get("push"):
-        return ("Lanes have no authority to push or open pull requests in this delivery. Commit on your branch and "
-                "tell the lead it is ready; the lead pushes it.")
+        return ("Lanes have no authority to push, open pull requests or mark one ready in this delivery. Commit on "
+                "your branch and tell the lead it is ready; the lead pushes it.")
     what = f"push your own `{c.branch_pattern.replace('{key}', '<key>')}` branch, with `{flow_command()} push <key>`"
     if granted.get("draftPullRequests"):
         what += f", and open its draft pull request into `{c.base_branch}`, with `{flow_command()} open-pr`"

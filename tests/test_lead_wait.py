@@ -264,14 +264,23 @@ class OutputTests(RecordCase):
         with self.output().open(encoding="utf-8") as stream:
             written = json.load(stream)
         self.assertEqual([event["id"] for event in written["events"]], [first])
-        self.assertEqual(written["restart"][-1], f"--output={self.output()}")
+        self.assertEqual(written["restart"][-1], f"--output={self.output().resolve()}")
         self.assertEqual(_tree(self.record.directory), before, "a wait wrote to the record")
         # The next wait, from the printed arguments, writes there again: an expiry this time, the file replaced whole.
         code, again = self.record.wait(*written["restart"])
         self.assertEqual(code, state_tool.WAIT_EXPIRED_EXIT)
         self.assertEqual(json.loads(self.output().read_text(encoding="utf-8")), again)
         self.assertEqual(again["woke"], "expired")
-        self.assertEqual(state_tool.wait_arguments(again["restart"]).output, self.output())
+        self.assertEqual(state_tool.wait_arguments(again["restart"]).output, self.output().resolve())
+
+    def test_a_relative_output_is_carried_into_restart_resolved(self) -> None:
+        self.record.add_lanes("lane-1")
+        first = self.record.journal("candidate.merged")
+        relative = os.path.relpath(self.output())
+        code, result = self.record.wait("--after", str(first - 1), f"--output={relative}")
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result["restart"][-1], f"--output={self.output().resolve()}")
+        self.assertTrue(Path(result["restart"][-1].split("=", 1)[1]).is_absolute())
 
     def test_a_failed_wait_writes_its_one_error_document_there_too(self) -> None:
         with (self.record.directory / "journal.jsonl").open("ab") as journal:
@@ -285,7 +294,8 @@ class OutputTests(RecordCase):
         before = _tree(self.record.directory)
         for output, words in ((self.record.directory / "wait.json", "outside the state directory"),
                               (self.record.directory, "outside the state directory"),
-                              (self.record.directory.parent / "no-such-folder/wait.json", "in a folder that exists")):
+                              (self.record.directory.parent / "no-such-folder/wait.json", "in a folder that exists"),
+                              (self.record.directory.parent, "must be a file in a folder that exists")):
             with self.subTest(output=output):
                 code, result = self.record.wait(f"--output={output}")
                 self.assertEqual((code, result["code"]), (1, "wait_invalid"), result)

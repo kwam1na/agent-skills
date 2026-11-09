@@ -4703,7 +4703,7 @@ def main(argv: list[str] | None = None) -> int:
                 code, result = 1, {"ok": False, "code": error.code, "error": str(error)}
             if output is not None:
                 if isinstance(result.get("restart"), list):  # the next wait writes where this one did
-                    result["restart"] = [*result["restart"], f"--output={args.output}"]
+                    result["restart"] = [*result["restart"], f"--output={output}"]  # resolved: any folder reads it
                 _write_atomically(output, emitted(result))
             emit(result)
             return code

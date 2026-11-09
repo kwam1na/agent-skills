@@ -253,6 +253,13 @@ class JiraTests(SnapshotCase):
         code, out, _ = self.run_kind(JIRA_ARGS, Transport((SEARCH, 200, JIRA["page-2"]), (ISSUE, 404, b"{}")), JIRA_ENV)
         self.assertEqual(code, 0)
         self.assertNotIn("parent", self.checked(out, parent="APP-10"))
+        # An answer for the parent that holds no fields object says so, rather than failing some other way.
+        for answer in ({"key": "APP-10"}, {"key": "APP-10", "fields": []}, ["APP-10"]):
+            with self.subTest(answer=answer):
+                code, _, err = self.run_kind(JIRA_ARGS, Transport((SEARCH, 200, JIRA["page-2"]), (ISSUE, 200, answer)),
+                                             JIRA_ENV)
+                self.assertNotEqual(code, 0)
+                self.failed(err, "APP-10", "has no fields")
 
     def test_a_done_status_not_listed_as_canceled_is_completed(self) -> None:
         code, out, _ = self.run_kind(JIRA_ARGS, self.pages(), JIRA_ENV)

@@ -2237,6 +2237,14 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         asked = calls.read_text().split()
         self.assertIn("open", asked)
         self.assertNotIn("ready", asked, "open-pr marked the pull request ready under the lead's grant")
+        # The lead's grant alone gives lanes nothing, and their brief says marking ready is not theirs either.
+        d = json.loads(path.read_text())
+        d["authority"] = {"readyPullRequests": True, "grantedBy": "the operator", "grantedOn": "2026-11-09"}
+        path.write_text(json.dumps(d, indent=2))
+        commit(m, "FX-1: only the lead's grant")
+        code, out = fx.flow("lead-brief", cwd=m); expect(code == 0, out)
+        brief = " ".join((m / "docs/lane-brief.md").read_text().split())
+        self.assertIn("Lanes have no authority to push, open pull requests or mark one ready in this delivery", brief)
 
     def test_lanes_push_and_open_prs_only_as_granted(self) -> None:
         fx = self.fixture()
@@ -4453,6 +4461,8 @@ class RunDeliveryPlanTests(unittest.TestCase):
                          [("finish", covers, narrower, "Narrowed."),
                           ("finish", "Every criterion is met", "One loads", "Narrowed.")])
         self.assertIn(f"recorded {changes[-2]['id']} and {changes[-1]['id']}", out)
+        self.assertIn(f"plan change {changes[-2]['id']} and {changes[-1]['id']} (finish acs)",
+                      sh("git", "log", "-1", "--format=%s", cwd=m).stdout)
         # The same wording and covers again changes nothing, and is refused with nothing written.
         before = (path.read_text(), len(self.plan(fx)["changes"]))
         code, out = fx.flow("lead-plan", "change", "--kind", "finish", "--finish", "acs", "--text", "One loads",
@@ -5385,6 +5395,9 @@ if kind.startswith("as:"):  # a command that ignores {parent} and answers for an
 if kind == "fail":
     print("the tracker is down", file=sys.stderr)
     raise SystemExit(3)
+failing = kind.startswith("printfail:")  # a command that prints a whole snapshot, then exits non-zero
+if failing:
+    kind = kind.split(":", 1)[1]
 answer = {"data": {"issue": {"createdAt": "2026-10-20T08:00:00.000Z", "state": {"type": kind}, "children": {
     "nodes": [{"identifier": parent + "-child", "createdAt": "2026-10-20T09:00:00.000Z", "title": "A child",
                "description": None, "state": {"type": "started"}, "inverseRelations": {"nodes": []}}],
@@ -5397,7 +5410,7 @@ code, out, err = snapshot.run(["--kind", "linear", "--parent", parent, "--token-
                               transport=transport)
 sys.stdout.write(out)
 sys.stderr.write(err)
-raise SystemExit(code)
+raise SystemExit(3 if failing else code)
 '''
 
 
@@ -5517,6 +5530,16 @@ class RunDeliveryDefaultDeliveryTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertEqual(list(json.JSONDecoder().raw_decode(out)[0]["items"]), ["FX-6"])
 
+    def test_a_lone_delivery_file_is_taken_even_once_closed_so_the_commands_after_its_close_still_find_it(self) -> None:
+        # With one file there is nothing to choose between: a repository with one delivery never names it, before or
+        # after its close, so the lone delivery is taken whatever the tracker or the flow log says.
+        fx = self.fixture({"FX-1": "completed", "FX-5": "completed"})
+        (fx.main / ".agents/deliveries/FX-5.json").unlink()
+        commit(fx.main, "FX-5 gone: one delivery file")
+        self.closed_here(fx, "FX-1")
+        code, out, stories = self.picked(fx)
+        self.assertEqual((code, stories), (0, ["FX-2", "FX-3"]), out)
+
     def test_the_story_branch_rule_comes_before_the_only_delivery_not_known_to_be_closed(self) -> None:
         # A deliberate addition to the default's order: FX-5's parent is completed, so FX-1 is the only delivery not
         # known to be closed, yet a lane on FX-5's story branch still takes FX-5, as lanes did before the order.
@@ -5577,6 +5600,12 @@ class RunDeliveryDefaultDeliveryTests(unittest.TestCase):
 
     def test_a_snapshot_command_that_fails_leaves_its_delivery_not_known_to_be_closed(self) -> None:
         fx = self.fixture({"FX-1": "fail", "FX-5": "started"})
+        code, out, _ = self.picked(fx)
+        self.assertEqual(code, 2, out)
+        self.assertIn("FX-1, FX-5 aren't known to be closed", out)
+        # A command that prints a whole snapshot, parent completed, but exits non-zero says nothing either.
+        (fx.main / "tools/tracker-states.json").write_text(json.dumps({"FX-1": "printfail:completed", "FX-5": "started"}))
+        commit(fx.main, "a tracker command that prints, then fails")
         code, out, _ = self.picked(fx)
         self.assertEqual(code, 2, out)
         self.assertIn("FX-1, FX-5 aren't known to be closed", out)
