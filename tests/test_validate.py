@@ -28,10 +28,18 @@ MISSING = b"\0missing\0"
 
 
 def tree_digest(root: Path) -> str:
+    """The checkout's own files: what git tracks and what it would add, never what it ignores.
+
+    Ignored paths hold live state (a running delivery's .orchestration/, environments), which other processes may
+    write while a test runs, so they are never read. A listed path that is gone is recorded as missing.
+    """
+    listed = subprocess.run(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], cwd=root,
+                            check=True, capture_output=True).stdout
     digest = hashlib.sha256()
-    for path in sorted(item for item in root.rglob("*") if item.is_file()):
-        digest.update(path.relative_to(root).as_posix().encode())
-        digest.update(path.read_bytes())
+    for relative in sorted(set(name.decode() for name in listed.split(b"\0") if name)):
+        path = root / relative
+        digest.update(relative.encode() + b"\0")
+        digest.update(path.read_bytes() if path.is_file() else MISSING)
     return digest.hexdigest()
 
 
