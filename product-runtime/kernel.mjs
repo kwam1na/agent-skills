@@ -36,30 +36,30 @@ var init_canonical = __esm({
     CanonicalizationError = class extends Error {
       code;
       path;
-      constructor(code, path25, message) {
-        super(`${message} (at ${path25 === "" ? "the document root" : path25})`);
+      constructor(code, path26, message) {
+        super(`${message} (at ${path26 === "" ? "the document root" : path26})`);
         this.name = "CanonicalizationError";
         this.code = code;
-        this.path = path25;
+        this.path = path26;
       }
     };
     pointerSegment = (key) => `/${key.replace(/~/gu, "~0").replace(/\//gu, "~1")}`;
-    serializeNumber = (value, path25) => {
+    serializeNumber = (value, path26) => {
       if (!Number.isFinite(value)) {
         throw new CanonicalizationError(
           "non_finite_number",
-          path25,
+          path26,
           `${String(value)} has no JSON representation`
         );
       }
       return String(value);
     };
     LONE_SURROGATE = new RegExp("\\p{Surrogate}", "u");
-    serializeString = (value, path25) => {
+    serializeString = (value, path26) => {
       if (LONE_SURROGATE.test(value)) {
         throw new CanonicalizationError(
           "lone_surrogate",
-          path25,
+          path26,
           "string contains an unpaired surrogate, which RFC 8785 \xA73.2.2.2 requires be rejected"
         );
       }
@@ -76,27 +76,27 @@ var init_canonical = __esm({
       if (typeof value === "bigint") return "a bigint";
       return `a non-plain object (${Object.prototype.toString.call(value)})`;
     };
-    serialize = (value, path25, ancestors) => {
+    serialize = (value, path26, ancestors) => {
       if (value === null) return "null";
       switch (typeof value) {
         case "boolean":
           return value ? "true" : "false";
         case "number":
-          return serializeNumber(value, path25);
+          return serializeNumber(value, path26);
         case "string":
-          return serializeString(value, path25);
+          return serializeString(value, path26);
         case "object":
           break;
         default:
           throw new CanonicalizationError(
             "unsupported_value",
-            path25,
+            path26,
             `${describeValue(value)} has no JSON representation`
           );
       }
       const container = value;
       if (ancestors.has(container)) {
-        throw new CanonicalizationError("circular_reference", path25, "value contains itself");
+        throw new CanonicalizationError("circular_reference", path26, "value contains itself");
       }
       ancestors.add(container);
       try {
@@ -104,28 +104,28 @@ var init_canonical = __esm({
           const source = container;
           const elements = [];
           for (let index2 = 0; index2 < source.length; index2 += 1) {
-            elements.push(serialize(source[index2], `${path25}/${index2}`, ancestors));
+            elements.push(serialize(source[index2], `${path26}/${index2}`, ancestors));
           }
           return `[${elements.join(",")}]`;
         }
         if (!isPlainObject(container)) {
           throw new CanonicalizationError(
             "unsupported_value",
-            path25,
+            path26,
             `${describeValue(container)} has no JSON representation`
           );
         }
         if (Object.getOwnPropertySymbols(container).length > 0) {
           throw new CanonicalizationError(
             "symbol_key",
-            path25,
+            path26,
             "object carries symbol-keyed members, which have no JSON representation"
           );
         }
         const record2 = container;
         const members = Object.keys(record2).sort(compareUtf16CodeUnits).map((key) => {
-          const name = serializeString(key, path25);
-          return `${name}:${serialize(record2[key], `${path25}${pointerSegment(key)}`, ancestors)}`;
+          const name = serializeString(key, path26);
+          return `${name}:${serialize(record2[key], `${path26}${pointerSegment(key)}`, ancestors)}`;
         });
         return `{${members.join(",")}}`;
       } finally {
@@ -1204,11 +1204,11 @@ var init_archive = __esm({
 
 // packages/kernel/src/host/projection.ts
 import { readFile as readFile5 } from "node:fs/promises";
-import path7 from "node:path";
+import path8 from "node:path";
 async function verifyProjection(input) {
   let receiptText;
   try {
-    receiptText = await readFile5(path7.join(input.bindingDir, PROJECTION_RECEIPT_FILE), "utf8");
+    receiptText = await readFile5(path8.join(input.bindingDir, PROJECTION_RECEIPT_FILE), "utf8");
   } catch {
     return fail2("projection_receipt_missing", "no projection receipt; nothing can be verified against it");
   }
@@ -1227,7 +1227,7 @@ async function verifyProjection(input) {
   for (const entry3 of receipt.entries) {
     let bytes;
     try {
-      bytes = await readFile5(path7.join(input.worktreeDir, PROJECTION_DIR, ...entry3.path.split("/")));
+      bytes = await readFile5(path8.join(input.worktreeDir, PROJECTION_DIR, ...entry3.path.split("/")));
     } catch {
       return fail2("projection_digest_mismatch", `receipted projection file ${entry3.path} is missing from the worktree`);
     }
@@ -1248,7 +1248,7 @@ async function verifyProjection(input) {
 async function readConsumptionMarker(input) {
   let text5;
   try {
-    text5 = await readFile5(path7.join(input.worktreeDir, PROJECTION_DIR, CONSUMPTION_MARKER_FILE), "utf8");
+    text5 = await readFile5(path8.join(input.worktreeDir, PROJECTION_DIR, CONSUMPTION_MARKER_FILE), "utf8");
   } catch {
     return fail2("consumption_marker_missing", "the worktree carries no per-run consumption marker; nothing was materialized here");
   }
@@ -2459,13 +2459,13 @@ __export(assertion_source_exports, {
 import { spawn as spawn3 } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { chmod as chmod5, mkdir as mkdir5, readFile as readFile7, stat as stat3, writeFile as writeFile5 } from "node:fs/promises";
-import path9 from "node:path";
+import path10 from "node:path";
 function assertionProviderConfigPathFor(installationPath) {
-  return path9.join(installationPath, "trust", "assertion-provider.json");
+  return path10.join(installationPath, "trust", "assertion-provider.json");
 }
 async function writeAssertionProviderConfig(installationPath, sourceKind) {
   const target = assertionProviderConfigPathFor(installationPath);
-  await mkdir5(path9.dirname(target), { recursive: true, mode: OWNER_DIR2 });
+  await mkdir5(path10.dirname(target), { recursive: true, mode: OWNER_DIR2 });
   const config = { spec: ASSERTION_PROVIDER_SPEC, sourceKind };
   await writeFile5(target, JSON.stringify(config), { mode: OWNER_FILE2 });
   await chmod5(target, OWNER_FILE2);
@@ -2631,8 +2631,8 @@ password for %u: `, "-v"]
 // packages/kernel/src/checkpoint/append-only-file.ts
 import { constants as fsConstants } from "node:fs";
 import { randomUUID as randomUUID4 } from "node:crypto";
-import { lstat, mkdir as mkdir8, open as open5, readdir as readdir4, rename as rename5, unlink } from "node:fs/promises";
-import path13 from "node:path";
+import { lstat as lstat2, mkdir as mkdir8, open as open5, readdir as readdir4, rename as rename5, unlink } from "node:fs/promises";
+import path14 from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 function splitTerminated(text5) {
   const lastNewline = text5.lastIndexOf("\n");
@@ -2703,7 +2703,7 @@ function appendDecided(options) {
     const decision = await options.decide(read);
     if (!decision.ok) return { ok: false, rejected: decision.rejected };
     if (decision.entry === void 0) return { ok: true, accepted: decision.accepted };
-    await mkdir8(path13.dirname(journalPath), { recursive: true, mode: OWNER_DIR5 });
+    await mkdir8(path14.dirname(journalPath), { recursive: true, mode: OWNER_DIR5 });
     const flags = fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_APPEND | (discipline2?.extraFlags ?? 0);
     const handle = await open5(journalPath, flags, OWNER_FILE5);
     try {
@@ -2718,7 +2718,7 @@ function appendDecided(options) {
     }
     return { ok: true, accepted: decision.accepted };
   };
-  return serializedOnPath(path13.resolve(journalPath), () => options.crossProcess === true ? withProcessAppendLock(journalPath, options.crossProcessTimeoutMs ?? 5e3, operation) : operation());
+  return serializedOnPath(path14.resolve(journalPath), () => options.crossProcess === true ? withProcessAppendLock(journalPath, options.crossProcessTimeoutMs ?? 5e3, operation) : operation());
 }
 async function withProcessAppendLock(journalPath, timeoutMs, operation) {
   try {
@@ -2737,8 +2737,8 @@ async function withProcessLock(lockPath, timeoutMs, operation) {
   };
   const directory2 = lockPath;
   const id = `${process.pid}-${randomUUID4()}`;
-  const marker = path13.join(directory2, `${id}.ticket`);
-  const pending = path13.join(directory2, `${id}.pending`);
+  const marker = path14.join(directory2, `${id}.ticket`);
+  const pending = path14.join(directory2, `${id}.pending`);
   const flags = fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK;
   const alive = (pid) => {
     try {
@@ -2757,17 +2757,17 @@ async function withProcessLock(lockPath, timeoutMs, operation) {
     const pid = Number(name.slice(0, name.indexOf("-")));
     if (!Number.isSafeInteger(pid) || pid <= 0) throw refuse5("invalid append lock owner");
     if (!alive(pid)) {
-      await unlink(path13.join(directory2, name)).catch((error) => {
+      await unlink(path14.join(directory2, name)).catch((error) => {
         if (!isMissing(error)) throw error;
       });
-      await unlink(path13.join(directory2, name.replace(/\.ticket$/, ".pending"))).catch((error) => {
+      await unlink(path14.join(directory2, name.replace(/\.ticket$/, ".pending"))).catch((error) => {
         if (!isMissing(error)) throw error;
       });
       return void 0;
     }
     let handle;
     try {
-      handle = await open5(path13.join(directory2, name), fsConstants.O_RDONLY | flags);
+      handle = await open5(path14.join(directory2, name), fsConstants.O_RDONLY | flags);
     } catch (error) {
       if (isMissing(error)) return void 0;
       throw error;
@@ -2791,7 +2791,7 @@ async function withProcessLock(lockPath, timeoutMs, operation) {
   let acquired = false;
   try {
     await mkdir8(directory2, { recursive: true, mode: OWNER_DIR5 });
-    const directoryStats = await lstat(directory2);
+    const directoryStats = await lstat2(directory2);
     if (!directoryStats.isDirectory() || (directoryStats.mode & 63) !== 0 || process.getuid !== void 0 && directoryStats.uid !== process.getuid()) throw refuse5("append lock directory is not owner-only");
     const choosing = await open5(marker, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | flags, OWNER_FILE5);
     registered = true;
@@ -3174,12 +3174,12 @@ var init_graph = __esm({
 
 // packages/kernel/src/host/codex-app-server.ts
 import { chmod as chmod9, mkdir as mkdir11, readFile as readFile12, writeFile as writeFile8 } from "node:fs/promises";
-import path17 from "node:path";
+import path18 from "node:path";
 import { tmpdir as tmpdir3 } from "node:os";
 import { realpathSync as realpathSync2 } from "node:fs";
 function codexPermissionProfileOf(input) {
   const workspaceRoots = unique([...spellings(input.workspaceRoot)]);
-  const underWorkspace = (relatives) => unique(workspaceRoots.flatMap((root) => relatives.map((relative) => path17.resolve(root, relative))));
+  const underWorkspace = (relatives) => unique(workspaceRoots.flatMap((root) => relatives.map((relative) => path18.resolve(root, relative))));
   const protectedRoots = underWorkspace(input.grant.protectedPaths);
   const authorityRoots = unique([input.commonGitDir, input.authorityDir].flatMap(spellings));
   return {
@@ -3259,14 +3259,14 @@ async function composeCodexAppServerThread(input) {
   const request = {
     method: "thread/start",
     params: {
-      cwd: path17.resolve(input.workspaceRoot),
+      cwd: path18.resolve(input.workspaceRoot),
       ephemeral: true,
       sandbox: "workspace-write",
       approvalPolicy: "on-request",
       config
     }
   };
-  const threadConfigPath = path17.join(input.bindingDir, CODEX_THREAD_CONFIG_FILE(input.fence));
+  const threadConfigPath = path18.join(input.bindingDir, CODEX_THREAD_CONFIG_FILE(input.fence));
   const bytes = `${JSON.stringify(request, null, 2)}
 `;
   await mkdir11(input.bindingDir, { recursive: true, mode: OWNER_DIR7 });
@@ -3371,7 +3371,7 @@ function evaluateCodexEscalation(request, profile) {
     };
   }
   for (const root of request.writableRoots ?? []) {
-    if (!profile.writableRoots.includes(path17.resolve(root))) {
+    if (!profile.writableRoots.includes(path18.resolve(root))) {
       return {
         refused: true,
         code: "extra_writable_root_refused",
@@ -3402,7 +3402,7 @@ var init_codex_app_server = __esm({
     CODEX_THREAD_CONFIG_FILE = (fence) => `codex-thread-${fence}.json`;
     OWNER_DIR7 = 448;
     OWNER_FILE7 = 384;
-    codexPermissionProfileId = (workspaceRoot, fence) => `managed-delivery-${sha256Hex(path17.resolve(workspaceRoot)).slice(0, 12)}-${fence}`;
+    codexPermissionProfileId = (workspaceRoot, fence) => `managed-delivery-${sha256Hex(path18.resolve(workspaceRoot)).slice(0, 12)}-${fence}`;
     CODEX_UNENFORCEABLE_TOOL_SOURCES = Object.freeze(["mcp", "app", "hosted", "dynamic", "plugin"]);
     CODEX_DISABLED_FEATURE_KEYS = Object.freeze(["tool_registry", "multi_agent_v2", "web_search"]);
     CODEX_HOST_TOOLS = Object.freeze([
@@ -3441,17 +3441,17 @@ var init_codex_app_server = __esm({
       reason: "exact permission-profile, hook, and fence inheritance into a Codex subagent is unproved; the capability is removed rather than supervised"
     });
     spellings = (target) => {
-      const resolved = path17.resolve(target);
+      const resolved = path18.resolve(target);
       let ancestor = resolved;
       const tail = [];
       for (; ; ) {
         try {
-          const canonical2 = path17.join(realpathSync2(ancestor), ...tail);
-          return canonical2 === resolved ? [resolved] : [resolved, canonical2];
+          const canonical3 = path18.join(realpathSync2(ancestor), ...tail);
+          return canonical3 === resolved ? [resolved] : [resolved, canonical3];
         } catch {
-          const parent = path17.dirname(ancestor);
+          const parent = path18.dirname(ancestor);
           if (parent === ancestor) return [resolved];
-          tail.unshift(path17.basename(ancestor));
+          tail.unshift(path18.basename(ancestor));
           ancestor = parent;
         }
       }
@@ -3509,14 +3509,14 @@ var init_codex_app_server = __esm({
         }
       },
       admissionConfigurationPath(bindingDir, fence) {
-        return path17.join(bindingDir, CODEX_THREAD_CONFIG_FILE(fence));
+        return path18.join(bindingDir, CODEX_THREAD_CONFIG_FILE(fence));
       }
     };
   }
 });
 
 // packages/kernel/src/projection-consumption-observation.ts
-import path18 from "node:path";
+import path19 from "node:path";
 function parseProjectionConsumptionObservation(value) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return void 0;
   const observation = value;
@@ -3524,7 +3524,7 @@ function parseProjectionConsumptionObservation(value) {
   if (keys2.length !== OBSERVATION_KEYS.length || keys2.some((key, index2) => key !== OBSERVATION_KEYS[index2])) {
     return void 0;
   }
-  if (observation["spec"] !== PROJECTION_CONSUMPTION_OBSERVATION_SPEC || !nonempty(observation["deliveryId"]) || !Number.isSafeInteger(observation["fence"]) || observation["fence"] <= 0 || observation["entry"] !== WORKFLOW_GRAPH_ENTRY || !nonempty(observation["canonicalProjectionPath"]) || !path18.isAbsolute(observation["canonicalProjectionPath"]) || typeof observation["projectionDigest"] !== "string" || !SPINE_SHA256.test(observation["projectionDigest"]) || !nonempty(observation["hostInvocationId"]) || typeof observation["observedAt"] !== "string" || !SPINE_INSTANT.test(observation["observedAt"])) {
+  if (observation["spec"] !== PROJECTION_CONSUMPTION_OBSERVATION_SPEC || !nonempty(observation["deliveryId"]) || !Number.isSafeInteger(observation["fence"]) || observation["fence"] <= 0 || observation["entry"] !== WORKFLOW_GRAPH_ENTRY || !nonempty(observation["canonicalProjectionPath"]) || !path19.isAbsolute(observation["canonicalProjectionPath"]) || typeof observation["projectionDigest"] !== "string" || !SPINE_SHA256.test(observation["projectionDigest"]) || !nonempty(observation["hostInvocationId"]) || typeof observation["observedAt"] !== "string" || !SPINE_INSTANT.test(observation["observedAt"])) {
     return void 0;
   }
   return observation;
@@ -3553,12 +3553,12 @@ var init_projection_consumption_observation = __esm({
 
 // packages/kernel/src/host/hook-main.ts
 import { readFileSync, readlinkSync, realpathSync as realpathSync3, writeFileSync } from "node:fs";
-import path19 from "node:path";
+import path20 from "node:path";
 import { fileURLToPath } from "node:url";
 function writesOf(state, toolName, toolInput) {
   const members = WRITE_PATH_MEMBERS[toolName] ?? [];
   if (members.length === 0) return [];
-  const rootWalk = path19.isAbsolute(state.workspaceRoot) ? walkPath(state.workspaceRoot, () => {
+  const rootWalk = path20.isAbsolute(state.workspaceRoot) ? walkPath(state.workspaceRoot, () => {
   }) : void 0;
   const protectedPaths = protectedPathsOf(state.grant);
   const writes = [];
@@ -3580,7 +3580,7 @@ function writesOf(state, toolName, toolInput) {
       const relative = workspaceRelative(root, position);
       if (staysInside(relative) && underAnyFolded(relative, protectedPaths)) reached = relative;
     };
-    const landed = walkPath(path19.isAbsolute(value) ? value : `${root}${path19.sep}${value}`, note);
+    const landed = walkPath(path20.isAbsolute(value) ? value : `${root}${path20.sep}${value}`, note);
     writes.push(landed === void 0 ? UNJUDGEABLE : workspaceRelative(root, landed));
     if (reached !== void 0) writes.push(reached);
   }
@@ -3595,10 +3595,10 @@ function exactWorkflowSourceRead(state, input, receipt) {
     return void 0;
   }
   const value = toolInput["file_path"];
-  if (typeof value !== "string" || value.length === 0 || !path19.isAbsolute(value)) return void 0;
-  const canonicalRoot = canonical(path19.resolve(state.workspaceRoot));
-  const directPath = path19.join(canonicalRoot, PROJECTION_DIR, ...WORKFLOW_GRAPH_ENTRY.split("/"));
-  const expectedPath = canonical(directPath);
+  if (typeof value !== "string" || value.length === 0 || !path20.isAbsolute(value)) return void 0;
+  const canonicalRoot = canonical2(path20.resolve(state.workspaceRoot));
+  const directPath = path20.join(canonicalRoot, PROJECTION_DIR, ...WORKFLOW_GRAPH_ENTRY.split("/"));
+  const expectedPath = canonical2(directPath);
   if (expectedPath !== directPath || value !== directPath) return void 0;
   return {
     deliveryId: state.expectation.deliveryId,
@@ -3780,7 +3780,7 @@ async function main(argv) {
   });
   return 0;
 }
-var WRITE_PATH_MEMBERS, MAX_LINK_HOPS, MAX_PATH_STEPS, segmentsOf, walkPath, workspaceRelative, staysInside, protectedPathsOf, UNJUDGEABLE, canonical, invokedDirectly;
+var WRITE_PATH_MEMBERS, MAX_LINK_HOPS, MAX_PATH_STEPS, segmentsOf, walkPath, workspaceRelative, staysInside, protectedPathsOf, UNJUDGEABLE, canonical2, invokedDirectly;
 var init_hook_main = __esm({
   "packages/kernel/src/host/hook-main.ts"() {
     "use strict";
@@ -3797,9 +3797,9 @@ var init_hook_main = __esm({
     });
     MAX_LINK_HOPS = 40;
     MAX_PATH_STEPS = 1024;
-    segmentsOf = (value) => value.split(path19.sep).filter((segment) => segment.length > 0 && segment !== ".");
+    segmentsOf = (value) => value.split(path20.sep).filter((segment) => segment.length > 0 && segment !== ".");
     walkPath = (value, note) => {
-      const base = path19.parse(value).root;
+      const base = path20.parse(value).root;
       let current = base;
       const pending = segmentsOf(value.slice(base.length));
       let hops = 0;
@@ -3808,10 +3808,10 @@ var init_hook_main = __esm({
         if (++steps > MAX_PATH_STEPS) return void 0;
         const segment = pending.shift();
         if (segment === "..") {
-          current = path19.dirname(current);
+          current = path20.dirname(current);
           continue;
         }
-        const next = path19.join(current, segment);
+        const next = path20.join(current, segment);
         note(next);
         let target;
         try {
@@ -3821,21 +3821,21 @@ var init_hook_main = __esm({
           continue;
         }
         if (++hops > MAX_LINK_HOPS) return void 0;
-        const targetBase = path19.parse(target).root;
+        const targetBase = path20.parse(target).root;
         if (targetBase.length > 0) current = targetBase;
         pending.unshift(...segmentsOf(target.slice(targetBase.length)));
       }
       return current;
     };
-    workspaceRelative = (root, absolute) => path19.relative(root, absolute).split(path19.sep).join("/");
-    staysInside = (relative) => relative.length > 0 && !relative.startsWith("../") && relative !== ".." && !path19.isAbsolute(relative);
+    workspaceRelative = (root, absolute) => path20.relative(root, absolute).split(path20.sep).join("/");
+    staysInside = (relative) => relative.length > 0 && !relative.startsWith("../") && relative !== ".." && !path20.isAbsolute(relative);
     protectedPathsOf = (grant) => {
       if (typeof grant !== "object" || grant === null) return [];
       const declared = grant.protectedPaths;
       return Array.isArray(declared) ? declared.filter((entry3) => typeof entry3 === "string") : [];
     };
     UNJUDGEABLE = "..";
-    canonical = (value) => {
+    canonical2 = (value) => {
       try {
         return realpathSync3(value);
       } catch {
@@ -3846,7 +3846,7 @@ var init_hook_main = __esm({
       const entry3 = process.argv[1];
       if (entry3 === void 0) return false;
       try {
-        return path19.resolve(entry3) === fileURLToPath(import.meta.url);
+        return path20.resolve(entry3) === fileURLToPath(import.meta.url);
       } catch {
         return false;
       }
@@ -4491,11 +4491,11 @@ function validateInstalledDataResourceCapture(value) {
     }
     if (!ordered(paths)) fail("installed_data_capture_invalid", "Duplicate or unordered resource entries.");
     const required = /* @__PURE__ */ new Set();
-    const need = (path25, kind) => {
-      const e = entries.get(path25);
-      required.add(path25);
-      if (!e || kind !== void 0 && e.kind !== kind) fail("installed_data_capture_invalid", `Missing resource witness: ${path25}`);
-      for (const parent of parents(path25)) {
+    const need = (path26, kind) => {
+      const e = entries.get(path26);
+      required.add(path26);
+      if (!e || kind !== void 0 && e.kind !== kind) fail("installed_data_capture_invalid", `Missing resource witness: ${path26}`);
+      for (const parent of parents(path26)) {
         required.add(parent);
         const p = entries.get(parent);
         if (!p || p.kind !== "directory" && !(e.kind === "absent" && p.kind === "absent")) fail("installed_data_resource_unsafe", `Invalid resource ancestor: ${parent}`);
@@ -4508,11 +4508,11 @@ function validateInstalledDataResourceCapture(value) {
     for (const file of request.files) need(`${root}/${file}`, "file");
     const directoryPaths = /* @__PURE__ */ new Set();
     for (const dir of request.directories) {
-      const path25 = `${root}/${dir.path}`;
-      directoryPaths.add(path25);
-      const e = need(path25, "directory");
+      const path26 = `${root}/${dir.path}`;
+      directoryPaths.add(path26);
+      const e = need(path26, "directory");
       if (e.members === null) fail("installed_data_capture_invalid", "Missing complete directory membership.");
-      for (const name of e.members) if (name.endsWith(dir.suffix)) need(`${path25}/${name}`, "file");
+      for (const name of e.members) if (name.endsWith(dir.suffix)) need(`${path26}/${name}`, "file");
     }
     for (const e of entries.values()) if (!required.has(e.path) || e.members !== null && !directoryPaths.has(e.path)) fail("installed_data_capture_invalid", "Undeclared extra resource witness.");
   });
@@ -4531,15 +4531,15 @@ async function captureInstalledDataResources(requestsValue, context, ports) {
       const resolution = await ports.resolve(structuredClone(request));
       validateResolution(resolution, request);
       const entries = /* @__PURE__ */ new Map();
-      const observe2 = async (path25, read = false) => {
-        const prior = entries.get(path25);
+      const observe2 = async (path26, read = false) => {
+        const prior = entries.get(path26);
         if (prior && (!read || prior.bytesBase64 !== null)) return prior;
-        const info = await ports.stat(path25);
-        if (!keys(info, ["kind", "physicalPath", "linkTarget"]) || info.physicalPath !== path25 || info.linkTarget !== null || !["file", "directory", "absent"].includes(info.kind)) fail("installed_data_resource_unsafe", `Unsafe resource path: ${path25}`);
+        const info = await ports.stat(path26);
+        if (!keys(info, ["kind", "physicalPath", "linkTarget"]) || info.physicalPath !== path26 || info.linkTarget !== null || !["file", "directory", "absent"].includes(info.kind)) fail("installed_data_resource_unsafe", `Unsafe resource path: ${path26}`);
         let bytesBase64 = null, sha2562 = null;
         if (read) {
-          if (info.kind !== "file") fail("installed_data_resource_unsafe", `Resource is not a regular file: ${path25}`);
-          const bytes = await ports.readFile(path25);
+          if (info.kind !== "file") fail("installed_data_resource_unsafe", `Resource is not a regular file: ${path26}`);
+          const bytes = await ports.readFile(path26);
           if (!(bytes instanceof Uint8Array)) fail("installed_data_capture_invalid", "Invalid file byte transport.");
           rawBytes += bytes.length;
           if (rawBytes > INSTALLED_DATA_LIMITS.rawBytes) fail("installed_data_limit_exceeded", "Installed data bytes exceed limit.");
@@ -4547,26 +4547,26 @@ async function captureInstalledDataResources(requestsValue, context, ports) {
           sha2562 = sha256Hex(bytes);
         }
         if (!prior && ++count > INSTALLED_DATA_LIMITS.entries) fail("installed_data_limit_exceeded", "Installed data entries exceed limit.");
-        const entry3 = { path: path25, kind: info.kind, physicalPath: path25, linkTarget: null, bytesBase64, sha256: sha2562, members: null };
-        entries.set(path25, entry3);
+        const entry3 = { path: path26, kind: info.kind, physicalPath: path26, linkTarget: null, bytesBase64, sha256: sha2562, members: null };
+        entries.set(path26, entry3);
         return entry3;
       };
-      const withParents = async (path25, read = false) => {
-        for (const p of parents(path25)) await observe2(p);
-        return observe2(path25, read);
+      const withParents = async (path26, read = false) => {
+        for (const p of parents(path26)) await observe2(p);
+        return observe2(path26, read);
       };
       for (const e of resolution.search) await withParents(e.path);
       await withParents(resolution.manifestPath, true);
-      for (const path25 of request.files) await withParents(`${resolution.packageRoot}/${path25}`, true);
+      for (const path26 of request.files) await withParents(`${resolution.packageRoot}/${path26}`, true);
       for (const directory2 of request.directories) {
-        const path25 = `${resolution.packageRoot}/${directory2.path}`;
-        const entry3 = await withParents(path25);
-        if (entry3.kind !== "directory") fail("installed_data_resource_unsafe", `Missing resource directory: ${path25}`);
-        const members = await ports.listDirectory(path25);
+        const path26 = `${resolution.packageRoot}/${directory2.path}`;
+        const entry3 = await withParents(path26);
+        if (entry3.kind !== "directory") fail("installed_data_resource_unsafe", `Missing resource directory: ${path26}`);
+        const members = await ports.listDirectory(path26);
         if (!Array.isArray(members) || members.length > INSTALLED_DATA_LIMITS.directoryMembers) fail("installed_data_limit_exceeded", "Resource directory exceeds limit.");
         if (!members.every(literalName) || new Set(members).size !== members.length) fail("installed_data_resource_unsafe", "Unsafe or duplicate directory members.");
-        entries.set(path25, { ...entry3, members: [...members].sort() });
-        for (const member2 of members) if (member2.endsWith(directory2.suffix)) await withParents(`${path25}/${member2}`, true);
+        entries.set(path26, { ...entry3, members: [...members].sort() });
+        for (const member2 of members) if (member2.endsWith(directory2.suffix)) await withParents(`${path26}/${member2}`, true);
       }
       resources.push({ requestId: request.id, resolution: structuredClone(resolution), entries: [...entries.values()].sort((a, b) => a.path < b.path ? -1 : 1) });
     }
@@ -4641,6 +4641,7 @@ var PATH_MATCHER_KINDS = ["prefix", "glob"];
 var DEFAULT_STORAGE_NAMESPACE = "delivery-harness/";
 var DEFAULT_BASE_REF = "origin/main";
 var DEFAULT_BASE_MOVEMENT_POLICY = "stale";
+var INHERITABLE_DESCRIPTORS = [3, 4];
 function isPhysicalSourceDefinition(value) {
   if (!isRecord(value) || Object.keys(value).sort().join(",") !== "absentInputs,files,version" || value["version"] !== "physical-source/1") return false;
   const files = value["files"], absent = value["absentInputs"];
@@ -5159,7 +5160,7 @@ function readShape(findings2, input) {
           sound = false;
           return;
         }
-        checkClosed(findings2, at, entry3, ["id", "findingCodes", "command", "check"]);
+        checkClosed(findings2, at, entry3, ["id", "findingCodes", "command", "check", "inheritDescriptors"]);
         const id = readString(findings2, `${at}.id`, entry3["id"], { pattern: ID_PATTERN, describe: "a provider id" });
         const findingCodes = readStringArray(findings2, `${at}.findingCodes`, entry3["findingCodes"], {
           pattern: FINDING_CODE_PATTERN,
@@ -5213,8 +5214,16 @@ function readShape(findings2, input) {
             }
           }
         }
+        let inheritDescriptors;
+        if (entry3["inheritDescriptors"] !== void 0) {
+          const value = entry3["inheritDescriptors"];
+          if (command === void 0 || !Array.isArray(value) || value.length === 0 || !Array.from(value).every((fd, index3) => INHERITABLE_DESCRIPTORS.includes(fd) && (index3 === 0 || fd > value[index3 - 1]))) {
+            findings2.add("config_invalid_member", `${at}.inheritDescriptors`, "requires a provider command and ascending unique descriptors from 3 and 4");
+            sound = false;
+          } else inheritDescriptors = value;
+        }
         if (id === void 0 || findingCodes === void 0) sound = false;
-        else registrations.push({ id, findingCodes, ...command === void 0 ? {} : { command }, ...check === void 0 ? {} : { check } });
+        else registrations.push({ id, findingCodes, ...command === void 0 ? {} : { command }, ...check === void 0 ? {} : { check }, ...inheritDescriptors === void 0 ? {} : { inheritDescriptors } });
       });
       if (sound) providers = registrations;
     }
@@ -5369,8 +5378,8 @@ function readShape(findings2, input) {
     deliveryRecordVerification
   };
 }
-function matchesNeutralSet(matchers, path25) {
-  return matchers.some((matcher) => path25.startsWith(matcher.prefix) && (matcher.suffix === void 0 || path25.endsWith(matcher.suffix)));
+function matchesNeutralSet(matchers, path26) {
+  return matchers.some((matcher) => path26.startsWith(matcher.prefix) && (matcher.suffix === void 0 || path26.endsWith(matcher.suffix)));
 }
 function deriveDeliveryRecordPath(deliveryRecordPath, deliverableDigest) {
   const lastSlash = deliveryRecordPath.lastIndexOf("/");
@@ -5658,6 +5667,8 @@ async function capturePhysicalSource(source, read) {
 
 // packages/kernel/src/delivery-posture.ts
 import { spawn as spawn2 } from "node:child_process";
+import { lstat, realpath } from "node:fs/promises";
+import path2 from "node:path";
 
 // packages/kernel/src/candidate.ts
 import { spawn } from "node:child_process";
@@ -5816,15 +5827,12 @@ function scrubbedEnvironment() {
   }
   return { ...environment, ...GIT_ENVIRONMENT_OVERRIDES };
 }
-var runGitCommand = (command, options) => collectGitCommand(command, options, false);
-function runGitCommandBytes(command, options) {
-  return collectGitCommand(command, { ...options, captureBytes: true }, true);
-}
-function collectGitCommand(command, options, rawBytes) {
+var runGitCommand = (command, options) => collectGitCommand(command, options);
+function collectGitCommand(command, options) {
   return new Promise((resolve) => {
     const [executable, ...args] = command;
     if (executable === void 0) {
-      resolve(rawBytes ? { exitCode: -1, stdout: Buffer.alloc(0), stderr: "no command was given" } : { exitCode: -1, stdout: "", stderr: "no command was given" });
+      resolve({ exitCode: -1, stdout: "", stderr: "no command was given" });
       return;
     }
     const child = spawn(executable, args, {
@@ -5847,7 +5855,7 @@ function collectGitCommand(command, options, rawBytes) {
       stderr += chunk;
     });
     child.once("error", (error) => {
-      resolve(rawBytes ? { exitCode: -1, stdout: Buffer.alloc(0), stderr: error.message } : { exitCode: -1, stdout, stderr: error.message });
+      resolve({ exitCode: -1, stdout, stderr: error.message });
     });
     if (options.stdin !== void 0) {
       child.stdin.once("error", (error) => {
@@ -5858,10 +5866,6 @@ function collectGitCommand(command, options, rawBytes) {
     }
     child.once("close", (code) => {
       const bytes = options.captureBytes ? Buffer.concat(chunks) : void 0;
-      if (rawBytes) {
-        resolve({ exitCode: inputError === void 0 ? code ?? -1 : -1, stdout: bytes, stderr: inputError ?? stderr });
-        return;
-      }
       resolve({ exitCode: inputError === void 0 ? code ?? -1 : -1, stdout: bytes?.toString("utf8") ?? stdout, stderr: inputError ?? stderr, ...bytes === void 0 ? {} : { stdoutBase64: bytes.toString("base64") } });
     });
   });
@@ -6352,10 +6356,39 @@ function boundedGit(args, cwd, env, timeoutMs, signal) {
   });
 }
 var BLANK = /^[\s\x1c-\x1f\x85]*$/;
+var MAX_DEPTH = 64;
+var QUOTE = 34;
+var BACKSLASH = 92;
+var OPEN_ARRAY = 91;
+var CLOSE_ARRAY = 93;
+var OPEN_OBJECT = 123;
+var CLOSE_OBJECT = 125;
+function nestsTooDeep(text5) {
+  let depth = 0, inString = false;
+  for (let i = 0; i < text5.length; i += 1) {
+    const unit = text5.charCodeAt(i);
+    if (inString) {
+      if (unit === BACKSLASH) i += 1;
+      else if (unit === QUOTE) inString = false;
+    } else if (unit === QUOTE) inString = true;
+    else if (unit === OPEN_ARRAY || unit === OPEN_OBJECT) {
+      depth += 1;
+      if (depth > MAX_DEPTH) return true;
+    } else if (unit === CLOSE_ARRAY || unit === CLOSE_OBJECT) depth -= 1;
+  }
+  return false;
+}
 function parseDeclaration(bytes) {
+  let text5;
+  try {
+    text5 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    return { malformed: "it is not valid UTF-8 JSON" };
+  }
+  if (nestsTooDeep(text5)) return { malformed: `it nests deeper than ${MAX_DEPTH} levels` };
   let parsed;
   try {
-    parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes));
+    parsed = JSON.parse(text5);
   } catch {
     return { malformed: "it is not valid UTF-8 JSON" };
   }
@@ -6375,6 +6408,58 @@ var unreadable = (baseRef, why) => ({
   baseTipSha: null,
   code: "posture_unreadable"
 });
+var notAtRoot = /* @__PURE__ */ new WeakSet();
+function deliveryPostureRefusedOutsideRoot(result2) {
+  return notAtRoot.has(result2);
+}
+async function canonical(target) {
+  try {
+    return await realpath(target);
+  } catch {
+    return void 0;
+  }
+}
+async function mayExist(target) {
+  try {
+    await lstat(target);
+    return true;
+  } catch (error) {
+    const code = error.code;
+    return code !== "ENOENT" && code !== "ENOTDIR";
+  }
+}
+async function couldBeRepository(dir) {
+  const [dotGit, ...gitDirectory] = await Promise.all([".git", "HEAD", "objects", "refs"].map((name) => mayExist(path2.join(dir, name))));
+  return dotGit === true || gitDirectory.every(Boolean);
+}
+async function whyNotRoot(rootDir, git, gitIn) {
+  const directory2 = await canonical(rootDir);
+  if (directory2 === void 0) return "it does not exist";
+  const top = await git(["rev-parse", "--show-toplevel"], LOCAL_TIMEOUT_MS);
+  if (top.exitCode !== 0) return "it is not in a work tree";
+  const topText = top.stdout.toString("utf8").replace(/\n$/, "");
+  if (await canonical(topText) !== directory2) return "it is not its work tree's root";
+  const superproject = await git(["rev-parse", "--show-superproject-working-tree"], LOCAL_TIMEOUT_MS);
+  if (superproject.exitCode !== 0 || superproject.stdout.length !== 0) return "it is a submodule's work tree";
+  const commonDir = async (run, cwd) => {
+    const listed = await run(["rev-parse", "--git-common-dir"], LOCAL_TIMEOUT_MS);
+    const text5 = listed.stdout.toString("utf8").replace(/\n$/, "");
+    if (listed.exitCode !== 0 || text5 === "") return void 0;
+    return canonical(path2.resolve(cwd, text5));
+  };
+  const own = await commonDir(git, directory2);
+  if (own === void 0) return "its git directory did not read";
+  const nested = "it is nested in another repository's work tree";
+  const parent = path2.dirname(directory2);
+  const parentGit = gitIn(parent);
+  const enclosing = await parentGit(["rev-parse", "--is-inside-work-tree"], LOCAL_TIMEOUT_MS);
+  if (enclosing.exitCode === -1) return nested;
+  if (enclosing.exitCode === 0 && enclosing.stdout.toString("utf8").trim() === "true" && await commonDir(parentGit, parent) !== own) return nested;
+  for (let ancestor = parent; ; ancestor = path2.dirname(ancestor)) {
+    if (ancestor !== own && await couldBeRepository(ancestor) && await commonDir(gitIn(ancestor), ancestor) !== own) return nested;
+    if (path2.dirname(ancestor) === ancestor) return void 0;
+  }
+}
 async function exactRef(fullRef, git) {
   const listed = await git(["for-each-ref", "--format=%(refname) %(objectname)", fullRef], LOCAL_TIMEOUT_MS);
   if (listed.exitCode !== 0) return void 0;
@@ -6426,9 +6511,16 @@ async function resolveDeliveryPosture(input) {
   const networkTimeoutMs = input.networkTimeoutMs ?? DELIVERY_POSTURE_NETWORK_TIMEOUT_MS;
   const git = (args, timeoutMs) => boundedGit(args, rootDir, localEnvironment(), timeoutMs, signal);
   const network = (args, timeoutMs) => boundedGit(args, rootDir, networkEnvironment(), timeoutMs, signal);
+  const gitIn = (cwd) => (args, timeoutMs) => boundedGit(args, cwd, localEnvironment(), timeoutMs, signal);
   try {
     const named = /^origin\/(.+)$/.exec(baseRef)?.[1];
     if (named === void 0) return unreadable(baseRef, "the base does not name origin/<branch>");
+    const notRoot = await whyNotRoot(rootDir, git, gitIn);
+    if (notRoot !== void 0) {
+      const refused2 = unreadable(baseRef, `${rootDir} is not a repository root it may be read from: ${notRoot}`);
+      notAtRoot.add(refused2);
+      return refused2;
+    }
     const url = await network(["config", "--get", "remote.origin.url"], LOCAL_TIMEOUT_MS);
     if (url.exitCode !== 0 || url.stdout.toString("utf8").trim() === "") return unreadable(baseRef, "origin is not a configured remote");
     const branch = await defaultBranch(git, network, networkTimeoutMs);
@@ -6492,8 +6584,8 @@ function computeRecordId(workspaceId, input) {
 // packages/kernel/src/records.ts
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { chmod, link, mkdir, open, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
-import path2 from "node:path";
+import { chmod, link, mkdir, open, readFile, readdir, realpath as realpath2, rm, writeFile } from "node:fs/promises";
+import path3 from "node:path";
 import { promisify } from "node:util";
 init_digest();
 
@@ -6525,22 +6617,22 @@ function normalizeNamespace(namespace) {
   return trimmed === "" ? DEFAULT_STORAGE_NAMESPACE.replace(/\/+$/, "") : trimmed;
 }
 async function physicalPath(target) {
-  const absolute = path2.resolve(target);
+  const absolute = path3.resolve(target);
   const trailing = [];
   let cursor = absolute;
   for (; ; ) {
     try {
-      return path2.join(await realpath(cursor), ...[...trailing].reverse());
+      return path3.join(await realpath2(cursor), ...[...trailing].reverse());
     } catch (error) {
-      const parent = path2.dirname(cursor);
+      const parent = path3.dirname(cursor);
       if (errorCode(error) !== "ENOENT" || parent === cursor) return absolute;
-      trailing.push(path2.basename(cursor));
+      trailing.push(path3.basename(cursor));
       cursor = parent;
     }
   }
 }
 function isInside(child, parent) {
-  return child !== parent && child.startsWith(parent + path2.sep);
+  return child !== parent && child.startsWith(parent + path3.sep);
 }
 function unresolved(details) {
   return blocked2(
@@ -6575,8 +6667,8 @@ async function resolveStorageRoot(rootDir, options) {
   if (gitDirLine === void 0 || gitDirLine === "" || storageLine === void 0 || storageLine === "") {
     throw unresolved(`git rev-parse --git-dir --git-path ${namespace} printed no path in ${cwd}`);
   }
-  const gitDir = await physicalPath(path2.resolve(cwd, gitDirLine));
-  const storageRoot = await physicalPath(path2.resolve(cwd, storageLine));
+  const gitDir = await physicalPath(path3.resolve(cwd, gitDirLine));
+  const storageRoot = await physicalPath(path3.resolve(cwd, storageLine));
   if (!isInside(storageRoot, gitDir)) {
     throw unresolved(
       `storageNamespace ${JSON.stringify(namespace)} resolves to ${storageRoot}, which is outside this worktree's git directory ${gitDir}`
@@ -6588,7 +6680,7 @@ async function resolveRecordStorage(rootDir, options = {}) {
   const storageRoot = await resolveStorageRoot(rootDir, options);
   return {
     storageRoot,
-    storageDir: path2.join(storageRoot, options.leaf ?? RECORDS_LEAF),
+    storageDir: path3.join(storageRoot, options.leaf ?? RECORDS_LEAF),
     workspaceId: digestCanonical(storageRoot)
   };
 }
@@ -6840,7 +6932,7 @@ async function publishRecord(rootDir, input, options = {}) {
   const { storageDir, workspaceId } = await resolveRecordStorage(rootDir, options);
   const record2 = prepareRecord(workspaceId, input);
   const recordId = record2.recordId;
-  const destination = path2.join(storageDir, recordFileName(record2.gateId, record2.obligationId, recordId));
+  const destination = path3.join(storageDir, recordFileName(record2.gateId, record2.obligationId, recordId));
   const rendered = renderRecord(record2);
   try {
     await mkdir(storageDir, { recursive: true, mode: DIRECTORY_MODE });
@@ -6848,7 +6940,7 @@ async function publishRecord(rootDir, input, options = {}) {
   } catch (error) {
     throw unwritable(storageDir, error);
   }
-  const temporary = path2.join(storageDir, `.${recordId}.${process.pid}.${randomUUID()}.tmp`);
+  const temporary = path3.join(storageDir, `.${recordId}.${process.pid}.${randomUUID()}.tmp`);
   try {
     try {
       await writeFile(temporary, rendered, { mode: RECORD_MODE, flag: "wx" });
@@ -6906,7 +6998,7 @@ async function discoverRecords(rootDir, selector) {
   }
   const prefix = slotPrefix(selector.gateId, selector.obligationId);
   for (const entry3 of entries) {
-    const filePath = path2.join(storageDir, entry3);
+    const filePath = path3.join(storageDir, entry3);
     if (entry3.startsWith(".") && entry3.endsWith(".tmp")) {
       ignored.push({ path: filePath, reason: "in_progress" });
       continue;
@@ -7996,7 +8088,7 @@ function withDeliverableIdentity(options = {}) {
 // packages/kernel/src/preparation.ts
 import { chmod as chmod2, mkdir as mkdir2, open as open2, readFile as readFile2, rename, rm as rm2, stat, writeFile as writeFile2 } from "node:fs/promises";
 import { randomUUID as randomUUID2 } from "node:crypto";
-import path3 from "node:path";
+import path4 from "node:path";
 init_digest();
 
 // packages/kernel/src/record-output.ts
@@ -8014,7 +8106,7 @@ function recordOutputConfiguration(config, deliverableDigest) {
 // packages/kernel/src/preparation.ts
 var PREPARATION_RECEIPT_SCHEMA_VERSION = 1;
 var PREPARATION_RECEIPT_LEAF = "preparation";
-var HARNESS_VERSION = "0.8.2";
+var HARNESS_VERSION = "0.8.3";
 var PREPARATION_FAILURE_CLASSES = ["missing", "invalid", "wiring_mismatch", "base_changed", "stale"];
 var DIRECTORY_MODE2 = 448;
 var RECEIPT_MODE = 384;
@@ -8091,7 +8183,7 @@ async function computePreparationFingerprint(rootDir, config, options = {}) {
   const declared = [...new Set(config.preparationWiringPaths)].sort();
   const wiring = [];
   for (const repoPath of declared) {
-    const target = path3.resolve(rootDir, repoPath);
+    const target = path4.resolve(rootDir, repoPath);
     let contents;
     try {
       if (options.readWiring !== void 0) contents = Buffer.from(await options.readWiring(repoPath));
@@ -8114,9 +8206,9 @@ async function computePreparationFingerprint(rootDir, config, options = {}) {
 }
 async function invalidatePreparationReceipt(rootDir, config, options = {}) {
   const { storageDir } = await resolveReceiptStorage(rootDir, options);
-  const receiptPath = path3.join(storageDir, receiptFileName(config.gateId));
+  const receiptPath = path4.join(storageDir, receiptFileName(config.gateId));
   const attemptId = randomUUID2();
-  const temporary = path3.join(storageDir, `.${attemptId}.tmp`);
+  const temporary = path4.join(storageDir, `.${attemptId}.tmp`);
   try {
     await mkdir2(storageDir, { recursive: true, mode: DIRECTORY_MODE2 });
     await writeFile2(temporary, attemptId, { flag: "wx", mode: RECEIPT_MODE });
@@ -8132,7 +8224,7 @@ async function invalidatePreparationReceipt(rootDir, config, options = {}) {
 }
 async function revokePreparationAttempt(rootDir, config, attemptId, options = {}) {
   const { storageDir } = await resolveReceiptStorage(rootDir, options);
-  const receiptPath = path3.join(storageDir, receiptFileName(config.gateId));
+  const receiptPath = path4.join(storageDir, receiptFileName(config.gateId));
   let handle;
   try {
     handle = await open2(`${receiptPath}.attempt`, "r+");
@@ -8183,7 +8275,7 @@ async function publishPreparationReceipt(rootDir, input, options = {}) {
     ...input.attemptId === void 0 ? {} : { attemptId: input.attemptId },
     ...input.validationDigest === void 0 ? {} : { validationDigest: input.validationDigest, policyDigest: digestCanonical(recordOutputConfiguration(input.config, input.candidate.deliverable.digest)) }
   };
-  const destination = path3.join(storageDir, receiptFileName(input.config.gateId));
+  const destination = path4.join(storageDir, receiptFileName(input.config.gateId));
   await requireCurrentAttempt(destination, input.attemptId);
   try {
     await mkdir2(storageDir, { recursive: true, mode: DIRECTORY_MODE2 });
@@ -8191,7 +8283,7 @@ async function publishPreparationReceipt(rootDir, input, options = {}) {
   } catch (error) {
     throw storeUnwritable(storageDir, error);
   }
-  const temporary = path3.join(storageDir, `.${randomUUID2()}.tmp`);
+  const temporary = path4.join(storageDir, `.${randomUUID2()}.tmp`);
   try {
     try {
       await writeFile2(temporary, `${JSON.stringify(receipt, null, 2)}
@@ -8297,7 +8389,7 @@ function receiptBinding(receipt) {
 }
 async function evaluatePreparationReceipt(rootDir, input, options = {}) {
   const { storageDir, workspaceId } = await resolveReceiptStorage(rootDir, options);
-  const receiptPath = path3.join(storageDir, receiptFileName(input.config.gateId));
+  const receiptPath = path4.join(storageDir, receiptFileName(input.config.gateId));
   let text5;
   try {
     text5 = await readFile2(receiptPath, "utf8");
@@ -8776,9 +8868,9 @@ function evaluateGate(input) {
 
 // packages/kernel/src/artifacts.ts
 import { createHash as createHash3, randomUUID as randomUUID3 } from "node:crypto";
-import { chmod as chmod3, mkdir as mkdir3, open as open3, readFile as readFile3, realpath as realpath2, rename as rename2, rm as rm3, stat as stat2, writeFile as writeFile3 } from "node:fs/promises";
+import { chmod as chmod3, mkdir as mkdir3, open as open3, readFile as readFile3, realpath as realpath3, rename as rename2, rm as rm3, stat as stat2, writeFile as writeFile3 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import path4 from "node:path";
+import path5 from "node:path";
 
 // packages/kernel/src/artifacts.types.ts
 var RUN_ROOT_REFUSAL_REASONS = [
@@ -8834,7 +8926,7 @@ function errorCode3(error) {
 }
 async function resolvedOrNull(target) {
   try {
-    return await realpath2(target);
+    return await realpath3(target);
   } catch (error) {
     const code = errorCode3(error);
     if (code === "ENOENT" || code === "ENOTDIR") return null;
@@ -8842,8 +8934,8 @@ async function resolvedOrNull(target) {
   }
 }
 function isInsideResolved(parent, child) {
-  const relative = path4.relative(parent, child);
-  return relative !== "" && !relative.startsWith("..") && !path4.isAbsolute(relative);
+  const relative = path5.relative(parent, child);
+  return relative !== "" && !relative.startsWith("..") && !path5.isAbsolute(relative);
 }
 function isSafeRelativePath2(value) {
   if (value === "") return false;
@@ -8854,17 +8946,17 @@ function isSafeRelativePath2(value) {
   return !segments.includes("..") && !segments.includes("");
 }
 async function defaultRunRootBase() {
-  const base = path4.join(tmpdir(), RUN_ROOT_NAMESPACE, RUN_ROOT_LEAF);
+  const base = path5.join(tmpdir(), RUN_ROOT_NAMESPACE, RUN_ROOT_LEAF);
   try {
     await mkdir3(base, { recursive: true, mode: DIRECTORY_MODE3 });
   } catch (error) {
     throw artifactsBlocker("run_root_unwritable", "The run-root directory could not be created.", `${base}: ${describe3(error)}`, RETRY);
   }
-  return realpath2(base);
+  return realpath3(base);
 }
 function createArtifactsPort(options = {}) {
   let resolvedBase;
-  const base = () => resolvedBase ??= options.runRootBase === void 0 ? defaultRunRootBase() : realpath2(options.runRootBase);
+  const base = () => resolvedBase ??= options.runRootBase === void 0 ? defaultRunRootBase() : realpath3(options.runRootBase);
   const derive = async (request, create) => {
     if (!PROVIDER_ID2.test(request.providerId)) return { ok: false, reason: "unsafe_provider_id" };
     if (request.providerId.length > MAX_PROVIDER_ID_LENGTH) return { ok: false, reason: "provider_id_too_long" };
@@ -8872,7 +8964,7 @@ function createArtifactsPort(options = {}) {
       return { ok: false, reason: "unsafe_run_id" };
     }
     const baseDir = await base();
-    const target = path4.join(baseDir, request.providerId, request.runId);
+    const target = path5.join(baseDir, request.providerId, request.runId);
     if (create) {
       try {
         await mkdir3(target, { recursive: true, mode: DIRECTORY_MODE3 });
@@ -8936,7 +9028,7 @@ function createArtifactsPort(options = {}) {
           detail: "the run root resolves outside its original pool"
         });
       }
-      const resolved = await resolvedOrNull(path4.join(root, declaredPath));
+      const resolved = await resolvedOrNull(path5.join(root, declaredPath));
       if (resolved === null) {
         return observation({
           status: "missing",
@@ -9037,8 +9129,8 @@ function createArtifactsPort(options = {}) {
     },
     async writeTextFile(target, contents, writeOptions = {}) {
       const mode = writeOptions.mode ?? DEFAULT_FILE_MODE;
-      const directory2 = path4.dirname(target);
-      const temporary = path4.join(directory2, `.${path4.basename(target)}.${process.pid}.${randomUUID3()}.tmp`);
+      const directory2 = path5.dirname(target);
+      const temporary = path5.join(directory2, `.${path5.basename(target)}.${process.pid}.${randomUUID3()}.tmp`);
       try {
         await mkdir3(directory2, { recursive: true });
         await writeFile3(temporary, contents, { mode, flag: "wx" });
@@ -9070,13 +9162,13 @@ async function syncFile2(target) {
 }
 
 // packages/kernel/src/checks.ts
-import { open as open4, readFile as readFile4, realpath as realpath3 } from "node:fs/promises";
-import path6 from "node:path";
+import { open as open4, readFile as readFile4, realpath as realpath4 } from "node:fs/promises";
+import path7 from "node:path";
 init_digest();
 
 // packages/kernel/src/review-inputs.ts
 init_digest();
-import path5 from "node:path";
+import path6 from "node:path";
 
 // packages/kernel/src/policy/shipped-personas.ts
 init_digest();
@@ -10081,7 +10173,7 @@ async function resolveReviewCharters(read, config) {
     if (!isRecord4(snapshot["inputDigests"])) throw new OutcomeError("the compiled policy input digests are malformed");
     for (const [file, digest2] of Object.entries(snapshot["inputDigests"])) {
       if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(file) || !/^[a-f0-9]{64}$/.test(String(digest2))) throw new OutcomeError("the compiled policy declares an invalid input digest");
-      const bytes = await read(path5.posix.join(path5.posix.dirname(COMPILED_SNAPSHOT_FILE), file));
+      const bytes = await read(path6.posix.join(path6.posix.dirname(COMPILED_SNAPSHOT_FILE), file));
       if (bytes === null || sha256Hex(bytes) !== digest2) throw new OutcomeError("the compiled policy snapshot is stale against its declared input bytes; recompile policy");
     }
   }
@@ -10097,7 +10189,7 @@ async function resolveReviewCharters(read, config) {
   if (!Array.isArray(lenses)) {
     throw new OutcomeError(`${COMPILED_SNAPSHOT_FILE} records no compiled review lenses to review under`);
   }
-  const manifestPath = path5.posix.join(INSTALLED_ARCHIVE_DIR, PERSONA_MANIFEST_ENTRY);
+  const manifestPath = path6.posix.join(INSTALLED_ARCHIVE_DIR, PERSONA_MANIFEST_ENTRY);
   const manifest = await readJsonFile(
     read,
     manifestPath,
@@ -10114,7 +10206,7 @@ async function resolveReviewCharters(read, config) {
       charterPaths.set(entry3["personaId"], entry3["path"]);
     }
   }
-  const archiveRoot = path5.posix.resolve("/", INSTALLED_ARCHIVE_DIR);
+  const archiveRoot = path6.posix.resolve("/", INSTALLED_ARCHIVE_DIR);
   const resolved = [];
   const seen = /* @__PURE__ */ new Set();
   for (const lens of lenses) {
@@ -10129,13 +10221,13 @@ async function resolveReviewCharters(read, config) {
         `the compiled policy activates a lens referencing charter ${personaId}, which the installed generation's manifest does not declare`
       );
     }
-    const charterPath = path5.posix.resolve(archiveRoot, entryPath);
+    const charterPath = path6.posix.resolve(archiveRoot, entryPath);
     if (!charterPath.startsWith(`${archiveRoot}/`)) {
       throw new OutcomeError(`charter ${personaId} is declared at ${entryPath}, which leaves ${INSTALLED_ARCHIVE_DIR}`);
     }
     let bytes;
     try {
-      const contents = await read(path5.posix.join(INSTALLED_ARCHIVE_DIR, entryPath));
+      const contents = await read(path6.posix.join(INSTALLED_ARCHIVE_DIR, entryPath));
       if (contents === null) throw new Error("missing charter");
       bytes = contents;
     } catch (error) {
@@ -10149,18 +10241,18 @@ async function resolveReviewCharters(read, config) {
         `charter ${personaId} at ${entryPath} hashes to ${actual}, and the compiled policy was resolved against ${digest2}`
       );
     }
-    const base = path5.posix.basename(entryPath);
+    const base = path6.posix.basename(entryPath);
     const reviewerId = base.endsWith(CHARTER_EXTENSION) ? base.slice(0, -CHARTER_EXTENSION.length) : base;
     if (seen.has(reviewerId)) {
       throw new OutcomeError(`two activated lenses resolve to reviewer ${reviewerId}; a reviewer reviews once`);
     }
     seen.add(reviewerId);
-    resolved.push({ origin: "composition", sourcePath: path5.posix.join(INSTALLED_ARCHIVE_DIR, entryPath), lensId: lens["lensId"], reviewerId, personaId, entryPath, digest: digest2 });
+    resolved.push({ origin: "composition", sourcePath: path6.posix.join(INSTALLED_ARCHIVE_DIR, entryPath), lensId: lens["lensId"], reviewerId, personaId, entryPath, digest: digest2 });
   }
   const lensIds = new Set(resolved.map((charter) => charter.lensId));
   for (const extra of config?.additionalReviewLenses ?? []) {
     if (lensIds.has(extra.lensId) || seen.has(extra.reviewerId)) throw new OutcomeError("an additional review lens collides with an activated lens or reviewer");
-    const normalized = path5.posix.normalize(extra.charterPath);
+    const normalized = path6.posix.normalize(extra.charterPath);
     if (normalized !== extra.charterPath || normalized.startsWith("/") || normalized === "." || normalized === ".." || normalized.endsWith("/") || normalized.startsWith("../") || normalized.includes("\\") || normalized.includes("\0")) {
       throw new OutcomeError("an additional review charter must name a repository-relative file");
     }
@@ -10255,7 +10347,7 @@ async function captureScopedCheckInputs(definition, ports) {
   return { version: "scoped-inputs/1", inputDigest: digestCanonical(inputs), reusable, files, memberships, environment };
 }
 async function captureCheckOutputSnapshots(rootDir, outputs, readOutput) {
-  const root = await realpath3(rootDir);
+  const root = await realpath4(rootDir);
   const result2 = [];
   for (const output of outputs) {
     try {
@@ -10265,9 +10357,9 @@ async function captureCheckOutputSnapshots(rootDir, outputs, readOutput) {
         result2.push({ path: output, sha256: sha256Hex(bytes), base64: Buffer.from(bytes).toString("base64") });
         continue;
       }
-      const target = await realpath3(path6.resolve(root, output));
-      const relative = path6.relative(root, target);
-      if (relative.startsWith(`..${path6.sep}`) || relative === ".." || path6.isAbsolute(relative)) return void 0;
+      const target = await realpath4(path7.resolve(root, output));
+      const relative = path7.relative(root, target);
+      if (relative.startsWith(`..${path7.sep}`) || relative === ".." || path7.isAbsolute(relative)) return void 0;
       const handle = await open4(target, "r");
       try {
         const info = await handle.stat();
@@ -10292,12 +10384,12 @@ async function captureCheckOutputSnapshots(rootDir, outputs, readOutput) {
   return result2;
 }
 async function captureCheckOutputs(rootDir, outputs, readOutput) {
-  return (await captureCheckOutputSnapshots(rootDir, outputs, readOutput))?.map(({ path: path25, sha256: sha2562 }) => ({ path: path25, sha256: sha2562 }));
+  return (await captureCheckOutputSnapshots(rootDir, outputs, readOutput))?.map(({ path: path26, sha256: sha2562 }) => ({ path: path26, sha256: sha2562 }));
 }
 async function computeCheckWiringFingerprint(rootDir, config, options = {}) {
   const read = options.readReleaseInputs ?? (async (repoPath) => {
     try {
-      return await readFile4(path6.join(rootDir, repoPath));
+      return await readFile4(path7.join(rootDir, repoPath));
     } catch (error) {
       if (error.code === "ENOENT") return null;
       throw error;
@@ -12177,7 +12269,7 @@ init_projection();
 init_projection();
 import { existsSync as existsSync2, realpathSync } from "node:fs";
 import { chmod as chmod4, mkdir as mkdir4, readFile as readFile6, rm as rm4, writeFile as writeFile4 } from "node:fs/promises";
-import path8 from "node:path";
+import path9 from "node:path";
 import { tmpdir as tmpdir2 } from "node:os";
 var GENERATION_SKILLS_ARCHIVE = "skills/agent-skills-core-v1.zip";
 var PROJECTION_ENTRY_PREFIXES = Object.freeze(["skills/", "workflows/", "schemas/workflow-"]);
@@ -12207,14 +12299,14 @@ var fail3 = (code, message) => ({
 async function materializeProjection(input) {
   let archive;
   try {
-    archive = await readFile6(path8.join(input.generationRoot, ...GENERATION_SKILLS_ARCHIVE.split("/")));
+    archive = await readFile6(path9.join(input.generationRoot, ...GENERATION_SKILLS_ARCHIVE.split("/")));
   } catch {
     return fail3(
       "generation_archive_unreadable",
       `the pinned generation carries no readable ${GENERATION_SKILLS_ARCHIVE}; a missing pinned root blocks rather than falling forward`
     );
   }
-  const excludesPath = path8.join(input.bindingDir, WORKTREE_EXCLUDES_FILE);
+  const excludesPath = path9.join(input.bindingDir, WORKTREE_EXCLUDES_FILE);
   const enable = await input.exec.run({
     command: "git",
     args: ["config", "extensions.worktreeConfig", "true"],
@@ -12247,7 +12339,7 @@ async function materializeProjection(input) {
     return fail3("worktree_config_failed", `setting the worktree excludes file failed: ${setExcludes.stderr.trim()}`);
   }
   const entries = [];
-  const projectionRoot = path8.join(input.worktreeDir, PROJECTION_DIR);
+  const projectionRoot = path9.join(input.worktreeDir, PROJECTION_DIR);
   try {
     let names;
     try {
@@ -12264,8 +12356,8 @@ async function materializeProjection(input) {
         return fail3("projection_write_failed", `archive entry ${JSON.stringify(name)} is not a normalized relative path \u2014 refusing`);
       }
       const bytes = readArchiveEntry(archive, name);
-      const target = path8.join(projectionRoot, ...name.split("/"));
-      await mkdir4(path8.dirname(target), { recursive: true });
+      const target = path9.join(projectionRoot, ...name.split("/"));
+      await mkdir4(path9.dirname(target), { recursive: true });
       await writeFile4(target, bytes);
       await chmod4(target, READONLY_FILE);
       entries.push({ path: name, sha256: sha256Hex(bytes) });
@@ -12276,7 +12368,7 @@ async function materializeProjection(input) {
       consumed: GENERATION_SKILLS_ARCHIVE
     })}
 `;
-    const markerPath = path8.join(projectionRoot, CONSUMPTION_MARKER_FILE);
+    const markerPath = path9.join(projectionRoot, CONSUMPTION_MARKER_FILE);
     await writeFile4(markerPath, marker);
     await chmod4(markerPath, READONLY_FILE);
     entries.push({ path: CONSUMPTION_MARKER_FILE, sha256: sha256Hex(marker) });
@@ -12291,7 +12383,7 @@ async function materializeProjection(input) {
     projectionDigest: projectionDigestOf(entries),
     entries: [...entries].sort((a, b) => compareUtf16CodeUnits(a.path, b.path))
   };
-  const receiptPath = path8.join(input.bindingDir, PROJECTION_RECEIPT_FILE);
+  const receiptPath = path9.join(input.bindingDir, PROJECTION_RECEIPT_FILE);
   await writeFile4(receiptPath, `${JSON.stringify(receipt)}
 `, { mode: OWNER_FILE });
   await chmod4(receiptPath, OWNER_FILE);
@@ -12300,14 +12392,14 @@ async function materializeProjection(input) {
 async function discoveryConfigurationDigestOf(input) {
   try {
     const settings = await readFile6(input.settingsPath, "utf8");
-    const worktreeExcludes = await readFile6(path8.join(input.bindingDir, WORKTREE_EXCLUDES_FILE), "utf8");
+    const worktreeExcludes = await readFile6(path9.join(input.bindingDir, WORKTREE_EXCLUDES_FILE), "utf8");
     return digestCanonical({ settings, worktreeExcludes });
   } catch {
     return void 0;
   }
 }
 async function tearDownProjection(input) {
-  const excludesPath = path8.join(input.bindingDir, WORKTREE_EXCLUDES_FILE);
+  const excludesPath = path9.join(input.bindingDir, WORKTREE_EXCLUDES_FILE);
   let clearExclusion = false;
   if (existsSync2(input.worktreeDir)) {
     const current = await input.exec.run({
@@ -12318,10 +12410,10 @@ async function tearDownProjection(input) {
     clearExclusion = current.code === 0 && current.stdout.trim() === excludesPath;
   }
   try {
-    await rm4(path8.join(input.worktreeDir, PROJECTION_DIR), { recursive: true, force: true });
+    await rm4(path9.join(input.worktreeDir, PROJECTION_DIR), { recursive: true, force: true });
     await rm4(input.settingsPath, { force: true });
     for (const file of [WORKTREE_EXCLUDES_FILE, PROJECTION_RECEIPT_FILE]) {
-      await rm4(path8.join(input.bindingDir, file), { force: true });
+      await rm4(path9.join(input.bindingDir, file), { force: true });
     }
   } catch (error) {
     return fail3("teardown_failed", `removing the projection failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -12342,7 +12434,7 @@ async function gradedDescendantTeardown(input) {
   let record2;
   try {
     record2 = JSON.parse(
-      await readFile6(path8.join(input.generationRoot, ...GENERATION_HOST_CAPABILITIES.split("/")), "utf8")
+      await readFile6(path9.join(input.generationRoot, ...GENERATION_HOST_CAPABILITIES.split("/")), "utf8")
     );
   } catch {
     return "unverified";
@@ -12362,29 +12454,29 @@ function gradeResumeEligibility(input) {
 }
 async function composeClaudeCodeSession(input) {
   const hook = (subcommand) => [...input.hookCommand, subcommand, input.statePath, String(input.fence)].map((part) => JSON.stringify(part)).join(" ");
-  const workspaceRoot = path8.resolve(input.workspaceRoot);
-  const commonGitDir = path8.resolve(input.commonGitDir);
-  const authorityDir = path8.resolve(input.authorityDir);
-  const absolutePermissionPath = (target) => `/${path8.resolve(target).replace(/^\/+/, "")}`;
+  const workspaceRoot = path9.resolve(input.workspaceRoot);
+  const commonGitDir = path9.resolve(input.commonGitDir);
+  const authorityDir = path9.resolve(input.authorityDir);
+  const absolutePermissionPath = (target) => `/${path9.resolve(target).replace(/^\/+/, "")}`;
   const unique2 = (values) => [...new Set(values)].sort(compareUtf16CodeUnits);
   const spellings2 = (target) => {
-    const resolved = path8.resolve(target);
+    const resolved = path9.resolve(target);
     let ancestor = resolved;
     const tail = [];
     for (; ; ) {
       try {
-        const canonical2 = path8.join(realpathSync(ancestor), ...tail);
-        return canonical2 === resolved ? [resolved] : [resolved, canonical2];
+        const canonical3 = path9.join(realpathSync(ancestor), ...tail);
+        return canonical3 === resolved ? [resolved] : [resolved, canonical3];
       } catch {
-        const parent = path8.dirname(ancestor);
+        const parent = path9.dirname(ancestor);
         if (parent === ancestor) return [resolved];
-        tail.unshift(path8.basename(ancestor));
+        tail.unshift(path9.basename(ancestor));
         ancestor = parent;
       }
     }
   };
   const workspaceRoots = spellings2(workspaceRoot);
-  const underWorkspace = (relatives) => unique2(workspaceRoots.flatMap((root) => relatives.map((relative) => path8.resolve(root, relative))));
+  const underWorkspace = (relatives) => unique2(workspaceRoots.flatMap((root) => relatives.map((relative) => path9.resolve(root, relative))));
   const writableRoots = underWorkspace(input.grant.writablePaths);
   const protectedRoots = underWorkspace(input.grant.protectedPaths);
   const deniedAuthorityRoots = unique2([commonGitDir, authorityDir].flatMap(spellings2));
@@ -12449,7 +12541,7 @@ async function composeClaudeCodeSession(input) {
   };
   const settingsBytes = `${JSON.stringify(settings, null, 2)}
 `;
-  const settingsPath = path8.join(input.bindingDir, sessionSettingsFile(input.fence));
+  const settingsPath = path9.join(input.bindingDir, sessionSettingsFile(input.fence));
   await mkdir4(input.bindingDir, { recursive: true, mode: OWNER_DIR });
   await writeFile4(settingsPath, settingsBytes, { mode: OWNER_FILE });
   await chmod4(settingsPath, OWNER_FILE);
@@ -12525,7 +12617,7 @@ var claudeCodeBinding = {
     return discoveryConfigurationDigestOf({ settingsPath: input.admissionConfigurationPath, bindingDir: input.bindingDir });
   },
   admissionConfigurationPath(bindingDir, fence) {
-    return path8.join(bindingDir, sessionSettingsFile(fence));
+    return path9.join(bindingDir, sessionSettingsFile(fence));
   }
 };
 
@@ -12930,18 +13022,18 @@ init_digest();
 init_composition();
 import { randomBytes as randomBytes2 } from "node:crypto";
 import { chmod as chmod7, mkdir as mkdir7, readFile as readFile9, readdir as readdir2, rename as rename3, stat as stat4, writeFile as writeFile6 } from "node:fs/promises";
-import path11 from "node:path";
+import path12 from "node:path";
 init_grammar();
 init_assertion_source();
 
 // packages/kernel/src/substrate/maintenance-journal.ts
 init_journal();
 import { appendFile, chmod as chmod6, mkdir as mkdir6, readFile as readFile8 } from "node:fs/promises";
-import path10 from "node:path";
+import path11 from "node:path";
 var OWNER_DIR3 = 448;
 var OWNER_FILE3 = 384;
 function maintenanceJournalPathFor(installationPath) {
-  return path10.join(installationPath, "journal", "maintenance.jsonl");
+  return path11.join(installationPath, "journal", "maintenance.jsonl");
 }
 async function readMaintenanceJournal(installationPath) {
   let text5;
@@ -13002,7 +13094,7 @@ async function appendMaintenanceAction(installationPath, installationId, payload
     };
   }
   const journalPath = maintenanceJournalPathFor(installationPath);
-  await mkdir6(path10.dirname(journalPath), { recursive: true, mode: OWNER_DIR3 });
+  await mkdir6(path11.dirname(journalPath), { recursive: true, mode: OWNER_DIR3 });
   await appendFile(journalPath, `${JSON.stringify(entry3)}
 `, { mode: OWNER_FILE3 });
   await chmod6(journalPath, OWNER_FILE3);
@@ -13185,15 +13277,15 @@ var OWNER_FILE4 = 384;
 var READONLY_DIR = 365;
 var READONLY_FILE2 = 292;
 function trustStorePathFor(installationPath) {
-  return path11.join(installationPath, TRUST_LEAF, "product-trust.json");
+  return path12.join(installationPath, TRUST_LEAF, "product-trust.json");
 }
 function receiptPathFor(receiptDir, installationPath) {
-  return path11.join(receiptDir, RECEIPTS_LEAF, `${sha256Hex(installationPath)}.json`);
+  return path12.join(receiptDir, RECEIPTS_LEAF, `${sha256Hex(installationPath)}.json`);
 }
-var generationRootFor = (installationPath, generationDigest) => path11.join(installationPath, GENERATIONS_LEAF, generationDigest);
-var generationsDirFor = (installationPath) => path11.join(installationPath, GENERATIONS_LEAF);
-var activePointerPathFor = (installationPath) => path11.join(installationPath, POINTERS_LEAF, "active.json");
-var rollbackPointerPathFor = (installationPath) => path11.join(installationPath, POINTERS_LEAF, "rollback.json");
+var generationRootFor = (installationPath, generationDigest) => path12.join(installationPath, GENERATIONS_LEAF, generationDigest);
+var generationsDirFor = (installationPath) => path12.join(installationPath, GENERATIONS_LEAF);
+var activePointerPathFor = (installationPath) => path12.join(installationPath, POINTERS_LEAF, "active.json");
+var rollbackPointerPathFor = (installationPath) => path12.join(installationPath, POINTERS_LEAF, "rollback.json");
 var ROLLBACK_POINTER_SPEC = "rollback-pointer/1";
 var exists2 = async (target) => {
   try {
@@ -13204,7 +13296,7 @@ var exists2 = async (target) => {
   }
 };
 async function walkFiles(root, mode, relative = "") {
-  const absolute = relative === "" ? root : path11.join(root, relative);
+  const absolute = relative === "" ? root : path12.join(root, relative);
   const entries = await readdir2(absolute, { withFileTypes: true });
   entries.sort((a, b) => compareUtf16CodeUnits(a.name, b.name));
   const out = [];
@@ -13226,7 +13318,7 @@ async function walkFiles(root, mode, relative = "") {
   return out;
 }
 async function writeOwnerFile(target, contents) {
-  await mkdir7(path11.dirname(target), { recursive: true, mode: OWNER_DIR4 });
+  await mkdir7(path12.dirname(target), { recursive: true, mode: OWNER_DIR4 });
   await writeFile6(target, contents, { mode: OWNER_FILE4 });
   await chmod7(target, OWNER_FILE4);
 }
@@ -13251,29 +13343,29 @@ async function packComposition(input) {
       `the skills release metadata hashes to ${metadataDigest}, not the pinned ${PINNED_AGENT_SKILLS.metadataSha256}`
     );
   }
-  const packedDir = path11.join(input.outDir, "composition");
+  const packedDir = path12.join(input.outDir, "composition");
   const inventory = [];
   const stage = async (entryPath, bytes) => {
-    const target = path11.join(packedDir, ...entryPath.split("/"));
-    await mkdir7(path11.dirname(target), { recursive: true });
+    const target = path12.join(packedDir, ...entryPath.split("/"));
+    await mkdir7(path12.dirname(target), { recursive: true });
     await writeFile6(target, bytes);
     inventory.push({ path: entryPath, sha256: sha256Hex(bytes) });
   };
   const harnessModuleVersions = {};
   for (const packageLeaf of PACKED_HARNESS_PACKAGES) {
-    const packageRoot = path11.join(input.sourceRoot, "packages", packageLeaf);
-    const manifest2 = JSON.parse(await readFile9(path11.join(packageRoot, "package.json"), "utf8"));
+    const packageRoot = path12.join(input.sourceRoot, "packages", packageLeaf);
+    const manifest2 = JSON.parse(await readFile9(path12.join(packageRoot, "package.json"), "utf8"));
     harnessModuleVersions[manifest2.name] = manifest2.version;
     for (const relative of await walkFiles(packageRoot, "skip-dev-artifacts")) {
-      await stage(`harness/packages/${packageLeaf}/${relative}`, await readFile9(path11.join(packageRoot, ...relative.split("/"))));
+      await stage(`harness/packages/${packageLeaf}/${relative}`, await readFile9(path12.join(packageRoot, ...relative.split("/"))));
     }
   }
   for (const rootFile of PACKED_ROOT_FILES) {
-    await stage(`harness/${rootFile}`, await readFile9(path11.join(input.sourceRoot, ...rootFile.split("/"))));
+    await stage(`harness/${rootFile}`, await readFile9(path12.join(input.sourceRoot, ...rootFile.split("/"))));
   }
   await stage(SKILLS_ARCHIVE_ENTRY, archiveBytes);
   await stage(SKILLS_METADATA_ENTRY, metadataBytes);
-  const rootManifest = JSON.parse(await readFile9(path11.join(input.sourceRoot, "package.json"), "utf8"));
+  const rootManifest = JSON.parse(await readFile9(path12.join(input.sourceRoot, "package.json"), "utf8"));
   const manifest = buildCompositionManifest({
     compositionProfile: input.compositionProfile,
     compositionSequence: input.compositionSequence,
@@ -13282,7 +13374,7 @@ async function packComposition(input) {
     inventory
   });
   const manifestBytes = compositionManifestBytes(manifest);
-  const manifestPath = path11.join(packedDir, COMPOSITION_MANIFEST_FILE);
+  const manifestPath = path12.join(packedDir, COMPOSITION_MANIFEST_FILE);
   await writeFile6(manifestPath, manifestBytes);
   return { ok: true, generationDigest: generationDigestOf(manifestBytes), manifestPath, packedDir };
 }
@@ -13305,7 +13397,7 @@ async function verifyGenerationClosure(root, expectedDigest) {
       `${root} carries no ${COMPOSITION_MANIFEST_FILE}; a source checkout or arbitrary directory is not an installed generation`
     );
   }
-  const manifestBytes = await readFile9(path11.join(root, COMPOSITION_MANIFEST_FILE), "utf8");
+  const manifestBytes = await readFile9(path12.join(root, COMPOSITION_MANIFEST_FILE), "utf8");
   const generationDigest = generationDigestOf(manifestBytes);
   if (expectedDigest !== void 0 && generationDigest !== expectedDigest) {
     return fail4(
@@ -13333,7 +13425,7 @@ async function verifyGenerationClosure(root, expectedDigest) {
     }
   }
   for (const entry3 of inventory) {
-    const target = path11.join(root, ...entry3.path.split("/"));
+    const target = path12.join(root, ...entry3.path.split("/"));
     let bytes;
     try {
       bytes = await readFile9(target);
@@ -13433,17 +13525,17 @@ async function observePresence(input) {
   const receiptRead = await readInstallReceipt(input.receiptDir, input.installationPath);
   const receipt = receiptRead.presence === "valid" ? receiptRead.receipt : void 0;
   const otherArtifacts = [];
-  const generationsDir = path11.join(input.installationPath, GENERATIONS_LEAF);
+  const generationsDir = path12.join(input.installationPath, GENERATIONS_LEAF);
   if (await exists2(generationsDir) && (await readdir2(generationsDir)).length > 0) {
     otherArtifacts.push("generation-root");
   }
-  if (await exists2(path11.join(input.installationPath, JOURNAL_LEAF))) {
+  if (await exists2(path12.join(input.installationPath, JOURNAL_LEAF))) {
     otherArtifacts.push("update-journal");
   }
   if (await exists2(activePointerPathFor(input.installationPath))) {
     otherArtifacts.push("active-pointer");
   }
-  if (await exists2(path11.join(input.installationPath, POINTERS_LEAF, "rollback.json"))) {
+  if (await exists2(path12.join(input.installationPath, POINTERS_LEAF, "rollback.json"))) {
     otherArtifacts.push("rollback-pointer");
   }
   return {
@@ -13453,19 +13545,19 @@ async function observePresence(input) {
   };
 }
 async function materializeRoot(packedDir, root) {
-  const parent = path11.dirname(root);
+  const parent = path12.dirname(root);
   await mkdir7(parent, { recursive: true, mode: OWNER_DIR4 });
   const staging = `${root}.staging-${randomBytes2(6).toString("hex")}`;
   const files = await walkFiles(packedDir, "raw");
   const directories = /* @__PURE__ */ new Set([staging]);
   for (const relative of files.includes(COMPOSITION_MANIFEST_FILE) ? files : [...files, COMPOSITION_MANIFEST_FILE]) {
-    const source = path11.join(packedDir, ...relative.split("/"));
-    const target = path11.join(staging, ...relative.split("/"));
-    await mkdir7(path11.dirname(target), { recursive: true });
-    let cursor = path11.dirname(target);
+    const source = path12.join(packedDir, ...relative.split("/"));
+    const target = path12.join(staging, ...relative.split("/"));
+    await mkdir7(path12.dirname(target), { recursive: true });
+    let cursor = path12.dirname(target);
     while (cursor.length >= staging.length && !directories.has(cursor)) {
       directories.add(cursor);
-      cursor = path11.dirname(cursor);
+      cursor = path12.dirname(cursor);
     }
     await writeFile6(target, await readFile9(source));
     await chmod7(target, READONLY_FILE2);
@@ -13685,7 +13777,7 @@ init_assertion_source();
 init_assertion();
 init_composition();
 import { readdir as readdir3, readFile as readFile10, rm as rm5 } from "node:fs/promises";
-import path12 from "node:path";
+import path13 from "node:path";
 init_assertion_source();
 var fail5 = (code, message) => ({
   ok: false,
@@ -14003,7 +14095,7 @@ async function removeReadonlyTree(root) {
       return;
     }
     for (const entry3 of entries) {
-      if (entry3.isDirectory()) await restore(path12.join(dir, entry3.name));
+      if (entry3.isDirectory()) await restore(path13.join(dir, entry3.name));
     }
   };
   await restore(root);
@@ -14077,7 +14169,7 @@ async function recoverInterruptedMaintenance(input) {
     } catch {
     }
     for (const name of entries) {
-      if (name.includes(".staging-")) await removeReadonlyTree(path12.join(generationsDir, name));
+      if (name.includes(".staging-")) await removeReadonlyTree(path13.join(generationsDir, name));
     }
     const targetRoot = generationRootFor(input.installationPath, target);
     const closure = await verifyGenerationClosure(targetRoot, target);
@@ -15368,7 +15460,7 @@ function analyze(events, treeSha2, mandatedLensIds, reviewedTreeShas) {
 // packages/kernel/src/checkpoint/run-namespace.ts
 init_digest();
 import { spawn as spawn4 } from "node:child_process";
-import path14 from "node:path";
+import path15 from "node:path";
 var MANAGED_DELIVERY_NAMESPACE = "managed-delivery";
 var RUN_STORE_DIRECTORY = "runs";
 async function resolveCommonDirectoryNamespace(input) {
@@ -15381,7 +15473,7 @@ async function resolveCommonDirectoryNamespace(input) {
   if (outcome.code !== 0 || commonDir.length === 0) {
     return { ok: false, reason: `not a git repository: ${input.cwd}` };
   }
-  return { ok: true, commonDir, namespaceDir: path14.join(commonDir, MANAGED_DELIVERY_NAMESPACE) };
+  return { ok: true, commonDir, namespaceDir: path15.join(commonDir, MANAGED_DELIVERY_NAMESPACE) };
 }
 async function resolveRunStoreLocation(input) {
   const outcome = await input.run({
@@ -15395,13 +15487,13 @@ async function resolveRunStoreLocation(input) {
   if (outcome.code !== 0 || gitDir === void 0 || commonDir === void 0) {
     return { ok: false, reason: `not a git repository: ${input.cwd}` };
   }
-  const namespaceDir = path14.join(commonDir, MANAGED_DELIVERY_NAMESPACE);
+  const namespaceDir = path15.join(commonDir, MANAGED_DELIVERY_NAMESPACE);
   return {
     ok: true,
     gitDir,
     commonDir,
     namespaceDir,
-    runsDir: path14.join(namespaceDir, RUN_STORE_DIRECTORY),
+    runsDir: path15.join(namespaceDir, RUN_STORE_DIRECTORY),
     worktreeKey: sha256Hex(gitDir)
   };
 }
@@ -15435,7 +15527,7 @@ init_redaction();
 import { constants as fsConstants2 } from "node:fs";
 import { mkdir as mkdir9, open as open6, readdir as readdir5, unlink as unlink2 } from "node:fs/promises";
 import { randomBytes as randomBytes3 } from "node:crypto";
-import path15 from "node:path";
+import path16 from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 // packages/kernel/src/spine/run-action-reconciliation.ts
@@ -15680,23 +15772,23 @@ function isLegalRunId(runId) {
   return typeof runId === "string" && runId.length <= 128 && RUN_STORE_ID.test(runId);
 }
 function createRunStore(commonDir) {
-  const runsDir = path15.join(commonDir, MANAGED_DELIVERY_NAMESPACE, RUN_STORE_DIRECTORY);
-  const notesDir = path15.join(runsDir, NOTES_DIRECTORY);
-  const currentDir = path15.join(runsDir, CURRENT_DIRECTORY);
+  const runsDir = path16.join(commonDir, MANAGED_DELIVERY_NAMESPACE, RUN_STORE_DIRECTORY);
+  const notesDir = path16.join(runsDir, NOTES_DIRECTORY);
+  const currentDir = path16.join(runsDir, CURRENT_DIRECTORY);
   const journalPathFor = (runId) => {
     if (!isLegalRunId(runId)) return void 0;
-    const resolved = path15.join(runsDir, `${runId}${JOURNAL_SUFFIX}`);
-    return path15.dirname(resolved) === runsDir ? resolved : void 0;
+    const resolved = path16.join(runsDir, `${runId}${JOURNAL_SUFFIX}`);
+    return path16.dirname(resolved) === runsDir ? resolved : void 0;
   };
   const notePathFor = (runId) => {
     if (!isLegalRunId(runId)) return void 0;
-    const resolved = path15.join(notesDir, `${runId}${JOURNAL_SUFFIX}`);
-    return path15.dirname(resolved) === notesDir ? resolved : void 0;
+    const resolved = path16.join(notesDir, `${runId}${JOURNAL_SUFFIX}`);
+    return path16.dirname(resolved) === notesDir ? resolved : void 0;
   };
   const pointerPathFor = (worktreeKey) => {
     if (!WORKTREE_KEY.test(worktreeKey)) return void 0;
-    const resolved = path15.join(currentDir, worktreeKey);
-    return path15.dirname(resolved) === currentDir ? resolved : void 0;
+    const resolved = path16.join(currentDir, worktreeKey);
+    return path16.dirname(resolved) === currentDir ? resolved : void 0;
   };
   const journalExists = async (journalPath) => {
     let handle;
@@ -16094,12 +16186,12 @@ function createRunStore(commonDir) {
 init_digest();
 init_journal_store();
 import { chmod as chmod8, mkdir as mkdir10, readFile as readFile11, rm as rm6, writeFile as writeFile7 } from "node:fs/promises";
-import path16 from "node:path";
+import path17 from "node:path";
 var OWNER_DIR6 = 448;
 var OWNER_FILE6 = 384;
 var refuse2 = (code, summary, remediation) => ({ ok: false, code, summary, remediation });
 async function writeOwned(target, contents) {
-  await mkdir10(path16.dirname(target), { recursive: true, mode: OWNER_DIR6 });
+  await mkdir10(path17.dirname(target), { recursive: true, mode: OWNER_DIR6 });
   await writeFile7(target, contents, { mode: OWNER_FILE6 });
   await chmod8(target, OWNER_FILE6);
 }
@@ -16137,15 +16229,15 @@ async function appendRetentionRecord(context, action, deliveryId, artifactDigest
 }
 var lastOf = (views, kind) => [...views].reverse().find((view) => view.kind === kind);
 async function exportDelivery(context, deliveryId) {
-  const deliveryDir = path16.join(context.namespaceDir, "deliveries", deliveryId);
-  const store = createJournalStore(path16.join(deliveryDir, "journal.jsonl"));
+  const deliveryDir = path17.join(context.namespaceDir, "deliveries", deliveryId);
+  const store = createJournalStore(path17.join(deliveryDir, "journal.jsonl"));
   const read = await store.read();
   if (!read.ok || read.entries.length === 0) {
     return refuse2("unknown_delivery", `No registered delivery ${deliveryId} to export.`, "Name a registered delivery.");
   }
   let meta;
   try {
-    meta = JSON.parse(await readFile11(path16.join(deliveryDir, "delivery.json"), "utf8"));
+    meta = JSON.parse(await readFile11(path17.join(deliveryDir, "delivery.json"), "utf8"));
   } catch {
     meta = void 0;
   }
@@ -16158,15 +16250,15 @@ async function exportDelivery(context, deliveryId) {
   })}
 `;
   const artifactDigest = sha256Hex(bundle);
-  const exportPath = path16.join(context.namespaceDir, "exports", `${deliveryId}.json`);
+  const exportPath = path17.join(context.namespaceDir, "exports", `${deliveryId}.json`);
   await writeOwned(exportPath, bundle);
   const recorded = await appendRetentionRecord(context, "export", deliveryId, artifactDigest, []);
   if (!recorded.ok) return recorded;
   return { ok: true, exportPath, artifactDigest };
 }
 async function deleteDelivery(context, deliveryId) {
-  const deliveryDir = path16.join(context.namespaceDir, "deliveries", deliveryId);
-  const store = createJournalStore(path16.join(deliveryDir, "journal.jsonl"));
+  const deliveryDir = path17.join(context.namespaceDir, "deliveries", deliveryId);
+  const store = createJournalStore(path17.join(deliveryDir, "journal.jsonl"));
   const read = await store.read();
   if (!read.ok || read.entries.length === 0) {
     return refuse2("unknown_delivery", `No registered delivery ${deliveryId} to delete.`, "Name a registered delivery.");
@@ -16203,8 +16295,8 @@ async function deleteDelivery(context, deliveryId) {
     ...finishLine === void 0 ? {} : { finishLine: finishLine.payload }
   })}
 `;
-  const auditRelative = path16.join("audit", `${deliveryId}.json`);
-  const auditPath = path16.join(context.namespaceDir, auditRelative);
+  const auditRelative = path17.join("audit", `${deliveryId}.json`);
+  const auditPath = path17.join(context.namespaceDir, auditRelative);
   await writeOwned(auditPath, audit);
   const preservedAuditRecords = [auditRelative];
   const recorded = await appendRetentionRecord(context, "delete", deliveryId, sha256Hex(audit), preservedAuditRecords);
@@ -16223,14 +16315,14 @@ init_codex_app_server_hook();
 init_host_admission();
 init_codex_app_server();
 import { existsSync as existsSync3 } from "node:fs";
-import path20 from "node:path";
+import path21 from "node:path";
 
 // packages/kernel/src/host/exec-port.ts
 import { execFile as execFile3, spawn as spawn5 } from "node:child_process";
-function createExecPort() {
+function createExecPort(options = {}) {
   return {
     run(invocation) {
-      if (process.platform !== "win32") return runProcessGroup(invocation);
+      if (process.platform !== "win32") return runProcessGroup(invocation, options.groupKill ?? nativeGroupKill);
       return new Promise((resolve) => {
         execFile3(
           invocation.command,
@@ -16257,7 +16349,56 @@ function createExecPort() {
     }
   };
 }
-function runProcessGroup(invocation) {
+var ESRCH = 3;
+function groupStopped(rc, errno) {
+  return rc === 0 || errno === ESRCH;
+}
+function libcGroupKill(kill, readErrno) {
+  return (pid) => kill(-pid, 9) === 0 || groupStopped(-1, readErrno());
+}
+var nativeGroupKillOnce;
+function nativeGroupKill() {
+  return nativeGroupKillOnce ??= (async () => {
+    if (!("Bun" in globalThis) || process.platform !== "darwin" && process.platform !== "linux") return null;
+    try {
+      const ffiModule = "bun:ffi";
+      const { dlopen, FFIType, read } = await import(ffiModule);
+      const errnoSymbol = process.platform === "darwin" ? "__error" : "__errno_location";
+      const libc = dlopen(process.platform === "darwin" ? "libc.dylib" : "libc.so.6", {
+        kill: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
+        [errnoSymbol]: { args: [], returns: FFIType.ptr }
+      });
+      const kill = libc.symbols["kill"];
+      const errno = libc.symbols[errnoSymbol];
+      return libcGroupKill(kill, () => read.i32(errno(), 0));
+    } catch {
+      return null;
+    }
+  })();
+}
+var LAUNCH_FAILURES = /* @__PURE__ */ new Set(["EAGAIN", "EMFILE", "ENFILE", "ENOMEM"]);
+var UTILITY_RETRY_DELAYS_MS = [0, 50, 100, 250, 500];
+async function killGroupWithUtility(pid) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await new Promise((resolve, reject2) => {
+        execFile3("/bin/kill", ["-KILL", "--", `-${pid}`], {
+          timeout: 1e3,
+          maxBuffer: 16 * 1024,
+          env: { PATH: "/usr/bin:/bin", LC_ALL: "C" }
+        }, (error, _stdout, stderr) => {
+          if (error && !stderr.includes("No such process")) reject2(Object.assign(error, { launched: typeof error.code !== "string" || !LAUNCH_FAILURES.has(error.code) }));
+          else resolve();
+        });
+      });
+      return;
+    } catch (error) {
+      if (error.launched === true || attempt + 1 >= UTILITY_RETRY_DELAYS_MS.length) throw error;
+      await new Promise((resolve) => setTimeout(resolve, UTILITY_RETRY_DELAYS_MS[attempt + 1]));
+    }
+  }
+}
+function runProcessGroup(invocation, groupKill) {
   if (invocation.signal?.aborted) return Promise.resolve({ code: 1, stdout: "", stderr: "", errorCode: "ABORT_ERR" });
   return new Promise((resolve) => {
     const child = spawn5(invocation.command, [...invocation.args], {
@@ -16280,16 +16421,13 @@ function runProcessGroup(invocation) {
           process.kill(-child.pid, "SIGKILL");
         } catch (error) {
           if (error.code !== "ERR_OUT_OF_RANGE") throw error;
-          await new Promise((resolve2, reject2) => {
-            execFile3("/bin/kill", ["-KILL", "--", `-${child.pid}`], {
-              timeout: 1e3,
-              maxBuffer: 16 * 1024,
-              env: { PATH: "/usr/bin:/bin", LC_ALL: "C" }
-            }, (error2, _stdout, stderr) => {
-              if (error2 && !stderr.includes("No such process")) reject2(error2);
-              else resolve2();
-            });
-          });
+          const native = await groupKill();
+          let stopped = false;
+          try {
+            stopped = native?.(child.pid) === true;
+          } catch {
+          }
+          if (!stopped) await killGroupWithUtility(child.pid);
         }
       } catch (error) {
         if (error.code !== "ESRCH" && error.errno !== 3) {
@@ -16385,7 +16523,7 @@ function createCodexAppServerConformancePort(input) {
     })).stdout.trim();
     const composed = await composeCodexAppServerThread({
       bindingDir: input.bindingDir,
-      statePath: path20.join(input.bindingDir, `state-${input.fence}.json`),
+      statePath: path21.join(input.bindingDir, `state-${input.fence}.json`),
       hookCommand: ["node", "--import", "tsx", "codex-hook-main.ts"],
       fence: input.fence,
       workspaceRoot: input.worktreeDir,
@@ -16500,10 +16638,10 @@ function createCodexAppServerConformancePort(input) {
         return { outcome: "failed", residue: torn.blockers.map((blocker) => blocker.code) };
       }
       const residue = [
-        path20.join(input.worktreeDir, PROJECTION_DIR),
+        path21.join(input.worktreeDir, PROJECTION_DIR),
         admissionConfigurationPath,
-        path20.join(input.bindingDir, WORKTREE_EXCLUDES_FILE),
-        path20.join(input.bindingDir, PROJECTION_RECEIPT_FILE)
+        path21.join(input.bindingDir, WORKTREE_EXCLUDES_FILE),
+        path21.join(input.bindingDir, PROJECTION_RECEIPT_FILE)
       ].filter((candidate2) => existsSync3(candidate2));
       return { outcome: "torn-down", residue };
     }
@@ -16517,8 +16655,8 @@ init_projection();
 init_projection();
 init_projection_consumption_observation();
 init_graph();
-import { lstat as lstat2, open as open7, readFile as readFile13, realpath as realpath4, rename as rename6, rm as rm7, stat as stat5, writeFile as writeFile9 } from "node:fs/promises";
-import path21 from "node:path";
+import { lstat as lstat3, open as open7, readFile as readFile13, realpath as realpath5, rename as rename6, rm as rm7, stat as stat5, writeFile as writeFile9 } from "node:fs/promises";
+import path22 from "node:path";
 var SHADOW_MILESTONE_GATE_RECORD_SPEC_SUFFIX = "shadow-milestone-gate-record/1";
 var SHADOW_MILESTONE_GATE_RECORD_SPEC = `athena-${SHADOW_MILESTONE_GATE_RECORD_SPEC_SUFFIX}`;
 var SHADOW_MILESTONE_GATE_RECORD_PATH = ".agents/policy/shadow-milestone-gate-record.json";
@@ -16551,7 +16689,7 @@ async function emitProjectionConsumptionRecord(input) {
   try {
     observation = parseProjectionConsumptionObservation(JSON.parse(
       await readFile13(
-        path21.join(input.bindingDir, projectionConsumptionObservationFile(input.fence)),
+        path22.join(input.bindingDir, projectionConsumptionObservationFile(input.fence)),
         "utf8"
       )
     ));
@@ -16561,8 +16699,8 @@ async function emitProjectionConsumptionRecord(input) {
   if (observation === void 0) return unobserved("projection-not-consumed");
   let canonicalWorkflowPath;
   try {
-    canonicalWorkflowPath = await realpath4(
-      path21.join(input.worktreeDir, PROJECTION_DIR, ...WORKFLOW_GRAPH_ENTRY.split("/"))
+    canonicalWorkflowPath = await realpath5(
+      path22.join(input.worktreeDir, PROJECTION_DIR, ...WORKFLOW_GRAPH_ENTRY.split("/"))
     );
   } catch {
     return unobserved("projection-not-consumed");
@@ -16630,13 +16768,13 @@ async function resolveGateRecordTarget(input) {
   let recordLink;
   let recordStat;
   try {
-    repositoryRoot = await realpath4(input.repositoryRoot);
-    const expectedParent = path21.join(repositoryRoot, ".agents", "policy");
-    const expectedRecord = path21.join(expectedParent, SHADOW_MILESTONE_GATE_RECORD_PATH.split("/").at(-1));
+    repositoryRoot = await realpath5(input.repositoryRoot);
+    const expectedParent = path22.join(repositoryRoot, ".agents", "policy");
+    const expectedRecord = path22.join(expectedParent, SHADOW_MILESTONE_GATE_RECORD_PATH.split("/").at(-1));
     [gateRecordParent, gateRecordPath, recordLink, recordStat] = await Promise.all([
-      realpath4(path21.dirname(input.gateRecordPath)),
-      realpath4(input.gateRecordPath),
-      lstat2(expectedRecord),
+      realpath5(path22.dirname(input.gateRecordPath)),
+      realpath5(input.gateRecordPath),
+      lstat3(expectedRecord),
       stat5(expectedRecord)
     ]);
     if (gateRecordParent !== expectedParent || gateRecordPath !== expectedRecord || !recordLink.isFile() || recordLink.isSymbolicLink() || recordStat.nlink !== 1) {
@@ -16674,7 +16812,7 @@ async function writeEntry(input, record2, lockPath) {
   };
   if (index2 >= 0) deliveries[index2] = entry3;
   else deliveries.push(entry3);
-  const tempPath = `${input.gateRecordPath}.${path21.basename(lockPath)}.tmp`;
+  const tempPath = `${input.gateRecordPath}.${path22.basename(lockPath)}.tmp`;
   try {
     const beforePublish = await resolveGateRecordTarget(input);
     if ("ok" in beforePublish) return beforePublish;
@@ -18297,8 +18435,9 @@ async function reconstructResourceApplicability(config, provider2, candidate2, p
 
 // packages/kernel/src/portable-inputs.ts
 init_digest();
-import path22 from "node:path";
+import path23 from "node:path";
 import { createHash as createHash4 } from "node:crypto";
+import { spawn as spawn6 } from "node:child_process";
 async function candidateTreeEvidenceReader(rootDir, treeSha2, run = runGitCommand) {
   return candidateTreeReader(rootDir, treeSha2, run, MAX_PORTABLE_ARTIFACT_BYTES);
 }
@@ -18326,52 +18465,94 @@ async function candidateTreeReader(rootDir, treeSha2, run, maxBytes, directoryLi
     const bytes = result2.stdoutBase64 === void 0 ? Buffer.from(result2.stdout, "utf8") : Buffer.from(result2.stdoutBase64, "base64");
     return verifyObject(sha, type, bytes);
   };
-  const queued = [];
-  let active = 0, scheduled = false;
-  const schedule = () => {
-    if (scheduled || active >= 4 || !queued.length) return;
-    scheduled = true;
-    queueMicrotask(() => {
-      scheduled = false;
-      while (active < 4 && queued.length) {
-        const batch = queued.splice(0, 8);
-        active++;
-        void flush(batch);
-      }
-    });
+  let current;
+  const fail7 = (child, error) => {
+    if (child.closed) return;
+    child.closed = true;
+    if (current === child) current = void 0;
+    child.git.kill("SIGKILL");
+    for (const request of child.written.splice(0)) request.reject(error);
   };
-  const flush = async (batch) => {
+  const failure = (message) => {
     try {
-      const result2 = await runGitCommandBytes(["git", "cat-file", "--batch"], {
-        cwd: rootDir,
-        stdin: batch.map((request) => `${request.sha}
-`).join("")
-      });
-      if (result2.exitCode !== 0) refusal4("A target-tree evidence input cannot be read.");
-      const output = result2.stdout, values = [];
-      let offset = 0;
-      for (const request of batch) {
-        const end = output.indexOf(10, offset);
-        if (end < offset || end - offset > 128) refusal4("A target-tree object batch has an invalid header.");
-        const header = /^([a-f0-9]{40}(?:[a-f0-9]{24})?) (blob|tree) (0|[1-9][0-9]*)$/.exec(output.subarray(offset, end).toString("utf8"));
-        if (!header || header[1] !== request.sha || header[2] !== request.type) refusal4("A target-tree object batch has an invalid identity or type.");
-        const size = Number(header[3]), start = end + 1, finish2 = start + size;
-        if (!Number.isSafeInteger(size) || !Number.isSafeInteger(finish2) || finish2 >= output.length || output[finish2] !== 10) refusal4("A target-tree object batch has invalid or truncated bytes.");
-        values.push(verifyObject(request.sha, request.type, Buffer.from(output.subarray(start, finish2))));
-        offset = finish2 + 1;
-      }
-      if (offset !== output.length) refusal4("A target-tree object batch has unexpected trailing bytes.");
-      batch.forEach((request, index2) => request.resolve(values[index2]));
+      return refusal4(message);
     } catch (error) {
-      batch.forEach((request) => request.reject(error));
-    } finally {
-      active--;
-      schedule();
+      return error;
     }
   };
+  const settle = (child) => {
+    if (child.written.length || child.closed) return;
+    if (current === child) current = void 0;
+    child.git.stdin.end();
+  };
+  const take = (child, length) => {
+    const joined = child.chunks.length === 1 ? child.chunks[0] : Buffer.concat(child.chunks, child.buffered);
+    child.chunks = joined.length > length ? [joined.subarray(length)] : [];
+    child.buffered = joined.length - length;
+    return joined.subarray(0, length);
+  };
+  const parse = (child) => {
+    while (!child.closed && child.written.length) {
+      if (child.awaiting !== void 0 && child.buffered < child.awaiting) return;
+      const request = child.written[0];
+      const head = child.chunks.length === 1 ? child.chunks[0] : Buffer.concat(child.chunks, child.buffered);
+      child.chunks = head.length ? [head] : [];
+      const end = head.indexOf(10);
+      if (end < 0 ? head.length > 128 : end > 128) return fail7(child, failure("A target-tree object batch has an invalid header."));
+      if (end < 0) return;
+      const line = head.subarray(0, end).toString("utf8");
+      if (line === `${request.sha} missing` || line === `${request.sha} ambiguous`) {
+        take(child, end + 1);
+        child.written.shift();
+        request.reject(failure("A target-tree input is missing or oversized."));
+        continue;
+      }
+      const header = /^([a-f0-9]{40}(?:[a-f0-9]{24})?) (blob|tree) (0|[1-9][0-9]*)$/.exec(line);
+      if (!header || header[1] !== request.sha || header[2] !== request.type) return fail7(child, failure("A target-tree object batch has an invalid identity or type."));
+      const size = Number(header[3]);
+      if (!Number.isSafeInteger(size) || !Number.isSafeInteger(end + size + 2)) return fail7(child, failure("A target-tree object batch has invalid or truncated bytes."));
+      if (child.buffered < end + size + 2) {
+        child.awaiting = end + size + 2;
+        return;
+      }
+      child.awaiting = void 0;
+      const frame = take(child, end + size + 2);
+      if (frame[end + size + 1] !== 10) return fail7(child, failure("A target-tree object batch has invalid or truncated bytes."));
+      let bytes;
+      try {
+        bytes = verifyObject(request.sha, request.type, Buffer.from(frame.subarray(end + 1, end + 1 + size)));
+      } catch (error) {
+        return fail7(child, error);
+      }
+      child.written.shift();
+      request.resolve(bytes);
+    }
+    if (!child.closed && child.buffered) return fail7(child, failure("A target-tree object batch has unexpected trailing bytes."));
+    setImmediate(() => settle(child));
+  };
+  const start = () => {
+    const git = spawn6("git", ["cat-file", "--batch"], { cwd: rootDir, env: scrubbedEnvironment(), stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
+    const child = { git, written: [], chunks: [], buffered: 0, closed: false };
+    git.stdout.on("data", (chunk) => {
+      if (child.closed) return;
+      child.chunks.push(chunk);
+      child.buffered += chunk.length;
+      parse(child);
+    });
+    git.once("error", () => fail7(child, failure("A target-tree evidence input cannot be read.")));
+    git.stdin.once("error", () => fail7(child, failure("A target-tree evidence input cannot be read.")));
+    git.once("close", () => {
+      if (child.written.length) return fail7(child, failure("A target-tree evidence input cannot be read."));
+      child.closed = true;
+      if (current === child) current = void 0;
+    });
+    return child;
+  };
   const loadNativeObject = (sha, type) => new Promise((resolve2, reject2) => {
-    queued.push({ sha, type, resolve: resolve2, reject: reject2 });
-    schedule();
+    const child = current ??= start();
+    child.written.push({ sha, type, resolve: resolve2, reject: reject2 });
+    child.git.stdin.write(`${sha}
+`);
   });
   const readObject = (sha, type = "blob") => {
     const key = `${type}:${sha}`;
@@ -18386,10 +18567,10 @@ async function candidateTreeReader(rootDir, treeSha2, run, maxBytes, directoryLi
   };
   const resolve = async (requested) => {
     if (!isSafeRelativePath(requested)) refusal4("An evidence input is not a safe repository-relative path.");
-    let current = requested;
+    let current2 = requested;
     const links = [];
     for (let depth = 0; depth < 32; depth += 1) {
-      const segments = current.split("/");
+      const segments = current2.split("/");
       let redirected = false;
       for (let index2 = 0; index2 < segments.length; index2 += 1) {
         const prefix = segments.slice(0, index2 + 1).join("/");
@@ -18397,14 +18578,14 @@ async function candidateTreeReader(rootDir, treeSha2, run, maxBytes, directoryLi
         if (entry4?.mode !== "120000") continue;
         const target = (await readObject(entry4.objectSha)).toString("utf8");
         links.push({ path: prefix, target });
-        if (path22.posix.isAbsolute(target) || target.includes("\\") || target.includes("\0")) refusal4("An evidence input symlink escapes the repository.");
-        current = path22.posix.normalize(path22.posix.join(path22.posix.dirname(prefix), target, ...segments.slice(index2 + 1)));
-        if (!isSafeRelativePath(current)) refusal4("An evidence input symlink escapes the repository.");
+        if (path23.posix.isAbsolute(target) || target.includes("\\") || target.includes("\0")) refusal4("An evidence input symlink escapes the repository.");
+        current2 = path23.posix.normalize(path23.posix.join(path23.posix.dirname(prefix), target, ...segments.slice(index2 + 1)));
+        if (!isSafeRelativePath(current2)) refusal4("An evidence input symlink escapes the repository.");
         redirected = true;
         break;
       }
       if (redirected) continue;
-      const entry3 = entries.get(current);
+      const entry3 = entries.get(current2);
       if (entry3 === void 0) return { entry: entry3, links };
       if (entry3.mode === "040000" && directoryLinks) {
         return { entry: entries.get(requested)?.mode === "120000" ? entry3 : void 0, links };
@@ -18571,8 +18752,8 @@ async function capturePortableVerificationInputs(rootDir, config, candidate2, re
 // packages/kernel/src/facade/managed-delivery.ts
 init_host_admission();
 import { randomBytes as randomBytes4 } from "node:crypto";
-import { chmod as chmod10, mkdir as mkdir12, readFile as readFile14, readdir as readdir6, realpath as realpath5, rm as rm8, stat as stat6, writeFile as writeFile10 } from "node:fs/promises";
-import path23 from "node:path";
+import { chmod as chmod10, mkdir as mkdir12, readFile as readFile14, readdir as readdir6, realpath as realpath6, rm as rm8, stat as stat6, writeFile as writeFile10 } from "node:fs/promises";
+import path24 from "node:path";
 init_journal_store();
 init_digest();
 
@@ -19312,7 +19493,7 @@ var OWNER_FILE8 = 384;
 var GENERATION_HOOK_ENTRY = "harness/packages/kernel/src/host/hook-main.ts";
 async function resolveStagedHookEntry(target) {
   try {
-    return (await stat6(target)).isFile() ? await realpath5(target) : void 0;
+    return (await stat6(target)).isFile() ? await realpath6(target) : void 0;
   } catch {
     return void 0;
   }
@@ -19330,7 +19511,7 @@ var hex = (bytes) => randomBytes4(bytes).toString("hex");
 var capabilityShape = (capability) => /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/.test(capability.id) && capability.secret.length >= 32 && capability.secret.length <= 1024;
 var capabilityDigest = (input) => digestCanonical(input);
 async function writeOwned2(target, contents) {
-  await mkdir12(path23.dirname(target), { recursive: true, mode: OWNER_DIR8 });
+  await mkdir12(path24.dirname(target), { recursive: true, mode: OWNER_DIR8 });
   await writeFile10(target, contents, { mode: OWNER_FILE8 });
   await chmod10(target, OWNER_FILE8);
 }
@@ -19448,7 +19629,7 @@ async function voidSupersededBindingStates(bindingDir, currentFence) {
     const match = /^state-(\d+)\.json$/.exec(name);
     if (match === null) continue;
     if (Number.parseInt(match[1], 10) >= currentFence) continue;
-    const statePath = path23.join(bindingDir, name);
+    const statePath = path24.join(bindingDir, name);
     const state = await readJson(statePath);
     if (state === void 0 || state["attestation"] === null) continue;
     await writeOwned2(statePath, `${JSON.stringify({ ...state, attestation: null })}
@@ -19492,7 +19673,7 @@ function createManagedDeliveryFacade(input) {
   if (sensorCapability === void 0 || sensorCapability.resultSpec !== "sensor-result/1") {
     throw new Error("the adopter's trusted sensor binding is not present in the compiled policy");
   }
-  if (path23.isAbsolute(policyBinding.sensor.trustedBasePath) || policyBinding.sensor.trustedBasePath.split("/").includes("..")) {
+  if (path24.isAbsolute(policyBinding.sensor.trustedBasePath) || policyBinding.sensor.trustedBasePath.split("/").includes("..")) {
     throw new Error("the adopter's trusted sensor binding must be a repository-relative path");
   }
   for (const lens of compiledPolicy.snapshot.reviewLenses) {
@@ -19500,7 +19681,7 @@ function createManagedDeliveryFacade(input) {
     if (source === void 0 || source.digest !== sha256Hex(source.bytes) || source.digest !== lens.personaDigest) {
       throw new Error(`the adopter's resolved persona bytes do not match ${lens.personaId}`);
     }
-    if (source.origin === "repository" && (path23.isAbsolute(source.trustedBasePath) || source.trustedBasePath.split("/").includes(".."))) {
+    if (source.origin === "repository" && (path24.isAbsolute(source.trustedBasePath) || source.trustedBasePath.split("/").includes(".."))) {
       throw new Error(`the repository persona source for ${lens.personaId} must be a repository-relative path`);
     }
   }
@@ -19588,12 +19769,12 @@ function createManagedDeliveryFacade(input) {
     namespaceDirCache = resolved.namespaceDir;
     return namespaceDirCache;
   };
-  const deliveryDir = async (deliveryId) => path23.join(await namespaceDir(), "deliveries", deliveryId);
-  const providerAuthorityDir = (deliveryId) => path23.join(input.installation.installationPath, "provider-review-authority", "deliveries", deliveryId);
-  const providerAuthorityStatePath = (deliveryId) => path23.join(providerAuthorityDir(deliveryId), "workspace.json");
-  const providerHandoffAuthorityPath = (deliveryId, handoffId) => path23.join(providerAuthorityDir(deliveryId), "handoffs", `${handoffId}.json`);
-  const journalStoreFor = async (deliveryId) => createJournalStore(path23.join(await deliveryDir(deliveryId), "journal.jsonl"));
-  const confirmationPath = (nonce) => path23.join(input.installation.installationPath, "confirmations", `${nonce}.json`);
+  const deliveryDir = async (deliveryId) => path24.join(await namespaceDir(), "deliveries", deliveryId);
+  const providerAuthorityDir = (deliveryId) => path24.join(input.installation.installationPath, "provider-review-authority", "deliveries", deliveryId);
+  const providerAuthorityStatePath = (deliveryId) => path24.join(providerAuthorityDir(deliveryId), "workspace.json");
+  const providerHandoffAuthorityPath = (deliveryId, handoffId) => path24.join(providerAuthorityDir(deliveryId), "handoffs", `${handoffId}.json`);
+  const journalStoreFor = async (deliveryId) => createJournalStore(path24.join(await deliveryDir(deliveryId), "journal.jsonl"));
+  const confirmationPath = (nonce) => path24.join(input.installation.installationPath, "confirmations", `${nonce}.json`);
   const readTrust = async () => {
     try {
       const parsed = parseTrustState(await readFile14(trustStorePathFor(input.installation.installationPath), "utf8"));
@@ -19637,11 +19818,11 @@ function createManagedDeliveryFacade(input) {
   };
   const guard = async (deliveryId, options = {}) => {
     const dir = await deliveryDir(deliveryId);
-    const meta = await readJson(path23.join(dir, "delivery.json"));
+    const meta = await readJson(path24.join(dir, "delivery.json"));
     if (meta === void 0) {
       return refuse4("unknown_delivery", `No registered delivery ${deliveryId}.`, "Register a delivery through the contract handoff first.");
     }
-    if (options.allowPendingTakeover !== true && await readJson(path23.join(dir, "takeover.json")) !== void 0) {
+    if (options.allowPendingTakeover !== true && await readJson(path24.join(dir, "takeover.json")) !== void 0) {
       return refuse4(
         "takeover_pending",
         "A consumed takeover authorization is pending; the quarantined workspace accepts no further checkpoints.",
@@ -19664,7 +19845,7 @@ function createManagedDeliveryFacade(input) {
         "Use the exact binding captured at registration; drift requires a new owner-approved delivery."
       );
     }
-    const workspace = await readJson(path23.join(dir, "workspace.json"));
+    const workspace = await readJson(path24.join(dir, "workspace.json"));
     const pinned = reduced.state.generationDigest;
     if (pinned === void 0) {
       return refuse4("unregistered", "The delivery has no pinned generation.", "Register the delivery first.");
@@ -19720,7 +19901,7 @@ function createManagedDeliveryFacade(input) {
       }
       const projection = await verifyProjection({
         worktreeDir: workspace.worktreeDir,
-        bindingDir: path23.join(dir, "binding")
+        bindingDir: path24.join(dir, "binding")
       });
       projectionCheck = {
         kind: "compare",
@@ -19732,7 +19913,7 @@ function createManagedDeliveryFacade(input) {
         expected: workspace.discoveryConfigurationDigest,
         observed: await hostBinding.recomputeDiscoveryConfigurationDigest({
           admissionConfigurationPath: workspace.settingsPath,
-          bindingDir: path23.join(dir, "binding")
+          bindingDir: path24.join(dir, "binding")
         }) ?? "unreadable-discovery-configuration"
       };
     }
@@ -20029,12 +20210,12 @@ function createManagedDeliveryFacade(input) {
     return {
       namespaceDir: await namespaceDir(),
       installationId: binding2.registeringInstallationId,
-      maintenanceJournalPath: path23.join(input.installation.installationPath, "maintenance.jsonl")
+      maintenanceJournalPath: path24.join(input.installation.installationPath, "maintenance.jsonl")
     };
   };
   const verifyDeliveryBinding = async (deliveryId) => {
     const dir = await deliveryDir(deliveryId);
-    const meta = await readJson(path23.join(dir, "delivery.json"));
+    const meta = await readJson(path24.join(dir, "delivery.json"));
     if (meta === void 0) {
       return refuse4("unknown_delivery", `No registered delivery ${deliveryId}.`, "Register a delivery through the contract handoff first.");
     }
@@ -20051,7 +20232,7 @@ function createManagedDeliveryFacade(input) {
     }
     return { ok: true };
   };
-  const intakePath = async (intakeId, suffix) => path23.join(await namespaceDir(), "intake", `${intakeId}${suffix}`);
+  const intakePath = async (intakeId, suffix) => path24.join(await namespaceDir(), "intake", `${intakeId}${suffix}`);
   const intakeStoreFor = async (intakeId) => createIntakeJournalStore(await intakePath(intakeId, ".jsonl"));
   const intakeProjectionOf = async (intakeId) => {
     try {
@@ -20330,19 +20511,19 @@ function createManagedDeliveryFacade(input) {
       productTrustEpoch: trust.revocationEpoch,
       repositoryAuthorityEpoch: meta.policy.repositoryAuthorityRevocationEpoch
     });
-    await writeOwned2(path23.join(dir, "trusted-sensor.mjs"), preflight.sensorBytes);
+    await writeOwned2(path24.join(dir, "trusted-sensor.mjs"), preflight.sensorBytes);
     for (const [personaId, bytes] of Object.entries(preflight.personaBytes)) {
-      await writeOwned2(path23.join(dir, "personas", `${personaId}.md`), bytes);
+      await writeOwned2(path24.join(dir, "personas", `${personaId}.md`), bytes);
     }
     await writeOwned2(
-      path23.join(dir, "delivery.json"),
+      path24.join(dir, "delivery.json"),
       `${JSON.stringify({ contract: meta.contract, policy: meta.policy, generationDigest: meta.generationDigest, intakeId, policyBindingDigest })}
 `
     );
-    await writeOwned2(path23.join(ns, "policy-binding.json"), `${JSON.stringify(policyBinding)}
+    await writeOwned2(path24.join(ns, "policy-binding.json"), `${JSON.stringify(policyBinding)}
 `);
     await writeOwned2(
-      path23.join(ns, "facade.json"),
+      path24.join(ns, "facade.json"),
       `${JSON.stringify({
         installationPath: input.installation.installationPath,
         receiptDir: input.installation.receiptDir,
@@ -20368,7 +20549,7 @@ function createManagedDeliveryFacade(input) {
   const loadGraph = async (generationRoot) => {
     let archiveBytes;
     try {
-      archiveBytes = await readFile14(path23.join(generationRoot, ...GENERATION_SKILLS_ARCHIVE.split("/")));
+      archiveBytes = await readFile14(path24.join(generationRoot, ...GENERATION_SKILLS_ARCHIVE.split("/")));
     } catch {
       return refuse4("workflow_graph_rejected", "The pinned generation's skills archive is unreadable.", "Restore the installation through the operator maintenance lane.");
     }
@@ -20382,7 +20563,7 @@ function createManagedDeliveryFacade(input) {
     }
     return { graph: loaded.graph, graphSha256: loaded.graphSha256 };
   };
-  const persistedResultPath = (dir, digest2) => path23.join(dir, "results", `${digest2}.json`);
+  const persistedResultPath = (dir, digest2) => path24.join(dir, "results", `${digest2}.json`);
   const persistedResultOf = async (dir, digest2) => {
     try {
       const bytes = await readFile14(persistedResultPath(dir, digest2), "utf8");
@@ -20647,7 +20828,7 @@ function createManagedDeliveryFacade(input) {
           "Run the delivery on a Node runtime that accepts the type-stripping flag; the activation preflight declares the floor."
         );
       }
-      const takeover = await readJson(path23.join(await deliveryDir(deliveryId), "takeover.json"));
+      const takeover = await readJson(path24.join(await deliveryDir(deliveryId), "takeover.json"));
       if (guarded.state !== "preparing" && takeover === void 0) {
         return refuse4(
           "wrong_state",
@@ -20680,7 +20861,7 @@ function createManagedDeliveryFacade(input) {
         }
       }
       const dir = await deliveryDir(deliveryId);
-      const bindingDir = path23.join(dir, "binding");
+      const bindingDir = path24.join(dir, "binding");
       const workspaceId = `ws-${hex(6)}`;
       const worktreeId = `wt-${sha256Hex(worktreeDir).slice(0, 16)}`;
       await voidSupersededBindingStates(bindingDir, guarded.lastFence + 1);
@@ -20711,8 +20892,8 @@ function createManagedDeliveryFacade(input) {
           "A missing or unmaterializable pinned root blocks rather than falling forward."
         );
       }
-      const statePath = path23.join(bindingDir, bindingStateFile(fence));
-      const hookEntry = await resolveStagedHookEntry(path23.join(guarded.generationRoot, ...GENERATION_HOOK_ENTRY.split("/")));
+      const statePath = path24.join(bindingDir, bindingStateFile(fence));
+      const hookEntry = await resolveStagedHookEntry(path24.join(guarded.generationRoot, ...GENERATION_HOOK_ENTRY.split("/")));
       if (hookEntry === void 0) {
         return refuse4(
           "hook_entry_missing",
@@ -20733,7 +20914,7 @@ function createManagedDeliveryFacade(input) {
         fence,
         workspaceRoot: worktreeDir,
         commonGitDir: commonOfWorktree.out,
-        authorityDir: path23.join(input.installation.installationPath, "provider-review-authority"),
+        authorityDir: path24.join(input.installation.installationPath, "provider-review-authority"),
         grant: stageGrant
       });
       if (!composed.ok) {
@@ -20748,7 +20929,7 @@ function createManagedDeliveryFacade(input) {
         cliArgs: composed.hostAdmissionArguments,
         discoveryConfigurationDigest: composed.discoveryConfigurationDigest
       };
-      const archiveBytes = await readFile14(path23.join(guarded.generationRoot, ...GENERATION_SKILLS_ARCHIVE.split("/")));
+      const archiveBytes = await readFile14(path24.join(guarded.generationRoot, ...GENERATION_SKILLS_ARCHIVE.split("/")));
       const graph = loadBundledWorkflowGraph(archiveBytes);
       if (!graph.ok) {
         return refuse4(
@@ -20784,7 +20965,7 @@ function createManagedDeliveryFacade(input) {
           "Missing or failed grant application yields no mutation-capable invocation token."
         );
       }
-      const observationPath = path23.join(bindingDir, "observation.json");
+      const observationPath = path24.join(bindingDir, "observation.json");
       await writeOwned2(
         statePath,
         `${JSON.stringify({
@@ -20793,8 +20974,8 @@ function createManagedDeliveryFacade(input) {
           attestation,
           workspaceRoot: worktreeDir,
           observationPath,
-          projectionConsumptionPath: path23.join(bindingDir, projectionConsumptionObservationFile(fence)),
-          projectionReceiptPath: path23.join(bindingDir, PROJECTION_RECEIPT_FILE),
+          projectionConsumptionPath: path24.join(bindingDir, projectionConsumptionObservationFile(fence)),
+          projectionReceiptPath: path24.join(bindingDir, PROJECTION_RECEIPT_FILE),
           journalPath: guarded.store.journalPath,
           deliveryId
         })}
@@ -20831,7 +21012,7 @@ function createManagedDeliveryFacade(input) {
 `
       );
       await writeOwned2(
-        path23.join(dir, "workspace.json"),
+        path24.join(dir, "workspace.json"),
         `${JSON.stringify({
           worktreeDir,
           workspaceId,
@@ -20870,7 +21051,7 @@ function createManagedDeliveryFacade(input) {
           });
           if (!resumed.ok) return resumed;
         }
-        await rm8(path23.join(dir, "takeover.json"), { force: true });
+        await rm8(path24.join(dir, "takeover.json"), { force: true });
       } else {
         const transitioned = await appendEntry(guarded.store, deliveryId, "transition.committed", { from: "preparing", to: "planning" });
         if (!transitioned.ok) return transitioned;
@@ -20887,7 +21068,7 @@ function createManagedDeliveryFacade(input) {
     },
     async status({ deliveryId, observedAt }) {
       const dir = await deliveryDir(deliveryId);
-      const meta = await readJson(path23.join(dir, "delivery.json"));
+      const meta = await readJson(path24.join(dir, "delivery.json"));
       if (meta === void 0) {
         return refuse4("unknown_delivery", `No registered delivery ${deliveryId}.`, "Register a delivery through the contract handoff first.");
       }
@@ -20905,7 +21086,7 @@ function createManagedDeliveryFacade(input) {
         );
       }
       const views = viewsOf(read.entries);
-      const workspace = await readJson(path23.join(dir, "workspace.json"));
+      const workspace = await readJson(path24.join(dir, "workspace.json"));
       const lastActivity = lastOf2(views, "activity.observed");
       const activity = gradeHostActivity({
         currentFence: reduced.state.lastFence,
@@ -20919,7 +21100,7 @@ function createManagedDeliveryFacade(input) {
         // instead of the caller re-deriving half of it to decide what to read.
         // The cost is one small JSON read on a path that already reduces the
         // whole journal.
-        observation: workspace === void 0 ? void 0 : await readJson(path23.join(dir, "binding", "observation.json")),
+        observation: workspace === void 0 ? void 0 : await readJson(path24.join(dir, "binding", "observation.json")),
         observedAt
       });
       const confirmations = views.filter((view) => view.kind === "operator.confirmation.recorded").length;
@@ -20992,7 +21173,7 @@ function createManagedDeliveryFacade(input) {
         )
       ];
       const lastDisposition = dispositions[dispositions.length - 1]?.payload["disposition"];
-      const admission = await readJson(path23.join(dir, "admission.json"));
+      const admission = await readJson(path24.join(dir, "admission.json"));
       const intakeState = await intakeProjectionOf(meta.intakeId);
       const composed = {
         deliveryId,
@@ -21027,7 +21208,7 @@ function createManagedDeliveryFacade(input) {
       return { ok: true, status: composeManagedStatus(composed) };
     },
     async listDeliveries({ observedAt }) {
-      const root = path23.join(await namespaceDir(), "deliveries");
+      const root = path24.join(await namespaceDir(), "deliveries");
       let ids;
       try {
         ids = (await readdir6(root, { withFileTypes: true })).filter((candidate2) => candidate2.isDirectory()).map((candidate2) => candidate2.name).sort();
@@ -21045,8 +21226,8 @@ function createManagedDeliveryFacade(input) {
       const listed = [];
       const unreadable2 = [];
       for (const deliveryId of ids) {
-        const dir = path23.join(root, deliveryId);
-        const meta = await readJson(path23.join(dir, "delivery.json"));
+        const dir = path24.join(root, deliveryId);
+        const meta = await readJson(path24.join(dir, "delivery.json"));
         if (meta === void 0) {
           unreadable2.push(deliveryId);
           continue;
@@ -21063,8 +21244,8 @@ function createManagedDeliveryFacade(input) {
           continue;
         }
         const views = viewsOf(read.entries);
-        const workspace = await readJson(path23.join(dir, "workspace.json"));
-        const observation = workspace === void 0 ? void 0 : await readJson(path23.join(dir, "binding", "observation.json"));
+        const workspace = await readJson(path24.join(dir, "workspace.json"));
+        const observation = workspace === void 0 ? void 0 : await readJson(path24.join(dir, "binding", "observation.json"));
         const lastActivity = lastOf2(views, "activity.observed");
         const currentFence = reduced.state.lastFence;
         listed.push({
@@ -21227,7 +21408,7 @@ function createManagedDeliveryFacade(input) {
       if (!("store" in guarded)) return guarded;
       const workspace = guarded.workspace;
       if (workspace === void 0) return refuse4("workspace_unbound", "No workspace is bound.", "Bind the host-supplied worktree first.");
-      const trustedSensor = path23.join(await deliveryDir(deliveryId), "trusted-sensor.mjs");
+      const trustedSensor = path24.join(await deliveryDir(deliveryId), "trusted-sensor.mjs");
       const run = await exec.run({ command: process.execPath, args: [trustedSensor], cwd: workspace.worktreeDir });
       const outcome = run.code === 0 ? "passed" : "failed";
       const treeSha2 = (await git(workspace.worktreeDir, "rev-parse", "HEAD^{tree}")).out;
@@ -21343,11 +21524,11 @@ ${run.stderr}`.trim().slice(0, 1900);
       let mutableRoot;
       let reviewRoot;
       try {
-        [mutableRoot, reviewRoot] = await Promise.all([realpath5(workspace.worktreeDir), realpath5(reviewWorkspaceDir)]);
+        [mutableRoot, reviewRoot] = await Promise.all([realpath6(workspace.worktreeDir), realpath6(reviewWorkspaceDir)]);
       } catch {
         return refuse4("provider_review_workspace_invalid", "The host-created review snapshot is absent or unresolved.", "Create a distinct linked review snapshot before preparing the handoff.");
       }
-      if (reviewRoot === mutableRoot || reviewRoot.startsWith(`${mutableRoot}${path23.sep}`) || mutableRoot.startsWith(`${reviewRoot}${path23.sep}`)) {
+      if (reviewRoot === mutableRoot || reviewRoot.startsWith(`${mutableRoot}${path24.sep}`) || mutableRoot.startsWith(`${reviewRoot}${path24.sep}`)) {
         return refuse4("provider_review_workspace_invalid", "The review snapshot overlaps the mutable delivery worktree.", "Have the trusted operator-owned host create a distinct snapshot outside every model/reviewer writable root.");
       }
       const commonReview = await git(reviewRoot, "rev-parse", "--path-format=absolute", "--git-common-dir");
@@ -21367,7 +21548,7 @@ ${run.stderr}`.trim().slice(0, 1900);
       if (lens === void 0) {
         return refuse4("provider_lens_unselected", `Review lens ${lensId} is not selected by policy.`, "Prepare exactly one policy-selected reviewer invocation.");
       }
-      const charterPath = path23.join(await deliveryDir(deliveryId), "personas", `${lens.personaId}.md`);
+      const charterPath = path24.join(await deliveryDir(deliveryId), "personas", `${lens.personaId}.md`);
       let charterBytes;
       try {
         charterBytes = await readFile14(charterPath, "utf8");
@@ -21413,8 +21594,8 @@ ${run.stderr}`.trim().slice(0, 1900);
           personaBytes: charterBytes
         }
       });
-      const handoffDir = path23.join(await deliveryDir(deliveryId), "binding", "provider-review-handoffs");
-      const handoffPath = path23.join(handoffDir, `${handoff.handoffId}.json`);
+      const handoffDir = path24.join(await deliveryDir(deliveryId), "binding", "provider-review-handoffs");
+      const handoffPath = path24.join(handoffDir, `${handoff.handoffId}.json`);
       const invocationCapabilityBinding = {
         id: invocationCapability.id,
         digest: capabilityDigest({
@@ -21659,7 +21840,7 @@ ${run.stderr}`.trim().slice(0, 1900);
         );
       }
       await artifacts.writeTextFile(
-        path23.join(allocation.runRoot.path, `provider-result-${result2.reviewer.attemptId}.json`),
+        path24.join(allocation.runRoot.path, `provider-result-${result2.reviewer.attemptId}.json`),
         normalizedResultBytes,
         { mode: OWNER_FILE8 }
       ).catch(() => void 0);
@@ -21921,8 +22102,8 @@ ${run.stderr}`.trim().slice(0, 1900);
         workspaceId: captured.workspaceId
       };
       const manifestArtifacts = [];
-      await mkdir12(path23.join(runRoot, "provider-results"), { recursive: true });
-      await mkdir12(path23.join(runRoot, "reviewers"), { recursive: true });
+      await mkdir12(path24.join(runRoot, "provider-results"), { recursive: true });
+      await mkdir12(path24.join(runRoot, "reviewers"), { recursive: true });
       for (const result2 of completeProviderResults) {
         const reviewer2 = result2.reviewer;
         const attempt = qualified.find((candidate2) => candidate2.attemptId === reviewer2.attemptId);
@@ -21932,7 +22113,7 @@ ${run.stderr}`.trim().slice(0, 1900);
         const normalizedProviderResultBytes = `${JSON.stringify(result2, null, 2)}
 `;
         const providerResultRelative = `provider-results/${reviewer2.lensId}.json`;
-        await writeFile10(path23.join(runRoot, providerResultRelative), normalizedProviderResultBytes, "utf8");
+        await writeFile10(path24.join(runRoot, providerResultRelative), normalizedProviderResultBytes, "utf8");
         manifestArtifacts.push({ path: providerResultRelative, sha256: sha256Hex(normalizedProviderResultBytes), role: "provider-review-result" });
         const approval = `${JSON.stringify({
           schemaVersion: 1,
@@ -21947,7 +22128,7 @@ ${run.stderr}`.trim().slice(0, 1900);
         }, null, 2)}
 `;
         const relative = `reviewers/${attempt.lensId}.json`;
-        await writeFile10(path23.join(runRoot, relative), approval, "utf8");
+        await writeFile10(path24.join(runRoot, relative), approval, "utf8");
         manifestArtifacts.push({ path: relative, sha256: sha256Hex(approval), role: "reviewer-approval" });
       }
       const manifest = {
@@ -21993,7 +22174,7 @@ ${run.stderr}`.trim().slice(0, 1900);
           }
         ]
       };
-      const manifestPath = path23.join(runRoot, "manifest.json");
+      const manifestPath = path24.join(runRoot, "manifest.json");
       await writeFile10(manifestPath, `${JSON.stringify(manifest, null, 2)}
 `, "utf8");
       const submission = await submitManifest(
@@ -22037,7 +22218,7 @@ ${run.stderr}`.trim().slice(0, 1900);
         manifestDigest: submission.manifestDigest
       });
       if (!referenced.ok) return referenced;
-      await writeOwned2(path23.join(await deliveryDir(deliveryId), "outcome.json"), `${JSON.stringify(outcome)}
+      await writeOwned2(path24.join(await deliveryDir(deliveryId), "outcome.json"), `${JSON.stringify(outcome)}
 `);
       const completedObligations = [
         .../* @__PURE__ */ new Set([
@@ -22046,7 +22227,7 @@ ${run.stderr}`.trim().slice(0, 1900);
         ])
       ].sort();
       await writeOwned2(
-        path23.join(await deliveryDir(deliveryId), "admission.json"),
+        path24.join(await deliveryDir(deliveryId), "admission.json"),
         `${JSON.stringify({ completedObligations })}
 `
       );
@@ -22088,8 +22269,8 @@ ${run.stderr}`.trim().slice(0, 1900);
       const built = buildDeliveryRecord({ config, decision: admission.decision, evidenceRecords, context });
       if (!built.ok) return refuseWith(built.blockers);
       const relativePath = deliveryRecordPathFor(config, admission.decision.candidate.deliverable.digest);
-      await mkdir12(path23.dirname(path23.join(rootDir, relativePath)), { recursive: true });
-      await writeFile10(path23.join(rootDir, relativePath), deliveryRecordBytes(built.record), "utf8");
+      await mkdir12(path24.dirname(path24.join(rootDir, relativePath)), { recursive: true });
+      await writeFile10(path24.join(rootDir, relativePath), deliveryRecordBytes(built.record), "utf8");
       return { ok: true, relativePath };
     },
     async confirmTrackedRecord({ deliveryId, fence }) {
@@ -22155,7 +22336,7 @@ ${run.stderr}`.trim().slice(0, 1900);
       const relativePath = deliveryRecordPathFor(config, captured.deliverable.digest);
       let recordText;
       try {
-        recordText = await readFile14(path23.join(rootDir, relativePath), "utf8");
+        recordText = await readFile14(path24.join(rootDir, relativePath), "utf8");
       } catch {
         return refuse4("record_missing", `No tracked record at ${relativePath}.`, "Prepare and commit the tracked record first.");
       }
@@ -22191,11 +22372,11 @@ ${run.stderr}`.trim().slice(0, 1900);
       const workspace = guarded.workspace;
       if (workspace === void 0) return refuse4("workspace_unbound", "No workspace is bound.", "Bind the host-supplied worktree first.");
       const dir = await deliveryDir(deliveryId);
-      const outcome = await readJson(path23.join(dir, "outcome.json"));
+      const outcome = await readJson(path24.join(dir, "outcome.json"));
       if (outcome === void 0) {
         return refuse4("outcome_missing", "No outcome verification is on file for this delivery.", "Admit the delivery first.");
       }
-      const completed = await readJson(path23.join(dir, "admission.json"));
+      const completed = await readJson(path24.join(dir, "admission.json"));
       if (completed === void 0 || !Array.isArray(completed.completedObligations)) {
         return refuse4("admission_missing", "No readable admission result is on file for this delivery.", "Admit the delivery first.");
       }
@@ -22214,7 +22395,7 @@ ${run.stderr}`.trim().slice(0, 1900);
       const relativePath = deliveryRecordPathFor(config, captured.deliverable.digest);
       let recordText;
       try {
-        recordText = await readFile14(path23.join(rootDir, relativePath), "utf8");
+        recordText = await readFile14(path24.join(rootDir, relativePath), "utf8");
       } catch {
         recordText = void 0;
       }
@@ -22325,11 +22506,11 @@ ${run.stderr}`.trim().slice(0, 1900);
         // are derived from the protected facade context after the canonical
         // delivery recheck, so a delivery cannot redirect its evidence into a
         // different adopter's comparison authority.
-        gateRecordPath: path23.join(input.repoDir, SHADOW_MILESTONE_GATE_RECORD_PATH),
+        gateRecordPath: path24.join(input.repoDir, SHADOW_MILESTONE_GATE_RECORD_PATH),
         repositoryRoot: input.repoDir,
         expectedRepositoryId: guarded.meta.contract.repository.repositoryId,
         worktreeDir: guarded.workspace.worktreeDir,
-        bindingDir: path23.join(await deliveryDir(deliveryId), "binding"),
+        bindingDir: path24.join(await deliveryDir(deliveryId), "binding"),
         // The run the record binds is the BINDING's, read from the workspace
         // record — the caller's fence has already been checked against the
         // journal, and this is the value the binding itself materialized under.
@@ -22353,13 +22534,13 @@ ${run.stderr}`.trim().slice(0, 1900);
       const guarded = await guard(deliveryId);
       if (!("store" in guarded)) return guarded;
       const dir = await deliveryDir(deliveryId);
-      const workspace = await readJson(path23.join(dir, "workspace.json"));
+      const workspace = await readJson(path24.join(dir, "workspace.json"));
       if (workspace === void 0) {
         return refuse4("workspace_unbound", "No workspace is bound.", "Bind the host-supplied worktree first.");
       }
       const torn = await tearDownProjection({
         worktreeDir: workspace.worktreeDir,
-        bindingDir: path23.join(dir, "binding"),
+        bindingDir: path24.join(dir, "binding"),
         settingsPath: workspace.settingsPath,
         exec
       });
@@ -22524,7 +22705,7 @@ ${run.stderr}`.trim().slice(0, 1900);
       });
       if (!amended.ok) return amended;
       await writeOwned2(
-        path23.join(await deliveryDir(deliveryId), "delivery.json"),
+        path24.join(await deliveryDir(deliveryId), "delivery.json"),
         `${JSON.stringify({ ...guarded.meta, contract: amendedContract })}
 `
       );
@@ -22553,7 +22734,7 @@ ${run.stderr}`.trim().slice(0, 1900);
         to: "cancellation_requested"
       });
       if (!transitioned.ok) return transitioned;
-      const cancelBindingDir = path23.join(await deliveryDir(deliveryId), "binding");
+      const cancelBindingDir = path24.join(await deliveryDir(deliveryId), "binding");
       await voidSupersededBindingStates(cancelBindingDir, Number.POSITIVE_INFINITY);
       if (guarded.lastFence > 0) {
         await appendEntry(guarded.store, deliveryId, "activity.observed", {
@@ -22652,7 +22833,7 @@ ${run.stderr}`.trim().slice(0, 1900);
       const rendered = await renderChallenge(nonce, confirmation, deliveryId, expiry);
       if (!rendered.ok) return rendered;
       await writeOwned2(
-        path23.join(await deliveryDir(deliveryId), "takeover-pending.json"),
+        path24.join(await deliveryDir(deliveryId), "takeover-pending.json"),
         `${JSON.stringify({ nonce, targetBaseCommit, takeoverBranchRef, supersededFence: guarded.lastFence })}
 `
       );
@@ -22670,7 +22851,7 @@ ${run.stderr}`.trim().slice(0, 1900);
       const guarded = await guard(deliveryId);
       if (!("store" in guarded)) return guarded;
       const dir = await deliveryDir(deliveryId);
-      const pending = await readJson(path23.join(dir, "takeover-pending.json"));
+      const pending = await readJson(path24.join(dir, "takeover-pending.json"));
       if (pending === void 0) {
         return refuse4("takeover_unknown", "No presented takeover authorization is pending.", "Present the takeover first.");
       }
@@ -22717,7 +22898,7 @@ ${run.stderr}`.trim().slice(0, 1900);
         disposition: "quarantined"
       });
       await writeOwned2(
-        path23.join(dir, "takeover.json"),
+        path24.join(dir, "takeover.json"),
         `${JSON.stringify({
           targetBaseCommit: pending.targetBaseCommit,
           takeoverBranchRef: pending.takeoverBranchRef,
@@ -22725,7 +22906,7 @@ ${run.stderr}`.trim().slice(0, 1900);
         })}
 `
       );
-      await rm8(path23.join(dir, "takeover-pending.json"), { force: true });
+      await rm8(path24.join(dir, "takeover-pending.json"), { force: true });
       return { ok: true, targetBaseCommit: pending.targetBaseCommit, takeoverBranchRef: pending.takeoverBranchRef };
     },
     async explainBlocker({ deliveryId }) {
@@ -22774,7 +22955,7 @@ ${run.stderr}`.trim().slice(0, 1900);
     },
     async recoverSecurityBlocked({ deliveryId, targetGenerationDigest, assertionSource, now }) {
       const dir = await deliveryDir(deliveryId);
-      const meta = await readJson(path23.join(dir, "delivery.json"));
+      const meta = await readJson(path24.join(dir, "delivery.json"));
       if (meta === void 0) {
         return refuse4("unknown_delivery", `No registered delivery ${deliveryId}.`, "Register a delivery through the contract handoff first.");
       }
@@ -22929,15 +23110,15 @@ ${run.stderr}`.trim().slice(0, 1900);
           if (!pinned.ok) return pinned;
         }
       }
-      const attemptsDir = path23.join(dir, "attempts");
+      const attemptsDir = path24.join(dir, "attempts");
       try {
         await readdir6(attemptsDir);
         const { rename: rename8 } = await import("node:fs/promises");
-        await rename8(attemptsDir, path23.join(dir, `attempts-invalidated-r${reduced.state.expectedRevision}`));
+        await rename8(attemptsDir, path24.join(dir, `attempts-invalidated-r${reduced.state.expectedRevision}`));
       } catch {
       }
-      await rm8(path23.join(dir, "workspace.json"), { force: true });
-      await rm8(path23.join(dir, "takeover.json"), { force: true });
+      await rm8(path24.join(dir, "workspace.json"), { force: true });
+      await rm8(path24.join(dir, "takeover.json"), { force: true });
       const transitioned = await appendEntry(store, deliveryId, "transition.committed", {
         from: "security_blocked",
         to: "preparing"
@@ -22965,7 +23146,8 @@ async function captureFor(rootDir, config, run, runGit) {
 
 // packages/kernel/src/provider-rails.ts
 init_canonical();
-import { spawn as spawn6 } from "node:child_process";
+import { spawn as spawn7 } from "node:child_process";
+import { fstatSync } from "node:fs";
 import { createInterface } from "node:readline";
 var DELIVERY_PROVIDER_RAILS_VERSION = "delivery-provider-rails/1";
 function isObject(value) {
@@ -23099,6 +23281,39 @@ function consumeProviderRailMessages(messages, options = {}) {
   for (const message of options.afterInterruption ?? []) accept(message);
   return { status, acceptedCount, duplicateCount, rejectedCount, events, terminal: terminal2 };
 }
+var INHERITED_DESCRIPTORS_ENV = "DELIVERY_HARNESS_INHERITED_DESCRIPTORS";
+function channelIdentity(fd) {
+  try {
+    const stat7 = fstatSync(fd, { bigint: true });
+    return stat7.isFIFO() || stat7.isSocket() ? descriptorIdentity(stat7) : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function descriptorIdentity(stat7) {
+  const exact2 = (value) => typeof value === "bigint" ? BigInt.asUintN(64, value) : Number.isSafeInteger(value) ? BigInt.asUintN(64, BigInt(value)) : void 0;
+  const dev = exact2(stat7.dev);
+  const ino = exact2(stat7.ino);
+  return dev === void 0 || ino === void 0 ? void 0 : `${dev}:${ino}`;
+}
+function providerRailLaunch(declared = [], env = {}, identify = channelIdentity) {
+  const vouched = /* @__PURE__ */ new Map();
+  for (const entry3 of (env[INHERITED_DESCRIPTORS_ENV] ?? "").split(",")) {
+    const match = /^\s*([34]):(\d+:\d+)\s*$/.exec(entry3);
+    if (match && !vouched.has(Number(match[1]))) vouched.set(Number(match[1]), match[2]);
+  }
+  const stdio = ["pipe", "pipe", "pipe"];
+  const passed = [];
+  for (let fd = 3; fd <= Math.max(2, ...declared); fd++) {
+    const identity = declared.includes(fd) && vouched.has(fd) ? identify(fd) : void 0;
+    if (identity !== void 0 && identity === vouched.get(fd)) {
+      stdio.push(fd);
+      passed.push(`${fd}:${identity}`);
+    } else stdio.push("ignore");
+  }
+  const { [INHERITED_DESCRIPTORS_ENV]: _vouched, ...rest } = env;
+  return { stdio, env: passed.length ? { ...rest, [INHERITED_DESCRIPTORS_ENV]: passed.join(",") } : rest };
+}
 var DEFAULT_PROVIDER_RAIL_DEADLINE_MS = 10 * 6e4;
 var DEFAULT_TERMINATION_GRACE_MS = 1e3;
 var RailLifecycleEnded = class extends Error {
@@ -23161,10 +23376,11 @@ async function settlesWithin(operation, milliseconds) {
 }
 function openProviderRailProcess(input) {
   const [executable, ...args] = input.command;
-  const child = spawn6(executable, args, {
+  const launch = providerRailLaunch(input.inheritDescriptors, input.env);
+  const child = spawn7(executable, args, {
     cwd: input.cwd,
-    env: input.env,
-    stdio: ["pipe", "pipe", "pipe"],
+    env: launch.env,
+    stdio: launch.stdio,
     shell: false
   });
   child.stdin.on("error", () => {
@@ -23479,7 +23695,8 @@ async function collectLiveProviderResults(input) {
       if (input.signal?.aborted) {
         return { liveResults: [], blockers: [refusal3("live_provider_cancelled", "Live verification was cancelled.")] };
       }
-      const command = input.config.providers.find((provider2) => provider2.id === providerId2)?.command;
+      const registration = input.config.providers.find((provider2) => provider2.id === providerId2);
+      const command = registration?.command;
       if (command === void 0) continue;
       const requestId = randomUUID5();
       const result2 = await invokeProviderRail({
@@ -23494,7 +23711,13 @@ async function collectLiveProviderResults(input) {
           candidate: before.candidate
         }
       }, {
-        open: () => openProviderRailProcess({ command, cwd: input.rootDir, env: input.env }),
+        // The provider's own declaration, as at the gate and record boundary.
+        open: () => openProviderRailProcess({
+          command,
+          cwd: input.rootDir,
+          env: input.env,
+          ...registration?.inheritDescriptors ? { inheritDescriptors: registration.inheritDescriptors } : {}
+        }),
         ...input.signal === void 0 ? {} : { signal: input.signal }
       });
       if (result2.kind === "success") {
@@ -23529,8 +23752,8 @@ async function collectLiveProviderResults(input) {
 
 // packages/kernel/src/checkpoint/run-artifacts.ts
 import { constants } from "node:fs";
-import { mkdir as mkdir13, open as open8, rename as rename7, rm as rm9, lstat as lstat3, realpath as realpath6 } from "node:fs/promises";
-import path24 from "node:path";
+import { mkdir as mkdir13, open as open8, rename as rename7, rm as rm9, lstat as lstat4, realpath as realpath7 } from "node:fs/promises";
+import path25 from "node:path";
 import { randomUUID as randomUUID6 } from "node:crypto";
 init_digest();
 init_append_only_file();
@@ -23575,7 +23798,7 @@ function validMetadata(metadata, runId) {
 function same(a, b) {
   return Object.keys(a).length === Object.keys(b).length && Object.entries(a).every(([k, v]) => b[k] === v);
 }
-var directory = (store, runId) => path24.join(store.runsDir, "artifacts", runId);
+var directory = (store, runId) => path25.join(store.runsDir, "artifacts", runId);
 async function boundedRead(file, limit) {
   const h = await open8(file, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
@@ -23606,19 +23829,19 @@ async function boundedRead(file, limit) {
   }
 }
 async function checkDirectory(store, runId) {
-  const base = await realpath6(store.runsDir);
+  const base = await realpath7(store.runsDir);
   for (const dir of [
-    path24.join(store.runsDir, "artifacts"),
+    path25.join(store.runsDir, "artifacts"),
     directory(store, runId)
   ]) {
-    const info = await lstat3(dir);
+    const info = await lstat4(dir);
     if (!info.isDirectory() || info.isSymbolicLink() || (info.mode & 63) !== 0 || process.getuid !== void 0 && info.uid !== process.getuid())
       throw new AttachmentReadFailure(
         "access_refused",
         "attachment directory access refused"
       );
-    const resolved = await realpath6(dir);
-    if (!resolved.startsWith(base + path24.sep))
+    const resolved = await realpath7(dir);
+    if (!resolved.startsWith(base + path25.sep))
       throw new AttachmentReadFailure(
         "access_refused",
         "attachment directory outside run store"
@@ -23628,11 +23851,11 @@ async function checkDirectory(store, runId) {
 async function index(store, runId) {
   await checkDirectory(store, runId);
   await boundedRead(
-    path24.join(directory(store, runId), "index.jsonl"),
+    path25.join(directory(store, runId), "index.jsonl"),
     128 * 4096
   );
   const raw = await readRawJournal(
-    path24.join(directory(store, runId), "index.jsonl"),
+    path25.join(directory(store, runId), "index.jsonl"),
     discipline
   );
   const parsed = parseJournalLines(raw.lines);
@@ -23692,11 +23915,11 @@ async function captureRunArtifact(input) {
     return refused("attachment contains a secret-like value");
   const dir = directory(store, runId);
   try {
-    for (const component of [path24.join(store.runsDir, "artifacts"), dir]) {
+    for (const component of [path25.join(store.runsDir, "artifacts"), dir]) {
       await mkdir13(component, { mode: OWNER_DIR5 }).catch((error) => {
         if (error.code !== "EEXIST") throw error;
       });
-      const info = await lstat3(component);
+      const info = await lstat4(component);
       if (!info.isDirectory() || info.isSymbolicLink() || (info.mode & 63) !== 0 || process.getuid !== void 0 && info.uid !== process.getuid())
         throw new AttachmentReadFailure(
           "access_refused",
@@ -23705,12 +23928,12 @@ async function captureRunArtifact(input) {
     }
     await checkDirectory(store, runId);
     const outcome = await appendDecided({
-      journalPath: path24.join(dir, "index.jsonl"),
+      journalPath: path25.join(dir, "index.jsonl"),
       discipline,
       crossProcess: true,
       decide: async (read) => {
         try {
-          await boundedRead(path24.join(dir, "index.jsonl"), 128 * 4096);
+          await boundedRead(path25.join(dir, "index.jsonl"), 128 * 4096);
         } catch (error) {
           if (error.code !== "ENOENT") throw error;
         }
@@ -23737,7 +23960,7 @@ async function captureRunArtifact(input) {
             continue;
           }
           const prior = await boundedRead(
-            path24.join(dir, `${entry3.digest}.blob`),
+            path25.join(dir, `${entry3.digest}.blob`),
             MAX_PORTABLE_ARTIFACT_BYTES
           );
           if (sha256Hex(prior) !== entry3.digest || prior.length !== entry3.sizeBytes)
@@ -23752,7 +23975,7 @@ async function captureRunArtifact(input) {
             ok: false,
             rejected: "run exceeds 8 MiB serialized attachment limit"
           };
-        await atomicBlob(path24.join(dir, `${metadata.digest}.blob`), bytes);
+        await atomicBlob(path25.join(dir, `${metadata.digest}.blob`), bytes);
         const accepted = { ok: true, metadata, base64 };
         return existing ? { ok: true, accepted } : { ok: true, accepted, entry: metadata };
       }
@@ -23771,7 +23994,7 @@ async function readRunArtifact(store, runId, artifactId) {
     if (metadata === void 0)
       return refused("attachment unavailable in this run", "missing");
     const bytes = await boundedRead(
-      path24.join(directory(store, runId), `${metadata.digest}.blob`),
+      path25.join(directory(store, runId), `${metadata.digest}.blob`),
       MAX_PORTABLE_ARTIFACT_BYTES
     );
     if (bytes.length !== metadata.sizeBytes || sha256Hex(bytes) !== metadata.digest)
@@ -23916,6 +24139,8 @@ export {
   HOST_INTERCEPTION_SCENARIOS,
   IDENTITY_DOMAIN,
   IDENTITY_FINDING_CODES,
+  INHERITABLE_DESCRIPTORS,
+  INHERITED_DESCRIPTORS_ENV,
   INSTALLED_DATA_LIMITS,
   INSTALL_RECEIPT_SPEC,
   INTAKE_STATES,
@@ -24087,6 +24312,7 @@ export {
   capturePortableVerificationInputs,
   captureRunArtifact,
   captureScopedCheckInputs,
+  channelIdentity,
   checkActionAuthorization,
   checkBoundPolicy,
   checkClaimAuthorized,
@@ -24161,11 +24387,13 @@ export {
   defaultRunRootBase,
   defineHarnessConfig,
   deleteDelivery,
+  deliveryPostureRefusedOutsideRoot,
   deliveryRecordBytes,
   deliveryRecordPathFor,
   deriveDeliveryRecordPath,
   deriveTelemetry,
   describeRunEventPayload,
+  descriptorIdentity,
   digestCanonical,
   digestDeliverableEntries,
   digestsEqual,
@@ -24266,6 +24494,7 @@ export {
   projectRunActivities,
   projectShippedPersonas,
   projectionConsumptionObservationFile,
+  providerRailLaunch,
   publishPreparationReceipt,
   publishRecord,
   qualifyReviewAttempts,
