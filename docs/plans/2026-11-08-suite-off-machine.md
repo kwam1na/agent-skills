@@ -50,7 +50,7 @@ Two lanes. Lane 1 holds the run-delivery chain. Lane 2 holds the tracker module 
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | V26-3286, V26-3273, V26-3324 | `skills/run-delivery/`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_plan_review.py`, `docs/solutions/`, `provenance.lock.json` for `run_delivery.py`'s digest, and `catalog.json` and `profiles/*.json` only if an output is added |
+| 1 | 1 | V26-3286, V26-3273, V26-3325, V26-3324 | `skills/run-delivery/`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_plan_review.py`, `docs/solutions/`, `provenance.lock.json` for `run_delivery.py`'s digest, and `catalog.json` and `profiles/*.json` only if an output is added |
 | 1 | 2 | V26-3274, V26-3292, V26-3312, V26-3316 | `tests/test_run_delivery_tracker.py`, `tests/test_own_deliveries.py`, `tests/test_delivery_views_render.py` |
 
 **Moving ownership.** `provenance.lock.json` belongs to lane 1, the only lane that changes a listed output. If lane 2 finds it needs a file
@@ -147,6 +147,13 @@ briefly take a live supervisor's lock. The fix keeps every in-process call insid
 checkout with a planted delivery and held lock proves it, red before and green after. It also names and fixes the run's un-waited Popen
 (the ResourceWarning), and says whether any product path can reach a delivery outside its repository. Files: lane 1's. Sensors: both
 run-delivery test modules, under `-W error::ResourceWarning` from a planted live checkout.
+
+### V26-3325. Remove the ticket ids from the detached-supervisors solution note
+
+Lane 1, first, ahead of V26-3324 (lead's addition, 2026-11-09: `main` broke at V26-3273's merge, because its note names ticket ids and
+the lead's narrow selection skipped the corpus pin). Sensor-only: reword the note's id lines, keeping the lessons. Its queue selection is
+`tests.test_linear_qualification`, plus validate-registry and the provenance check. Files: that note, and `provenance.lock.json` if it lists
+the note. Sensors: `tests.test_linear_qualification`, `scripts/validate-registry.py`.
 
 ## Execution posture
 
