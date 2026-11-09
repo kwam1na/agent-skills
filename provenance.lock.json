@@ -1042,11 +1042,11 @@
         },
         {
           "path": "skills/run-delivery/references/config.md",
-          "sha256": "ab73679447bec4a2546b7ac3d82102f0b0db613c9addbfc9ec2030dad857dee2"
+          "sha256": "54c47cf58eb1f4cc3428e7f46f323635eff5861a9c1cede71666c1f1765fd0cf"
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "c27ae01624fa74947e88e0fc1bfa695adc5019ae044fd92f39713240d70552d6"
+          "sha256": "675bbbd962d32df63ed1cb930ae51a059868df8b59a795f8c9330c8afafd9b6a"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",

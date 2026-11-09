@@ -3417,6 +3417,9 @@ POSTURE_FILE = ".agents/delivery-posture.json"
 POSTURE_SCHEMA = "delivery-posture/1"
 POSTURE_LIMIT_BYTES = 64 * 1024
 POSTURE_SECONDS = 15
+# Arrays and objects open at once, the top-level object being 1. Measured on the text before it is parsed, as the
+# harness's reader measures it, so no decoder's own limit, which differs by Python version, is what decides.
+POSTURE_MAX_DEPTH = 64
 # What Python's strip and JavaScript's trim remove, together: the two disagree, and both readers must not.
 POSTURE_BLANK = re.compile("[\t-\r\x1c-\x20\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*")
 # delivery-plan/1's caps and refusals, so what the record shows of a declaration can always go in the plan.
@@ -3444,13 +3447,42 @@ def posture_git(root: Path, args: list[str], seconds: int) -> subprocess.Complet
         return None
 
 
+def posture_nests_too_deep(text: str) -> bool:
+    """Whether more than POSTURE_MAX_DEPTH arrays and objects are open at once anywhere in ``text``, outside strings.
+    A string runs from an unescaped quote to the next, and inside one a backslash escapes exactly the next character."""
+    depth, in_string, escaped = 0, False, False
+    for char in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char in "[{":
+            depth += 1
+            if depth > POSTURE_MAX_DEPTH:
+                return True
+        elif char in "]}":
+            depth -= 1
+    return False
+
+
 def posture_of_bytes(raw: bytes) -> tuple[dict | None, str]:
     """A declaration's posture and reason, or None and what is wrong with it."""
     def constant(name: str) -> None:
         raise ValueError(f"{name} isn't JSON")
     try:
+        text = raw.decode("utf-8")
+    except ValueError:
+        return None, "it isn't valid UTF-8 JSON"
+    if posture_nests_too_deep(text):
+        return None, f"it nests deeper than {POSTURE_MAX_DEPTH} levels"
+    try:
         # Numbers as floats: a member is ignored whatever its size, as JSON.parse ignores it.
-        value = json.loads(raw.decode("utf-8"), parse_constant=constant, parse_int=float)
+        value = json.loads(text, parse_constant=constant, parse_int=float)
     except (ValueError, RecursionError):
         return None, "it isn't valid UTF-8 JSON"
     if not isinstance(value, dict):

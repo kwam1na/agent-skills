@@ -65,6 +65,15 @@ class RuntimeExportTests(unittest.TestCase):
         self.assertEqual(result["source"], "fallback")
         self.assertEqual(set(result), {"posture", "reason", "source", "baseTipSha", "code"})
 
+    def test_the_guide_says_nesting_past_the_runtimes_depth_is_malformed(self) -> None:
+        # The built reader gates a declaration nested past its MAX_DEPTH, so the table an adopter reads has to say so.
+        kernel = (ROOT / "product-runtime" / "kernel.mjs").read_text(encoding="utf-8")
+        self.assertEqual(re.findall(r"^var MAX_DEPTH = (\d+);$", kernel, re.MULTILINE), ["64"])
+        guide = " ".join((ROOT / "docs" / "product-generation.md").read_text(encoding="utf-8").split())
+        self.assertIn("| Not valid UTF-8 JSON, JSON nesting arrays or objects more than 64 levels deep (the top-level object "
+                      "being 1), an object failing the shape above, or an unknown `posture` | `gate` | `posture_malformed` |",
+                      guide)
+
 
 @unittest.skipIf(os.name == "nt", "POSIX git")
 class RuntimeTrustTests(unittest.TestCase):
