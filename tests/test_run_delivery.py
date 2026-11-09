@@ -7909,6 +7909,24 @@ class InProcessCallsStayInTheirCaseTests(unittest.TestCase):
         self.assertEqual([line.split()[0] for line in unreaped_cleanups(probe)], ["6", "7", "10"],
                          "the scan misses a form, or flags a recorded pid it can't wait for")
 
+    def test_a_lease_given_up_closes_its_lock_file(self) -> None:
+        tool = fresh_tool("run_delivery_lease")
+        lock = self.case_folder() / "app.lock"
+        holder = open(lock, "a+")
+        self.addCleanup(holder.close)
+        fcntl.flock(holder, fcntl.LOCK_EX)  # held through another open file, as a live check holds it
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", ResourceWarning)
+            try:
+                tool.Lease(lock, 0, "lead-close", 0)
+            except tool.Stop as held:
+                self.assertIn("the in-app lease is held", str(held))
+            else:
+                self.fail("took a held lease")
+            gc.collect()
+        self.assertEqual([str(w.message) for w in caught if issubclass(w.category, ResourceWarning)], [],
+                         "the lease it gave up left its lock file open")
+
     def test_a_stopped_and_reaped_process_is_gone_and_leaves_no_warning(self) -> None:
         def released(reap: bool) -> list[str]:
             proc = subprocess.Popen(["sleep", "60"], start_new_session=True)

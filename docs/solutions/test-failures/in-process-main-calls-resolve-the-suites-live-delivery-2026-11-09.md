@@ -38,6 +38,9 @@ built for one repository from inside another mixed the two.
 - Separately, `ResourceWarning: subprocess N is still running` appeared, from a cleanup that sent SIGKILL to a
   `Popen` but never waited for it. The child stays unreaped and the object's `returncode` stays `None`, so
   `Popen.__del__` warns.
+- With every ResourceWarning made an error (`PYTHONWARNINGS=error::ResourceWarning`, which the tool's own child
+  processes inherit), two product sources showed up as crashes. A lead command that starts the detached supervisor
+  dropped its never-waited `Popen`. An in-app `Lease` that gave up on a held lock left its lock file open.
 
 ## What Didn't Work
 
@@ -58,6 +61,8 @@ a delivery record, and a supervisor lock held under every name the tool reads.
   holds no delivery, works from it, and strips every setting the tool reads.
 - **No call inherits another's configuration.** `main()` sets `CFG = None` before it parses.
 - **A configuration is its root's.** `Config` takes `main_checkout(root)` and the branch from `root`.
+- **The tool lets go of what it means to.** `start_supervisor` drops the supervisor's handle with `ResourceWarning`
+  ignored, because that process is started to outlive the command. A `Lease` that gives up closes its file.
 - **A stopped child is reaped.** `stop_and_reap(proc)` stops the process group and waits for it. A scan of both
   modules flags any cleanup lambda that stops a `Popen` it doesn't wait for.
 
@@ -83,7 +88,10 @@ that isn't a guard, the case's own repository, is what makes the settings strip 
 - Watch for contact with audit events, not mtimes: a read or a lock probe changes nothing a snapshot sees.
 - Running tests as a suite inside a test also runs the module's cleanups. Run each test under its class's setup
   instead.
-- A cleanup that kills a `Popen` also waits for it.
+- A cleanup that kills a `Popen` also waits for it. A process started to outlive its starter has its handle dropped
+  deliberately, not left to the garbage collector.
+- Run a suite once with `PYTHONWARNINGS=error::ResourceWarning`. It reaches the processes the tests start, so leaks in
+  the tool under test show up too.
 
 ## Related Issues
 

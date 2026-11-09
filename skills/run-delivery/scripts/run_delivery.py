@@ -56,6 +56,7 @@ import socket
 import subprocess
 import tempfile
 import time
+import warnings
 from collections.abc import Callable
 from pathlib import Path
 
@@ -2199,7 +2200,9 @@ class Lease:
             except BlockingIOError:
                 if time.time() > deadline:
                     self.file.seek(0)
-                    raise Stop(f"the in-app lease is held ({self.file.read().strip() or 'unknown holder'}); gave up after {wait}s")
+                    holder = self.file.read().strip() or "unknown holder"
+                    self.file.close()  # a lease given up holds nothing, not even its file
+                    raise Stop(f"the in-app lease is held ({holder}); gave up after {wait}s")
                 time.sleep(min(3, max(0.1, wait / 10)))
         self.file.seek(0)
         for group in re.findall(r"pgid (\d+)", self.file.read()):  # we hold the lock, so their owner is gone
@@ -5795,14 +5798,21 @@ def start_supervisor(c) -> str:
         proc = subprocess.Popen(argv, cwd=c.root, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
                                 start_new_session=True)
     deadline = time.monotonic() + SUPERVISOR_WAIT_SECONDS
-    while time.monotonic() < deadline:
-        held, recorded = read_lock(supervisor_lock_path(c))
-        if held and recorded.get("pid") == proc.pid and recorded.get("address"):
-            return recorded["address"]
-        if proc.poll() is not None:
-            raise Stop(f"the supervisor stopped as it started: {log.read_text()[-600:].strip()}; its log is {log}")
-        time.sleep(0.1)
-    raise Stop(f"the supervisor didn't start within {SUPERVISOR_WAIT_SECONDS}s; its log is {log}")
+    try:
+        while time.monotonic() < deadline:
+            held, recorded = read_lock(supervisor_lock_path(c))
+            if held and recorded.get("pid") == proc.pid and recorded.get("address"):
+                return recorded["address"]
+            if proc.poll() is not None:
+                raise Stop(f"the supervisor stopped as it started: {log.read_text()[-600:].strip()}; its log is {log}")
+            time.sleep(0.1)
+        raise Stop(f"the supervisor didn't start within {SUPERVISOR_WAIT_SECONDS}s; its log is {log}")
+    finally:
+        # The supervisor is started to outlive this command, which never waits for it, so the handle is let go here:
+        # without this, dropping it later warns that the subprocess "is still running".
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ResourceWarning)
+            del proc
 
 
 def stop_orphans(c) -> list[str]:

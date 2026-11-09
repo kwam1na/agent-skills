@@ -3386,6 +3386,16 @@ class NoSupervisorOutlivesItsCaseTests(unittest.TestCase):
 
     # -- the supervisor exits once what it serves is gone --------------------------------------------------------------
 
+    def test_starting_the_supervisor_lets_its_handle_go_without_a_resource_warning(self) -> None:
+        """lead-init starts the supervisor to outlive it and never waits for it: with every ResourceWarning an error,
+        as the suite's own sensor runs, it still ends with no warning that the subprocess is still running."""
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        fx.env["PYTHONWARNINGS"] = "error::ResourceWarning"
+        self.started(fx)  # its command's output carries no traceback, or the fixture fails it
+        log = self.supervisor_log(fx)
+        self.assertNotIn("ResourceWarning", log)
+
     def test_a_supervisor_whose_record_is_removed_exits_on_its_own(self) -> None:
         fx = Fixture(self.generation, self.receipt)
         self.addCleanup(fx.close)
