@@ -74,13 +74,15 @@ file that is malformed or can't be read runs `fullHealth` and holds the close on
   `waitingBy`, which says who set its `waitingOn`, and `restedFrom`, the
   lane's own last word, kept while the queue's words stand over it. A lane writes only its own
   lane's `focus`, `state` and `waitingOn`, its own review rounds, the run
-  building its own planned work, the one stage move it makes (besides a no-change hand-off, which moves its own planned
-  work to `review` carrying `noChange`, for the lead to settle), a story planned in its own lane from `planned` to
+  building its own planned work, the one stage move it makes, a story planned in its own lane from `planned` to
   `building` when it starts it, and its own hand-off, which the tool turns
   into a queue element, with any suite evidence
   it gives in `queue[i].evidence`, which only a hand-off writes. Every write goes
   through the state tool, which checks the declared writer against this
   ownership and refuses anything else with `writer_not_owned` for a lane.
+  A story whose criteria already hold needs no change: the lane's
+  `handoff --no-change` moves its planned work to `review` with its evidence,
+  for the lead to settle, and it never enters the queue.
 
 ## Lead authority
 

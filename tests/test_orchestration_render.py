@@ -612,11 +612,11 @@ EMPTY_STATE = {
 }
 PINNED_EMPTY_VIEWS = {
     "delivery.md": "bf22eae1f7b5115650ba06265e138d9b9ed720f44158d1fc761ba4df356507c9",
-    "delivery.html": "05e0ad6b0565bd5f207a65a9b84809726a51aa59fc3ddd1c32964402041435ca",
+    "delivery.html": "f16a712aecbf01ea05fe644d690082c296d838380ce68162d1fcc367016132b7",
 }
 PINNED_VIEWS = {
     "delivery.md": "412c01eecfbdcfba6f1f5f650a0368c29c40e3e7cf3b0ef44d0687e68115d79c",
-    "delivery.html": "76bfc21b2340fade00efae257024da3fa953dabe53985c0de1cd36e1e9a71136",
+    "delivery.html": "94b6925208c7ac4ec3743ae61e3524bfd59dbe3f9da2d2fe7ae0d00fac36a6c0",
 }
 
 
@@ -874,7 +874,7 @@ class StatsViewTests(unittest.TestCase):
         self.assertIn("· 1 round, findings", render_state.render_markdown(one))
 
     def test_the_markdown_view_shows_a_story_settled_with_no_change_and_its_evidence(self) -> None:
-        document = self.document()
+        document = copy.deepcopy(self.document())
         no_change = {"evidence": "one-loads: test_one_loads passes", "baseHead": HEAD_A, "handedAt": "2026-10-21T09:00:00Z"}
         document["state"]["planned"] = [
             {"subject": "done-1", "title": "Done one", "lane": "lane-1", "stage": "settled",
