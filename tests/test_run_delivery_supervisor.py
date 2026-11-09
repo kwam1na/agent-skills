@@ -1529,7 +1529,7 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertIn(rerun["id"], [mark["journal"] for mark in marks], "the rerun's decision isn't marked for the tracker")
         code, out = fx.flow("lead-resolve", "full-health", "--why", "again", cwd=m)
         self.assertEqual(code, 2, out)
-        self.assertIn("already asked for", out)
+        self.assertIn("already asked for; it runs on the supervisor's next pass", out)
         self.holds(fx)
         self.assertEqual(runs(), 3)
         self.holds(fx)
@@ -1991,6 +1991,11 @@ class SupervisorPostureTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn("if the base returns to gate", out)
         self.assertNotIn("next pass", kinds(fx, "decision.recorded")[-1]["summary"])
+        # Asked again, the refusal says the same: no pass runs it while the base says focused.
+        code, out = fx.flow("lead-resolve", "full-health", "--why", "again", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("already asked for; it runs if the base returns to gate", out)
+        self.assertNotIn("next pass", out)
         self.assertEqual(plan_of(fx)["closeOut"]["fullHealth"], "skipped")
         self.once(fx)
         self.assertEqual(plan_of(fx)["closeOut"]["fullHealth"], "skipped")
@@ -2141,10 +2146,15 @@ class SupervisorPostureRestoredTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         return fx, backend
 
-    def skipped_and_held_open(self) -> Fixture:
+    def skipped_and_held_open(self, failed: bool = False) -> Fixture:
+        """With `failed`, a failed result already stands at the tip that says focused, from before the skip."""
         fx, backend = self.fixture()
         self.closable(fx, deferred=True)
-        declare(fx, declaration())
+        tip = declare(fx, declaration())
+        if failed:
+            with open(fx.tmp / "flow-log/FX-1.full-health.jsonl", "a") as log:
+                log.write(json.dumps({"head": tip, "result": "failed", "output": "boom",
+                                      "at": "2026-01-01T00:00:00.000000Z"}) + "\n")
         with backend.edit() as store:
             store["failures"].append({"op": "create", "ticket": None, "status": 409, "times": 1})
         last = self.once(fx)
@@ -2218,6 +2228,39 @@ class SupervisorPostureRestoredTests(unittest.TestCase):
         self.assertNotIn("closeOut", plan_of(fx))
         self.assertNotIn("fullHealth", closed_of(fx))
         self.assertEqual(health_runs(fx), 0)
+
+    def test_a_failed_result_then_a_skip_then_gate_at_the_same_head_holds_the_close_on_the_failure(self) -> None:
+        fx = self.skipped_and_held_open(failed=True)
+        tip = sh("git", "rev-parse", "origin/feature/FX-1", cwd=fx.main).stdout.strip()
+        (fx.tmp / "health").write_text("fail")
+        # The same head now reads as gate: its tree can't be listed.
+        real = sh("sh", "-c", "command -v git").stdout.strip()
+        stubs = fx.tmp / "stubs"
+        stubs.mkdir()
+        (stubs / "git").write_text(f'#!/bin/sh\nif [ "$1" = ls-tree ]; then exit 1; fi\nexec {real} "$@"\n')
+        (stubs / "git").chmod(0o755)
+        path = fx.env["PATH"]
+        fx.env["PATH"] = f"{stubs}{os.pathsep}{path}"
+        try:
+            for _ in range(2):
+                gated = self.once(fx)
+                self.assertTrue(any(h.startswith(f"fullHealth failed at {tip[:10]}") for h in gated["closeHeldBy"]), gated)
+            self.assertEqual(health_runs(fx), 0, "the failed head ran again with no rerun asked for")
+            self.assertEqual(kinds(fx, "delivery.closed"), [])
+            self.assertNotIn("closeOut", plan_of(fx))
+            # The failed result reads as a gate word, so the skip journalled one change and gate the next.
+            changed = [d["summary"] for d in decisions(fx, "posture changed")]
+            self.assertEqual([("from gate to focused" in s, "from focused to gate" in s) for s in changed],
+                             [(True, False), (False, True)], changed)
+            # Under gate the lead's rerun is the next pass's, and that pass runs it.
+            (fx.tmp / "health").write_text("pass")
+            code, out = fx.flow("lead-resolve", "full-health", "--why", "fixed", cwd=fx.main)
+            self.assertEqual(code, 0, out)
+            self.assertIn("on the supervisor's next pass", out)
+            self.once(fx)
+            self.assertEqual(health_runs(fx), 1)
+        finally:
+            fx.env["PATH"] = path
 
     def test_gate_at_the_same_head_starts_a_real_run_and_clears_the_skip(self) -> None:
         fx = self.skipped_and_held_open()

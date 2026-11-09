@@ -7259,13 +7259,13 @@ def lead_resolve(args) -> None:
         last, rerun = full_health_results(c, head)
         if not last or last["result"] != "failed":
             raise Stop(f"fullHealth hasn't failed at the base head {head[:10]}; there is nothing to rerun")
-        if rerun:
-            raise Stop(f"a rerun of fullHealth at {head[:10]} is already asked for; the supervisor's next pass runs it")
-        with plan_lock(c):
-            append_full_health(c, {"rerun": True, "head": head, "why": args.why})
         # Under focused no run starts, so the rerun waits on the base returning to gate.
         when = ("if the base returns to gate" if delivery_posture(c)["posture"] == "focused"
                 else "on the supervisor's next pass")
+        if rerun:
+            raise Stop(f"a rerun of fullHealth at {head[:10]} is already asked for; it runs {when}")
+        with plan_lock(c):
+            append_full_health(c, {"rerun": True, "head": head, "why": args.why})
         with marked_decision(c) as written:
             written.append(journal_id(state_tool("journal", "--kind", "decision.recorded", "--summary",
                                                  f"fullHealth at {head[:10]} runs again {when}: {args.why}")))
