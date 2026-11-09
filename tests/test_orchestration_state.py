@@ -3231,21 +3231,26 @@ class LaneWriterTests(unittest.TestCase):
                          assignments={"/stage": "checked"})
 
     def test_a_lanes_focus_lands_when_the_queue_writes_inside_its_window(self) -> None:
-        # The queue writes the record between the focus write's version read and its pinned write.
+        # The queue writes the record between the focus write's version read and its pinned write, and the lead writes
+        # it more times than the focus has attempts: only a write that reads the record again can land.
         wrote = []
 
         def queue_once() -> None:
             if not wrote:
                 wrote.append(self.version())
                 self.queue_checks()
+                for moved in range(state_tool.FOCUS_ATTEMPTS):
+                    self.lead({"meta": {"headline": f"Moved {moved}"}})
 
         before = self.version()
-        written = state_tool.set_focus(self.directory, "lane-1", "work-q merged; nothing left", state="done",
-                                       between_read_and_write=queue_once)
+        written = state_tool.set_focus(self.directory, "lane-1", "work-q merged; asking the lead", state="done",
+                                       waiting_on="lead", between_read_and_write=queue_once)
         self.assertEqual(wrote, [before], "the queue wrote inside the window")
         own = self.row()
-        self.assertEqual((own["focus"], own["state"]), ("work-q merged; nothing left", "done"))
-        self.assertEqual(written["version"], before + 2, "the queue's write and then the lane's")
+        self.assertEqual((own["focus"], own["state"], own["waitingOn"]), ("work-q merged; asking the lead", "done", "lead"),
+                         "the retry carried every field the lane wrote")
+        self.assertEqual(written["version"], before + 2 + state_tool.FOCUS_ATTEMPTS,
+                         "the queue's write, the lead's, and then the lane's")
         state = state_tool.read_state(self.directory)
         self.assertEqual(next(item for item in state["queue"] if item["subject"] == "work-q")["stage"], "checked",
                          "the retry kept the queue's write")
@@ -3260,8 +3265,8 @@ class LaneWriterTests(unittest.TestCase):
         with self.assertRaises(state_tool.StateError) as refused:
             state_tool.set_focus(self.directory, "lane-1", "never lands", between_read_and_write=queue_always)
         self.assertEqual(refused.exception.code, "version_stale")
+        # Each attempt is a new read; the row above proves the read, by moving the record past every guessed version.
         self.assertEqual(len(attempts), state_tool.FOCUS_ATTEMPTS, "a bounded number of attempts, then refusal")
-        self.assertEqual(len(set(attempts)), len(attempts), "each attempt read the record again")
         self.assertNotEqual(self.row()["focus"], "never lands")
 
     def test_a_lanes_focus_is_not_retried_past_a_refusal_other_than_a_moved_record(self) -> None:
