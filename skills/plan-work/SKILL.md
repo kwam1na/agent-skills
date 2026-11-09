@@ -108,6 +108,56 @@ Record sensors whose assertions compare to the merge base, and require a fresh
 base check before their final validation; upstream movement invalidates the
 earlier result according to that sensor's contract.
 
+## Plan Format for a Delivery
+
+A plan that an `orchestrate-work` delivery runs through `run-delivery` keeps its
+stories, their order and the lanes' files in one format. `lead-setup` drafts the
+delivery file from it, so no lane, file list or order is typed twice:
+
+- Each story is a `### KEY. Title` heading under `## Stories`, where `KEY` is its
+  tracker key.
+- Its section opens with one sentence: `Lane N, tier T, not blocked.`, or
+  `Lane N, tier T, after KEY.` with several keys written `after KEY and KEY.` or
+  `after KEY, KEY and KEY.`. `Lane N` is lane `lane-N`; the `after` keys become
+  the story's order, which `next` reads without the tracker. A section without
+  this sentence leaves its story unassigned, and `lead-setup` says so.
+- A sentence starting `Files:` lists the story's files as backticked repository
+  paths, comma-separated, with `and` before the last. A path ending `/` names a
+  folder.
+- The `## Units and order` table has the columns `Tier`, `Lane`,
+  `Items, in order` and `Owns`, with `Owns` in the same path form. A lane's
+  lowest-tier row is its `owns`; a later row lists only what the lane gains when
+  an earlier item merges, which the lead applies then.
+- Each story's criteria come from its tracker item's Acceptance Criteria
+  section, through the tracker snapshot. Without one, `lead-setup` drafts none
+  and says so.
+
+```markdown example plan-format
+## Units and order
+
+| Tier | Lane | Items, in order | Owns |
+| --- | --- | --- | --- |
+| 1 | 1 | EX-2 | `src/api/`, `tests/test_api.py` |
+| 1 | 2 | EX-3 | `src/web/`, `tests/test_web.py` |
+| 2 | 2 | EX-4 | `src/api/` |
+
+## Stories
+
+### EX-2. Serve the greeting from the API
+
+Lane 1, tier 1, not blocked. Test-first. Files: `src/api/greeting.py` and
+`tests/test_api.py`.
+
+### EX-3. Show the greeting on the front page
+
+Lane 2, tier 1, after EX-2. Test-first. Files: `src/web/front.py`,
+`src/web/templates/` and `tests/test_web.py`.
+
+### EX-4. Greet a returning visitor by name
+
+Lane 2, tier 2, after EX-2 and EX-3. Test-first. Files: `src/api/visitor.py`.
+```
+
 ## Resolve Optional Operations
 
 Tracking is optional unless repository authority or the user makes it required.

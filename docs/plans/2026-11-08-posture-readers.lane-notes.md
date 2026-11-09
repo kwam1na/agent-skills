@@ -24,7 +24,8 @@ Keep your changes to run-delivery files small and local to the functions your st
 **Lane 1: V26-3162.** Two repositories. Work the harness change in a checkout of `kwam1na/agent-delivery-harness` under
 `/Users/kwamina/delivery-harness-worktrees/`, never in `/Users/kwamina/agent-delivery-harness` itself, which other work uses. Record the
 per-test comparison the plan names on both the pull request and `runtime/0.8.3`. Hand off the harness pull request to the lead for review
-and merge before you build `runtime/0.8.3`; the build's story branch here is what goes through the queue.
+and merge before you build `runtime/0.8.3`; the build's story branch here is what goes through the queue. Since #280 shipped harness `v0.8.3`, the story builds no
+runtime of its own (Decision 3): its branch here carries the tests and evidence against the runtime on `main`.
 
 **Lane 2: V26-3174, then V26-3163.** Work the run-delivery findings first. Don't touch the built-product test files until the lead tells
 you they've moved to you, after V26-3162 merges.

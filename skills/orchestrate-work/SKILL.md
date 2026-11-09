@@ -180,7 +180,8 @@ the lead still decides and sends:
 python3 -B scripts/delivery_state.py --dir <state directory> next --lane <lane> --snapshot <tracker snapshot> --binding .agents/orchestration.json
 ```
 
-Unblocked work comes first, by the tracker snapshot's `blockedBy`; then work
+Unblocked work comes first, by the tracker snapshot's `blockedBy` and the
+hints' `blockers`; then work
 whose files do not overlap what another open lane holds; then priority; then
 files the lane holds or has worked on. Each item comes with a one-line reason,
 which says whether the files compared were declared or what a change actually
@@ -189,8 +190,10 @@ unblocked. Paths are relative to the repository, and a glob's `*` crosses
 folders. The files and priorities come from a `work-hints/1` document (in
 `references/schemas.json`): each item's declared `files`, as paths, folders
 ending in `/` or globs; the `changedFiles` its change actually touches, once
-it has one, used in their place; and its `priority`, 1 the most urgent to 4,
-or null. The repository's own command produces it when the binding declares
+it has one, used in their place; its `priority`, 1 the most urgent to 4, or
+null; and its `blockers`, the subjects it comes after in the plan's order, so
+the order holds when the tracker has none. A blocker stops blocking once the
+record holds it merged, or the snapshot holds it completed or canceled. The repository's own command produces it when the binding declares
 `state.workHints`, `{argv, timeoutSeconds?}`, run like `trackerSnapshot` with
 `{parent}`; how it learns files and priorities is the repository's choice. A
 `--hints` file is the fallback when the binding declares no command or the

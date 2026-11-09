@@ -3254,10 +3254,12 @@ def next_for_lane(state: dict, lane: str, snapshot: dict, hints: dict | None) ->
     item named by its reference, or by its id when it has none; the hints are
     keyed the same way. They are ordered by:
 
-    1. unblocked first: every tracker blocker completed, canceled, or merged
-       in the record; a blocker the snapshot does not list counts as open,
-       and work the snapshot does not list comes after work it shows
-       unblocked, its blockers unknown;
+    1. unblocked first: every blocker completed, canceled, or merged in the
+       record. Blockers are the tracker's ``blockedBy`` and the hints'
+       ``blockers``, the plan's order, so the order holds when the tracker
+       has none; a blocker the snapshot does not list counts as open, and work
+       the snapshot does not list comes after work it shows unblocked, its
+       blockers unknown;
     2. no collision first: no file overlaps a file of work another open lane
        holds, planned or queued, not merged and not finished in the tracker.
        Files are the ones an item's
@@ -3299,7 +3301,8 @@ def next_for_lane(state: dict, lane: str, snapshot: dict, hints: dict | None) ->
         if tracker.get(subject, {}).get("state") in ("completed", "canceled"):
             continue
         open_blockers = []
-        for blocker in tracker.get(subject, {}).get("blockedBy", []):
+        blockers = [*tracker.get(subject, {}).get("blockedBy", []), *declared.get(subject, {}).get("blockers", [])]
+        for blocker in dict.fromkeys(blockers):
             if blocker in merged or tracker.get(blocker, {}).get("state") in ("completed", "canceled"):
                 continue
             open_blockers.append(blocker if blocker in tracker else f"{blocker} (not in the snapshot)")
