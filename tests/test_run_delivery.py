@@ -4009,8 +4009,10 @@ class RunDeliveryPlanFormatTests(unittest.TestCase):
                 self.assertEqual(stories[key]["lane"], story["lane"])
                 self.assertEqual([c["text"] for c in stories[key].get("criteria", [])],
                                  [c["text"] for c in story.get("criteria", [])])
-                self.assertEqual(stories[key].get("after", []), story.get("after", after[key]))
-                self.assertEqual(stories[key].get("after", []), after[key])
+                # A story added since the row was written isn't in its table: its delivery-file story holds its keys.
+                expected = after.get(key, story.get("after", []))
+                self.assertEqual(stories[key].get("after", []), story.get("after", expected))
+                self.assertEqual(stories[key].get("after", []), expected)
         self.assertEqual({lane: entry["owns"] for lane, entry in drafted["lanes"].items()}, THIS_PLAN_OWNS)
         self.assertNotIn("unassigned", out)
         self.assertNotIn("drafted no", out)
@@ -4043,6 +4045,40 @@ class RunDeliveryPlanFormatTests(unittest.TestCase):
         self.assertIn("left it unassigned", out)
         self.assertEqual(drafted["stories"]["EX-2"]["lane"], "lane-1")
 
+    def test_only_headings_under_stories_are_stories_and_a_lanes_lowest_tier_row_wins_in_any_order(self) -> None:
+        fx = self.fixture()
+        example = plan_format_example()
+        # A story heading outside `## Stories` drafts nothing, and a table listing lane-2's tier-2 row first still
+        # drafts its tier-1 owns.
+        plan = (example.replace("| 1 | 2 | EX-3 | `src/web/`, `tests/test_web.py` |\n| 2 | 2 | EX-4 | `src/api/` |",
+                                "| 2 | 2 | EX-4 | `src/api/` |\n| 1 | 2 | EX-3 | `src/web/`, `tests/test_web.py` |")
+                .replace("## Stories", "### EX-9. Not a story\n\nLane 1, tier 1, not blocked.\n\n## Stories"))
+        self.assertNotEqual(plan, example)
+        self.assertIn("| 2 | 2 | EX-4 | `src/api/` |\n| 1 | 2 | EX-3", plan)
+        code, out, drafted = self.setup(fx, plan)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(sorted(drafted["stories"]), ["EX-2", "EX-3", "EX-4"])
+        self.assertEqual(drafted["lanes"]["lane-2"], {"owns": ["src/web/*", "tests/test_web.py"]})
+
+    def test_the_lane_sentence_counts_only_as_its_sections_opening_sentence(self) -> None:
+        fx = self.fixture()
+        plan = plan_format_example().replace("Lane 2, tier 1, after EX-2. Test-first.", "Test-first. Lane 2, tier 1, after EX-2.")
+        code, out, drafted = self.setup(fx, plan)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(drafted["stories"]["EX-3"]["lane"], "unassigned")
+        self.assertIn("note: plan story EX-3's section doesn't open with its lane sentence", out)
+
+    def test_lead_setup_notes_a_lane_with_no_units_row_and_an_after_key_with_no_story(self) -> None:
+        fx = self.fixture()
+        plan = plan_format_example().replace("Lane 2, tier 2, after EX-2 and EX-3.", "Lane 3, tier 1, after EX-9.")
+        code, out, drafted = self.setup(fx, plan)
+        self.assertEqual(code, 0, out)
+        self.assertEqual((drafted["stories"]["EX-4"]["lane"], drafted["stories"]["EX-4"]["after"]), ("lane-3", ["EX-9"]))
+        self.assertEqual(drafted["lanes"]["lane-3"], {"owns": []})
+        self.assertIn("note: plan story EX-4 comes after EX-9, which the plan has no story for", out)
+        self.assertIn("note: lane-3 has stories but no row in the plan's 'Units and order' table: drafted it owning "
+                      "nothing", out)
+
     def test_criteria_come_from_the_tracker_snapshot_and_a_story_without_any_is_named(self) -> None:
         fx = self.fixture()
         snapshot = fx.tmp / "tracker.json"
@@ -4060,15 +4096,30 @@ class RunDeliveryPlanFormatTests(unittest.TestCase):
         # The binding's own tracker snapshot, run for the delivery, when no file is given.
         binding = fx.main / ".agents/orchestration.json"
         document = json.loads(binding.read_text()) if binding.exists() else {}
-        document.setdefault("state", {})["trackerSnapshot"] = {"argv": ["cat", str(snapshot)]}
+        # The command runs for the delivery's own key: it prints the snapshot only when {parent} is EX-1.
+        argv = ["sh", "-c", 'test "$1" = EX-1 && cat "$2"', "sh", "{parent}", str(snapshot)]
+        rerun = lambda: fx.flow("lead-setup", "EX-1", "--plan", "docs/format-plan.md", "--base", "feature/FX-1",
+                                "--no-authority", "--force", cwd=fx.main)
+        document.setdefault("state", {})["trackerSnapshot"] = {"argv": argv}
         binding.write_text(json.dumps(document, indent=2))
         commit(fx.main, "EX-1: the binding's tracker snapshot")
-        code, out = fx.flow("lead-setup", "EX-1", "--plan", "docs/format-plan.md", "--base", "feature/FX-1",
-                            "--no-authority", "--force", cwd=fx.main)
+        code, out = rerun()
         self.assertEqual(code, 0, out)
         drafted = json.loads((fx.main / ".agents/deliveries/EX-1.json").read_text())
         self.assertEqual([c["id"] for c in drafted["stories"]["EX-2"]["criteria"]], ["ex-2-1", "ex-2-2"])
         self.assertNotIn("no tracker snapshot", out)
+        # When the command fails or prints no snapshot, lead-setup says so and drafts no criteria.
+        for failing, words in ((["sh", "-c", "echo boom >&2; exit 3"], "the binding's tracker snapshot failed (3: boom)"),
+                               (["echo", "not json"], "the binding's tracker snapshot printed no snapshot")):
+            with self.subTest(failing=failing):
+                document["state"]["trackerSnapshot"] = {"argv": failing}
+                binding.write_text(json.dumps(document, indent=2))
+                commit(fx.main, "EX-1: a failing tracker snapshot")
+                code, out = rerun()
+                self.assertEqual(code, 0, out)
+                self.assertIn(f"note: {words}: drafted no story's criteria", out)
+                drafted = json.loads((fx.main / ".agents/deliveries/EX-1.json").read_text())
+                self.assertTrue(all("criteria" not in story for story in drafted["stories"].values()), drafted)
 
     def test_lead_hints_passes_each_storys_after_keys_and_plan_files_as_work_hints(self) -> None:
         fx = self.fixture()
@@ -4737,6 +4788,54 @@ class RunDeliveryPlanTests(unittest.TestCase):
         added = [e for e in self.record(fx)["journal"]
                  if e.get("subject") == "FX-4" and "added to the delivery as planned work" in e["summary"]]
         self.assertEqual(len(added), 1, added)
+
+    def test_registration_waits_for_the_plans_lock_so_a_whole_story_add_is_never_registered_twice(self) -> None:
+        fx = self.fixture()
+        path = plan_delivery(fx)
+        m = fx.main
+        fx.flow("lead-init", cwd=m)
+        # As lead-plan's add leaves it mid-way: the story in the delivery file, not yet planned, the lock held.
+        add_story(fx, path, "FX-4", why="A lane found the gap.")
+        lock = fx.tmp / "flow-log/plan.lock"
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        with open(lock, "a+") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            sweep = subprocess.Popen([sys.executable, "-B", str(fx.tool), "lead-brief"], cwd=m, env=fx.env,
+                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            self.addCleanup(lambda: sweep.poll() is None and (sweep.kill(), sweep.wait()))
+            time.sleep(3)
+            self.assertIsNone(sweep.poll(), "registration ran without the plan's lock")
+            self.assertNotIn("FX-4", [p["subject"] for p in self.record(fx)["state"]["planned"]],
+                             "registration planned the story while the lock was held")
+            fcntl.flock(held, fcntl.LOCK_UN)
+        out, _ = sweep.communicate(timeout=300)
+        self.assertEqual(sweep.returncode, 0, out)
+        self.assertIn("registered FX-4", out)
+        self.assertEqual([(c["kind"], c["subjects"]) for c in self.plan(fx)["changes"]], [("added", ["FX-4"])])
+
+    def test_lead_plans_added_heading_takes_the_lanes_latest_tier_and_never_repeats_one(self) -> None:
+        fx = self.fixture()
+        path = plan_delivery(fx)
+        m = fx.main
+        plan = m / "docs/plan.md"
+        plan.write_text(plan.read_text() + "\n## Units and order\n\n| Tier | Lane | Items, in order | Owns |\n"
+                        "| --- | --- | --- | --- |\n| 1 | 1 | FX-2 | `src/one.txt` |\n| 2 | 1 | FX-4 | `src/four.txt` |\n"
+                        "\n### FX-5. Thing five\n\nWritten by the lead before the add.\n")
+        commit(m, "FX-1: units and a heading for FX-5")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        fx.flow("lead-init", cwd=m)
+        add = lambda key, title: fx.flow("lead-plan", "change", "--kind", "added", "--subjects", key, "--title", title,
+                                         "--text", f"{title} works", "--why", "Found mid-way.", "--lane", "lane-1", cwd=m)
+        code, out = add("FX-4", "Thing four")
+        self.assertEqual(code, 0, out)
+        self.assertIn("### FX-4. Thing four\n\nLane 1, tier 2, not blocked. Added mid-delivery: Found mid-way.\n",
+                      plan.read_text())
+        code, out = add("FX-5", "Thing five")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(plan.read_text().count("### FX-5."), 1, "a heading the plan already held was written again")
+        self.assertEqual(sh("git", "show", "--name-only", "--format=", "HEAD", cwd=m).stdout.split(),
+                         [".agents/deliveries/FX-1.json"])
+        self.assertEqual(json.loads(path.read_text())["stories"]["FX-5"]["why"], "Found mid-way.")
 
     def test_lead_plan_refuses_a_whole_story_it_cant_add_and_writes_nothing(self) -> None:
         fx = self.fixture()

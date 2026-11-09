@@ -198,6 +198,10 @@ class JiraTests(SnapshotCase):
         # An issue whose description has no such section carries no criteria.
         pages["page-1"]["issues"][1]["fields"]["description"] = {"type": "doc", "version": 1, "content": [
             heading("Summary"), paragraph("Only a summary.")]}
+        # One whose section holds only paragraphs yields them, up to the next heading.
+        pages["page-2"]["issues"][0]["fields"]["description"] = {"type": "doc", "version": 1, "content": [
+            heading("Acceptance Criteria"), paragraph("The view loads."), paragraph("It says when it fails."),
+            heading("Notes"), paragraph("Not a criterion.")]}
         transport = Transport((SEARCH, 200, pages["page-1"]), (SEARCH, 200, pages["page-2"]))
         code, out, _ = self.run_kind(JIRA_ARGS, transport, JIRA_ENV)
         self.assertEqual(code, 0)
@@ -205,6 +209,7 @@ class JiraTests(SnapshotCase):
         self.assertEqual(items["APP-11"]["criteria"], ["Set up from a plan, every story has a lane.",
                                                        "next orders a blocked story after its dependencies."])
         self.assertNotIn("criteria", items["APP-12"])
+        self.assertEqual(items["APP-13"]["criteria"], ["The view loads.", "It says when it fails."])
 
     def test_a_done_status_not_listed_as_canceled_is_completed(self) -> None:
         code, out, _ = self.run_kind(JIRA_ARGS, self.pages(), JIRA_ENV)

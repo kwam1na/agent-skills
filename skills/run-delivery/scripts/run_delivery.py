@@ -4968,6 +4968,13 @@ def register_stories(c) -> list[str]:
     with nothing registered. Returns the keys added; a delivery not yet initialized is left to lead-init."""
     if not (c.state / "state.json").exists():
         return []
+    # Under the plan's lock: lead-plan's whole-story add writes the delivery file before it plans the story, and a
+    # sweep registering it in between would record its `added` change a second time.
+    with plan_lock(c):
+        return _register_stories(c)
+
+
+def _register_stories(c) -> list[str]:
     added: list[str] = []
 
     def compute(doc: dict) -> dict | None:
