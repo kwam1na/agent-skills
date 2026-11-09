@@ -378,8 +378,13 @@ class Fixture:
         self.port = free_port()
         self.release = generation
         self.tool = generation / TOOL_RELATIVE
+        # The commands' own temp folder, inside the case's folder but outside its checkouts: what a process the case
+        # stops with SIGKILL leaves there (a merge queue's hooks folder, a full-health checkout) goes with the case.
+        self.temp = self.tmp / "temp"
+        self.temp.mkdir()
         # The supervisor's own cases start it; every other case runs the lead's commands by hand.
-        self.env = {**clean_environment(), "FAKE_FORGE_STATE": str(self.tmp / "forge.json"), "RUN_DELIVERY_SUPERVISOR": "off"}
+        self.env = {**clean_environment(), "FAKE_FORGE_STATE": str(self.tmp / "forge.json"), "RUN_DELIVERY_SUPERVISOR": "off",
+                    "TMPDIR": str(self.temp)}
         sh("git", "init", "-q", "--bare", "-b", "main", self.origin)
         quieten(self.origin)
         sh("git", "clone", "-q", self.origin, self.main)
@@ -3089,7 +3094,7 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         recorded = lambda: [int(g) for g in re.findall(r"pgid (\d+)", lock.read_text())] if lock.exists() else []
         groups: list[int] = []
         # The check's own temp folder, so what a killed check leaves there is this case's to see.
-        temp = fx.tmp / "temp"
+        temp = fx.tmp / "check-temp"
         temp.mkdir()
         proc = subprocess.Popen([sys.executable, "-B", str(fx.tool), "app-check", "FX-2", "slow", "--mode", "loaded",
                                  "--path", "/slow", "--eval", "true"], cwd=wt, env={**fx.env, "TMPDIR": str(temp)},
