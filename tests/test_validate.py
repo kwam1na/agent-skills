@@ -4,12 +4,14 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
 from agent_skills.validate import safe_relative_path, validate_corpus
-from corpus_copy import SharedCorpus
+from corpus_copy import SharedCorpus, copy_corpus
+from quiet_git import quieten
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,6 +22,9 @@ def write_json(path: Path, value: object) -> None:
         json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+MISSING = b"\0missing\0"
 
 
 def tree_digest(root: Path) -> str:
@@ -42,15 +47,19 @@ class CorpusValidationTests(unittest.TestCase):
         self.addCleanup(self.corpus.restored)
         return tempfile.TemporaryDirectory(), self.corpus.restored()
 
-    def test_valid_corpus_is_stable_and_read_only(self) -> None:
-        before = tree_digest(ROOT)
-        first = validate_corpus(ROOT)
-        second = validate_corpus(ROOT)
+    def assert_stable_and_read_only(self, root: Path, validate=None) -> None:
+        validate = validate or validate_corpus
+        before = tree_digest(root)
+        first = validate(root)
+        second = validate(root)
         self.assertEqual(first.to_json(), second.to_json())
         self.assertEqual(first.findings, ())
         self.assertGreater(len(first.rules_checked), 0)
         self.assertGreater(len(first.scan_roots), 0)
-        self.assertEqual(tree_digest(ROOT), before)
+        self.assertEqual(tree_digest(root), before, "validation wrote a file of the checkout")
+
+    def test_valid_corpus_is_stable_and_read_only(self) -> None:
+        self.assert_stable_and_read_only(ROOT)
 
     def test_structure_reference_and_dependency_findings_aggregate(self) -> None:
         temporary, root = self.copied_corpus()
@@ -423,6 +432,71 @@ class CorpusValidationTests(unittest.TestCase):
         (root / "AGENTS.md").unlink()
 
         self.assertEqual(validate_corpus(root).findings, ())
+
+class ReadOnlyCheckTests(unittest.TestCase):
+    """The read-only check sees a write to the checkout's own files, and never reads the live state git ignores."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        holder = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(holder.cleanup)
+        cls.root = copy_corpus(Path(holder.name) / "checkout")
+        subprocess.run(["git", "init", "--quiet", "--initial-branch=main", str(cls.root)], check=True, capture_output=True)
+        quieten(cls.root)
+        subprocess.run(["git", "add", "--all"], cwd=cls.root, check=True, capture_output=True)
+
+    def check(self, write) -> None:
+        """The read-only row's own check on the copy, with ``write`` run during each validation."""
+        def validating(root: Path):
+            write(root)
+            return validate_corpus(root)
+        CorpusValidationTests.assert_stable_and_read_only(self, self.root, validating)
+
+    def written(self, relative: str, text: str) -> None:
+        path = self.root / relative
+        before = path.read_bytes() if path.exists() else None
+        self.addCleanup(lambda: path.write_bytes(before) if before is not None else path.unlink(missing_ok=True))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        counter = iter(range(1000))
+        self.write = lambda root: (root / relative).write_text(f"{text} {next(counter)}\n", encoding="utf-8")
+
+    def test_an_ignored_live_state_file_changing_during_validation_is_not_a_write(self) -> None:
+        relative = ".orchestration/state/state.json"
+        self.assertTrue(subprocess.run(["git", "check-ignore", "-q", relative], cwd=self.root).returncode == 0)
+        self.written(relative, '{"version":')
+        self.check(self.write)
+
+    def test_validation_writing_a_tracked_file_fails_the_check(self) -> None:
+        # Outside what validation reads, so the write itself is what the check must see.
+        relative = "tests/quiet_git.py"
+        self.assertIn(relative.encode(), subprocess.run(["git", "ls-files", "--cached", relative], cwd=self.root,
+                                                         check=True, capture_output=True).stdout)
+        original = (self.root / relative).read_text(encoding="utf-8")
+        self.written(relative, original)
+        with self.assertRaisesRegex(AssertionError, "validation wrote a file of the checkout"):
+            self.check(self.write)
+
+    def test_validation_adding_a_file_git_would_track_fails_the_check(self) -> None:
+        relative = "tests/stray-validation-output.md"
+        self.assertNotEqual(subprocess.run(["git", "check-ignore", "-q", relative], cwd=self.root).returncode, 0)
+        self.written(relative, "# stray")
+        with self.assertRaisesRegex(AssertionError, "validation wrote a file of the checkout"):
+            self.check(self.write)
+
+    def test_a_tracked_file_validation_removes_is_recorded_missing(self) -> None:
+        relative = "skills/compound-delivery-kernel/SKILL.md"
+        path = self.root / relative
+        before = tree_digest(self.root)
+        original = path.read_bytes()
+        self.addCleanup(path.write_bytes, original)
+        path.unlink()
+        removed = tree_digest(self.root)
+        self.assertNotEqual(removed, before)
+        path.write_bytes(b"")
+        self.assertNotEqual(tree_digest(self.root), removed, "a removed file reads apart from an emptied one")
+        path.write_bytes(original)
+        self.assertEqual(tree_digest(self.root), before)
+
 
 if __name__ == "__main__":
     unittest.main()
