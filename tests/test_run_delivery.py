@@ -7743,6 +7743,16 @@ def stop_and_reap(proc: subprocess.Popen) -> None:
     proc.wait()
 
 
+def alive_pid(pid: int) -> bool:
+    """Whether a process with this pid still runs (a zombie, which init reaps, counts as gone)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+    return bool(state) and not state.startswith("Z")
+
+
 def unreaped_cleanups(source: str) -> list[str]:
     """Each `addCleanup(lambda: ...)` in `source` that stops a process the module started with `subprocess.Popen`
     without waiting for it, which leaves it unreaped: `<line> <lambda>`. A pid the case only recorded (a detached
@@ -7926,6 +7936,22 @@ class InProcessCallsStayInTheirCaseTests(unittest.TestCase):
             gc.collect()
         self.assertEqual([str(w.message) for w in caught if issubclass(w.category, ResourceWarning)], [],
                          "the lease it gave up left its lock file open")
+
+    def test_stopping_and_reaping_stops_the_whole_group_the_process_leads(self) -> None:
+        # A leader with a child in its session, as `lead-run --once` starts its pass's own: stopping only the leader
+        # would leave the child running after the case.
+        leader = subprocess.Popen(["sh", "-c", "sleep 60 & echo $!; wait"], stdout=subprocess.PIPE, text=True,
+                                  start_new_session=True)
+        self.addCleanup(stop_and_reap, leader)  # on any way out, as a case's cleanup does
+        self.addCleanup(leader.stdout.close)
+        child = int(leader.stdout.readline())
+        self.addCleanup(lambda: alive_pid(child) and os.kill(child, signal.SIGKILL))
+        self.assertEqual(os.getpgid(child), leader.pid, "the child isn't in the leader's group")
+        stop_and_reap(leader)
+        deadline = time.monotonic() + 5
+        while alive_pid(child) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertFalse(alive_pid(child), "the leader's child outlived stop_and_reap")
 
     def test_a_stopped_and_reaped_process_is_gone_and_leaves_no_warning(self) -> None:
         def released(reap: bool) -> list[str]:
