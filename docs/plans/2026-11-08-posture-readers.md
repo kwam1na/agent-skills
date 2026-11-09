@@ -133,7 +133,8 @@ Lane 1, tier 1, not blocked. Test-first, per the item. In the harness, the resol
   git with `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_NOSYSTEM=1`. The row first confirms that, under the wrapper, the bare repository's
   `rev-parse --verify refs/remotes/origin/main` succeeds, then asserts `gate` with `posture_unreadable`. Red run under the wrapper with the
   show-toplevel failure branch mutated to carry on. The same row without the wrapper gates too, by git's own refusal. A second row reads
-  from a bare repository embedded in the tree, and gates by the third condition; it claims no red run against that mutant.
+  from a bare repository embedded in the tree and gates: unmutated, by the first condition (git skips the embedded repository or fails
+  inside it), and by the third if the first is mutated away; it claims no red run against the show-toplevel mutant.
 - Allowed, with the base declaring `focused`, read from each one's own root: a normal clone whose parent is no work tree; a linked worktree
   made with `git worktree add` outside its main checkout; and one nested under its main checkout at `.orchestration/lanes/<id>`. Each reads
   `focused` with no code, including when its root is given through a symlinked path such as macOS's `/var`. The nested worktree's red runs are recorded against two mutants: refusing whenever `.git` is a file, and refusing
