@@ -114,8 +114,11 @@ checks may need no file at all.
   "supervisor": { "passSeconds": 60 },        // optional: how long the supervisor waits between passes
   "inApp": {                                  // optional; its "lease" must name one of the binding's leases
     "lease": "app-session",
-    "lock": "~/.cache/my-app-session.lock",   // an OS lock, held for each check
-    "port": 4201,
+    "lock": "~/.cache/my-app-session.lock",   // an OS lock, held for each check; the serve's output is kept
+                                              // beside it, in <lock>.serve.log
+    "port": 4201,                             // the lock is what keeps runs on this port apart: checkouts that
+                                              // share a port share one lock path. A check whose serve finds the
+                                              // port answered by another listener refuses, naming it
     "build": { "argv": ["npm", "run", "build"], "artifact": "dist", "timeoutSeconds": 1800 },
     "serve": { "argv": ["my-static-server", "{dir}", "--port", "{port}"] },
     "check": { "argv": ["my-check", "--spec", "{spec}", "{args}"] },   // {args}: what the lane passes after --
@@ -325,7 +328,7 @@ offline, the last fetched tip decides.
 | A valid `focused` declaration | `focused` | none |
 | A valid `gate` declaration | `gate` | none |
 | No file at the tip | `gate` | `posture_undeclared` |
-| Not valid UTF-8 JSON, an object failing the shape above, or an unknown `posture` | `gate` | `posture_malformed` |
+| Not valid UTF-8 JSON, JSON nesting arrays or objects more than 64 levels deep (the top-level object being 1), an object failing the shape above, or an unknown `posture` | `gate` | `posture_malformed` |
 | A symlink, tree or submodule at that path, or a blob over 64 KiB | `gate` | `posture_malformed` |
 | The base ref can't be resolved or read, or `git` fails or times out | `gate` | `posture_unreadable` |
 

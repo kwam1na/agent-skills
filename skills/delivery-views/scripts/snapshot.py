@@ -315,18 +315,7 @@ def jira_snapshot(args: argparse.Namespace, environ: dict, transport: Transport,
         fields = issue.get("fields")
         if not isinstance(fields, dict):
             raise Failure(f"{_shown(key)} has no fields")
-        status = fields.get("status")
-        category = status.get("statusCategory") if isinstance(status, dict) else None
-        category_key = category.get("key") if isinstance(category, dict) else None
-        name = status.get("name") if isinstance(status, dict) else None
-        if not isinstance(name, str) or not isinstance(category_key, str):
-            raise Failure(f"{_shown(key)} has no status or status category")
-        if name in canceled:
-            state = "canceled"
-        elif category_key in JIRA_STATES:
-            state = JIRA_STATES[category_key]
-        else:
-            raise Failure(f"{_shown(key)} has a status category the snapshot does not know: {_shown(category_key)}")
+        state, name = _jira_state(key, fields, canceled)
         item = {"subject": key, "title": _text(fields.get("summary"), f"{_shown(key)}'s summary"), "state": state}
         transitions = issue.get("transitions")
         if isinstance(transitions, list):
@@ -358,7 +347,30 @@ def jira_snapshot(args: argparse.Namespace, environ: dict, transport: Transport,
         if blockers:
             item["blockedBy"] = blockers
         items.append(item)
-    return {"source": "tracker", "items": items}
+    # The search lists the children only: the parent's own status is read once, by its key.
+    answer = client.get(f"{site}/rest/api/3/issue/{urllib.parse.quote(args.parent)}?fields=status", missing_ok=True)
+    snapshot = {"source": "tracker", "items": items}
+    if answer is not None:
+        fields = answer.get("fields") if isinstance(answer, dict) else None
+        if not isinstance(fields, dict):
+            raise Failure(f"{_shown(args.parent)} has no fields")
+        snapshot["parent"] = {"subject": args.parent, "state": _jira_state(args.parent, fields, canceled)[0]}
+    return snapshot
+
+
+def _jira_state(key: str, fields: dict, canceled: set[str]) -> tuple[str, str]:
+    """An issue's state, and its status's own name, from its status category or a status named as canceled."""
+    status = fields.get("status")
+    category = status.get("statusCategory") if isinstance(status, dict) else None
+    category_key = category.get("key") if isinstance(category, dict) else None
+    name = status.get("name") if isinstance(status, dict) else None
+    if not isinstance(name, str) or not isinstance(category_key, str):
+        raise Failure(f"{_shown(key)} has no status or status category")
+    if name in canceled:
+        return "canceled", name
+    if category_key in JIRA_STATES:
+        return JIRA_STATES[category_key], name
+    raise Failure(f"{_shown(key)} has a status category the snapshot does not know: {_shown(category_key)}")
 
 
 # Bitbucket Cloud
@@ -501,6 +513,7 @@ LINEAR_KEY = re.compile(r"lin_api_[A-Za-z0-9]+", re.IGNORECASE)
 LINEAR_QUERY = f"""query Children($parent: String!, $after: String) {{
   issue(id: $parent) {{
     createdAt
+    state {{ type }}
     children(first: {LINEAR_PAGE_SIZE}, after: $after) {{
       nodes {{
         identifier
@@ -653,6 +666,17 @@ def criteria_of_adf(document: object) -> list[str] | None:
     return _criteria(items or paragraphs)
 
 
+def _linear_parent(key: str, issue: dict) -> dict | None:
+    """The parent's own state, as the children's are read; none when the answer doesn't give it."""
+    state = issue.get("state")
+    kind = state.get("type") if isinstance(state, dict) else None
+    if kind is None:
+        return None
+    if kind not in LINEAR_STATES:
+        raise Failure(f"{_shown(key)} has a state type the snapshot does not know: {_shown(kind)}")
+    return {"subject": key, "state": LINEAR_STATES[kind]}
+
+
 def linear_snapshot(args: argparse.Namespace, environ: dict, transport: Transport, deadline: float,
                     clock: Callable[[], float], sleep: Callable[[float], None]) -> dict:
     # A personal key goes in the Authorization header as it is.
@@ -661,6 +685,7 @@ def linear_snapshot(args: argparse.Namespace, environ: dict, transport: Transpor
     seen: set[str] = set()
     cursors: set[str] = set()
     after = None
+    parent: dict | None = None
     while True:
         answer = client.post(LINEAR_API, {"query": LINEAR_QUERY, "variables": {"parent": args.parent, "after": after}})
         if not isinstance(answer, dict):
@@ -674,6 +699,8 @@ def linear_snapshot(args: argparse.Namespace, environ: dict, transport: Transpor
         issue = data.get("issue") if isinstance(data, dict) else None
         if issue is None:
             raise Failure(f"the tracker has no issue {_shown(args.parent)}")
+        if parent is None:
+            parent = _linear_parent(args.parent, issue)
         try:
             children = issue["children"]
             nodes = children["nodes"]
@@ -718,7 +745,7 @@ def linear_snapshot(args: argparse.Namespace, environ: dict, transport: Transpor
         except (KeyError, TypeError, AttributeError):
             raise Failure("Linear's answer is not the shape of a children listing") from None
         if has_next is not True:
-            return {"source": "tracker", "items": items}
+            return {"source": "tracker", "items": items, **({"parent": parent} if parent else {})}
         # A page that names no new place to go on from would be read forever.
         if not isinstance(after, str) or not after or after in cursors:
             raise Failure(f"Linear gave no next page for the children of {_shown(args.parent)}")

@@ -312,7 +312,9 @@ python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lea
 
 `lead-setup` asks for the operator's grant to lanes before it writes anything: `--authority` names what lanes may do
 (`push`, `draftPullRequests`, or both) and `--granted-by` who allowed it. `--no-authority` says lanes get none and hand
-their branches to the lead.
+their branches to the lead. `--authority` also takes `readyPullRequests`, the lead's own grant, which a merge step that
+refuses drafts needs: `lead-accept` marks each draft ready under it. The lane brief leaves it out, saying lanes never
+mark a pull request ready, and `open-pr` still opens a draft.
 
 A plan in plan-work's format (its SKILL.md, "Plan Format for a Delivery", has the grammar and an example) needs no
 `--pattern`: each `### KEY. Title` under `## Stories` is a story. Its section's opening sentence, `Lane N, tier T, not
@@ -369,7 +371,15 @@ is merely ahead stays in the chapter's "Approvals ahead" fold.
 
 Commit it, check the delivery, create the record and write the lane brief. `lead-init` refuses each setup gap
 `doctor --delivery` reports, then starts the supervisor and prints the live view's address; every lead command
-repeats it:
+repeats it.
+
+A command with no `--delivery` finds its delivery once `.agents/deliveries/` holds more than one file: the delivery
+whose record is open in this checkout (not in a checkout nested inside it, such as a lead's under the lanes folder);
+else the one whose story branch this checkout is on; else the only delivery not known to be closed. A delivery is known to be closed when this machine's flow log holds its `closed.json`, or when the
+binding's `trackerSnapshot`, run with `{parent}` as its key, shows its parent completed or canceled, so a delivery closed
+from another checkout counts too. A snapshot that fails, or no tracker, leaves it not known to be closed. With none or
+several left it refuses, naming each delivery not known to be closed. A `--delivery` whose file is missing is refused
+naming the open delivery, and saying when the key is one of a delivery's stories:
 
 ```sh example repo
 git add -A
@@ -406,7 +416,9 @@ what the plan said before and after and why, edits the delivery file, and commit
 on a checkout with uncommitted changes, one behind the base or diverged from it, and a story branch. It runs in the
 lead's checkout of the base, or in a lead worktree of its own (section 8). `--kind changed` or `relaxed` rewords a criterion,
 `added` adds one to a story (or, for a key the delivery doesn't hold yet, the whole story, below), `removed` takes stories out of the delivery (the plan keeps them, marked removed), and
-`finish` changes or adds a finish line's `covers`. Push the commit so lanes see it:
+`finish` changes or adds a finish line's `covers`, and with `--text` its wording; an existing line's `--text` alone
+rewords it and keeps what it covers. A change of both records two changes, what it covers and then its wording, so
+the plan keeps each before and after. Push the commit so lanes see it:
 
 ```sh example repo
 python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lead-plan change --kind relaxed --subjects <story-key> --criterion greeting-shown --text "The front page shows a greeting" --why "The operator accepted any greeting"
@@ -664,10 +676,10 @@ setup, which `bases` then requires:
 ```text example outline
 run_delivery.py lead-setup <delivery-key> --base integration-2 --plan docs/plans/<delivery-key>.md \
   --pattern '^### (?P<key>[A-Z]+-[0-9]+)\. (?P<title>.+)$' --review-when pipeline-green \
-  --authority push,draftPullRequests --granted-by 'the operator'
+  --authority push,draftPullRequests,readyPullRequests --granted-by 'the operator'
 ```
 
-Add `"readyPullRequests": true` to the delivery file's `authority`, since the merge step refuses drafts. Every settings
+The grant includes `readyPullRequests`, since the merge step refuses drafts. Every settings
 change and the delivery file reach `main`, and each integration base, through a reviewed pull request (section 8).
 
 ## 8. Running deliveries
@@ -846,7 +858,8 @@ do. A line marked `skipped` names the check it waits on: fix that one first.
 
 - **`forge.mergeNeedsReady says the merge step refuses a draft`**: the merge step refuses a draft pull request, and
   the delivery gives the lead no grant to mark one ready. Add `"readyPullRequests": true` to the delivery file's
-  `authority`; `lead-accept` then marks each draft ready before the queue takes it.
+  `authority`, or draft it again with `lead-setup --force --authority push,draftPullRequests,readyPullRequests`;
+  `lead-accept` then marks each draft ready before the queue takes it.
 - **`the supervisor is down`**: the supervisor stopped, was killed, or was never started. `lead-run --resume` stops
   whatever it left running and starts it again, and it skips what is already done. Meanwhile every lead command still
   works by hand.

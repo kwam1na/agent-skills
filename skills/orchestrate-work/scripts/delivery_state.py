@@ -310,9 +310,14 @@ def _require_unicode(value: object, code: str) -> None:
         raise StateError(code, "text must be valid Unicode: a lone surrogate cannot be stored") from None
 
 
+def emitted(value: object) -> str:
+    """The one JSON document a command prints."""
+    return json.dumps(value, indent=2, ensure_ascii=True, sort_keys=True) + "\n"
+
+
 def emit(value: object) -> None:
     """Write ``value`` to stdout as ASCII JSON, whatever the console encoding."""
-    text = json.dumps(value, indent=2, ensure_ascii=True, sort_keys=True) + "\n"
+    text = emitted(value)
     sys.stdout.flush()
     sys.stdout.buffer.write(text.encode("ascii"))
     sys.stdout.buffer.flush()
@@ -2502,6 +2507,10 @@ def check_snapshot(snapshot: object, name: str, max_age: float, *, parent: str |
         if snapshot["source"] == "tracker":
             errors += [f"/items: {problem}" for problem in dependency_problems(
                 [(item["subject"], item.get("blockedBy", [])) for item in snapshot["items"]], parent)]
+        if "parent" in snapshot and snapshot["source"] != "tracker":
+            errors.append("/parent: only a tracker snapshot carries it")
+        elif "parent" in snapshot and parent is not None and snapshot["parent"]["subject"] != parent:
+            errors.append(f"/parent: {snapshot['parent']['subject']} is not the record's tracker parent {parent}")
     if not errors:
         try:
             _parse_time(snapshot["takenAt"], exact=True)
@@ -4059,8 +4068,11 @@ def read_published(directory: Path) -> dict | None:
     return published
 
 
-def ack(directory: Path, *, version: int, through: int) -> dict:
+def ack(directory: Path, *, version: int | None = None, through: int | None = None) -> dict:
     """Record that ``version`` and the journal through entry ``through`` were published.
+
+    Either left out is the outbox's own: what a host publisher last wrote is what
+    it published. Without an outbox, both are needed.
 
     Kept beside the state, not in it: an acknowledgement that wrote the state
     would make the record newer than what it acknowledges.
@@ -4068,6 +4080,13 @@ def ack(directory: Path, *, version: int, through: int) -> dict:
     with file_lock(directory / STATE_LOCK):
         state = read_state(directory)
         journal = read_journal(directory)
+        outbox = read_outbox(directory)
+        if version is None or through is None:
+            if outbox is None:
+                raise StateError("ack_invalid", "there is no outbox to acknowledge: pass --version and --through, "
+                                                "the version and journal entry that were published")
+            version = outbox["version"] if version is None else version
+            through = outbox["journalThrough"] if through is None else through
         try:
             previous = read_published(directory) or {"version": 0, "journalThrough": 0}
         except StateError:
@@ -4083,13 +4102,15 @@ def ack(directory: Path, *, version: int, through: int) -> dict:
             problems.append(f"journal entry {through} does not exist; the last is {last}")
         if through < previous["journalThrough"]:
             problems.append(f"journal entry {through} is before the published {previous['journalThrough']}")
-        outbox = read_outbox(directory)
         if outbox is not None and (version > outbox["version"] or through > outbox["journalThrough"]):
             hint = (f"; if {outbox['publisher']} is no longer bound, retire its outbox with outbox --retire "
                     f"{outbox['publisher']}") if outbox.get("publisher") else ""
             problems.append(
                 f"the outbox holds version {outbox['version']} through entry {outbox['journalThrough']}: "
-                f"acknowledge only what was published{hint}")
+                f"acknowledge only what was published, with ack --version {outbox['version']} --through "
+                f"{outbox['journalThrough']}, or ack with neither to take the outbox's own{hint}")
+        elif problems and outbox is not None:  # whatever was refused, the outbox says what was published
+            problems.append(f"the outbox holds version {outbox['version']} through entry {outbox['journalThrough']}")
         if problems:
             raise StateError("ack_invalid", "; ".join(problems))
         published = {"version": version, "journalThrough": through, "at": now()}
@@ -4459,6 +4480,9 @@ def _add_wait_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--load-multiple", type=float, default=WAIT_LOAD_MULTIPLE, help="five-minute load, as a multiple of the cores")
     parser.add_argument("--min-free-bytes", type=int, default=WAIT_MIN_FREE_BYTES, help="free disk under the state directory")
     parser.add_argument("--swap-growth-bytes", type=int, default=WAIT_SWAP_GROWTH_BYTES, help="swap growth since the baseline")
+    parser.add_argument("--output", type=Path, metavar="FILE",
+                        help="also write the one result document to FILE, atomically, outside the state directory: "
+                             "read it there, not from a host's capture of stdout, which may add its own lines")
 
 
 def wait_arguments(arguments: list[str]) -> argparse.Namespace:
@@ -4466,6 +4490,18 @@ def wait_arguments(arguments: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(add_help=False)
     _add_wait_arguments(parser)
     return parser.parse_args(arguments)
+
+
+def _wait_output(args: argparse.Namespace) -> Path | None:
+    """Where a wait writes its result besides stdout: a file outside the state directory, in a folder that exists."""
+    if args.output is None:
+        return None
+    output = args.output.resolve()
+    if output == args.dir.resolve() or args.dir.resolve() in output.parents:
+        raise StateError("wait_invalid", "--output must be outside the state directory: a wait writes nothing to the record")
+    if not output.parent.is_dir() or output.is_dir():
+        raise StateError("wait_invalid", f"--output {args.output} must be a file in a folder that exists")
+    return output
 
 
 def _wait_command(args: argparse.Namespace) -> tuple[int, dict]:
@@ -4610,8 +4646,10 @@ def main(argv: list[str] | None = None) -> int:
     retire.add_argument("--retire", required=True, metavar="PUBLISHER", help="remove this publisher's outbox")
     retire.add_argument("--force", action="store_true", help="also remove an outbox that cannot be read")
     published = commands.add_parser("ack", help="record which version and journal entries were published")
-    published.add_argument("--version", type=int, required=True)
-    published.add_argument("--through", type=int, required=True, help="the last journal id published")
+    published.add_argument("--version", type=int,
+                           help="the version published: the outbox's version when left out, not the record's")
+    published.add_argument("--through", type=int,
+                           help="the last journal id published: the outbox's journalThrough when left out")
     args = parser.parse_args(argv)
     try:
         if args.command == "init":
@@ -4657,7 +4695,16 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "select":
             result = _select_command(args)
         elif args.command == "wait":
-            code, result = _wait_command(args)
+            # One run is one document: on stdout, and in --output when it is given, even when the wait fails.
+            output = _wait_output(args)
+            try:
+                code, result = _wait_command(args)
+            except StateError as error:
+                code, result = 1, {"ok": False, "code": error.code, "error": str(error)}
+            if output is not None:
+                if isinstance(result.get("restart"), list):  # the next wait writes where this one did
+                    result["restart"] = [*result["restart"], f"--output={output}"]  # resolved: any folder reads it
+                _write_atomically(output, emitted(result))
             emit(result)
             return code
         elif args.command == "review-evidence":

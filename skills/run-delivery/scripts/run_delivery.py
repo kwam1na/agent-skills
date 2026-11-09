@@ -565,30 +565,116 @@ class Config:
     def delivery_keys(self) -> list[str]:
         return [name[:-len(".json")] for name in self.shelf.names(self.deliveries_rel, ".json")]
 
+    def delivery_files(self) -> dict[str, dict]:
+        return {key: self.shelf.json(f"{self.deliveries_rel}/{key}.json") or {} for key in self.delivery_keys()}
+
+    def state_of(self, key: str, d: dict) -> Path:
+        """Where a delivery's record is kept on this machine, as load_delivery finds it."""
+        if os.environ.get("DELIVERY_STATE"):
+            return Path(os.environ["DELIVERY_STATE"])
+        if d.get("stateDirectory"):
+            return self.main / d["stateDirectory"]
+        return self.lane_checkout(key) / self.state_rel
+
+    def closed_here(self, key: str, d: dict) -> bool:
+        """Whether this machine's flow log for the delivery holds the closed.json lead-close writes."""
+        return (self.state_of(key, d).parent / "flow-log" / f"{key}.closed.json").exists()
+
+    def open_here(self, key: str, d: dict) -> bool:
+        """Whether the delivery's record is open in this checkout: it is kept under it, and not in a checkout nested
+        inside it (a lead's under the lanes folder, say), holds state.json, and isn't closed. A record that names its
+        tracker parent must name this delivery."""
+        state, root = self.state_of(key, d).resolve(), self.root.resolve()
+        try:
+            state.relative_to(root)
+        except ValueError:
+            return False
+        if any((folder / ".git").exists() for folder in [state, *state.parents] if folder != root and
+               folder.is_relative_to(root)):
+            return False
+        if not (state / "state.json").is_file() or self.closed_here(key, d):
+            return False
+        parent = ((load_json(state / "state.json") or {}).get("meta") or {}).get("trackerParent")
+        return parent in (None, key)
+
+    def tracker_closed(self, key: str, d: dict) -> bool:
+        """Whether the binding's tracker snapshot, run for the delivery's own key, shows its parent completed or
+        canceled. Without a tracker snapshot, or when it fails or doesn't say, the delivery isn't known to be closed."""
+        asked = self.__dict__.setdefault("tracker_answers", {})  # each delivery's tracker is asked once per command
+        if key not in asked:
+            asked[key] = self.ask_tracker(key, d)
+        return asked[key]
+
+    def ask_tracker(self, key: str, d: dict) -> bool:
+        spec = (self.binding.get("state") or {}).get("trackerSnapshot")
+        if not spec:
+            return False
+        argv = expand_argv(spec["argv"], stateDirectory=str(self.state_of(key, d)), parent=key)
+        try:
+            taken = run(argv, cwd=self.root, check=False, timeout=int(spec.get("timeoutSeconds", 60)))
+            parent = json.loads(taken.stdout).get("parent") if taken.returncode == 0 else None
+        except (subprocess.TimeoutExpired, OSError, ValueError, AttributeError):
+            return False
+        return (isinstance(parent, dict) and parent.get("subject") == key
+                and parent.get("state") in ("completed", "canceled"))
+
+    def not_known_closed(self, files: dict[str, dict]) -> list[str]:
+        """The deliveries not known to be closed: no closed.json here, and no tracker snapshot showing the parent
+        closed. The tracker is asked whenever there is more than one delivery file."""
+        left = [key for key, d in files.items() if not self.closed_here(key, d)]
+        if len(files) > 1:
+            left = [key for key in left if not self.tracker_closed(key, files[key])]
+        return left
+
     def pick_delivery(self, required: bool) -> str | None:
-        keys = self.delivery_keys()
-        if len(keys) == 1:
-            return keys[0]
+        """The delivery a command without --delivery is for: the only delivery file; else the one whose record is
+        open in this checkout; else the one whose story branch this checkout is on; else the only one not known to be
+        closed. Otherwise it refuses, naming each delivery not known to be closed."""
+        files = self.delivery_files()
+        if len(files) == 1:
+            return next(iter(files))
+        here = [key for key, d in files.items() if self.open_here(key, d)]
+        if len(here) == 1:
+            return here[0]
         branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=self.root, check=False)
-        matches = []
-        for key in keys:
-            d = self.shelf.json(f"{self.deliveries_rel}/{key}.json") or {}
-            base = d.get("baseBranch") or self.binding_base
-            if branch == base or any(branch == self.branch_pattern.format(key=k) for k in d.get("stories", {})):
-                matches.append(key)
+        matches = [key for key, d in files.items()
+                   if any(branch == self.branch_pattern.format(key=k) for k in d.get("stories", {}))]
         if len(matches) == 1:
             return matches[0]
+        left = self.not_known_closed(files)
+        if len(left) == 1:
+            return left[0]
         if required:
-            raise Stop(f"can't tell which delivery this is (branch {branch}; deliveries: "
-                       f"{keys or 'none'}); pass --delivery KEY{self.base_hint()}")
+            named = (f"{', '.join(left)} aren't known to be closed, and no record of theirs is open here" if left
+                     else f"deliveries {', '.join(files) or 'none'}, none of them open")
+            raise Stop(f"can't tell which delivery this is (branch {branch}; {named}); pass --delivery KEY"
+                       f"{self.base_hint()}")
         return None
+
+    def missing_delivery(self, key: str) -> str:
+        """For a delivery file that is missing: whether the key is a story of a delivery, and which delivery is open."""
+        files = self.delivery_files()
+        owners = [other for other, d in files.items() if key in (d.get("stories") or {})]
+        said = (f"; {key} looks like a story key: it is a story of {', '.join(owners)}" if owners
+                else f"; {key} is no story of any delivery here either")
+        try:
+            default = self.pick_delivery(False)
+        except Stop:
+            default = None
+        if default:
+            said += f"; the open delivery is {default}: pass --delivery {default}"
+        else:
+            left = self.not_known_closed(files)
+            said += (f"; the deliveries not known to be closed are {', '.join(left)}" if left
+                     else "; no delivery here is open")
+        return said
 
     def load_delivery(self, key: str) -> None:
         path = self.deliveries / f"{key}.json"
         d = self.shelf.json(f"{self.deliveries_rel}/{key}.json")
         if d is None:
             raise Stop(f"{self.shelf.where(f'{self.deliveries_rel}/{key}.json')} is missing (lead-setup writes it)"
-                       f"{self.base_hint()}")
+                       f"{self.missing_delivery(key)}{self.base_hint()}")
         if d.get("schemaVersion") != "delivery-flow-delivery/1":
             raise Stop(f"{path}: schemaVersion must be delivery-flow-delivery/1")
         self.raw, self.delivery_path = d, path
@@ -610,12 +696,12 @@ class Config:
             raise Stop("the repository's configs disagree:\n  " + "\n  ".join(conflicts))
         self.sources["baseBranch"] = f"{path.name}" if base else "orchestration binding (base.ref)"
         self.base_ref = f"{self.remote}/{self.base_branch}"
+        self.state = self.state_of(key, d)
         if os.environ.get("DELIVERY_STATE"):
-            self.state, self.sources["state"] = Path(os.environ["DELIVERY_STATE"]), "DELIVERY_STATE"
+            self.sources["state"] = "DELIVERY_STATE"
         elif d.get("stateDirectory"):
-            self.state, self.sources["state"] = self.main / d["stateDirectory"], path.name
+            self.sources["state"] = path.name
         else:
-            self.state = self.lane_checkout(key) / self.state_rel
             self.sources["state"] = "the lead's checkout (laneCheckout with the delivery key) + the binding's state.directory"
         self.flow_log = self.state.parent / "flow-log"
         self.plan = Path(d["plan"])
@@ -2172,17 +2258,107 @@ def port_holders(port: int) -> list[tuple[int, str]]:
     return holders
 
 
+def short_command(command: str) -> str:
+    """A long command keeps its head (the program) and its tail (the arguments, which tell one server from another)."""
+    return command if len(command) <= 160 else f"{command[:40]} ... {command[-110:]}"
+
+
 def port_busy(port: int) -> str:
     """Why the in-app port can't be used: who listens on it, outside the lease, and how to release it."""
     holders = port_holders(port)
     if not holders:
         return f"something else is listening on {port}, outside the in-app lease (its process isn't visible here); stop it first"
-    # A long command keeps its head (the program) and its tail (the arguments, which tell one server from another).
-    short = lambda command: command if len(command) <= 160 else f"{command[:40]} ... {command[-110:]}"
-    named = ", ".join(f"pid {pid} ({short(command)})" for pid, command in holders)
+    named = ", ".join(f"pid {pid} ({short_command(command)})" for pid, command in holders)
     pids = " ".join(str(pid) for pid, _ in holders)
     return (f"something else is listening on {port}, outside the in-app lease: {named}. A build served by hand doesn't "
             f"hold the lease, so app-check can't use the port: stop it (kill {pids}) and run again")
+
+
+# How long the serve has to start listening.
+SERVE_READY_SECONDS = 20
+# How long a serve that lost its port to another listener is given to exit, so its refusal can name the exit, or to
+# take the port once that listener lets it go.
+SERVE_SETTLE_SECONDS = 5
+# Where the host can't name a port's listeners, how long the serve must stay running once the port answers to be taken
+# as the listener: a serve that lost the bind dies of it well within this.
+SERVE_UNNAMED_SECONDS = 2
+
+
+def serve_log(ia: dict) -> Path:
+    """Where the serve's output goes: beside the lease's lock, written by one holder at a time, as the check's spec is."""
+    lock = Path(expand(ia["lock"]))
+    return lock.with_name(lock.name + ".serve.log")
+
+
+def start_serve(ia: dict, dist: Path, port: int, lease: "Lease") -> subprocess.Popen:
+    """Start the serve adapter on `dist` under `lease` and wait until `port` answers from it. Refuses, having stopped
+    what it started, unless the listener is this serve's: a serve that loses the port to another listener (another run
+    on the same port, under a lease of its own) exits or never listens, and the port's answer is then someone else's."""
+    log = serve_log(ia)
+    with open(log, "w") as out:
+        server = subprocess.Popen(expand_argv(ia["serve"]["argv"], dir=str(dist), port=str(port)),
+                                  stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
+    try:
+        lease.track(server.pid)
+        ready = time.monotonic() + SERVE_READY_SECONDS
+        while time.monotonic() < ready:
+            if port_open(port) or server.poll() is not None:
+                break
+            time.sleep(0.2)
+        problem = serve_problem(server, port, log)
+    except BaseException:
+        stop_group(server)
+        raise
+    if problem:
+        stop_group(server)
+        raise Stop(problem)
+    return server
+
+
+def serve_problem(server: subprocess.Popen, port: int, log: Path) -> str | None:
+    """Why the listener on `port` isn't `server`'s, or None when it is: a listener in the serve's own process group
+    (its child, for a serve that runs its server as one), or, where the host can't name listeners, a serve that stays
+    running a moment after the port answers."""
+    def group(pid: int) -> int | None:
+        try:
+            return os.getpgid(pid)
+        except (ProcessLookupError, PermissionError):
+            return None
+
+    def output() -> str:
+        try:
+            tail = log.read_text(errors="replace").strip()[-600:]
+        except OSError:
+            tail = ""
+        return f"; its output is in {log}" + (f", ending:\n{tail}" if tail else "")
+
+    if not port_open(port):
+        if server.poll() is not None:
+            return f"the serve command exited with code {server.returncode} before it listened on port {port}" + output()
+        return f"the serve command didn't start listening on port {port}" + output()
+    holders = port_holders(port)
+    if any(group(pid) == server.pid for pid, _ in holders):
+        return None
+    if not holders:
+        settled = time.monotonic() + SERVE_UNNAMED_SECONDS
+        while server.poll() is None and time.monotonic() < settled:
+            time.sleep(0.1)
+        if server.poll() is None:
+            return None
+    # Give the serve a moment: it exits of the lost bind, so its refusal can name the exit, or it takes the port once
+    # the other listener lets it go, and is then this run's after all.
+    deadline = time.monotonic() + SERVE_SETTLE_SECONDS
+    while server.poll() is None and time.monotonic() < deadline:
+        holders = port_holders(port) or holders
+        if any(group(pid) == server.pid for pid, _ in holders):
+            return None
+        time.sleep(0.2)
+    named = ", ".join(f"pid {pid} ({short_command(command)})" for pid, command in holders) or "a process this host can't name"
+    state = (f"exited with code {server.returncode}" if server.poll() is not None
+             else f"is still running (pid {server.pid}) and isn't listening")
+    return (f"port {port} answered, but not from this run's serve: {named} took the port while the serve was starting, "
+            f"so the check would have run against that server. This run's serve {state}" + output() + ". Another run "
+            "using the same port under a lease of its own does this: give each its own port, or have them share one lock")
 
 
 class Lease:
@@ -2300,15 +2476,7 @@ def run_in_app(dist: Path, spec: dict, passthrough: list[str], owner: str, lock_
         spec_file.write_text(json.dumps(spec))
         if port_open(port):
             raise Stop(port_busy(port))
-        server = subprocess.Popen(expand_argv(ia["serve"]["argv"], dir=str(dist), port=str(port)),
-                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-        lease.track(server.pid)
-        for _ in range(100):
-            if port_open(port) or server.poll() is not None:
-                break
-            time.sleep(0.2)
-        if not port_open(port):
-            raise Stop("the serve command didn't start listening")
+        server = start_serve(ia, dist, port, lease)
         check = subprocess.Popen(expand_argv(ia["check"]["argv"], spec=str(spec_file), port=str(port), args=passthrough),
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
         lease.track(check.pid)
@@ -2855,8 +3023,8 @@ def require_authority(what: str) -> dict:
 def authority_text() -> str:
     c, granted = cfg(), authority()
     if not granted.get("push"):
-        return ("Lanes have no authority to push or open pull requests in this delivery. Commit on your branch and "
-                "tell the lead it is ready; the lead pushes it.")
+        return ("Lanes have no authority to push, open pull requests or mark one ready in this delivery. Commit on "
+                "your branch and tell the lead it is ready; the lead pushes it.")
     what = f"push your own `{c.branch_pattern.replace('{key}', '<key>')}` branch, with `{flow_command()} push <key>`"
     if granted.get("draftPullRequests"):
         what += f", and open its draft pull request into `{c.base_branch}`, with `{flow_command()} open-pr`"
@@ -3417,6 +3585,9 @@ POSTURE_FILE = ".agents/delivery-posture.json"
 POSTURE_SCHEMA = "delivery-posture/1"
 POSTURE_LIMIT_BYTES = 64 * 1024
 POSTURE_SECONDS = 15
+# Arrays and objects open at once, the top-level object being 1. Measured on the text before it is parsed, as the
+# harness's reader measures it, so no decoder's own limit, which differs by Python version, is what decides.
+POSTURE_MAX_DEPTH = 64
 # What Python's strip and JavaScript's trim remove, together: the two disagree, and both readers must not.
 POSTURE_BLANK = re.compile("[\t-\r\x1c-\x20\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*")
 # delivery-plan/1's caps and refusals, so what the record shows of a declaration can always go in the plan.
@@ -3444,13 +3615,42 @@ def posture_git(root: Path, args: list[str], seconds: int) -> subprocess.Complet
         return None
 
 
+def posture_nests_too_deep(text: str) -> bool:
+    """Whether more than POSTURE_MAX_DEPTH arrays and objects are open at once anywhere in ``text``, outside strings.
+    A string runs from an unescaped quote to the next, and inside one a backslash escapes exactly the next character."""
+    depth, in_string, escaped = 0, False, False
+    for char in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char in "[{":
+            depth += 1
+            if depth > POSTURE_MAX_DEPTH:
+                return True
+        elif char in "]}":
+            depth -= 1
+    return False
+
+
 def posture_of_bytes(raw: bytes) -> tuple[dict | None, str]:
     """A declaration's posture and reason, or None and what is wrong with it."""
     def constant(name: str) -> None:
         raise ValueError(f"{name} isn't JSON")
     try:
+        text = raw.decode("utf-8")
+    except ValueError:
+        return None, "it isn't valid UTF-8 JSON"
+    if posture_nests_too_deep(text):
+        return None, f"it nests deeper than {POSTURE_MAX_DEPTH} levels"
+    try:
         # Numbers as floats: a member is ignored whatever its size, as JSON.parse ignores it.
-        value = json.loads(raw.decode("utf-8"), parse_constant=constant, parse_int=float)
+        value = json.loads(text, parse_constant=constant, parse_int=float)
     except (ValueError, RecursionError):
         return None, "it isn't valid UTF-8 JSON"
     if not isinstance(value, dict):
@@ -3976,6 +4176,8 @@ def lead_plan(args) -> None:
         raise Stop(f"{', '.join(unknown)} isn't a story of {c.delivery}")
     planned_after = None
     record_finish = None
+    reword_finish = None
+    wording = None  # a finish line's (before, after) wording, recorded as its own change when its covers change too
     plan_text = None
     if new_story:
         # The whole story in one change: its plan heading, its delivery-file story carrying the reason its `added`
@@ -4029,24 +4231,39 @@ def lead_plan(args) -> None:
             del stories[key]
         planned_after = True
     elif args.kind == "finish":
-        if not args.finish or args.covers is None:
-            raise Stop("--kind finish takes --finish <id> and --covers <JSON>")
+        lines = raw.setdefault("finish", [])
+        line = next((item for item in lines if item["id"] == args.finish), None) if args.finish else None
+        # An existing line's wording alone may change: --text without --covers keeps what it covers.
+        if not args.finish or (args.covers is None and (line is None or args.text is None)):
+            raise Stop("--kind finish takes --finish <id> and --covers <JSON>; an existing line's --text alone "
+                       "rewords it")
         try:
-            covers = json.loads(args.covers)
+            covers = json.loads(args.covers) if args.covers is not None else plan_covers(line)
         except ValueError:
             raise Stop("--covers must be JSON, such as {\"criteria\": \"all\", \"proofs\": [\"merged\"]}")
-        lines = raw.setdefault("finish", [])
-        line = next((item for item in lines if item["id"] == args.finish), None)
         if line is None:
             if not args.text:
                 raise Stop(f"finish line {args.finish} is new: give its --text")
             line = {"id": args.finish, "text": args.text, **({"label": args.label} if args.label else {})}
             lines.append(line)
             record_finish = {"id": args.finish, "text": args.text, "met": False}
+            change.update(after=covers)
         else:
-            change["before"] = plan_covers(line)
+            reworded = args.text is not None and args.text != line["text"]
+            if not reworded and covers == plan_covers(line):
+                raise Stop(f"finish line {args.finish} already reads so and covers that: nothing to change")
+            # What changed is recorded: what it covers, and its wording when that moved, as a change of its own.
+            if covers != plan_covers(line):
+                change.update(before=plan_covers(line), after=covers)
+                if reworded:
+                    wording = (line["text"], args.text)
+            else:
+                change.update(before=line["text"], after=args.text)
+            if reworded:
+                reword_finish = (args.finish, args.text)
+                line["text"] = args.text
         line.update(covers=covers, at=now())
-        change.update(finish=args.finish, after=covers)
+        change.update(finish=args.finish)
     with plan_lock(c):
         # A delivery started before its criteria has no snapshot yet: it is taken of the plan before this change.
         if (c.state / "state.json").exists() and not any(entry["type"] == "snapshot" for entry in read_plan_log(c)):
@@ -4068,13 +4285,21 @@ def lead_plan(args) -> None:
             raise
         git("add", str(c.delivery_path), *([str(plan_path)] if plan_text is not None else []), cwd=root)
         entry = record_plan_change(c, change)
-        git("commit", "-q", "-m", f"{c.delivery}: plan change {entry['id']} ({'added story' if new_story else args.kind} "
+        ids = entry["id"]
+        if wording is not None:
+            ids += f" and {record_plan_change(c, {**change, 'before': wording[0], 'after': wording[1]})['id']}"
+        git("commit", "-q", "-m", f"{c.delivery}: plan change {ids} ({'added story' if new_story else args.kind} "
             f"{', '.join(change['subjects']) or change.get('finish', '')})".rstrip(), cwd=root)
         if planned_after is not None:  # as it stands now: a story registered since the check above stays planned
             patch_from(lambda doc: {"planned": [p for p in doc["state"].get("planned", [])
                                                 if p["subject"] not in change["subjects"]]}, "the plan change's planned work")
         if record_finish is not None:
             patch_from(lambda doc: {"finish": [*doc["state"]["finish"], record_finish]}, "the new finish line")
+        if reword_finish is not None and (c.state / "state.json").exists():  # the record's line reads as the plan's
+            ident, text = reword_finish
+            patch_from(lambda doc: None if all(line["id"] != ident or line["text"] == text for line in doc["state"]["finish"])
+                       else {"finish": [{**line, "text": text} if line["id"] == ident else line
+                                        for line in doc["state"]["finish"]]}, "the reworded finish line")
         if new_story and (c.state / "state.json").exists():
             # Planned here, so the rebuild's registration finds it held and records no second `added` change.
             key = change["subjects"][0]
@@ -4088,7 +4313,7 @@ def lead_plan(args) -> None:
                 state_tool("journal", "--kind", "decision.recorded", "--subject", key, "--summary",
                            f"{key} added to the delivery as planned work for {c.lane_of(key)}")
         rebuild_plan(c, mark=True)
-    print(f"recorded {entry['id']}: {args.kind} {', '.join(change['subjects']) or change.get('finish', '')}".rstrip())
+    print(f"recorded {ids}: {args.kind} {', '.join(change['subjects']) or change.get('finish', '')}".rstrip())
     print(f"committed the delivery file{' and the plan' if plan_text is not None else ''}; push it so lanes see it: "
           f"git push {c.remote} HEAD:{c.base_branch}")
 
@@ -4445,8 +4670,9 @@ def ready_problem(c) -> str | None:
     """A merge step that refuses drafts, with no grant for the lead to mark them ready at acceptance."""
     if c.forge.get("mergeNeedsReady") and not (c.raw.get("authority") or {}).get("readyPullRequests"):
         return (f"forge.mergeNeedsReady says the merge step refuses a draft, but the delivery grants no "
-                f"readyPullRequests; fix: add \"readyPullRequests\": true to `authority` in {c.delivery_where}, so "
-                "lead-accept marks each draft ready, or remove forge.mergeNeedsReady")
+                f"readyPullRequests; fix: add \"readyPullRequests\": true to `authority` in {c.delivery_where} (lead-setup "
+                "--force --authority push,draftPullRequests,readyPullRequests writes it), so lead-accept marks each draft "
+                "ready, or remove forge.mergeNeedsReady")
     return None
 
 
@@ -4503,11 +4729,13 @@ def patch_from(compute, what: str, writer: str = "lead", attempts: int = PATCH_A
 
 
 LANE_GRANTS = ("push", "draftPullRequests")
+# The lead's own grant, beside the lanes': lead-accept marks a draft ready under it. No lane reads it.
+LEAD_GRANTS = ("readyPullRequests",)
 
 
 def lanes_grant(args, existing: dict | None) -> dict | None:
-    """The operator's grant to lanes, as lead-setup is told it; None when lanes get none. A file drafted again keeps
-    the grant it holds unless told otherwise."""
+    """The operator's grant, as lead-setup is told it: the lanes' push and draft pull requests, and the lead's
+    readyPullRequests. None when there is none. A file drafted again keeps the grant it holds unless told otherwise."""
     if args.authority and args.no_authority:
         raise Stop("pass --authority or --no-authority, not both")
     if args.no_authority:
@@ -4516,19 +4744,19 @@ def lanes_grant(args, existing: dict | None) -> dict | None:
         if (existing or {}).get("authority"):
             return existing["authority"]
         raise Stop("lead-setup needs the lanes' authority grant: ask the operator what lanes may do on the forge, then "
-                   "pass --authority push,draftPullRequests --granted-by WHO (either or both grants), or --no-authority "
+                   "pass --authority push,draftPullRequests --granted-by WHO (either or both grants; add "
+                   "readyPullRequests, the lead's, when lead-accept marks drafts ready), or --no-authority "
                    "when lanes get none and hand their branches to the lead")
     names = [name.strip() for name in args.authority.split(",") if name.strip()]
-    if "readyPullRequests" in names:
-        raise Stop("lanes are never granted readyPullRequests: marking a pull request ready is the lead's, at acceptance")
-    unknown = [name for name in names if name not in LANE_GRANTS]
+    unknown = [name for name in names if name not in (*LANE_GRANTS, *LEAD_GRANTS)]
     if unknown or not names:
-        raise Stop(f"--authority takes {' and '.join(LANE_GRANTS)}, comma-separated, not {', '.join(unknown) or 'nothing'}")
+        raise Stop(f"--authority takes {', '.join(LANE_GRANTS)} (the lanes') and {', '.join(LEAD_GRANTS)} (the lead's, "
+                   f"to mark a draft ready at acceptance), comma-separated, not {', '.join(unknown) or 'nothing'}")
     if "draftPullRequests" in names and "push" not in names:
         raise Stop("draftPullRequests needs push: a lane opens its draft pull request from the branch it pushed")
     if not args.granted_by:
         raise Stop("--authority needs --granted-by: who granted it")
-    return {**{name: True for name in LANE_GRANTS if name in names}, "grantedBy": args.granted_by,
+    return {**{name: True for name in (*LANE_GRANTS, *LEAD_GRANTS) if name in names}, "grantedBy": args.granted_by,
             "grantedOn": args.granted_on or datetime.date.today().isoformat()}
 
 
@@ -7534,13 +7762,7 @@ def adapter_contract(ia: dict, lease: "Lease", say) -> list[str]:
         try:
             if port_open(ia["port"]):
                 raise Stop(port_busy(ia["port"]))
-            server = subprocess.Popen(expand_argv(ia["serve"]["argv"], dir=str(site), port=str(ia["port"])),
-                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-            lease.track(server.pid)
-            for _ in range(100):
-                if port_open(ia["port"]):
-                    break
-                time.sleep(0.2)
+            server = start_serve(ia, site, ia["port"], lease)
             busy = '[aria-busy="true"]'
             loaded = "document.querySelector('#state').textContent === 'loaded'"
             hold = {"holds": ["/api/one$"], "fails": [], "clicks": [], "for": busy, "wait": 300,
@@ -8307,7 +8529,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--context-section", action="append"); p.add_argument("--force", action="store_true")
     p.add_argument("--approvals-section", help="draft approvals from this plan section's list")
     p.add_argument("--out-of-scope-section", help="draft outOfScope from this plan section's list")
-    p.add_argument("--authority", help="the operator's grant to lanes: push,draftPullRequests (either or both)")
+    p.add_argument("--authority", help="the operator's grant: push,draftPullRequests for lanes (either or both), and "
+                   "readyPullRequests for the lead")
     p.add_argument("--granted-by", help="who granted --authority"); p.add_argument("--granted-on", help="default: today")
     p.add_argument("--no-authority", action="store_true", help="lanes get no grant, and hand their branches to the lead")
     p.add_argument("--review-when", choices=tracker_publisher.REVIEW_WHEN,

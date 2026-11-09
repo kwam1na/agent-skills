@@ -50,7 +50,7 @@ Two lanes. Lane 1 holds the run-delivery chain. Lane 2 holds the tracker module 
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | V26-3286, V26-3273, V26-3325, V26-3324 | `skills/run-delivery/`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_plan_review.py`, `docs/solutions/`, `provenance.lock.json` for `run_delivery.py`'s digest, and `catalog.json` and `profiles/*.json` only if an output is added |
+| 1 | 1 | V26-3286, V26-3273, V26-3325, V26-3324, V26-3330 | `skills/run-delivery/`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_plan_review.py`, `docs/solutions/`, `provenance.lock.json` for `run_delivery.py`'s digest, and `catalog.json` and `profiles/*.json` only if an output is added |
 | 1 | 2 | V26-3274, V26-3292, V26-3312, V26-3316, V26-3328 | `tests/test_run_delivery_tracker.py`, `tests/test_own_deliveries.py`, `tests/test_delivery_views_render.py`, `tests/test_validate.py` |
 
 **Moving ownership.** `provenance.lock.json` belongs to lane 1, the only lane that changes a listed output. If lane 2 finds it needs a file
@@ -163,6 +163,16 @@ records included; it passes in a clean worktree). Test-first: a row green while 
 and red when validation writes a tracked or corpus file; then the digest leaves ignored paths out. A search of `tests/` for other
 whole-checkout scans of ignored live state, each fixed or recorded as none. Files: `tests/test_validate.py`, and any other test file the
 search names through the lead. Sensors: `tests/test_validate.py` from a checkout with a live record changing, `tests.test_linear_qualification`.
+
+### V26-3330. adapter-test and app-check accept another run's server on a shared port
+
+Lane 1 (lead's addition, 2026-11-09, under the no-deferrals ruling: the adoption-guide case's `Connection refused` in two deliveries'
+`fullHealth`, which lane 1 traced to concurrent suites sharing the guide binding's fixed `inApp.port` 47613). `adapter_contract` and
+`run_in_app` accept any listener after their ready-wait, so a serve that lost the bind dies silently and the run tests another run's server.
+Both refuse unless their own serve still runs, naming its exit and stderr tail; the guide case takes a free port through a new pinned
+substitution; a two-run race row is red before and green after for both. Files: lane 1's (`run_delivery.py`, `references/adopting.md`,
+`tests/test_run_delivery.py`, the lock). Sensors: `RunDeliveryAdoptionGuideTests`, the in-app rows, the two-run race,
+`tests.test_linear_qualification`.
 
 ## Execution posture
 

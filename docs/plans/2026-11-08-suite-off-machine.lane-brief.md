@@ -34,7 +34,7 @@ assemble briefs, round files or records by hand, and don't edit what they write.
 
 | Lane | Stories | Owns |
 | --- | --- | --- |
-| lane-1 | V26-3286, V26-3273, V26-3324, V26-3325 | `skills/run-delivery/*`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_plan_review.py`, `docs/solutions/*`, `provenance.lock.json`, `catalog.json`, `profiles/*` |
+| lane-1 | V26-3286, V26-3273, V26-3324, V26-3325, V26-3330 | `skills/run-delivery/*`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_plan_review.py`, `docs/solutions/*`, `provenance.lock.json`, `catalog.json`, `profiles/*` |
 | lane-2 | V26-3274, V26-3292, V26-3312, V26-3316, V26-3328 | `tests/test_run_delivery_tracker.py`, `tests/test_own_deliveries.py`, `tests/test_delivery_views_render.py`, `skills/orchestrate-work/scripts/delivery_state.py`, `tests/test_orchestration_state.py`, `tests/test_validate.py` |
 
 | Story | Label | Pinned request patterns | In-app checks its hand-off needs |
@@ -48,6 +48,7 @@ assemble briefs, round files or records by hand, and don't edit what they write.
 | V26-3324 | V26-3324 | - | none |
 | V26-3325 | V26-3325 | - | none |
 | V26-3328 | V26-3328 | - | none |
+| V26-3330 | V26-3330 | - | none |
 
 ## The focused lane profile
 
