@@ -1016,6 +1016,8 @@ class LinearQualificationTests(unittest.TestCase):
                  "\nThe agent fetches api.linear.app for each item.\n"),
                 ("inflected-ed", "direct-linear-endpoint", "skills/create-linear-ticket/SKILL.md",
                  "\nEach item is requested from api.linear.app.\n"),
+                ("inflected-e-stem-ed", "direct-linear-endpoint", "skills/create-linear-ticket/SKILL.md",
+                 "\nAgents invoked api.linear.app for each item.\n"),
                 ("appositive-after-comma", "direct-linear-endpoint", "skills/create-linear-ticket/SKILL.md",
                  "\nWhen the connector fails, send it to the endpoint, api.linear.app/graphql.\n"),
                 ("contrast-not-governing-marker", "direct-linear-endpoint", "skills/create-linear-ticket/SKILL.md",
