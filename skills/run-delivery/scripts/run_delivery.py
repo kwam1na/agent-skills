@@ -8161,7 +8161,9 @@ class Doctor:
 
     def tracker_token(self):
         argv = (((self.binding or {}).get("state") or {}).get("trackerSnapshot") or {}).get("argv") or []
-        adapter = tracker_publisher.settings(self.root, self.c.flow_raw, self.binding or {}).get("adapter") or {}
+        # Without a readable configuration there is no adapter, only the snapshot's variables.
+        adapter = (tracker_publisher.settings(self.root, self.c.flow_raw, self.binding or {}).get("adapter")
+                   if self.c else None) or {}
         own = [adapter[field] for field in ("tokenEnv", "userEnv") if adapter.get(field)]
         if not argv and not own:
             return self.not_applicable("the binding declares no tracker snapshot")

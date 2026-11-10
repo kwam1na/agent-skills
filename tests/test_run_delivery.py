@@ -6681,6 +6681,9 @@ class RunDeliveryDoctorTests(unittest.TestCase):
             ("forge find", "missing", "export FX_FORGE_TOKEN", lambda: (edit_json(conf_path, lambda c: c.update(
                 forge={"adapter": "bitbucket", "repository": "ws/repo", "tokenEnv": "FX_FORGE_TOKEN"})), None)),
             ("tracker snapshot token", "missing", "export FX_TRACKER_TOKEN", lambda: env(FX_TRACKER_TOKEN=None)),
+            # The tracker adapter's own variable, which no snapshot names.
+            ("tracker snapshot token", "missing", "export FX_LINEAR_KEY", lambda: (edit_json(conf_path, lambda c: c[
+                "tracker"].update(adapter="linear", tokenEnv="FX_LINEAR_KEY")), None)),
             ("in-app adapters", "wrong", "install them", lambda: (edit_json(conf_path, lambda c: c["inApp"]["check"].update(
                 argv=["no-such-check-program"])), None)),
             ("in-app adapters", "wrong", "make it writable", lambda: (chmod_locked(), None)),

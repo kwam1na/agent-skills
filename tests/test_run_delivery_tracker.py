@@ -2182,6 +2182,26 @@ class FakeJiraBindTests(unittest.TestCase):
         self.assertEqual(stalled, [], "the bind looked up a loopback name")
 
 
+# Each failure class, once: the GraphQL operation it hits, the adapter operation that sends it, the httpStatus
+# tracker_linear.py reports, and the publisher's outcome. "unreachable" is the endpoint refusing connections.
+LINEAR_FAILURES = [
+    # (label, rule, adapter operation, httpStatus, publisher outcome)
+    ("HTTP 429", dict(op="CommentCreate", status=429), "comment", 429, "transient"),
+    ("HTTP 502", dict(op="CommentCreate", status=502), "comment", 502, "transient"),
+    ("another 4xx: HTTP 404", dict(op="CommentCreate", status=404), "comment", 404, "failed"),
+    ("another 4xx: HTTP 400", dict(op="CommentCreate", status=400), "comment", 400, "failed"),
+    ("unreachable", None, "comment", None, "transient"),
+    ("rate limit at 200", dict(op="CommentCreate", code="RATELIMITED"), "comment", 429, "transient"),
+    ("rate limit at HTTP 400", dict(op="CommentCreate", status=400, code="RATELIMITED"), "comment", 429, "transient"),
+    ("authentication at 200", dict(op="CommentCreate", code="AUTHENTICATION_ERROR"), "comment", 401, "transient"),
+    ("forbidden at 200, one ticket", dict(op="CommentCreate", code="FORBIDDEN"), "comment", 403, "failed"),
+    ("forbidden at 200, the whole site", dict(op="CommentCreate", code="FORBIDDEN"), "comment", 403, "transient"),
+    ("another error at 200", dict(op="CommentCreate", code="INVALID_INPUT"), "comment", 400, "failed"),
+    ("status with an error at 200", dict(op="Status", code="RATELIMITED"), "status", 429, "transient"),
+    ("transition to an unknown state", dict(op="IssueUpdate", code="INVALID_INPUT"), "transition", 400, "failed"),
+]
+
+
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
 class LinearAdapterContractTests(unittest.TestCase):
     """`tracker_linear.py` against the fake Linear: each operation, each failure class, and the token kept out."""
@@ -2211,7 +2231,7 @@ class LinearAdapterContractTests(unittest.TestCase):
         path.write_text(text, encoding="utf-8")
         return str(path)
 
-    def fail(self, op: str, status: int | None = None, code: str | None = None, ticket: str | None = None,
+    def inject(self, op: str, status: int | None = None, code: str | None = None, ticket: str | None = None,
              times: int = 1, message: str | None = None) -> None:
         self.store["failures"].append({"op": op, "ticket": ticket, "status": status, "code": code, "times": times,
                                        "message": message})
@@ -2280,32 +2300,22 @@ class LinearAdapterContractTests(unittest.TestCase):
                 self.assertEqual(self.adapter("markers", "--ticket", "EP-2")[1], {"markers": ["m:long"]})
 
     def test_each_failure_class_maps_to_its_http_status(self) -> None:
-        body = self.body("An update")
-        comment = ("comment", "--ticket", "EP-2", "--marker", "m", "--body-file", body)
-        rows = [
-            ("HTTP 429", dict(op="CommentCreate", status=429), comment, 429),
-            ("HTTP 503", dict(op="CommentCreate", status=503), comment, 503),
-            ("HTTP 404", dict(op="CommentCreate", status=404), comment, 404),
-            ("rate limit at 200", dict(op="CommentCreate", code="RATELIMITED"), comment, 429),
-            ("rate limit at 400", dict(op="CommentCreate", status=400, code="RATELIMITED"), comment, 429),
-            ("authentication at 200", dict(op="CommentCreate", code="AUTHENTICATION_ERROR"), comment, 401),
-            ("forbidden at 200", dict(op="CommentCreate", code="FORBIDDEN"), comment, 403),
-            ("another error at 200", dict(op="CommentCreate", code="INVALID_INPUT"), comment, 400),
-            ("status with errors", dict(op="Status", code="RATELIMITED"), ("status", "--ticket", "EP-2"), 429),
-            ("a mutation not done", None, ("transition", "--ticket", "EP-2", "--name", "No such state",
-                                           "--marker", "m"), 400),
-        ]
-        for label, rule, args, status in rows:
+        args = {"comment": ("comment", "--ticket", "EP-2", "--marker", "m", "--body-file", self.body("An update")),
+                "status": ("status", "--ticket", "EP-2"),
+                "transition": ("transition", "--ticket", "EP-2", "--name", "In Review", "--marker", "m")}
+        for label, rule, operation, status, _ in LINEAR_FAILURES:
             with self.subTest(label):
                 self.store["failures"] = []
+                self.store["issues"]["EP-2"]["status"] = "In Progress"
                 if rule:
-                    self.fail(**rule)
+                    self.inject(**rule, ticket="EP-2")
                 before = len(self.store["issues"]["EP-2"]["comments"])
-                code, answer = self.adapter(*args)
+                code, answer = self.adapter(*args[operation], site="http://127.0.0.1:9" if rule is None else None)
                 self.assertEqual((code, answer["httpStatus"]), (3, status), answer)
                 self.assertEqual(len(self.store["issues"]["EP-2"]["comments"]), before, "no success, nothing posted")
-        code, answer = self.adapter("status", "--ticket", "EP-2", site="http://127.0.0.1:9")
-        self.assertEqual((code, answer["httpStatus"]), (3, None), "an unreachable endpoint has no status")
+                self.assertEqual(self.store["issues"]["EP-2"]["status"], "In Progress")
+        code, answer = self.adapter("transition", "--ticket", "EP-2", "--name", "No such state", "--marker", "m")
+        self.assertEqual((code, answer["httpStatus"]), (3, 400), "a state the team doesn't have is refused unsent")
 
     def test_the_token_comes_only_from_its_variable_and_is_never_printed(self) -> None:
         requests = self.store["requests"]
@@ -2317,7 +2327,7 @@ class LinearAdapterContractTests(unittest.TestCase):
         self.assertEqual((code, answer["status"]), (0, "In Progress"), "a different --token-env name")
         code, answer = self.adapter("status", "--ticket", "EP-2", env={"FX_LINEAR": "Bearer " + LINEAR_TOKEN})
         self.assertEqual((code, answer["httpStatus"]), (3, 401), "the key goes as it is, never as a bearer token")
-        self.fail("CommentCreate", code="INVALID_INPUT", message=f"bad key {LINEAR_TOKEN} and lin_api_someOtherKey9")
+        self.inject("CommentCreate", code="INVALID_INPUT", message=f"bad key {LINEAR_TOKEN} and lin_api_someOtherKey9")
         code, answer = self.adapter("comment", "--ticket", "EP-2", "--marker", "m", "--body-file", self.body("x"))
         self.assertEqual(answer["httpStatus"], 400)
         self.assertIn("[redacted]", answer["error"])
@@ -2359,7 +2369,7 @@ class LinearPublisherTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         return out
 
-    def fail(self, d: Delivery, op: str, status: int | None = None, code: str | None = None,
+    def inject(self, d: Delivery, op: str, status: int | None = None, code: str | None = None,
              ticket: str | None = None, times: int = 1) -> None:
         with d.backend.edit() as store:
             store["failures"].append({"op": op, "ticket": ticket, "status": status, "code": code, "times": times})
@@ -2395,40 +2405,36 @@ class LinearPublisherTests(unittest.TestCase):
         self.assertEqual(d.needs_you(), [])
 
     def test_each_failure_class_has_its_publisher_outcome(self) -> None:
-        d = self.delivery()
-        d.ticket("EP-2")
-        d.ticket("EP-3")
-        transient = [("HTTP 429", dict(op="CommentCreate", status=429)),
-                     ("HTTP 503", dict(op="CommentCreate", status=503)),
-                     ("rate limit at 200", dict(op="CommentCreate", code="RATELIMITED")),
-                     ("authentication at 200", dict(op="CommentCreate", code="AUTHENTICATION_ERROR")),
-                     ("forbidden site-wide", dict(op="CommentCreate", code="FORBIDDEN"))]
-        for label, rule in transient:
+        for label, rule, operation, status, outcome in LINEAR_FAILURES:
             with self.subTest(label):
+                moves = {"lead": {"lease.granted": ["In Review"]}} if operation == "transition" else None
+                d = self.delivery(moves)
+                d.ticket("EP-2", status="In Progress")
                 entry = d.entry("lease.granted", "EP-2", label)
-                self.fail(d, ticket="EP-2", **rule)
-                if label == "forbidden site-wide":
-                    self.fail(d, "Status", code="FORBIDDEN", ticket=EPIC)
+                if rule is None:
+                    d.unreachable()
+                else:
+                    self.inject(d, ticket="EP-2", times=1 if outcome == "transient" else -1, **rule)
+                if label.endswith("the whole site"):
+                    self.inject(d, "Status", code="FORBIDDEN", ticket=EPIC)
                 code, out = d.publish()
-                self.assertEqual(code, 1, out)
-                self.assertEqual(d.lines(entry["id"]), [], "no ledger line, success or otherwise")
-                self.assertTrue([item for item in d.needs_you() if item["holding"]])
-                self.published(d)
-                self.assertEqual(d.outcomes(entry["id"]), ["comment"], "the next run retries from there")
-        permanent = [("forbidden for one ticket", dict(op="CommentCreate", code="FORBIDDEN")),
-                     ("another error at 200", dict(op="CommentCreate", code="INVALID_INPUT")),
-                     ("another 4xx", dict(op="CommentCreate", status=404))]
-        for label, rule in permanent:
-            with self.subTest(label):
-                entry = d.entry("lease.granted", "EP-3", label)
-                self.fail(d, ticket="EP-3", times=-1, **rule)
-                self.published(d)
-                self.assertEqual(d.outcomes(entry["id"]), ["failed"])
-                shown = [item["text"] for item in d.needs_you()
-                         if not item["holding"] and f"journal entry {entry['id']} " in item["text"]]
-                self.assertEqual(len(shown), 1, d.needs_you())
-                with d.backend.edit() as store:
-                    store["failures"] = []
+                if outcome == "transient":
+                    self.assertEqual(code, 1, out)
+                    self.assertEqual(d.lines(entry["id"]), [], "no ledger line, success or otherwise")
+                    self.assertTrue([item for item in d.needs_you() if item["holding"]])
+                    d.reachable()
+                    self.published(d)
+                    self.assertEqual(d.outcomes(entry["id"])[-1], "comment", "the next run retries from there")
+                    self.assertEqual(len(d.comments("EP-2")), 1)
+                else:
+                    self.assertEqual(code, 0, out)
+                    self.assertEqual(d.outcomes(entry["id"])[-1], "failed")
+                    self.published(d)
+                    self.assertEqual(d.outcomes(entry["id"])[-1], "failed", "never retried")
+                    shown = [item for item in d.needs_you()
+                             if not item["holding"] and f"journal entry {entry['id']} " in item["text"]]
+                    self.assertEqual(len(shown), 1, d.needs_you())
+                    self.assertEqual(d.comments("EP-2"), [])
 
     def test_a_failure_between_a_moves_two_calls_is_rerun_to_a_ledger_that_matches_linear(self) -> None:
         for failing in ("IssueUpdate", "CommentCreate"):
@@ -2438,7 +2444,7 @@ class LinearPublisherTests(unittest.TestCase):
                 entry = d.entry("lane.assigned", "EP-2", lane="lane-1")
                 d.lane_start("EP-2")
                 # The first CommentCreate is the move's marker: the state update has already been made.
-                self.fail(d, failing, status=503, ticket="EP-2")
+                self.inject(d, failing, status=503, ticket="EP-2")
                 code, out = d.publish()
                 self.assertEqual(code, 1, out)
                 self.assertEqual(d.lines(entry["id"]), [])
@@ -2515,7 +2521,7 @@ class LinearPublisherTests(unittest.TestCase):
         d.entry("lane.assigned", "EP-2", lane="lane-1")
         d.lane_start("EP-2")
         d.entry("candidate.handed", "EP-2")
-        self.fail(d, "CommentCreate", code="RATELIMITED", ticket="EP-2")
+        self.inject(d, "CommentCreate", code="RATELIMITED", ticket="EP-2")
         outputs = [d.publish()[1], d.publish()[1]]
         d.entry("candidate.stopped", "EP-2")
         with d.backend.edit() as store:
