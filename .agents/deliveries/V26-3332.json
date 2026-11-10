@@ -31,14 +31,24 @@
         "docs/solutions/*",
         "catalog.json",
         "profiles/*",
-        "provenance.lock.json"
+        "provenance.lock.json",
+        "scripts/validate-registry.py",
+        "scripts/build-release.py",
+        "tests/test_registry.py",
+        "tests/test_delivery_views_snapshots.py",
+        "tests/test_delivery_views_render.py",
+        "tests/test_core_boundary.py",
+        "tests/test_review_bound_corpus.py"
       ]
     },
     "lane-2": {
       "owns": [
         "scripts/qualify-linear.py",
         "tests/test_linear_qualification.py",
-        "docs/linear-connector-check.md"
+        "docs/linear-connector-check.md",
+        "README.md",
+        "tests/test_provider_qualification.py",
+        "tests/test_qualification.py"
       ]
     }
   },
