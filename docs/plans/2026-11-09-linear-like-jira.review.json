@@ -1,0 +1,156 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "writtenBy": "run-delivery plan-review",
+  "plan": "docs/plans/2026-11-09-linear-like-jira.md",
+  "planSha256": "8b0bf7dd0ff662824609a57d2b3859437c976812f0bab3f7814e077fdf79fc8e",
+  "planCommit": "c50e06ddb3f7e65d04ea45fcba1066d5083beac1",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": [
+    "lens.outcome-correctness",
+    "lens.adversarial-testing"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "candidate": "6e36d5aab9248ce13573a7204b5341f7386c616d",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-10T01:23:57.586283Z",
+      "finishedAt": "2026-11-10T01:27:45.198089Z",
+      "open": [
+        "outcome-correctness-r1-1",
+        "outcome-correctness-r1-2",
+        "outcome-correctness-r1-3",
+        "outcome-correctness-r1-4",
+        "outcome-correctness-r1-5",
+        "outcome-correctness-r1-6",
+        "outcome-correctness-r1-7",
+        "adversarial-testing-r1-1",
+        "adversarial-testing-r1-2",
+        "adversarial-testing-r1-3",
+        "adversarial-testing-r1-4",
+        "adversarial-testing-r1-5",
+        "adversarial-testing-r1-6",
+        "adversarial-testing-r1-7"
+      ]
+    },
+    {
+      "round": 2,
+      "candidate": "6d696b5606505704df0f6baa131b6c26b859e5b1",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-10T01:29:05.655085Z",
+      "finishedAt": "2026-11-10T01:30:47.217337Z",
+      "open": [
+        "outcome-correctness-r2-1",
+        "outcome-correctness-r2-2",
+        "outcome-correctness-r2-3",
+        "adversarial-testing-r2-1",
+        "adversarial-testing-r2-2",
+        "adversarial-testing-r2-3"
+      ]
+    },
+    {
+      "round": 3,
+      "candidate": "c50e06ddb3f7e65d04ea45fcba1066d5083beac1",
+      "outcome": "aligned",
+      "startedAt": "2026-11-10T01:31:20.158550Z",
+      "finishedAt": "2026-11-10T01:33:28.610181Z",
+      "open": []
+    }
+  ],
+  "reviews": [
+    {
+      "lens": "lens.outcome-correctness",
+      "round": 3,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.outcome-correctness",
+        "subjectRef": "linear-like-jira.plan",
+        "candidateRef": "c50e06ddb3f7e65d04ea45fcba1066d5083beac1",
+        "round": 3,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [
+          {
+            "id": "outcome-correctness-r2-1",
+            "state": "fixed",
+            "resolution": "Adopted as written. Decision 3 now says that AC3's `handled` is met by the existing `skip` outcome, with the status found and the reason 'already <status>: made by someone else', because `handled` means 'not offered, make it by hand' (config.md). The lead records that reading on V26-3269 under the operator's 2026-11-09 grant before the story is reviewed."
+          },
+          {
+            "id": "outcome-correctness-r2-2",
+            "state": "fixed",
+            "resolution": "Adopted as written. Authentication maps to 401 and forbidden to 403, and classify() is unchanged. Rate limits and authentication errors are transient, a forbidden answer is decided by site_refuses() as for Jira, and all other errors are a permanent `failed`. This matches TRANSIENT = (401, 409, 423, 429) and classify()'s 403 branch in tracker_publisher.py."
+          },
+          {
+            "id": "outcome-correctness-r2-3",
+            "state": "fixed",
+            "resolution": "Adopted as written. Decision 7 now runs the check in one disposable team and reads AC3 as no open entity left. The cleanup is confirmed by a marker search that finds only canceled issues, and the lead records that reading on V26-3083 under the operator's grant."
+          }
+        ],
+        "evidence": [
+          "Reviewed tree SHA 41fb020c1fc8ca4c27a935c2a2ae41123b18286e at HEAD c50e06ddb3f7e65d04ea45fcba1066d5083beac1. The start identity check passed (`git rev-parse HEAD^{tree}` matched and `git status --porcelain` was empty), and the same checks passed again at the end. No probes or mutants were made, and no file was changed.",
+          "Delta derived with `git diff 6d696b5606505704df0f6baa131b6c26b859e5b1..c50e06ddb3f7e65d04ea45fcba1066d5083beac1`. It changes one file, docs/plans/2026-11-09-linear-like-jira.md (+27/-13), in five places: Decision 2's Errors and Moves bullets, Decision 3's AC3 reading, Decision 6's trusted list of Linear skill ids, Decision 7's AC3 reading, and Decision 8's journalThrough row with the pre-switch ack. It also adjusts the matching V26-3269 and V26-3097 rows.",
+          "Re-check of the carried findings: the three open round-2 findings, r2-1, r2-2 and r2-3, were each adopted as their approval conditions state. The round-1 findings closed in round 2 and remain resolved in this revision, so they are not listed in resolvedFindings.",
+          "Delta review, Decision 2 Moves: the new `offered` order (triage, backlog, unstarted, started, completed, canceled, with completed and canceled offering none) lets In Progress move to In Review and Done, and the row now includes that allow side. A Done ticket offers no transitions, so move() records a replayed start as `handled` (not offered) and never moves it back. This matches what Decision 8 now asserts.",
+          "Delta review, Decision 6: the Linear skill ids are a trusted constant, not read from the candidate's catalog, so a coordinated catalog and profile move can no longer redefine the delta. That closes the bypass, and the qualifier names the missing skill.",
+          "Delta review, Decision 8: the journalThrough and journalThrough + 1 row proves both sides of the seeding boundary. The pre-switch drain and ack resolve the round-2 P3 note about updates posted by hand but not yet acked.",
+          "The round-2 P3 note about the `triage` type is resolved: Decision 2 now places triage first in the order.",
+          "No new P0 or P1 findings in the delta. Declined: I raised no finding against the `handled` Needs-you item for a replayed start on a Done ticket. It is an accurate 'not offered' signal in a corner case that seeding already narrows, not a failure.",
+          "Model class: Claude Opus 5.5 (claude-opus-5-5), run as a native subagent. The host exposes no progress or permission signals to this lens, a limitation recorded here.",
+          "Realization basis: host-convention.",
+          "The brief scopes no checks for a plan review, so none were run.",
+          "Approval conditions: this round raises no findings, so there are none to state."
+        ]
+      },
+      "resultSha256": "a65d6e79b4b810f8abc201095f50e1322882f269a2a6ef10bb4f298957cfc752"
+    },
+    {
+      "lens": "lens.adversarial-testing",
+      "round": 3,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.adversarial-testing",
+        "subjectRef": "linear-like-jira.plan",
+        "candidateRef": "c50e06ddb3f7e65d04ea45fcba1066d5083beac1",
+        "round": 3,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [
+          {
+            "id": "adversarial-testing-r2-1",
+            "state": "fixed",
+            "resolution": "Adopted as written. Decision 6 now holds the Linear-only skill ids (create-linear-ticket, execute-linear-ticket, linear-tracker-adapter) as a trusted constant in scripts/qualify-linear.py, kept the way TRUSTED_CONTRACT_SHA256 is and never derived from the candidate's catalog or profiles. Every file of those skills must be in the delta. The V26-3097 row moves a skill with the catalog and profiles changed together, so the registry stays valid, and asserts the qualifier fails naming the missing skill. The expected set no longer comes from the catalog the move edits, so the mutation where the check agrees with itself is caught."
+          },
+          {
+            "id": "adversarial-testing-r2-2",
+            "state": "fixed",
+            "resolution": "Adopted as written. Decision 2 maps an authentication error to 401 and a forbidden error to 403, and leaves classify() unchanged. A rate limit or an authentication error is transient, as for Jira. A forbidden error goes through site_refuses(): permanent for that ticket, transient when the whole site refuses too. Every other error is a permanent 'failed'. The decision now agrees with the unchanged TRANSIENT tuple, so a row written to the decision passes without editing Jira's classification."
+          },
+          {
+            "id": "adversarial-testing-r2-3",
+            "state": "fixed",
+            "resolution": "Adopted as written. Decision 8's row uses a record with an entry at journalThrough and one at journalThrough + 1. The first is a final skip with no comment. The second is posted once through the shipped tracker_linear.py, with its comment and marker on the stub. A mutation that skips everything fails that row, and so does an off-by-one at the boundary."
+          }
+        ],
+        "evidence": [
+          "Reviewed tree SHA 41fb020c1fc8ca4c27a935c2a2ae41123b18286e. Start identity check: HEAD = c50e06ddb3f7e65d04ea45fcba1066d5083beac1, HEAD^{tree} = 41fb020c1fc8ca4c27a935c2a2ae41123b18286e, git status --porcelain empty. End identity check: same tree SHA, porcelain empty.",
+          "Delta derived from git diff 6d696b5606505704df0f6baa131b6c26b859e5b1..c50e06ddb3f7e65d04ea45fcba1066d5083beac1. It changes only docs/plans/2026-11-09-linear-like-jira.md (27 insertions, 13 deletions). Both references were matched by exact text against the brief's resolution pairs.",
+          "Re-check of carried findings: adversarial-testing-r2-1, r2-2 and r2-3 are each adopted as their approval conditions state. The round-1 findings closed in round 2, and this delta does not regress them: it changes none of the rows or decisions that closed them.",
+          "Review of the delta's other changes: the offered rule now orders triage < backlog < unstarted < started < completed < canceled, and a completed or canceled ticket offers nothing, which resolves round 2's P3 inconsistency. The offered row now carries its allow side (In Progress offers In Review and Done, and the move is made), which closes a round-2 P2 note. The replayed start move on a Done ticket now asserts 'handled', no move, and its needs_you() item, which closes the other round-2 P2 note. The pre-switch post-and-ack of held outbox entries, and the recorded readings of V26-3269's acceptance criterion 3 (AC3) and V26-3083's AC3, are process and acceptance readings with no new test claim to mutate.",
+          "No new findings and no late findings.",
+          "P2 note (not filed): V26-3269's error rows are listed by operation (comment, transition, status) and as 'mapped as Decision 2 says'. They don't name the two site_refuses() branches for a forbidden error, or the transient outcome for an authentication error. Naming them would catch a mutation that maps forbidden to 401, under which a ticket-scoped forbidden error retries forever. The decision text already fixes the mapping, so this is a gap in how precise the evidence is, not a contradiction.",
+          "P3 note (not filed): V26-3269's list of failure classes still reads 'another 4xx permanent', beside Decision 2's mapping that makes 401 transient. The decision governs. The row wording could say 'another 4xx except 401 and 403'.",
+          "Model class: Opus 5.5 (claude-opus-5-5), running as a native subagent. The host exposes no progress or permission signals to this lens; recorded as a limitation.",
+          "Realization basis: host-convention.",
+          "Scope: the brief names no scoped sensors and no test files for a plan review, so no tests were run and no mutants were planted. Mutations were argued only against the delta's lines and the code they would change: classify(), TRANSIENT and site_refuses() in tracker_publisher.py, and _candidate_delta() and inspect_candidate_transport_boundary() in qualify-linear.py. Read-only: nothing in the checkout was changed.",
+          "Approval conditions: this round raises no new findings and every carried finding is fixed, so from this lens the plan is ready to approve."
+        ]
+      },
+      "resultSha256": "69dc3fa1aeeee9d054956ff458c43b7af10cb4089ffc540330d0cb8912f13b08"
+    }
+  ],
+  "residualRisks": [
+    "3 review rounds; findings open after each round: 14, 6, 0."
+  ]
+}
