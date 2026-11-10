@@ -15,6 +15,32 @@ ROOT = Path(__file__).resolve().parents[1]
 TOOL = ".agent-skills/current/skills/run-delivery/scripts/run_delivery.py"
 
 
+# Every test module, by its module name: the lead selects checks by these ids. A module added later is selectable once
+# its entry is added here and in the binding; until then a JSON list still selects it.
+CATALOGUE_MODULES = (
+    "adoption", "bootstrap_qualification", "catalog", "compound_learning_corpus", "core_boundary", "corpus_copy",
+    "cut_release", "declared_mechanics_corpus", "delivery_posture_vectors", "delivery_provider",
+    "delivery_provider_rails_contract", "delivery_views", "delivery_views_adopter", "delivery_views_history",
+    "delivery_views_page", "delivery_views_plan", "delivery_views_plan_fixtures", "delivery_views_render",
+    "delivery_views_review_projection", "delivery_views_snapshots", "diagnosis", "documented_install_surface",
+    "fault_injection", "forge_adapters", "historical_qualifications", "host_exposure", "jira_profile", "lane_rows",
+    "lane_ruling_corpus", "lead_wait", "lifecycle", "linear_profile", "linear_qualification", "measure_test_writes",
+    "merge_occurrence", "merge_queue", "no_current_set_names", "orchestration_adopter", "orchestration_render",
+    "orchestration_state", "own_deliveries", "product_descriptors", "product_launcher", "product_release",
+    "profile_inventory", "provenance", "provider_qualification", "qualification", "readme", "receipt", "registry",
+    "release_archive", "release_channel", "release_entry_budget", "release_integration", "review_and_compounding",
+    "review_base_reopening", "review_bound_corpus", "review_grace", "review_orchestration", "round_brief_template_corpus",
+    "router", "run_delivery", "run_delivery_plan_review", "run_delivery_supervisor", "run_delivery_tracker",
+    "run_event_emission_corpus", "run_tests", "runless_reviews", "test_dependency_guard", "test_environment",
+    "tracker_contract", "update_provenance", "validate", "workflow_graph_contract", "workflow_observation", "workflows",
+)
+CATALOGUE_IDS = tuple("tests.test_" + name for name in CATALOGUE_MODULES)
+GUARDS = ["tests.test_linear_qualification", "tests.test_registry"]
+# Modules that run as scripts, holding no unittest case.
+SCRIPT_MODULES = ("tests.test_registry",)
+STATE_TOOL = ".agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py"
+
+
 def _git(cwd: Path, *args: str) -> str:
     identity = ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false"]
     return subprocess.run(["git", *identity, *args], cwd=cwd, check=True, capture_output=True, text=True).stdout
@@ -171,6 +197,114 @@ class StandingBinding(unittest.TestCase):
         self.assertNotIn(dropped, listed(other))
         self.assertIn(added, listed(other))
         self.assertEqual(listing(other), listed(other))
+
+    def test_the_lead_selects_by_catalogue_id_and_the_guards_join_every_selection(self) -> None:
+        binding = json.loads((ROOT / ".agents/orchestration.json").read_text(encoding="utf-8"))
+        selection = binding["selection"]
+        self.assertTrue(selection["lead"])
+        catalogue = selection["catalogue"]
+        self.assertEqual([entry["id"] for entry in catalogue], list(CATALOGUE_IDS))
+        for entry in catalogue:
+            # Each id is a test module that exists, run on its own through the worktree's environment.
+            module = entry["id"]
+            source = ROOT / (module.replace(".", "/") + ".py")
+            self.assertTrue(source.is_file(), module)
+            if module in SCRIPT_MODULES:
+                # unittest finds no case in it and passes having run nothing, so the entry runs it as the script it is.
+                self.assertNotIn("TestCase", source.read_text(encoding="utf-8"), module)
+                self.assertEqual(entry["argv"], [".venv/bin/python", "-B", source.relative_to(ROOT).as_posix()])
+            else:
+                self.assertIn("TestCase", source.read_text(encoding="utf-8"), module)
+                # Through the suite's runner, as the fallback runs, since a serial unittest of a large module can time out.
+                self.assertEqual(entry["argv"], [".venv/bin/python", "-B", "scripts/run-tests.py", "--workers", "4", "-p",
+                                                 source.name])
+            self.assertEqual((entry["cwd"], entry["prerequisites"]), (".", []), module)
+            # The run-delivery module is the slowest, so it alone gets the ceiling.
+            self.assertEqual(entry["timeoutSeconds"], 5400 if module == "tests.test_run_delivery" else 3600, module)
+            self.assertLessEqual(entry["timeoutSeconds"], binding["checkTimeoutCeiling"], module)
+            self.assertTrue(entry["reasons"], module)
+        self.assertEqual(selection["guards"], GUARDS)
+        self.assertEqual(selection["readers"], [{"paths": ["skills/delivery-views/scripts/snapshot.py"],
+                                                 "checks": ["tests.test_delivery_views_adopter",
+                                                            "tests.test_delivery_views_snapshots"]}])
+        # A runner entry's pattern selects its own module's units and nothing else.
+        guard = next(entry for entry in catalogue if entry["id"] == "tests.test_linear_qualification")
+        listed = subprocess.run([sys.executable, "-B", *guard["argv"][2:], "--list"], cwd=ROOT, capture_output=True, text=True,
+                                timeout=120)
+        self.assertEqual(listed.returncode, 0, listed.stdout + listed.stderr)
+        units = [line.split()[0] for line in listed.stdout.splitlines() if line.strip()]
+        self.assertTrue(units, listed.stdout)
+        self.assertEqual([unit for unit in units if not unit.startswith("tests.test_linear_qualification.")], [], units)
+        # Corpus validation still runs on every candidate, as it did before the catalogue.
+        self.assertEqual([entry["id"] for entry in binding["alwaysRun"]], ["validate-registry"])
+        self.assertNotIn("validate-registry", CATALOGUE_IDS)
+
+        with tempfile.TemporaryDirectory() as folder:
+            top = Path(os.path.realpath(folder))
+            repo = top / "repo"
+            (repo / "skills/delivery-views/scripts").mkdir(parents=True)
+            (repo / "skills/delivery-views/scripts/snapshot.py").write_text("one\n", encoding="utf-8")
+            (repo / "README.md").write_text("one\n", encoding="utf-8")
+            _git(top, "init", "-q", "-b", "main", str(repo))
+            _git(repo, "add", "-A")
+            _git(repo, "commit", "-q", "-m", "base")
+            base = _git(repo, "rev-parse", "HEAD").strip()
+
+            def candidate(path: str) -> str:
+                _git(repo, "checkout", "-q", "-B", "work", base)
+                (repo / path).write_text("two\n", encoding="utf-8")
+                _git(repo, "commit", "-q", "-am", "work")
+                return _git(repo, "rev-parse", "HEAD").strip()
+
+            def select(head: str, checks: str) -> dict:
+                state = top / "state"
+                shutil.rmtree(state, ignore_errors=True)
+                tool = [sys.executable, "-B", str(ROOT / STATE_TOOL), "--dir", str(state)]
+                subprocess.run([*tool, "init", "--headline", "Fixture"], check=True, capture_output=True, text=True)
+                item = {"order": 1, "subject": "WORK-1", "title": "Work", "lane": "lane-1", "stage": "queued", "head": head,
+                        "syncedHead": None, "leadInputs": [], "reportedRounds": 1, "runId": None, "checks": []}
+                lane = {"id": "lane-1", "title": "Lane", "focus": "", "state": "working", "waitingOn": None,
+                        "since": "2026-11-09T00:00:00Z"}
+                patched = subprocess.run([*tool, "patch", "--writer", "lead", "--version", "1", "--patch", "-"],
+                                         input=json.dumps({"lanes": [lane], "queue": [item]}), capture_output=True, text=True)
+                self.assertEqual(patched.returncode, 0, patched.stdout + patched.stderr)
+                done = subprocess.run([*tool, "select", "--subject", "WORK-1",
+                                       "--binding", str(ROOT / ".agents/orchestration.json"), "--head", head, "--checks", checks, "--reason", "the story's sensors",
+                                       "--repo", str(repo), "--base-head", base], capture_output=True, text=True)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                return json.loads(done.stdout)
+
+            entries = {entry["id"]: entry for entry in catalogue}
+            done = select(candidate("README.md"), "tests.test_own_deliveries,tests.test_run_delivery")
+            chosen = done["item"]["leadSelection"]["checks"]
+            # The ids resolve to the catalogue's entries, in the order named, with the guards added after them.
+            self.assertEqual([check["id"] for check in chosen],
+                             ["tests.test_own_deliveries", "tests.test_run_delivery", *GUARDS])
+            self.assertEqual(chosen, [entries[check["id"]] for check in chosen])
+            # A selection naming a guard selects it once.
+            done = select(candidate("README.md"), "tests.test_registry")
+            self.assertEqual([check["id"] for check in done["item"]["leadSelection"]["checks"]],
+                             ["tests.test_registry", "tests.test_linear_qualification"])
+            # A change to the snapshot producer brings the line map's outside adopter, which once broke main unselected.
+            done = select(candidate("skills/delivery-views/scripts/snapshot.py"), "tests.test_run_delivery")
+            self.assertEqual([check["id"] for check in done["item"]["leadSelection"]["checks"]],
+                             ["tests.test_run_delivery", *GUARDS, "tests.test_delivery_views_adopter",
+                              "tests.test_delivery_views_snapshots"])
+
+    def test_the_checks_section_names_the_binding_s_guards_and_readers(self) -> None:
+        binding = json.loads((ROOT / ".agents/orchestration.json").read_text(encoding="utf-8"))
+        selection = binding["selection"]
+        text = " ".join((ROOT / "docs/own-deliveries.md").read_text(encoding="utf-8").split())
+        section = text[text.index("## Checks"):text.index("## Later deliveries")]
+        first, second = selection["guards"]
+        self.assertIn(f"Two guards join every selection, named or not: `{first}`,", section)
+        self.assertIn(f"and `{second}`.", section)
+        self.assertEqual(len(selection["guards"]), 2)
+        (reader,) = selection["readers"]
+        (path,) = reader["paths"]
+        adopter, snapshots = reader["checks"]
+        self.assertIn(f"A change to `{path}` also brings `{adopter}` and `{snapshots}`,", section)
+        self.assertIn("The lead selects by catalogue id.", section)
 
     def test_the_delivery_folders_are_ignored(self) -> None:
         for path in (".orchestration/lanes/x", ".orchestration/state/state.json", ".worktrees/x", ".claude/worktrees/x"):

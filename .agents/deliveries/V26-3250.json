@@ -217,7 +217,8 @@
     {
       "id": "approval-2",
       "text": "The release candidate's tag and its apply here (V26-3309), under the operator's grant for this delivery, agreed with the other running deliveries' leads.",
-      "state": "waiting"
+      "state": "done",
+      "who": "the operator"
     },
     {
       "id": "approval-3",

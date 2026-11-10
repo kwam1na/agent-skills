@@ -38,7 +38,8 @@
         "tests/test_delivery_views_snapshots.py",
         "tests/test_delivery_views_render.py",
         "tests/test_core_boundary.py",
-        "tests/test_review_bound_corpus.py"
+        "tests/test_review_bound_corpus.py",
+        "tests/test_release_integration.py"
       ]
     },
     "lane-2": {
