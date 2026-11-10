@@ -21,9 +21,16 @@ from agent_skills.release import RUNTIME_FILES, VerifiedRelease, build_release, 
 
 
 CONTRACT_PATH = "skills/linear-tracker-adapter/references/adapter-contract.json"
-ADAPTER_ROOT = "skills/linear-tracker-adapter"
 GRAPH_PATH = "workflows/delivery-v1.json"
 TRUSTED_CONTRACT_SHA256 = "82b9bd2de7a3a38b866dbdccca66cc0b37fd253b58a816412984f67484b94f45"
+# The Linear-only skills, trusted like the contract digest: a candidate's catalog or profiles never name them, so a
+# skill moved into the base cannot leave the sensor's delta unnoticed. Adding a Linear skill changes this on purpose.
+LINEAR_SKILL_IDS = ("create-linear-ticket", "execute-linear-ticket", "linear-tracker-adapter")
+TRANSPORT_CHARTER = (
+    "proves that the Linear skills reach Linear only through the host's connector; files the run-delivery base "
+    "holds, its own tracker adapters included, are outside the inspected delta, so it does not prove that no file "
+    "in the generation reaches Linear"
+)
 REQUIRED_SCENARIOS = (
     "core-qualification-binding",
     "linear-install-and-host-discovery",
@@ -54,6 +61,8 @@ DECLARED_HOST_OPERATIONS = {
     "search",
     "update",
 }
+# What every profile's release writes for itself, so it differs between any two profiles whatever their skills hold.
+RELEASE_METADATA = {"catalog.json", "provenance.lock.json", "release-manifest.json", "validation-inventory.json"}
 EXECUTABLE_SUFFIXES = {".cjs", ".js", ".mjs", ".py", ".sh", ".ts", ".tsx"}
 DIRECT_LINEAR_ENDPOINTS = ("api.linear.app", "linear.app/api", "linear.app/graphql")
 LINEAR_SDK_ACTIONS = (
@@ -65,6 +74,34 @@ LINEAR_SDK_ACTIONS = (
     "linearclient",
 )
 COMMAND_TRANSPORT = re.compile(r"(?m)^\s*(?:curl|wget)\s+https?://")
+# A document's command can sit inside inline code mid-sentence, so in documents it counts wherever it stands.
+DOCUMENT_COMMAND = re.compile(r"\b(?:curl|wget)\b[^\n]*?https?://")
+# A document's instruction is any of these verbs, in any inflection, standing before the marker in its sentence.
+DOCUMENT_VERBS = (
+    "call", "connect", "curl", "execute", "fetch", "hit", "import", "install", "invoke", "issue", "make", "open",
+    "point", "post", "prefer", "query", "reach", "request", "run", "send", "submit", "talk", "use", "wget", "write",
+)
+# A verb right after one of these, an adverb ending in -ly allowed between, tells the reader not to act.
+DOCUMENT_NEGATIONS = ("avoid", "don't", "don\u2019t", "dont", "never", "no", "nor", "not", "without")
+# One of these right before the marker, or before the word that holds it, turns it into what the reader acts instead of.
+DOCUMENT_CONTRASTS = ("except", "instead of", "never", "no", "not", "rather than", "unlike", "without")
+# Sentences, not clauses: a comma can join an instruction to the endpoint it names.
+DOCUMENT_SENTENCE = re.compile(r"(?<=[.!?;])\s+|\s+[-\u2013\u2014]+\s+|\\n")
+
+
+def _inflected(verb: str) -> str:
+    if verb.endswith("e"):
+        return rf"{verb[:-1]}(?:e|es|ed|ing)"
+    return rf"{verb}(?:s|es|ed|ing|{verb[-1]}ed|{verb[-1]}ing)?"
+
+
+DOCUMENT_VERB = re.compile(r"(?<![\w'\u2019])(?:" + "|".join(_inflected(verb) for verb in DOCUMENT_VERBS) + r")(?![\w'\u2019])")
+DOCUMENT_NEGATED = re.compile(
+    r"(?:^|(?<![\w'\u2019]))(?:" + "|".join(re.escape(word) for word in DOCUMENT_NEGATIONS) + r")\s+(?:\w+ly\s+)?$"
+)
+DOCUMENT_CONTRAST = re.compile(
+    r"(?<![\w'\u2019])(?:" + "|".join(re.escape(word) for word in DOCUMENT_CONTRASTS) + r")\s+\S*$"
+)
 HTTP_CLIENT_ACTION = re.compile(
     r"\b(?:aiohttp|httpx|requests|urllib3)\.(?:delete|get|patch|post|put|request)\s*\(|"
     r"\b(?:axios\.(?:delete|get|patch|post|put)|fetch|urlopen)\s*\("
@@ -215,6 +252,50 @@ def _actionable_instruction(contents: str, marker: str) -> bool:
     )
 
 
+def _document_instruction(contents: str, marker: str) -> bool:
+    """Whether a document tells its reader to act on the marker.
+
+    The executables' line-start rule is the floor. Above it, a sentence instructs when the nearest verb before the
+    marker is not negated ("never use", "do not call") and the marker does not follow a contrast ("instead of"), so
+    a list item, a quoted prompt or a YAML or JSON value counts the same as prose, and boundary wording passes.
+    """
+    if _actionable_instruction(contents, marker):
+        return True
+    for line in contents.splitlines():
+        if marker not in line:
+            continue
+        for sentence in DOCUMENT_SENTENCE.split(line):
+            start = sentence.find(marker)
+            while start >= 0:
+                verbs = list(DOCUMENT_VERB.finditer(sentence, 0, start))
+                if verbs:
+                    verb = verbs[-1]
+                    if not DOCUMENT_NEGATED.search(sentence[:verb.start()]) and not DOCUMENT_CONTRAST.search(
+                        sentence[verb.end():start]
+                    ):
+                        return True
+                start = sentence.find(marker, start + 1)
+    return False
+
+
+def _release_metadata(relative: str) -> bool:
+    return relative in RELEASE_METADATA or relative.startswith("profiles/")
+
+
+def _linear_skill_coverage(linear_candidate: Path, base_candidate: Path, delta: list[Path]) -> None:
+    """That every file of each Linear skill is in the delta, so none of them sits in the base unseen."""
+    changed = {path.relative_to(linear_candidate).as_posix() for path in delta}
+    for skill in LINEAR_SKILL_IDS:
+        root = f"skills/{skill}"
+        files = [
+            path.relative_to(linear_candidate).as_posix()
+            for path in (linear_candidate / root).rglob("*")
+            if path.is_file()
+        ]
+        if not files or (base_candidate / root).exists() or any(path not in changed for path in files):
+            raise QualificationFailure(f"candidate delta is missing the Linear skill: {skill}")
+
+
 def _node_http_action(contents: str) -> bool:
     identifier = r"[a-z_$][a-z0-9_$]*"
     module = r"(?:node:)?https?"
@@ -296,8 +377,10 @@ def inspect_candidate_transport_boundary(
 ) -> list[str]:
     """That what the Linear profile adds to its base reaches Linear only through the host's connector.
 
-    The base is the run-delivery product, which holds the delivery views and forge adapters that reach their own
-    providers. A file differing from it is in the delta, wherever it sits, so no folder is set aside.
+    The base is the run-delivery product, which holds the delivery views and forge and tracker adapters that reach
+    their own providers. A file differing from it is in the delta, wherever it sits, so no folder is set aside, and
+    every file in it is read: executables for transport actions, and documents, skill instructions, references and
+    agent prompts alike, for an instruction to reach Linear another way. The delta must hold every Linear skill.
     """
     contract_path = linear_candidate / CONTRACT_PATH
     contract_bytes = contract_path.read_bytes()
@@ -311,19 +394,24 @@ def inspect_candidate_transport_boundary(
     if set(contract.get("allowedHostOperations", ())) != DECLARED_HOST_OPERATIONS:
         raise QualificationFailure("host-native MCP capability set is incomplete")
 
-    for path in _candidate_delta(linear_candidate, base_candidate):
+    delta = _candidate_delta(linear_candidate, base_candidate)
+    if all(_release_metadata(path.relative_to(linear_candidate).as_posix()) for path in delta):
+        raise QualificationFailure("candidate delta is empty")
+    _linear_skill_coverage(linear_candidate, base_candidate, delta)
+    for path in delta:
         relative = path.relative_to(linear_candidate).as_posix()
         if relative == CONTRACT_PATH:
             continue
         executable = path.suffix in EXECUTABLE_SUFFIXES
-        actionable_document = relative == f"{ADAPTER_ROOT}/SKILL.md"
-        if not executable and not actionable_document:
-            continue
-        contents = path.read_text(encoding="utf-8").casefold()
+        try:
+            contents = path.read_text(encoding="utf-8").casefold()
+        except UnicodeDecodeError as error:
+            raise QualificationFailure(f"candidate delta file is not text: {relative}") from error
+        instruction = _actionable_instruction if executable else _document_instruction
         command_action = COMMAND_TRANSPORT.search(contents) or re.search(
             r"(?:os\.system|subprocess\.(?:call|run|popen))\s*\([^\n]*(?:curl|wget)",
             contents,
-        )
+        ) or (not executable and DOCUMENT_COMMAND.search(contents))
         http_action = HTTP_CLIENT_ACTION.search(contents)
         node_http_action = _node_http_action(contents)
         if any(
@@ -332,13 +420,13 @@ def inspect_candidate_transport_boundary(
                 http_action
                 or node_http_action
                 or command_action
-                or _actionable_instruction(contents, marker)
+                or instruction(contents, marker)
             )
             for marker in DIRECT_LINEAR_ENDPOINTS
         ):
             raise QualificationFailure("candidate alternate transport: direct-linear-endpoint")
         if LINEAR_SDK_IMPORT.search(contents) or any(
-            _actionable_instruction(contents, marker) for marker in LINEAR_SDK_ACTIONS
+            instruction(contents, marker) for marker in LINEAR_SDK_ACTIONS
         ):
             raise QualificationFailure("candidate alternate transport: linear-sdk")
         if command_action:
@@ -346,7 +434,10 @@ def inspect_candidate_transport_boundary(
         if executable and http_action:
             raise QualificationFailure("candidate alternate transport: http-client-action")
     return [
+        f"transport sensor charter: {TRANSPORT_CHARTER}",
+        "every file of the Linear skills is in the delta: " + ", ".join(LINEAR_SKILL_IDS),
         "supplied Linear candidate delta contains no concrete alternate transport action",
+        "documents in the delta carry no instruction to reach Linear another way",
         "host-native MCP capability set remains complete",
     ]
 
@@ -560,6 +651,7 @@ def _finalize_record(
                 "declared degraded outcomes, and the candidate's transport boundary; "
                 "it makes no call to Linear or a host connector"
             ),
+            "transport": TRANSPORT_CHARTER,
         },
         "redaction": {
             "environmentCaptured": False,
