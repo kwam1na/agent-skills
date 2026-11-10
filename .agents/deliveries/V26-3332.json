@@ -220,6 +220,22 @@
           "text": "A run leaves no open entity, its issues canceled and found only canceled by its marker (the lead's recorded reading of AC3)"
         }
       ]
+    },
+    "V26-3343": {
+      "title": "Make the connector check's marker searches count only issues that carry the marker",
+      "lane": "lane-2",
+      "inApp": "none",
+      "why": "V26-3083's first deliberate failing run found Linear's search matches loosely, so step 1's 'expecting nothing' and the cleanup search could miscount (Decision 11).",
+      "criteria": [
+        {
+          "id": "v26-3343-marked",
+          "text": "The on-demand steps and the routine prompt say a match is an issue carrying the run's marker, in step 1, step 3 and the cleanup search"
+        },
+        {
+          "id": "v26-3343-pins",
+          "text": "The doc's exact pins are updated, each proven red by a mutant"
+        }
+      ]
     }
   },
   "finish": [
