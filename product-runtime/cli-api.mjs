@@ -1279,7 +1279,7 @@ async function runConfiguredCommand(descriptor, args, runtime, observeSuccess, o
       // invocation never prompts — it blocks — no matter what the run wired.
       ...runtime.stdinIsTTY && runtime.stdoutIsTTY && runtime.promptForWaiver !== void 0 ? { promptForWaiver: observation?.prompt(runtime.promptForWaiver) ?? runtime.promptForWaiver } : {},
       ...runtime.liveResults === void 0 ? {} : { liveResults: runtime.liveResults },
-      invokeProvider: async ({ providerId, payload, requiresEvidence }) => {
+      invokeProvider: async ({ providerId, payload, requiresEvidence, signal: attemptSignal }) => {
         const provider = config.providers.find((registration) => registration.id === providerId);
         if (provider?.command === void 0) return void 0;
         const command = provider.command;
@@ -1334,7 +1334,7 @@ async function runConfiguredCommand(descriptor, args, runtime, observeSuccess, o
                   ...wiring.storageOptions
                 }
               ),
-              signal: runtime.signal ?? interruptController?.signal,
+              signal: [runtime.signal ?? interruptController?.signal, attemptSignal].filter((s) => s !== void 0).reduce((one, other) => one ? AbortSignal.any([one, other]) : other, void 0),
               cancellationId: randomUUID3()
             }
           );
@@ -2404,7 +2404,15 @@ var ScopedChecks = class _ScopedChecks {
    * worker takes the startable id expected to run longest instead, and its clone queues by that cost, so
    * the critical path gets its base, clone and worker first.
    */
-  async pool(ids, run, halted = () => false, expected) {
+  async pool(ids, run, halted = () => false, expected, onSaturated) {
+    let busy = 0, saturated = false;
+    const saturate = () => {
+      if (!saturated) {
+        saturated = true;
+        onSaturated?.();
+      }
+    };
+    if (ids.length === 0) saturate();
     const failures = /* @__PURE__ */ new Map(), remaining = [...ids];
     const sleepers = /* @__PURE__ */ new Set();
     const woken = () => new Promise((resolve) => {
@@ -2422,6 +2430,8 @@ var ScopedChecks = class _ScopedChecks {
         if (index >= 0) {
           const id = remaining.splice(index, 1)[0];
           this.claim(id);
+          busy += 1;
+          if (remaining.length === 0 || busy >= this.workers.length) saturate();
           return id;
         }
         await Promise.race([woken(), ...remaining.flatMap((id) => {
@@ -2442,6 +2452,7 @@ var ScopedChecks = class _ScopedChecks {
             failures.set(id, error);
             this.wakePools();
           } finally {
+            busy -= 1;
             this.release(this.keyOf(id), id);
             for (const line of lines) this.context.write(line);
           }
@@ -2512,9 +2523,11 @@ var ScopedChecks = class _ScopedChecks {
    * Runs the gate's requested checks on the pool. A check's own failure is returned in request order. Without
    * `scopedExecution.failFast` it stops nothing; with it, the first failure cancels every other check: one not
    * yet started never starts and one running has its process group signalled, and both are recorded
-   * `interrupted` with `check_cancelled` and left out of the returned failures.
+   * `interrupted` with `check_cancelled` and left out of the returned failures. `onFailFast` hears that first
+   * failure. `onAllStarted` hears, once, that the pool is saturated: every worker holds a check, or every
+   * requested check has been handed out (at once when none remains for the pool). Not at all if the pool throws.
    */
-  async executeAll(requests) {
+  async executeAll(requests, onFailFast, onAllStarted) {
     const failures = /* @__PURE__ */ new Map();
     const failFast = this.context.config.scopedExecution?.failFast === true;
     const running = /* @__PURE__ */ new Map(), unstarted = [];
@@ -2535,6 +2548,7 @@ var ScopedChecks = class _ScopedChecks {
         failures.set(id, error);
         if (failFast && firstFailure === void 0) {
           firstFailure = id;
+          onFailFast?.(id);
           for (const [other, controller] of running) if (other !== id) controller.abort();
           this.wakePools();
         }
@@ -2549,8 +2563,8 @@ var ScopedChecks = class _ScopedChecks {
     await this.prewarm(requests.map((r) => r.provider.id), expected, serialIds);
     if (resource) {
       for (const id of serialIds) await run(id, this.serial);
-      await this.pool(requests.map((r) => r.provider.id).filter((id) => !serialIds.includes(id)), run, halted, expected);
-    } else await this.pool(requests.map((r) => r.provider.id), run, halted, expected);
+      await this.pool(requests.map((r) => r.provider.id).filter((id) => !serialIds.includes(id)), run, halted, expected, onAllStarted);
+    } else await this.pool(requests.map((r) => r.provider.id), run, halted, expected, onAllStarted);
     if (firstFailure !== void 0) await this.cancelUnstarted(unstarted, firstFailure);
     return requests.flatMap((r) => failures.has(r.provider.id) ? [failures.get(r.provider.id)] : []);
   }
@@ -3185,7 +3199,7 @@ function refuseOverBudget(config) {
 }
 
 // packages/cli/src/commands/gate.ts
-import { computeDeliverableIdentity as computeDeliverableIdentity2, runAdmission } from "./kernel.mjs";
+import { computeDeliverableIdentity as computeDeliverableIdentity2, digestCanonical as digestCanonical7, runAdmission } from "./kernel.mjs";
 
 // packages/cli/src/delivery-posture.ts
 import { deliveryPostureRefusedOutsideRoot, resolveDeliveryPosture } from "./kernel.mjs";
@@ -3240,6 +3254,8 @@ async function providerAdmission(context, options, session) {
     return admit(input, finalAdmissionOptions);
   }
   const liveResults = options.includeInjectedLiveResults ? [...context.liveResults ?? []] : [];
+  const invokeProvider = context.invokeProvider;
+  const besideOutcomes = /* @__PURE__ */ new Map();
   const attempted = /* @__PURE__ */ new Set();
   const attemptBlockers = [];
   let admission = await admit(input, admissionOptions);
@@ -3268,9 +3284,46 @@ async function providerAdmission(context, options, session) {
     const scoped = session !== void 0 && session.concurrency > 1 ? [...requested].filter(([id]) => context.config.providers.find((p) => p.id === id).check?.scope) : [];
     if (session !== void 0 && scoped.length > 0) {
       for (const [id] of scoped) attempted.add(id);
-      const failures = await session.executeAll(scoped.map(([id, request2]) => ({ provider: context.config.providers.find((p) => p.id === id), obligationIds: request2.obligationIds })));
+      const shared = (id) => context.config.obligations.some((o) => (o.providerPolicy ?? "all") === "existential" && o.providers.includes(id) && o.providers.length > 1);
+      const beside = invokeProvider === void 0 ? [] : [...requested].filter(([id, request2]) => {
+        const registration2 = context.config.providers.find((p) => p.id === id);
+        return registration2.independentOfScopedChecks === true && registration2.command !== void 0 && request2.needsLiveResult && !request2.requiresEvidence && !shared(id) && !besideOutcomes.has(id);
+      });
+      const cancelBeside = new AbortController();
+      let cancelledAfter;
+      const besideRuns = [];
+      const startBeside = () => {
+        if (besideRuns.length > 0 || cancelBeside.signal.aborted) return;
+        for (const [providerId2, request2] of beside) besideRuns.push(invokeProvider({
+          providerId: providerId2,
+          requiresEvidence: false,
+          signal: cancelBeside.signal,
+          payload: { gateId: context.config.gateId, providerId: providerId2, obligationIds: [...new Set(request2.obligationIds)].sort(), candidate: admission.candidate }
+        }).then((result2) => ({ result: result2 }), (error) => ({ error })));
+      };
+      let failures;
+      try {
+        failures = await session.executeAll(
+          scoped.map(([id, request2]) => ({ provider: context.config.providers.find((p) => p.id === id), obligationIds: request2.obligationIds })),
+          (failed) => {
+            cancelledAfter = failed;
+            cancelBeside.abort();
+          },
+          startBeside
+        );
+      } catch (error) {
+        cancelBeside.abort();
+        await Promise.all(besideRuns);
+        throw error;
+      }
+      const settled = await Promise.all(besideRuns);
+      if (context.signal?.aborted) throw new CliInterruption();
       attemptBlockers.push(...failures.map(scopedCheckBlocker));
       failedFast = failFast && failures.length > 0;
+      for (const [index, [providerId2]] of beside.entries()) {
+        if (cancelledAfter !== void 0) context.write(`interrupted ${providerId2}: check_cancelled after ${cancelledAfter} failed`);
+        else besideOutcomes.set(providerId2, { ...settled[index], obligationIds: [...new Set(beside[index][1].obligationIds)].sort() });
+      }
       admission = await admit({ ...input, ...liveResults.length === 0 ? {} : { liveResults } }, admissionOptions);
       continue;
     }
@@ -3295,7 +3348,10 @@ async function providerAdmission(context, options, session) {
       admission = await admit({ ...input, ...liveResults.length === 0 ? {} : { liveResults } }, admissionOptions);
       continue;
     }
-    const result = await context.invokeProvider?.({
+    const stored = besideOutcomes.get(providerId);
+    const early = stored && digestCanonical7(stored.obligationIds) === digestCanonical7([...new Set(request.obligationIds)].sort()) ? stored : void 0;
+    if (early && "error" in early) throw early.error;
+    const result = early ? early.result : await context.invokeProvider?.({
       providerId,
       requiresEvidence: request.requiresEvidence,
       payload: {
@@ -5807,7 +5863,7 @@ import {
   isSafeRelativePath,
   isInsideResolved,
   parseDeliveryRecord,
-  digestCanonical as digestCanonical7
+  digestCanonical as digestCanonical8
 } from "./kernel.mjs";
 async function withRetainedRecord(view, root, relativePath) {
   if (relativePath === void 0 || view.historical) return view;
@@ -5851,7 +5907,7 @@ async function withRetainedRecord(view, root, relativePath) {
             "Status",
             "Legacy record \u2014 integrity unavailable; no accepted evidence inferred"
           );
-        else if (integrityDigest !== digestCanonical7(unsigned))
+        else if (integrityDigest !== digestCanonical8(unsigned))
           add("Status", "Corrupt \u2014 retained record digest does not match");
         else {
           add(
@@ -5872,7 +5928,7 @@ async function withRetainedRecord(view, root, relativePath) {
               if (evidence?.resolution.kind !== "evidence") continue;
               const manifest = evidence.resolution.portable?.manifest;
               if (typeof manifest !== "object" || manifest === null) continue;
-              if (digestCanonical7(manifest) !== evidence.resolution.manifestDigest) {
+              if (digestCanonical8(manifest) !== evidence.resolution.manifestDigest) {
                 add(
                   "Retained manifest",
                   "Corrupt \u2014 digest does not match; timestamp unavailable"
@@ -7795,7 +7851,7 @@ import { describeRunEventPayload as describeRunEventPayload2, RUN_EVENT_SPEC as 
 // packages/cli/src/ordinary-context.ts
 import { readFile as readFile10 } from "node:fs/promises";
 import path22 from "node:path";
-import { HARNESS_VERSION, digestCanonical as digestCanonical8 } from "./kernel.mjs";
+import { HARNESS_VERSION, digestCanonical as digestCanonical9 } from "./kernel.mjs";
 import { reconciliationActions } from "./kernel.mjs";
 function recoveryBlocker(code, summary, details) {
   return commandBlocker({
@@ -7813,7 +7869,7 @@ function rejectionDetails(rejections) {
 }
 function ordinaryEventWriter(version, kind, payload) {
   if (version !== "run-event/2") return { version };
-  return { version, eventId: `${kind.replaceAll(".", "-")}-${digestCanonical8(payload)}` };
+  return { version, eventId: `${kind.replaceAll(".", "-")}-${digestCanonical9(payload)}` };
 }
 async function recoveryRun(rootDir, named) {
   const resolved = await resolveRunSurface(rootDir);
@@ -7833,7 +7889,7 @@ async function installedRelease(rootDir) {
   }
   return { runtimeVersion: HARNESS_VERSION, releaseId: release.releaseId, profile: release.profile, archiveSha256: release.archiveSha256 };
 }
-var policyDigest = (context) => digestCanonical8({ config: context.config, policyBinding: context.policyBinding ?? null });
+var policyDigest = (context) => digestCanonical9({ config: context.config, policyBinding: context.policyBinding ?? null });
 
 // packages/cli/src/commands/save-context.ts
 var USAGE8 = `Usage: delivery-harness save-context --json '{"contract":{"objective":"...","acceptanceCriteria":["..."],"finishLine":"merge-ready"},"stage":"work"}'`;
@@ -7905,7 +7961,7 @@ ${BOUNDS}`,
 };
 
 // packages/cli/src/commands/resume.ts
-import { classifyCandidateDrift as classifyCandidateDrift3, digestCanonical as digestCanonical9, evaluatePreparationReceipt as evaluatePreparationReceipt4, runAdmission as runAdmission2 } from "./kernel.mjs";
+import { classifyCandidateDrift as classifyCandidateDrift3, digestCanonical as digestCanonical10, evaluatePreparationReceipt as evaluatePreparationReceipt4, runAdmission as runAdmission2 } from "./kernel.mjs";
 var USAGE9 = "Usage: delivery-harness resume [--run <run-id>]";
 var resumeCommand = {
   name: "resume",
@@ -7928,7 +7984,7 @@ var resumeCommand = {
     const drift = [];
     if (p["policyDigest"] !== policyDigest(context)) drift.push("policy_changed");
     try {
-      if (digestCanonical9(p["release"]) !== digestCanonical9(await installedRelease(context.rootDir))) drift.push("release_changed");
+      if (digestCanonical10(p["release"]) !== digestCanonical10(await installedRelease(context.rootDir))) drift.push("release_changed");
     } catch {
       drift.push("release_unreadable");
     }
@@ -7951,7 +8007,7 @@ var resumeCommand = {
     ) : void 0;
     if (capture2.ok && admission?.candidate && classifyCandidateDrift3(capture2.candidate, admission.candidate).length > 0) drift.push("candidate_observation_changed");
     try {
-      if (digestCanonical9(p["release"]) !== digestCanonical9(await installedRelease(context.rootDir)) && !drift.includes("release_changed")) drift.push("release_changed");
+      if (digestCanonical10(p["release"]) !== digestCanonical10(await installedRelease(context.rootDir)) && !drift.includes("release_changed")) drift.push("release_changed");
     } catch {
       if (!drift.includes("release_unreadable")) drift.push("release_unreadable");
     }

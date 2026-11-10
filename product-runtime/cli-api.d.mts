@@ -70,6 +70,8 @@ interface CommandContext {
         readonly providerId: string;
         readonly payload: Readonly<Record<string, unknown>>;
         readonly requiresEvidence: boolean;
+        /** Cancels this one attempt through the rail, as an interruption of the invocation would. */
+        readonly signal?: AbortSignal;
     }) => Promise<ProviderRailInvocationResult | undefined>;
     /** Emits one line of operator-facing output to stdout. */
     readonly write: (text: string) => void;

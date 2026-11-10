@@ -181,13 +181,18 @@ Setting `PYTHONDONTWRITEBYTECODE=1` for the suite stops it being written.
 ### Where the stored runtime comes from
 
 `product-runtime/` is the build output of `kwam1na/agent-delivery-harness`, now at
-`v26-technologies/agent-delivery-harness`. It declares 0.8.4 and was built with
+`v26-technologies/agent-delivery-harness`. It declares 0.8.6 and was built with
 `npm run product:build-runtime` from a clean checkout of
-`e727adeda6454c41a0628a721a9fb15e0892499a`, that repository's `main` at the merge that the
-`v0.8.4` tag names. Like the runtimes before it, it is `main` itself. Over 0.8.3, the kernel
-loads Bun's FFI through a literal `import("bun:ffi")`, so an adopter's import scanner can bound
+`51a1d116c0715306a37de02410c4dee8249ec6d4`, that repository's `main` at the merge that the
+`v0.8.6` tag names. 0.8.5 never published, and 0.8.6 differs from it only in tests and its
+version. Over 0.8.4, a live rail provider that declares `independentOfScopedChecks` runs while the
+gate's scoped checks run, starting once the gate's scoped pool is saturated. Its outcome is applied
+where the serial loop reaches it, and under failFast the first scoped failure cancels it through
+the rail. `cli-api.d.mts` gains only the optional per-attempt `signal` on `invokeProvider`.
+
+0.8.4 loads Bun's FFI through a literal `import("bun:ffi")`, so an adopter's import scanner can bound
 it, and the runtime build refuses any bundle that loads code through a computed specifier, other
-than the CLI's one config loader. Only `kernel.mjs` and `kernel.d.mts` differ from 0.8.3.
+than the CLI's one config loader.
 
 0.8.3 added, over 0.8.2:
 
@@ -198,7 +203,7 @@ than the CLI's one config loader. Only `kernel.mjs` and `kernel.d.mts` differ fr
 - declared rail descriptors;
 - the Bun libc group kill.
 
-`HARNESS_VERSION` 0.8.4 is part of every preparation fingerprint, so it invalidates
+`HARNESS_VERSION` 0.8.6 is part of every preparation fingerprint, so it invalidates
 receipts prepared by an earlier runtime: an adopter's in-flight deliveries prepare again
 after applying it.
 

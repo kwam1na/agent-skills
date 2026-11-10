@@ -5160,7 +5160,7 @@ function readShape(findings2, input) {
           sound = false;
           return;
         }
-        checkClosed(findings2, at, entry3, ["id", "findingCodes", "command", "check", "inheritDescriptors"]);
+        checkClosed(findings2, at, entry3, ["id", "findingCodes", "command", "check", "inheritDescriptors", "independentOfScopedChecks"]);
         const id = readString(findings2, `${at}.id`, entry3["id"], { pattern: ID_PATTERN, describe: "a provider id" });
         const findingCodes = readStringArray(findings2, `${at}.findingCodes`, entry3["findingCodes"], {
           pattern: FINDING_CODE_PATTERN,
@@ -5222,8 +5222,13 @@ function readShape(findings2, input) {
             sound = false;
           } else inheritDescriptors = value;
         }
+        const independent = entry3["independentOfScopedChecks"];
+        if (independent !== void 0 && (independent !== true || command === void 0)) {
+          findings2.add("config_invalid_member", `${at}.independentOfScopedChecks`, "may only be true, and only on a provider with a command");
+          sound = false;
+        }
         if (id === void 0 || findingCodes === void 0) sound = false;
-        else registrations.push({ id, findingCodes, ...command === void 0 ? {} : { command }, ...check === void 0 ? {} : { check }, ...inheritDescriptors === void 0 ? {} : { inheritDescriptors } });
+        else registrations.push({ id, findingCodes, ...command === void 0 ? {} : { command }, ...check === void 0 ? {} : { check }, ...inheritDescriptors === void 0 ? {} : { inheritDescriptors }, ...independent === true ? { independentOfScopedChecks: true } : {} });
       });
       if (sound) providers = registrations;
     }
@@ -8106,7 +8111,7 @@ function recordOutputConfiguration(config, deliverableDigest) {
 // packages/kernel/src/preparation.ts
 var PREPARATION_RECEIPT_SCHEMA_VERSION = 1;
 var PREPARATION_RECEIPT_LEAF = "preparation";
-var HARNESS_VERSION = "0.8.4";
+var HARNESS_VERSION = "0.8.6";
 var PREPARATION_FAILURE_CLASSES = ["missing", "invalid", "wiring_mismatch", "base_changed", "stale"];
 var DIRECTORY_MODE2 = 448;
 var RECEIPT_MODE = 384;

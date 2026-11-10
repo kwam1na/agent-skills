@@ -612,6 +612,9 @@ interface ProviderRegistration {
      * by number: only 3 and 4, ascending, each at most once. A provider that does
      * not declare them gets plain stdio. Requires `command`. */
     readonly inheritDescriptors?: readonly InheritedDescriptor[];
+    /** Declares that this rail provider reads no scoped check's attempts, records or outputs, so the gate may
+     * run it while its scoped checks run instead of after them. Only `true`, and only with `command`. */
+    readonly independentOfScopedChecks?: true;
     /** Deterministic bounded check executed by the product, not a provider protocol. */
     readonly check?: {
         readonly command: NonEmptyTuple<string>;
@@ -3602,7 +3605,7 @@ declare const PREPARATION_RECEIPT_LEAF = "preparation";
  * supposed to be invalidated by; the manifest-equality test is what makes the
  * omission a red run rather than a silent one.
  */
-declare const HARNESS_VERSION = "0.8.4";
+declare const HARNESS_VERSION = "0.8.6";
 /**
  * The five ways a receipt can fail to authorise the candidate in front of it,
  * in the order they are decided. The order is the contract, not an
