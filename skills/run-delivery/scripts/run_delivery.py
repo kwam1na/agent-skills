@@ -4111,8 +4111,8 @@ def lead_plan_checkout(c) -> Path:
     clean and holds the base; a story branch is a lane's. A lead worktree then reads its own working tree."""
     root = c.root
     branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=root)
-    # Any delivery's story branch here is a lane's, not only this delivery's.
-    stories = {key for d in c.delivery_files().values() for key in (d.get("stories") or {})} | set(c.stories)
+    # Any delivery's story branch here is a lane's, not only this delivery's: every delivery file, this one's included.
+    stories = {key for d in c.delivery_files().values() for key in (d.get("stories") or {})}
     if any(branch == c.branch(key) for key in stories):
         raise Stop(f"run lead-plan in the lead's checkout of {c.base_branch}, or in a lead worktree of its own; "
                    f"{branch} is a story branch")
