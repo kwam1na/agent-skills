@@ -96,9 +96,15 @@ how the work reaches `main`.
    - from run-delivery: `tracker.updates: host` and the default that chose it; the moves and posts `lane-start`, `handoff` and the lead
      commands print for a host to make; and the outbox reading in `needs_you()`. `doctor`, `lead-init` and `lead-setup` refuse a host
      publisher, naming the fix. `config.md`, `adopting.md` and `SKILL.md` match.
-   Absence pins hold "outbox", "`ack`", "host publisher" and "kind": "host" out of every shipped skill, reference and script, and the
-   tests that pinned host behaviour are deleted with it, each named in the hand-off. `published.json` stays, since the render wrapper's
-   other publishers record what they last published there and Decision 8's seeding reads it. `tracker.updates: manual` stays. A record
+   The removal is pinned by behaviour and by exact tokens. Behaviour: `delivery_state.py ack` is refused as an unknown command, and a
+   binding naming a host publisher fails validation. Tokens, each absent from every shipped skill, reference and script: the `ack`
+   subcommand's registration in `delivery_state.py`, the `"kind": "host"` literal in `schemas.json` and any `== "host"` comparison in a
+   script, the outbox file name the render wrapper wrote (`OUTBOX_FILE`'s value) outside the one named exception, and the phrases "host
+   publisher" and "host outbox" in prose. The one exception is the reopen code that recognises a host-mode record's old files by their
+   path constant, so it can ignore them; it names them once, in one module. The tests that pinned host behaviour are deleted with it,
+   each named in the hand-off, except V26-3269's `journalThrough` boundary row, which is kept unchanged as the new generation's reopen
+   behaviour. `published.json` stays only as something read: after V26-3334 nothing writes it, and Decision 8's seeding reads the
+   `journalThrough` an earlier `ack` left there. `tracker.updates: manual` stays. A record
    opened under host mode reopens under the new generation with its outbox files ignored, no outbox item, and no re-post. Because a
    binding naming a host publisher stops validating, the release is a major version, and its release notes say what an adopter changes:
    replace the host publisher with the tracker publisher (`lead-setup` adds it), and export the tracker's token.
@@ -128,9 +134,11 @@ how the work reaches `main`.
    candidate on its branch, switches `.agents/orchestration.json` from the host publisher to the tracker publisher, and updates
    `docs/own-deliveries.md`'s "Tracker updates" and "Credentials", with the keychain-and-`~/.zshenv` recipe for an agent shell moved there
    from V26-3261's Scope 4 and `doctor`'s fix line pointing to it. It lands through the queue. Immediately before it merges, the lead
-   posts every outbox entry still held and runs `ack`, then stops each running supervisor by its pid; once it merges, each restarts with
-   `lead-run --resume` on the new generation. A record opened under host mode has no ledger, so the publisher's first run over it writes
-   a final `skip`, "published through the host outbox", for every entry at or below `published.json`'s `journalThrough`, and posts
+   posts every outbox entry still held and runs `ack`, stops this delivery's supervisor by its pid, and asks V26-3250's lead to stop
+   theirs, since each lead stops only what it started. The lead then merges V26-3333 with one `lead-run --once` pass under the old
+   generation; the entries that pass journals sit above `journalThrough`, so the publisher posts them later. Once it merges, each
+   supervisor restarts with `lead-run --resume` on the new generation, V26-3250's by its own lead. A record opened under host mode has no ledger, so the publisher's first run over it writes
+   a final `skip`, "published before the tracker publisher", for every entry at or below `published.json`'s `journalThrough`, and posts
    nothing for them. V26-3269 builds that seeding and pins it with a record holding entries at `journalThrough` and at
    `journalThrough` + 1: the first is a final `skip` with no comment, and the second is posted once through the shipped
    `tracker_linear.py`, with its comment and marker on the stub. A replayed start move on a Done ticket is recorded `handled` and never
@@ -191,8 +199,11 @@ Sensors: `tests/test_run_delivery_tracker.py`, `tests/test_run_delivery.py`, `te
 Lane 1, tier 1, after V26-3269. Test-first, per the item and Decisions 4 and 5. Rows: a binding naming a host publisher fails validation,
 and `doctor` and `lead-init` refuse it naming the fix; a `--kind linear` snapshot binding with the tracker publisher and no `tracker`
 settings posts through the shipped `tracker_linear.py` against the stub, as the `--kind jira` row does through `tracker_jira.py`;
-`tracker.updates: host` is refused with the fix, and `manual` still works; a record opened under host mode, with outbox files and a
-`published.json`, reopens with no outbox item and no re-post; `lane-start` and `handoff` print no move for anyone to make when the
+`tracker.updates: host` is refused with the fix; `manual` still works: with `tracker.updates: manual`, `lane-start` prints the
+start move and post, and `handoff` prints the review move, as today; `lead-setup` on a `--kind linear` binding adds the tracker publisher,
+as the Jira row does; `delivery_state.py ack` is refused as an unknown command; a record opened under host mode, with outbox files and a
+`published.json`, reopens with no outbox item and no re-post, while V26-3269's `journalThrough` boundary row stays unchanged and
+green; `lane-start` and `handoff` print no move for anyone to make when the
 publisher posts; and the absence pins of Decision 5. The settings row V26-3269 added for host mode is replaced by the implied-adapter row,
 and the replaced and deleted host rows are named in the hand-off. The line map's page tests drop their outbox cases. Files:
 `skills/orchestrate-work/`, `skills/delivery-views/`, `skills/run-delivery/`, `tests/test_orchestration_state.py`,
@@ -207,8 +218,8 @@ release candidate. Test-first: a `StandingBinding` row in `tests/test_own_delive
 binding, with no host publisher. Beside it, rows on `docs/own-deliveries.md` pin the absence of "reachable only through the host" and
 Decision 1's listed synonyms, and of "outbox", and the presence of the publisher posting with `LINEAR_API_KEY` and of the
 keychain-and-`~/.zshenv` recipe under "Credentials". Then the lane applies the candidate as `docs/own-deliveries.md` says, switches the
-binding, and rewrites "Tracker updates" and "Credentials". The lead drains and acks the host outbox immediately before it merges, and
-records the finish-line evidence of Decision 8 on the item. Files: `.agent-skills/`, `.agents/skills/`, `.claude/skills/`,
+binding, and rewrites "Tracker updates" and "Credentials". The lead drains and acks the host outbox immediately before it merges, merges it with
+one `lead-run --once` pass as Decision 8 says, and records the finish-line evidence on the item. Files: `.agent-skills/`, `.agents/skills/`, `.claude/skills/`,
 `.agents/orchestration.json`, `.agents/run-delivery.json`, `docs/own-deliveries.md` and `tests/test_own_deliveries.py`. Sensors:
 `tests/test_own_deliveries.py`, `scripts/validate-registry.py`, `run_delivery.py doctor`.
 
