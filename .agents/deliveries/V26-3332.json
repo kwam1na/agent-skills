@@ -1,0 +1,250 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3332",
+  "headline": "V26-3332: make Linear work the way Jira does",
+  "plan": "docs/plans/2026-11-09-linear-like-jira.md",
+  "laneBrief": "docs/plans/2026-11-09-linear-like-jira.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-09-linear-like-jira.lane-notes.md"
+  },
+  "context": {
+    "sections": [
+      "Decisions"
+    ]
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "skills/run-delivery/*",
+        "skills/orchestrate-work/*",
+        "skills/delivery-views/*",
+        "skills/linear-tracker-adapter/*",
+        "tests/test_run_delivery.py",
+        "tests/test_run_delivery_tracker.py",
+        "tests/test_run_delivery_supervisor.py",
+        "tests/test_orchestration_render.py",
+        "tests/test_orchestration_state.py",
+        "tests/test_orchestration_adopter.py",
+        "tests/fixtures/orchestration-adopter/*",
+        "tests/test_merge_queue.py",
+        "tests/delivery_views_page/*",
+        "docs/solutions/*",
+        "catalog.json",
+        "profiles/*",
+        "provenance.lock.json"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "scripts/qualify-linear.py",
+        "tests/test_linear_qualification.py",
+        "docs/linear-connector-check.md"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3269": {
+      "title": "Post a delivery's Linear updates and moves from a publisher, not by hand",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3269-posts",
+          "text": "With the Linear adapter configured, a delivery's lane.assigned, hand-off, merge and decision entries post to Linear with no lead action, and each is in the ledger once"
+        },
+        {
+          "id": "v26-3269-failures",
+          "text": "A 429, a 5xx or a GraphQL rate-limit or authentication error stops the run and the next run retries from there; a forbidden error is decided by site_refuses(); any other error writes failed and shows in Needs you"
+        },
+        {
+          "id": "v26-3269-already",
+          "text": "A ticket already in the target status is recorded as the existing skip outcome (the lead's recorded reading of AC3), with its update posted once and no duplicate comment"
+        },
+        {
+          "id": "v26-3269-token",
+          "text": "No output, log or ledger line contains the API key"
+        },
+        {
+          "id": "v26-3269-live",
+          "text": "A marked comment posted through the adapter is read back by markers --ticket against real Linear, recorded on the item"
+        }
+      ]
+    },
+    "V26-3334": {
+      "title": "Remove the host publisher mode: every tracker posts through the tracker publisher",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3334-refused",
+          "text": "A binding naming a host publisher fails validation, and doctor and lead-init name the fix"
+        },
+        {
+          "id": "v26-3334-implied",
+          "text": "A Linear-snapshot binding with the tracker publisher and no tracker settings posts through the Linear adapter"
+        },
+        {
+          "id": "v26-3334-gone",
+          "text": "No shipped skill, reference or script carries the host mode's tokens, ack is refused as an unknown command, and pins hold both"
+        },
+        {
+          "id": "v26-3334-reopen",
+          "text": "A record opened under host mode reopens under the new generation with no outbox item and no re-post"
+        },
+        {
+          "id": "v26-3334-manual",
+          "text": "tracker.updates manual still prints the start, post and review moves for people to make"
+        }
+      ]
+    },
+    "V26-3333": {
+      "title": "Post this repository's own deliveries' Linear updates through the tracker publisher",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3333-live",
+          "text": "After the switch, the first new journal entry posts to Linear with no lead action, with its ledger line, marked Linear comment and a real markers --ticket read linked on the item"
+        },
+        {
+          "id": "v26-3333-no-repost",
+          "text": "Nothing the host outbox already held is posted again"
+        },
+        {
+          "id": "v26-3333-doctor",
+          "text": "run_delivery.py doctor passes on the switched configuration"
+        }
+      ]
+    },
+    "V26-3097": {
+      "title": "Widen what the Linear qualifier's transport sensor proves",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3097-documents",
+          "text": "A planted instruction to reach Linear another way, in a Linear SKILL.md or references file, fails the qualifier"
+        },
+        {
+          "id": "v26-3097-delta",
+          "text": "A Linear skill moved out of the linear profile, with catalog and profiles changed together, fails naming the skill, and an empty delta fails"
+        },
+        {
+          "id": "v26-3097-charter",
+          "text": "The qualifier's result states that it proves the Linear skills reach Linear only through the host"
+        }
+      ]
+    },
+    "V26-3083": {
+      "title": "Run the on-demand Linear connector check on a schedule",
+      "lane": "lane-2",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3083-scheduled",
+          "text": "The check runs weekly with no one starting it, recorded by its first scheduled run"
+        },
+        {
+          "id": "v26-3083-failure",
+          "text": "A failure reaches the owner within a day, shown by a deliberately failing run's notification"
+        },
+        {
+          "id": "v26-3083-clean",
+          "text": "A run leaves no open entity, its issues canceled and found only canceled by its marker (the lead's recorded reading of AC3)"
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "Every story",
+      "text": "Each item merged to main through the merge queue, or closed with a recorded reason",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "main-ci",
+      "label": "Main CI",
+      "text": "main's CI on the last merged commit passes on the Ubuntu job and cut-release, with the run linked",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the commit the release candidate is tagged on",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "release",
+      "label": "Release",
+      "text": "A major release candidate carrying the Linear adapter and the host mode's removal is tagged, published and applied here, and this repository's deliveries post through the tracker publisher",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "no-deferrals",
+      "label": "No deferrals",
+      "text": "No finding any review in this delivery raised is deferred: each is fixed in the story that found it, and no follow-up item is filed",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "grantedBy": "the operator",
+    "grantedOn": "2026-11-09"
+  },
+  "approvals": [
+    {
+      "id": "approval-1",
+      "text": "The plan itself, before lead-setup.",
+      "state": "done",
+      "who": "the lead, under the operator's 2026-11-09 grant"
+    },
+    {
+      "id": "approval-2",
+      "text": "The major release candidate's tag, agreed with V26-3250's lead, and its apply here in V26-3333.",
+      "state": "waiting"
+    },
+    {
+      "id": "approval-3",
+      "text": "Creating the scheduled connector-check routine on the operator's account (V26-3083).",
+      "state": "waiting"
+    }
+  ],
+  "outOfScope": [
+    "V26-2947, a release-set tracking item from before tag-driven releases, and V26-1592, which is Athena's repository.",
+    "The rest of V26-3306 (V26-3260, V26-3262, V26-3270) and of V26-3266.",
+    "Any change to how agents themselves reach Linear: `linear-tracker-adapter`, `create-linear-ticket` and `execute-linear-ticket` stay MCP-only.",
+    "A Linear write path anywhere but run-delivery's tracker publisher and the commands that already post through a tracker adapter.",
+    "`tracker.updates: manual`, which stays: a tracker with no adapter, by the adopter's choice, has its moves made by people.",
+    "A final (non-candidate) release. The candidate is promoted at a later batch boundary, as `docs/product-generation.md` says."
+  ],
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  },
+  "outcome": {
+    "summary": "Linear updates post themselves, the way Jira's do.",
+    "text": "run-delivery's tracker publisher posts Linear updates and moves through Linear's API, host mode is gone, this repository's deliveries use it, the Linear qualifier covers the agent-facing documents, and the connector check runs weekly."
+  }
+}
