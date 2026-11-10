@@ -61,6 +61,8 @@ DECLARED_HOST_OPERATIONS = {
     "search",
     "update",
 }
+# What every profile's release writes for itself, so it differs between any two profiles whatever their skills hold.
+RELEASE_METADATA = {"catalog.json", "provenance.lock.json", "release-manifest.json", "validation-inventory.json"}
 EXECUTABLE_SUFFIXES = {".cjs", ".js", ".mjs", ".py", ".sh", ".ts", ".tsx"}
 DIRECT_LINEAR_ENDPOINTS = ("api.linear.app", "linear.app/api", "linear.app/graphql")
 LINEAR_SDK_ACTIONS = (
@@ -74,14 +76,30 @@ LINEAR_SDK_ACTIONS = (
 COMMAND_TRANSPORT = re.compile(r"(?m)^\s*(?:curl|wget)\s+https?://")
 # A document's command can sit inside inline code mid-sentence, so in documents it counts wherever it stands.
 DOCUMENT_COMMAND = re.compile(r"\b(?:curl|wget)\b[^\n]*?https?://")
-# Markup that can stand before an instruction: quotes, emphasis, list and heading markers, and a YAML or JSON key.
-DOCUMENT_LEAD = re.compile(
-    r"""^(?:\s+|"[^"\n]*"\s*:|[\w$-]+\s*:(?=\s)|>|[-*+](?=\s)|\d+[.)](?=\s)|#+(?=\s)|["'`*_(\[])*"""
+# A document's instruction is any of these verbs, in any inflection, standing before the marker in its sentence.
+DOCUMENT_VERBS = (
+    "call", "connect", "curl", "execute", "fetch", "hit", "import", "install", "invoke", "issue", "make", "open",
+    "point", "post", "prefer", "query", "reach", "request", "run", "send", "submit", "talk", "use", "wget", "write",
 )
-DOCUMENT_CLAUSE = re.compile(r"(?<=[.!?;:,])\s+|\s+[-\u2013\u2014]+\s+|\\n")
-DOCUMENT_VERB = re.compile(
-    r"(?:call|connect|curl|execute|fetch|hit|import|install|invoke|issue|make|open|point|post|query|reach|request|"
-    r"run|send|submit|talk|use|wget|write)\b"
+# A verb right after one of these, an adverb ending in -ly allowed between, tells the reader not to act.
+DOCUMENT_NEGATIONS = ("avoid", "don't", "don\u2019t", "dont", "never", "no", "nor", "not", "without")
+# One of these between the verb and the marker turns the marker into what the reader acts instead of.
+DOCUMENT_CONTRASTS = ("except", "instead of", "never", "no", "not", "rather than", "unlike", "without")
+DOCUMENT_SENTENCE = re.compile(r"(?<=[.!?;,])\s+|\s+[-\u2013\u2014]+\s+|\\n")
+
+
+def _inflected(verb: str) -> str:
+    if verb.endswith("e"):
+        return rf"{verb[:-1]}(?:e|es|ed|ing)"
+    return rf"{verb}(?:s|es|ed|ing|{verb[-1]}ed|{verb[-1]}ing)?"
+
+
+DOCUMENT_VERB = re.compile(r"(?<![\w'\u2019])(?:" + "|".join(_inflected(verb) for verb in DOCUMENT_VERBS) + r")(?![\w'\u2019])")
+DOCUMENT_NEGATED = re.compile(
+    r"(?:^|(?<![\w'\u2019]))(?:" + "|".join(re.escape(word) for word in DOCUMENT_NEGATIONS) + r")\s+(?:\w+ly\s+)?$"
+)
+DOCUMENT_CONTRAST = re.compile(
+    r"(?<![\w'\u2019])(?:" + "|".join(re.escape(word) for word in DOCUMENT_CONTRASTS) + r")(?![\w'\u2019])"
 )
 HTTP_CLIENT_ACTION = re.compile(
     r"\b(?:aiohttp|httpx|requests|urllib3)\.(?:delete|get|patch|post|put|request)\s*\(|"
@@ -234,19 +252,33 @@ def _actionable_instruction(contents: str, marker: str) -> bool:
 
 
 def _document_instruction(contents: str, marker: str) -> bool:
-    """Whether a document tells its reader, in some clause, to act on the marker.
+    """Whether a document tells its reader to act on the marker.
 
-    A clause is read after its leading markup, so a list item, a quoted prompt or a YAML or JSON value counts the same
-    as a sentence of prose, and a clause naming the marker without an instruction, such as "never use", does not.
+    The executables' line-start rule is the floor. Above it, a sentence instructs when the nearest verb before the
+    marker is not negated ("never use", "do not call") and no contrast ("instead of", "not") stands between them, so
+    a list item, a quoted prompt or a YAML or JSON value counts the same as prose, and boundary wording passes.
     """
+    if _actionable_instruction(contents, marker):
+        return True
     for line in contents.splitlines():
         if marker not in line:
             continue
-        for clause in DOCUMENT_CLAUSE.split(DOCUMENT_LEAD.sub("", line)):
-            clause = DOCUMENT_LEAD.sub("", clause)
-            if marker in clause and DOCUMENT_VERB.match(clause):
-                return True
+        for sentence in DOCUMENT_SENTENCE.split(line):
+            start = sentence.find(marker)
+            while start >= 0:
+                verbs = list(DOCUMENT_VERB.finditer(sentence, 0, start))
+                if verbs:
+                    verb = verbs[-1]
+                    if not DOCUMENT_NEGATED.search(sentence[:verb.start()]) and not DOCUMENT_CONTRAST.search(
+                        sentence, verb.end(), start
+                    ):
+                        return True
+                start = sentence.find(marker, start + 1)
     return False
+
+
+def _release_metadata(relative: str) -> bool:
+    return relative in RELEASE_METADATA or relative.startswith("profiles/")
 
 
 def _linear_skill_coverage(linear_candidate: Path, base_candidate: Path, delta: list[Path]) -> None:
@@ -362,7 +394,7 @@ def inspect_candidate_transport_boundary(
         raise QualificationFailure("host-native MCP capability set is incomplete")
 
     delta = _candidate_delta(linear_candidate, base_candidate)
-    if not delta:
+    if all(_release_metadata(path.relative_to(linear_candidate).as_posix()) for path in delta):
         raise QualificationFailure("candidate delta is empty")
     _linear_skill_coverage(linear_candidate, base_candidate, delta)
     for path in delta:

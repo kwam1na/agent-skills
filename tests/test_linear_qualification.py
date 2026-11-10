@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import importlib.util
+import inspect
 import json
 import os
 import re
@@ -980,6 +981,32 @@ class LinearQualificationTests(unittest.TestCase):
                  "\n- **Install @linear/sdk** and create items with it.\n"),
                 ("other-command", "command-transport", "skills/create-linear-ticket/SKILL.md",
                  "\nThen run `wget https://example.invalid/provider` for the item.\n"),
+                # The parent rule's line-start shapes stay refused, a verb read as a YAML key included.
+                ("verb-colon", "direct-linear-endpoint", "skills/linear-tracker-adapter/SKILL.md",
+                 "\nUse: https://api.linear.app/graphql\n"),
+                ("lower-verb-colon", "direct-linear-endpoint", "skills/linear-tracker-adapter/SKILL.md",
+                 "\nuse: api.linear.app/graphql\n"),
+                ("unspaced-bullet", "direct-linear-endpoint", "skills/linear-tracker-adapter/SKILL.md",
+                 "\n-use api.linear.app\n"),
+                ("blockquote", "direct-linear-endpoint", "skills/create-linear-ticket/SKILL.md",
+                 "\n> use api.linear.app for each item.\n"),
+                ("parenthesised-step", "direct-linear-endpoint", "skills/create-linear-ticket/SKILL.md",
+                 "\n3) call linear.app/api for each item.\n"),
+                ("prompt-after-escaped-newline", "direct-linear-endpoint", "skills/execute-linear-ticket/agents/openai.yaml",
+                 '\n  long_prompt: "Read the item.\\nuse api.linear.app to post the comment."\n'),
+                ("after-em-dash", "direct-linear-endpoint", "skills/create-linear-ticket/SKILL.md",
+                 "\nPrefer the connector \u2014 use api.linear.app when it is down.\n"),
+                ("modal-verb", "direct-linear-endpoint", "skills/create-linear-ticket/SKILL.md",
+                 "\nYou should send it to api.linear.app.\n"),
+                ("adverb-first", "direct-linear-endpoint", "skills/create-linear-ticket/SKILL.md",
+                 "\nAlways use api.linear.app for reads.\n"),
+                ("inflected-verb", "direct-linear-endpoint", "skills/create-linear-ticket/SKILL.md",
+                 "\nStart by calling api.linear.app for each item.\n"),
+                ("verb-after-negated-verb", "direct-linear-endpoint", "skills/create-linear-ticket/SKILL.md",
+                 "\nAgents never wait and use api.linear.app.\n"),
+                # The floor: a line that opens with an instruction is refused whatever its sentences say.
+                ("line-start-floor", "direct-linear-endpoint", "skills/linear-tracker-adapter/SKILL.md",
+                 "\nUse the host connector instead of api.linear.app.\n"),
             )
             for case_name, category, relative, planted in hostile:
                 with self.subTest(case=case_name):
@@ -988,16 +1015,48 @@ class LinearQualificationTests(unittest.TestCase):
                     with self.assertRaisesRegex(runner.QualificationFailure, category):
                         runner.inspect_candidate_transport_boundary(mutated, base_candidate, contract)
 
+            # Each verb, wherever it stands before the marker in its sentence, is an instruction.
+            self.assertEqual(runner.DOCUMENT_VERBS, (
+                "call", "connect", "curl", "execute", "fetch", "hit", "import", "install", "invoke", "issue", "make",
+                "open", "point", "post", "prefer", "query", "reach", "request", "run", "send", "submit", "talk", "use",
+                "wget", "write",
+            ))
+            for verb in runner.DOCUMENT_VERBS:
+                with self.subTest(verb=verb):
+                    mutated = copies.restored()
+                    _append(mutated / "skills/create-linear-ticket/SKILL.md", f"\nAgents should {verb} api.linear.app for the item.\n")
+                    with self.assertRaisesRegex(runner.QualificationFailure, "direct-linear-endpoint"):
+                        runner.inspect_candidate_transport_boundary(mutated, base_candidate, contract)
+
             # Naming the endpoint without telling the reader to act on it is boundary terminology, and passes.
-            harmless = copies.restored()
-            _append(harmless / "skills/create-linear-ticket/references/atomic-ticket-template.md",
-                    "\nNever use api.linear.app; reach Linear only through the host connector.\n"
-                    "- Do not call https://api.linear.app/graphql directly.\n"
-                    "The connector, not linear.app/graphql or @linear/sdk, is the transport.\n")
-            _append(harmless / "skills/execute-linear-ticket/agents/openai.yaml",
-                    '\n  boundary_note: "The host connector replaces api.linear.app."\n')
-            evidence = runner.inspect_candidate_transport_boundary(harmless, base_candidate, contract)
-            self.assertIn("documents in the delta carry no instruction to reach Linear another way", evidence)
+            self.assertEqual(runner.DOCUMENT_NEGATIONS,
+                             ("avoid", "don't", "don\u2019t", "dont", "never", "no", "nor", "not", "without"))
+            self.assertEqual(runner.DOCUMENT_CONTRASTS,
+                             ("except", "instead of", "never", "no", "not", "rather than", "unlike", "without"))
+            harmless_lines = [
+                ("terminology", "Never use api.linear.app; reach Linear only through the host connector."),
+                ("negated-bullet", "- Do not call https://api.linear.app/graphql directly."),
+                ("contrasted-list", "The connector, not linear.app/graphql or @linear/sdk, is the transport."),
+                ("negated-adverb", "Agents should never directly call api.linear.app."),
+                ("no-verb", "The host connector replaces api.linear.app."),
+                ("past-participle-negated", "This skill is not used with api.linear.app."),
+                ("negated-noun", "Make no call to api.linear.app."),
+                ("noun-not-verb", "The users of api.linear.app are other tools."),
+                *((f"negation-{word}", f"Agents should {word} use api.linear.app.") for word in runner.DOCUMENT_NEGATIONS),
+                *((f"contrast-{word}", f"Agents use the host connector {word} api.linear.app.")
+                  for word in runner.DOCUMENT_CONTRASTS),
+                *((f"sentence-split-{name}", f"Agents run the check{separator}api.linear.app is named for reference.")
+                  for name, separator in (("period", ". "), ("comma", ", "), ("semicolon", "; "), ("exclamation", "! "),
+                                          ("question", "? "), ("hyphen", " - "), ("en-dash", " \u2013 "),
+                                          ("em-dash", " \u2014 "), ("escaped-newline", "\\n"))),
+            ]
+            for case_name, line in harmless_lines:
+                with self.subTest(harmless=case_name):
+                    harmless = copies.restored()
+                    _append(harmless / "skills/create-linear-ticket/references/atomic-ticket-template.md", f"\n{line}\n")
+                    _append(harmless / "skills/execute-linear-ticket/agents/openai.yaml", f'\n  boundary_note: "{line}"\n')
+                    evidence = runner.inspect_candidate_transport_boundary(harmless, base_candidate, contract)
+                    self.assertIn("documents in the delta carry no instruction to reach Linear another way", evidence)
 
             binary = copies.restored()
             (binary / "skills/create-linear-ticket/references/diagram.bin").write_bytes(b"\xff\xfe\x00linear")
@@ -1015,6 +1074,17 @@ class LinearQualificationTests(unittest.TestCase):
 
             copies = SharedCorpus(directory / "changed-candidate", source=linear_candidate)
             self.addCleanup(copies.restored)
+            # The release's own metadata differs between any two profiles, so a delta of it alone is empty, and one
+            # more file is not.
+            metadata_only = copies.restored()
+            for relative in sorted(runner.RELEASE_METADATA) + ["profiles/linear.json"]:
+                _append(metadata_only / relative, "\n")
+            with self.assertRaisesRegex(runner.QualificationFailure, "^candidate delta is empty$"):
+                runner.inspect_candidate_transport_boundary(metadata_only, linear_candidate, contract)
+            _append(metadata_only / "agent_skills/__init__.py", "\n")
+            with self.assertRaisesRegex(runner.QualificationFailure, "^candidate delta is missing the Linear skill: "):
+                runner.inspect_candidate_transport_boundary(metadata_only, linear_candidate, contract)
+
             for skill in ("create-linear-ticket", "execute-linear-ticket"):
                 with self.subTest(removed=skill):
                     mutated = copies.restored()
@@ -1022,6 +1092,17 @@ class LinearQualificationTests(unittest.TestCase):
                     with self.assertRaisesRegex(runner.QualificationFailure,
                                                 f"^candidate delta is missing the Linear skill: {skill}$"):
                         runner.inspect_candidate_transport_boundary(mutated, base_candidate, contract)
+            # A base holding any file of a Linear skill, even one the Linear candidate does not, holds that skill.
+            mutated = copies.restored()
+            stray = base_candidate / "skills/create-linear-ticket/references/extra.md"
+            stray.parent.mkdir(parents=True)
+            stray.write_text("A base copy.\n", encoding="utf-8")
+            with self.assertRaisesRegex(runner.QualificationFailure,
+                                        "^candidate delta is missing the Linear skill: create-linear-ticket$"):
+                runner.inspect_candidate_transport_boundary(mutated, base_candidate, contract)
+            stray.unlink()
+            stray.parent.rmdir()
+            stray.parent.parent.rmdir()
             # One file of a Linear skill the base also holds, byte for byte, is outside the delta.
             mutated = copies.restored()
             shared = base_candidate / "skills/execute-linear-ticket/agents/openai.yaml"
@@ -1094,7 +1175,10 @@ class LinearQualificationTests(unittest.TestCase):
             base_candidate, linear_candidate, contract = self._extracted_candidates(directory / "extracted")
             adapter = "skills/run-delivery/adapters/tracker_linear.py"
             source = 'import urllib.request\nurllib.request.urlopen("https://api.linear.app/graphql")\n'
-            if not (base_candidate / adapter).is_file():
+            if (ROOT / adapter).is_file():
+                # Once run-delivery ships its Linear adapter, its own archive must carry it.
+                self.assertTrue((base_candidate / adapter).is_file())
+            else:
                 (base_candidate / adapter).write_text(source, encoding="utf-8")
                 (linear_candidate / adapter).write_text(source, encoding="utf-8")
             self.assertEqual((base_candidate / adapter).read_bytes(), (linear_candidate / adapter).read_bytes())
@@ -1110,9 +1194,13 @@ class LinearQualificationTests(unittest.TestCase):
         self.assertEqual(runner.LINEAR_SKILL_IDS, ("create-linear-ticket", "execute-linear-ticket", "linear-tracker-adapter"))
         profile = json.loads((ROOT / "profiles" / "linear.json").read_text(encoding="utf-8"))
         self.assertEqual(tuple(sorted(profile["members"])), runner.LINEAR_SKILL_IDS)
-        sensor = SCRIPT.read_text(encoding="utf-8")
-        for derived in ("catalog.json", "profiles/", '"members"'):
-            self.assertNotIn(derived, sensor)
+        # Only the release's own metadata is named, to set it aside: no profile's members are read.
+        self.assertNotIn('"members"', SCRIPT.read_text(encoding="utf-8"))
+        for function in (runner.inspect_candidate_transport_boundary, runner._linear_skill_coverage):
+            source = inspect.getsource(function)
+            for derived in ("catalog", "profiles", "members"):
+                with self.subTest(function=function.__name__, derived=derived):
+                    self.assertNotIn(derived, source)
 
     def _extracted_candidates(self, directory: Path) -> tuple[Path, Path, dict]:
         directory.mkdir(parents=True, exist_ok=True)
