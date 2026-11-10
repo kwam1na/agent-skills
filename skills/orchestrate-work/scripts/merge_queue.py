@@ -337,6 +337,12 @@ def served_bases(binding: dict) -> str:
 
 def binding_errors(binding: object) -> list[str]:
     errors = validate(binding, load_schema("orchestration-binding/1"))
+    publishers = ((binding.get("state") or {}).get("publishers") if isinstance(binding, dict) else None) or []
+    for index, entry in enumerate(publishers if isinstance(publishers, list) else []):
+        if isinstance(entry, dict) and "kind" in entry and "argv" not in entry:
+            # The schema refuses it too; this says what replaces it.
+            errors.append(f"/state/publishers/{index}: a publisher with a kind and no argv runs nothing; fix: name "
+                          "the tracker publisher instead (run-delivery's lead-setup adds it)")
     if errors or not isinstance(binding, dict):
         return errors
     commands: list[tuple[str, object]] = [

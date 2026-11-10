@@ -688,6 +688,13 @@ def linear_snapshot(args: argparse.Namespace, environ: dict, transport: Transpor
                     clock: Callable[[], float], sleep: Callable[[float], None]) -> dict:
     # A personal key goes in the Authorization header as it is. --site names Linear's API origin, as run-delivery's
     # Linear adapter reads it from this command, so the reads and the writes reach the same place.
+    if args.site:
+        parts = urllib.parse.urlsplit(args.site)
+        loopback = parts.hostname in ("127.0.0.1", "localhost", "::1")
+        # The key goes in the clear to whatever this names: never over plain HTTP off this machine.
+        if (parts.scheme != "https" and not (parts.scheme == "http" and loopback)) or parts.path not in ("", "/") \
+                or parts.query or parts.fragment:
+            raise Failure("usage: --site must be an https origin, such as https://api.linear.app")
     api = f"{args.site.rstrip('/')}/graphql" if args.site else LINEAR_API
     client = Client(api, _credential(environ, args.token_env), transport, deadline, clock, sleep)
     items: list[dict] = []

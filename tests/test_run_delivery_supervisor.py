@@ -2569,6 +2569,11 @@ class CloseStoppedPartwayTests(unittest.TestCase):
         self.assertEqual(self.marks(fx.tmp / "record").get("finished"), None)
         self.assertTrue(self.status(fx).startswith("supervisor: running"))
         self.assertNotIn("stopped partway", self.status(fx))
+        # Only the close's own update was refused: every other entry's reached the tracker.
+        texts = [c["text"] for issue in self.backend.read()["issues"].values() for c in issue["comments"]]
+        self.assertTrue(texts)
+        self.assertFalse([text for text in texts if "(delivery.closed)" in text])
+        self.assertTrue([text for text in texts if "(candidate.merged)" in text])
 
     def test_a_record_without_marks_reads_as_it_did(self) -> None:
         fx = self.closable_fixture()

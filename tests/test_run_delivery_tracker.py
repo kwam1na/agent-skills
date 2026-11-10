@@ -1362,6 +1362,13 @@ class TrackerSettingsTests(unittest.TestCase):
                 self.assertIsNone(tp.refusal(tp.settings(tmp, {"tracker": {"updates": "manual"}}, binding)))
                 binding["state"]["publishers"] = publisher
                 self.assertIsNone(tp.refusal(tp.settings(tmp, {}, binding)))
+        # A named adapter wins over the snapshot's kind.
+        linear = {"state": {"publishers": publisher, "trackerSnapshot": {"argv": rows[1][0]}}}
+        named = {"tracker": {"adapter": "jira", "site": "https://t.test", "tokenEnv": "T", "userEnv": "U"}}
+        self.assertEqual(tp.settings(tmp, named, linear)["adapter"],
+                         {"name": "jira", "site": "https://t.test", "userEnv": "U", "tokenEnv": "T"})
+        own = tp.settings(tmp, {"tracker": {"argv": ["own-adapter"]}}, linear)["adapter"]
+        self.assertEqual(own, {"name": "argv", "argv": ["own-adapter"]})
 
     def test_a_publisher_that_runs_nothing_is_refused_naming_the_fix_whatever_else_is_bound(self) -> None:
         tmp = Path(tempfile.mkdtemp(prefix="tracker-unrunnable-"))
@@ -1381,8 +1388,23 @@ class TrackerSettingsTests(unittest.TestCase):
                 self.assertIn("run-delivery's tracker publisher (lead-setup adds it)", fix)
                 self.assertIn("export the tracker's token", fix)
         # One with an argv is a publisher like any other, whatever else it carries.
-        conf = tp.settings(tmp, {}, {"state": {"publishers": [tracker], "trackerSnapshot": snapshot}})
-        self.assertEqual((conf["unrunnable"], tp.refusal(conf)), ([], None))
+        for entry in (tracker, {**tracker, "kind": "x"}):
+            with self.subTest(entry=entry):
+                conf = tp.settings(tmp, {}, {"state": {"publishers": [entry], "trackerSnapshot": snapshot}})
+                self.assertEqual((conf["unrunnable"], conf["publisher"], tp.refusal(conf)), ([], tracker["id"], None))
+
+    def test_a_binding_of_the_wrong_shape_reads_as_naming_nothing(self) -> None:
+        tmp = Path(tempfile.mkdtemp(prefix="tracker-shape-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        for binding in ([], "x", {"state": []}, {"state": ["x"]}, {"state": "x"}, {"state": {"publishers": 5}},
+                        {"state": {"trackerSnapshot": "x"}},
+                        {"state": {"trackerSnapshot": {"argv": "snapshot.py --kind linear"}}},
+                        {"state": {"publishers": [{"id": "p", "argv": "tracker_publisher.py"}, 7]}}):
+            with self.subTest(binding=binding):
+                conf = tp.settings(tmp, {}, binding)
+                self.assertEqual((conf["mode"], conf["publisher"], conf["unrunnable"], conf["snapshot"]),
+                                 (None, None, [], False))
+                self.assertIsNone(tp.refusal(conf))
 
     def test_tracker_updates_host_is_refused_with_the_fix(self) -> None:
         tmp = Path(tempfile.mkdtemp(prefix="tracker-updates-"))
@@ -1823,6 +1845,21 @@ class LaneCommandTests(RunDeliveryTrackerCommandTests):
         self.assertEqual(code, 2, out)
         self.assertIn("doesn't serve the base release/1", out)
         self.assertFalse((fx.main / "lanes/FX-3").exists())
+
+    def test_by_hand_open_pr_and_handoff_print_the_review_move_and_nothing_moves(self) -> None:
+        fx, backend = self.lane({"start": ["Start work"], "review": ["Submit for review"], "reviewWhen": "pr-open"},
+                                updates="manual")
+        code, out = fx.flow("lane-start", "FX-3", "--base", "feature/FX-1", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn('Tracker move (your story FX-3): "Start work", with your tracker tools.', out)
+        wt = fx.main / "lanes/FX-3"
+        said = 'Tracker move (your story FX-3): "Submit for review", with your tracker tools.'
+        self.assertIn(said, self.opened(fx, wt))
+        code, out = self.handed(fx, wt)
+        self.assertEqual(code, 0, out)
+        self.assertIn(said, out)
+        self.assertIn("Tracker post (your story): hand-off: https://forge.test/pr/1", out)
+        self.assertFalse([call for call in backend.read()["calls"] if call[0] in ("transition", "comment")])
 
     def test_with_the_publisher_lane_start_open_pr_and_handoff_print_no_move_for_anyone_to_make(self) -> None:
         fx, backend = self.lane({"start": ["Start work"], "review": ["Submit for review"], "reviewWhen": "pr-open"})

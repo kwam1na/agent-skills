@@ -1293,6 +1293,18 @@ class RegenerableListingTests(MergeQueueTestCase):
         self.assertEqual(queue.binding_errors({**binding, "regenerable": {
             **binding["regenerable"], "listings": [{"path": "gen/lock.json", "argv": REAL_LISTING}]}}), [])
 
+    def test_a_publisher_that_runs_nothing_is_refused_naming_the_fix(self) -> None:
+        binding = Adopter.default_binding(type("Fixture", (), {"work": Path("/work"), "state": Path("/state"),
+                                                                "remote": Path("/r"), "log": Path("/l")})())
+        state = binding.get("state") or {"directory": "state", "renderers": []}
+        for publishers in ([{"id": "tracker", "kind": "host"}], [{"id": "ok", "argv": ["true"]}, {"id": "live", "kind": "host"}]):
+            with self.subTest(publishers=publishers):
+                errors = queue.binding_errors({**binding, "state": {**state, "publishers": publishers}})
+                index = len(publishers) - 1
+                self.assertIn(f"/state/publishers/{index}: a publisher with a kind and no argv runs nothing; fix: name "
+                              "the tracker publisher instead (run-delivery's lead-setup adds it)", errors)
+        self.assertEqual(queue.binding_errors({**binding, "state": {**state, "publishers": [{"id": "ok", "argv": ["true"]}]}}), [])
+
 
 REVIEW_GATE = """
 import os, subprocess, sys, time

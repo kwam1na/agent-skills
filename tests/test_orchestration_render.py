@@ -744,11 +744,13 @@ class BindingStateTests(DeliveryStateFixture):
 
     def test_a_publisher_with_a_kind_is_refused_and_no_view_may_claim_the_records_names(self) -> None:
         # The old folder stays reserved, so a record reopened with what an earlier generation left is never written over.
-        for publisher in ({"id": "live", "kind": "host", "argv": ["x"]}, {"id": "live", "kind": "shell"},
-                          {"id": "live", "kind": "host", "timeoutSeconds": 5}):
+        for publisher, said in (({"id": "live", "kind": "host", "argv": ["x"]}, "unknown fields: kind"),
+                                ({"id": "live", "kind": "shell"}, "runs nothing"),
+                                ({"id": "live", "kind": "host", "timeoutSeconds": 5}, "runs nothing")):
             with self.subTest(publisher=publisher):
                 code, result = wrapper(self.state_dir, "--state-config", self.config([], [publisher]))
                 self.assertEqual((code, result["code"]), (2, "config_invalid"), result)
+                self.assertIn(said, result["error"])
         for output in ("outbox/outbox.json", "published.json", "OUTBOX/x.md", "recovery.json", "Recovery.JSON",
                        "changes.jsonl", "Changes.JSONL", "recovery.json.invalid",
                        "recovery.json.invalid.2"):

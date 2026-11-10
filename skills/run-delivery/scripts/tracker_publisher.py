@@ -268,8 +268,12 @@ def settings(root: Path, own: dict | None = None, binding: dict | None = None) -
         return {"mode": None, "adapter": None, "project": None, "transitions": {}, "publisher": None, "unrunnable": [],
                 "snapshot": False,
                 "problems": [f"{named or 'run-delivery.json'} tracker must be an object"]}
-    state = binding.get("state") or {}
-    snapshot = (state.get("trackerSnapshot") or {}).get("argv") or []
+    # A binding of the wrong shape is the schema check's to refuse: it reads here as one naming nothing.
+    state = binding.get("state") if isinstance(binding, dict) else None
+    state = state if isinstance(state, dict) else {}
+    reader = state.get("trackerSnapshot")
+    snapshot = reader.get("argv") if isinstance(reader, dict) else None
+    snapshot = [part for part in snapshot if isinstance(part, str)] if isinstance(snapshot, list) else []
     kind = _flag(snapshot, "--kind")
     adapter = None
     if tracker.get("argv") is not None:
@@ -305,13 +309,15 @@ def settings(root: Path, own: dict | None = None, binding: dict | None = None) -
         problems.append("tracker.updates is publisher, but no tracker adapter is configured (tracker.adapter or tracker.argv)")
     publisher = None
     unrunnable = []
-    for entry in state.get("publishers") or []:
+    entries = state.get("publishers")
+    for entry in entries if isinstance(entries, list) else []:
         if not isinstance(entry, dict):
             continue
         if entry.get("kind") is not None and "argv" not in entry:
             # A publisher that runs nothing: this generation leaves no outbox for anyone to post.
             unrunnable.append(entry.get("id"))
-        elif any(isinstance(part, str) and part.endswith("tracker_publisher.py") for part in entry.get("argv") or []):
+        elif isinstance(entry.get("argv"), list) and any(
+                isinstance(part, str) and part.endswith("tracker_publisher.py") for part in entry["argv"]):
             publisher = entry.get("id")
     transitions = tracker.get("transitions") or {}
     if not isinstance(transitions, dict):
