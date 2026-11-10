@@ -1304,6 +1304,10 @@ class RegenerableListingTests(MergeQueueTestCase):
                 self.assertIn(f"/state/publishers/{index}: a publisher with a kind and no argv runs nothing; fix: name "
                               "the tracker publisher instead (run-delivery's lead-setup adds it)", errors)
         self.assertEqual(queue.binding_errors({**binding, "state": {**state, "publishers": [{"id": "ok", "argv": ["true"]}]}}), [])
+        # A binding of the wrong shape gets the schema's verdict, never an error of the check's own.
+        for shape in ([], {**binding, "state": ["x"]}, {**binding, "state": {**state, "publishers": 5}}):
+            with self.subTest(shape=type(shape).__name__):
+                self.assertTrue(queue.binding_errors(shape))
 
 
 REVIEW_GATE = """

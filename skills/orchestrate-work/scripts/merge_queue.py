@@ -337,7 +337,8 @@ def served_bases(binding: dict) -> str:
 
 def binding_errors(binding: object) -> list[str]:
     errors = validate(binding, load_schema("orchestration-binding/1"))
-    publishers = ((binding.get("state") or {}).get("publishers") if isinstance(binding, dict) else None) or []
+    state = binding.get("state") if isinstance(binding, dict) else None
+    publishers = state.get("publishers") if isinstance(state, dict) else None
     for index, entry in enumerate(publishers if isinstance(publishers, list) else []):
         if isinstance(entry, dict) and "kind" in entry and "argv" not in entry:
             # The schema refuses it too; this says what replaces it.
