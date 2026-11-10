@@ -41,8 +41,8 @@ host with the Linear connector configured. Its parts are:
 - **Failure route.** A failed run sends the owner a push notification and records the
   failure in the routine's own run result, which the owner reads within a day. It never
   reports through a Linear entity, since the connector may be what failed.
-- **Cleanup.** The run ends by cancelling every issue it created, then searching for its
-  marker and finding only canceled issues. The connector offers no issue delete, so
+- **Cleanup.** The run ends by cancelling every issue it created, by the identifiers it
+  noted when creating them, then searching for its marker and finding only canceled issues. The connector offers no issue delete, so
   leaving no entities behind means leaving no open entity behind. The cleanup runs after a
   failed step too, for whatever the run has created.
 
@@ -54,19 +54,21 @@ agent-skills repository, against the disposable Linear team <disposable team>, u
 only the host's Linear connector.
 
 1. Choose a random marker and search for it, expecting nothing.
-2. Create a primary issue and a dependency issue in that team, each carrying the marker.
+2. Create a primary issue and a dependency issue in that team, each carrying the marker,
+   and note each issue's identifier for this run.
 3. Read both, update one, and search for the marker again, expecting both.
 4. Relate them, and read the relation back.
 5. Reconcile: confirm each operation's result by reading it rather than trusting the
    response.
-6. Cleanup, always, even after a failed step: cancel every issue this run created, then
-   search for the marker and confirm every issue it finds is canceled.
+6. Cleanup, always, even after a failed step: cancel every issue this run created, by
+   the identifiers noted in step 2, then search for the marker and confirm every issue
+   it finds is canceled.
 
 If any step fails, the connector answers differently from the adapter's contract, or the
 cleanup leaves an issue that is not canceled, send the owner a push notification naming
 the step and what it saw, and end the run as failed. Report only through the
 notification and this run's result, never through a Linear entity. Write nothing to the
-repository, and record no tokens, keys, identifiers or host payloads.
+repository, and keep no tokens, keys, identifiers or host payloads after the run.
 ```
 
 The owner writes the disposable team's name in place of `<disposable team>` when

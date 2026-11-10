@@ -1280,7 +1280,10 @@ class LinearQualificationTests(unittest.TestCase):
         # The on-demand check keeps its own wording; the scheduled run is read from its own section onward.
         self.assertIn("It gates nothing and retains no attestation.", document)
         self.assertIn("## Scheduled run", document)
-        scheduled = document[document.index("## Scheduled run"):]
+        # The section runs from its heading to the next one, so a phrase moved under a later heading fails.
+        start = document.index("## Scheduled run")
+        following = document.find(" ## ", start + 1)
+        scheduled = document[start:] if following < 0 else document[start:following]
         for phrase in (
             "The scheduled run gates nothing either: no release waits for it, and a failure reaches its owner "
             "without blocking anything.",
@@ -1292,25 +1295,37 @@ class LinearQualificationTests(unittest.TestCase):
             "A failed run sends the owner a push notification and records the failure in the routine's own run "
             "result, which the owner reads within a day. It never reports through a Linear entity, since the "
             "connector may be what failed.",
-            "**Cleanup.** The run ends by cancelling every issue it created, then searching for its marker and "
-            "finding only canceled issues.",
+            "**Cleanup.** The run ends by cancelling every issue it created, by the identifiers it noted when "
+            "creating them, then searching for its marker and finding only canceled issues.",
             "leaving no entities behind means leaving no open entity behind. The cleanup runs after a failed step "
             "too, for whatever the run has created.",
-            "6. Cleanup, always, even after a failed step: cancel every issue this run created, then search for "
-            "the marker and confirm every issue it finds is canceled.",
-            "Report only through the notification and this run's result, never through a Linear entity. Write "
-            "nothing to the repository, and record no tokens, keys, identifiers or host payloads.",
             "one deliberate failing run, with a team name that does not exist in place of `<disposable team>`, "
             "whose notification reaches the owner.",
         ):
             with self.subTest(phrase=phrase[:48]):
                 self.assertIn(phrase, scheduled)
-        # The prompt reaches Linear only through the connector, and its own steps are the check's six.
-        prompt = scheduled[scheduled.index("```text"):scheduled.index("```", scheduled.index("```text") + 7)]
-        self.assertIn("using only the host's Linear connector.", prompt)
-        self.assertEqual(re.findall(r"(?<= )([1-6])\. ", prompt), ["1", "2", "3", "4", "5", "6"])
-        for marker in ("api.linear.app", "linear.app/api", "linear.app/graphql", "@linear/sdk", "curl", "token="):
-            self.assertNotIn(marker, prompt)
+        # The prompt is what the routine runs, so its own steps, cleanup and failure route are pinned inside it.
+        opening = scheduled.index("```text")
+        prompt = scheduled[opening:scheduled.index("```", opening + len("```text"))]
+        for phrase in (
+            "using only the host's Linear connector.",
+            "2. Create a primary issue and a dependency issue in that team, each carrying the marker, and note "
+            "each issue's identifier for this run.",
+            "6. Cleanup, always, even after a failed step: cancel every issue this run created, by the "
+            "identifiers noted in step 2, then search for the marker and confirm every issue it finds is canceled.",
+            "send the owner a push notification naming the step and what it saw, and end the run as failed.",
+            "Report only through the notification and this run's result, never through a Linear entity. Write "
+            "nothing to the repository, and keep no tokens, keys, identifiers or host payloads after the run.",
+        ):
+            with self.subTest(prompt=phrase[:48]):
+                self.assertIn(phrase, prompt)
+        # Exactly the check's six steps, so nothing follows the cleanup.
+        self.assertEqual(re.findall(r"(?<= )(\d+)\. ", prompt), ["1", "2", "3", "4", "5", "6"])
+        self.assertLess(prompt.index("6. Cleanup"), prompt.index("If any step fails"))
+        for marker in ("api.linear.app", "linear.app/api", "linear.app/graphql", "@linear/sdk", "curl", "token=",
+                       "tracker_linear", "linear_api_key", "graphql"):
+            with self.subTest(absent=marker):
+                self.assertNotIn(marker, prompt.lower())
 
     def test_durable_corpus_contains_no_plan_or_ticket_ids(self) -> None:
         durable_paths = [ROOT / "README.md"]
