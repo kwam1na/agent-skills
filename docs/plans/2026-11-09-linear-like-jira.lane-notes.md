@@ -21,6 +21,10 @@ another epic's change), stop and tell the lead before hand-off. Don't hand off a
   for that ticket and transient when the whole site refuses too, through `site_refuses()`; any other error is a permanent `failed`.
 - The failure-class rows read "another 4xx, except 401 and 403, permanent".
 
+**Carried from the last round, for V26-3334.** Decision 5's token pin forbids any `== "host"` comparison in a shipped script, yet the
+refusals must recognise a host publisher. Detect it generically: a publisher entry that has a `kind` and no `argv` is refused, naming the
+fix, so no host token is needed. The reopen code's old-file path constant stays the one named exception.
+
 **Acceptance readings.** The lead recorded on V26-3269 that its AC3 is met by the publisher's existing `skip` outcome (Decision 3), and
 on V26-3083 that its AC3 means no open entity is left (Decision 7). Review against those readings.
 
