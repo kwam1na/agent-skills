@@ -83,9 +83,10 @@ DOCUMENT_VERBS = (
 )
 # A verb right after one of these, an adverb ending in -ly allowed between, tells the reader not to act.
 DOCUMENT_NEGATIONS = ("avoid", "don't", "don\u2019t", "dont", "never", "no", "nor", "not", "without")
-# One of these between the verb and the marker turns the marker into what the reader acts instead of.
+# One of these right before the marker, or before the word that holds it, turns it into what the reader acts instead of.
 DOCUMENT_CONTRASTS = ("except", "instead of", "never", "no", "not", "rather than", "unlike", "without")
-DOCUMENT_SENTENCE = re.compile(r"(?<=[.!?;,])\s+|\s+[-\u2013\u2014]+\s+|\\n")
+# Sentences, not clauses: a comma can join an instruction to the endpoint it names.
+DOCUMENT_SENTENCE = re.compile(r"(?<=[.!?;])\s+|\s+[-\u2013\u2014]+\s+|\\n")
 
 
 def _inflected(verb: str) -> str:
@@ -99,7 +100,7 @@ DOCUMENT_NEGATED = re.compile(
     r"(?:^|(?<![\w'\u2019]))(?:" + "|".join(re.escape(word) for word in DOCUMENT_NEGATIONS) + r")\s+(?:\w+ly\s+)?$"
 )
 DOCUMENT_CONTRAST = re.compile(
-    r"(?<![\w'\u2019])(?:" + "|".join(re.escape(word) for word in DOCUMENT_CONTRASTS) + r")(?![\w'\u2019])"
+    r"(?<![\w'\u2019])(?:" + "|".join(re.escape(word) for word in DOCUMENT_CONTRASTS) + r")\s+\S*$"
 )
 HTTP_CLIENT_ACTION = re.compile(
     r"\b(?:aiohttp|httpx|requests|urllib3)\.(?:delete|get|patch|post|put|request)\s*\(|"
@@ -255,7 +256,7 @@ def _document_instruction(contents: str, marker: str) -> bool:
     """Whether a document tells its reader to act on the marker.
 
     The executables' line-start rule is the floor. Above it, a sentence instructs when the nearest verb before the
-    marker is not negated ("never use", "do not call") and no contrast ("instead of", "not") stands between them, so
+    marker is not negated ("never use", "do not call") and the marker does not follow a contrast ("instead of"), so
     a list item, a quoted prompt or a YAML or JSON value counts the same as prose, and boundary wording passes.
     """
     if _actionable_instruction(contents, marker):
@@ -270,7 +271,7 @@ def _document_instruction(contents: str, marker: str) -> bool:
                 if verbs:
                     verb = verbs[-1]
                     if not DOCUMENT_NEGATED.search(sentence[:verb.start()]) and not DOCUMENT_CONTRAST.search(
-                        sentence, verb.end(), start
+                        sentence[verb.end():start]
                     ):
                         return True
                 start = sentence.find(marker, start + 1)
