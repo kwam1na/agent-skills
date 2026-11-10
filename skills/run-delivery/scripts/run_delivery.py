@@ -3068,7 +3068,7 @@ def said_moves(names: list[str]) -> str:
 
 
 def lane_print(c, key: str, what: dict) -> None:
-    """Record what a command printed for the lane to make with its own tracker tools (a host-only tracker)."""
+    """Record what a command printed for the lane to make with its own tracker tools (a host or manual tracker)."""
     tracker_publisher.append_flow(c.flow_log, c.delivery, "lane-prints", {"subject": key, **what})
 
 
@@ -8160,14 +8160,20 @@ class Doctor:
         return "skipped-ok", "(not verified: doctor never writes to a forge; open-pr is the first write)"
 
     def tracker_token(self):
-        argv = (((self.binding or {}).get("state") or {}).get("trackerSnapshot") or {}).get("argv")
-        if not argv:
+        argv = (((self.binding or {}).get("state") or {}).get("trackerSnapshot") or {}).get("argv") or []
+        # Without a readable configuration there is no adapter, only the snapshot's variables.
+        adapter = (tracker_publisher.settings(self.root, self.c.flow_raw, self.binding or {}).get("adapter")
+                   if self.c else None) or {}
+        own = [adapter[field] for field in ("tokenEnv", "userEnv") if adapter.get(field)]
+        if not argv and not own:
             return self.not_applicable("the binding declares no tracker snapshot")
         names = [argv[i + 1] for i, a in enumerate(argv[:-1]) if a in ("--token-env", "--user-env")]
+        names += [name for name in own if name not in names]
         unset = [name for name in names if not os.environ.get(name)]
         if unset:
             return "missing", (f"{', '.join(unset)} {'is' if len(unset) == 1 else 'are'} unset, and the tracker "
-                               f"snapshot reads {'it' if len(unset) == 1 else 'them'}; fix: export {', '.join(unset)}")
+                               f"snapshot or adapter reads {'it' if len(unset) == 1 else 'them'}; fix: export "
+                               f"{', '.join(unset)}")
         return "ok", f"{', '.join(names) or 'no variables'} set"
 
     def publishing(self):

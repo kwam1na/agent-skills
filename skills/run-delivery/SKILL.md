@@ -94,7 +94,7 @@ It exits 0 when no check is `missing` or `wrong`, 1 when one is, and 2 on a usag
 | `gh` is installed and signed in | the GitHub adapter is configured |
 | The forge adapter answers `find` | a forge is configured, and not `--offline` |
 | Forge write access: reported as not verified, since the check never writes to a forge | a forge is configured |
-| The tracker snapshot's token variables are set | the binding declares a tracker snapshot |
+| The tracker snapshot's and tracker adapter's token variables are set | the binding declares a tracker snapshot, or the configuration names a tracker adapter |
 | The in-app build, serve and check programs resolve; the lease and baseline folders are writable | in-app checks are declared |
 | The in-app adapters keep their contract on the fixture page | `--run-adapters`; skipped at once if the lease is held |
 | ffmpeg and ffprobe, with the filters video evidence uses | a story is marked for video evidence |

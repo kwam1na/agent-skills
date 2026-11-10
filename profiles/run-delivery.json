@@ -36,6 +36,7 @@
     "skills/run-delivery/adapters/forge_bitbucket.py",
     "skills/run-delivery/adapters/forge_github.py",
     "skills/run-delivery/adapters/tracker_jira.py",
+    "skills/run-delivery/adapters/tracker_linear.py",
     "skills/run-delivery/assets/adapter-fixture/index.html",
     "skills/run-delivery/references/adopting.md",
     "skills/run-delivery/references/config.md",

@@ -47,6 +47,10 @@ LANE_MOVE = 0
 ADAPTER_TIMEOUT_SECONDS = 60
 # Statuses retried by a later run; any other 4xx is permanent. A 403 is transient only when the site refuses it too.
 TRANSIENT = (401, 409, 423, 429)
+LINEAR_TOKEN_ENV = "LINEAR_API_KEY"
+# What a host publisher's `ack` left beside the record: the last journal entry it published.
+PUBLISHED = "published.json"
+SEEDED = "published before the tracker publisher"
 JIRA_KEY = re.compile(r"^([A-Z][A-Z0-9_]*)-[0-9]+$")
 TOOL = Path(__file__).resolve().parent.parent
 
@@ -272,8 +276,14 @@ def settings(root: Path, own: dict | None = None, binding: dict | None = None) -
             problems.append("tracker.argv must be a non-empty list of strings")
         else:
             adapter = {"name": "argv", "argv": tracker["argv"]}
-    elif tracker.get("adapter") not in (None, "jira"):
-        problems.append(f"tracker.adapter {tracker['adapter']!r} isn't one run-delivery ships (jira); give tracker.argv")
+    elif tracker.get("adapter") not in (None, "jira", "linear"):
+        problems.append(f"tracker.adapter {tracker['adapter']!r} isn't one run-delivery ships (jira, linear); give "
+                        "tracker.argv")
+    elif tracker.get("adapter") == "linear":
+        # Linear's API takes the snapshot's personal key; the adapter's own default variable when neither names one.
+        adapter = {"name": "linear", "site": tracker.get("site"),
+                   "tokenEnv": tracker.get("tokenEnv") or (_flag(snapshot, "--token-env") if kind == "linear" else None)
+                   or LINEAR_TOKEN_ENV}
     elif tracker.get("adapter") == "jira" or kind == "jira":
         adapter = {"name": "jira", "site": tracker.get("site") or _flag(snapshot, "--site"),
                    "userEnv": tracker.get("userEnv") or _flag(snapshot, "--user-env"),
@@ -286,7 +296,7 @@ def settings(root: Path, own: dict | None = None, binding: dict | None = None) -
     if updates not in (None, "publisher", "host", "manual"):
         problems.append(f"tracker.updates must be publisher, host or manual, not {updates!r}")
         updates = None
-    # Linear is reachable only through the host's connector, by this corpus's own rule.
+    # A Linear snapshot with no adapter named keeps the host publisher's outbox; tracker.adapter "linear" opts in.
     mode = updates or ("publisher" if adapter else "host" if kind == "linear" else None)
     if mode == "publisher" and adapter is None and not problems:
         problems.append("tracker.updates is publisher, but no tracker adapter is configured (tracker.adapter or tracker.argv)")
@@ -348,9 +358,10 @@ def refusal(conf: dict) -> str | None:
                 "updates and moves to it; fix: add one to state.publishers (lead-setup adds run-delivery's tracker "
                 "publisher), or set tracker.updates to \"manual\" to post them by hand")
     if conf["mode"] == "host" and not conf["host"]:
-        return ("the tracker is reachable only through the host, but the binding has no host publisher; fix: add one "
-                "to state.publishers, {\"id\": \"tracker\", \"kind\": \"host\"}, whose outbox the lead publishes, "
-                "or set tracker.updates to \"manual\"")
+        return ("the tracker's updates go to a host publisher, but the binding has none; fix: set tracker.adapter "
+                "to \"linear\" and run lead-setup, which adds run-delivery's tracker publisher; or add a host "
+                "publisher to state.publishers, {\"id\": \"tracker\", \"kind\": \"host\"}, whose outbox the lead "
+                "publishes; or set tracker.updates to \"manual\"")
     if conf["mode"] is None and conf.get("snapshot") and not (conf["publisher"] or conf["host"]):
         # A tracker the binding reads with no adapter run-delivery knows: some publisher must post to it.
         return ("the tracker is configured, but the binding has no tracker publisher, so nothing posts the delivery's "
@@ -385,6 +396,9 @@ class Adapter:
         if spec["name"] == "jira":
             self.prefix = [sys.executable, "-B", str(TOOL / "adapters" / "tracker_jira.py"), "--site", spec["site"],
                            "--token-env", spec["tokenEnv"], *(["--user-env", spec["userEnv"]] if spec.get("userEnv") else [])]
+        elif spec["name"] == "linear":
+            self.prefix = [sys.executable, "-B", str(TOOL / "adapters" / "tracker_linear.py"),
+                           *(["--site", spec["site"]] if spec.get("site") else []), "--token-env", spec["tokenEnv"]]
         else:
             self.prefix = [os.path.expanduser(part) for part in spec["argv"]]
         self.root, self.environ = root, environ if environ is not None else dict(os.environ)
@@ -711,10 +725,44 @@ class Publisher:
                 return True
         return False
 
+    def published_through(self) -> int:
+        """The last journal entry a host publisher's `ack` recorded for this record, or 0. Only the publisher's first
+        run over the record reads `published.json`: its seeding lines carry the value it read, so a run that stopped
+        partway finishes with it, and a later `ack` never covers an entry the publisher hasn't. A record the publisher
+        has written other lines for was never seeded. One acknowledged before the record's first entry belongs to an
+        earlier record."""
+        own = [line for line in self.ledger if line.get("init") == self.init and line.get("writer") == "publisher"]
+        seeded = [line["through"] for line in own if line.get("reason") == SEEDED and isinstance(line.get("through"), int)]
+        if seeded:
+            return max(seeded)
+        if own:
+            return 0
+        path = self.state_dir / PUBLISHED
+        if not path.exists():
+            return 0
+        published = _json(path)
+        through, at = published.get("journalThrough"), published.get("at")
+        if (not isinstance(through, int) or isinstance(through, bool) or through < 0 or not isinstance(at, str)):
+            raise Stop(f"{PUBLISHED} is malformed: the entries a host publisher posted can't be told from the rest")
+        try:
+            if self.journal and moment(at) < moment(self.journal[0]["at"]):
+                return 0
+        except ValueError:
+            raise Stop(f"{PUBLISHED} is malformed: its time can't be read") from None
+        return through
+
     def run(self) -> tuple[int, str | None]:
         done = covered(self.ledger, self.init)
+        try:
+            through = self.published_through()
+        except Stop as failure:
+            return 1, str(failure)
         for entry in self.journal:
             if entry["id"] in done:
+                continue
+            if entry["id"] <= through:
+                # Posted by the host publisher this record had before: never posted again.
+                self.write(entry, "skip", final=True, reason=SEEDED, through=through)
                 continue
             try:
                 try:

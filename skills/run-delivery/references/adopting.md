@@ -814,9 +814,11 @@ do. A line marked `skipped` names the check it waits on: fix that one first.
   argument.
 - **`forge find failed`**: the forge adapter didn't answer. Check its settings and that the forge is reachable, or run
   the check with `--offline`.
-- **`the tracker snapshot reads`**: export the tracker variables the line names.
-- **`reachable only through the host`**: add a host publisher, `{"id": "tracker", "kind": "host"}`, to the binding's
-  `state.publishers`, and post its outbox with the host's tracker tools; or set `tracker.updates` to `"manual"`.
+- **`the tracker snapshot or adapter reads`**: export the tracker variables the line names.
+- **`go to a host publisher, but the binding has none`**: set `tracker.adapter` (for Linear, `"linear"`) and run
+  `lead-setup`, which adds run-delivery's tracker publisher; or add a host publisher, `{"id": "tracker", "kind":
+  "host"}`, to the binding's `state.publishers` and post its outbox with the host's tracker tools; or set
+  `tracker.updates` to `"manual"`.
 - **`these in-app adapters don't resolve`**: install the build, serve or check program the line names, or correct
   `inApp`.
 - **`isn't writable`**: make the in-app lease's folder or the baseline folder writable, or point `inApp` elsewhere.
@@ -843,7 +845,7 @@ do. A line marked `skipped` names the check it waits on: fix that one first.
   into the record. Add `state.forgeSnapshot` to the binding; delivery-views' `snapshot.py` prints one for GitHub and
   Bitbucket.
 - **`the binding has no tracker publisher`**: the binding reads the tracker, but nothing posts the delivery's updates
-  and moves to it. A tracker with an adapter, such as Jira, needs run-delivery's tracker publisher in
+  and moves to it. A tracker with an adapter, such as Jira or Linear, needs run-delivery's tracker publisher in
   `state.publishers`; `lead-setup` adds it, so commit that. Another tracker needs that or a host publisher whose
   outbox the lead publishes. Or set `tracker.updates` to `"manual"` in `.agents/run-delivery.json` to post them by
   hand.

@@ -364,6 +364,203 @@ class FileBackend:
         return json.loads(self.path.read_text())
 
 
+LINEAR_ADAPTER = ROOT / "skills/run-delivery/adapters/tracker_linear.py"
+# The team's workflow: (name, type), in Linear's position order.
+LINEAR_WORKFLOW = [("Triage", "triage"), ("Backlog", "backlog"), ("Todo", "unstarted"), ("In Progress", "started"),
+                   ("In Review", "started"), ("Done", "completed"), ("Canceled", "canceled")]
+# Set here from what Linear's API says when it refuses a longer body ("body must be shorter than or equal to 100000
+# characters"), counted as JavaScript counts, not from the adapter's constant.
+LINEAR_BODY_LIMIT = 100000
+LINEAR_TOKEN = "lin_api_fixtureSecret0123456789"
+# Each operation the adapter may send, with the variables it must carry (a dotted path reads into `input`).
+LINEAR_OPERATIONS = {"Status": ["id"], "Team": ["key"], "Comments": ["id"], "Labelled": ["team", "label"],
+                     "Label": ["name"], "CommentCreate": ["input.issueId", "input.body"],
+                     "IssueUpdate": ["id", "input.stateId"], "IssueLabelCreate": ["input.name", "input.teamId"],
+                     "IssueCreate": ["input.teamId", "input.title", "input.labelIds"]}
+LINEAR_CARRIER = re.compile(r"<!-- run-delivery:(.+?) -->\s*\Z")
+
+
+def linear_error(code: str, message: str | None = None) -> dict:
+    """Linear's error shape, as it answers an invalid key."""
+    return {"errors": [{"message": message or code.lower(), "extensions": {"code": code, "type": code.lower()}}]}
+
+
+class FakeLinear:
+    """Linear's GraphQL API, as much as the adapter uses, on port 0, keeping the same store as the fake Jira.
+
+    It refuses an unknown operation or one missing a required variable, and an `Authorization` header that isn't the
+    token exactly, with Linear's 401 shape. A failure rule {op, ticket, status, code, times} names a GraphQL operation:
+    with `code` (or several `codes`) it answers `errors` at `status` (200 when left out); with `data`, that `data` at
+    200; with neither, a bare HTTP `status`."""
+
+    def __init__(self, token: str = LINEAR_TOKEN) -> None:
+        self.store = blank_store()
+        self.store["token"] = token
+        self.store["labels"] = []
+        self.store["requests"] = 0
+        self.lock = threading.Lock()
+        fake = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args) -> None:
+                pass
+
+            def do_POST(self) -> None:
+                length = int(self.headers.get("Content-Length") or 0)
+                document = json.loads(self.rfile.read(length) or b"null")
+                with fake.lock:
+                    status, answer = fake.answer(self.path, document, self.headers.get("Authorization", ""))
+                body = json.dumps(answer).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        self.server = _Server(("127.0.0.1", 0), Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.site = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join()
+
+    def state(self, name: str) -> dict:
+        index = [n for n, _ in LINEAR_WORKFLOW].index(name)
+        return {"id": f"state-{index}", "name": name, "type": LINEAR_WORKFLOW[index][1], "position": index}
+
+    def answer(self, path: str, document: dict, auth: str):
+        self.store["requests"] += 1
+        if path != "/graphql":
+            return 404, {}
+        if auth != self.store["token"]:
+            return 401, linear_error("AUTHENTICATION_ERROR", "Authentication required, not authenticated")
+        operation, variables = document.get("operationName"), document.get("variables") or {}
+        self.last_query = document.get("query", "")
+        if operation not in LINEAR_OPERATIONS or f"query {operation}(" not in document.get("query", "") \
+                and f"mutation {operation}(" not in document.get("query", ""):
+            return 400, linear_error("GRAPHQL_VALIDATION_FAILED", f"unknown operation {operation}")
+        for needed in LINEAR_OPERATIONS[operation]:
+            value = variables
+            for part in needed.split("."):
+                value = value.get(part) if isinstance(value, dict) else None
+            if value in (None, "", []):
+                return 400, linear_error("GRAPHQL_VALIDATION_FAILED", f"{operation} needs {needed}")
+        inputs = variables.get("input") or {}
+        target = variables.get("id") or inputs.get("issueId") or variables.get("key") or variables.get("team")
+        for rule in self.store["failures"]:
+            if rule["op"] == operation and rule.get("ticket") in (None, target) and rule["times"] != 0:
+                rule["times"] -= 1
+                if rule.get("data") is not None:
+                    return 200, {"data": rule["data"]}
+                if rule.get("codes") or rule.get("code"):
+                    errors = [linear_error(code, rule.get("message"))["errors"][0]
+                              for code in rule.get("codes") or [rule["code"]]]
+                    return rule.get("status") or 200, {"errors": errors}
+                return rule["status"], {}
+        issues = self.store["issues"]
+        data = getattr(self, "op_" + operation)(variables, inputs, issues)
+        if isinstance(data, tuple):
+            return data
+        return 200, {"data": data}
+
+    def team_of(self, key: str) -> str:
+        return key.rsplit("-", 1)[0]
+
+    def op_Status(self, v, i, issues):
+        issue = issues.get(v["id"])
+        if issue is None:
+            return 200, {"data": {"issue": None}, **linear_error("INPUT_ERROR", "Entity not found")}
+        return {"issue": {"identifier": v["id"], "state": self.state(issue["status"]),
+                          "team": {"states": {"nodes": [self.state(name) for name, _ in reversed(LINEAR_WORKFLOW)]}}}}
+
+    def op_Team(self, v, i, issues):
+        known = v["key"] in self.store["projects"]
+        return {"teams": {"nodes": [{"id": f"team-{v['key']}", "key": v["key"]}] if known else []}}
+
+    def op_Comments(self, v, i, issues):
+        issue = issues.get(v["id"])
+        if issue is None:
+            return 200, linear_error("INPUT_ERROR", "Entity not found")
+        size = int(re.search(r"comments\(first: (\d+)", self.last_query).group(1))
+        start = int(v.get("after") or 0)
+        page = issue["comments"][start:start + size]
+        self.store["calls"].append(["comments-page", v["id"], start])
+        return {"issue": {"comments": {"nodes": [{"body": c["text"]} for c in page],
+                                       "pageInfo": {"hasNextPage": start + size < len(issue["comments"]),
+                                                    "endCursor": str(start + size)}}}}
+
+    def op_Labelled(self, v, i, issues):
+        return {"issues": {"nodes": [{"identifier": k} for k, issue in issues.items()
+                                     if v["label"] in issue["labels"] and self.team_of(k) == v["team"]][:10]}}
+
+    def op_Label(self, v, i, issues):
+        # A workspace label has no team.
+        return {"issueLabels": {"nodes": [{"id": label["id"], "team": {"id": label["team"]} if label["team"] else None}
+                                          for label in self.store["labels"] if label["name"] == v["name"]]}}
+
+    def op_IssueLabelCreate(self, v, i, issues):
+        label = {"id": f"label-{len(self.store['labels'])}", "name": i["name"], "team": i["teamId"]}
+        self.store["labels"].append(label)
+        return {"issueLabelCreate": {"success": True, "issueLabel": {"id": label["id"]}}}
+
+    def op_CommentCreate(self, v, i, issues):
+        if len(i["body"].encode("utf-16-le")) // 2 > LINEAR_BODY_LIMIT:
+            return 200, linear_error("INVALID_INPUT", "body must be shorter than or equal to 100000 characters")
+        issue = issues.get(i["issueId"])
+        if issue is None:
+            return 200, linear_error("INPUT_ERROR", "issue not found")
+        found = LINEAR_CARRIER.search(i["body"])
+        issue["comments"].append({"text": i["body"], "markers": [found.group(1)] if found else []})
+        self.store["calls"].append(["comment", i["issueId"]])
+        return {"commentCreate": {"success": True}}
+
+    def op_IssueUpdate(self, v, i, issues):
+        issue = issues.get(v["id"])
+        state = next((name for name, _ in LINEAR_WORKFLOW if self.state(name)["id"] == i["stateId"]), None)
+        if issue is None or state is None:
+            return 200, linear_error("INPUT_ERROR", "Entity not found")
+        issue["status"] = state
+        self.store["calls"].append(["transition", v["id"], state])
+        return {"issueUpdate": {"success": True}}
+
+    def op_IssueCreate(self, v, i, issues):
+        team = i["teamId"].removeprefix("team-")
+        self.store["next"] += 1
+        key = f"{team}-{self.store['next']}"
+        names = [label["name"] for label in self.store["labels"] if label["id"] in i["labelIds"]]
+        issues[key] = {"status": "Backlog", "comments": [], "markers": [], "labels": names,
+                       "parent": i.get("parentId"), "summary": i["title"], "description": i.get("description")}
+        self.store["calls"].append(["create", key])
+        return {"issueCreate": {"success": True, "issue": {"identifier": key}}}
+
+
+class LinearBackend:
+    name = "linear"
+
+    def __init__(self, folder: Path) -> None:
+        self.linear = FakeLinear()
+        self.store = self.linear.store
+
+    def close(self) -> None:
+        self.linear.close()
+
+    def adapter(self) -> dict:
+        return {"adapter": "linear", "site": self.linear.site, "tokenEnv": "FX_TRACKER_TOKEN"}
+
+    def env(self) -> dict:
+        return {"FX_TRACKER_TOKEN": LINEAR_TOKEN}
+
+    def edit(self):
+        return contextlib.nullcontext(self.store)
+
+    def read(self) -> dict:
+        with self.linear.lock:
+            return json.loads(json.dumps(self.store))
+
+
 class Delivery:
     """One delivery's record, as the render wrapper shows it, with its configuration, flow log and fake tracker."""
 
@@ -467,14 +664,14 @@ class Delivery:
 
     def unreachable(self) -> None:
         """The tracker can't be reached: the adapter reports no HTTP status."""
-        if self.backend.name == "jira":
+        if self.backend.name in ("jira", "linear"):
             self.tracker["site"] = "http://127.0.0.1:9"
             self.write_config()
         else:
             self.fail("comment", None, times=-1)
 
     def reachable(self) -> None:
-        if self.backend.name == "jira":
+        if self.backend.name in ("jira", "linear"):
             self.tracker["site"] = self.backend.adapter()["site"]
             self.write_config()
         else:
@@ -1989,6 +2186,575 @@ class FakeJiraBindTests(unittest.TestCase):
             connection.close()
         self.assertLess(time.monotonic() - started, 5)
         self.assertEqual(stalled, [], "the bind looked up a loopback name")
+
+
+# Each failure class, once: the GraphQL operation it hits, the adapter operation that sends it, the httpStatus
+# tracker_linear.py reports, and the publisher's outcome. "unreachable" is the endpoint refusing connections.
+LINEAR_FAILURES = [
+    # (label, rule, adapter operation, httpStatus, publisher outcome)
+    ("HTTP 429", dict(op="CommentCreate", status=429), "comment", 429, "transient"),
+    ("HTTP 502", dict(op="CommentCreate", status=502), "comment", 502, "transient"),
+    ("another 4xx: HTTP 404", dict(op="CommentCreate", status=404), "comment", 404, "failed"),
+    ("another 4xx: HTTP 400", dict(op="CommentCreate", status=400), "comment", 400, "failed"),
+    ("unreachable", None, "comment", None, "transient"),
+    ("rate limit at 200", dict(op="CommentCreate", code="RATELIMITED"), "comment", 429, "transient"),
+    ("rate limit at HTTP 400", dict(op="CommentCreate", status=400, code="RATELIMITED"), "comment", 429, "transient"),
+    ("authentication at 200", dict(op="CommentCreate", code="AUTHENTICATION_ERROR"), "comment", 401, "transient"),
+    ("forbidden at 200, one ticket", dict(op="CommentCreate", code="FORBIDDEN"), "comment", 403, "failed"),
+    ("forbidden at 200, the whole site", dict(op="CommentCreate", code="FORBIDDEN"), "comment", 403, "transient"),
+    ("another error at 200", dict(op="CommentCreate", code="INVALID_INPUT"), "comment", 400, "failed"),
+    ("status with an error at 200", dict(op="Status", code="RATELIMITED"), "status", 429, "transient"),
+    ("transition to an unknown state", dict(op="IssueUpdate", code="INVALID_INPUT"), "transition", 400, "failed"),
+    ("a mutation answering no success", dict(op="CommentCreate", data={"commentCreate": {"success": False}}),
+     "comment", 400, "failed"),
+    ("a rate limit among other errors", dict(op="CommentCreate", codes=["INVALID_INPUT", "FORBIDDEN", "RATELIMITED"]),
+     "comment", 429, "transient"),
+    ("forbidden among other errors", dict(op="CommentCreate", codes=["INVALID_INPUT", "FORBIDDEN"]),
+     "comment", 403, "failed"),
+]
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class LinearAdapterContractTests(unittest.TestCase):
+    """`tracker_linear.py` against the fake Linear: each operation, each failure class, and the token kept out."""
+
+    def setUp(self) -> None:
+        self.linear = FakeLinear()
+        self.addCleanup(self.linear.close)
+        self.store = self.linear.store
+        self.tmp = Path(tempfile.mkdtemp(prefix="tracker-linear-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.outputs: list[str] = []
+        for key, status in (("EP-2", "In Progress"), ("EP-3", "Done"), ("EP-4", "Backlog")):
+            self.store["issues"][key] = {"status": status, "comments": [], "markers": [], "labels": [],
+                                         "parent": EPIC, "summary": key}
+
+    def adapter(self, *args: str, env: dict | None = None, token_env: str = "FX_LINEAR",
+                site: str | None = None) -> tuple[int, dict]:
+        environ = {key: value for key, value in os.environ.items() if not key.startswith(("FX_", "LINEAR_"))}
+        environ.update({"FX_LINEAR": LINEAR_TOKEN} if env is None else env)
+        done = subprocess.run([sys.executable, "-B", str(LINEAR_ADAPTER), "--site", site or self.linear.site,
+                               "--token-env", token_env, *args], capture_output=True, text=True, env=environ, timeout=60)
+        self.outputs.append(done.stdout + done.stderr)
+        return done.returncode, json.loads(done.stdout)
+
+    def body(self, text: str) -> str:
+        path = self.tmp / f"body-{len(self.outputs)}.md"
+        path.write_text(text, encoding="utf-8")
+        return str(path)
+
+    def inject(self, op: str, status: int | None = None, ticket: str | None = None, times: int = 1, **rule) -> None:
+        self.store["failures"].append({"op": op, "ticket": ticket, "status": status, "times": times, **rule})
+
+    def test_status_offers_only_the_current_workflow_type_or_later_and_the_move_is_made(self) -> None:
+        code, answer = self.adapter("status", "--ticket", "EP-2")
+        self.assertEqual(code, 0, answer)
+        self.assertEqual(answer["status"], "In Progress")
+        self.assertIsInstance(answer["commentLimit"], int)
+        self.assertLess(answer["commentLimit"], LINEAR_BODY_LIMIT)
+        offered = {t["name"]: t["offered"] for t in answer["transitions"]}
+        self.assertEqual([t["name"] for t in answer["transitions"]], [name for name, _ in LINEAR_WORKFLOW],
+                         "every state, in workflow order")
+        self.assertTrue(all(t["to"] == t["name"] for t in answer["transitions"]))
+        self.assertEqual(offered, {"Triage": False, "Backlog": False, "Todo": False, "In Progress": False,
+                                   "In Review": True, "Done": True, "Canceled": True})
+        # The allow side: In Progress to In Review is made, with one marker comment after the state.
+        code, answer = self.adapter("transition", "--ticket", "EP-2", "--name", "In Review", "--marker", "m:review")
+        self.assertEqual((code, answer), (0, {}))
+        self.assertEqual(self.store["issues"]["EP-2"]["status"], "In Review")
+        self.assertEqual([c for c in self.store["calls"] if c[0] != "comments-page"],
+                         [["transition", "EP-2", "In Review"], ["comment", "EP-2"]])
+        self.assertEqual(self.adapter("markers", "--ticket", "EP-2")[1], {"markers": ["m:review"]})
+        code, answer = self.adapter("transition", "--ticket", "EP-2", "--name", "Done", "--marker", "m:done")
+        self.assertEqual((code, self.store["issues"]["EP-2"]["status"]), (0, "Done"))
+        # The refuse side: an earlier type is not offered, and a Done ticket offers nothing.
+        code, answer = self.adapter("transition", "--ticket", "EP-4", "--name", "Triage", "--marker", "m:back")
+        self.assertEqual((code, answer["httpStatus"]), (3, 400))
+        self.assertEqual(self.store["issues"]["EP-4"]["status"], "Backlog")
+        code, answer = self.adapter("status", "--ticket", "EP-3")
+        self.assertEqual([t["name"] for t in answer["transitions"] if t["offered"]], [])
+        before = list(self.store["calls"])
+        code, answer = self.adapter("transition", "--ticket", "EP-3", "--name", "In Progress", "--marker", "m:start")
+        self.assertEqual((code, answer["httpStatus"], self.store["calls"]), (3, 400, before),
+                         "a replayed start never sends a Done ticket back")
+        self.assertEqual(self.store["issues"]["EP-3"]["status"], "Done")
+
+    def test_a_marker_on_the_second_page_of_comments_is_read_back(self) -> None:
+        for n in range(150):
+            self.store["issues"]["EP-2"]["comments"].append({"text": f"comment {n}", "markers": []})
+        code, answer = self.adapter("comment", "--ticket", "EP-2", "--marker", "agent-delivery:EP-1:x:7:comment",
+                                    "--body-file", self.body("Handed off.\nSecond line"))
+        self.assertEqual((code, answer), (0, {}))
+        [text] = [c["text"] for c in self.store["issues"]["EP-2"]["comments"][150:]]
+        self.assertTrue(text.startswith("Handed off.\nSecond line"))
+        self.assertTrue(text.endswith("<!-- run-delivery:agent-delivery:EP-1:x:7:comment -->"), text)
+        code, answer = self.adapter("markers", "--ticket", "EP-2")
+        self.assertEqual(answer, {"markers": ["agent-delivery:EP-1:x:7:comment"]})
+        pages = [c[2] for c in self.store["calls"] if c[0] == "comments-page"]
+        self.assertEqual(pages, [0, 100], "both pages, following pageInfo to the end")
+        # Past MAX_PAGES pages, or with no cursor to go on from, markers refuses rather than answer in part.
+        self.store["issues"]["EP-4"]["comments"] = [{"text": f"c{n}", "markers": []} for n in range(50 * 100 + 1)]
+        code, answer = self.adapter("markers", "--ticket", "EP-4")
+        self.assertEqual((code, "markers" in answer), (3, False), answer)
+        self.assertIn("more than 50 pages", answer["error"])
+        self.store["issues"]["EP-4"]["comments"] = []
+        self.inject("Comments", ticket="EP-4", data={"issue": {"comments": {
+            "nodes": [], "pageInfo": {"hasNextPage": True, "endCursor": None}}}})
+        code, answer = self.adapter("markers", "--ticket", "EP-4")
+        self.assertEqual((code, "markers" in answer), (3, False), answer)
+        self.assertIn("no next page", answer["error"])
+        # A marker quoted in the middle of a comment isn't one the comment carries.
+        self.store["issues"]["EP-4"]["comments"].append(
+            {"text": "see <!-- run-delivery:quoted --> above", "markers": []})
+        self.assertEqual(self.adapter("markers", "--ticket", "EP-4")[1], {"markers": []})
+
+    def test_a_long_comment_is_cut_to_what_linear_takes_with_its_marker_kept(self) -> None:
+        for text in ("x" * 150000, "😀" * 80000):
+            with self.subTest(length=len(text)):
+                self.store["issues"]["EP-2"]["comments"] = []
+                code, answer = self.adapter("comment", "--ticket", "EP-2", "--marker", "m:long",
+                                            "--body-file", self.body(text))
+                self.assertEqual((code, answer), (0, {}), "the stub refuses a body over Linear's own limit")
+                [stored] = [c["text"] for c in self.store["issues"]["EP-2"]["comments"]]
+                self.assertLessEqual(len(stored.encode("utf-16-le")) // 2, LINEAR_BODY_LIMIT)
+                self.assertGreater(len(stored.encode("utf-16-le")) // 2, LINEAR_BODY_LIMIT - 2000)
+                self.assertEqual(self.adapter("markers", "--ticket", "EP-2")[1], {"markers": ["m:long"]})
+
+    def test_each_failure_class_maps_to_its_http_status(self) -> None:
+        args = {"comment": ("comment", "--ticket", "EP-2", "--marker", "m", "--body-file", self.body("An update")),
+                "status": ("status", "--ticket", "EP-2"),
+                "transition": ("transition", "--ticket", "EP-2", "--name", "In Review", "--marker", "m")}
+        for label, rule, operation, status, _ in LINEAR_FAILURES:
+            with self.subTest(label):
+                self.store["failures"] = []
+                self.store["issues"]["EP-2"]["status"] = "In Progress"
+                if rule:
+                    self.inject(**rule, ticket="EP-2")
+                before = len(self.store["issues"]["EP-2"]["comments"])
+                code, answer = self.adapter(*args[operation], site="http://127.0.0.1:9" if rule is None else None)
+                self.assertEqual((code, answer["httpStatus"]), (3, status), answer)
+                self.assertEqual(len(self.store["issues"]["EP-2"]["comments"]), before, "no success, nothing posted")
+                self.assertEqual(self.store["issues"]["EP-2"]["status"], "In Progress")
+        code, answer = self.adapter("transition", "--ticket", "EP-2", "--name", "No such state", "--marker", "m")
+        self.assertEqual((code, answer["httpStatus"]), (3, 400), "a state the team doesn't have is refused unsent")
+
+    def test_the_token_comes_only_from_its_variable_and_is_never_printed(self) -> None:
+        requests = self.store["requests"]
+        code, answer = self.adapter("status", "--ticket", "EP-2", env={})
+        self.assertEqual((code, answer["httpStatus"]), (3, None))
+        self.assertIn("FX_LINEAR is not set", answer["error"])
+        self.assertEqual(self.store["requests"], requests, "a missing token fails before any request")
+        code, answer = self.adapter("status", "--ticket", "EP-2", env={"OTHER_KEY": LINEAR_TOKEN}, token_env="OTHER_KEY")
+        self.assertEqual((code, answer["status"]), (0, "In Progress"), "a different --token-env name")
+        code, answer = self.adapter("status", "--ticket", "EP-2", env={"FX_LINEAR": "Bearer " + LINEAR_TOKEN})
+        self.assertEqual((code, answer["httpStatus"]), (3, 401), "the key goes as it is, never as a bearer token")
+        self.inject("CommentCreate", code="INVALID_INPUT", message=f"bad key {LINEAR_TOKEN} and lin_api_someOtherKey9")
+        code, answer = self.adapter("comment", "--ticket", "EP-2", "--marker", "m", "--body-file", self.body("x"))
+        self.assertEqual(answer["httpStatus"], 400)
+        self.assertIn("[redacted]", answer["error"])
+        self.assertNotIn("lin_api_someOtherKey9", answer["error"])
+        # A key of another form, which the lin_api_ pattern wouldn't catch, is taken out as the key in use.
+        self.store["token"] = "oauthFixture0123"
+        self.inject("CommentCreate", code="INVALID_INPUT", message="refused oauthFixture0123 for this team")
+        code, answer = self.adapter("comment", "--ticket", "EP-2", "--marker", "m", "--body-file", self.body("x"),
+                                    env={"FX_LINEAR": "oauthFixture0123"})
+        self.assertEqual(answer["httpStatus"], 400)
+        self.assertIn("refused [redacted] for this team", answer["error"])
+        self.assertFalse([out for out in self.outputs if "oauthFixture0123" in out])
+        self.store["token"] = LINEAR_TOKEN
+        for args in (("status", "--project", "EP"), ("markers", "--ticket", "EP-2"),
+                     ("create", "--project", "EP", "--title", "A follow-up", "--body-file", self.body("Later"),
+                      "--marker", "agent-followup-ep-2-f1", "--parent", "EP-2")):
+            self.assertEqual(self.adapter(*args)[0], 0)
+        self.assertFalse([out for out in self.outputs if LINEAR_TOKEN in out], "no output carries the token")
+
+    def test_create_labels_the_item_and_markers_finds_it_by_its_label(self) -> None:
+        body = self.body("Deferred F1")
+        code, answer = self.adapter("create", "--project", "EP", "--title", "Tidy the parser", "--body-file", body,
+                                    "--marker", "agent-followup-ep-2-f1", "--parent", "EP-2", "--type", "Bug")
+        self.assertEqual(code, 0, answer)
+        made = self.store["issues"][answer["key"]]
+        self.assertEqual((made["labels"], made["parent"], made["summary"]),
+                         (["agent-followup-ep-2-f1"], "EP-2", "Tidy the parser"))
+        code, found = self.adapter("markers", "--project", "EP", "--marker", "agent-followup-ep-2-f1")
+        self.assertEqual(found, {"items": [{"key": answer["key"]}]})
+        # A second item with the same marker reuses the label rather than making another.
+        self.adapter("create", "--project", "EP", "--title", "Again", "--body-file", body,
+                     "--marker", "agent-followup-ep-2-f1")
+        self.assertEqual(len(self.store["labels"]), 1)
+        # A same-named label of another team isn't one this team can carry; a workspace label is.
+        self.store["labels"] = [{"id": "label-other", "name": "agent-followup-x", "team": "team-OTHER"}]
+        code, made = self.adapter("create", "--project", "EP", "--title", "t" * 300, "--body-file", body,
+                                  "--marker", "agent-followup-x")
+        self.assertEqual(code, 0, made)
+        self.assertEqual([label["team"] for label in self.store["labels"]], ["team-OTHER", "team-EP"])
+        self.assertEqual(len(self.store["issues"][made["key"]]["summary"]), 255, "the title is cut to 255")
+        self.store["labels"] = [{"id": "label-workspace", "name": "agent-followup-y", "team": None}]
+        self.adapter("create", "--project", "EP", "--title", "Workspace", "--body-file", body,
+                     "--marker", "agent-followup-y")
+        self.assertEqual([label["id"] for label in self.store["labels"]], ["label-workspace"])
+        self.assertEqual(self.adapter("status", "--project", "NOPE")[1]["httpStatus"], 404)
+        limit = self.adapter("status", "--ticket", "EP-2")[1]["commentLimit"]
+        self.assertEqual(self.adapter("status", "--project", "EP")[1], {"commentLimit": limit})
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class LinearPublisherTests(unittest.TestCase):
+    """The publisher through the shipped `tracker_linear.py`, as the Jira rows run through `tracker_jira.py`."""
+
+    def delivery(self, transitions: dict | None = None, backend=LinearBackend) -> Delivery:
+        return Delivery(self, backend, transitions)
+
+    def published(self, d: Delivery) -> str:
+        code, out = d.publish()
+        self.assertEqual(code, 0, out)
+        return out
+
+    def inject(self, d: Delivery, op: str, status: int | None = None, ticket: str | None = None, times: int = 1,
+               **rule) -> None:
+        with d.backend.edit() as store:
+            store["failures"].append({"op": op, "ticket": ticket, "status": status, "times": times, **rule})
+
+    def marked(self, d: Delivery, key: str) -> list[str]:
+        return [m for c in d.backend.read()["issues"][key]["comments"] for m in c["markers"]]
+
+    def test_a_deliverys_entries_post_with_no_lead_action_each_in_the_ledger_once(self) -> None:
+        d = self.delivery({"start": ["In Progress"], "lead": {"candidate.merged": ["Done"]}})
+        d.ticket("EP-2")
+        assigned = d.entry("lane.assigned", "EP-2", lane="lane-1")
+        d.lane_start("EP-2")
+        handed = d.entry("candidate.handed", "EP-2", "Handed off at abc")
+        merged = d.entry("candidate.merged", "EP-2", "Merged at def")
+        decision = d.entry("decision.recorded", "EP-2", "Plan change: EP-3 removed")
+        d.mark(decision)
+        self.published(d)
+        self.published(d)
+        self.assertEqual(d.outcomes(assigned["id"]), ["transition", "comment"])
+        self.assertEqual(d.outcomes(handed["id"]), ["comment"])
+        self.assertEqual(d.outcomes(merged["id"]), ["transition", "comment"])
+        self.assertEqual(d.outcomes(decision["id"]), ["comment"])
+        self.assertEqual(d.status("EP-2"), "Done")
+        comments = d.comments("EP-2")
+        for entry in (assigned, handed, merged, decision):
+            self.assertEqual(sum(f"journal entry {entry['id']} " in text for text in comments), 1, entry)
+        init = d.init()
+        self.assertEqual(sorted(self.marked(d, "EP-2")), sorted([
+            tp.marker(EPIC, init, assigned["id"], "transition:In Progress"), tp.marker(EPIC, init, assigned["id"], "comment"),
+            tp.marker(EPIC, init, handed["id"], "comment"), tp.marker(EPIC, init, merged["id"], "transition:Done"),
+            tp.marker(EPIC, init, merged["id"], "comment"), tp.marker(EPIC, init, decision["id"], "comment")]),
+            "every action carries its marker, once")
+        self.assertEqual(d.needs_you(), [])
+
+    def test_each_failure_class_has_its_publisher_outcome(self) -> None:
+        for label, rule, operation, status, outcome in LINEAR_FAILURES:
+            with self.subTest(label):
+                moves = {"lead": {"lease.granted": ["In Review"]}} if operation == "transition" else None
+                d = self.delivery(moves)
+                d.ticket("EP-2", status="In Progress")
+                entry = d.entry("lease.granted", "EP-2", label)
+                if rule is None:
+                    d.unreachable()
+                else:
+                    self.inject(d, ticket="EP-2", times=1 if outcome == "transient" else -1, **rule)
+                if label.endswith("the whole site"):
+                    self.inject(d, "Status", code="FORBIDDEN", ticket=EPIC)
+                code, out = d.publish()
+                if outcome == "transient":
+                    self.assertEqual(code, 1, out)
+                    self.assertEqual(d.lines(entry["id"]), [], "no ledger line, success or otherwise")
+                    self.assertTrue([item for item in d.needs_you() if item["holding"]])
+                    d.reachable()
+                    self.published(d)
+                    self.assertEqual(d.outcomes(entry["id"])[-1], "comment", "the next run retries from there")
+                    self.assertEqual(len(d.comments("EP-2")), 1)
+                else:
+                    self.assertEqual(code, 0, out)
+                    self.assertEqual(d.outcomes(entry["id"])[-1], "failed")
+                    self.published(d)
+                    self.assertEqual(d.outcomes(entry["id"])[-1], "failed", "never retried")
+                    shown = [item for item in d.needs_you()
+                             if not item["holding"] and f"journal entry {entry['id']} " in item["text"]]
+                    self.assertEqual(len(shown), 1, d.needs_you())
+                    self.assertEqual(d.comments("EP-2"), [])
+
+    def test_a_failure_between_a_moves_two_calls_is_rerun_to_a_ledger_that_matches_linear(self) -> None:
+        for failing in ("IssueUpdate", "CommentCreate"):
+            with self.subTest(failing=failing):
+                d = self.delivery({"start": ["In Progress"]})
+                d.ticket("EP-2")
+                entry = d.entry("lane.assigned", "EP-2", lane="lane-1")
+                d.lane_start("EP-2")
+                # The first CommentCreate is the move's marker: the state update has already been made.
+                self.inject(d, failing, status=503, ticket="EP-2")
+                code, out = d.publish()
+                self.assertEqual(code, 1, out)
+                self.assertEqual(d.lines(entry["id"]), [])
+                self.assertEqual(d.status("EP-2"), "Backlog" if failing == "IssueUpdate" else "In Progress")
+                self.published(d)
+                self.published(d)
+                self.assertEqual(d.status("EP-2"), "In Progress")
+                move = tp.marker(EPIC, d.init(), entry["id"], "transition:In Progress")
+                comment = tp.marker(EPIC, d.init(), entry["id"], "comment")
+                markers = self.marked(d, "EP-2")
+                if failing == "IssueUpdate":
+                    self.assertEqual(d.outcomes(entry["id"]), ["transition", "comment"])
+                    self.assertEqual(sorted(markers), sorted([move, comment]))
+                else:
+                    # Moved and unmarked reads as made by someone else: never moved again, never claimed as ours.
+                    self.assertEqual(d.outcomes(entry["id"]), ["skip", "comment"])
+                    self.assertEqual(markers, [comment])
+                self.assertEqual(markers.count(comment), 1, "one update comment")
+                self.assertEqual([c for c in d.calls() if c[0] == "transition"], [["transition", "EP-2", "In Progress"]])
+
+    def test_a_replayed_start_on_a_done_ticket_is_handled_and_never_moves_it(self) -> None:
+        d = self.delivery({"start": ["In Progress"]})
+        d.ticket("EP-2", status="Done")
+        entry = d.entry("lane.assigned", "EP-2", lane="lane-1")
+        d.lane_start("EP-2")
+        self.published(d)
+        self.published(d)
+        self.assertEqual(d.outcomes(entry["id"]), ["handled", "comment"])
+        self.assertEqual(d.status("EP-2"), "Done")
+        self.assertFalse([c for c in d.calls() if c[0] == "transition"])
+        [item] = d.needs_you()
+        self.assertFalse(item["holding"])
+        self.assertIn("EP-2: the move \"In Progress\" isn't offered from Done", item["text"])
+
+    def test_the_first_run_over_a_host_mode_record_skips_through_journal_through(self) -> None:
+        d = self.delivery()
+        d.ticket("EP-2")
+        posted = d.entry("candidate.handed", "EP-2", "Posted by the host publisher")
+        after = d.entry("candidate.merged", "EP-2", "Merged after the switch")
+        (d.state_dir / "published.json").write_text(json.dumps(
+            {"version": 7, "journalThrough": posted["id"], "at": stamp(d.clock + 5)}))
+        self.published(d)
+        self.published(d)
+        [line] = d.lines(posted["id"])
+        self.assertEqual((line["outcome"], line.get("final"), line["reason"], line["writer"], line["through"]),
+                         ("skip", True, "published before the tracker publisher", "publisher", posted["id"]))
+        self.assertEqual(d.outcomes(after["id"]), ["comment"])
+        [text] = d.comments("EP-2")
+        self.assertIn(f"journal entry {after['id']} ", text)
+        self.assertEqual(self.marked(d, "EP-2"), [tp.marker(EPIC, d.init(), after["id"], "comment")])
+        self.assertEqual(d.lines(1)[0]["outcome"], "skip", "the record's own start is skipped as published too")
+
+    def test_an_earlier_records_or_unreadable_published_file_is_never_taken_for_this_ones(self) -> None:
+        d = self.delivery()
+        d.ticket("EP-2")
+        entry = d.entry("candidate.handed", "EP-2")
+        path = d.state_dir / "published.json"
+        path.write_text("{not json")
+        code, out = d.publish()
+        self.assertEqual(code, 1, out)
+        self.assertIn("published.json is malformed", out)
+        self.assertEqual(d.ledger(), [], "nothing is seeded or posted from a file that can't be read")
+        path.write_text(json.dumps({"version": 9, "journalThrough": 50, "at": stamp(-100)}))
+        self.published(d)
+        self.assertEqual(d.outcomes(entry["id"]), ["comment"], "acknowledged before this record began")
+
+    def test_an_ack_at_the_records_first_moment_counts_and_a_malformed_through_stops_the_run(self) -> None:
+        d = self.delivery()
+        d.ticket("EP-2")
+        posted = d.entry("candidate.handed", "EP-2")
+        path = d.state_dir / "published.json"
+        for through in (True, -1, "2"):
+            with self.subTest(through=through):
+                path.write_text(json.dumps({"version": 1, "journalThrough": through, "at": stamp(d.clock)}))
+                code, out = d.publish()
+                self.assertEqual(code, 1, out)
+                self.assertIn("published.json is malformed", out)
+                self.assertEqual(d.ledger(), [])
+        path.write_text(json.dumps({"version": 1, "journalThrough": posted["id"], "at": d.journal[0]["at"]}))
+        self.published(d)
+        self.assertEqual(d.lines(posted["id"])[0]["reason"], "published before the tracker publisher")
+
+    def test_only_the_first_run_seeds_and_a_later_ack_covers_nothing(self) -> None:
+        d = self.delivery({"start": ["In Progress"]})
+        d.ticket("EP-2")
+        posted = d.entry("candidate.handed", "EP-2", "Posted by the host publisher")
+        path = d.state_dir / "published.json"
+        path.write_text(json.dumps({"version": 3, "journalThrough": posted["id"], "at": stamp(d.clock + 1)}))
+        self.published(d)
+        self.assertEqual(d.lines(posted["id"])[0]["reason"], "published before the tracker publisher")
+        # A host publisher beside it acknowledges past a story still waiting for its start, and past an entry a
+        # transient failure held back: neither is taken for one it posted.
+        assigned = d.entry("lane.assigned", "EP-2", lane="lane-1")
+        held = d.entry("lease.granted", "EP-2", "Held back")
+        self.inject(d, "Comments", status=503, ticket="EP-2")
+        self.assertEqual(d.publish()[0], 1)
+        path.write_text(json.dumps({"version": 9, "journalThrough": held["id"], "at": stamp(d.clock + 1)}))
+        self.published(d)
+        d.lane_start("EP-2")
+        self.published(d)
+        self.assertEqual(d.outcomes(assigned["id"]), ["transition", "comment"])
+        self.assertEqual(d.outcomes(held["id"]), ["comment"])
+        self.assertEqual(d.status("EP-2"), "In Progress")
+        self.assertFalse([line for line in d.ledger() if line["journal"] in (assigned["id"], held["id"])
+                          and line.get("reason") == "published before the tracker publisher"])
+
+    def test_a_record_the_publisher_began_is_never_seeded_by_a_later_ack(self) -> None:
+        d = self.delivery({"start": ["In Progress"]})
+        d.ticket("EP-2")
+        handed = d.entry("candidate.handed", "EP-2", "Posted by the tracker publisher")
+        self.published(d)
+        self.assertEqual(d.outcomes(handed["id"]), ["comment"])
+        assigned = d.entry("lane.assigned", "EP-2", lane="lane-1")
+        held = d.entry("lease.granted", "EP-2", "Held back by a transient failure")
+        self.inject(d, "Comments", status=503, ticket="EP-2")
+        self.assertEqual(d.publish()[0], 1)
+        self.assertEqual((d.lines(assigned["id"]), d.lines(held["id"])), ([], []), "one waits, one is held back")
+        (d.state_dir / "published.json").write_text(json.dumps(
+            {"version": 6, "journalThrough": held["id"], "at": stamp(d.clock + 1)}))
+        self.published(d)
+        d.lane_start("EP-2")
+        self.published(d)
+        self.assertEqual(d.outcomes(held["id"]), ["comment"])
+        self.assertEqual(d.outcomes(assigned["id"]), ["transition", "comment"])
+        self.assertEqual(d.status("EP-2"), "In Progress")
+        self.assertFalse([line for line in d.ledger() if line.get("reason") == "published before the tracker publisher"])
+
+    def test_a_command_line_before_the_first_run_doesnt_end_the_seeding_and_a_cut_seeding_finishes(self) -> None:
+        for case in ("a lane command's line first", "a seeding cut short"):
+            with self.subTest(case):
+                d = self.delivery()
+                d.ticket("EP-2")
+                first = d.entry("candidate.handed", "EP-2", "Posted by the host publisher")
+                second = d.entry("candidate.stopped", "EP-2", "Posted by the host publisher too")
+                after = d.entry("candidate.merged", "EP-2", "After the switch")
+                (d.state_dir / "published.json").write_text(json.dumps(
+                    {"version": 4, "journalThrough": second["id"], "at": stamp(d.clock + 1)}))
+                if case == "a seeding cut short":
+                    # A real seeding run, cut back to its first line, as a run killed after that line leaves it.
+                    self.published(d)
+                    ledger = d.state_dir / tp.LEDGER
+                    ledger.write_text(ledger.read_text().splitlines(keepends=True)[0])
+                    self.assertEqual([(line["journal"], line["writer"], line["through"]) for line in d.ledger()],
+                                     [(1, "publisher", second["id"])])
+                    with d.backend.edit() as store:
+                        store["issues"]["EP-2"]["comments"] = []
+                    # The ack the cut run read is the one it finishes with, whatever the file says now.
+                    (d.state_dir / "published.json").write_text(json.dumps(
+                        {"version": 5, "journalThrough": after["id"], "at": stamp(d.clock + 1)}))
+                else:
+                    lane = d.entry("candidate.handed", "EP-2", "Handed off by its lane")
+                    d.command_line(lane, action="comment")
+                self.published(d)
+                for entry in (first, second):
+                    self.assertEqual([(line["outcome"], line.get("reason")) for line in d.lines(entry["id"])],
+                                     [("skip", "published before the tracker publisher")], entry)
+                self.assertEqual(d.outcomes(after["id"]), ["comment"])
+                self.assertEqual(len(d.comments("EP-2")), 1, "only the entry after journalThrough is posted")
+
+    def test_no_output_log_or_ledger_line_carries_the_key(self) -> None:
+        d = self.delivery({"start": ["In Progress"]})
+        d.ticket("EP-2")
+        d.entry("lane.assigned", "EP-2", lane="lane-1")
+        d.lane_start("EP-2")
+        d.entry("candidate.handed", "EP-2")
+        self.inject(d, "CommentCreate", code="RATELIMITED", ticket="EP-2")
+        outputs = [d.publish()[1], d.publish()[1]]
+        d.entry("candidate.stopped", "EP-2")
+        with d.backend.edit() as store:
+            store["token"] = "lin_api_rotatedKey"
+        outputs.append(d.publish()[1])
+        files = [path.read_text(errors="replace") for path in d.root.rglob("*") if path.is_file()]
+        self.assertTrue(any("tracker-published" in str(p) for p in d.root.rglob("*")))
+        self.assertFalse([text for text in outputs + files if LINEAR_TOKEN in text])
+        self.assertFalse([item for item in d.needs_you() if LINEAR_TOKEN in item["text"]])
+
+    def test_a_move_already_made_is_skipped_with_no_needs_you_item_for_both_adapters(self) -> None:
+        rows = [(JiraBackend, {"lead": {"candidate.merged": ["Complete"]}, "targets": {"Complete": "Done"}}),
+                (LinearBackend, {"lead": {"candidate.merged": ["Done"]}})]
+        for backend, transitions in rows:
+            with self.subTest(backend=backend.name):
+                d = self.delivery(transitions, backend)
+                d.ticket("EP-2", status="Done")
+                entry = d.entry("candidate.merged", "EP-2", "Merged; the tracker's integration closed it")
+                self.published(d)
+                self.published(d)
+                lines = d.lines(entry["id"])
+                self.assertEqual([line["outcome"] for line in lines], ["skip", "comment"])
+                self.assertEqual((lines[0]["status"], lines[0]["reason"]), ("Done", "already Done: made by someone else"))
+                [text] = d.comments("EP-2")
+                self.assertIn("already made by someone else", text)
+                self.assertEqual(d.status("EP-2"), "Done")
+                self.assertFalse([call for call in d.calls() if call[0] == "transition"])
+                self.assertEqual(d.needs_you(), [], "a move someone else made is nothing to do")
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class LinearSettingsTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="tracker-linear-settings-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def binding(self, *flags: str, publishers: list | None = None) -> dict:
+        return {"state": {"publishers": publishers or [], "trackerSnapshot": {"argv": [
+            "python3", "snapshot.py", "--kind", "linear", "--parent", "{parent}", *flags]}}}
+
+    def test_the_linear_adapter_gives_the_publisher_with_the_snapshots_token(self) -> None:
+        publisher = [tp.publisher_entry(".agent-skills/current/skills/run-delivery/scripts/tracker_publisher.py")]
+        conf = tp.settings(self.tmp, {"tracker": {"adapter": "linear"}},
+                           self.binding("--token-env", "FX_LINEAR", publishers=publisher))
+        self.assertEqual((conf["mode"], conf["adapter"], conf["problems"]),
+                         ("publisher", {"name": "linear", "site": None, "tokenEnv": "FX_LINEAR"}, []))
+        self.assertIsNone(tp.refusal(conf))
+        self.assertIn("no tracker publisher", tp.refusal(tp.settings(
+            self.tmp, {"tracker": {"adapter": "linear"}}, self.binding("--token-env", "FX_LINEAR"))))
+        bare = tp.settings(self.tmp, {"tracker": {"adapter": "linear"}}, {"state": {"publishers": publisher}})
+        self.assertEqual(bare["adapter"]["tokenEnv"], "LINEAR_API_KEY")
+        jira = {"state": {"publishers": publisher, "trackerSnapshot": {"argv": [
+            "snapshot.py", "--kind", "jira", "--site", "https://t.test", "--token-env", "JIRA_X"]}}}
+        self.assertEqual(tp.settings(self.tmp, {"tracker": {"adapter": "linear"}}, jira)["adapter"]["tokenEnv"],
+                         "LINEAR_API_KEY", "a Jira snapshot's token never goes to Linear")
+        named = tp.settings(self.tmp, {"tracker": {"adapter": "linear", "tokenEnv": "OWN"}}, self.binding("--token-env", "X"))
+        self.assertEqual(named["adapter"]["tokenEnv"], "OWN")
+        adapter = tp.Adapter(conf, self.tmp)
+        self.assertEqual(adapter.prefix[2:], [str(LINEAR_ADAPTER), "--token-env", "FX_LINEAR"])
+
+    def test_a_linear_snapshot_with_no_adapter_named_keeps_the_host_publisher(self) -> None:
+        conf = tp.settings(self.tmp, {}, self.binding("--token-env", "FX_LINEAR",
+                                                     publishers=[{"id": "tracker", "kind": "host"}]))
+        self.assertEqual((conf["mode"], conf["adapter"], conf["host"]), ("host", None, "tracker"))
+        self.assertIsNone(tp.refusal(conf))
+        self.assertIn("tracker.adapter", tp.refusal(tp.settings(self.tmp, {}, self.binding("--token-env", "FX_LINEAR"))))
+        self.assertIn("isn't one run-delivery ships (jira, linear)",
+                      tp.refusal(tp.settings(self.tmp, {"tracker": {"adapter": "trello"}}, {})))
+
+
+class LinearWordingTests(unittest.TestCase):
+    """Decision 1: the claim that Linear is reachable only through the host is withdrawn from every file the
+    run-delivery and linear profiles ship, and linear-tracker-adapter's own MCP-only rule stays word for word."""
+
+    WITHDRAWN = ("reachable only through the host", "only through the host's connector", "host-only tracker",
+                 "by this corpus's rule", "by this corpus's own rule", "linear needs a host publisher",
+                 "linear is reachable only", "linear, by this corpus")
+
+    def shipped(self) -> dict[str, str]:
+        files = {}
+        for profile in ("run-delivery", "linear"):
+            for rel in json.loads((ROOT / f"profiles/{profile}.json").read_text(encoding="utf-8"))["expectedFiles"]:
+                path = ROOT / rel
+                if path.suffix in (".md", ".py", ".json", ".yaml", ".html", ".js"):
+                    files[rel] = " ".join(path.read_text(encoding="utf-8").split()).casefold()
+        files["catalog.json"] = " ".join((ROOT / "catalog.json").read_text(encoding="utf-8").split()).casefold()
+        return files
+
+    def test_the_withdrawn_claim_is_absent_from_every_shipped_file(self) -> None:
+        files = self.shipped()
+        self.assertIn("skills/run-delivery/adapters/tracker_linear.py", files)
+        found = {rel: [phrase for phrase in self.WITHDRAWN if phrase in text] for rel, text in files.items()}
+        self.assertEqual({rel: hits for rel, hits in found.items() if hits}, {})
+
+    def test_the_linear_skills_mcp_only_rule_stays(self) -> None:
+        skill = " ".join((ROOT / "skills/linear-tracker-adapter/SKILL.md").read_text(encoding="utf-8").split())
+        self.assertIn("Use only the host's native Linear MCP capability. The adapter contract's `transportBoundary` is "
+                      "exhaustive; no other provider access path is allowed.", skill)
+        contract = json.loads((ROOT / "skills/linear-tracker-adapter/references/adapter-contract.json").read_text())
+        self.assertIn("transportBoundary", contract)
+        self.assertEqual(set(contract["transportBoundary"]["forbiddenActionMarkers"]),
+                         {"direct-linear-api", "http-client-or-sdk", "command-downloader", "subprocess-or-shell-bridge",
+                          "oauth-flow", "credential-token-env", "fallback-transport"})
 
 
 if __name__ == "__main__":

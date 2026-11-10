@@ -5364,7 +5364,7 @@ TROUBLESHOOTING_KEYS = [
     "no gates are declared", "these don't resolve", "isn't ignored by git", "no tracker issue URL",
     "review.pr is configured, but", "gh isn't installed", "gh isn't signed in",
     "no token variable for the Bitbucket adapter", "the Bitbucket adapter reads its token from it", "forge find failed",
-    "the tracker snapshot reads", "reachable only through the host", "these in-app adapters don't resolve", "isn't writable",
+    "the tracker snapshot or adapter reads", "go to a host publisher, but the binding has none", "these in-app adapters don't resolve", "isn't writable",
     "the in-app adapters break the contract", "lease held by", "video evidence needs both", "which video evidence uses",
     "needs Node 22.6 or newer", "no runtime loader", "harness.config.ts not read", "is missing (lead-setup writes it)",
     "stories without a lane", "lanes own the same files", "fails on", "isn't a valid delivery-plan/1",
@@ -6684,6 +6684,13 @@ class RunDeliveryDoctorTests(unittest.TestCase):
             ("forge find", "missing", "export FX_FORGE_TOKEN", lambda: (edit_json(conf_path, lambda c: c.update(
                 forge={"adapter": "bitbucket", "repository": "ws/repo", "tokenEnv": "FX_FORGE_TOKEN"})), None)),
             ("tracker snapshot token", "missing", "export FX_TRACKER_TOKEN", lambda: env(FX_TRACKER_TOKEN=None)),
+            # The tracker adapter's own variable, which no snapshot names.
+            ("tracker snapshot token", "missing", "export FX_LINEAR_KEY", lambda: (edit_json(conf_path, lambda c: c[
+                "tracker"].update(adapter="linear", tokenEnv="FX_LINEAR_KEY")), None)),
+            # And with no tracker snapshot at all, the adapter's variable is still checked.
+            ("tracker snapshot token", "missing", "export FX_LINEAR_KEY", lambda: (both(
+                edit_json(conf_path, lambda c: c["tracker"].update(adapter="linear", tokenEnv="FX_LINEAR_KEY")),
+                edit_json(binding_path, lambda b: b["state"].pop("trackerSnapshot"))), None)),
             ("in-app adapters", "wrong", "install them", lambda: (edit_json(conf_path, lambda c: c["inApp"]["check"].update(
                 argv=["no-such-check-program"])), None)),
             ("in-app adapters", "wrong", "make it writable", lambda: (chmod_locked(), None)),
