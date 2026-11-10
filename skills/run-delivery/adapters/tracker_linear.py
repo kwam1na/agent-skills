@@ -38,6 +38,9 @@ SITE = "https://api.linear.app"
 BODY_LIMIT = 100000
 MARKER_ROOM = 1000
 COMMENT_LIMIT = BODY_LIMIT - MARKER_ROOM
+# A created item's title is cut here, as Jira's summary is: Linear checks the team before the title, so its own limit
+# can't be read without making an item.
+TITLE_LIMIT = 255
 TIMEOUT_SECONDS = 25
 MAX_PAGES = 50
 PAGE_SIZE = 100
@@ -263,7 +266,7 @@ def create(linear, args):
         made = linear.mutate("IssueLabelCreate", LABEL_CREATE,
                              {"input": {"name": args.marker, "teamId": team["id"]}}, "issueLabelCreate")
         label = (made.get("issueLabel") or {}).get("id")
-    issue = {"teamId": team["id"], "title": args.title[:255], "labelIds": [label],
+    issue = {"teamId": team["id"], "title": args.title[:TITLE_LIMIT], "labelIds": [label],
              "description": cut(read_body(args.body_file), COMMENT_LIMIT)}
     if args.parent:
         issue["parentId"] = args.parent

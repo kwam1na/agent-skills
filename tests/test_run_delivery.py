@@ -6684,6 +6684,10 @@ class RunDeliveryDoctorTests(unittest.TestCase):
             # The tracker adapter's own variable, which no snapshot names.
             ("tracker snapshot token", "missing", "export FX_LINEAR_KEY", lambda: (edit_json(conf_path, lambda c: c[
                 "tracker"].update(adapter="linear", tokenEnv="FX_LINEAR_KEY")), None)),
+            # And with no tracker snapshot at all, the adapter's variable is still checked.
+            ("tracker snapshot token", "missing", "export FX_LINEAR_KEY", lambda: (both(
+                edit_json(conf_path, lambda c: c["tracker"].update(adapter="linear", tokenEnv="FX_LINEAR_KEY")),
+                edit_json(binding_path, lambda b: b["state"].pop("trackerSnapshot"))), None)),
             ("in-app adapters", "wrong", "install them", lambda: (edit_json(conf_path, lambda c: c["inApp"]["check"].update(
                 argv=["no-such-check-program"])), None)),
             ("in-app adapters", "wrong", "make it writable", lambda: (chmod_locked(), None)),

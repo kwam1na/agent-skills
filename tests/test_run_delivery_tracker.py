@@ -390,7 +390,8 @@ class FakeLinear:
 
     It refuses an unknown operation or one missing a required variable, and an `Authorization` header that isn't the
     token exactly, with Linear's 401 shape. A failure rule {op, ticket, status, code, times} names a GraphQL operation:
-    with `code` it answers `errors` at `status` (200 when left out); without, a bare HTTP `status`."""
+    with `code` (or several `codes`) it answers `errors` at `status` (200 when left out); with `data`, that `data` at
+    200; with neither, a bare HTTP `status`."""
 
     def __init__(self, token: str = LINEAR_TOKEN) -> None:
         self.store = blank_store()
@@ -452,8 +453,12 @@ class FakeLinear:
         for rule in self.store["failures"]:
             if rule["op"] == operation and rule.get("ticket") in (None, target) and rule["times"] != 0:
                 rule["times"] -= 1
-                if rule.get("code"):
-                    return rule.get("status") or 200, linear_error(rule["code"], rule.get("message"))
+                if rule.get("data") is not None:
+                    return 200, {"data": rule["data"]}
+                if rule.get("codes") or rule.get("code"):
+                    errors = [linear_error(code, rule.get("message"))["errors"][0]
+                              for code in rule.get("codes") or [rule["code"]]]
+                    return rule.get("status") or 200, {"errors": errors}
                 return rule["status"], {}
         issues = self.store["issues"]
         data = getattr(self, "op_" + operation)(variables, inputs, issues)
@@ -492,7 +497,8 @@ class FakeLinear:
                                      if v["label"] in issue["labels"] and self.team_of(k) == v["team"]][:10]}}
 
     def op_Label(self, v, i, issues):
-        return {"issueLabels": {"nodes": [{"id": label["id"], "team": {"id": label["team"]}}
+        # A workspace label has no team.
+        return {"issueLabels": {"nodes": [{"id": label["id"], "team": {"id": label["team"]} if label["team"] else None}
                                           for label in self.store["labels"] if label["name"] == v["name"]]}}
 
     def op_IssueLabelCreate(self, v, i, issues):
@@ -2199,6 +2205,12 @@ LINEAR_FAILURES = [
     ("another error at 200", dict(op="CommentCreate", code="INVALID_INPUT"), "comment", 400, "failed"),
     ("status with an error at 200", dict(op="Status", code="RATELIMITED"), "status", 429, "transient"),
     ("transition to an unknown state", dict(op="IssueUpdate", code="INVALID_INPUT"), "transition", 400, "failed"),
+    ("a mutation answering no success", dict(op="CommentCreate", data={"commentCreate": {"success": False}}),
+     "comment", 400, "failed"),
+    ("a rate limit among other errors", dict(op="CommentCreate", codes=["INVALID_INPUT", "FORBIDDEN", "RATELIMITED"]),
+     "comment", 429, "transient"),
+    ("forbidden among other errors", dict(op="CommentCreate", codes=["INVALID_INPUT", "FORBIDDEN"]),
+     "comment", 403, "failed"),
 ]
 
 
@@ -2231,10 +2243,8 @@ class LinearAdapterContractTests(unittest.TestCase):
         path.write_text(text, encoding="utf-8")
         return str(path)
 
-    def inject(self, op: str, status: int | None = None, code: str | None = None, ticket: str | None = None,
-             times: int = 1, message: str | None = None) -> None:
-        self.store["failures"].append({"op": op, "ticket": ticket, "status": status, "code": code, "times": times,
-                                       "message": message})
+    def inject(self, op: str, status: int | None = None, ticket: str | None = None, times: int = 1, **rule) -> None:
+        self.store["failures"].append({"op": op, "ticket": ticket, "status": status, "times": times, **rule})
 
     def test_status_offers_only_the_current_workflow_type_or_later_and_the_move_is_made(self) -> None:
         code, answer = self.adapter("status", "--ticket", "EP-2")
@@ -2282,6 +2292,17 @@ class LinearAdapterContractTests(unittest.TestCase):
         self.assertEqual(answer, {"markers": ["agent-delivery:EP-1:x:7:comment"]})
         pages = [c[2] for c in self.store["calls"] if c[0] == "comments-page"]
         self.assertEqual(pages, [0, 100], "both pages, following pageInfo to the end")
+        # Past MAX_PAGES pages, or with no cursor to go on from, markers refuses rather than answer in part.
+        self.store["issues"]["EP-4"]["comments"] = [{"text": f"c{n}", "markers": []} for n in range(50 * 100 + 1)]
+        code, answer = self.adapter("markers", "--ticket", "EP-4")
+        self.assertEqual((code, "markers" in answer), (3, False), answer)
+        self.assertIn("more than 50 pages", answer["error"])
+        self.store["issues"]["EP-4"]["comments"] = []
+        self.inject("Comments", ticket="EP-4", data={"issue": {"comments": {
+            "nodes": [], "pageInfo": {"hasNextPage": True, "endCursor": None}}}})
+        code, answer = self.adapter("markers", "--ticket", "EP-4")
+        self.assertEqual((code, "markers" in answer), (3, False), answer)
+        self.assertIn("no next page", answer["error"])
         # A marker quoted in the middle of a comment isn't one the comment carries.
         self.store["issues"]["EP-4"]["comments"].append(
             {"text": "see <!-- run-delivery:quoted --> above", "markers": []})
@@ -2332,6 +2353,15 @@ class LinearAdapterContractTests(unittest.TestCase):
         self.assertEqual(answer["httpStatus"], 400)
         self.assertIn("[redacted]", answer["error"])
         self.assertNotIn("lin_api_someOtherKey9", answer["error"])
+        # A key of another form, which the lin_api_ pattern wouldn't catch, is taken out as the key in use.
+        self.store["token"] = "oauthFixture0123"
+        self.inject("CommentCreate", code="INVALID_INPUT", message="refused oauthFixture0123 for this team")
+        code, answer = self.adapter("comment", "--ticket", "EP-2", "--marker", "m", "--body-file", self.body("x"),
+                                    env={"FX_LINEAR": "oauthFixture0123"})
+        self.assertEqual(answer["httpStatus"], 400)
+        self.assertIn("refused [redacted] for this team", answer["error"])
+        self.assertFalse([out for out in self.outputs if "oauthFixture0123" in out])
+        self.store["token"] = LINEAR_TOKEN
         for args in (("status", "--project", "EP"), ("markers", "--ticket", "EP-2"),
                      ("create", "--project", "EP", "--title", "A follow-up", "--body-file", self.body("Later"),
                       "--marker", "agent-followup-ep-2-f1", "--parent", "EP-2")):
@@ -2352,6 +2382,17 @@ class LinearAdapterContractTests(unittest.TestCase):
         self.adapter("create", "--project", "EP", "--title", "Again", "--body-file", body,
                      "--marker", "agent-followup-ep-2-f1")
         self.assertEqual(len(self.store["labels"]), 1)
+        # A same-named label of another team isn't one this team can carry; a workspace label is.
+        self.store["labels"] = [{"id": "label-other", "name": "agent-followup-x", "team": "team-OTHER"}]
+        code, made = self.adapter("create", "--project", "EP", "--title", "t" * 300, "--body-file", body,
+                                  "--marker", "agent-followup-x")
+        self.assertEqual(code, 0, made)
+        self.assertEqual([label["team"] for label in self.store["labels"]], ["team-OTHER", "team-EP"])
+        self.assertEqual(len(self.store["issues"][made["key"]]["summary"]), 255, "the title is cut to 255")
+        self.store["labels"] = [{"id": "label-workspace", "name": "agent-followup-y", "team": None}]
+        self.adapter("create", "--project", "EP", "--title", "Workspace", "--body-file", body,
+                     "--marker", "agent-followup-y")
+        self.assertEqual([label["id"] for label in self.store["labels"]], ["label-workspace"])
         self.assertEqual(self.adapter("status", "--project", "NOPE")[1]["httpStatus"], 404)
         limit = self.adapter("status", "--ticket", "EP-2")[1]["commentLimit"]
         self.assertEqual(self.adapter("status", "--project", "EP")[1], {"commentLimit": limit})
@@ -2369,10 +2410,10 @@ class LinearPublisherTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         return out
 
-    def inject(self, d: Delivery, op: str, status: int | None = None, code: str | None = None,
-             ticket: str | None = None, times: int = 1) -> None:
+    def inject(self, d: Delivery, op: str, status: int | None = None, ticket: str | None = None, times: int = 1,
+               **rule) -> None:
         with d.backend.edit() as store:
-            store["failures"].append({"op": op, "ticket": ticket, "status": status, "code": code, "times": times})
+            store["failures"].append({"op": op, "ticket": ticket, "status": status, "times": times, **rule})
 
     def marked(self, d: Delivery, key: str) -> list[str]:
         return [m for c in d.backend.read()["issues"][key]["comments"] for m in c["markers"]]
@@ -2511,6 +2552,22 @@ class LinearPublisherTests(unittest.TestCase):
         self.published(d)
         self.assertEqual(d.outcomes(entry["id"]), ["comment"], "acknowledged before this record began")
 
+    def test_an_ack_at_the_records_first_moment_counts_and_a_malformed_through_stops_the_run(self) -> None:
+        d = self.delivery()
+        d.ticket("EP-2")
+        posted = d.entry("candidate.handed", "EP-2")
+        path = d.state_dir / "published.json"
+        for through in (True, -1, "2"):
+            with self.subTest(through=through):
+                path.write_text(json.dumps({"version": 1, "journalThrough": through, "at": stamp(d.clock)}))
+                code, out = d.publish()
+                self.assertEqual(code, 1, out)
+                self.assertIn("published.json is malformed", out)
+                self.assertEqual(d.ledger(), [])
+        path.write_text(json.dumps({"version": 1, "journalThrough": posted["id"], "at": d.journal[0]["at"]}))
+        self.published(d)
+        self.assertEqual(d.lines(posted["id"])[0]["reason"], "published before the tracker publisher")
+
     def test_only_the_first_run_seeds_and_a_later_ack_covers_nothing(self) -> None:
         d = self.delivery({"start": ["In Progress"]})
         d.ticket("EP-2")
@@ -2621,6 +2678,10 @@ class LinearSettingsTests(unittest.TestCase):
             self.tmp, {"tracker": {"adapter": "linear"}}, self.binding("--token-env", "FX_LINEAR"))))
         bare = tp.settings(self.tmp, {"tracker": {"adapter": "linear"}}, {"state": {"publishers": publisher}})
         self.assertEqual(bare["adapter"]["tokenEnv"], "LINEAR_API_KEY")
+        jira = {"state": {"publishers": publisher, "trackerSnapshot": {"argv": [
+            "snapshot.py", "--kind", "jira", "--site", "https://t.test", "--token-env", "JIRA_X"]}}}
+        self.assertEqual(tp.settings(self.tmp, {"tracker": {"adapter": "linear"}}, jira)["adapter"]["tokenEnv"],
+                         "LINEAR_API_KEY", "a Jira snapshot's token never goes to Linear")
         named = tp.settings(self.tmp, {"tracker": {"adapter": "linear", "tokenEnv": "OWN"}}, self.binding("--token-env", "X"))
         self.assertEqual(named["adapter"]["tokenEnv"], "OWN")
         adapter = tp.Adapter(conf, self.tmp)

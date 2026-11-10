@@ -1034,7 +1034,7 @@
         },
         {
           "path": "skills/run-delivery/adapters/tracker_linear.py",
-          "sha256": "9c63fb6f1f9d5819f32dc889ef98eb24c829d6e8d4d83dcc4c9024427c1098b3"
+          "sha256": "acba7193d03cf9a0f00324d236ca3a73caf6c75276fc1c9c5425e4784c4e848a"
         },
         {
           "path": "skills/run-delivery/assets/adapter-fixture/index.html",
@@ -1046,7 +1046,7 @@
         },
         {
           "path": "skills/run-delivery/references/config.md",
-          "sha256": "d702fd9ec31879a387a9024975b468d9943719425f95169875a03d24fef09483"
+          "sha256": "63fe05cb38856e0df493c9347d2976cefccbeda4f432ab9ce417a7300f4924c9"
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",

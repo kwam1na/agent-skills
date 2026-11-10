@@ -446,12 +446,15 @@ It keeps this contract exactly:
   `<!-- run-delivery:<marker> -->`. `markers --ticket` reads every page of the ticket's comments.
 - A move is the state update, then a short comment carrying its marker, in that order: a failure between the two
   leaves the ticket in its target status with no marker, which the publisher reads as made by someone else.
-- `--project` is the team key; `create` labels the item with its marker, making the label when the workspace has
-  none, and ignores `--type`, as Linear has no issue types.
+- `--project` is the team key; `create` labels the item with its marker, reusing a workspace label or the team's own
+  of that name and making one otherwise, cuts its title to 255 characters, and ignores `--type`, as Linear has no
+  issue types.
 - `commentLimit` is 99,000 UTF-16 code units: Linear refuses a body over 100,000, and the rest is the marker's room.
 - Linear reports a failure as GraphQL `errors`, at HTTP 200 or otherwise. The adapter maps it whatever the HTTP status:
-  `RATELIMITED` to 429, `AUTHENTICATION_ERROR` to 401 and `FORBIDDEN` to 403, so the publisher classes them as it
-  does Jira's, and any other error to 400, a permanent `failed`. An answer carrying `errors` is never success.
+  `RATELIMITED` to 429, `AUTHENTICATION_ERROR` to 401 and `FORBIDDEN` to 403, in that order when an answer carries
+  several, so the publisher classes them as it does Jira's, and any other error to 400, a permanent `failed`. An
+  answer carrying `errors`, or a mutation not reporting success, is never success, and `markers --ticket` refuses
+  past 50 pages of comments rather than answer in part.
 
 ## The in-app check contract
 
