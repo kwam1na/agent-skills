@@ -84,7 +84,8 @@ Two guards join every selection, named or not: `tests.test_linear_qualification`
 which holds the corpus pins any doc or skill change can break, and
 `tests.test_registry`. A change to `skills/delivery-views/scripts/snapshot.py` also
 brings `tests.test_delivery_views_adopter` and `tests.test_delivery_views_snapshots`,
-the line map's outside adopter among them. Corpus validation stays in `alwaysRun`.
+the line map's outside adopter among them. A change under `docs/solutions/` brings
+`tests.test_compound_learning_corpus`, which pins each note's shape. Corpus validation stays in `alwaysRun`.
 `select` says what it added and why, and warns when a selected check failed its last
 base re-run at the current base head.
 
