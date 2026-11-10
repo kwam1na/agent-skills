@@ -42,7 +42,8 @@
         "tests/test_release_integration.py",
         ".agents/orchestration.json",
         "tests/test_own_deliveries.py",
-        "tests/test_compound_learning_corpus.py"
+        "tests/test_compound_learning_corpus.py",
+        "docs/own-deliveries.md"
       ]
     },
     "lane-2": {
