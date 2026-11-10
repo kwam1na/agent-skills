@@ -1297,7 +1297,8 @@ class RegenerableListingTests(MergeQueueTestCase):
         binding = Adopter.default_binding(type("Fixture", (), {"work": Path("/work"), "state": Path("/state"),
                                                                 "remote": Path("/r"), "log": Path("/l")})())
         state = binding.get("state") or {"directory": "state", "renderers": []}
-        for publishers in ([{"id": "tracker", "kind": "host"}], [{"id": "ok", "argv": ["true"]}, {"id": "live", "kind": "host"}]):
+        for publishers in ([{"id": "tracker", "kind": "host"}], [{"id": "ok", "argv": ["true"]}, {"id": "live", "kind": "host"}],
+                           [{"id": "nothing", "kind": None}]):
             with self.subTest(publishers=publishers):
                 errors = queue.binding_errors({**binding, "state": {**state, "publishers": publishers}})
                 index = len(publishers) - 1
@@ -1305,7 +1306,8 @@ class RegenerableListingTests(MergeQueueTestCase):
                               "the tracker publisher instead (run-delivery's lead-setup adds it)", errors)
         self.assertEqual(queue.binding_errors({**binding, "state": {**state, "publishers": [{"id": "ok", "argv": ["true"]}]}}), [])
         # A binding of the wrong shape gets the schema's verdict, never an error of the check's own.
-        for shape in ([], {**binding, "state": ["x"]}, {**binding, "state": {**state, "publishers": 5}}):
+        for shape in ([], {**binding, "state": ["x"]}, {**binding, "state": {**state, "publishers": 5}},
+                      {**binding, "state": {**state, "publishers": [7]}}):
             with self.subTest(shape=type(shape).__name__):
                 self.assertTrue(queue.binding_errors(shape))
 

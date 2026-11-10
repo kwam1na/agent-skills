@@ -273,7 +273,7 @@ def settings(root: Path, own: dict | None = None, binding: dict | None = None) -
     state = state if isinstance(state, dict) else {}
     reader = state.get("trackerSnapshot")
     snapshot = reader.get("argv") if isinstance(reader, dict) else None
-    snapshot = [part for part in snapshot if isinstance(part, str)] if isinstance(snapshot, list) else []
+    snapshot = snapshot if isinstance(snapshot, list) and all(isinstance(part, str) for part in snapshot) else []
     kind = _flag(snapshot, "--kind")
     adapter = None
     if tracker.get("argv") is not None:
@@ -313,7 +313,7 @@ def settings(root: Path, own: dict | None = None, binding: dict | None = None) -
     for entry in entries if isinstance(entries, list) else []:
         if not isinstance(entry, dict):
             continue
-        if entry.get("kind") is not None and "argv" not in entry:
+        if "kind" in entry and "argv" not in entry:
             # A publisher that runs nothing: this generation leaves no outbox for anyone to post.
             unrunnable.append(entry.get("id"))
         elif isinstance(entry.get("argv"), list) and any(

@@ -1378,7 +1378,8 @@ class TrackerSettingsTests(unittest.TestCase):
         for publishers, own in (([{"id": "tracker", "kind": "host"}], {}),
                                 ([{"id": "live", "kind": "host"}, tracker], {}),
                                 ([{"id": "tracker", "kind": "host"}], {"tracker": {"updates": "manual"}}),
-                                ([{"id": "mirror", "kind": "store"}], {"tracker": {"updates": "manual"}})):
+                                ([{"id": "mirror", "kind": "store"}], {"tracker": {"updates": "manual"}}),
+                                ([{"id": "nothing", "kind": None}], {})):
             with self.subTest(publishers=publishers, own=own):
                 conf = tp.settings(tmp, own, {"state": {"publishers": publishers, "trackerSnapshot": snapshot}})
                 refused = tp.refusal(conf)
@@ -1399,6 +1400,8 @@ class TrackerSettingsTests(unittest.TestCase):
         for binding in ([], "x", {"state": []}, {"state": ["x"]}, {"state": "x"}, {"state": {"publishers": 5}},
                         {"state": {"trackerSnapshot": "x"}},
                         {"state": {"trackerSnapshot": {"argv": "snapshot.py --kind linear"}}},
+                        {"state": {"trackerSnapshot": {"argv": ["snapshot.py", "--kind", 7, "linear"]}}},
+                        {"state": {"trackerSnapshot": {"argv": ["snapshot.py", "--kind", "linear", None]}}},
                         {"state": {"publishers": [{"id": "p", "argv": "tracker_publisher.py"}, 7]}}):
             with self.subTest(binding=binding):
                 conf = tp.settings(tmp, {}, binding)
