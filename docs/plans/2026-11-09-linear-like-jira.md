@@ -36,7 +36,8 @@ the same files, and how the work reaches `main`.
    Linear takes the same split. `linear-tracker-adapter`'s "use only the host's native Linear MCP capability" and its contract's
    `transportBoundary` stay word for word, held by presence pins. What is withdrawn is the claim that Linear is reachable only through
    the host: the `tracker_publisher.py` comment, the `host` bullet in `skills/run-delivery/references/config.md`, the troubleshooting
-   entry in `references/adopting.md`, and `docs/own-deliveries.md`'s "Tracker updates". Per AGENTS.md, V26-3269 searches by meaning
+   entry in `references/adopting.md`, all by V26-3269, and `docs/own-deliveries.md`'s "Tracker updates", by V26-3333, since this
+   repository's binding stays host-mode until the switch. Per AGENTS.md, V26-3269 searches by meaning
    across every skill in the `run-delivery` and `linear` profiles for that claim and its synonyms ("only through the host's connector",
    "host-only tracker", "by this corpus's rule", "Linear needs a host publisher"), rewords each hit, and pins their absence. The generic
    wording for any tracker reachable only through a host, such as the orchestrate-work guide's host publisher, stays, with a presence pin,
@@ -190,7 +191,9 @@ recipe in `docs/own-deliveries.md`, and the orchestrate-work guide notes the for
 
 Lane 1, tier 2, after V26-3269 and V26-3261. Per the item and Decision 8, it starts once the lead has tagged, published, verified and
 applied the release candidate. Test-first: a `StandingBinding` row in `tests/test_own_deliveries.py` pins `tracker.adapter: "linear"`
-and the tracker publisher in the committed binding, with no host publisher. Then `.agents/run-delivery.json` and `.agents/orchestration.json`
+and the tracker publisher in the committed binding, with no host publisher. Beside it, rows on `docs/own-deliveries.md` pin the
+absence of "reachable only through the host" and Decision 1's listed synonyms, and the presence of the publisher posting with
+`LINEAR_API_KEY` and of the keychain-and-`~/.zshenv` recipe under "Credentials". Then `.agents/run-delivery.json` and `.agents/orchestration.json`
 switch, and `docs/own-deliveries.md`'s "Tracker updates" and "Credentials" say the publisher posts with `LINEAR_API_KEY` and give V26-3261's
 keychain-and-`~/.zshenv` recipe. The lead drains and acks the host outbox immediately before it merges, and records the finish-line
 evidence of Decision 8 on the item. Files: `.agents/run-delivery.json`, `.agents/orchestration.json`, `docs/own-deliveries.md` and

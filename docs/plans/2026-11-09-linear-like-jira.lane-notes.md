@@ -24,13 +24,12 @@ another epic's change), stop and tell the lead before hand-off. Don't hand off a
 **Acceptance readings.** The lead recorded on V26-3269 that its AC3 is met by the publisher's existing `skip` outcome (Decision 3), and
 on V26-3083 that its AC3 means no open entity is left (Decision 7). Review against those readings.
 
-**Real Linear.** Rows never reach Linear. The live checks the plan names (V26-3269's marker round trip before the switch, and its
-finish-line evidence after it) use `LINEAR_API_KEY` from your environment against an item of this delivery, and are recorded on
-V26-3269. Never write the key, or a payload carrying it, anywhere in the repository.
+**Real Linear.** Rows never reach Linear. The live checks the plan names (V26-3269's marker round trip before it hands off, and
+V26-3333's finish-line evidence after the switch) use `LINEAR_API_KEY` from your environment against an item of this delivery, and are
+recorded on the item they belong to. Never write the key, or a payload carrying it, anywhere in the repository.
 
-**Lane 1: V26-3269, then V26-3261.** V26-3269's switch step (Decision 8) waits for the lead to tag and apply the release candidate
-after both stories merge. Hand off V26-3269 without the switch, as its own change; the switch is a second hand-off of the same story
-once the lead says the release is applied, and the lead drains and acks the host outbox immediately before it merges.
+**Lane 1: V26-3269, then V26-3261, then V26-3333 in tier 2.** V26-3333 starts only when the lead says the release candidate carrying
+V26-3269 and V26-3261 is applied here. The lead drains and acks the host outbox immediately before V26-3333 merges.
 
 **Lane 2: V26-3097, then V26-3083.** V26-3083's routine is created by the lead. Hand off the documentation with its pins; the lead
 records the two run results on the item.
