@@ -5364,7 +5364,7 @@ TROUBLESHOOTING_KEYS = [
     "no gates are declared", "these don't resolve", "isn't ignored by git", "no tracker issue URL",
     "review.pr is configured, but", "gh isn't installed", "gh isn't signed in",
     "no token variable for the Bitbucket adapter", "the Bitbucket adapter reads its token from it", "forge find failed",
-    "the tracker snapshot or adapter reads", "go to a host publisher, but the binding has none", "these in-app adapters don't resolve", "isn't writable",
+    "the tracker snapshot or adapter reads", "the binding names a publisher that runs nothing", "these in-app adapters don't resolve", "isn't writable",
     "the in-app adapters break the contract", "lease held by", "video evidence needs both", "which video evidence uses",
     "needs Node 22.6 or newer", "no runtime loader", "harness.config.ts not read", "is missing (lead-setup writes it)",
     "stories without a lane", "lanes own the same files", "fails on", "isn't a valid delivery-plan/1",
@@ -6812,9 +6812,29 @@ class RunDeliveryDoctorTests(unittest.TestCase):
                 self.assertIn(detail, refused)
                 self.assertIn(fix, refused)
                 self.assertFalse(record.exists(), f"lead-init kept a record while refusing: {refused}")
-        # A Jira tracker has an adapter, so its publisher is run-delivery's own: a host publisher doesn't post for it,
-        # unless tracker.updates says the lead posts by hand.
-        undo = edit_json(binding_path, lambda b: b["state"].update(publishers=[{"id": "tracker", "kind": "host"}]))
+        # A publisher that runs nothing is refused by doctor and lead-init, naming the fix, whether or not the tracker
+        # publisher is bound beside it and whatever tracker.updates says; with none bound, the binding needs one.
+        tracker = json.loads(binding_path.read_text())["state"]["publishers"]
+        for publishers, updates in (([{"id": "tracker", "kind": "host"}], None),
+                                    ([{"id": "live", "kind": "host"}, *tracker], None),
+                                    ([{"id": "tracker", "kind": "host"}], "manual")):
+            with self.subTest(publishers=publishers, updates=updates):
+                undo = both(edit_json(binding_path, lambda b: b["state"].update(publishers=publishers)),
+                            edit_json(m / conf_rel, lambda c: c["tracker"].update(updates=updates))
+                            if updates else (lambda: None))
+                try:
+                    out = self.doctor(fx, "--offline", expect_code=1)
+                    found, fixed = failing(out)["snapshots and publishers"].split("; fix: ", 1)
+                    self.assertIn("the binding names a publisher that runs nothing", found, out)
+                    self.assertIn("run-delivery's tracker publisher (lead-setup adds it)", fixed, out)
+                    record = fx.tmp / "record"
+                    code, refused = fx.flow("lead-init", cwd=m)
+                    self.assertEqual(code, 2, refused)
+                    self.assertIn("the binding names a publisher that runs nothing", refused)
+                    self.assertFalse(record.exists(), f"lead-init kept a record while refusing: {refused}")
+                finally:
+                    undo()
+        undo = edit_json(binding_path, lambda b: b["state"].update(publishers=[]))
         try:
             out = self.doctor(fx, "--offline", expect_code=1)
             self.assertIn("the binding has no tracker publisher", failing(out)["snapshots and publishers"], out)
@@ -8067,9 +8087,10 @@ class RunDeliveryRenderHalvesTests(unittest.TestCase):
                     self.assertEqual(self.tool.render_views(c, only=only), "rendered")
                 self.assertEqual(json.loads(seen[0][seen[0].index("--state-config") + 1]), expected)
 
-    def test_the_publishers_half_of_a_binding_with_a_live_home_refreshes_the_outbox(self) -> None:
+    def test_the_publishers_half_of_a_binding_with_a_live_home_runs_its_publishers(self) -> None:
         state_tool = ROOT / "skills/orchestrate-work/scripts/delivery_state.py"
-        config = {"directory": "s", "liveHome": "home", "publishers": [{"id": "tracker", "kind": "host"}],
+        config = {"directory": "s", "liveHome": "home",
+                  "publishers": [{"id": "sink", "argv": ["sh", "-c", "cat > \"$0/published-copy.json\"", "{stateDirectory}"]}],
                   "renderers": [{"id": "home", "argv": ["sh", "-c", "cat >/dev/null; echo home"], "output": "home.html"}]}
         with tempfile.TemporaryDirectory() as folder:
             record = Path(folder) / "state"
@@ -8078,7 +8099,7 @@ class RunDeliveryRenderHalvesTests(unittest.TestCase):
                            check=True, capture_output=True)
             with mock.patch.object(self.tool, "binding_state", lambda _: config):
                 self.assertEqual(self.tool.render_views(c, only="publishers"), "rendered")
-                self.assertTrue((record / "outbox/outbox.json").is_file())
+                self.assertTrue((record / "published-copy.json").is_file())
                 self.assertFalse((record / "home.html").exists(), "the publishers half draws no view")
                 # The renderers half still answers to the home it names.
                 self.assertEqual(self.tool.render_views(c, only="renderers"), "rendered")
@@ -8431,7 +8452,7 @@ class DeliveryPostureReaderTests(unittest.TestCase):
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
 class LaneStartAndReadinessTests(unittest.TestCase):
     """lane-start moves its story to building in the record in every tracker mode, and in manual mode prints the start
-    move and post as host mode does. lead-assign and doctor --delivery check that a story's tracker item offers the
+    move and post for the lane to make. lead-assign and doctor --delivery check that a story's tracker item offers the
     first start move, from the tracker snapshot, before its lane starts."""
 
     @classmethod
@@ -8488,10 +8509,6 @@ class LaneStartAndReadinessTests(unittest.TestCase):
         doc = self.record(fx)["state"]
         return next(entry["stage"] for entry in [*doc.get("planned", []), *doc["queue"]] if entry["subject"] == key)
 
-    def lane_prints(self, fx) -> list[dict]:
-        path = fx.tmp / "flow-log/FX-1.lane-prints.jsonl"
-        return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
-
     def started(self, fx) -> str:
         code, out = fx.flow("lane-start", "FX-3", "--base", "feature/FX-1", cwd=fx.main)
         self.assertEqual(code, 0, out)
@@ -8530,7 +8547,7 @@ class LaneStartAndReadinessTests(unittest.TestCase):
         self.assertIn("Tracker post (your story FX-3): Started (lane-2): S2: Thing two", out)
         self.assertIn("lane-2 started it: now building", out)
         self.assertEqual(self.stage(fx), "building")
-        self.assertEqual(self.lane_prints(fx), [], "only host mode writes the lane's print to the flow log")
+        self.assertFalse((fx.tmp / "flow-log/FX-1.lane-prints.jsonl").exists(), "no log of prints is kept")
 
     def test_in_manual_mode_a_re_run_prints_and_changes_nothing(self) -> None:
         fx = self.delivery("manual")
@@ -8542,19 +8559,11 @@ class LaneStartAndReadinessTests(unittest.TestCase):
         self.assertNotIn("now building", out)
         self.assertEqual([(fx.tmp / "record" / name).read_bytes() for name in ("state.json", "journal.jsonl")], before)
 
-    def test_in_host_mode_the_print_is_still_written_and_the_story_moves_to_building(self) -> None:
-        fx = self.delivery("host")
-        out = self.started(fx)
-        self.assertIn('Tracker move (your story FX-3): "Start work", with your tracker tools.', out)
-        self.assertEqual([(p["subject"], p["move"]) for p in self.lane_prints(fx)], [("FX-3", "start")])
-        self.assertEqual(self.stage(fx), "building")
-
     def test_in_publisher_mode_the_publisher_makes_the_move_and_the_story_moves_to_building(self) -> None:
         fx = self.delivery(None)
         out = self.started(fx)
         self.assertNotIn("Tracker move", out)
         self.assertNotIn("Tracker post", out)
-        self.assertEqual(self.lane_prints(fx), [])
         self.assertEqual(self.stage(fx), "building")
 
     def test_a_reassigned_story_already_in_review_doesnt_move_back(self) -> None:
@@ -8571,7 +8580,6 @@ class LaneStartAndReadinessTests(unittest.TestCase):
 
     def test_the_brief_says_who_makes_the_start_move_in_each_mode(self) -> None:
         for updates, said in (("manual", "`lane-start` prints it; make it with your tracker tools."),
-                              ("host", "`lane-start` prints it; make it with your tracker tools."),
                               (None, "the tracker publisher makes it once `lane-start` records your start.")):
             with self.subTest(updates=updates or "publisher"):
                 fx = self.delivery(updates, assign=False)

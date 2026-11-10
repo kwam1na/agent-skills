@@ -1193,7 +1193,7 @@ class Runner:
         notes and never fails the runner.
 
         When the binding declares no renderer and no publisher, the wrapper
-        would write nothing: no view, no outbox, and nothing of the record,
+        would write nothing: no view and nothing of the record,
         the journal or the change log, which only the state tool writes. All it
         would do is read the record and serialize it, so that is done here
         instead, without starting a process, and a failure is noted just as

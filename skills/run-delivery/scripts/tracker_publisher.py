@@ -48,7 +48,7 @@ ADAPTER_TIMEOUT_SECONDS = 60
 # Statuses retried by a later run; any other 4xx is permanent. A 403 is transient only when the site refuses it too.
 TRANSIENT = (401, 409, 423, 429)
 LINEAR_TOKEN_ENV = "LINEAR_API_KEY"
-# What a host publisher's `ack` left beside the record: the last journal entry it published.
+# What an earlier generation's `ack` left beside a record whose updates it posted by hand: the last journal entry.
 PUBLISHED = "published.json"
 SEEDED = "published before the tracker publisher"
 JIRA_KEY = re.compile(r"^([A-Z][A-Z0-9_]*)-[0-9]+$")
@@ -255,8 +255,9 @@ def _flag(argv: list, name: str) -> str | None:
 
 def settings(root: Path, own: dict | None = None, binding: dict | None = None) -> dict:
     """How this repository's tracker is updated:
-    {mode: publisher|host|manual|None, adapter: {name, argv?, site?, userEnv?, tokenEnv?} | None, project, transitions,
-    publisher: the binding's tracker publisher id | None, host: the binding's host publisher id | None, problems}."""
+    {mode: publisher|manual|None, adapter: {name, argv?, site?, userEnv?, tokenEnv?} | None, project, transitions,
+    publisher: the binding's tracker publisher id | None, unrunnable: the ids of publishers this generation can't run,
+    problems}."""
     named = None
     if own is None:
         own, named = own_config(root)
@@ -264,7 +265,7 @@ def settings(root: Path, own: dict | None = None, binding: dict | None = None) -
     tracker = own.get("tracker") or {}
     problems = []
     if not isinstance(tracker, dict):
-        return {"mode": None, "adapter": None, "project": None, "transitions": {}, "publisher": None, "host": None,
+        return {"mode": None, "adapter": None, "project": None, "transitions": {}, "publisher": None, "unrunnable": [],
                 "snapshot": False,
                 "problems": [f"{named or 'run-delivery.json'} tracker must be an object"]}
     state = binding.get("state") or {}
@@ -279,10 +280,12 @@ def settings(root: Path, own: dict | None = None, binding: dict | None = None) -
     elif tracker.get("adapter") not in (None, "jira", "linear"):
         problems.append(f"tracker.adapter {tracker['adapter']!r} isn't one run-delivery ships (jira, linear); give "
                         "tracker.argv")
-    elif tracker.get("adapter") == "linear":
-        # Linear's API takes the snapshot's personal key; the adapter's own default variable when neither names one.
-        adapter = {"name": "linear", "site": tracker.get("site"),
-                   "tokenEnv": tracker.get("tokenEnv") or (_flag(snapshot, "--token-env") if kind == "linear" else None)
+    elif tracker.get("adapter") == "linear" or (tracker.get("adapter") is None and kind == "linear"):
+        # A Linear snapshot implies Linear's adapter, as a Jira one implies Jira's: the same site and personal key,
+        # or the adapter's own defaults when neither names them.
+        linear = kind == "linear"
+        adapter = {"name": "linear", "site": tracker.get("site") or (_flag(snapshot, "--site") if linear else None),
+                   "tokenEnv": tracker.get("tokenEnv") or (_flag(snapshot, "--token-env") if linear else None)
                    or LINEAR_TOKEN_ENV}
     elif tracker.get("adapter") == "jira" or kind == "jira":
         adapter = {"name": "jira", "site": tracker.get("site") or _flag(snapshot, "--site"),
@@ -293,19 +296,21 @@ def settings(root: Path, own: dict | None = None, binding: dict | None = None) -
             problems.append(f"the Jira tracker adapter needs tracker.{' and tracker.'.join(missing)} (or a jira "
                             "trackerSnapshot in the binding that names them)")
     updates = tracker.get("updates")
-    if updates not in (None, "publisher", "host", "manual"):
-        problems.append(f"tracker.updates must be publisher, host or manual, not {updates!r}")
+    if updates not in (None, "publisher", "manual"):
+        problems.append(f"tracker.updates is publisher or manual, not {updates!r}: every tracker posts through the "
+                        "tracker publisher, which lead-setup adds, unless its updates are made by hand")
         updates = None
-    # A Linear snapshot with no adapter named keeps the host publisher's outbox; tracker.adapter "linear" opts in.
-    mode = updates or ("publisher" if adapter else "host" if kind == "linear" else None)
+    mode = updates or ("publisher" if adapter else None)
     if mode == "publisher" and adapter is None and not problems:
         problems.append("tracker.updates is publisher, but no tracker adapter is configured (tracker.adapter or tracker.argv)")
-    publisher = host = None
+    publisher = None
+    unrunnable = []
     for entry in state.get("publishers") or []:
         if not isinstance(entry, dict):
             continue
-        if entry.get("kind") == "host":
-            host = entry.get("id")
+        if entry.get("kind") is not None and "argv" not in entry:
+            # A publisher that runs nothing: this generation leaves no outbox for anyone to post.
+            unrunnable.append(entry.get("id"))
         elif any(isinstance(part, str) and part.endswith("tracker_publisher.py") for part in entry.get("argv") or []):
             publisher = entry.get("id")
     transitions = tracker.get("transitions") or {}
@@ -333,7 +338,7 @@ def settings(root: Path, own: dict | None = None, binding: dict | None = None) -
         problems.append(f"tracker.transitions.lead names kinds the journal doesn't have: {sorted(set(lead) - set(UPDATES))}")
     return {"mode": mode, "adapter": adapter, "project": tracker.get("project"), "transitions": transitions,
             "snapshot": bool(snapshot),
-            "followupType": tracker.get("followupType", "Task"), "publisher": publisher, "host": host,
+            "followupType": tracker.get("followupType", "Task"), "publisher": publisher, "unrunnable": unrunnable,
             "problems": problems}
 
 
@@ -351,22 +356,21 @@ def untargeted(conf: dict) -> list[str]:
 def refusal(conf: dict) -> str | None:
     """Why this repository's tracker updates would be forgotten, with its fix, or None: doctor's row and lead-init's
     refusal."""
+    if conf.get("unrunnable"):
+        return (f"the binding names a publisher that runs nothing ({', '.join(map(str, conf['unrunnable']))}: a kind "
+                "and no argv), which this generation doesn't support; fix: replace it in state.publishers with "
+                "run-delivery's tracker publisher (lead-setup adds it), and export the tracker's token")
     if conf["problems"]:
         return "; ".join(conf["problems"]) + "; fix: correct `tracker` in the configuration (references/config.md)"
     if conf["mode"] == "publisher" and not conf["publisher"]:
         return ("the tracker has an adapter, but the binding has no tracker publisher, so nothing posts the delivery's "
                 "updates and moves to it; fix: add one to state.publishers (lead-setup adds run-delivery's tracker "
                 "publisher), or set tracker.updates to \"manual\" to post them by hand")
-    if conf["mode"] == "host" and not conf["host"]:
-        return ("the tracker's updates go to a host publisher, but the binding has none; fix: set tracker.adapter "
-                "to \"linear\" and run lead-setup, which adds run-delivery's tracker publisher; or add a host "
-                "publisher to state.publishers, {\"id\": \"tracker\", \"kind\": \"host\"}, whose outbox the lead "
-                "publishes; or set tracker.updates to \"manual\"")
-    if conf["mode"] is None and conf.get("snapshot") and not (conf["publisher"] or conf["host"]):
+    if conf["mode"] is None and conf.get("snapshot") and not conf["publisher"]:
         # A tracker the binding reads with no adapter run-delivery knows: some publisher must post to it.
         return ("the tracker is configured, but the binding has no tracker publisher, so nothing posts the delivery's "
-                "moves to it; fix: add one to state.publishers: run-delivery's tracker publisher with an adapter, or "
-                "a host publisher whose outbox the lead publishes; or set tracker.updates to \"manual\"")
+                "moves to it; fix: give the tracker an adapter (tracker.argv) and add run-delivery's tracker "
+                "publisher to state.publishers (lead-setup adds it), or set tracker.updates to \"manual\"")
     return None
 
 
@@ -726,7 +730,7 @@ class Publisher:
         return False
 
     def published_through(self) -> int:
-        """The last journal entry a host publisher's `ack` recorded for this record, or 0. Only the publisher's first
+        """The last journal entry an earlier generation's `ack` recorded for this record, or 0. Only the publisher's first
         run over the record reads `published.json`: its seeding lines carry the value it read, so a run that stopped
         partway finishes with it, and a later `ack` never covers an entry the publisher hasn't. A record the publisher
         has written other lines for was never seeded. One acknowledged before the record's first entry belongs to an
@@ -743,7 +747,7 @@ class Publisher:
         published = _json(path)
         through, at = published.get("journalThrough"), published.get("at")
         if (not isinstance(through, int) or isinstance(through, bool) or through < 0 or not isinstance(at, str)):
-            raise Stop(f"{PUBLISHED} is malformed: the entries a host publisher posted can't be told from the rest")
+            raise Stop(f"{PUBLISHED} is malformed: the entries posted before the tracker publisher can't be told from the rest")
         try:
             if self.journal and moment(at) < moment(self.journal[0]["at"]):
                 return 0
@@ -761,7 +765,7 @@ class Publisher:
             if entry["id"] in done:
                 continue
             if entry["id"] <= through:
-                # Posted by the host publisher this record had before: never posted again.
+                # Posted by hand under an earlier generation, and acknowledged: never posted again.
                 self.write(entry, "skip", final=True, reason=SEEDED, through=through)
                 continue
             try:
@@ -791,7 +795,7 @@ def read_error(state_dir: Path) -> dict | None:
     return value or None
 
 
-# "Needs you", for the supervisor and doctor: derived from the ledger, the journal and the outbox, never stored.
+# "Needs you", for the supervisor and doctor: derived from the ledger and the journal, never stored.
 
 def waiting(doc: dict, state_dir: Path, flow_log: Path, delivery: str) -> tuple[list[dict], list[dict]]:
     """(lagging, waiting starts): the entries the ledger doesn't cover, split into those the publisher owes and the
@@ -814,7 +818,7 @@ def waiting(doc: dict, state_dir: Path, flow_log: Path, delivery: str) -> tuple[
 def needs_you(doc: dict, state_dir: Path, flow_log: Path, delivery: str, conf: dict, closing: bool = False) -> list[dict]:
     """The tracker's "Needs you" items: {holding, text}. A publisher whose ledger lags the journal holds, naming its
     last error; `failed` and `handled` lines are shown. A start that waits holds nothing, except while closing,
-    when it is shown. With a host publisher, an undrained outbox holds."""
+    when it is shown."""
     items: list[dict] = []
     if conf.get("mode") == "publisher":
         lagging, starts = waiting(doc, state_dir, flow_log, delivery)
@@ -841,15 +845,6 @@ def needs_you(doc: dict, state_dir: Path, flow_log: Path, delivery: str, conf: d
             elif line["outcome"] == "handled":
                 items.append({"holding": False, "text": f"{line.get('ticket')}: the move \"{line.get('transition')}\" "
                               f"isn't offered from {line.get('status')}; make it by hand if it still applies"})
-    elif conf.get("mode") == "host":
-        outbox = _json(state_dir / "outbox" / "outbox.json")
-        published = _json(state_dir / "published.json")
-        through = published.get("journalThrough", 0) if published else 0
-        pending = [e for e in outbox.get("journal") or [] if isinstance(e, dict) and e.get("id", 0) > through]
-        if pending:
-            named = ", ".join(f"{e['id']} {e.get('kind')}" for e in pending[:10]) + (" and more" if len(pending) > 10 else "")
-            items.append({"holding": True, "text": f"The host outbox holds {len(pending)} tracker update"
-                          f"{'s' if len(pending) != 1 else ''} to post with your tracker tools, then ack: {named}"})
     return items
 
 
@@ -870,8 +865,8 @@ def main(argv: list[str] | None = None) -> int:
                              .stdout.strip() or os.getcwd())
     conf = settings(root)
     delivery = args.delivery or doc["state"].get("meta", {}).get("trackerParent")
-    if conf["mode"] in (None, "manual", "host"):
-        return 0  # Nothing for this publisher to do: by hand, or the host publisher's outbox.
+    if conf["mode"] in (None, "manual"):
+        return 0  # Nothing for this publisher to do: the updates are made by hand.
     if conf["problems"] or not delivery:
         print("tracker publisher: " + ("; ".join(conf["problems"]) or "the record names no delivery "
               "(meta.trackerParent); pass --delivery"), file=sys.stderr)

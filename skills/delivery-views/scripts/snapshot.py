@@ -686,15 +686,17 @@ def _linear_parent(key: str, issue: dict) -> dict | None:
 
 def linear_snapshot(args: argparse.Namespace, environ: dict, transport: Transport, deadline: float,
                     clock: Callable[[], float], sleep: Callable[[float], None]) -> dict:
-    # A personal key goes in the Authorization header as it is.
-    client = Client(LINEAR_API, _credential(environ, args.token_env), transport, deadline, clock, sleep)
+    # A personal key goes in the Authorization header as it is. --site names Linear's API origin, as run-delivery's
+    # Linear adapter reads it from this command, so the reads and the writes reach the same place.
+    api = f"{args.site.rstrip('/')}/graphql" if args.site else LINEAR_API
+    client = Client(api, _credential(environ, args.token_env), transport, deadline, clock, sleep)
     items: list[dict] = []
     seen: set[str] = set()
     cursors: set[str] = set()
     after = None
     parent: dict | None = None
     while True:
-        answer = client.post(LINEAR_API, {"query": LINEAR_QUERY, "variables": {"parent": args.parent, "after": after}})
+        answer = client.post(api, {"query": LINEAR_QUERY, "variables": {"parent": args.parent, "after": after}})
         if not isinstance(answer, dict):
             raise Failure("Linear's answer could not be read")
         errors = answer.get("errors")

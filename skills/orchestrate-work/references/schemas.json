@@ -2448,47 +2448,26 @@
           "publishers": {
             "type": "array",
             "items": {
-              "anyOf": [
-                {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "required": [
-                    "id",
-                    "argv"
-                  ],
-                  "properties": {
-                    "id": {
-                      "$ref": "#/$defs/name"
-                    },
-                    "argv": {
-                      "$ref": "#/$defs/argv"
-                    },
-                    "timeoutSeconds": {
-                      "type": "integer",
-                      "minimum": 1
-                    }
-                  }
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "argv"
+              ],
+              "properties": {
+                "id": {
+                  "$ref": "#/$defs/name"
                 },
-                {
-                  "description": "A host publisher: the wrapper writes an outbox that the lead publishes with its host's own tool.",
-                  "type": "object",
-                  "additionalProperties": false,
-                  "required": [
-                    "id",
-                    "kind"
-                  ],
-                  "properties": {
-                    "id": {
-                      "$ref": "#/$defs/name"
-                    },
-                    "kind": {
-                      "const": "host"
-                    }
-                  }
+                "argv": {
+                  "$ref": "#/$defs/argv"
+                },
+                "timeoutSeconds": {
+                  "type": "integer",
+                  "minimum": 1
                 }
-              ]
+              }
             },
-            "description": "Each publisher is an argv, or a host publisher whose outbox the lead publishes. At most one is a host publisher: every host publisher writes the one outbox."
+            "description": "Each publisher is an argv the render wrapper runs with the validated record on stdin."
           },
           "snapshotMaxAgeSeconds": {
             "description": "How old a forge or tracker snapshot may be before reconcile refuses it, in seconds. Optional; 900 when absent, and --max-age overrides it.",

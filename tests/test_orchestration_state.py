@@ -5260,159 +5260,40 @@ class NextTests(unittest.TestCase):
         self.assertTrue(state_tool.validate({"items": {"x": {"priority": 0}}}, schema))
 
 
-class PublicationTests(unittest.TestCase):
-    """What was published, so an unpublished view is visible."""
+class ShowTests(unittest.TestCase):
+    """What `show` adds beside the record: only a recovery still pending. Nothing records what was published, and an
+    outbox or a `published.json` an earlier generation left is neither read nor reported."""
 
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name) / "state"
         state_tool.init(self.directory, "Epic underway")
-        for number in range(1, 4):
-            state_tool.append_journal(self.directory, kind="decision.recorded", summary=f"Decision {number}")
+        state_tool.append_journal(self.directory, kind="decision.recorded", summary="Decision 1")
 
-    def test_ack_records_what_went_out_and_never_moves_backwards(self) -> None:
-        version = state_tool.show(self.directory)["state"]["version"]
-        code, acked = run_tool(self.directory, "ack", "--version", str(version), "--through", "2")
-        self.assertEqual(code, 0, acked)
-        self.assertEqual(acked["published"], {"version": version, "journalThrough": 2, "at": acked["published"]["at"]})
-        self.assertEqual(state_tool.show(self.directory)["state"]["version"], version, "an ack is not a state write")
-        for args, reason in (
-            (["--version", str(version + 1), "--through", "2"], "a version the record has not reached"),
-            (["--version", str(version), "--through", "9"], "a journal entry that does not exist"),
-            (["--version", str(version), "--through", "1"], "an earlier journal entry"),
-            (["--version", "0", "--through", "2"], "an earlier version"),
-        ):
-            with self.subTest(reason):
-                code, refused = run_tool(self.directory, "ack", *args)
-                self.assertEqual((code, refused["code"]), (1, "ack_invalid"), refused)
-        code, acked = run_tool(self.directory, "ack", "--version", str(version), "--through", "3")
-        self.assertEqual((code, acked["published"]["journalThrough"]), (0, 3))
-
-    def outbox(self, version: int, through: int) -> None:
-        """What a host publisher leaves: the version and journal range it published."""
-        folder = self.directory / state_tool.OUTBOX_DIRECTORY
-        folder.mkdir(exist_ok=True)
-        (folder / state_tool.OUTBOX_FILE).write_text(json.dumps(
-            {"version": version, "journalThrough": through, "publisher": "live"}), encoding="utf-8")
-
-    def test_ack_without_a_version_acks_the_outbox_s_own_version_and_range(self) -> None:
-        published = state_tool.show(self.directory)["state"]["version"]
-        self.outbox(published, 2)
-        # The record moves on after the publisher wrote its outbox: show gives the record's version, not the outbox's.
-        state_tool.patch(self.directory, writer="lead", version=published, changes={"meta": {"headline": "Moved"}})
-        record = state_tool.show(self.directory)["state"]["version"]
-        self.assertGreater(record, published)
-        code, refused = run_tool(self.directory, "ack", "--version", str(record), "--through", "3")
-        self.assertEqual((code, refused["code"]), (1, "ack_invalid"), refused)
-        self.assertIn(f"the outbox holds version {published} through entry 2", refused["error"])
-        self.assertIn(f"ack --version {published} --through 2, or ack with neither", refused["error"])
-        code, acked = run_tool(self.directory, "ack")
-        self.assertEqual(code, 0, acked)
-        self.assertEqual((acked["published"]["version"], acked["published"]["journalThrough"]), (published, 2))
-        # Either one left out is the outbox's, and the one given is kept, even where it differs from the outbox's.
-        self.outbox(record, 3)
-        code, acked = run_tool(self.directory, "ack", "--through", "2")
-        self.assertEqual((code, acked["published"]["version"], acked["published"]["journalThrough"]), (0, record, 2), acked)
-        # Any refusal names what the outbox holds.
-        code, refused = run_tool(self.directory, "ack", "--version", "1", "--through", "3")
-        self.assertEqual((code, refused["code"]), (1, "ack_invalid"), refused)
-        self.assertIn(f"the outbox holds version {record} through entry 3", refused["error"])
-
-    def test_ack_without_a_version_and_no_outbox_is_refused_naming_what_it_needs(self) -> None:
-        before = state_tool.show(self.directory)
-        for args in ((), ("--version", str(before["state"]["version"])), ("--through", "2")):
-            with self.subTest(args=args):
-                code, refused = run_tool(self.directory, "ack", *args)
-                self.assertEqual((code, refused["code"]), (1, "ack_invalid"), refused)
-                self.assertIn("there is no outbox to acknowledge: pass --version and --through", refused["error"])
-        self.assertFalse((self.directory / state_tool.PUBLISHED_FILE).exists())
-
-    def test_a_journal_entry_alone_leaves_the_publication_behind(self) -> None:
-        version = state_tool.show(self.directory)["state"]["version"]
-        run_tool(self.directory, "ack", "--version", str(version), "--through", "3")
-        state_tool.append_journal(self.directory, kind="decision.recorded", summary="Decision 4")
+    def test_show_reports_only_a_pending_recovery_whatever_an_earlier_generation_left(self) -> None:
         code, shown = run_tool(self.directory, "show")
-        self.assertEqual((shown["publication"]["unpublishedEntries"], shown["publication"]["lags"]), (1, True))
-
-    def test_a_malformed_acknowledgement_is_reported_and_repaired_by_the_next_ack(self) -> None:
-        version = state_tool.show(self.directory)["state"]["version"]
-        published = self.directory / state_tool.PUBLISHED_FILE
-        for contents in ("not json", json.dumps({"version": version, "journalThrough": -5, "at": "x"}),
-                         json.dumps({"version": version, "journalThrough": 1, "at": "x", "extra": True}),
-                         json.dumps({"version": version, "journalThrough": 1, "at": 3})):
-            with self.subTest(contents=contents):
-                published.write_text(contents, encoding="utf-8")
-                code, shown = run_tool(self.directory, "show")
-                self.assertEqual(code, 0, "the record is still shown")
-                self.assertTrue(shown["publication"]["lags"])
-                self.assertIn("published.json", shown["publication"]["error"])
-        outbox = self.directory / "outbox" / "outbox.json"
-        outbox.parent.mkdir()
-        outbox.write_text(json.dumps({"version": version - 1, "journalThrough": 3, "state": {}, "journal": []}))
+        self.assertEqual((code, shown["publication"]), (0, {"recoveryPending": False}))
+        (self.directory / "outbox").mkdir()
+        (self.directory / "outbox" / "outbox.json").write_text("{not json")
+        (self.directory / "published.json").write_text(json.dumps({"version": 1, "journalThrough": 1, "at": "x"}))
         code, shown = run_tool(self.directory, "show")
-        self.assertEqual((shown["publication"]["outboxVersion"], shown["publication"]["outboxLags"]),
-                         (version - 1, True), "a bad acknowledgement hides nothing about the outbox")
-        outbox.write_text(json.dumps({"version": version, "journalThrough": 3, "state": {}, "journal": []}))
-        code, acked = run_tool(self.directory, "ack", "--version", str(version), "--through", "3")
-        self.assertEqual(code, 0, acked)
+        self.assertEqual((code, shown["publication"]), (0, {"recoveryPending": False}), "neither is read")
+        (self.directory / "recovery.json").write_text("{}")
         code, shown = run_tool(self.directory, "show")
-        self.assertEqual((shown["publication"]["lags"], "error" in shown["publication"]), (False, False))
-
-    def test_an_unreadable_outbox_is_reported_as_a_lag(self) -> None:
-        outbox = self.directory / "outbox" / "outbox.json"
-        outbox.parent.mkdir()
-        for contents in ("garbage", json.dumps({"version": "one", "journalThrough": 1}),
-                         json.dumps({"version": -3, "journalThrough": -1}),
-                         json.dumps({"version": 1, "journalThrough": 1, "publisher": 3})):
-            with self.subTest(contents=contents):
-                outbox.write_text(contents, encoding="utf-8")
-                code, shown = run_tool(self.directory, "show")
-                self.assertEqual(code, 0)
-                self.assertEqual((shown["publication"]["outboxVersion"], shown["publication"]["outboxLags"]),
-                                 (None, True))
-                self.assertIn("outbox", shown["publication"]["outboxError"])
-
-    def test_ack_never_claims_more_than_the_outbox_held(self) -> None:
-        version = state_tool.show(self.directory)["state"]["version"]
-        outbox = self.directory / "outbox" / "outbox.json"
-        outbox.parent.mkdir()
-        outbox.write_text(json.dumps({"version": version, "journalThrough": 2, "state": {}, "journal": []}))
-        code, refused = run_tool(self.directory, "ack", "--version", str(version), "--through", "3")
-        self.assertEqual((code, refused["code"]), (1, "ack_invalid"), "entry 3 was never in the outbox")
-        state_tool.patch(self.directory, writer="lead", version=version, changes={"meta": {"headline": "Later"}})
-        code, refused = run_tool(self.directory, "ack", "--version", str(version + 1), "--through", "2")
-        self.assertEqual((code, refused["code"]), (1, "ack_invalid"), "the record's version, not the outbox's")
-        self.assertIn("outbox", refused["error"])
-        code, acked = run_tool(self.directory, "ack", "--version", str(version), "--through", "2")
-        self.assertEqual((code, acked["published"]["journalThrough"]), (0, 2))
-
-    def test_show_flags_a_publication_that_lags_the_record(self) -> None:
-        code, shown = run_tool(self.directory, "show")
-        self.assertEqual(shown["publication"], {"publishedVersion": None, "journalThrough": 0, "unpublishedEntries": 3,
-                                                "outboxVersion": None, "outboxPublisher": None, "recoveryPending": False,
-                                                "outboxOrphaned": None,
-                                                "outboxLags": False, "lags": True})
-        version = shown["state"]["version"]
-        run_tool(self.directory, "ack", "--version", str(version), "--through", "3")
-        code, shown = run_tool(self.directory, "show")
-        self.assertFalse(shown["publication"]["lags"])
-        state_tool.patch(self.directory, writer="lead", version=version, changes={"meta": {"headline": "Later"}})
-        code, shown = run_tool(self.directory, "show")
-        self.assertTrue(shown["publication"]["lags"])
-        self.assertEqual(shown["publication"]["publishedVersion"], version)
-        # An outbox is behind when the record or the journal has moved past it.
-        version = shown["state"]["version"]
-        outbox = self.directory / "outbox" / "outbox.json"
-        outbox.parent.mkdir()
-        outbox.write_text(json.dumps({"version": version, "journalThrough": 3, "state": {}, "journal": []}))
-        code, shown = run_tool(self.directory, "show")
-        self.assertEqual((shown["publication"]["outboxVersion"], shown["publication"]["outboxLags"]), (version, False))
-        state_tool.append_journal(self.directory, kind="decision.recorded", summary="Decision 4")
-        code, shown = run_tool(self.directory, "show")
-        self.assertTrue(shown["publication"]["outboxLags"], "a journal entry the outbox lacks is a lag")
+        self.assertEqual(shown["publication"], {"recoveryPending": True})
         # What renderers read: the state, the journal, and the stats, estimates, status and focus folded from them.
         self.assertEqual(sorted(state_tool.show(self.directory)), ["estimates", "focus", "journal", "state", "stats", "status"])
+
+    def test_ack_and_outbox_are_unknown_commands(self) -> None:
+        for args in (["ack"], ["outbox", "--retire", "live"]):
+            with self.subTest(args=args):
+                done = subprocess.run([sys.executable, "-B", str(TOOL), "--dir", str(self.directory), *args],
+                                      capture_output=True, text=True)
+                self.assertEqual(done.returncode, 2, done.stderr)
+                self.assertIn(f"invalid choice: '{args[0]}'", done.stderr)
+        self.assertFalse((self.directory / "published.json").exists())
+        self.assertFalse(hasattr(state_tool, "ack") or hasattr(state_tool, "read_outbox"))
 
 
 def valid_state() -> dict:
@@ -5724,7 +5605,7 @@ def bullets_after(text: str, lead_in: str) -> list[str]:
 # written into its state directory, as views, the outbox, the
 # acknowledgement, or beside it, as the close's closed.json; none
 # is shipped with the skill.
-ADOPTER_FILES = frozenset({".agents/orchestration.json", ".agents/delivery-posture.json", "delivery.md", "delivery.html", "outbox/outbox.json",
+ADOPTER_FILES = frozenset({".agents/orchestration.json", ".agents/delivery-posture.json", "delivery.md", "delivery.html",
                            "published.json", "recovery.json", "changes.jsonl", "plan.json", "closed.json"})
 
 

@@ -456,8 +456,7 @@ class FixtureAdopterTests(unittest.TestCase):
                                 str(adopter.operator / ".agents/orchestration.json"))
         self.assertEqual([(entry["id"], entry["ok"]) for entry in rendered["renderers"]],
                          [("markdown", True), ("page", True)])
-        self.assertEqual([(entry["id"], entry["kind"], entry["ok"]) for entry in rendered["publishers"]],
-                         [("live", "host", True)])
+        self.assertEqual([(entry["id"], entry["ok"]) for entry in rendered["publishers"]], [("mirror", True)])
         final = adopter.document()
         page = (adopter.state / "delivery.html").read_text(encoding="utf-8")
         embedded = re.search(r'<script type="application/json" id="delivery-state">(.*?)</script>', page, re.S)
@@ -845,41 +844,23 @@ class FixtureAdopterTests(unittest.TestCase):
         self.assertEqual((recorded["kind"], recorded["subject"]), ("candidate.merged", "delta-copy"))
         self.assertIn(hand_merged, recorded["summary"])
 
-        # Nothing has been published yet, so the view lags the record.
-        shown = adopter.show()
-        self.assertTrue(shown["publication"]["lags"])
-        self.assertIsNone(shown["publication"]["publishedVersion"])
-
-        # Render: the host publisher leaves the projection and every unacknowledged entry in the outbox.
+        # Render: the binding's publisher receives exactly the record the views are drawn from.
         binding = str(adopter.operator / ".agents/orchestration.json")
+        mirror = adopter.state.parent / "mirror.json"
         adopter.tool(WRAPPER, "--dir", str(adopter.state), "--binding", binding)
-        outbox_path = adopter.state / "outbox" / "outbox.json"
-        outbox = json.loads(outbox_path.read_text(encoding="utf-8"))
-        self.assertEqual(outbox["version"], shown["state"]["version"])
-        self.assertEqual(outbox["state"], shown["state"])
-        self.assertEqual(outbox["journal"], shown["journal"])
-        self.assertFalse(adopter.show()["publication"]["outboxLags"])
+        shown = adopter.show()
+        self.assertEqual(json.loads(mirror.read_text(encoding="utf-8")),
+                         {key: value for key, value in shown.items() if key != "publication"})
+        self.assertFalse((adopter.state / "outbox").exists(), "nothing is left for anyone to post by hand")
 
-        # The lead publishes the outbox with its host's own tool, then acknowledges what it published.
-        last = outbox["journalThrough"]
-        self.assertEqual(last, outbox["journal"][-1]["id"])
-        adopter.state_tool("ack", "--version", str(outbox["version"]), "--through", str(last))
-        published = adopter.show()["publication"]
-        self.assertEqual((published["publishedVersion"], published["journalThrough"], published["unpublishedEntries"],
-                          published["lags"]), (outbox["version"], last, 0, False))
-
-        # The next pass finds no drift and has nothing new to publish.
+        # The next pass finds no drift, and a new entry reaches the publisher on the next render.
         again = adopter.state_tool("reconcile", *snapshots)
         self.assertEqual((again["drift"], again["changes"], again["summary"]), (False, [], "no drift"))
-        adopter.tool(WRAPPER, "--dir", str(adopter.state), "--binding", binding)
-        self.assertEqual(json.loads(outbox_path.read_text(encoding="utf-8"))["journal"], [])
-
-        # A new entry lags the published view, and the next outbox carries exactly that entry.
         adopter.journal("delivery.closed", "The hand-merged candidate is recorded")
-        self.assertTrue(adopter.show()["publication"]["lags"])
         adopter.tool(WRAPPER, "--dir", str(adopter.state), "--binding", binding)
-        pending = json.loads(outbox_path.read_text(encoding="utf-8"))["journal"]
-        self.assertEqual([(entry["id"], entry["kind"]) for entry in pending], [(last + 1, "delivery.closed")])
+        published = json.loads(mirror.read_text(encoding="utf-8"))
+        self.assertEqual((published["journal"][-1]["kind"], published["journal"][-1]["id"]),
+                         ("delivery.closed", shown["journal"][-1]["id"] + 1))
 
 
 class FixtureAdopterLiveViewTests(unittest.TestCase):
