@@ -21,9 +21,16 @@ from agent_skills.release import RUNTIME_FILES, VerifiedRelease, build_release, 
 
 
 CONTRACT_PATH = "skills/linear-tracker-adapter/references/adapter-contract.json"
-ADAPTER_ROOT = "skills/linear-tracker-adapter"
 GRAPH_PATH = "workflows/delivery-v1.json"
 TRUSTED_CONTRACT_SHA256 = "82b9bd2de7a3a38b866dbdccca66cc0b37fd253b58a816412984f67484b94f45"
+# The Linear-only skills, trusted like the contract digest: a candidate's catalog or profiles never name them, so a
+# skill moved into the base cannot leave the sensor's delta unnoticed. Adding a Linear skill changes this on purpose.
+LINEAR_SKILL_IDS = ("create-linear-ticket", "execute-linear-ticket", "linear-tracker-adapter")
+TRANSPORT_CHARTER = (
+    "proves that the Linear skills reach Linear only through the host's connector; files the run-delivery base "
+    "holds, its own tracker adapters included, are outside the inspected delta, so it does not prove that no file "
+    "in the generation reaches Linear"
+)
 REQUIRED_SCENARIOS = (
     "core-qualification-binding",
     "linear-install-and-host-discovery",
@@ -65,6 +72,17 @@ LINEAR_SDK_ACTIONS = (
     "linearclient",
 )
 COMMAND_TRANSPORT = re.compile(r"(?m)^\s*(?:curl|wget)\s+https?://")
+# A document's command can sit inside inline code mid-sentence, so in documents it counts wherever it stands.
+DOCUMENT_COMMAND = re.compile(r"\b(?:curl|wget)\b[^\n]*?https?://")
+# Markup that can stand before an instruction: quotes, emphasis, list and heading markers, and a YAML or JSON key.
+DOCUMENT_LEAD = re.compile(
+    r"""^(?:\s+|"[^"\n]*"\s*:|[\w$-]+\s*:(?=\s)|>|[-*+](?=\s)|\d+[.)](?=\s)|#+(?=\s)|["'`*_(\[])*"""
+)
+DOCUMENT_CLAUSE = re.compile(r"(?<=[.!?;:,])\s+|\s+[-\u2013\u2014]+\s+|\\n")
+DOCUMENT_VERB = re.compile(
+    r"(?:call|connect|curl|execute|fetch|hit|import|install|invoke|issue|make|open|point|post|query|reach|request|"
+    r"run|send|submit|talk|use|wget|write)\b"
+)
 HTTP_CLIENT_ACTION = re.compile(
     r"\b(?:aiohttp|httpx|requests|urllib3)\.(?:delete|get|patch|post|put|request)\s*\(|"
     r"\b(?:axios\.(?:delete|get|patch|post|put)|fetch|urlopen)\s*\("
@@ -215,6 +233,36 @@ def _actionable_instruction(contents: str, marker: str) -> bool:
     )
 
 
+def _document_instruction(contents: str, marker: str) -> bool:
+    """Whether a document tells its reader, in some clause, to act on the marker.
+
+    A clause is read after its leading markup, so a list item, a quoted prompt or a YAML or JSON value counts the same
+    as a sentence of prose, and a clause naming the marker without an instruction, such as "never use", does not.
+    """
+    for line in contents.splitlines():
+        if marker not in line:
+            continue
+        for clause in DOCUMENT_CLAUSE.split(DOCUMENT_LEAD.sub("", line)):
+            clause = DOCUMENT_LEAD.sub("", clause)
+            if marker in clause and DOCUMENT_VERB.match(clause):
+                return True
+    return False
+
+
+def _linear_skill_coverage(linear_candidate: Path, base_candidate: Path, delta: list[Path]) -> None:
+    """That every file of each Linear skill is in the delta, so none of them sits in the base unseen."""
+    changed = {path.relative_to(linear_candidate).as_posix() for path in delta}
+    for skill in LINEAR_SKILL_IDS:
+        root = f"skills/{skill}"
+        files = [
+            path.relative_to(linear_candidate).as_posix()
+            for path in (linear_candidate / root).rglob("*")
+            if path.is_file()
+        ]
+        if not files or (base_candidate / root).exists() or any(path not in changed for path in files):
+            raise QualificationFailure(f"candidate delta is missing the Linear skill: {skill}")
+
+
 def _node_http_action(contents: str) -> bool:
     identifier = r"[a-z_$][a-z0-9_$]*"
     module = r"(?:node:)?https?"
@@ -296,8 +344,10 @@ def inspect_candidate_transport_boundary(
 ) -> list[str]:
     """That what the Linear profile adds to its base reaches Linear only through the host's connector.
 
-    The base is the run-delivery product, which holds the delivery views and forge adapters that reach their own
-    providers. A file differing from it is in the delta, wherever it sits, so no folder is set aside.
+    The base is the run-delivery product, which holds the delivery views and forge and tracker adapters that reach
+    their own providers. A file differing from it is in the delta, wherever it sits, so no folder is set aside, and
+    every file in it is read: executables for transport actions, and documents, skill instructions, references and
+    agent prompts alike, for an instruction to reach Linear another way. The delta must hold every Linear skill.
     """
     contract_path = linear_candidate / CONTRACT_PATH
     contract_bytes = contract_path.read_bytes()
@@ -311,19 +361,24 @@ def inspect_candidate_transport_boundary(
     if set(contract.get("allowedHostOperations", ())) != DECLARED_HOST_OPERATIONS:
         raise QualificationFailure("host-native MCP capability set is incomplete")
 
-    for path in _candidate_delta(linear_candidate, base_candidate):
+    delta = _candidate_delta(linear_candidate, base_candidate)
+    if not delta:
+        raise QualificationFailure("candidate delta is empty")
+    _linear_skill_coverage(linear_candidate, base_candidate, delta)
+    for path in delta:
         relative = path.relative_to(linear_candidate).as_posix()
         if relative == CONTRACT_PATH:
             continue
         executable = path.suffix in EXECUTABLE_SUFFIXES
-        actionable_document = relative == f"{ADAPTER_ROOT}/SKILL.md"
-        if not executable and not actionable_document:
-            continue
-        contents = path.read_text(encoding="utf-8").casefold()
+        try:
+            contents = path.read_text(encoding="utf-8").casefold()
+        except UnicodeDecodeError as error:
+            raise QualificationFailure(f"candidate delta file is not text: {relative}") from error
+        instruction = _actionable_instruction if executable else _document_instruction
         command_action = COMMAND_TRANSPORT.search(contents) or re.search(
             r"(?:os\.system|subprocess\.(?:call|run|popen))\s*\([^\n]*(?:curl|wget)",
             contents,
-        )
+        ) or (not executable and DOCUMENT_COMMAND.search(contents))
         http_action = HTTP_CLIENT_ACTION.search(contents)
         node_http_action = _node_http_action(contents)
         if any(
@@ -332,13 +387,13 @@ def inspect_candidate_transport_boundary(
                 http_action
                 or node_http_action
                 or command_action
-                or _actionable_instruction(contents, marker)
+                or instruction(contents, marker)
             )
             for marker in DIRECT_LINEAR_ENDPOINTS
         ):
             raise QualificationFailure("candidate alternate transport: direct-linear-endpoint")
         if LINEAR_SDK_IMPORT.search(contents) or any(
-            _actionable_instruction(contents, marker) for marker in LINEAR_SDK_ACTIONS
+            instruction(contents, marker) for marker in LINEAR_SDK_ACTIONS
         ):
             raise QualificationFailure("candidate alternate transport: linear-sdk")
         if command_action:
@@ -346,7 +401,10 @@ def inspect_candidate_transport_boundary(
         if executable and http_action:
             raise QualificationFailure("candidate alternate transport: http-client-action")
     return [
+        f"transport sensor charter: {TRANSPORT_CHARTER}",
+        "every file of the Linear skills is in the delta: " + ", ".join(LINEAR_SKILL_IDS),
         "supplied Linear candidate delta contains no concrete alternate transport action",
+        "documents in the delta carry no instruction to reach Linear another way",
         "host-native MCP capability set remains complete",
     ]
 
@@ -560,6 +618,7 @@ def _finalize_record(
                 "declared degraded outcomes, and the candidate's transport boundary; "
                 "it makes no call to Linear or a host connector"
             ),
+            "transport": TRANSPORT_CHARTER,
         },
         "redaction": {
             "environmentCaptured": False,
