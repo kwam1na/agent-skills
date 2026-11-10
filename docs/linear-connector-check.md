@@ -15,12 +15,13 @@ ignored.
 
 1. Choose a random marker and search for it, expecting no match.
 2. Create a primary issue and a dependency issue, each carrying the marker.
-3. Read both, update one, and search for the marker again, expecting exactly those two
-   matches.
+3. Read both, update one without removing the marker, and search for the marker again,
+   expecting exactly those two matches.
 4. Relate them, and read the relation back.
 5. Reconcile: confirm each operation's result by reading it rather than trusting the
    response.
-6. Cancel both issues, then search for the marker and confirm every match is canceled.
+6. Cancel both issues, then search for the marker and confirm the matches are exactly
+   those two, both canceled.
 
 If a step fails, or the connector answers differently from
 `skills/linear-tracker-adapter/references/adapter-contract.json`, report it as a defect
@@ -46,10 +47,11 @@ host with the Linear connector configured. Its parts are:
   failure in the routine's own run result, which the owner reads within a day. It never
   reports through a Linear entity, since the connector may be what failed.
 - **Cleanup.** The run ends by cancelling every issue it created, by the identifiers it
-  noted when creating them, then searching for its marker and finding only canceled
-  matches: issues whose title or description carries the marker. The connector offers
-  no issue delete, so leaving no entities behind means leaving no open entity behind.
-  The cleanup runs after a failed step too, for whatever the run has created.
+  noted when creating them, then searching for its marker and finding that the matches,
+  issues whose title or description carries the marker, are exactly the issues it created,
+  each canceled. The connector offers no issue delete, so leaving no entities behind means
+  leaving no open entity behind. The cleanup runs after a failed step too, for whatever
+  the run has created.
 
 The routine's prompt:
 
@@ -63,20 +65,21 @@ other issue the search returns is ignored.
 1. Choose a random marker and search for it, expecting no match.
 2. Create a primary issue and a dependency issue in that team, each carrying the marker,
    and note each issue's identifier for this run.
-3. Read both, update one, and search for the marker again, expecting exactly those two
-   matches.
+3. Read both, update one without removing the marker, and search for the marker again,
+   expecting exactly those two matches.
 4. Relate them, and read the relation back.
 5. Reconcile: confirm each operation's result by reading it rather than trusting the
    response.
 6. Cleanup, always, even after a failed step: cancel every issue this run created, by
-   the identifiers noted in step 2, then search for the marker and confirm every match is
-   canceled.
+   the identifiers noted in step 2, then search for the marker and confirm the matches
+   are exactly the issues this run created, each canceled.
 
 If any step fails, the connector answers differently from the adapter's contract, or the
-cleanup leaves a match that is not canceled, send the owner a push notification naming
-the step and what it saw, and end the run as failed. Report only through the
-notification and this run's result, never through a Linear entity. Write nothing to the
-repository, and keep no tokens, keys, identifiers or host payloads after the run.
+cleanup's search finds a match that is not canceled or misses an issue this run created,
+send the owner a push notification naming the step and what it saw, and end the run as
+failed. Report only through the notification and this run's result, never through a
+Linear entity. Write nothing to the repository, and keep no tokens, keys, identifiers or
+host payloads after the run.
 ```
 
 The owner writes the disposable team's name in place of `<disposable team>` when
