@@ -9,7 +9,7 @@ same way jira works", and reshaped by the operator's second ruling the same day,
 the api? doesn't make sense to support both modes". So every tracker run-delivery ships posts through the tracker publisher, and the host
 publisher mode goes. The items are V26-3269 (the Linear adapter), V26-3334 (removing host mode, which supersedes the canceled V26-3261),
 V26-3333 (this repository's switch, split from V26-3269's Scope 4), V26-3097 (the Linear qualifier), V26-3083 (the scheduled connector
-check) and V26-3339 (the lead's check choice at acceptance, added by the operator's third ruling). Each item's tracker scope and acceptance criteria bind what it does. This plan decides only what the items leave open: how the
+check) V26-3339 (the lead's check choice at acceptance, added by the operator's third ruling) and V26-3342 (repairing `main` after V26-3269). Each item's tracker scope and acceptance criteria bind what it does. This plan decides only what the items leave open: how the
 rulings read in the corpus, the choices two items share, order, file ownership while another delivery holds some of the same files, and
 how the work reaches `main`.
 
@@ -150,6 +150,11 @@ how the work reaches `main`.
    and visible while checking. It adds no selection logic of its own: `lead-accept --checks` records through the state tool's `select`,
    with its validation, guards and readers, and the proposal is the catalogue ids matching the diff's test modules and the lane's named
    checks. It goes after V26-3334 on lane 1, which owns the files, and before the major candidate is tagged, so it ships in it.
+10. **A broken base is repaired forward (V26-3342).** `fullHealth` failed at `c16bded`, V26-3269's merge, on
+    `tests.test_compound_learning_corpus`: its two solution notes miss the note shape that test pins, and the lead's selection for it
+    left that module out. Per the base-broken rules, V26-3342 lands the smallest fix through the queue and closes the gap: the binding's
+    `selection.readers` maps `docs/solutions/*` to that module. It goes first on lane 1, which owns `docs/solutions/`, and the lane
+    takes `.agents/orchestration.json` and `tests/test_own_deliveries.py` for it, ahead of V26-3333.
 
 ## Units and order
 
@@ -158,7 +163,7 @@ them in order and then V26-3333. Lane 2 holds the qualifier and the connector ch
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | V26-3269, V26-3334, V26-3339 | `skills/run-delivery/`, `skills/orchestrate-work/`, `skills/delivery-views/`, `skills/linear-tracker-adapter/`, `tests/test_run_delivery.py`, `tests/test_run_delivery_tracker.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_orchestration_render.py`, `tests/test_orchestration_state.py`, `tests/test_orchestration_adopter.py`, `tests/fixtures/orchestration-adopter/`, `tests/test_merge_queue.py`, `tests/delivery_views_page/`, `docs/solutions/`, `catalog.json`, `profiles/` |
+| 1 | 1 | V26-3269, V26-3334, V26-3342, V26-3339 | `skills/run-delivery/`, `skills/orchestrate-work/`, `skills/delivery-views/`, `skills/linear-tracker-adapter/`, `tests/test_run_delivery.py`, `tests/test_run_delivery_tracker.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_orchestration_render.py`, `tests/test_orchestration_state.py`, `tests/test_orchestration_adopter.py`, `tests/fixtures/orchestration-adopter/`, `tests/test_merge_queue.py`, `tests/delivery_views_page/`, `docs/solutions/`, `catalog.json`, `profiles/` |
 | 2 | 1 | V26-3333 | `.agent-skills/`, `.agents/skills/`, `.claude/skills/`, `.agents/orchestration.json`, `.agents/run-delivery.json`, `docs/own-deliveries.md`, `tests/test_own_deliveries.py` |
 | 1 | 2 | V26-3097, V26-3083 | `scripts/qualify-linear.py`, `tests/test_linear_qualification.py`, `docs/linear-connector-check.md` |
 
@@ -217,6 +222,14 @@ and the replaced and deleted host rows are named in the hand-off. The line map's
 `tests/test_merge_queue.py`, `tests/test_run_delivery_tracker.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery.py`,
 `tests/delivery_views_page/`, `catalog.json` and `profiles/`. Sensors: those test modules, the page lane, `scripts/validate-registry.py`.
 
+### V26-3342. Repair main: give V26-3269's solution notes the corpus's note shape, and select the corpus check for notes
+
+Lane 1, tier 1, before V26-3339, per the item and Decision 10. The two notes gain what `tests.test_compound_learning_corpus` pins
+(the missing sections in one, `symptoms:` in the other) without losing what they teach; the binding's `selection.readers` gains
+`docs/solutions/*` → `tests.test_compound_learning_corpus`, with any pin on the readers updated. Files: `docs/solutions/`,
+`.agents/orchestration.json`, `tests/test_own_deliveries.py`. Sensors: `tests.test_compound_learning_corpus`,
+`tests.test_own_deliveries`, `scripts/validate-registry.py`.
+
 ### V26-3339. Make the lead choose a candidate's checks, or the full suite, when accepting it
 
 Lane 1, tier 1, after V26-3334. Test-first, per the item and Decision 9. Rows: under a binding with `selection.lead`, `lead-accept`
@@ -260,7 +273,7 @@ first scheduled run's result, the deliberately failing run's notification, `scri
 
 ## Execution posture
 
-`test-first` for V26-3269, V26-3334, V26-3339, V26-3333 and V26-3097, and `sensor-only` for V26-3083. Lanes work to the focused lane profile: no
+`test-first` for V26-3269, V26-3334, V26-3342, V26-3339, V26-3333 and V26-3097, and `sensor-only` for V26-3083. Lanes work to the focused lane profile: no
 full suite in a lane. The queue runs the selected checks on the synced head, `fullHealth` runs after each merge, and the lead runs the
 full suite before tagging.
 
@@ -275,6 +288,6 @@ full suite before tagging.
 
 ## Tracking
 
-The epic and its items are in Linear: V26-3269, V26-3334, V26-3339, V26-3333, V26-3097 and V26-3083, with V26-3261 canceled as superseded. Until
+The epic and its items are in Linear: V26-3269, V26-3334, V26-3342, V26-3339, V26-3333, V26-3097 and V26-3083, with V26-3261 canceled as superseded. Until
 the switch, the lead posts at each milestone with the host's Linear tools and moves items to their final state. After it, the tracker
 publisher does.
