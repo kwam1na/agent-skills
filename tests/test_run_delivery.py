@@ -4427,7 +4427,8 @@ class RunDeliveryPlanTests(unittest.TestCase):
         code, out = fx.flow("lead-plan", "change", "--kind", "changed", "--subjects", "FX-3", "--criterion", "two-renders",
                             "--text", "Two", "--why", "w", cwd=m)
         self.assertEqual(code, 2, out)
-        self.assertIn("diverged from origin/feature/FX-1", out)
+        self.assertIn(f"{m} is behind origin/feature/FX-1; bring it up to date first: git merge --ff-only "
+                      "origin/feature/FX-1", out)
         self.assertEqual((path.read_text(), self.written(fx)), before)
 
     def test_a_finish_change_adds_the_line_to_the_record_and_the_plan(self) -> None:
@@ -5654,6 +5655,282 @@ class RunDeliveryDefaultDeliveryTests(unittest.TestCase):
         code, out = fx.flow("--delivery", "FX-6", "lead-accept", "FX-6", cwd=fx.main)
         self.assertEqual(code, 2, out)
         self.assertIn("the deliveries not known to be closed are FX-1, FX-5", out)
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class RunDeliveryLeadWorktreeTests(unittest.TestCase):
+    """lead-plan from a lead's own worktree on its own branch, as when several deliveries share one machine and the
+    operator's checkout already holds the base: its HEAD at the base's tip, or ahead with this delivery's own plan
+    commits only. It commits there and prints the push to the base; it never pushes."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        for name, value in vars(installed_release()).items():
+            setattr(cls, name, value)
+
+    def fixture(self) -> tuple[Fixture, Path, Path]:
+        """The plan fixture, initialised, with one approval waiting, and the lead's worktree on lead/FX-1 at the base."""
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        m = fx.main
+        path = plan_delivery(fx)
+        d = json.loads(path.read_text())
+        d["approvals"] = [{"id": "approval-1", "text": "Copy sign-off", "state": "waiting", "blocking": True}]
+        path.write_text(json.dumps(d, indent=2))
+        # The binding names the base, so a checkout on another branch reads the base on the remote, as a lane does.
+        binding = m / ".agents/orchestration.json"
+        bound = json.loads(binding.read_text()) if binding.exists() else {}
+        bound.setdefault("base", {}).update(remote="origin", ref="feature/FX-1")
+        bound.setdefault("state", {}).setdefault("forgeSnapshot", {"argv": ["true"]})
+        binding.write_text(json.dumps(bound, indent=2) + "\n")
+        commit(m, "FX-1: an approval, and the binding's base")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        lead = fx.tmp / "lead-FX-1"
+        sh("git", "worktree", "add", "-q", "--no-track", "-b", "lead/FX-1", lead, "origin/feature/FX-1", cwd=m)
+        return fx, lead, lead / ".agents/deliveries/FX-1.json"
+
+    def pushed(self, fx: Fixture, out: str, lead: Path) -> dict:
+        """Run the push the command printed, from the worktree, and read the delivery file the base then holds."""
+        line = next(line for line in out.splitlines() if "git push" in line)
+        command = line[line.index("git push"):].split()
+        self.assertEqual(command, ["git", "push", "origin", "HEAD:feature/FX-1"], out)
+        sh(*command, "-q", cwd=lead)
+        return json.loads(sh("git", "show", "origin/feature/FX-1:.agents/deliveries/FX-1.json", cwd=lead).stdout)
+
+    def test_an_approval_from_a_lead_worktree_at_the_base_tip_commits_there_and_reaches_the_base(self) -> None:
+        fx, lead, path = self.fixture()
+        code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "done", "--who", "the operator", cwd=lead)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads(path.read_text())["approvals"][0]["state"], "done")
+        self.assertEqual(sh("git", "log", "-1", "--format=%s", cwd=lead).stdout.strip(), "FX-1: approval approval-1 done")
+        self.assertEqual(sh("git", "status", "--porcelain", cwd=lead).stdout, "")
+        # It never pushes: the base still has it waiting until the lead runs the push it printed.
+        on_base = json.loads(sh("git", "show", "origin/feature/FX-1:.agents/deliveries/FX-1.json", cwd=lead).stdout)
+        self.assertEqual(on_base["approvals"][0]["state"], "waiting")
+        self.assertEqual(self.pushed(fx, out, lead)["approvals"][0]["state"], "done")
+
+    def test_with_two_deliveries_open_a_lead_worktree_names_its_delivery_and_is_never_handed_another(self) -> None:
+        fx, lead, path = self.fixture()
+        m = fx.main
+        # A second delivery on the same base, open too: its file reaches the lead's worktree with the base.
+        other = json.loads((m / ".agents/deliveries/FX-1.json").read_text())
+        stories = {f"FX-9{key.split('-')[1]}": story for key, story in other["stories"].items()}
+        (m / ".agents/deliveries/FX-9.json").write_text(json.dumps({**other, "delivery": "FX-9", "stories": stories},
+                                                                   indent=2))
+        commit(m, "FX-9: a second delivery")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        sh("git", "fetch", "-q", "origin", cwd=lead)
+        sh("git", "merge", "-q", "--ff-only", "origin/feature/FX-1", cwd=lead)
+        # Neither record is open in the worktree and lead/FX-1 is no story branch, so without --delivery it refuses,
+        # naming both, rather than taking one, and writes nothing.
+        code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "done", "--who", "the operator", cwd=lead)
+        self.assertEqual(code, 2, out)
+        self.assertIn("FX-1, FX-9 aren't known to be closed", out)
+        self.assertIn("pass --delivery KEY", out)
+        self.assertEqual(sh("git", "status", "--porcelain", cwd=lead).stdout, "")
+        self.assertEqual(json.loads(path.read_text())["approvals"][0]["state"], "waiting")
+        # Named, it records FX-1's approval in FX-1's file only.
+        code, out = fx.flow("--delivery", "FX-1", "lead-plan", "approval", "approval-1", "--state", "done", "--who",
+                            "the operator", cwd=lead)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(sh("git", "show", "--name-only", "--format=", "HEAD", cwd=lead).stdout.split(),
+                         [".agents/deliveries/FX-1.json"])
+        self.assertEqual(self.pushed(fx, out, lead)["approvals"][0]["state"], "done")
+        on_base = json.loads(sh("git", "show", "origin/feature/FX-1:.agents/deliveries/FX-9.json", cwd=lead).stdout)
+        self.assertEqual(on_base["approvals"][0]["state"], "waiting")
+        # The other delivery's story branch is a lane's too, though none of FX-1's stories is on it.
+        lane = fx.tmp / "lane-FX-92"
+        sh("git", "worktree", "add", "-q", "--no-track", "-b", "feature/FX-92", lane, "origin/feature/FX-1", cwd=m)
+        code, out = fx.flow("--delivery", "FX-1", "lead-plan", "approval", "approval-1", "--state", "waiting",
+                            cwd=lane)
+        self.assertEqual(code, 2, out)
+        self.assertIn("feature/FX-92 is a story branch", out)
+        self.assertEqual(sh("git", "status", "--porcelain", cwd=lane).stdout, "")
+
+    def test_a_change_from_a_lead_worktree_at_the_base_tip_commits_there_and_reaches_the_base(self) -> None:
+        fx, lead, path = self.fixture()
+        code, out = fx.flow("lead-plan", "change", "--kind", "relaxed", "--subjects", "FX-2", "--criterion", "one-fails",
+                            "--text", "Thing one says something when it fails", "--why", "The copy is not settled.",
+                            cwd=lead)
+        self.assertEqual(code, 0, out)
+        criteria = {c["id"]: c["text"] for c in json.loads(path.read_text())["stories"]["FX-2"]["criteria"]}
+        self.assertEqual(criteria["one-fails"], "Thing one says something when it fails")
+        self.assertEqual(sh("git", "status", "--porcelain", cwd=lead).stdout, "")
+        # The plan it rebuilds reads the worktree's delivery file, not the base's older one.
+        plan = json.loads((fx.tmp / "record/plan.json").read_text())
+        self.assertEqual([(c["kind"], c["after"]) for c in plan["changes"]],
+                         [("relaxed", "Thing one says something when it fails")])
+        # More changes before that push are ahead of the base with this delivery's own plan commits only: allowed.
+        # An added story commits the plan beside the delivery file.
+        code, out = fx.flow("lead-plan", "change", "--kind", "added", "--subjects", "FX-7", "--title", "Thing seven",
+                            "--text", "Thing seven loads", "--why", "The operator asked for it.", "--lane", "lane-1",
+                            cwd=lead)
+        self.assertEqual(code, 0, out)
+        self.assertIn("### FX-7. Thing seven", (lead / "docs/plan.md").read_text())
+        # A story only the worktree's unpushed commit holds is this delivery's own: one added after it is taken.
+        code, out = fx.flow("lead-plan", "change", "--kind", "added", "--subjects", "FX-8", "--title", "Thing eight",
+                            "--text", "Thing eight loads", "--why", "It follows seven.", "--lane", "lane-1",
+                            "--after", "FX-7", cwd=lead)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads(path.read_text())["stories"]["FX-8"].get("after"), ["FX-7"])
+        # A story only the worktree holds can be removed again before any push.
+        code, out = fx.flow("lead-plan", "change", "--kind", "removed", "--subjects", "FX-8", "--why", "Not needed.",
+                            cwd=lead)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("FX-8", json.loads(path.read_text())["stories"])
+        code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "done", cwd=lead)
+        self.assertEqual(code, 0, out)
+        # Before any push, the rebuilt plan is the worktree's: the changes and the approval, none the base's older file.
+        plan = json.loads((fx.tmp / "record/plan.json").read_text())
+        self.assertEqual(plan["approvals"][0]["state"], "done")
+        self.assertIn("FX-7", [unit["subject"] for unit in plan["units"]])
+        self.assertEqual([c["kind"] for c in plan["changes"]], ["relaxed", "added", "added", "removed"])
+        on_base = self.pushed(fx, out, lead)
+        on_base_criteria = {c["id"]: c["text"] for c in on_base["stories"]["FX-2"]["criteria"]}
+        self.assertEqual((on_base_criteria["one-fails"], on_base["approvals"][0]["state"], "FX-7" in on_base["stories"]),
+                         ("Thing one says something when it fails", "done", True))
+
+    def test_a_removal_after_an_unpushed_change_records_the_worktree_s_story(self) -> None:
+        fx, lead, path = self.fixture()
+        code, out = fx.flow("lead-plan", "change", "--kind", "relaxed", "--subjects", "FX-3", "--criterion",
+                            "two-renders", "--text", "Thing two renders, in time", "--why", "w", cwd=lead)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-plan", "change", "--kind", "removed", "--subjects", "FX-3", "--why", "Dropped.",
+                            cwd=lead)
+        self.assertEqual(code, 0, out)
+        logged = [json.loads(line) for line in (fx.tmp / "flow-log/plan-changes.jsonl").read_text().splitlines()]
+        removed = [entry for entry in logged if entry.get("type") == "change" and entry.get("kind") == "removed"]
+        self.assertEqual(len(removed), 1, logged)
+        # What was removed is the story as the worktree holds it, relaxed, not the base's older text.
+        self.assertIn("Thing two renders, in time", json.dumps(removed[0]["units"]))
+        self.assertNotIn('"Thing two renders"', json.dumps(removed[0]["units"]))
+
+    def test_a_lead_worktree_behind_the_base_is_refused_naming_the_fix(self) -> None:
+        fx, lead, path = self.fixture()
+        (fx.main / "src/app.txt").write_text("moved on\n")
+        commit(fx.main, "the base moves on")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+        before = path.read_text()
+        code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "done", cwd=lead)
+        self.assertEqual(code, 2, out)
+        self.assertIn(f"{lead} is behind origin/feature/FX-1", out)
+        self.assertIn("git merge --ff-only origin/feature/FX-1", out)
+        self.assertEqual(path.read_text(), before)
+        self.assertEqual(sh("git", "rev-list", "--count", "origin/feature/FX-1..HEAD", cwd=lead).stdout.strip(), "0")
+
+    def test_a_lead_worktree_ahead_with_another_lead_s_commit_is_refused_naming_it(self) -> None:
+        fx, lead, path = self.fixture()
+        # Another delivery's lead committed here, unpushed; a path with a space is named whole.
+        (lead / "docs/other plan.md").write_text("# FX-9\n")
+        commit(lead, "FX-9: its plan")
+        other = sh("git", "rev-parse", "--short=12", "HEAD", cwd=lead).stdout.strip()
+        code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "done", cwd=lead)
+        self.assertEqual(code, 2, out)
+        self.assertIn(f"{lead} is ahead of origin/feature/FX-1 with {other} (FX-9: its plan), which changes "
+                      "docs/other plan.md: a lead worktree", out)
+        self.assertIn("only FX-1's own delivery file and plan", out)
+        self.assertEqual(json.loads(path.read_text())["approvals"][0]["state"], "waiting")
+        # Every commit ahead is read, not only the last or the first, and another delivery's own file is not this
+        # one's: another lead's commit to FX-9's delivery file, above this lead's own approval, then below one.
+        sh("git", "reset", "-q", "--hard", "origin/feature/FX-1", cwd=lead)
+        code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "done", "--who", "the operator", cwd=lead)
+        self.assertEqual(code, 0, out)
+        other_file = lead / ".agents/deliveries/FX-9.json"
+        other_file.write_text(json.dumps({"delivery": "FX-9"}, indent=2) + "\n")
+        commit(lead, "FX-9: its delivery file")
+        above = sh("git", "rev-parse", "--short=12", "HEAD", cwd=lead).stdout.strip()
+        code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "waiting", cwd=lead)
+        self.assertEqual(code, 2, out)
+        self.assertIn(f"with {above} (FX-9: its delivery file), which changes .agents/deliveries/FX-9.json:", out)
+        sh("git", "reset", "-q", "--hard", "origin/feature/FX-1", cwd=lead)
+        other_file.write_text(json.dumps({"delivery": "FX-9"}, indent=2) + "\n")
+        commit(lead, "FX-9: its delivery file")
+        below = sh("git", "rev-parse", "--short=12", "HEAD", cwd=lead).stdout.strip()
+        code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "waiting", cwd=lead)
+        self.assertEqual(code, 2, out)  # refused already, before any own commit is on top
+        self.assertIn(f"with {below} (FX-9: its delivery file)", out)
+        d = json.loads(path.read_text())
+        d["approvals"][0]["state"] = "done"
+        path.write_text(json.dumps(d, indent=2))
+        commit(lead, "FX-1: approval approval-1 done")  # an own commit on top of the foreign one
+        code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "waiting", cwd=lead)
+        self.assertEqual(code, 2, out)
+        self.assertIn(f"with {below} (FX-9: its delivery file), which changes .agents/deliveries/FX-9.json:", out)
+        # A worktree that has diverged from the base is refused as today.
+        sh("git", "reset", "-q", "--hard", "origin/feature/FX-1", cwd=lead)
+        (lead / "src/app.txt").write_text("the lead's\n")
+        commit(lead, "a lead commit")
+        (fx.main / "src/app.txt").write_text("the base's\n")
+        commit(fx.main, "the base moves on")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+        code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "done", cwd=lead)
+        self.assertEqual(code, 2, out)
+        self.assertIn(f"{lead} has diverged from origin/feature/FX-1", out)
+
+    def test_a_clean_merge_of_the_base_passes_and_a_merge_adding_its_own_file_is_refused(self) -> None:
+        fx, lead, path = self.fixture()
+        code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "done", "--who", "the operator", cwd=lead)
+        self.assertEqual(code, 0, out)
+        # The base moves on before that commit is pushed; the lead merges it in, cleanly.
+        (fx.main / "src/app.txt").write_text("the base's\n")
+        commit(fx.main, "the base moves on")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+        sh("git", "fetch", "-q", "origin", cwd=lead)
+        sh("git", "merge", "-q", "--no-edit", "origin/feature/FX-1", cwd=lead)
+        code, out = fx.flow("lead-plan", "change", "--kind", "relaxed", "--subjects", "FX-2", "--criterion", "one-fails",
+                            "--text", "Thing one says so when it fails", "--why", "w", cwd=lead)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.pushed(fx, out, lead)["approvals"][0]["state"], "done")
+        # A merge that adds a file neither parent has is refused, naming it, though each parent alone is the lead's.
+        sh("git", "checkout", "-q", "-b", "side", cwd=lead)
+        sh("git", "commit", "-q", "--allow-empty", "-m", "side", cwd=lead)
+        sh("git", "checkout", "-q", "lead/FX-1", cwd=lead)
+        sh("git", "commit", "-q", "--allow-empty", "-m", "main side", cwd=lead)
+        sh("git", "merge", "-q", "--no-ff", "--no-commit", "side", cwd=lead)
+        (lead / "docs/evil.md").write_text("added by the merge\n")
+        sh("git", "add", "docs/evil.md", cwd=lead)
+        sh("git", "commit", "-q", "-m", "merge side", cwd=lead)
+        merge = sh("git", "rev-parse", "--short=12", "HEAD", cwd=lead).stdout.strip()
+        code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "waiting", cwd=lead)
+        self.assertEqual(code, 2, out)
+        self.assertIn(f"with {merge} (merge side), which changes docs/evil.md:", out)
+
+    def test_a_dirty_lead_worktree_is_refused(self) -> None:
+        fx, lead, path = self.fixture()
+        (lead / "notes.txt").write_text("untracked\n")
+        code, out = fx.flow("lead-plan", "change", "--kind", "relaxed", "--subjects", "FX-2", "--criterion", "one-fails",
+                            "--text", "Anything", "--why", "w", cwd=lead)
+        self.assertEqual(code, 2, out)
+        self.assertIn(f"{lead} has uncommitted changes; commit or remove them first", out)
+        self.assertEqual(json.loads(path.read_text())["approvals"][0]["state"], "waiting")
+
+    def test_a_checkout_on_the_base_branch_behaves_as_it_does_today(self) -> None:
+        fx, lead, _ = self.fixture()
+        m = fx.main
+        # Ahead of the base with a commit of any kind is allowed there, as before.
+        (m / "src/app.txt").write_text("the lead's own\n")
+        commit(m, "a commit on the base branch")
+        code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "done", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertIn("push it so lanes see it: git push origin HEAD:feature/FX-1", out)
+        self.assertEqual(sh("git", "log", "-1", "--format=%s", cwd=m).stdout.strip(), "FX-1: approval approval-1 done")
+        # And a story branch is no lead checkout: a lane can't change the plan from its own.
+        lane = fx.tmp / "lane-FX-2"
+        sh("git", "worktree", "add", "-q", "--no-track", "-b", "feature/FX-2", lane, "origin/feature/FX-1", cwd=m)
+        code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "waiting", cwd=lane)
+        self.assertEqual(code, 2, out)
+        self.assertIn("run lead-plan in the lead's checkout", out)
+        self.assertIn("feature/FX-2 is a story branch", out)
+
+    def test_doctor_reads_a_lead_worktree_on_its_own_branch_as_it_reads_the_base_checkout(self) -> None:
+        fx, lead, _ = self.fixture()
+        failing = lambda out: sorted(line for line in out.splitlines() if "FAIL" in line or "fix:" in line)
+        base_code, base_out = fx.flow("doctor", "--delivery", "FX-1", "--offline", cwd=fx.main)
+        code, out = fx.flow("doctor", "--delivery", "FX-1", "--offline", cwd=lead)
+        self.assertEqual((code, failing(out)), (base_code, failing(base_out)), out)
+        self.assertNotIn("lead/FX-1", out)
 
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)

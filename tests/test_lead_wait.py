@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import io
 import importlib.util
 import json
 import os
@@ -13,6 +15,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -86,6 +89,11 @@ class Record:
 def _finish(process: subprocess.Popen) -> tuple[int, dict]:
     stdout, _ = process.communicate(timeout=30)
     return process.returncode, json.loads(stdout)
+
+
+def _stdout() -> io.TextIOWrapper:
+    """A stdout the tool's emit writes to in-process: it writes bytes to sys.stdout.buffer."""
+    return io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
 
 
 class RecordCase(unittest.TestCase):
@@ -281,6 +289,53 @@ class OutputTests(RecordCase):
         self.assertEqual(code, 0, result)
         self.assertEqual(result["restart"][-1], f"--output={self.output().resolve()}")
         self.assertTrue(Path(result["restart"][-1].split("=", 1)[1]).is_absolute())
+
+    def test_output_is_written_whole_through_a_temporary_file_moved_onto_it_in_one_call(self) -> None:
+        # A reader of --output never sees half a document: the tool writes a temporary file beside FILE, then moves
+        # it onto FILE in one call, and never opens FILE for writing itself.
+        self.record.add_lanes("lane-1")
+        first = self.record.journal("candidate.merged")
+        previous = "the previous wait's document\n"
+        self.output().write_text(previous, encoding="utf-8")
+        argv = ["--dir", str(self.record.directory), "wait", "--load-multiple", "1000000", "--min-free-bytes", "0",
+                "--swap-growth-bytes", str(2**60), "--after", str(first - 1), f"--output={self.output()}",
+                "--poll", "0.05", "--timeout", "0.3"]
+        moves: list[tuple[str, str]] = []
+        real_replace = os.replace
+
+        def failed_move(source, destination):
+            moves.append((os.fspath(source), os.fspath(destination)))
+            self.assertEqual(self.output().read_text(encoding="utf-8"), previous, "FILE was written before the move")
+            raise OSError(28, "No space left on device")
+
+        with mock.patch.object(state_tool.os, "replace", failed_move), contextlib.redirect_stdout(_stdout()):
+            with self.assertRaises(OSError):
+                state_tool.main(argv)
+        self.assertEqual(len(moves), 1, moves)
+        source, destination = map(Path, moves[0])
+        self.assertEqual(destination, self.output().resolve())
+        self.assertEqual(source.parent, self.output().resolve().parent, "the temporary file is not in FILE's folder")
+        self.assertTrue(source.name.startswith(f".{self.output().name}."), source.name)
+        self.assertEqual(self.output().read_text(encoding="utf-8"), previous, "a failed move left FILE changed")
+        self.assertEqual(sorted(path.name for path in self.output().parent.glob(f".{self.output().name}.*")), [],
+                         "a failed move left its temporary file behind")
+
+        moves.clear()
+
+        def move(source, destination):
+            moves.append((os.fspath(source), os.fspath(destination)))
+            self.assertEqual(self.output().read_text(encoding="utf-8"), previous, "FILE was written before the move")
+            real_replace(source, destination)
+
+        stdout = _stdout()
+        with mock.patch.object(state_tool.os, "replace", move), contextlib.redirect_stdout(stdout):
+            code = state_tool.main(argv)
+        stdout.flush()
+        printed = stdout.buffer.getvalue().decode("utf-8")
+        self.assertEqual(code, 0, printed)
+        self.assertEqual(len(moves), 1, moves)
+        self.assertEqual(Path(moves[0][1]), self.output().resolve())
+        self.assertEqual(self.output().read_text(encoding="utf-8"), printed)
 
     def test_a_failed_wait_writes_its_one_error_document_there_too(self) -> None:
         with (self.record.directory / "journal.jsonl").open("ab") as journal:
