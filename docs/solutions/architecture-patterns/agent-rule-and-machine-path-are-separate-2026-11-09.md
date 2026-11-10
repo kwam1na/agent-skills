@@ -69,7 +69,7 @@ as AGENTS.md asks, rather than grepping for one phrase.
 - Jira: `jira-tracker-adapter` is MCP-only for agents, while
   `skills/run-delivery/adapters/tracker_jira.py` writes to Jira's REST API with a token
   from the environment.
-- Linear, after V26-3269: `linear-tracker-adapter` keeps "use only the host's native
+- Linear, once its adapter shipped: `linear-tracker-adapter` keeps "use only the host's native
   Linear MCP capability", while `skills/run-delivery/adapters/tracker_linear.py` writes
   to Linear's GraphQL API with the personal key the snapshot already reads with.
 
