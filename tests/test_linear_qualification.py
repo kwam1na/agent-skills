@@ -1087,6 +1087,20 @@ class LinearQualificationTests(unittest.TestCase):
                                         "not text: skills/create-linear-ticket/references/diagram.bin"):
                 runner.inspect_candidate_transport_boundary(binary, base_candidate, contract)
 
+    def test_every_inflection_of_every_document_verb_is_an_instruction(self) -> None:
+        # Spelled out here rather than taken from the sensor, so dropping any one of its inflections fails a form.
+        runner = _load_runner()
+        for verb in runner.DOCUMENT_VERBS:
+            if verb.endswith("e"):
+                forms = (verb, f"{verb}s", f"{verb}d", f"{verb[:-1]}ing")
+            else:
+                forms = (verb, f"{verb}s", f"{verb}es", f"{verb}ed", f"{verb}ing",
+                         f"{verb}{verb[-1]}ed", f"{verb}{verb[-1]}ing")
+            for form in forms:
+                with self.subTest(form=form):
+                    self.assertTrue(runner._document_instruction(f"agents {form} api.linear.app for the item.", "api.linear.app"))
+                    self.assertFalse(runner._document_instruction(f"agents never {form} api.linear.app.", "api.linear.app"))
+
     def test_an_empty_delta_or_a_linear_skill_outside_it_fails(self) -> None:
         runner = _load_runner()
         with tempfile.TemporaryDirectory() as temporary:
