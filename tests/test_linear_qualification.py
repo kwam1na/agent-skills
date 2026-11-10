@@ -1321,9 +1321,27 @@ class LinearQualificationTests(unittest.TestCase):
                 self.assertIn(phrase, prompt)
         # Exactly the check's six steps, so nothing follows the cleanup.
         self.assertEqual(re.findall(r"(?<= )(\d+)\. ", prompt), ["1", "2", "3", "4", "5", "6"])
-        # The failure paragraph follows the cleanup directly, so no instruction in any form comes after it.
+        # The failure paragraph follows the cleanup directly, and the prompt ends with it, so no instruction in any
+        # form comes after the cleanup.
         self.assertIn("then search for the marker and confirm every issue it finds is canceled. If any step fails",
                       prompt)
+        self.assertTrue(prompt.rstrip().endswith("keep no tokens, keys, identifiers or host payloads after the run."))
+        # And the whole prompt is this text, so nothing is inserted anywhere in what the routine runs.
+        self.assertEqual(prompt[len("```text"):].strip(), (
+            "Run the Linear connector check described in docs/linear-connector-check.md of the agent-skills "
+            "repository, against the disposable Linear team <disposable team>, using only the host's Linear "
+            "connector. 1. Choose a random marker and search for it, expecting nothing. 2. Create a primary issue "
+            "and a dependency issue in that team, each carrying the marker, and note each issue's identifier for "
+            "this run. 3. Read both, update one, and search for the marker again, expecting both. 4. Relate them, "
+            "and read the relation back. 5. Reconcile: confirm each operation's result by reading it rather than "
+            "trusting the response. 6. Cleanup, always, even after a failed step: cancel every issue this run "
+            "created, by the identifiers noted in step 2, then search for the marker and confirm every issue it "
+            "finds is canceled. If any step fails, the connector answers differently from the adapter's contract, "
+            "or the cleanup leaves an issue that is not canceled, send the owner a push notification naming the "
+            "step and what it saw, and end the run as failed. Report only through the notification and this run's "
+            "result, never through a Linear entity. Write nothing to the repository, and keep no tokens, keys, "
+            "identifiers or host payloads after the run."
+        ))
         for marker in ("api.linear.app", "linear.app/api", "linear.app/graphql", "@linear/sdk", "curl", "token=",
                        "tracker_linear", "linear_api_key", "graphql"):
             with self.subTest(absent=marker):
