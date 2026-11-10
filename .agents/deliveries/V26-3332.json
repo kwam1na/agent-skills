@@ -108,6 +108,38 @@
         }
       ]
     },
+    "V26-3339": {
+      "title": "Make the lead choose a candidate's checks, or the full suite, when accepting it",
+      "lane": "lane-1",
+      "inApp": "none",
+      "criteria": [
+        {
+          "id": "v26-3339-refused",
+          "text": "Under selection.lead, lead-accept with neither --checks nor --full-suite refuses, records nothing, and prints a proposed --checks from the diff and the hand-off's named checks"
+        },
+        {
+          "id": "v26-3339-checks",
+          "text": "lead-accept --checks records the selection at the handed head through select, refusing what select refuses, and the queue runs it"
+        },
+        {
+          "id": "v26-3339-full",
+          "text": "lead-accept --full-suite accepts on the fallback and journals it as the lead's decision"
+        },
+        {
+          "id": "v26-3339-handoff",
+          "text": "handoff --checks takes catalogue ids, refuses an unknown one, and shows them in the hand-off message and the record"
+        },
+        {
+          "id": "v26-3339-visible",
+          "text": "While a candidate checks on the fallback under selection.lead, the supervisor's status line and the live view's checking panel say so, naming the fallback"
+        },
+        {
+          "id": "v26-3339-unchanged",
+          "text": "A binding without selection.lead accepts exactly as before"
+        }
+      ],
+      "why": "The operator's ruling of 2026-11-10, \"close the gap in this run\": V26-3097 checked on the full suite because the lead's acceptance never asked for a check selection (Decision 9)."
+    },
     "V26-3333": {
       "title": "Post this repository's own deliveries' Linear updates through the tracker publisher",
       "lane": "lane-1",

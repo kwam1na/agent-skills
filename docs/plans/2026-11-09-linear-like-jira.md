@@ -8,8 +8,8 @@ Epic V26-3332: the open Linear items, gathered under one epic by the operator's 
 same way jira works", and reshaped by the operator's second ruling the same day, "do we still need the host work since we're moving to
 the api? doesn't make sense to support both modes". So every tracker run-delivery ships posts through the tracker publisher, and the host
 publisher mode goes. The items are V26-3269 (the Linear adapter), V26-3334 (removing host mode, which supersedes the canceled V26-3261),
-V26-3333 (this repository's switch, split from V26-3269's Scope 4), V26-3097 (the Linear qualifier) and V26-3083 (the scheduled connector
-check). Each item's tracker scope and acceptance criteria bind what it does. This plan decides only what the items leave open: how the
+V26-3333 (this repository's switch, split from V26-3269's Scope 4), V26-3097 (the Linear qualifier), V26-3083 (the scheduled connector
+check) and V26-3339 (the lead's check choice at acceptance, added by the operator's third ruling). Each item's tracker scope and acceptance criteria bind what it does. This plan decides only what the items leave open: how the
 rulings read in the corpus, the choices two items share, order, file ownership while another delivery holds some of the same files, and
 how the work reaches `main`.
 
@@ -128,8 +128,8 @@ how the work reaches `main`.
    under the operator's standing approval, and the item closes on two recorded results: the first scheduled run, and one deliberately
    failing run, against a team that does not exist, whose notification reached the owner.
 8. **The release and this repository's switch land together (V26-3333).** The new generation refuses a host publisher, and the old one
-   can't run the Linear adapter, so this repository's binding switches in the same change that applies the release. After V26-3269 and
-   V26-3334 merge, the lead runs the full suite on macOS with Python 3.11 and tags the next major candidate on a commit CI passed as the
+   can't run the Linear adapter, so this repository's binding switches in the same change that applies the release. After V26-3269,
+   V26-3334 and V26-3339 merge, the lead runs the full suite on macOS with Python 3.11 and tags the next major candidate on a commit CI passed as the
    tip of a push to `main`, agreed with V26-3250's lead, whose supervisor must restart on it. V26-3333, by lane 1 in tier 2, applies the
    candidate on its branch, switches `.agents/orchestration.json` from the host publisher to the tracker publisher, and updates
    `docs/own-deliveries.md`'s "Tracker updates" and "Credentials", with the keychain-and-`~/.zshenv` recipe for an agent shell moved there
@@ -144,6 +144,12 @@ how the work reaches `main`.
    `tracker_linear.py`, with its comment and marker on the stub. A replayed start move on a Done ticket is recorded `handled` and never
    moves it, with its `needs_you()` item asserted. The finish line's evidence is the first entry posted after the switch: its ledger line,
    its Linear comment carrying the marker, and a `markers --ticket` read against real Linear returning it, linked on V26-3333.
+9. **The third ruling adds V26-3339.** Under `selection.lead`, a candidate the lead accepts without a selection is checked on the
+   binding's `fallback`, the whole suite here, and nothing in run-delivery says so: V26-3097 checked for 15 minutes that way on a
+   two-file diff. On the operator's ruling (2026-11-10), "close the gap in this run", V26-3339 makes the choice explicit at acceptance
+   and visible while checking. It adds no selection logic of its own: `lead-accept --checks` records through the state tool's `select`,
+   with its validation, guards and readers, and the proposal is the catalogue ids matching the diff's test modules and the lane's named
+   checks. It goes after V26-3334 on lane 1, which owns the files, and before the major candidate is tagged, so it ships in it.
 
 ## Units and order
 
@@ -152,7 +158,7 @@ them in order and then V26-3333. Lane 2 holds the qualifier and the connector ch
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | V26-3269, V26-3334 | `skills/run-delivery/`, `skills/orchestrate-work/`, `skills/delivery-views/`, `skills/linear-tracker-adapter/`, `tests/test_run_delivery.py`, `tests/test_run_delivery_tracker.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_orchestration_render.py`, `tests/test_orchestration_state.py`, `tests/test_orchestration_adopter.py`, `tests/fixtures/orchestration-adopter/`, `tests/test_merge_queue.py`, `tests/delivery_views_page/`, `docs/solutions/`, `catalog.json`, `profiles/` |
+| 1 | 1 | V26-3269, V26-3334, V26-3339 | `skills/run-delivery/`, `skills/orchestrate-work/`, `skills/delivery-views/`, `skills/linear-tracker-adapter/`, `tests/test_run_delivery.py`, `tests/test_run_delivery_tracker.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_orchestration_render.py`, `tests/test_orchestration_state.py`, `tests/test_orchestration_adopter.py`, `tests/fixtures/orchestration-adopter/`, `tests/test_merge_queue.py`, `tests/delivery_views_page/`, `docs/solutions/`, `catalog.json`, `profiles/` |
 | 2 | 1 | V26-3333 | `.agent-skills/`, `.agents/skills/`, `.claude/skills/`, `.agents/orchestration.json`, `.agents/run-delivery.json`, `docs/own-deliveries.md`, `tests/test_own_deliveries.py` |
 | 1 | 2 | V26-3097, V26-3083 | `scripts/qualify-linear.py`, `tests/test_linear_qualification.py`, `docs/linear-connector-check.md` |
 
@@ -211,6 +217,18 @@ and the replaced and deleted host rows are named in the hand-off. The line map's
 `tests/test_merge_queue.py`, `tests/test_run_delivery_tracker.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery.py`,
 `tests/delivery_views_page/`, `catalog.json` and `profiles/`. Sensors: those test modules, the page lane, `scripts/validate-registry.py`.
 
+### V26-3339. Make the lead choose a candidate's checks, or the full suite, when accepting it
+
+Lane 1, tier 1, after V26-3334. Test-first, per the item and Decision 9. Rows: under a binding with `selection.lead`, `lead-accept`
+with neither `--checks` nor `--full-suite` refuses, records nothing, and prints a proposed `--checks` built from the candidate's diff
+and the hand-off's named checks; `--checks` records the selection at the handed head through `select`, and an id `select` refuses is
+refused the same way; `--full-suite` accepts on the fallback and journals that as the lead's decision; `handoff --checks` takes
+catalogue ids, refuses an unknown one, and shows them in the hand-off message and the record; while a candidate checks on the fallback
+under `selection.lead`, the supervisor's status line and the live view's checking panel say so, naming the fallback; and a binding
+without `selection.lead` accepts exactly as before. Files: `skills/run-delivery/`, `skills/orchestrate-work/`,
+`tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_orchestration_render.py`, `catalog.json`,
+`profiles/` and `provenance.lock.json`. Sensors: those test modules, `scripts/validate-registry.py`.
+
 ### V26-3333. Post this repository's own deliveries' Linear updates through the tracker publisher
 
 Lane 1, tier 2, after V26-3269 and V26-3334. Per the item and Decision 8, it starts once the lead has tagged and published the major
@@ -242,7 +260,7 @@ first scheduled run's result, the deliberately failing run's notification, `scri
 
 ## Execution posture
 
-`test-first` for V26-3269, V26-3334, V26-3333 and V26-3097, and `sensor-only` for V26-3083. Lanes work to the focused lane profile: no
+`test-first` for V26-3269, V26-3334, V26-3339, V26-3333 and V26-3097, and `sensor-only` for V26-3083. Lanes work to the focused lane profile: no
 full suite in a lane. The queue runs the selected checks on the synced head, `fullHealth` runs after each merge, and the lead runs the
 full suite before tagging.
 
@@ -257,6 +275,6 @@ full suite before tagging.
 
 ## Tracking
 
-The epic and its items are in Linear: V26-3269, V26-3334, V26-3333, V26-3097 and V26-3083, with V26-3261 canceled as superseded. Until
+The epic and its items are in Linear: V26-3269, V26-3334, V26-3339, V26-3333, V26-3097 and V26-3083, with V26-3261 canceled as superseded. Until
 the switch, the lead posts at each milestone with the host's Linear tools and moves items to their final state. After it, the tracker
 publisher does.
