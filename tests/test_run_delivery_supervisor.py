@@ -884,6 +884,20 @@ class LeadAcceptChoosesChecksTests(unittest.TestCase):
         self.assertEqual((item["stage"], item["checkSelection"]),
                          ("merged", {"by": "lead", "head": head, "reason": "only one changed"}))
 
+    def test_a_selection_made_before_a_refused_ready_is_cleared_so_nothing_is_left_selected(self) -> None:
+        fx = self.fixture()
+        hand_off(fx, "FX-2", "lane-1")
+        code, out = fx.flow("lead-accept", "FX-2", "--checks", "tests.test_one", "--reason", "only one changed",
+                            cwd=fx.main, env={**fx.env, "FAKE_FORGE_READY": "refuse"})
+        self.assertEqual(code, 1, out)
+        self.assertIn("couldn't be marked ready, so the hand-off stays pending", out)
+        item = self.item(fx)
+        self.assertTrue(item["pending"])
+        self.assertNotIn("leadSelection", item, "a selection for a hand-off not accepted is cleared")
+        self.assertEqual([e["summary"].split(";")[0] for e in kinds(fx, "check.selected")],
+                         [f"The lead selected checks for FX-2 at {item['head']}: tests.test_one. Why: only one changed",
+                          "Cleared the lead's check selection for FX-2"])
+
     def test_acceptance_refuses_what_select_refuses_and_records_nothing(self) -> None:
         # A catalogue entry naming a profile the binding lacks: select refuses every selection under this binding.
         fx = self.fixture(catalogue_extra={"environmentProfile": "missing"})
