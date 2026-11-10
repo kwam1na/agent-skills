@@ -5775,17 +5775,37 @@ class RunDeliveryLeadWorktreeTests(unittest.TestCase):
                             "--after", "FX-7", cwd=lead)
         self.assertEqual(code, 0, out)
         self.assertEqual(json.loads(path.read_text())["stories"]["FX-8"].get("after"), ["FX-7"])
+        # A story only the worktree holds can be removed again before any push.
+        code, out = fx.flow("lead-plan", "change", "--kind", "removed", "--subjects", "FX-8", "--why", "Not needed.",
+                            cwd=lead)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("FX-8", json.loads(path.read_text())["stories"])
         code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "done", cwd=lead)
         self.assertEqual(code, 0, out)
         # Before any push, the rebuilt plan is the worktree's: the changes and the approval, none the base's older file.
         plan = json.loads((fx.tmp / "record/plan.json").read_text())
         self.assertEqual(plan["approvals"][0]["state"], "done")
         self.assertIn("FX-7", [unit["subject"] for unit in plan["units"]])
-        self.assertEqual([c["kind"] for c in plan["changes"]], ["relaxed", "added", "added"])
+        self.assertEqual([c["kind"] for c in plan["changes"]], ["relaxed", "added", "added", "removed"])
         on_base = self.pushed(fx, out, lead)
         on_base_criteria = {c["id"]: c["text"] for c in on_base["stories"]["FX-2"]["criteria"]}
         self.assertEqual((on_base_criteria["one-fails"], on_base["approvals"][0]["state"], "FX-7" in on_base["stories"]),
                          ("Thing one says something when it fails", "done", True))
+
+    def test_a_removal_after_an_unpushed_change_records_the_worktree_s_story(self) -> None:
+        fx, lead, path = self.fixture()
+        code, out = fx.flow("lead-plan", "change", "--kind", "relaxed", "--subjects", "FX-3", "--criterion",
+                            "two-renders", "--text", "Thing two renders, in time", "--why", "w", cwd=lead)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-plan", "change", "--kind", "removed", "--subjects", "FX-3", "--why", "Dropped.",
+                            cwd=lead)
+        self.assertEqual(code, 0, out)
+        logged = [json.loads(line) for line in (fx.tmp / "flow-log/plan-changes.jsonl").read_text().splitlines()]
+        removed = [entry for entry in logged if entry.get("type") == "change" and entry.get("kind") == "removed"]
+        self.assertEqual(len(removed), 1, logged)
+        # What was removed is the story as the worktree holds it, relaxed, not the base's older text.
+        self.assertIn("Thing two renders, in time", json.dumps(removed[0]["units"]))
+        self.assertNotIn('"Thing two renders"', json.dumps(removed[0]["units"]))
 
     def test_a_lead_worktree_behind_the_base_is_refused_naming_the_fix(self) -> None:
         fx, lead, path = self.fixture()
