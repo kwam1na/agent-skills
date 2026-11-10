@@ -112,8 +112,8 @@ test("a closed delivery names a piece with no lane as having none, and a stop na
 
 // A close that stopped partway: the record's started mark for the closing entry without its finished mark.
 const LIVE_NEEDS = (over = {}) => ({ spec: "delivery-needs-you/1", running: true, pass: 3, at: "2026-10-30T11:59:30Z",
-  staleAfter: "2026-10-30T12:01:30Z", items: [{ holding: true, source: "host outbox", text: "The host outbox hasn't been acked through journal entry 4",
-    clears: "the host posting its outbox" }], ...over });
+  staleAfter: "2026-10-30T12:01:30Z", items: [{ holding: true, source: "tracker publisher", text: "The tracker publisher hasn't posted journal entries 4",
+    clears: "the publisher posting those entries on a later pass" }], ...over });
 function closing({ finish = true, marks = "started", earlier = false, needs = null, reopened = false, removed = null, stage = "merged",
   lane = "idle" } = {}) {
   const steps = [...landed("A"), close];

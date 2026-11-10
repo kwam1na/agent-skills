@@ -641,13 +641,9 @@ class PinnedViewTests(unittest.TestCase):
         self.assertEqual(self.views(EMPTY_STATE, []), PINNED_EMPTY_VIEWS)
 
 
-class HostPublisherTests(DeliveryStateFixture):
-    """A host publisher leaves an outbox the lead publishes with its host's own tool."""
-
-    def binding(self, publishers: list[dict]) -> str:
-        path = self.root / f"binding {len(list(self.root.iterdir()))}.json"
-        path.write_text(json.dumps({"state": json.loads(self.config([], publishers))}), encoding="utf-8")
-        return str(path)
+class BindingStateTests(DeliveryStateFixture):
+    """The binding's `state` member, as `show` and the wrapper read it. A publisher is an argv: one with a kind and no
+    argv, which an earlier generation kept for the lead to post by hand, is refused naming the fix."""
 
     def test_show_refuses_a_binding_that_keeps_its_state_elsewhere(self) -> None:
         elsewhere = self.root / "elsewhere"
@@ -699,54 +695,6 @@ class HostPublisherTests(DeliveryStateFixture):
         self.assertEqual(result.returncode, 1, result.stdout)
         return json.loads(result.stdout)
 
-    def test_an_orphaned_outbox_is_flagged_retired_explicitly_and_never_deleted_by_a_render(self) -> None:
-        host = [{"id": "live", "kind": "host"}]
-        wrapper(self.state_dir, "--state-config", self.config([], host))
-        self.assertEqual(self.outbox()["publisher"], "live")
-        publication = state_tool(self.state_dir, "show")["publication"]
-        self.assertEqual((publication["outboxPublisher"], publication["outboxOrphaned"]), ("live", None))
-        kept = state_tool(self.state_dir, "show", "--binding", self.binding(host))["publication"]
-        self.assertFalse(kept["outboxOrphaned"])
-        orphaned = state_tool(self.state_dir, "show", "--binding", self.binding([]))["publication"]
-        self.assertTrue(orphaned["outboxOrphaned"])
-        # A render that does not name the host publisher, with or without a configuration, leaves the outbox.
-        for args in ((), ("--state-config", self.config([], []))):
-            with self.subTest(args=args):
-                wrapper(self.state_dir, *args)
-                self.assertEqual(self.outbox()["publisher"], "live")
-        # While it stands it caps ack; another publisher cannot retire it.
-        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", "After the outbox")
-        shown = state_tool(self.state_dir, "show")
-        last = shown["journal"][-1]["id"]
-        capped = self.refused("ack", "--version", str(shown["state"]["version"]), "--through", str(last))
-        self.assertEqual(capped["code"], "ack_invalid")
-        self.assertIn("outbox --retire live", capped["error"], "the refusal names the way out")
-        self.assertEqual(self.refused("outbox", "--retire", "other")["code"], "outbox_not_owned")
-        retired = state_tool(self.state_dir, "outbox", "--retire", "live")
-        self.assertEqual(retired["retired"]["publisher"], "live")
-        self.assertFalse((self.state_dir / "outbox").exists())
-        state_tool(self.state_dir, "ack", "--version", str(shown["state"]["version"]), "--through", str(last))
-        self.assertEqual(self.refused("outbox", "--retire", "live")["code"], "outbox_missing")
-        publication = state_tool(self.state_dir, "show", "--binding", self.binding([]))["publication"]
-        self.assertEqual((publication["outboxPublisher"], publication["outboxOrphaned"]), (None, None))
-
-    def test_an_outbox_from_before_outboxes_named_their_publisher_is_retired_by_any_id(self) -> None:
-        wrapper(self.state_dir, "--state-config", self.config([], [{"id": "live", "kind": "host"}]))
-        legacy = {key: value for key, value in self.outbox().items() if key != "publisher"}
-        (self.state_dir / "outbox" / "outbox.json").write_text(json.dumps(legacy), encoding="utf-8")
-        self.assertTrue(state_tool(self.state_dir, "show", "--binding", self.binding([{"id": "live", "kind": "host"}]))
-                        ["publication"]["outboxOrphaned"], "an outbox naming no publisher belongs to none")
-        self.assertIsNone(state_tool(self.state_dir, "outbox", "--retire", "anyone")["retired"]["publisher"])
-
-    def test_an_unreadable_outbox_is_retired_only_by_force(self) -> None:
-        wrapper(self.state_dir, "--state-config", self.config([], [{"id": "live", "kind": "host"}]))
-        (self.state_dir / "outbox" / "outbox.json").write_text(json.dumps(
-            {"version": 1, "journalThrough": 0, "publisher": 7}), encoding="utf-8")
-        self.assertEqual(self.refused("outbox", "--retire", "live")["code"], "state_invalid")
-        retired = state_tool(self.state_dir, "outbox", "--retire", "live", "--force")
-        self.assertTrue(retired["retired"]["unreadable"])
-        self.assertFalse((self.state_dir / "outbox").exists())
-
     def test_every_state_field_the_binding_schema_declares_renders_and_no_other(self) -> None:
         schemas = json.loads((ROOT / "skills/orchestrate-work/references/schemas.json").read_text(encoding="utf-8"))
         fields = schemas["orchestration-binding/1"]["properties"]["state"]["properties"]
@@ -778,10 +726,14 @@ class HostPublisherTests(DeliveryStateFixture):
                              "trackerSnapshot": {"argv": ["tool", "{parent}"], "timeoutSeconds": 30}})
         self.assertEqual(wrapper(self.state_dir, "--state-config", config)[0], 0)
 
-    def test_one_host_publisher_and_a_whole_max_age_per_configuration(self) -> None:
-        two = [{"id": "live", "kind": "host"}, {"id": "mirror", "kind": "host"}]
-        code, result = wrapper(self.state_dir, "--state-config", self.config([], two))
-        self.assertEqual((code, result["code"]), (2, "config_invalid"))
+    def test_a_publisher_that_runs_nothing_is_refused_naming_the_fix_and_a_max_age_is_whole(self) -> None:
+        for publishers in ([{"id": "live", "kind": "host"}], [{"id": "live", "kind": "host"}, {"id": "mirror", "kind": "host"}]):
+            with self.subTest(publishers=publishers):
+                code, result = wrapper(self.state_dir, "--state-config", self.config([], publishers))
+                self.assertEqual((code, result["code"]), (2, "config_invalid"))
+                self.assertIn("publishers[0]: a publisher is an argv; one with a kind and no argv runs nothing", result["error"])
+                self.assertIn("fix: name the tracker publisher instead", result["error"])
+                self.assertFalse((self.state_dir / "outbox").exists(), "nothing is written for the lead to post")
         for age in (0, 1.5, True, "60"):
             with self.subTest(age=age):
                 config = json.dumps({**json.loads(self.config([], [])), "snapshotMaxAgeSeconds": age})
@@ -790,50 +742,15 @@ class HostPublisherTests(DeliveryStateFixture):
         config = json.dumps({**json.loads(self.config([], [])), "snapshotMaxAgeSeconds": 60})
         self.assertEqual(wrapper(self.state_dir, "--state-config", config)[0], 0)
 
-    def outbox(self) -> dict:
-        return json.loads((self.state_dir / "outbox" / "outbox.json").read_text(encoding="utf-8"))
-
-    def test_the_outbox_holds_the_state_and_exactly_the_unacknowledged_entries(self) -> None:
-        host = [{"id": "live", "kind": "host"}]
-        code, result = wrapper(self.state_dir, "--state-config", self.config([], host))
-        self.assertEqual(code, 0, result)
-        shown = state_tool(self.state_dir, "show")
-        self.assertEqual(result["publishers"], [{"id": "live", "kind": "host", "ok": True,
-                                                 "outbox": "outbox/outbox.json", "entries": len(shown["journal"]),
-                                                 "version": shown["state"]["version"],
-                                                 "journalThrough": shown["journal"][-1]["id"]}])
-        outbox = self.outbox()
-        self.assertEqual(outbox["version"], shown["state"]["version"])
-        self.assertEqual(outbox["state"], shown["state"])
-        self.assertEqual(outbox["stats"], shown["stats"], "host-published views carry the stats")
-        self.assertEqual(outbox["journal"], shown["journal"])
-        last = shown["journal"][-1]["id"]
-        state_tool(self.state_dir, "ack", "--version", str(outbox["version"]), "--through", str(last))
-        wrapper(self.state_dir, "--state-config", self.config([], host))
-        self.assertEqual((self.outbox()["journal"], self.outbox()["journalThrough"]), ([], last))
-        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", "After the ack")
-        wrapper(self.state_dir, "--state-config", self.config([], host))
-        self.assertEqual([entry["summary"] for entry in self.outbox()["journal"]], ["After the ack"])
-
-    def test_show_flags_an_outbox_older_than_the_record(self) -> None:
-        wrapper(self.state_dir, "--state-config", self.config([], [{"id": "live", "kind": "host"}]))
-        self.assertFalse(state_tool(self.state_dir, "show")["publication"]["outboxLags"])
-        version = state_tool(self.state_dir, "show")["state"]["version"]
-        state_tool(self.state_dir, "patch", "--writer", "lead", "--version", str(version),
-                   "--patch", json.dumps({"meta": {"headline": "Moved on"}}))
-        publication = state_tool(self.state_dir, "show")["publication"]
-        self.assertEqual((publication["outboxVersion"], publication["outboxLags"]), (version, True))
-        # A journal entry alone moves no version, and still leaves the outbox behind.
-        wrapper(self.state_dir, "--state-config", self.config([], [{"id": "live", "kind": "host"}]))
-        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", "Journal only")
-        self.assertTrue(state_tool(self.state_dir, "show")["publication"]["outboxLags"])
-
-    def test_a_host_publisher_takes_no_argv_and_no_view_may_claim_its_names(self) -> None:
-        for publisher in ({"id": "live", "kind": "host", "argv": ["x"]}, {"id": "live", "kind": "shell"},
-                          {"id": "live", "kind": "host", "timeoutSeconds": 5}):
+    def test_a_publisher_with_a_kind_is_refused_and_no_view_may_claim_the_records_names(self) -> None:
+        # The old folder stays reserved, so a record reopened with what an earlier generation left is never written over.
+        for publisher, said in (({"id": "live", "kind": "host", "argv": ["x"]}, "unknown fields: kind"),
+                                ({"id": "live", "kind": "shell"}, "runs nothing"),
+                                ({"id": "live", "kind": "host", "timeoutSeconds": 5}, "runs nothing")):
             with self.subTest(publisher=publisher):
                 code, result = wrapper(self.state_dir, "--state-config", self.config([], [publisher]))
                 self.assertEqual((code, result["code"]), (2, "config_invalid"), result)
+                self.assertIn(said, result["error"])
         for output in ("outbox/outbox.json", "published.json", "OUTBOX/x.md", "recovery.json", "Recovery.JSON",
                        "changes.jsonl", "Changes.JSONL", "recovery.json.invalid",
                        "recovery.json.invalid.2"):
@@ -1259,10 +1176,10 @@ class LiveTests(DeliveryStateFixture):
         client = self.client(url)
         client.listen()
         shown = client.wait_for(lambda doc: True)
-        state_tool(self.state_dir, "ack", "--version", str(shown["state"]["version"]),
-                   "--through", str(shown["journal"][-1]["id"] if shown["journal"] else 0))
+        # A change noted with nothing in the record moved, as a write that changes nothing would leave it.
+        delivery_state._note_change(self.state_dir, "patch", version=shown["state"]["version"])
         time.sleep(1.0)
-        self.assertEqual(len(client.events), 1, "an acknowledgement changes no page")
+        self.assertEqual(len(client.events), 1, "a change that moves nothing changes no page")
 
     def test_a_record_replaced_at_the_same_version_still_reaches_the_page(self) -> None:
         _, url = self.start()
@@ -1712,28 +1629,23 @@ class ChangeNotificationTests(DeliveryStateFixture):
                    "--patch", json.dumps({"meta": {"headline": "Changed"}}))
         state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", "A lane's entry", "--lane", "lane-1")
         shown = state_tool(self.state_dir, "show")
-        state_tool(self.state_dir, "ack", "--version", str(shown["state"]["version"]),
-                   "--through", str(shown["journal"][-1]["id"]))
         changes = self.changes()[before:]
-        self.assertEqual([change["change"] for change in changes], ["patch", "journal", "ack"])
+        self.assertEqual([change["change"] for change in changes], ["patch", "journal"])
         self.assertEqual(changes[0]["version"], version + 1)
         self.assertEqual(changes[1]["journal"], shown["journal"][-1]["id"])
         # A refused write records nothing.
         result = run([sys.executable, "-B", str(STATE_TOOL), "--dir", str(self.state_dir), "patch", "--writer", "lead",
                       "--version", "1", "--patch", "{}"])
         self.assertEqual(result.returncode, 1)
-        self.assertEqual(len(self.changes()), before + 3)
+        self.assertEqual(len(self.changes()), before + 2)
 
-    def test_retiring_an_outbox_records_a_change_and_a_refused_patch_records_none(self) -> None:
-        wrapper(self.state_dir, "--state-config", self.config([], [{"id": "live", "kind": "host"}]))
+    def test_a_refused_patch_records_no_change(self) -> None:
         before = len(self.changes())
-        state_tool(self.state_dir, "outbox", "--retire", "live")
-        self.assertEqual([change["change"] for change in self.changes()[before:]], ["outbox"])
         version = state_tool(self.state_dir, "show")["state"]["version"]
         result = run([sys.executable, "-B", str(STATE_TOOL), "--dir", str(self.state_dir), "patch", "--writer", "lead",
                       "--version", str(version), "--patch", json.dumps({"meta": {"headline": 3}})])
         self.assertEqual(json.loads(result.stdout)["code"], "patch_invalid")
-        self.assertEqual(len(self.changes()), before + 1, "a refused write records no change")
+        self.assertEqual(len(self.changes()), before, "a refused write records no change")
 
     def test_each_write_the_tool_makes_for_a_lane_records_one_change(self) -> None:
         # A hand-off writes the record, then journals it: one change each.
@@ -1743,15 +1655,6 @@ class ChangeNotificationTests(DeliveryStateFixture):
         changes = self.changes()[before:]
         self.assertEqual([change["change"] for change in changes], ["patch", "journal"])
         self.assertEqual(changes[0]["version"], state_tool(self.state_dir, "show")["state"]["version"])
-
-    def test_a_forced_retire_of_an_unreadable_outbox_records_a_change(self) -> None:
-        outbox = self.state_dir / "outbox"
-        outbox.mkdir(exist_ok=True)
-        (outbox / "outbox.json").write_text("{not json", encoding="utf-8")
-        before = len(self.changes())
-        retired = state_tool(self.state_dir, "outbox", "--retire", "live", "--force")
-        self.assertTrue(retired["retired"]["unreadable"], retired)
-        self.assertEqual([change["change"] for change in self.changes()[before:]], ["outbox"])
 
     def test_the_change_log_stays_within_its_cap_and_keeps_the_latest_changes(self) -> None:
         path = self.state_dir / "changes.jsonl"

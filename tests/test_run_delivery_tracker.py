@@ -256,6 +256,7 @@ with open(STORE + ".lock", "a") as lock:
             print("not json")
             sys.exit(0)
         if (rule["op"] == args.op and rule.get("ticket") in (None, target) and rule.get("name") in (None, args.name)
+                and (rule.get("contains") is None or rule["contains"] in open(args.body_file).read())
                 and rule["times"] != 0):
             rule["times"] -= 1
             save()
@@ -1314,33 +1315,7 @@ class AdapterContractTests(unittest.TestCase):
 
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
-class HostOutboxTests(unittest.TestCase):
-    def test_an_undrained_host_outbox_raises_needs_you_naming_the_updates(self) -> None:
-        tmp = Path(tempfile.mkdtemp(prefix="tracker-host-"))
-        self.addCleanup(shutil.rmtree, tmp, True)
-        root, state = tmp / "repo", tmp / "repo/.orchestration/state"
-        (root / ".agents").mkdir(parents=True)
-        (root / ".agents/orchestration.json").write_text(json.dumps({"state": {
-            "directory": ".orchestration/state", "renderers": [], "publishers": [{"id": "tracker", "kind": "host"}],
-            "trackerSnapshot": {"argv": ["python3", "snapshot.py", "--kind", "linear", "--parent", "{parent}",
-                                         "--token-env", "FX_TOKEN"]}}}))
-        conf = tp.settings(root)
-        self.assertEqual((conf["mode"], tp.refusal(conf)), ("host", None))
-        tool = lambda *args: json.loads(subprocess.run([sys.executable, "-B", str(STATE_TOOL), "--dir", str(state), *args],
-                                                       capture_output=True, text=True, check=True).stdout or "{}")
-        tool("init", "--headline", "A delivery")
-        tool("journal", "--kind", "decision.recorded", "--summary", "Record starts")
-        tool("journal", "--kind", "candidate.handed", "--subject", "EP-2", "--summary", "Handed off")
-        subprocess.run([sys.executable, "-B", str(RENDER), "--dir", str(state), "--binding",
-                        str(root / ".agents/orchestration.json")], capture_output=True, check=True)
-        doc = tool("show")
-        [item] = tp.needs_you(doc, state, state.parent / "flow-log", "EP-1", conf)
-        self.assertTrue(item["holding"])
-        self.assertIn("2 candidate.handed", item["text"])
-        version = doc["state"]["version"]
-        tool("ack", "--version", str(version), "--through", "2")
-        self.assertEqual(tp.needs_you(tool("show"), state, state.parent / "flow-log", "EP-1", conf), [])
-
+class TrackerSettingsTests(unittest.TestCase):
     def test_settings_refuse_bad_targets_and_name_the_moves_without_one(self) -> None:
         tmp = Path(tempfile.mkdtemp(prefix="tracker-targets-"))
         self.addCleanup(shutil.rmtree, tmp, True)
@@ -1364,25 +1339,87 @@ class HostOutboxTests(unittest.TestCase):
                 conf = tp.settings(tmp, {}, binding)
                 self.assertIsNone(conf["mode"])
                 self.assertIn("the binding has no tracker publisher", tp.refusal(conf))
-                binding["state"]["publishers"] = [{"id": "tracker", "kind": "host"}]
-                self.assertIsNone(tp.refusal(tp.settings(tmp, {}, binding)))
-                binding["state"]["publishers"] = []
+                self.assertIn("tracker.argv", tp.refusal(conf), "the fix names an adapter of its own")
                 self.assertIsNone(tp.refusal(tp.settings(tmp, {"tracker": {"updates": "manual"}}, binding)))
         self.assertIsNone(tp.refusal(tp.settings(tmp, {}, {"state": {"publishers": []}})), "no tracker, no refusal")
 
-    def test_a_host_tracker_without_a_host_publisher_is_refused_unless_manual(self) -> None:
-        tmp = Path(tempfile.mkdtemp(prefix="tracker-host-"))
+    def test_a_jira_or_linear_snapshot_implies_its_adapter_and_needs_the_tracker_publisher_unless_manual(self) -> None:
+        tmp = Path(tempfile.mkdtemp(prefix="tracker-implied-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        publisher = [tp.publisher_entry(".agent-skills/current/skills/run-delivery/scripts/tracker_publisher.py")]
+        rows = [(["snapshot.py", "--kind", "jira", "--site", "https://t.test", "--token-env", "T", "--user-env", "U"],
+                 {"name": "jira", "site": "https://t.test", "userEnv": "U", "tokenEnv": "T"}),
+                (["snapshot.py", "--kind", "linear", "--parent", "{parent}"],
+                 {"name": "linear", "site": None, "tokenEnv": "LINEAR_API_KEY"}),
+                (["snapshot.py", "--kind", "linear", "--site", "http://127.0.0.1:9", "--token-env", "T"],
+                 {"name": "linear", "site": "http://127.0.0.1:9", "tokenEnv": "T"})]
+        for snapshot, adapter in rows:
+            with self.subTest(kind=adapter["name"], snapshot=snapshot):
+                binding = {"state": {"publishers": [], "trackerSnapshot": {"argv": snapshot}}}
+                conf = tp.settings(tmp, {}, binding)
+                self.assertEqual((conf["mode"], conf["adapter"]), ("publisher", adapter))
+                self.assertIn("no tracker publisher", tp.refusal(conf))
+                self.assertIsNone(tp.refusal(tp.settings(tmp, {"tracker": {"updates": "manual"}}, binding)))
+                binding["state"]["publishers"] = publisher
+                self.assertIsNone(tp.refusal(tp.settings(tmp, {}, binding)))
+        # A named adapter wins over the snapshot's kind.
+        linear = {"state": {"publishers": publisher, "trackerSnapshot": {"argv": rows[1][0]}}}
+        named = {"tracker": {"adapter": "jira", "site": "https://t.test", "tokenEnv": "T", "userEnv": "U"}}
+        self.assertEqual(tp.settings(tmp, named, linear)["adapter"],
+                         {"name": "jira", "site": "https://t.test", "userEnv": "U", "tokenEnv": "T"})
+        own = tp.settings(tmp, {"tracker": {"argv": ["own-adapter"]}}, linear)["adapter"]
+        self.assertEqual(own, {"name": "argv", "argv": ["own-adapter"]})
+
+    def test_a_publisher_that_runs_nothing_is_refused_naming_the_fix_whatever_else_is_bound(self) -> None:
+        tmp = Path(tempfile.mkdtemp(prefix="tracker-unrunnable-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        tracker = tp.publisher_entry(".agent-skills/current/skills/run-delivery/scripts/tracker_publisher.py")
+        snapshot = {"argv": ["snapshot.py", "--kind", "linear", "--parent", "{parent}", "--token-env", "T"]}
+        for publishers, own in (([{"id": "tracker", "kind": "host"}], {}),
+                                ([{"id": "live", "kind": "host"}, tracker], {}),
+                                ([{"id": "tracker", "kind": "host"}], {"tracker": {"updates": "manual"}}),
+                                ([{"id": "mirror", "kind": "store"}], {"tracker": {"updates": "manual"}}),
+                                ([{"id": "nothing", "kind": None}], {})):
+            with self.subTest(publishers=publishers, own=own):
+                conf = tp.settings(tmp, own, {"state": {"publishers": publishers, "trackerSnapshot": snapshot}})
+                refused = tp.refusal(conf)
+                self.assertIn("the binding names a publisher that runs nothing", refused)
+                self.assertIn(publishers[0]["id"], refused)
+                fix = refused.split("; fix: ", 1)[1]
+                self.assertIn("run-delivery's tracker publisher (lead-setup adds it)", fix)
+                self.assertIn("export the tracker's token", fix)
+        # One with an argv is a publisher like any other, whatever else it carries.
+        for entry in (tracker, {**tracker, "kind": "x"}):
+            with self.subTest(entry=entry):
+                conf = tp.settings(tmp, {}, {"state": {"publishers": [entry], "trackerSnapshot": snapshot}})
+                self.assertEqual((conf["unrunnable"], conf["publisher"], tp.refusal(conf)), ([], tracker["id"], None))
+
+    def test_a_binding_of_the_wrong_shape_reads_as_naming_nothing(self) -> None:
+        tmp = Path(tempfile.mkdtemp(prefix="tracker-shape-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        for binding in ([], "x", {"state": []}, {"state": ["x"]}, {"state": "x"}, {"state": {"publishers": 5}},
+                        {"state": {"trackerSnapshot": "x"}},
+                        {"state": {"trackerSnapshot": {"argv": "snapshot.py --kind linear"}}},
+                        {"state": {"trackerSnapshot": {"argv": ["snapshot.py", "--kind", 7, "linear"]}}},
+                        {"state": {"trackerSnapshot": {"argv": ["snapshot.py", "--kind", "linear", None]}}},
+                        {"state": {"publishers": [{"id": "p", "argv": "tracker_publisher.py"}, 7]}}):
+            with self.subTest(binding=binding):
+                conf = tp.settings(tmp, {}, binding)
+                self.assertEqual((conf["mode"], conf["publisher"], conf["unrunnable"], conf["snapshot"]),
+                                 (None, None, [], False))
+                self.assertIsNone(tp.refusal(conf))
+
+    def test_tracker_updates_host_is_refused_with_the_fix(self) -> None:
+        tmp = Path(tempfile.mkdtemp(prefix="tracker-updates-"))
         self.addCleanup(shutil.rmtree, tmp, True)
         binding = {"state": {"publishers": [], "trackerSnapshot": {"argv": ["snapshot.py", "--kind", "linear"]}}}
-        self.assertIn("host publisher", tp.refusal(tp.settings(tmp, {}, binding)))
-        self.assertIsNone(tp.refusal(tp.settings(tmp, {"tracker": {"updates": "manual"}}, binding)))
-        jira = {"state": {"publishers": [], "trackerSnapshot": {"argv": [
-            "snapshot.py", "--kind", "jira", "--site", "https://t.test", "--token-env", "T", "--user-env", "U"]}}}
-        self.assertIn("no tracker publisher", tp.refusal(tp.settings(tmp, {}, jira)))
-        jira["state"]["publishers"] = [tp.publisher_entry(".agent-skills/current/skills/run-delivery/scripts/tracker_publisher.py")]
-        self.assertIsNone(tp.refusal(tp.settings(tmp, {}, jira)))
-        self.assertEqual(tp.settings(tmp, {}, jira)["adapter"],
-                         {"name": "jira", "site": "https://t.test", "userEnv": "U", "tokenEnv": "T"})
+        for updates in ("host", "outbox", 7):
+            with self.subTest(updates=updates):
+                conf = tp.settings(tmp, {"tracker": {"updates": updates}}, binding)
+                refused = tp.refusal(conf)
+                self.assertIn(f"tracker.updates is publisher or manual, not {updates!r}", refused)
+                self.assertIn("lead-setup", refused)
+                self.assertIn("fix: ", refused)
 
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
@@ -1417,6 +1454,154 @@ class RenderedPublisherTests(unittest.TestCase):
 
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class EveryTrackerPostsThroughThePublisherTests(unittest.TestCase):
+    """Decision 5: no publisher runs nothing. A Linear snapshot implies Linear's adapter as a Jira one implies Jira's,
+    a record an earlier generation left an outbox beside reopens with nothing re-posted, and the state tool has no
+    `ack`."""
+
+    def bind(self, d: Delivery, publishers: list, snapshot: list | None = None) -> Path:
+        binding = {"state": {"directory": ".orchestration/state", "renderers": [], "publishers": publishers,
+                             **({"trackerSnapshot": {"argv": snapshot}} if snapshot else {})}}
+        path = d.root / ".agents/orchestration.json"
+        path.write_text(json.dumps(binding))
+        return path
+
+    def record(self, d: Delivery, *entries: tuple) -> callable:
+        state = d.state_dir
+        tool = lambda *args: subprocess.run([sys.executable, "-B", str(STATE_TOOL), "--dir", str(state), *args],
+                                            capture_output=True, text=True, check=True, env=d.env)
+        tool("init", "--headline", "A delivery")
+        version = json.loads(tool("show").stdout)["state"]["version"]
+        tool("patch", "--writer", "lead", "--version", str(version), "--patch",
+             json.dumps({"meta": {"trackerParent": EPIC}}))
+        tool("journal", "--kind", "decision.recorded", "--summary", "Record starts")
+        for kind, subject, summary in entries:
+            tool("journal", "--kind", kind, "--subject", subject, "--summary", summary)
+        return tool
+
+    def render(self, d: Delivery, binding: Path) -> tuple[int, dict, str]:
+        done = subprocess.run([sys.executable, "-B", str(RENDER), "--dir", str(d.state_dir), "--binding", str(binding)],
+                              cwd=d.root, env=d.env, capture_output=True, text=True, timeout=120)
+        try:
+            result = json.loads(done.stdout)
+        except ValueError:
+            result = {}
+        return done.returncode, result, done.stdout + done.stderr
+
+    def test_a_linear_snapshot_with_the_tracker_publisher_and_no_tracker_settings_posts_through_linear(self) -> None:
+        d = Delivery(self, LinearBackend)
+        d.ticket("EP-2")
+        (d.root / ".agents/run-delivery.json").write_text(json.dumps({"schemaVersion": "delivery-flow/1"}) + "\n")
+        publisher = tp.publisher_entry(str(PUBLISHER))
+        publisher["argv"] += ["--repo", str(d.root)]
+        binding = self.bind(d, [publisher], ["python3", "snapshot.py", "--kind", "linear", "--parent", "{parent}",
+                                             "--site", d.backend.linear.site, "--token-env", "FX_TRACKER_TOKEN"])
+        self.assertNotIn("tracker", json.loads((d.root / ".agents/run-delivery.json").read_text()))
+        self.record(d, ("candidate.handed", "EP-2", "Handed off"))
+        code, result, out = self.render(d, binding)
+        self.assertEqual((code, result["publishers"][0]["ok"]), (0, True), out)
+        [text] = d.comments("EP-2")
+        self.assertIn("Handed off", text)
+        self.assertEqual(d.backend.read()["issues"]["EP-2"]["comments"][0]["markers"],
+                         [tp.marker(EPIC, tp.init_id(json.loads(subprocess.run(
+                             [sys.executable, "-B", str(STATE_TOOL), "--dir", str(d.state_dir), "show"],
+                             capture_output=True, text=True, check=True).stdout)["journal"]), 2, "comment")])
+        self.assertEqual(sorted(line["journal"] for line in d.ledger()), [1, 2])
+
+    def test_a_binding_naming_a_publisher_that_runs_nothing_fails_validation_naming_the_fix(self) -> None:
+        d = Delivery(self, LinearBackend)
+        binding = self.bind(d, [{"id": "tracker", "kind": "host"}])
+        self.record(d)
+        code, result, out = self.render(d, binding)
+        self.assertEqual((code, result.get("code")), (2, "config_invalid"), out)
+        self.assertIn("runs nothing", result["error"])
+        self.assertIn("fix: name the tracker publisher instead", result["error"])
+        self.assertFalse((d.state_dir / "outbox").exists(), "nothing is left for anyone to post by hand")
+        schema = json.loads((ROOT / "skills/orchestrate-work/references/schemas.json").read_text())
+        publishers = schema["orchestration-binding/1"]["properties"]["state"]["properties"]["publishers"]
+        self.assertEqual(publishers["items"]["required"], ["id", "argv"])
+        self.assertIs(publishers["items"]["additionalProperties"], False, "a kind is not a field a publisher has")
+
+    def test_ack_and_outbox_are_unknown_commands(self) -> None:
+        d = Delivery(self, LinearBackend)
+        self.record(d)
+        for args in (["ack"], ["ack", "--version", "1", "--through", "1"], ["outbox", "--retire", "tracker"]):
+            with self.subTest(args=args):
+                done = subprocess.run([sys.executable, "-B", str(STATE_TOOL), "--dir", str(d.state_dir), *args],
+                                      capture_output=True, text=True)
+                self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
+                self.assertIn(f"invalid choice: '{args[0]}'", done.stderr)
+        self.assertFalse((d.state_dir / "published.json").exists(), "nothing writes it")
+
+    def test_a_record_opened_with_an_outbox_reopens_with_no_outbox_item_and_no_repost(self) -> None:
+        d = Delivery(self, LinearBackend)
+        d.ticket("EP-2")
+        publisher = tp.publisher_entry(str(PUBLISHER))
+        publisher["argv"] += ["--repo", str(d.root)]
+        binding = self.bind(d, [publisher])
+        tool = self.record(d, ("candidate.handed", "EP-2", "Posted by hand under the earlier generation"),
+                           ("lease.granted", "EP-2", "Journalled after the outbox was last posted"))
+        shown = json.loads(tool("show").stdout)
+        # What the earlier generation left: an outbox still holding the last entry, and an ack through the first two.
+        outbox = d.state_dir / "outbox" / "outbox.json"
+        outbox.parent.mkdir()
+        outbox.write_text(json.dumps({"version": shown["state"]["version"], "journalThrough": 3, "publisher": "tracker",
+                                      "state": shown["state"], "journal": shown["journal"], "stats": {}}))
+        left = outbox.read_bytes()
+        (d.state_dir / "published.json").write_text(json.dumps(
+            {"version": shown["state"]["version"], "journalThrough": 2, "at": shown["journal"][-1]["at"]}))
+        for _ in range(2):
+            code, result, out = self.render(d, binding)
+            self.assertEqual((code, result["publishers"][0]["ok"]), (0, True), out)
+        self.assertEqual(outbox.read_bytes(), left, "nothing reads or rewrites what it left")
+        self.assertEqual([(line["journal"], line["outcome"], line.get("reason")) for line in d.ledger()],
+                         [(1, "skip", "published before the tracker publisher"),
+                          (2, "skip", "published before the tracker publisher"), (3, "comment", None)])
+        [text] = d.comments("EP-2")
+        self.assertIn("Journalled after the outbox was last posted", text)
+        conf = tp.settings(d.root)
+        self.assertEqual((conf["mode"], conf["unrunnable"]), ("publisher", []))
+        doc = json.loads(tool("show").stdout)
+        self.assertEqual(tp.needs_you(doc, d.state_dir, d.flow_log, EPIC, conf), [])
+        self.assertEqual(doc["publication"], {"recoveryPending": False})
+
+
+class HostModeTokenTests(unittest.TestCase):
+    """Decision 5's absence pins: no shipped skill, reference or script carries the removed mode's tokens. The one
+    exception is the state tool's constant naming the folder an earlier generation left, so nothing writes over it."""
+
+    def shipped(self) -> dict[str, str]:
+        return {str(path.relative_to(ROOT)): path.read_text(encoding="utf-8")
+                for path in sorted((ROOT / "skills").rglob("*"))
+                if path.is_file() and path.suffix in (".md", ".py", ".json", ".js", ".mjs", ".html", ".yaml", ".css")}
+
+    def test_no_shipped_file_carries_the_removed_modes_tokens(self) -> None:
+        files = self.shipped()
+        self.assertIn("skills/orchestrate-work/scripts/delivery_state.py", files)
+        tokens = {
+            "the ack subcommand": re.compile(r"add_parser\(\s*[\"']ack[\"']"),
+            "the outbox subcommand": re.compile(r"add_parser\(\s*[\"']outbox[\"']"),
+            "a host publisher literal": re.compile(r"[\"']kind[\"']\s*:\s*[\"']host[\"']"),
+            "a host comparison": re.compile(r"[!=]=\s*[\"']host[\"']|[\"']host[\"']\s*[!=]="),
+            "the outbox file name": re.compile(r"outbox\.json"),
+            "host publisher prose": re.compile(r"host[\s-]+publisher", re.IGNORECASE),
+            "host outbox prose": re.compile(r"host[\s-]+outbox", re.IGNORECASE),
+            "the lane prints log": re.compile(r"lane-prints"),
+        }
+        found = {f"{rel}: {name}" for rel, text in files.items() for name, pattern in tokens.items()
+                 if pattern.search(" ".join(text.split()))}
+        self.assertEqual(found, set())
+
+    def test_the_one_named_exception_names_the_old_folder_once_in_one_module(self) -> None:
+        files = self.shipped()
+        holders = [rel for rel, text in files.items() if re.search(r"""^OUTBOX_DIRECTORY = ["']outbox["']""", text, re.M)]
+        self.assertEqual(holders, ["skills/orchestrate-work/scripts/delivery_state.py"])
+        literal = [rel for rel, text in files.items() if rel.endswith(".py") and re.search(r"""["']outbox["']""", text)]
+        self.assertEqual(literal, ["skills/orchestrate-work/scripts/delivery_state.py"])
+        self.assertEqual(len(re.findall(r"""["']outbox["']""", files[literal[0]])), 1)
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
 class RunDeliveryTrackerCommandTests(unittest.TestCase):
     """The commands' side: lead-setup binds the publisher, lead-init refuses a tracker whose updates nothing posts,
     lead-assign journals each story's own start, and lead-plan change marks its decision for the publisher."""
@@ -1428,14 +1613,16 @@ class RunDeliveryTrackerCommandTests(unittest.TestCase):
         for name, value in vars(harness.installed_release()).items():
             setattr(cls, name, value)
 
-    def fixture(self, binding: bool = False):
+    def fixture(self, binding: bool = False, snapshot: list | None = None, publishers: list | None = None):
         h = self.harness
         fx = h.Fixture(self.generation, self.receipt)
         self.addCleanup(fx.close)
         if binding:
             m = fx.main
             bound = h.doctor_binding()
-            bound["state"]["publishers"] = []
+            bound["state"]["publishers"] = publishers or []
+            if snapshot:
+                bound["state"]["trackerSnapshot"]["argv"] = snapshot
             (m / ".agents/orchestration.json").write_text(json.dumps(bound, indent=2))
             conf = json.loads((m / ".agents/run-delivery.json").read_text())
             del conf["gates"]  # The binding's fallback checks are the gates.
@@ -1465,6 +1652,32 @@ class RunDeliveryTrackerCommandTests(unittest.TestCase):
         (m / ".agents/run-delivery.json").write_text(json.dumps({**conf, "tracker": {**conf["tracker"], "updates": "manual"}}))
         path.write_text(bound.replace('"publishers": [', '"publishers": [], "was": [', 1).replace(', "was": [', ', "wasnt": [', 1))
         self.assertIsNone(tp.refusal(tp.settings(m)), "manual opts out")
+
+    LINEAR_SNAPSHOT = ["python3", "-B", ".agent-skills/current/skills/delivery-views/scripts/snapshot.py", "--kind",
+                       "linear", "--parent", "{parent}", "--token-env", "FX_LINEAR_KEY"]
+
+    def test_lead_setup_on_a_linear_binding_adds_the_tracker_publisher_as_on_a_jira_one(self) -> None:
+        fx = self.fixture(binding=True, snapshot=self.LINEAR_SNAPSHOT)
+        m = fx.main
+        self.harness.setup_delivery(fx)
+        publishers = json.loads((m / ".agents/orchestration.json").read_text())["state"]["publishers"]
+        self.assertEqual(publishers, [tp.publisher_entry(".agent-skills/current/skills/run-delivery/scripts/tracker_publisher.py")])
+        conf = tp.settings(m)
+        self.assertEqual((conf["mode"], conf["adapter"]),
+                         ("publisher", {"name": "linear", "site": None, "tokenEnv": "FX_LINEAR_KEY"}))
+        self.assertIsNone(tp.refusal(conf))
+
+    def test_lead_setup_refuses_a_binding_naming_a_publisher_that_runs_nothing_and_drafts_nothing(self) -> None:
+        fx = self.fixture(binding=True, snapshot=self.LINEAR_SNAPSHOT, publishers=[{"id": "tracker", "kind": "host"}])
+        m = fx.main
+        before = (m / ".agents/orchestration.json").read_text()
+        code, out = fx.flow("lead-setup", "FX-1", "--plan", "docs/plan.md", "--base", "feature/FX-1", "--pattern",
+                            self.harness.PATTERN, "--no-authority", cwd=m)
+        self.assertEqual(code, 2, out)
+        self.assertIn("the binding names a publisher that runs nothing (tracker", out)
+        self.assertIn("fix: replace it in state.publishers with run-delivery's tracker publisher", out)
+        self.assertFalse((m / ".agents/deliveries/FX-1.json").exists())
+        self.assertEqual((m / ".agents/orchestration.json").read_text(), before)
 
     def test_lead_assign_journals_each_story_and_lead_plan_change_marks_its_decision(self) -> None:
         h = self.harness
@@ -1542,6 +1755,12 @@ class LaneCommandTests(RunDeliveryTrackerCommandTests):
         pass  # The parent's case; not repeated here.
 
     def test_lead_setup_binds_the_tracker_publisher_and_lead_init_refuses_without_it(self) -> None:
+        pass  # The parent's case; not repeated here.
+
+    def test_lead_setup_on_a_linear_binding_adds_the_tracker_publisher_as_on_a_jira_one(self) -> None:
+        pass  # The parent's case; not repeated here.
+
+    def test_lead_setup_refuses_a_binding_naming_a_publisher_that_runs_nothing_and_drafts_nothing(self) -> None:
         pass  # The parent's case; not repeated here.
 
     def lane(self, transitions: dict, review_pr: bool = False, **tracker):
@@ -1630,15 +1849,36 @@ class LaneCommandTests(RunDeliveryTrackerCommandTests):
         self.assertIn("doesn't serve the base release/1", out)
         self.assertFalse((fx.main / "lanes/FX-3").exists())
 
-    def test_with_a_host_only_tracker_lane_start_prints_the_move_and_post_and_records_them(self) -> None:
-        fx, backend = self.lane({"start": ["Start work"]}, updates="host")
+    def test_by_hand_open_pr_and_handoff_print_the_review_move_and_nothing_moves(self) -> None:
+        fx, backend = self.lane({"start": ["Start work"], "review": ["Submit for review"], "reviewWhen": "pr-open"},
+                                updates="manual")
         code, out = fx.flow("lane-start", "FX-3", "--base", "feature/FX-1", cwd=fx.main)
         self.assertEqual(code, 0, out)
         self.assertIn('Tracker move (your story FX-3): "Start work", with your tracker tools.', out)
-        self.assertIn("Tracker post (your story FX-3): Started (lane-2)", out)
-        printed = tp.read_flow(fx.tmp / "flow-log", "FX-1", "lane-prints")
-        self.assertEqual([(p["subject"], p["move"], p["transitions"]) for p in printed], [("FX-3", "start", ["Start work"])])
-        self.assertEqual(backend.read()["calls"], [])
+        wt = fx.main / "lanes/FX-3"
+        said = 'Tracker move (your story FX-3): "Submit for review", with your tracker tools.'
+        self.assertIn(said, self.opened(fx, wt))
+        code, out = self.handed(fx, wt)
+        self.assertEqual(code, 0, out)
+        self.assertIn(said, out)
+        self.assertIn("Tracker post (your story): hand-off: https://forge.test/pr/1", out)
+        self.assertFalse([call for call in backend.read()["calls"] if call[0] in ("transition", "comment")])
+
+    def test_with_the_publisher_lane_start_open_pr_and_handoff_print_no_move_for_anyone_to_make(self) -> None:
+        fx, backend = self.lane({"start": ["Start work"], "review": ["Submit for review"], "reviewWhen": "pr-open"})
+        code, out = fx.flow("lane-start", "FX-3", "--base", "feature/FX-1", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        wt = fx.main / "lanes/FX-3"
+        outs = [out, self.opened(fx, wt)]
+        code, out = self.handed(fx, wt)
+        self.assertEqual(code, 0, out)
+        outs.append(out)
+        for printed in outs:
+            self.assertNotIn("Tracker move", printed)
+            self.assertNotIn("with your tracker tools", printed)
+        self.assertIn("Tracker post: posted the hand-off update on FX-3.", outs[-1])
+        self.assertNotIn("Tracker post (your story", outs[0], "the publisher posts the start")
+        self.assertFalse((fx.tmp / "flow-log/FX-1.lane-prints.jsonl").exists(), "no log of prints is kept")
 
     # Review move.
 
@@ -1880,19 +2120,6 @@ class LaneCommandTests(RunDeliveryTrackerCommandTests):
     def record(self, fx) -> dict:
         return json.loads(self.harness.sh(sys.executable, "-B", STATE_TOOL, "--dir", fx.tmp / "record", "show").stdout)
 
-    def test_with_a_host_only_tracker_open_pr_and_handoff_print_and_record(self) -> None:
-        fx, backend = self.lane({"start": ["Start work"], "review": ["Submit for review"], "reviewWhen": "pr-open"},
-                                updates="host")
-        wt = self.started(fx)
-        out = self.opened(fx, wt)
-        self.assertIn('Tracker move (your story FX-3): "Submit for review", with your tracker tools.', out)
-        code, out = self.handed(fx, wt)
-        self.assertEqual(code, 0, out)
-        self.assertIn("Tracker post (your story): hand-off: https://forge.test/pr/1", out)
-        printed = [(p.get("move"), p.get("kind")) for p in tp.read_flow(fx.tmp / "flow-log", "FX-1", "lane-prints")]
-        self.assertEqual(printed, [("start", None), ("review", None), (None, "candidate.handed")])
-        self.assertEqual(backend.read()["calls"], [])
-
     def test_in_manual_mode_handoff_posts_nothing_itself(self) -> None:
         fx, backend = self.lane({"start": ["Start work"]}, updates="manual")
         wt = self.started(fx)
@@ -2122,7 +2349,7 @@ class LaneCommandTests(RunDeliveryTrackerCommandTests):
         self.assertNotIn("Post on your own story with your tracker tools: at start", text)
         own = Path(fx.env["RUN_DELIVERY_CONFIG"])
         own.write_text(json.dumps({**json.loads(own.read_text()), "tracker": {
-            **json.loads(own.read_text())["tracker"], "updates": "host"}}))
+            **json.loads(own.read_text())["tracker"], "updates": "manual"}}))
         self.assertEqual(fx.flow("lead-brief", cwd=fx.main)[0], 0)
         self.assertIn("`lane-start` prints it; make it with your tracker tools.",
                       (fx.main / "docs/lane-brief.md").read_text())
@@ -2712,12 +2939,14 @@ class LinearSettingsTests(unittest.TestCase):
         adapter = tp.Adapter(conf, self.tmp)
         self.assertEqual(adapter.prefix[2:], [str(LINEAR_ADAPTER), "--token-env", "FX_LINEAR"])
 
-    def test_a_linear_snapshot_with_no_adapter_named_keeps_the_host_publisher(self) -> None:
-        conf = tp.settings(self.tmp, {}, self.binding("--token-env", "FX_LINEAR",
-                                                     publishers=[{"id": "tracker", "kind": "host"}]))
-        self.assertEqual((conf["mode"], conf["adapter"], conf["host"]), ("host", None, "tracker"))
+    def test_a_linear_snapshot_with_no_adapter_named_implies_the_linear_adapter(self) -> None:
+        publisher = [tp.publisher_entry(".agent-skills/current/skills/run-delivery/scripts/tracker_publisher.py")]
+        conf = tp.settings(self.tmp, {}, self.binding("--token-env", "FX_LINEAR", "--site", "http://127.0.0.1:9",
+                                                     publishers=publisher))
+        self.assertEqual((conf["mode"], conf["adapter"]),
+                         ("publisher", {"name": "linear", "site": "http://127.0.0.1:9", "tokenEnv": "FX_LINEAR"}))
         self.assertIsNone(tp.refusal(conf))
-        self.assertIn("tracker.adapter", tp.refusal(tp.settings(self.tmp, {}, self.binding("--token-env", "FX_LINEAR"))))
+        self.assertIn("no tracker publisher", tp.refusal(tp.settings(self.tmp, {}, self.binding("--token-env", "FX_LINEAR"))))
         self.assertIn("isn't one run-delivery ships (jira, linear)",
                       tp.refusal(tp.settings(self.tmp, {"tracker": {"adapter": "trello"}}, {})))
 

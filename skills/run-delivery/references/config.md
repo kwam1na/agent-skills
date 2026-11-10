@@ -75,15 +75,15 @@ checks may need no file at all.
     "lenses": { "lens.x": { "short": "x", "charter": "docs/review/x.md" } }  // added; the charter is a repository file
   },
   "tracker": {                                // optional
-    "updates": "publisher",                   // publisher | host | manual (below); default: publisher with an
-                                              // adapter, host for a Linear tracker snapshot with none named,
+    "updates": "publisher",                   // publisher | manual (below); default: publisher with an adapter,
                                               // otherwise none
-    "adapter": "jira",                        // a shipped adapter, jira or linear; or "argv": [...], an adopter's own
+    "adapter": "jira",                        // a shipped adapter, jira or linear; or "argv": [...], an adopter's
+                                              // own. Default: the binding's jira or linear trackerSnapshot's kind
     "site": "https://example.atlassian.net", "userEnv": "JIRA_USER", "tokenEnv": "JIRA_TOKEN",
                                               // Jira's: default, the binding's jira trackerSnapshot's flags.
                                               // Linear's: tokenEnv, default the binding's linear
-                                              // trackerSnapshot's --token-env, else LINEAR_API_KEY; site,
-                                              // default https://api.linear.app
+                                              // trackerSnapshot's --token-env, else LINEAR_API_KEY; site, default
+                                              // its --site, else https://api.linear.app
     "project": "APP",                         // where follow-ups are filed; default: the delivery key's prefix
     "followupType": "Task",                   // the issue type a follow-up is filed as
     "transitions": {                          // every status move; absent: none
@@ -352,14 +352,16 @@ How a delivery's tracker updates (the orchestration guide's tracker-update table
   binding names it in `state.publishers`, so it runs whenever the render wrapper runs; `lead-setup` adds it when the
   configuration names an adapter: `{"id": "tracker", "argv": ["python3", "-B",
   ".agent-skills/current/skills/run-delivery/scripts/tracker_publisher.py", "--state-dir", "{stateDirectory}"]}`.
-- **`host`**: a host publisher, `{"id": "tracker", "kind": "host"}`, whose outbox the lead posts with the host's
-  tracker tools. A Linear tracker snapshot with no adapter named keeps it; `"adapter": "linear"` moves the tracker
-  to the publisher.
-- **`manual`**: the lead posts them by hand. Without it, `doctor` fails and `lead-init` refuses a tracker with an
-  adapter but no tracker publisher, or a host mode tracker without a host publisher.
+- **`manual`**: the lead and the lanes make them by hand, as the commands print them. Without it, `doctor` fails and
+  `lead-init` refuses a tracker with an adapter but no tracker publisher, or a tracker the binding reads with none.
 
-**From a host publisher to the tracker publisher.** A record a host publisher posted for has no ledger. The tracker
-publisher's first run over it writes a final `skip`, "published before the tracker publisher", for every entry at or
+A binding whose publisher has a `kind` and no `argv` runs nothing, and nothing posts the updates it once left for the
+lead: the render wrapper refuses it, and `doctor`, `lead-init` and `lead-setup` refuse it naming the fix: replace it
+with run-delivery's tracker publisher (`lead-setup` adds it), and export the tracker's token. Any other
+`tracker.updates` value is refused the same way.
+
+**From updates posted by hand to the tracker publisher.** A record whose updates an earlier generation left for the
+lead to post, and acknowledged with `ack`, has no ledger. The tracker publisher's first run over it writes a final `skip`, "published before the tracker publisher", for every entry at or
 below the `journalThrough` its last `ack` left in `published.json`, and posts nothing for them; the entries after it
 are posted as usual. Only that first run reads it: each seeding line carries the `through` it read, so a run that
 stopped partway finishes with the same value, and a later `ack` covers none of the publisher's entries. A record the
@@ -409,8 +411,8 @@ publisher's move rules, with ledger lines of journal id 0 (`move: "review"`, the
 journals nothing; a refused move writes no line, and running the command again, or `handoff`, retries it. `handoff`
 posts the hand-off update on the story, under its `candidate.handed` entry, holding the ledger's lock across the
 journal write, the post and the line; when the tracker refuses it, the hand-off stands and the publisher posts it
-later. With `tracker.updates` host or manual, the commands print each move and post for the lane to make,
-and in host mode record them in the flow log's `<delivery>.lane-prints.jsonl`. `lead-setup --review-when` records `reviewWhen`;
+later. With `tracker.updates` manual, the commands print each move and post for the lane to make; with the
+publisher, they print none. `lead-setup --review-when` records `reviewWhen`;
 it is never inferred from `review.pr`.
 
 ## The tracker adapter contract (`tracker-adapter/1`)

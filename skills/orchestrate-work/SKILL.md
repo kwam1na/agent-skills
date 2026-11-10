@@ -367,7 +367,9 @@ python3 -B scripts/render_state.py --dir <state directory>
   `static-page`), that reads the validated `{state, journal, stats}` on stdin and
   writes one view on stdout to its `output` inside the state directory. A
   publisher is any argv that puts the same document somewhere a view reads,
-  or a `host` publisher that leaves an outbox for the lead (see below).
+  such as run-delivery's tracker publisher. A publisher with a `kind` and no
+  `argv` runs nothing, and the wrapper refuses the configuration, naming the
+  fix: name the tracker publisher instead.
 - With no configuration it renders both built-ins, `delivery.md` and
   `delivery.html`.
 - It exits 0 when every renderer succeeded and 1 when one failed. A failing
@@ -413,8 +415,8 @@ says so: in the line it prints and at the top of that page.
   this machine only. It answers only requests for its own host and port. `--port 0`,
   the default, picks a free port. Ctrl-C stops it, non-zero, with nothing left
   running.
-- Host-published views, the outbox below, become mirrors for sharing; the
-  live view is the one to watch.
+- Views a host stores with its own tool become mirrors for sharing; the live
+  view is the one to watch.
 
 At every event, such as a hand-off, a merge, a decision or a tracker change,
 run the sync loop in this order:
@@ -544,41 +546,14 @@ run the sync loop in this order:
      reported, and the next pass after the runner stops records it if the
      runner did not.
    - It is idempotent and prints its changes as JSON, or `no drift`.
-3. **Render**, with the wrapper as above. Command publishers run as part of
-   it. A `host` publisher, `{"id": "<id>", "kind": "host"}`, runs nothing: it
-   writes `outbox/outbox.json` in the state directory, holding the record
-   `version`, the `journalThrough` id it reaches, the state and every journal
-   entry not yet acknowledged. Readers ignore fields they do not know, so
-   later projections can join these.
-4. **Publish** the outbox with the host's own tool, for a view whose store
-   only the host can write.
-5. **Acknowledge** what went out:
+3. **Render**, with the wrapper as above. Publishers run as part of it.
+4. **Publish** by hand only for a view whose store the host alone can write:
+   follow [the publishing step](references/orchestration-guide.md#publishing-step).
 
-   ```bash
-   python3 -B scripts/delivery_state.py --dir <state directory> ack
-   ```
-
-   With no `--version` or `--through`, `ack` takes the outbox's own `version`
-   and `journalThrough`. Pass them only without an outbox, and never the
-   record's version that `show` gives: an acknowledgement beyond what the
-   outbox held is refused with `ack_invalid`, naming the outbox's version. The next outbox then carries only later entries. `show` reports a
-   publication or an outbox that lags the record, so an unpublished view is
-   always visible.
-
-A binding names at most one `host` publisher, and its outbox records that
-publisher's id. Rendering never removes an outbox. When the binding no longer
-names its publisher, `show --binding .agents/orchestration.json` reports the
-outbox as orphaned, and it keeps capping `ack` until the lead retires it:
-
-```bash
-python3 -B scripts/delivery_state.py --dir <state directory> outbox --retire <publisher id>
-```
-
-Add `--force` to retire an outbox that cannot be read; no render rewrites one
-whose publisher is gone. The binding given to `show` must keep its state in the
-`--dir` being shown; one from another checkout is refused with
-`binding_invalid`, naming both directories, rather than judging this outbox by
-another record's publishers.
+A record an earlier generation kept with an `outbox/` folder and a
+`published.json` beside it reopens as it is: nothing reads the folder, and
+run-delivery's tracker publisher reads the file once, so nothing it
+acknowledged is posted again.
 
 ## Running the epic
 
@@ -656,8 +631,7 @@ python3 -B scripts/delivery_state.py --dir <state directory> journal --kind revi
   round that finishes before it starts, names no candidate or has no verdict
   is refused. The lead or the lane writes it; the runner never does.
 - `show` prints the validated `{state, journal, stats}` document that
-  renderers read, with a `publication` block saying whether what was
-  published lags it. `stats` is derived, never stored: per queued or planned
+  renderers read, with a `publication` block holding `recoveryPending`. `stats` is derived, never stored: per queued or planned
   candidate, the build, review, wait, check-to-merge and total seconds, the
   rounds and their findings, and `checksSelectedBy`: `lead` or `provider` once
   a binding that enables lead selection has checked it, absent otherwise. A stat whose events are missing is null, never

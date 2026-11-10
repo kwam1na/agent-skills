@@ -462,8 +462,10 @@ before the since time, for a ticket moved into the epic later, needs
 request's title and branch.
 
 **Linear** (tracker): `--kind linear --parent {parent} --token-env
-LINEAR_API_KEY`. The parent's children come from Linear's GraphQL API, paged
-by cursor, with the personal key as the Authorization header; a child listed
+LINEAR_API_KEY [--site https://api.linear.app]`. The parent's children come
+from Linear's GraphQL API at `--site`'s `/graphql`, paged by cursor, with the
+personal key as the Authorization header; run-delivery's Linear adapter posts
+to the same site with the same key. A child listed
 twice is kept once. State types map `triage`, `backlog` and `unstarted` to
 `backlog`, and `started`, `completed` and `canceled` to themselves. The
 summary is the first paragraph under the description's `## Summary` heading,

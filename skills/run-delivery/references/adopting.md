@@ -742,7 +742,7 @@ Where a host offers less otherwise, the workflow takes the path on the right:
 | Host behaviour | Without it |
 | --- | --- |
 | Publishing the evidence page | A local page the operator shares |
-| Tracker moves | A host publisher's outbox, which the lead posts with the host's tracker tools |
+| Tracker moves | `tracker.updates` manual: the commands print each move and post for the lane or lead to make |
 
 ## 10. Operating rules
 
@@ -815,10 +815,10 @@ do. A line marked `skipped` names the check it waits on: fix that one first.
 - **`forge find failed`**: the forge adapter didn't answer. Check its settings and that the forge is reachable, or run
   the check with `--offline`.
 - **`the tracker snapshot or adapter reads`**: export the tracker variables the line names.
-- **`go to a host publisher, but the binding has none`**: set `tracker.adapter` (for Linear, `"linear"`) and run
-  `lead-setup`, which adds run-delivery's tracker publisher; or add a host publisher, `{"id": "tracker", "kind":
-  "host"}`, to the binding's `state.publishers` and post its outbox with the host's tracker tools; or set
-  `tracker.updates` to `"manual"`.
+- **`the binding names a publisher that runs nothing`**: an earlier generation's publisher with a `kind` and no `argv`.
+  Before you switch, post what its outbox still holds and `ack` it under that generation, so nothing it posted is
+  posted again. Then replace it in `state.publishers` with run-delivery's tracker publisher (`lead-setup` adds it),
+  export the tracker's token (`LINEAR_API_KEY` for Linear), and commit the binding.
 - **`these in-app adapters don't resolve`**: install the build, serve or check program the line names, or correct
   `inApp`.
 - **`isn't writable`**: make the in-app lease's folder or the baseline folder writable, or point `inApp` elsewhere.
@@ -846,8 +846,8 @@ do. A line marked `skipped` names the check it waits on: fix that one first.
   Bitbucket.
 - **`the binding has no tracker publisher`**: the binding reads the tracker, but nothing posts the delivery's updates
   and moves to it. A tracker with an adapter, such as Jira or Linear, needs run-delivery's tracker publisher in
-  `state.publishers`; `lead-setup` adds it, so commit that. Another tracker needs that or a host publisher whose
-  outbox the lead publishes. Or set `tracker.updates` to `"manual"` in `.agents/run-delivery.json` to post them by
+  `state.publishers`; `lead-setup` adds it, so commit that. Another tracker needs its own adapter, `tracker.argv`,
+  and the same publisher. Or set `tracker.updates` to `"manual"` in `.agents/run-delivery.json` to post them by
   hand.
 - **`and the runtime needs Node`** or **`is below the runtime's nodeMinimum`**: install Node at the version the line
   names or newer, on `PATH` or under nvm.

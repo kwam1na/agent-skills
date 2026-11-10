@@ -1557,7 +1557,7 @@ class SupervisorPassTests(unittest.TestCase):
 
 
 def tracked(fx: Fixture, backend_class, updates: str | None = None):
-    """The supervised fixture's tracker: a fake one the release's tracker publisher posts to, or a host outbox."""
+    """The supervised fixture's tracker: a fake one the release's tracker publisher posts to."""
     m = fx.main
     backend = backend_class(fx.tmp)
     with backend.edit() as store:
@@ -1572,9 +1572,8 @@ def tracked(fx: Fixture, backend_class, updates: str | None = None):
     binding_path = m / ".agents/orchestration.json"
     binding = json.loads(binding_path.read_text())
     publisher = fx.release / "skills/run-delivery/scripts/tracker_publisher.py"
-    binding["state"]["publishers"] = ([{"id": "tracker", "kind": "host"}] if updates == "host" else
-                                      [{"id": "tracker", "argv": [sys.executable, "-B", str(publisher), "--state-dir",
-                                                                  "{stateDirectory}"], "timeoutSeconds": 120}])
+    binding["state"]["publishers"] = [{"id": "tracker", "argv": [sys.executable, "-B", str(publisher), "--state-dir",
+                                                                 "{stateDirectory}"], "timeoutSeconds": 120}]
     binding_path.write_text(json.dumps(binding, indent=2))
     commit(m, "FX-1: a tracker the publisher posts to")
     sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
@@ -1770,26 +1769,12 @@ class SupervisorTrackerTests(unittest.TestCase):
         self.assertTrue((fx.tmp / "flow-log/FX-1.closed.json").exists(), last)
         self.assertEqual(len([text for text in epic_comments(backend) if "Delivery closed" in text]), 1)
 
-    def test_with_a_host_publisher_the_close_waits_for_the_outbox_ack_and_by_hand_it_doesnt(self) -> None:
-        for updates in ("host", "manual"):
-            with self.subTest(updates=updates):
-                fx, backend = self.fixture(updates=updates)
-                self.closable(fx)
-                ack = lambda: state_tool(fx, "ack", "--version", str(record(fx)["state"]["version"]), "--through",
-                                         str(max(e["id"] for e in record(fx)["journal"])))
-                if updates == "host":
-                    first = self.once(fx)
-                    held = first["closeHeldBy"]
-                    self.assertTrue(any(h.startswith("The host outbox holds") for h in held), held)
-                    self.assertIn(("host outbox", "posting the updates with your tracker tools, then ack"),
-                                  [(i["source"], i["clears"]) for i in first["needsYou"] if i["holding"]])
-                    ack()
-                    last = self.once(fx)
-                    self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)
-                    self.assertFalse((fx.tmp / "flow-log/FX-1.closed.json").exists(), "closed before the outbox was acked")
-                    ack()
-                last = self.once(fx)
-                self.assertTrue((fx.tmp / "flow-log/FX-1.closed.json").exists(), last)
+    def test_by_hand_the_close_doesnt_wait_on_the_tracker(self) -> None:
+        fx, backend = self.fixture(updates="manual")
+        self.closable(fx)
+        last = self.once(fx)
+        self.assertTrue((fx.tmp / "flow-log/FX-1.closed.json").exists(), last)
+        self.assertFalse([i for i in last["needsYou"] if i["holding"] and i["source"].startswith("tracker")], last)
 
     def test_a_running_supervisor_posts_a_command_s_entry_within_one_pass_and_once_across_a_resume(self) -> None:
         fx, backend = self.fixture()
@@ -2560,42 +2545,35 @@ class CloseStoppedPartwayTests(unittest.TestCase):
                 self.assertNotIn("closing", json.loads((fx.tmp / "record/state.json").read_text())["meta"])
                 self.assertTrue(self.status(fx).startswith("supervisor: stopped; the delivery is closed."))
 
-    def test_a_close_waiting_on_the_host_outbox_under_a_live_supervisor_is_its_needs_not_a_stop(self) -> None:
-        fx, self.backend = self.fixture(updates="host")
+    def test_a_close_waiting_on_the_tracker_publisher_under_a_live_supervisor_is_its_needs_not_a_stop(self) -> None:
+        fx, self.backend = self.fixture()
         self.closable(fx)
+        # The tracker refuses the close's own update, transiently, until it is cleared: the close is journaled, and
+        # then waits for the publisher to cover its entry.
+        with self.backend.edit() as store:
+            store["failures"].append({"op": "comment", "ticket": None, "status": 503, "times": -1,
+                                      "contains": "(delivery.closed)"})
         code, out = fx.flow("lead-run", "--resume", cwd=fx.main, env=running(fx))
         self.assertEqual(code, 0, out)
         listed = lambda: json.loads((fx.tmp / "record/needs-you.json").read_text()) if (fx.tmp / "record/needs-you.json").exists() else {}
-        held = lambda: any("outbox" in item["text"] and item["holding"] for item in listed().get("items", []))
-        wait_for(held, "the outbox to hold the close")
-        # Posted and acked by hand, as a host does: the close is journaled, and waits on the outbox for its own entry.
-        # The host acks what the outbox holds, as each version of it is written, never the record's newest entry: a
-        # post-merge fullHealth beside the live supervisor journals base.verified after the outbox was first written.
-        acked: set[tuple[int, int]] = set()
-
-        def ack_and_check() -> bool:
-            if kinds(fx, "delivery.closed"):
-                return True
-            path = fx.tmp / "record/outbox/outbox.json"
-            outbox = json.loads(path.read_text()) if path.exists() else {}
-            pair = (outbox.get("state", {}).get("version"), outbox.get("journalThrough"))
-            if outbox.get("journal") and None not in pair and pair not in acked:
-                # An ack can meet a newer outbox the supervisor just wrote: it's refused, and the next try acks that.
-                with contextlib.suppress(AssertionError):
-                    state_tool(fx, "ack", "--version", str(pair[0]), "--through", str(pair[1]))
-                    acked.add(pair)
-            return False
-        wait_for(ack_and_check, "the supervisor to journal the close")
+        held = lambda: any("tracker publisher hasn't posted" in item["text"] and item["holding"]
+                           for item in listed().get("items", []))
+        wait_for(lambda: bool(kinds(fx, "delivery.closed")), "the supervisor to journal the close")
         wait_for(lambda: held() and listed().get("at", "") > kinds(fx, "delivery.closed")[-1]["at"],
-                 "the supervisor's list to hold the close on the outbox after it was journaled")
+                 "the supervisor's list to hold the close on the publisher after it was journaled")
         needs = json.loads((fx.tmp / "record/needs-you.json").read_text())
-        # What the page reads as a close still running: the list current, its supervisor running, the outbox holding it.
+        # What the page reads as a close still running: the list current, its supervisor running, the publisher holding it.
         self.assertTrue(needs["running"], needs)
         self.assertGreater(datetime.datetime.fromisoformat(needs["staleAfter"].replace("Z", "+00:00")),
                            datetime.datetime.now(datetime.timezone.utc))
         self.assertEqual(self.marks(fx.tmp / "record").get("finished"), None)
         self.assertTrue(self.status(fx).startswith("supervisor: running"))
         self.assertNotIn("stopped partway", self.status(fx))
+        # Only the close's own update was refused: every other entry's reached the tracker.
+        texts = [c["text"] for issue in self.backend.read()["issues"].values() for c in issue["comments"]]
+        self.assertTrue(texts)
+        self.assertFalse([text for text in texts if "(delivery.closed)" in text])
+        self.assertTrue([text for text in texts if "(candidate.merged)" in text])
 
     def test_a_record_without_marks_reads_as_it_did(self) -> None:
         fx = self.closable_fixture()
