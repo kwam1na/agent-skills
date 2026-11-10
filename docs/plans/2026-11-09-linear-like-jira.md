@@ -5,7 +5,8 @@ reviewSlug: linear-like-jira
 # Make Linear work the way Jira does
 
 Epic V26-3332: the four open Linear items, gathered under one epic by the operator's ruling on V26-3269 (2026-11-09), "linear should
-work the same way jira works". Each item's tracker scope and acceptance criteria bind what it does. This plan decides only what the items
+work the same way jira works", and V26-3333, split from V26-3269's Scope 4 because the switch can land only after a release carrying
+V26-3269 is applied. Each item's tracker scope and acceptance criteria bind what it does. This plan decides only what the items
 leave open: how the ruling reads in the corpus, the choices two items share, order, file ownership while another delivery holds some of
 the same files, and how the work reaches `main`.
 
@@ -112,7 +113,7 @@ the same files, and how the work reaches `main`.
    the owner.
 8. **The release and this repository's switch.** After V26-3269 and V26-3261 merge, the lead runs the full suite on macOS with Python
    3.11, tags the next candidate on a commit CI passed as the tip of a push to `main`, and applies it, agreed with the leads of the
-   deliveries running then, whose supervisors restart on it with `lead-run --resume`. V26-3269's last step, by lane 1, then sets
+   deliveries running then, whose supervisors restart on it with `lead-run --resume`. V26-3333, by lane 1 in tier 2, then sets
    `tracker.adapter: "linear"` in `.agents/run-delivery.json`, replaces the binding's host publisher with the tracker publisher, and
    updates `docs/own-deliveries.md`'s "Tracker updates" and "Credentials" (with V26-3261's keychain recipe). That step lands through the
    queue like any change. A record opened under host mode has no ledger, so the publisher's first run over it writes a final `skip`,
@@ -123,7 +124,7 @@ the same files, and how the work reaches `main`.
    before the switch merges, the lead posts every outbox entry still held and runs `ack`, so nothing posted by hand but not acked is
    posted again. The finish line's evidence is the first entry posted after the
    switch: its ledger line, its Linear comment carrying the marker, and a `markers --ticket` read against real Linear returning it,
-   linked on V26-3269.
+   linked on V26-3333.
 
 ## Units and order
 
@@ -133,6 +134,7 @@ qualifier and the connector check, which share nothing with lane 1.
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
 | 1 | 1 | V26-3269, V26-3261 | `skills/run-delivery/`, `skills/orchestrate-work/`, `skills/linear-tracker-adapter/`, `tests/test_run_delivery.py`, `tests/test_run_delivery_tracker.py`, `tests/test_orchestration_render.py`, `tests/test_orchestration_state.py`, `docs/own-deliveries.md`, `tests/test_own_deliveries.py`, `.agents/run-delivery.json`, `.agents/orchestration.json`, `docs/solutions/`, `catalog.json`, `profiles/` |
+| 2 | 1 | V26-3333 | the tier 1 row's files |
 | 1 | 2 | V26-3097, V26-3083 | `scripts/qualify-linear.py`, `tests/test_linear_qualification.py`, `docs/linear-connector-check.md` |
 
 **Another delivery on `main`.** V26-3250 runs at the same time with its own queue. Its lane 1 holds `skills/run-delivery/`,
@@ -149,11 +151,13 @@ outside its own folder. The adapter's rows run a stub HTTP server the test owns,
 
 ### V26-3269. Post a delivery's Linear updates and moves from a publisher, not by hand
 
-Lane 1, tier 1, not blocked. Test-first, per the item and Decisions 1 to 4 and 8. Contract rows run `tracker_linear.py` against a stub
+Lane 1, tier 1, not blocked. Test-first, per the item and Decisions 1 to 4, and Decision 8's seeding. Contract rows run `tracker_linear.py` against a stub
 GraphQL server the test owns, which checks each request's operation name, required variables and `Authorization` header, refusing a
 header that is not exactly the named variable's value with Linear's 401 shape. Rows cover each operation; each failure class (HTTP 429
-and 5xx transient, another 4xx permanent, unreachable, and `errors` at HTTP 200 for `comment`, `transition` with an unknown state and
-`status`, mapped as Decision 2 says, with the publisher's outcome asserted); a missing token variable and a different `--token-env` name;
+and 5xx transient, another 4xx, except 401 and 403, permanent, unreachable, and `errors` at HTTP 200 for `comment`, `transition` with an
+unknown state and `status`, mapped as Decision 2 says, with the publisher's outcome named in each row: an authentication code transient
+with no ledger success line, a forbidden code permanent for that ticket and transient when the whole site refuses too, any other error a
+permanent `failed`); a missing token variable and a different `--token-env` name;
 the marker round trip with the marker on the second page of comments; the comment limit; a failure between a move's two calls, in each
 order, re-run to a ledger that matches the stub with one marker comment; `offered` refusing an earlier workflow type, with the allow side in the same row (In Progress offers In Review and Done,
 and the move is made); and a token that
@@ -163,13 +167,12 @@ action and are in the ledger once; the already-in-target row of Decision 3 runs 
 first run over a host-mode record skips through `journalThrough`. Settings rows: `tracker.adapter: "linear"` gives mode publisher with the
 snapshot's `tokenEnv`, and a Linear snapshot naming `--token-env` with no adapter gives mode host and no refusal. Absence pins cover
 Decision 1's withdrawn wording, and presence pins keep `linear-tracker-adapter`'s MCP-only rule and the generic host-publisher wording.
-Before the switch, the live marker check of Decision 2; after the release applies, the switch and evidence of Decision 8. Files:
+Before it hands off, the live marker check of Decision 2, recorded on the item. The switch is V26-3333's. Files:
 `skills/run-delivery/adapters/`, `skills/run-delivery/scripts/tracker_publisher.py`, `skills/run-delivery/scripts/run_delivery.py`,
 `skills/run-delivery/references/config.md`, `skills/run-delivery/references/adopting.md`, `skills/run-delivery/SKILL.md`,
-`tests/test_run_delivery_tracker.py`, `tests/test_run_delivery.py`, `catalog.json`, `profiles/`, `.agents/run-delivery.json`,
-`.agents/orchestration.json`, `docs/own-deliveries.md` and `tests/test_own_deliveries.py`. Sensors: `tests/test_run_delivery_tracker.py`,
-`tests/test_run_delivery.py`, `tests/test_own_deliveries.py`, `tests/test_linear_qualification.py`, `scripts/validate-registry.py`. The
-item's compounding note goes in `docs/solutions/`.
+`tests/test_run_delivery_tracker.py`, `tests/test_run_delivery.py`, `catalog.json` and `profiles/`. Sensors:
+`tests/test_run_delivery_tracker.py`, `tests/test_run_delivery.py`, `tests/test_linear_qualification.py`, `scripts/validate-registry.py`.
+The item's compounding note goes in `docs/solutions/`.
 
 ### V26-3261. Make the host outbox a list of posts and moves, and document tracker credentials for an agent shell
 
@@ -182,6 +185,16 @@ recipe in `docs/own-deliveries.md`, and the orchestrate-work guide notes the for
 `skills/run-delivery/scripts/tracker_publisher.py`, `skills/run-delivery/scripts/run_delivery.py`, `tests/test_run_delivery_tracker.py`,
 `tests/test_orchestration_render.py`, `tests/test_run_delivery.py` and `docs/own-deliveries.md`. Sensors: `tests/test_run_delivery_tracker.py`,
 `tests/test_orchestration_render.py`, `tests/test_run_delivery.py`, `scripts/validate-registry.py`.
+
+### V26-3333. Post this repository's own deliveries' Linear updates through the tracker publisher
+
+Lane 1, tier 2, after V26-3269 and V26-3261. Per the item and Decision 8, it starts once the lead has tagged, published, verified and
+applied the release candidate. Test-first: a `StandingBinding` row in `tests/test_own_deliveries.py` pins `tracker.adapter: "linear"`
+and the tracker publisher in the committed binding, with no host publisher. Then `.agents/run-delivery.json` and `.agents/orchestration.json`
+switch, and `docs/own-deliveries.md`'s "Tracker updates" and "Credentials" say the publisher posts with `LINEAR_API_KEY` and give V26-3261's
+keychain-and-`~/.zshenv` recipe. The lead drains and acks the host outbox immediately before it merges, and records the finish-line
+evidence of Decision 8 on the item. Files: `.agents/run-delivery.json`, `.agents/orchestration.json`, `docs/own-deliveries.md` and
+`tests/test_own_deliveries.py`. Sensors: `tests/test_own_deliveries.py`, `scripts/validate-registry.py`, `run_delivery.py doctor`.
 
 ### V26-3097. Widen what the Linear qualifier's transport sensor proves
 
@@ -201,7 +214,7 @@ the deliberately failing run's notification, `scripts/validate-registry.py`.
 
 ## Execution posture
 
-`test-first` for V26-3269, V26-3261 and V26-3097, and `sensor-only` for V26-3083. Lanes work to the focused lane profile: no full suite in
+`test-first` for V26-3269, V26-3261, V26-3333 and V26-3097, and `sensor-only` for V26-3083. Lanes work to the focused lane profile: no full suite in
 a lane. The queue runs the selected checks on the synced head, `fullHealth` runs after each merge, and the lead runs the full suite before
 tagging.
 
@@ -216,5 +229,5 @@ tagging.
 
 ## Tracking
 
-The epic and its four items are in Linear. Until the switch, the lead posts at each milestone with the host's Linear tools and moves
+The epic and its five items are in Linear. Until the switch, the lead posts at each milestone with the host's Linear tools and moves
 items to their final state. After it, the tracker publisher does.
