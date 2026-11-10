@@ -108,9 +108,9 @@ proceeds and the lead notes the gap in its close-out.
 Where the repository runs run-delivery with its tracker publisher in the
 binding, run-delivery's tracker publisher posts every update in this table,
 once each, from its own ledger, and makes the moves its configuration names:
-the lead posts none of them by hand. A tracker reachable only through the
-host gets them through a host publisher's outbox instead, which the lead
-posts as the publishing step says.
+the lead posts none of them by hand. A binding with a host publisher instead
+gets them through its outbox, which the lead posts as the publishing step
+says.
 
 | Journal kind | Tracker update |
 | --- | --- |

@@ -76,10 +76,14 @@ checks may need no file at all.
   },
   "tracker": {                                // optional
     "updates": "publisher",                   // publisher | host | manual (below); default: publisher with an
-                                              // adapter, host for a Linear tracker snapshot, otherwise none
-    "adapter": "jira",                        // the shipped Jira adapter; or "argv": [...], an adopter's own adapter
+                                              // adapter, host for a Linear tracker snapshot with none named,
+                                              // otherwise none
+    "adapter": "jira",                        // a shipped adapter, jira or linear; or "argv": [...], an adopter's own
     "site": "https://example.atlassian.net", "userEnv": "JIRA_USER", "tokenEnv": "JIRA_TOKEN",
-                                              // Jira's: default, the binding's jira trackerSnapshot's flags
+                                              // Jira's: default, the binding's jira trackerSnapshot's flags.
+                                              // Linear's: tokenEnv, default the binding's linear
+                                              // trackerSnapshot's --token-env, else LINEAR_API_KEY; site,
+                                              // default https://api.linear.app
     "project": "APP",                         // where follow-ups are filed; default: the delivery key's prefix
     "followupType": "Task",                   // the issue type a follow-up is filed as
     "transitions": {                          // every status move; absent: none
@@ -348,10 +352,17 @@ How a delivery's tracker updates (the orchestration guide's tracker-update table
   binding names it in `state.publishers`, so it runs whenever the render wrapper runs; `lead-setup` adds it when the
   configuration names an adapter: `{"id": "tracker", "argv": ["python3", "-B",
   ".agent-skills/current/skills/run-delivery/scripts/tracker_publisher.py", "--state-dir", "{stateDirectory}"]}`.
-- **`host`**: a tracker reachable only through the host's connector (Linear, by this corpus's rule) uses a host
-  publisher, `{"id": "tracker", "kind": "host"}`, whose outbox the lead posts with the host's tracker tools.
+- **`host`**: a host publisher, `{"id": "tracker", "kind": "host"}`, whose outbox the lead posts with the host's
+  tracker tools. A Linear tracker snapshot with no adapter named keeps it; `"adapter": "linear"` moves the tracker
+  to the publisher.
 - **`manual`**: the lead posts them by hand. Without it, `doctor` fails and `lead-init` refuses a tracker with an
-  adapter but no tracker publisher, or a host-only tracker without a host publisher.
+  adapter but no tracker publisher, or a host mode tracker without a host publisher.
+
+**From a host publisher to the tracker publisher.** A record a host publisher posted for has no ledger. The tracker
+publisher's first run over it writes a final `skip`, "published before the tracker publisher", for every entry at or
+below the `journalThrough` its last `ack` left in `published.json`, and posts nothing for them; the entries after it
+are posted as usual. A `published.json` acknowledged before the record's first entry belongs to an earlier record and
+is ignored, and one that can't be read stops the run until it is repaired.
 
 **The ledger.** The publisher keeps `tracker-published.jsonl` beside the record, one JSON line per journal id and
 outcome: `{"journal", "init", "outcome", "writer", "at", "ticket"?, "action"?, "move"?, "transition"?, "reason"?, "error"?,
@@ -395,8 +406,8 @@ publisher's move rules, with ledger lines of journal id 0 (`move: "review"`, the
 journals nothing; a refused move writes no line, and running the command again, or `handoff`, retries it. `handoff`
 posts the hand-off update on the story, under its `candidate.handed` entry, holding the ledger's lock across the
 journal write, the post and the line; when the tracker refuses it, the hand-off stands and the publisher posts it
-later. With a tracker reachable only through the host, the commands print each move and post for the lane to make,
-and record them in the flow log's `<delivery>.lane-prints.jsonl`. `lead-setup --review-when` records `reviewWhen`;
+later. With `tracker.updates` host or manual, the commands print each move and post for the lane to make,
+and in host mode record them in the flow log's `<delivery>.lane-prints.jsonl`. `lead-setup --review-when` records `reviewWhen`;
 it is never inferred from `review.pr`.
 
 ## The tracker adapter contract (`tracker-adapter/1`)
@@ -419,6 +430,25 @@ A failure exits non-zero and prints `{"error", "httpStatus"}`, `httpStatus` null
 shipped Jira adapter, `tracker_jira.py` in the skill's adapters folder, takes `--site`, `--user-env` and `--token-env` before the operation,
 as the delivery-views Jira snapshot does; it stores markers as issue properties and on the comment or move itself,
 and labels follow-ups, which it finds by JQL within the project.
+
+The shipped Linear adapter, `tracker_linear.py` beside it, takes `--token-env` (default `LINEAR_API_KEY`) before the
+operation, and sends that personal key to Linear's GraphQL API as it is, as the delivery-views Linear snapshot does.
+It keeps this contract exactly:
+
+- A status is a workflow state on the ticket's team. `status` lists each state as a transition named for it, `to` the
+  same name, `offered` only for a state whose workflow type is the current one's or later (triage, backlog,
+  unstarted, started, completed, canceled), and none once the ticket is completed or canceled. So a story moves from
+  In Progress to In Review or Done, but a replayed start move never sends a Done ticket back.
+- Linear has no per-issue properties, so a marker is carried in the comment body, as a trailing
+  `<!-- run-delivery:<marker> -->`. `markers --ticket` reads every page of the ticket's comments.
+- A move is the state update, then a short comment carrying its marker, in that order: a failure between the two
+  leaves the ticket in its target status with no marker, which the publisher reads as made by someone else.
+- `--project` is the team key; `create` labels the item with its marker, making the label when the workspace has
+  none, and ignores `--type`, as Linear has no issue types.
+- `commentLimit` is 99,000 UTF-16 code units: Linear refuses a body over 100,000, and the rest is the marker's room.
+- Linear reports a failure as GraphQL `errors`, at HTTP 200 or otherwise. The adapter maps it whatever the HTTP status:
+  `RATELIMITED` to 429, `AUTHENTICATION_ERROR` to 401 and `FORBIDDEN` to 403, so the publisher classes them as it
+  does Jira's, and any other error to 400, a permanent `failed`. An answer carrying `errors` is never success.
 
 ## The in-app check contract
 

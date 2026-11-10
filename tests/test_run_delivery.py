@@ -5361,7 +5361,7 @@ TROUBLESHOOTING_KEYS = [
     "no gates are declared", "these don't resolve", "isn't ignored by git", "no tracker issue URL",
     "review.pr is configured, but", "gh isn't installed", "gh isn't signed in",
     "no token variable for the Bitbucket adapter", "the Bitbucket adapter reads its token from it", "forge find failed",
-    "the tracker snapshot reads", "reachable only through the host", "these in-app adapters don't resolve", "isn't writable",
+    "the tracker snapshot or adapter reads", "go to a host publisher, but the binding has none", "these in-app adapters don't resolve", "isn't writable",
     "the in-app adapters break the contract", "lease held by", "video evidence needs both", "which video evidence uses",
     "needs Node 22.6 or newer", "no runtime loader", "harness.config.ts not read", "is missing (lead-setup writes it)",
     "stories without a lane", "lanes own the same files", "fails on", "isn't a valid delivery-plan/1",
