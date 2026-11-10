@@ -34,13 +34,14 @@ assemble briefs, round files or records by hand, and don't edit what they write.
 
 | Lane | Stories | Owns |
 | --- | --- | --- |
-| lane-1 | V26-3269, V26-3334, V26-3333 | `skills/run-delivery/*`, `skills/orchestrate-work/*`, `skills/delivery-views/*`, `skills/linear-tracker-adapter/*`, `tests/test_run_delivery.py`, `tests/test_run_delivery_tracker.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_orchestration_render.py`, `tests/test_orchestration_state.py`, `tests/test_orchestration_adopter.py`, `tests/fixtures/orchestration-adopter/*`, `tests/test_merge_queue.py`, `tests/delivery_views_page/*`, `docs/solutions/*`, `catalog.json`, `profiles/*`, `provenance.lock.json` |
-| lane-2 | V26-3097, V26-3083 | `scripts/qualify-linear.py`, `tests/test_linear_qualification.py`, `docs/linear-connector-check.md` |
+| lane-1 | V26-3269, V26-3334, V26-3339, V26-3333 | `skills/run-delivery/*`, `skills/orchestrate-work/*`, `skills/delivery-views/*`, `skills/linear-tracker-adapter/*`, `tests/test_run_delivery.py`, `tests/test_run_delivery_tracker.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_orchestration_render.py`, `tests/test_orchestration_state.py`, `tests/test_orchestration_adopter.py`, `tests/fixtures/orchestration-adopter/*`, `tests/test_merge_queue.py`, `tests/delivery_views_page/*`, `docs/solutions/*`, `catalog.json`, `profiles/*`, `provenance.lock.json`, `scripts/validate-registry.py`, `scripts/build-release.py`, `tests/test_registry.py`, `tests/test_delivery_views_snapshots.py`, `tests/test_delivery_views_render.py`, `tests/test_core_boundary.py`, `tests/test_review_bound_corpus.py`, `tests/test_release_integration.py` |
+| lane-2 | V26-3097, V26-3083 | `scripts/qualify-linear.py`, `tests/test_linear_qualification.py`, `docs/linear-connector-check.md`, `README.md`, `tests/test_provider_qualification.py`, `tests/test_qualification.py` |
 
 | Story | Label | Pinned request patterns | In-app checks its hand-off needs |
 | --- | --- | --- | --- |
 | V26-3269 | V26-3269 | - | none |
 | V26-3334 | V26-3334 | - | none |
+| V26-3339 | V26-3339 | - | none |
 | V26-3333 | V26-3333 | - | none |
 | V26-3097 | V26-3097 | - | none |
 | V26-3083 | V26-3083 | - | none |
