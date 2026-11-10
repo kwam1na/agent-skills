@@ -1280,6 +1280,23 @@ class LinearQualificationTests(unittest.TestCase):
         # The on-demand check keeps its own wording; the scheduled run is read from its own section.
         self.assertIn("It gates nothing and retains no attestation.", document)
         self.assertIn("## Scheduled run", document)
+        # The on-demand check is what a person runs by hand, so its whole text, steps included, is pinned exactly.
+        on_demand = document[:document.index("## Scheduled run")].strip()
+        self.assertEqual(re.findall(r"(?<= )(\d+)\. ", on_demand), ["1", "2", "3", "4", "5", "6"])
+        self.assertEqual(on_demand, (
+            "# Linear connector check Run this by hand when the host's Linear connector changes, or when "
+            "Linear-facing skill text changes, such as `skills/linear-tracker-adapter/` or a workflow that reaches "
+            "the tracker through it. Offline qualification proves the adapter's boundary, not that a live connector "
+            "works. It gates nothing and retains no attestation. No release waits for it, and its result is not "
+            "evidence for one. In a host with the connector configured, on clearly disposable work: 1. Choose a "
+            "random marker and search for it, expecting nothing. 2. Create a primary issue and a dependency issue, "
+            "each carrying the marker. 3. Read both, update one, and search for the marker again, expecting both. "
+            "4. Relate them, and read the relation back. 5. Reconcile: confirm each operation's result by reading "
+            "it rather than trusting the response. 6. Cancel both issues. If a step fails, or the connector answers "
+            "differently from `skills/linear-tracker-adapter/references/adapter-contract.json`, report it as a "
+            "defect against the adapter or the skill text that changed. Keep no host payloads, identifiers or "
+            "credentials from the run in this repository."
+        ))
         # The section runs from its heading to the next one, so a phrase moved under a later heading fails.
         start = document.index("## Scheduled run")
         following = document.find(" ## ", start + 1)
