@@ -361,8 +361,11 @@ How a delivery's tracker updates (the orchestration guide's tracker-update table
 **From a host publisher to the tracker publisher.** A record a host publisher posted for has no ledger. The tracker
 publisher's first run over it writes a final `skip`, "published before the tracker publisher", for every entry at or
 below the `journalThrough` its last `ack` left in `published.json`, and posts nothing for them; the entries after it
-are posted as usual. A `published.json` acknowledged before the record's first entry belongs to an earlier record and
-is ignored, and one that can't be read stops the run until it is repaired.
+are posted as usual. Only that first run reads it: each seeding line carries the `through` it read, so a run that
+stopped partway finishes with the same value, and a later `ack` covers none of the publisher's entries. A record the
+publisher has already written other lines for is never seeded, and a lane or lead command's own lines don't count. A
+`published.json` acknowledged before the record's first entry belongs to an earlier record and is ignored, and one that
+can't be read stops the run until it is repaired.
 
 **The ledger.** The publisher keeps `tracker-published.jsonl` beside the record, one JSON line per journal id and
 outcome: `{"journal", "init", "outcome", "writer", "at", "ticket"?, "action"?, "move"?, "transition"?, "reason"?, "error"?,

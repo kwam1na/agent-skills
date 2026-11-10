@@ -50,6 +50,7 @@ TRANSIENT = (401, 409, 423, 429)
 LINEAR_TOKEN_ENV = "LINEAR_API_KEY"
 # What a host publisher's `ack` left beside the record: the last journal entry it published.
 PUBLISHED = "published.json"
+SEEDED = "published before the tracker publisher"
 JIRA_KEY = re.compile(r"^([A-Z][A-Z0-9_]*)-[0-9]+$")
 TOOL = Path(__file__).resolve().parent.parent
 
@@ -725,8 +726,17 @@ class Publisher:
         return False
 
     def published_through(self) -> int:
-        """The last journal entry a host publisher's `ack` recorded for this record, or 0. One acknowledged before the
-        record's first entry belongs to an earlier record."""
+        """The last journal entry a host publisher's `ack` recorded for this record, or 0. Only the publisher's first
+        run over the record reads `published.json`: its seeding lines carry the value it read, so a run that stopped
+        partway finishes with it, and a later `ack` never covers an entry the publisher hasn't. A record the publisher
+        has written other lines for was never seeded. One acknowledged before the record's first entry belongs to an
+        earlier record."""
+        own = [line for line in self.ledger if line.get("init") == self.init and line.get("writer") == "publisher"]
+        seeded = [line["through"] for line in own if line.get("reason") == SEEDED and isinstance(line.get("through"), int)]
+        if seeded:
+            return max(seeded)
+        if own:
+            return 0
         path = self.state_dir / PUBLISHED
         if not path.exists():
             return 0
@@ -752,7 +762,7 @@ class Publisher:
                 continue
             if entry["id"] <= through:
                 # Posted by the host publisher this record had before: never posted again.
-                self.write(entry, "skip", final=True, reason="published before the tracker publisher")
+                self.write(entry, "skip", final=True, reason=SEEDED, through=through)
                 continue
             try:
                 try:

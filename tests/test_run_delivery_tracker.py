@@ -2502,18 +2502,66 @@ class LinearPublisherTests(unittest.TestCase):
         d.ticket("EP-2")
         entry = d.entry("candidate.handed", "EP-2")
         path = d.state_dir / "published.json"
-        path.write_text(json.dumps({"version": 9, "journalThrough": 50, "at": stamp(-100)}))
-        self.published(d)
-        self.assertEqual(d.outcomes(entry["id"]), ["comment"], "acknowledged before this record began")
-        later = d.entry("candidate.merged", "EP-2")
         path.write_text("{not json")
         code, out = d.publish()
         self.assertEqual(code, 1, out)
         self.assertIn("published.json is malformed", out)
-        self.assertEqual(d.lines(later["id"]), [])
-        path.unlink()
+        self.assertEqual(d.ledger(), [], "nothing is seeded or posted from a file that can't be read")
+        path.write_text(json.dumps({"version": 9, "journalThrough": 50, "at": stamp(-100)}))
         self.published(d)
-        self.assertEqual(d.outcomes(later["id"]), ["comment"])
+        self.assertEqual(d.outcomes(entry["id"]), ["comment"], "acknowledged before this record began")
+
+    def test_only_the_first_run_seeds_and_a_later_ack_covers_nothing(self) -> None:
+        d = self.delivery({"start": ["In Progress"]})
+        d.ticket("EP-2")
+        posted = d.entry("candidate.handed", "EP-2", "Posted by the host publisher")
+        path = d.state_dir / "published.json"
+        path.write_text(json.dumps({"version": 3, "journalThrough": posted["id"], "at": stamp(d.clock + 1)}))
+        self.published(d)
+        self.assertEqual(d.lines(posted["id"])[0]["reason"], "published before the tracker publisher")
+        # A host publisher beside it acknowledges past a story still waiting for its start, and past an entry a
+        # transient failure held back: neither is taken for one it posted.
+        assigned = d.entry("lane.assigned", "EP-2", lane="lane-1")
+        held = d.entry("lease.granted", "EP-2", "Held back")
+        self.inject(d, "Comments", status=503, ticket="EP-2")
+        self.assertEqual(d.publish()[0], 1)
+        path.write_text(json.dumps({"version": 9, "journalThrough": held["id"], "at": stamp(d.clock + 1)}))
+        self.published(d)
+        d.lane_start("EP-2")
+        self.published(d)
+        self.assertEqual(d.outcomes(assigned["id"]), ["transition", "comment"])
+        self.assertEqual(d.outcomes(held["id"]), ["comment"])
+        self.assertEqual(d.status("EP-2"), "In Progress")
+        self.assertFalse([line for line in d.ledger() if line["journal"] in (assigned["id"], held["id"])
+                          and line.get("reason") == "published before the tracker publisher"])
+
+    def test_a_command_line_before_the_first_run_doesnt_end_the_seeding_and_a_cut_seeding_finishes(self) -> None:
+        for case in ("a lane command's line first", "a seeding cut short"):
+            with self.subTest(case):
+                d = self.delivery()
+                d.ticket("EP-2")
+                first = d.entry("candidate.handed", "EP-2", "Posted by the host publisher")
+                second = d.entry("candidate.stopped", "EP-2", "Posted by the host publisher too")
+                after = d.entry("candidate.merged", "EP-2", "After the switch")
+                (d.state_dir / "published.json").write_text(json.dumps(
+                    {"version": 4, "journalThrough": second["id"], "at": stamp(d.clock + 1)}))
+                if case == "a seeding cut short":
+                    tp.append_ledger(d.state_dir, {"journal": 1, "init": d.init(), "outcome": "skip",
+                                                   "writer": "publisher", "final": True,
+                                                   "reason": "published before the tracker publisher",
+                                                   "through": second["id"]})
+                    # The ack the cut run read is the one it finishes with, whatever the file says now.
+                    (d.state_dir / "published.json").write_text(json.dumps(
+                        {"version": 5, "journalThrough": after["id"], "at": stamp(d.clock + 1)}))
+                else:
+                    lane = d.entry("candidate.handed", "EP-2", "Handed off by its lane")
+                    d.command_line(lane, action="comment")
+                self.published(d)
+                for entry in (first, second):
+                    self.assertEqual([(line["outcome"], line.get("reason")) for line in d.lines(entry["id"])],
+                                     [("skip", "published before the tracker publisher")], entry)
+                self.assertEqual(d.outcomes(after["id"]), ["comment"])
+                self.assertEqual(len(d.comments("EP-2")), 1, "only the entry after journalThrough is posted")
 
     def test_no_output_log_or_ledger_line_carries_the_key(self) -> None:
         d = self.delivery({"start": ["In Progress"]})
