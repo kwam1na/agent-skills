@@ -28,14 +28,15 @@ on V26-3083 that its AC3 means no open entity is left (Decision 7). Review again
 V26-3333's finish-line evidence after the switch) use `LINEAR_API_KEY` from your environment against an item of this delivery, and are
 recorded on the item they belong to. Never write the key, or a payload carrying it, anywhere in the repository.
 
-**Lane 1: V26-3269, then V26-3261, then V26-3333 in tier 2.** V26-3333 starts only when the lead says the release candidate carrying
-V26-3269 and V26-3261 is applied here. The lead drains and acks the host outbox immediately before V26-3333 merges.
+**Lane 1: V26-3269, then V26-3334, then V26-3333 in tier 2.** V26-3334 removes the host publisher mode (Decision 5); name every host row
+you delete or replace in its hand-off. V26-3333 starts only when the lead says the major release candidate is tagged and published; it
+applies it and switches the binding in one change, and the lead drains and acks the host outbox immediately before it merges.
 
 **Lane 2: V26-3097, then V26-3083.** V26-3083's routine is created by the lead. Hand off the documentation with its pins; the lead
 records the two run results on the item.
 
-**Another delivery.** V26-3250 runs on `main` at the same time, and its lane 1 holds `skills/run-delivery/`, `skills/orchestrate-work/`
-and their tests, and its lane 2 holds `.agents/orchestration.json`, `docs/own-deliveries.md` and `tests/test_own_deliveries.py`. Work
+**Another delivery.** V26-3250 runs on `main` at the same time, and its lane 1 holds `skills/run-delivery/`, `skills/orchestrate-work/`,
+`skills/delivery-views/` and their tests, and its lane 2 holds `.agents/orchestration.json`, `docs/own-deliveries.md` and `tests/test_own_deliveries.py`. Work
 and review freely. When your story is ready, hand off as usual: the lead holds the queue on a shared file until the other delivery's
 candidate on it has merged, and may send your story back for a new round if a merge moved its files. Never merge `main` into your
 branch yourself, and rebase only when git reports a conflict.
