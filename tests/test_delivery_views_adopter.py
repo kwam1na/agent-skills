@@ -43,6 +43,7 @@ SECRETS = tuple(secret for user, token in (("JIRA_EMAIL", "JIRA_API_TOKEN"), ("B
                 for secret in (CREDENTIALS[token],
                                base64.b64encode(f"{CREDENTIALS[user]}:{CREDENTIALS[token]}".encode()).decode()))
 SEARCH = "https://example.atlassian.net/rest/api/3/search/jql?"
+PARENT = "https://example.atlassian.net/rest/api/3/issue/APP-10?fields=status"
 API = "https://api.bitbucket.org/2.0/repositories/example/app/"
 
 
@@ -107,6 +108,11 @@ def _exchange(url: str, body: object, status: int = 200, method: str = "GET") ->
     return {"method": method, "url": url, "status": status, "headers": {}, "body": body}
 
 
+def expect_taken(case: unittest.TestCase, result: dict) -> None:
+    """A snapshot step's result says it took the snapshot: it exits 0 even when its command failed."""
+    case.assertTrue(result.get("ok") and result.get("taken"), result)
+
+
 class OutsideAdopterTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -160,11 +166,15 @@ class OutsideAdopterTests(unittest.TestCase):
         snapshots = adopter.root / "snapshots"
         snapshots.mkdir()
 
+        # The replay answers the children's pages only: the parent's own issue, read once after them, is unreachable.
+        # That leaves the parent's state unknown and still takes the children's snapshot.
         taken = adopter.state_tool("tracker-snapshot", "--binding", ".agents/orchestration.json", "--output",
                                    str(snapshots / "tracker.json"),
                                    replay=[_exchange(SEARCH, JIRA["page-1"]), _exchange(SEARCH, JIRA["page-2"])])
         self.assertTrue(taken["taken"], taken)
+        self.assertEqual([request["url"] for request in adopter.requests()][-1], PARENT)
         tracker = json.loads((snapshots / "tracker.json").read_text(encoding="utf-8"))
+        self.assertNotIn("parent", tracker)
         self.assertEqual({item["subject"]: item["state"] for item in tracker["items"]},
                          {"APP-11": "backlog", "APP-12": "started", "APP-13": "completed", "APP-14": "canceled"})
         reconciled = adopter.state_tool("reconcile", "--snapshot", str(snapshots / "tracker.json"))
@@ -197,12 +207,13 @@ class OutsideAdopterTests(unittest.TestCase):
         self.assertEqual(planned["APP-12"].get("changeRequest"),
                          "https://bitbucket.org/example/app/pull-requests/34")
 
-        # Every recorded answer was asked for, in order, with credentials sent only to each provider's own
-        # origin; and no credential, raw or encoded, was written anywhere.
+        # Every recorded answer was asked for, in order, and the parent's issue once after the children, with
+        # credentials sent only to each provider's own origin; and no credential, raw or encoded, was written anywhere.
         requests = adopter.requests()
-        self.assertEqual([request["authorization"] for request in requests], ["Basic"] * 6)
-        for request, prefix in zip(requests, (SEARCH, SEARCH, API + "pullrequests?", API + "pullrequests?page=2",
-                                              API + "commit/aaaaaaaaaaaa", API + "commit/cccccccccccc")):
+        prefixes = (SEARCH, SEARCH, PARENT, API + "pullrequests?", API + "pullrequests?page=2",
+                    API + "commit/aaaaaaaaaaaa", API + "commit/cccccccccccc")
+        self.assertEqual([request["authorization"] for request in requests], ["Basic"] * len(prefixes))
+        for request, prefix in zip(requests, prefixes, strict=True):
             self.assertTrue(request["url"].startswith(prefix), request["url"])
         self.assertNotIn("nextPageToken", requests[0]["url"])
         self.assertIn("nextPageToken=token-page-2", requests[1]["url"])
@@ -248,17 +259,23 @@ class OutsideAdopterTests(unittest.TestCase):
                            json.dumps({"meta": {"trackerParent": "APP-10"}}))
         snapshots = adopter.root / "snapshots"
         snapshots.mkdir(exist_ok=True)
-        adopter.state_tool("tracker-snapshot", "--binding", ".agents/orchestration.json", "--output",
-                           str(snapshots / "tracker.json"),
-                           replay=[_exchange(SEARCH, jira["page-1"]), _exchange(SEARCH, jira["page-2"])])
+        # The children's pages, then the parent's own issue, which the snapshot reads once by its key. The step is
+        # best-effort and exits 0 when its command fails, so whether it took the snapshot is read from its result.
+        taken = adopter.state_tool("tracker-snapshot", "--binding", ".agents/orchestration.json", "--output",
+                                   str(snapshots / "tracker.json"), replay=[
+                                       _exchange(SEARCH, jira["page-1"]), _exchange(SEARCH, jira["page-2"]),
+                                       _exchange(PARENT, {"key": "APP-10", "fields": {"status": {
+                                           "name": "In Progress", "statusCategory": {"key": "indeterminate"}}}})])
+        expect_taken(self, taken)
         adopter.state_tool("reconcile", "--snapshot", str(snapshots / "tracker.json"))
-        adopter.state_tool("forge-snapshot", "--binding", ".agents/orchestration.json", "--output",
-                           str(snapshots / "forge.json"), replay=[
-                               _exchange(API + "pullrequests?", bitbucket["page-1"]),
-                               _exchange(API + "pullrequests?page=2", bitbucket["page-2"]),
-                               _exchange(API + "commit/aaaaaaaaaaaa", bitbucket["commit-a"]),
-                               _exchange(API + "commit/cccccccccccc", bitbucket["commit-c"]),
-                           ])
+        taken = adopter.state_tool("forge-snapshot", "--binding", ".agents/orchestration.json", "--output",
+                                   str(snapshots / "forge.json"), replay=[
+                                       _exchange(API + "pullrequests?", bitbucket["page-1"]),
+                                       _exchange(API + "pullrequests?page=2", bitbucket["page-2"]),
+                                       _exchange(API + "commit/aaaaaaaaaaaa", bitbucket["commit-a"]),
+                                       _exchange(API + "commit/cccccccccccc", bitbucket["commit-c"]),
+                                   ])
+        expect_taken(self, taken)
         adopter.state_tool("reconcile", "--snapshot", str(snapshots / "tracker.json"), "--snapshot",
                            str(snapshots / "forge.json"))
 

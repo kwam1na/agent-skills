@@ -34,8 +34,8 @@ assemble briefs, round files or records by hand, and don't edit what they write.
 
 | Lane | Stories | Owns |
 | --- | --- | --- |
-| lane-1 | V26-3276, V26-3256, V26-3263, V26-3257, V26-3310 | `skills/run-delivery/*`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_plan_review.py`, `tests/test_run_delivery_tracker.py`, `skills/plan-work/*`, `catalog.json`, `profiles/*` |
-| lane-2 | V26-3259, V26-3309 | `skills/orchestrate-work/*`, `tests/test_orchestration_state.py`, `tests/test_orchestration_render.py`, `tests/test_merge_queue.py`, `tests/test_lead_wait.py`, `tests/test_registry.py`, `skills/delivery-views/*`, `tests/test_delivery_views_page.py`, `tests/test_delivery_views_snapshots.py`, `tests/delivery_views_page/*`, `tests/fixtures/delivery-views/*`, `docs/solutions/*` |
+| lane-1 | V26-3276, V26-3256, V26-3263, V26-3257, V26-3310, V26-3331 | `skills/run-delivery/*`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_plan_review.py`, `tests/test_run_delivery_tracker.py`, `skills/plan-work/*`, `catalog.json`, `profiles/*`, `skills/orchestrate-work/*`, `tests/test_orchestration_state.py`, `tests/test_orchestration_render.py`, `tests/test_merge_queue.py`, `tests/test_lead_wait.py`, `tests/test_registry.py`, `skills/delivery-views/*`, `tests/test_delivery_views_page.py`, `tests/test_delivery_views_snapshots.py`, `tests/delivery_views_page/*`, `tests/fixtures/delivery-views/*`, `docs/solutions/*`, `provenance.lock.json`, `tests/test_delivery_views_adopter.py` |
+| lane-2 | V26-3259, V26-3309 | `.agents/orchestration.json`, `tests/test_own_deliveries.py`, `docs/own-deliveries.md` |
 
 | Story | Label | Pinned request patterns | In-app checks its hand-off needs |
 | --- | --- | --- | --- |
@@ -46,6 +46,7 @@ assemble briefs, round files or records by hand, and don't edit what they write.
 | V26-3257 | V26-3257 | - | none |
 | V26-3309 | V26-3309 | - | none |
 | V26-3310 | V26-3310 | - | none |
+| V26-3331 | V26-3331 | - | none |
 
 ## The focused lane profile
 

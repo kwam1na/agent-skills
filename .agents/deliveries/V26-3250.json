@@ -35,7 +35,8 @@
         "tests/delivery_views_page/*",
         "tests/fixtures/delivery-views/*",
         "docs/solutions/*",
-        "provenance.lock.json"
+        "provenance.lock.json",
+        "tests/test_delivery_views_adopter.py"
       ]
     },
     "lane-2": {
@@ -122,6 +123,21 @@
         {
           "id": "v26-3310-done",
           "text": "From a lead worktree on lead/<key> at the base tip, lead-plan approval and change each commit the delivery file and the commit reaches the base; a worktree behind the base, ahead with another lead's commit, or dirty is refused naming the reason; a checkout on the base branch behaves as today"
+        }
+      ]
+    },
+    "V26-3331": {
+      "title": "Fix main: the outside-adopter line map tests fail since the tracker snapshot reads the parent's state",
+      "lane": "lane-1",
+      "after": [
+        "V26-3257"
+      ],
+      "inApp": "none",
+      "why": "V26-3257's merge (415fe33) turned main red: three outside-adopter line-map tests fail because the tracker snapshot step leaves no file; this delivery's own regression, fixed in this delivery under the no-deferrals ruling",
+      "criteria": [
+        {
+          "id": "v26-3331-done",
+          "text": "tests.test_delivery_views_adopter passes at the fix's head, recorded red at 415fe33 with the cause confirmed; a row pins the snapshot producer's contract when the parent fetch fails"
         }
       ]
     }

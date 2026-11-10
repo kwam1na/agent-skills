@@ -198,7 +198,7 @@
       "outputs": [
         {
           "path": "skills/delivery-views/SKILL.md",
-          "sha256": "0555861071294f6d7c5707b9f366e7c9fc5f4ef886292d8f153e0af56b4f629f"
+          "sha256": "a9e3ca3f800df38b7e48391a11ef2b6509893f0f0a5cd9e61a15f76b09ba914b"
         },
         {
           "path": "skills/delivery-views/assets/history.css",
@@ -238,7 +238,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/snapshot.py",
-          "sha256": "b9c74c0d7040d3b558a67c284c3b320bb50c93ca3c7048c62288aab52c37f1a6"
+          "sha256": "13ccef8f47a2ae04c8333879b148cab932f87eda76f094df422bf9c84cd12e03"
         },
         {
           "path": "skills/delivery-views/scripts/views_common.py",
