@@ -63,6 +63,31 @@ file moves. Instead every candidate runs corpus validation, and the lead selects
 each candidate's checks from its unit's sensors, as `selection.lead` allows. With no
 selection the queue runs the whole suite.
 
+The lead selects by catalogue id. `selection.catalogue` holds one check per test
+module, its id the module's name, such as `tests.test_run_delivery`, so a selection
+is a comma-separated list:
+
+```bash
+python3 -B .agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py \
+  --dir .orchestration/state select --subject <key> --binding .agents/orchestration.json \
+  --head <reviewed head> --checks tests.test_run_delivery,tests.test_lead_wait \
+  --reason "<why these cover the diff>"
+```
+
+Each entry runs its module through `scripts/run-tests.py --workers 4`, as the full
+suite does, except `tests.test_registry`, which holds no unittest case and runs as
+the script it is. A module added later is selectable by id once its entry is added
+to the catalogue and to the pin in `tests/test_own_deliveries.py`. Until then, a
+JSON list of full entries still selects it.
+
+Two guards join every selection, named or not: `tests.test_linear_qualification`,
+which holds the corpus pins any doc or skill change can break, and
+`tests.test_registry`. A change to `skills/delivery-views/scripts/snapshot.py` also
+brings `tests.test_delivery_views_adopter` and `tests.test_delivery_views_snapshots`,
+the line map's outside adopter among them. Corpus validation stays in `alwaysRun`.
+`select` says what it added and why, and warns when a selected check failed its last
+base re-run at the current base head.
+
 A lane's gates are in `.agents/run-delivery.json`: corpus validation and the
 provenance check, both of which run on a fresh clone's standard library. The lane
 brief still bars a full suite in a lane.
