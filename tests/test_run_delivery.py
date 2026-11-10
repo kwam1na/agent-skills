@@ -4245,11 +4245,14 @@ class RunDeliveryPlanFormatTests(unittest.TestCase):
         drafted = json.loads((fx.main / ".agents/deliveries/EX-1.json").read_text())
         self.assertEqual([c["id"] for c in drafted["stories"]["EX-2"]["criteria"]], ["ex-2-1", "ex-2-2"])
         self.assertNotIn("no tracker snapshot", out)
-        # When the command fails or prints no snapshot, lead-setup says so and drafts no criteria.
-        for failing, words in ((["sh", "-c", "echo boom >&2; exit 3"], "the binding's tracker snapshot failed (3: boom)"),
-                               (["echo", "not json"], "the binding's tracker snapshot printed no snapshot")):
+        # When the command fails, prints no snapshot or outlives its timeout, lead-setup says so and drafts no criteria.
+        for failing, words in (({"argv": ["sh", "-c", "echo boom >&2; exit 3"]},
+                                "the binding's tracker snapshot failed (3: boom)"),
+                               ({"argv": ["echo", "not json"]}, "the binding's tracker snapshot printed no snapshot"),
+                               ({"argv": ["sleep", "30"], "timeoutSeconds": 1},
+                                "the binding's tracker snapshot timed out")):
             with self.subTest(failing=failing):
-                document["state"]["trackerSnapshot"] = {"argv": failing}
+                document["state"]["trackerSnapshot"] = failing
                 binding.write_text(json.dumps(document, indent=2))
                 commit(fx.main, "EX-1: a failing tracker snapshot")
                 code, out = rerun()
