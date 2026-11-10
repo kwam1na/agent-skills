@@ -6824,8 +6824,10 @@ class RunDeliveryDoctorTests(unittest.TestCase):
                             if updates else (lambda: None))
                 try:
                     out = self.doctor(fx, "--offline", expect_code=1)
-                    found, fixed = failing(out)["snapshots and publishers"].split("; fix: ", 1)
-                    self.assertIn("the binding names a publisher that runs nothing", found, out)
+                    # The binding no longer validates, and the line says what replaces the publisher.
+                    self.assertEqual(list(failing(out)), ["orchestration binding"], out)
+                    found, fixed = failing(out)["orchestration binding"].split("; fix: ", 1)
+                    self.assertIn("doesn't validate: the binding names a publisher that runs nothing", found, out)
                     self.assertIn("run-delivery's tracker publisher (lead-setup adds it)", fixed, out)
                     record = fx.tmp / "record"
                     code, refused = fx.flow("lead-init", cwd=m)
@@ -7762,7 +7764,7 @@ class RunDeliveryAdoptionGuideTests(unittest.TestCase):
                        "a finish line the record can't prove holds the close",
                        "an entry the lead journalled by hand is skipped",
                        "run-delivery's tracker publisher posts every update in this table",
-                       "the lead's drain skips every `lane.assigned` start move and update"):
+                       "With `tracker.updates` set to `manual`, the lead and the lanes make them instead"):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, guide)
         skill = " ".join((ROOT / "skills/orchestrate-work/SKILL.md").read_text(encoding="utf-8").split())

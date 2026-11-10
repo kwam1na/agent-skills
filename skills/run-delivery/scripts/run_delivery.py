@@ -8000,6 +8000,10 @@ class Doctor:
         sys.dont_write_bytecode = True  # the release's modules leave no bytecode in the installed generation
         import merge_queue  # noqa: E402  (the installed release's own binding check)
         errors = merge_queue.binding_errors(binding)
+        unrunnable = tracker_publisher.settings(self.root, self.c.flow_raw if self.c else None, binding)
+        if errors and unrunnable["unrunnable"]:
+            # The schema refuses it too, but only this says what replaces it.
+            return "wrong", f"{path.name} doesn't validate: {tracker_publisher.refusal(unrunnable)}"
         if errors:
             return "wrong", (f"{path.name} doesn't validate: {'; '.join(errors[:3])}"
                              f"{f' (and {len(errors) - 3} more)' if len(errors) > 3 else ''}; fix: correct it against "
