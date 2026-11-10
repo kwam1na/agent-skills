@@ -81,7 +81,1406 @@
     }
   ],
   "selection": {
-    "lead": true
+    "lead": true,
+    "catalogue": [
+      {
+        "id": "tests.test_adoption",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_adoption.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_adoption.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_bootstrap_qualification",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_bootstrap_qualification.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_bootstrap_qualification.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_catalog",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_catalog.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_catalog.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_compound_learning_corpus",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_compound_learning_corpus.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_compound_learning_corpus.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_core_boundary",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_core_boundary.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_core_boundary.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_corpus_copy",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_corpus_copy.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_corpus_copy.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_cut_release",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_cut_release.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_cut_release.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_declared_mechanics_corpus",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_declared_mechanics_corpus.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_declared_mechanics_corpus.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_delivery_posture_vectors",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_delivery_posture_vectors.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_delivery_posture_vectors.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_delivery_provider",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_delivery_provider.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_delivery_provider.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_delivery_provider_rails_contract",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_delivery_provider_rails_contract.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_delivery_provider_rails_contract.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_delivery_views",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_delivery_views.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_delivery_views.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_delivery_views_adopter",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_delivery_views_adopter.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_delivery_views_adopter.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_delivery_views_history",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_delivery_views_history.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_delivery_views_history.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_delivery_views_page",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_delivery_views_page.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_delivery_views_page.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_delivery_views_plan",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_delivery_views_plan.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_delivery_views_plan.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_delivery_views_plan_fixtures",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_delivery_views_plan_fixtures.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_delivery_views_plan_fixtures.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_delivery_views_render",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_delivery_views_render.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_delivery_views_render.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_delivery_views_review_projection",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_delivery_views_review_projection.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_delivery_views_review_projection.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_delivery_views_snapshots",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_delivery_views_snapshots.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_delivery_views_snapshots.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_diagnosis",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_diagnosis.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_diagnosis.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_documented_install_surface",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_documented_install_surface.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_documented_install_surface.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_fault_injection",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_fault_injection.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_fault_injection.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_forge_adapters",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_forge_adapters.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_forge_adapters.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_historical_qualifications",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_historical_qualifications.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_historical_qualifications.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_host_exposure",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_host_exposure.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_host_exposure.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_jira_profile",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_jira_profile.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_jira_profile.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_lane_rows",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_lane_rows.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_lane_rows.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_lane_ruling_corpus",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_lane_ruling_corpus.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_lane_ruling_corpus.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_lead_wait",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_lead_wait.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_lead_wait.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_lifecycle",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_lifecycle.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_lifecycle.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_linear_profile",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_linear_profile.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_linear_profile.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_linear_qualification",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_linear_qualification.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "A guard: the corpus pins over the skills' wording, which any doc or skill change can break."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_measure_test_writes",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_measure_test_writes.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_measure_test_writes.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_merge_occurrence",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_merge_occurrence.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_merge_occurrence.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_merge_queue",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_merge_queue.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_merge_queue.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_no_current_set_names",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_no_current_set_names.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_no_current_set_names.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_orchestration_adopter",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_orchestration_adopter.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_orchestration_adopter.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_orchestration_render",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_orchestration_render.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_orchestration_render.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_orchestration_state",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_orchestration_state.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_orchestration_state.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_own_deliveries",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_own_deliveries.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_own_deliveries.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_product_descriptors",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_product_descriptors.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_product_descriptors.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_product_launcher",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_product_launcher.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_product_launcher.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_product_release",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_product_release.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_product_release.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_profile_inventory",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_profile_inventory.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_profile_inventory.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_provenance",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_provenance.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_provenance.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_provider_qualification",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_provider_qualification.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_provider_qualification.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_qualification",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_qualification.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_qualification.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_readme",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_readme.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_readme.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_receipt",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_receipt.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_receipt.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_registry",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "tests/test_registry.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "A guard: the registry mutation sensors, which run as a script since the module holds no unittest case."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_release_archive",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_release_archive.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_release_archive.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_release_channel",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_release_channel.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_release_channel.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_release_entry_budget",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_release_entry_budget.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_release_entry_budget.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_release_integration",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_release_integration.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_release_integration.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_review_and_compounding",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_review_and_compounding.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_review_and_compounding.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_review_base_reopening",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_review_base_reopening.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_review_base_reopening.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_review_bound_corpus",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_review_bound_corpus.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_review_bound_corpus.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_review_grace",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_review_grace.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_review_grace.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_review_orchestration",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_review_orchestration.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_review_orchestration.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_round_brief_template_corpus",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_round_brief_template_corpus.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_round_brief_template_corpus.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_router",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_router.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_router.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_run_delivery",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_run_delivery.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_run_delivery.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 5400
+      },
+      {
+        "id": "tests.test_run_delivery_plan_review",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_run_delivery_plan_review.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_run_delivery_plan_review.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_run_delivery_supervisor",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_run_delivery_supervisor.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_run_delivery_supervisor.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_run_delivery_tracker",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_run_delivery_tracker.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_run_delivery_tracker.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_run_event_emission_corpus",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_run_event_emission_corpus.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_run_event_emission_corpus.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_run_tests",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_run_tests.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_run_tests.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_runless_reviews",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_runless_reviews.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_runless_reviews.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_test_dependency_guard",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_test_dependency_guard.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_test_dependency_guard.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_test_environment",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_test_environment.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_test_environment.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_tracker_contract",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_tracker_contract.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_tracker_contract.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_update_provenance",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_update_provenance.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_update_provenance.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_validate",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_validate.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_validate.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_workflow_graph_contract",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_workflow_graph_contract.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_workflow_graph_contract.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_workflow_observation",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_workflow_observation.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_workflow_observation.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_workflows",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_workflows.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_workflows.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      }
+    ],
+    "guards": [
+      "tests.test_linear_qualification",
+      "tests.test_registry"
+    ],
+    "readers": [
+      {
+        "paths": [
+          "skills/delivery-views/scripts/snapshot.py"
+        ],
+        "checks": [
+          "tests.test_delivery_views_adopter",
+          "tests.test_delivery_views_snapshots"
+        ]
+      }
+    ]
   },
   "checkOutput": {
     "failurePattern": "^(?:FAIL|ERROR): (?P<id>\\S+)"
