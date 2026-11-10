@@ -49,8 +49,10 @@ the same files, and how the work reaches `main`.
    bearer token. The token is read only from the named variable, a missing one fails before any request, and it is never printed,
    logged or written to the ledger.
    - **Errors.** Linear reports failures as GraphQL `errors`, at HTTP 200 or otherwise. The adapter maps them whatever the HTTP status:
-     a rate-limit code (`RATELIMITED`) to `httpStatus` 429, an authentication or forbidden code to 401, and any other error to 400, so
-     `classify()` makes a rate limit transient and the rest permanent. An HTTP 429 or 5xx with no `errors` is passed through, and an
+     a rate-limit code (`RATELIMITED`) to `httpStatus` 429, an authentication code to 401, a forbidden code to 403, and any other error
+     to 400. `classify()` is unchanged, so a rate limit or an authentication error is transient, as for Jira; a forbidden one is decided
+     by `site_refuses()`, permanent for that ticket and transient when the whole site refuses too, as for Jira; and the rest are
+     permanent `failed`. An HTTP 429 or 5xx with no `errors` is passed through, and an
      unreachable endpoint is `null`, as for Jira. An answer with `errors` is never success, so no ledger line is written for it.
    - **Markers.** Linear has no per-issue properties, so a marker is carried in the comment body as a trailing HTML comment,
      `<!-- run-delivery:<marker> -->`. `markers --ticket` follows the comments connection's `pageInfo` to the end, bounded by a
@@ -60,9 +62,10 @@ the same files, and how the work reaches `main`.
    - **Moves.** A move is the state update, then its marker comment, in that order, so a crash or failure between them leaves the ticket
      in the target status with no marker, which the publisher's existing already-in-target rule (Decision 3) reads as made, never as
      ours. A status is a workflow state name on the item's team. `status` lists each state as a transition named for it, `to` the same
-     name, and `offered` only for a state whose workflow type is not earlier than the current one's (backlog, unstarted, started,
-     completed, canceled in that order; a completed or canceled ticket offers none), so a replayed start move never sends a Done ticket
-     back, as Jira's workflow refuses it.
+     name, and `offered` only for a state whose workflow type is the current one's or later, in the order triage, backlog, unstarted,
+     started, completed, canceled, except that a completed or canceled ticket offers none. So a story can move from In Progress to
+     another started state such as In Review, and to Done, but a replayed start move never sends a Done ticket back, as Jira's
+     workflow refuses it.
    - **Create.** `--project` is the team key, which `project_of` already derives from the delivery key; `--type` is accepted and
      ignored, since Linear has no issue types; a created item's marker is a label, as for Jira.
    - **Limit.** `commentLimit` is the adapter's constant, taken from Linear's documented comment limit and counted the way
@@ -73,7 +76,9 @@ the same files, and how the work reaches `main`.
    rule is what makes a ticket Linear's GitHub integration closed on merge read as made, with the merge update posted and nothing moved
    twice. V26-3269 runs that row for the Linear adapter too, and adds that `needs_you()` raises no item for it, while
    `test_a_move_not_offered_is_handled_once_and_shown` keeps asserting its `handled` item. `handled` keeps meaning "not offered, make it
-   by hand". In host mode there is no ledger: V26-3261's reconcile reads the ticket's status from the tracker snapshot, and the outbox
+   by hand" (config.md), so V26-3269's AC3, "recorded as `handled`", is met by the existing `skip` outcome with the status found and
+   the reason "already <status>: made by someone else". The lead records that reading on V26-3269 under the operator's 2026-11-09
+   grant before the story is reviewed. In host mode there is no ledger: V26-3261's reconcile reads the ticket's status from the tracker snapshot, and the outbox
    drops a move whose target the ticket is already in while keeping its post.
 4. **`lead-setup` adds the publisher for Linear as it does for Jira, when the configuration names the adapter (V26-3269).** Only
    `tracker.adapter: "linear"` in `.agents/run-delivery.json` (or `tracker.argv`) selects the Linear adapter and the `publisher` mode.
@@ -88,14 +93,18 @@ the same files, and how the work reaches `main`.
    row: assigning three stories starts none, and `lane-start` then starts exactly that story.
 6. **The Linear qualifier's sensor covers agent-facing documents and holds the whole delta (V26-3097).** Its charter is the agent-facing
    Linear skills. It inspects every file the `linear` profile adds over `run-delivery`, `SKILL.md`, `references/` and `agents/` included,
-   for an actionable instruction to reach Linear any other way. The delta must hold every file the `linear` profile adds over
-   `run-delivery` as the catalog lists them, so a Linear skill moved into the `run-delivery` profile fails the qualifier even when other
-   files remain, and an empty delta fails too. `tracker_linear.py` lives in run-delivery, the base, so it is outside the delta by
+   for an actionable instruction to reach Linear any other way. The Linear-only skill ids (`create-linear-ticket`, `execute-linear-ticket`,
+   `linear-tracker-adapter`) are a trusted constant in `scripts/qualify-linear.py`, held the way `TRUSTED_CONTRACT_SHA256` is, never
+   derived from the candidate's catalog or profiles. Every file of those skills must be in the delta, so a Linear skill moved into the
+   `run-delivery` profile, with the catalog and profiles changed together so the registry stays valid, fails the qualifier naming the
+   missing skill, and an empty delta fails too. Adding a Linear skill means changing that constant on purpose. `tracker_linear.py` lives in run-delivery, the base, so it is outside the delta by
    design, and the qualifier's result says so where it is read: the sensor proves the Linear skills reach Linear only through the host,
    not that no file in the generation does.
 7. **The scheduled connector check is a routine of the operator's, described in the repository (V26-3083).** The check needs a host with
    the Linear connector, so it runs as a scheduled cloud agent on the operator's account, weekly, against disposable issues it creates
-   and cancels. The repository holds what it runs: `docs/linear-connector-check.md` gains the routine's prompt, its schedule, where its
+   in one disposable team and cancels. The connector offers no issue delete, so V26-3083's AC3, "It leaves no entities behind", reads
+   as: no open entity is left, and the cleanup step cancels every issue the run created, confirmed by searching for the run's marker
+   and finding only canceled issues. The lead records that reading on V26-3083 under the operator's grant. The repository holds what it runs: `docs/linear-connector-check.md` gains the routine's prompt, its schedule, where its
    credentials live (the connector's own sign-in, never the repository), how a failure reaches the owner (a push notification and the
    routine's own run result, never a Linear entity, since the connector may be what failed), and the cleanup step it ends with, pinned
    beside "gates nothing". The lead creates the routine under the operator's standing approval, and the item closes on two recorded
@@ -108,7 +117,11 @@ the same files, and how the work reaches `main`.
    updates `docs/own-deliveries.md`'s "Tracker updates" and "Credentials" (with V26-3261's keychain recipe). That step lands through the
    queue like any change. A record opened under host mode has no ledger, so the publisher's first run over it writes a final `skip`,
    "published through the host outbox", for every entry at or below `published.json`'s `journalThrough`, and posts nothing for them;
-   V26-3269 pins that, and a replayed start move on a Done ticket. The finish line's evidence is the first entry posted after the
+   V26-3269 pins it with a record holding entries at `journalThrough` and at `journalThrough` + 1: the first is a final
+   `skip` with no comment, and the second is posted once through the shipped `tracker_linear.py`, with its comment and marker on the stub.
+   A replayed start move on a Done ticket is recorded `handled` and never moves it, with its `needs_you()` item asserted. Immediately
+   before the switch merges, the lead posts every outbox entry still held and runs `ack`, so nothing posted by hand but not acked is
+   posted again. The finish line's evidence is the first entry posted after the
    switch: its ledger line, its Linear comment carrying the marker, and a `markers --ticket` read against real Linear returning it,
    linked on V26-3269.
 
@@ -142,7 +155,8 @@ header that is not exactly the named variable's value with Linear's 401 shape. R
 and 5xx transient, another 4xx permanent, unreachable, and `errors` at HTTP 200 for `comment`, `transition` with an unknown state and
 `status`, mapped as Decision 2 says, with the publisher's outcome asserted); a missing token variable and a different `--token-env` name;
 the marker round trip with the marker on the second page of comments; the comment limit; a failure between a move's two calls, in each
-order, re-run to a ledger that matches the stub with one marker comment; `offered` refusing an earlier workflow type; and a token that
+order, re-run to a ledger that matches the stub with one marker comment; `offered` refusing an earlier workflow type, with the allow side in the same row (In Progress offers In Review and Done,
+and the move is made); and a token that
 appears in no output, log or ledger line. Publisher rows run through the shipped `tracker_linear.py`, as the Jira rows run through
 `tracker_jira.py`: with the Linear adapter configured, a delivery's `lane.assigned`, hand-off, merge and decision entries post with no lead
 action and are in the ledger once; the already-in-target row of Decision 3 runs for both adapters, with no `needs_you()` item; and the
@@ -173,7 +187,7 @@ recipe in `docs/own-deliveries.md`, and the orchestrate-work guide notes the for
 
 Lane 2, tier 1, not blocked. Test-first, per the item and Decision 6. Rows: a planted `curl` instruction in a Linear `SKILL.md` outside
 the adapter fails; a planted endpoint instruction in a Linear `references/*.md` file fails; one Linear skill, carrying a planted
-instruction, moved into the `run-delivery` profile fails, because the delta no longer holds every file the profile adds; an empty delta
+instruction, moved into the `run-delivery` profile with the catalog and profiles changed together, fails, naming the missing skill; an empty delta
 fails; the unmodified corpus, with `tracker_linear.py` in run-delivery, passes, and its result states the sensor's charter. Files: `scripts/qualify-linear.py` and
 `tests/test_linear_qualification.py`. Sensors: `tests/test_linear_qualification.py`, `scripts/validate-registry.py`.
 
