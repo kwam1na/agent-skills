@@ -8,15 +8,19 @@ connector works.
 It gates nothing and retains no attestation. No release waits for it, and its result is
 not evidence for one.
 
-In a host with the connector configured, on clearly disposable work:
+Run these steps in a host with the connector configured, on clearly disposable work.
+Linear's search matches loosely, so in every search below a match is an issue whose title
+or description carries the run's marker, and any other issue the search returns is
+ignored.
 
-1. Choose a random marker and search for it, expecting nothing.
+1. Choose a random marker and search for it, expecting no match.
 2. Create a primary issue and a dependency issue, each carrying the marker.
-3. Read both, update one, and search for the marker again, expecting both.
+3. Read both, update one, and search for the marker again, expecting exactly those two
+   matches.
 4. Relate them, and read the relation back.
 5. Reconcile: confirm each operation's result by reading it rather than trusting the
    response.
-6. Cancel both issues.
+6. Cancel both issues, then search for the marker and confirm every match is canceled.
 
 If a step fails, or the connector answers differently from
 `skills/linear-tracker-adapter/references/adapter-contract.json`, report it as a defect
@@ -43,30 +47,33 @@ host with the Linear connector configured. Its parts are:
   reports through a Linear entity, since the connector may be what failed.
 - **Cleanup.** The run ends by cancelling every issue it created, by the identifiers it
   noted when creating them, then searching for its marker and finding only canceled
-  issues. The connector offers no issue delete, so leaving no entities behind means
-  leaving no open entity behind. The cleanup runs after a failed step too, for whatever
-  the run has created.
+  matches: issues whose title or description carries the marker. The connector offers
+  no issue delete, so leaving no entities behind means leaving no open entity behind.
+  The cleanup runs after a failed step too, for whatever the run has created.
 
 The routine's prompt:
 
 ```text
 Run the Linear connector check described in docs/linear-connector-check.md of the
 agent-skills repository, against the disposable Linear team <disposable team>, using
-only the host's Linear connector.
+only the host's Linear connector. Linear's search matches loosely, so in every search
+below a match is an issue whose title or description carries the run's marker, and any
+other issue the search returns is ignored.
 
-1. Choose a random marker and search for it, expecting nothing.
+1. Choose a random marker and search for it, expecting no match.
 2. Create a primary issue and a dependency issue in that team, each carrying the marker,
    and note each issue's identifier for this run.
-3. Read both, update one, and search for the marker again, expecting both.
+3. Read both, update one, and search for the marker again, expecting exactly those two
+   matches.
 4. Relate them, and read the relation back.
 5. Reconcile: confirm each operation's result by reading it rather than trusting the
    response.
 6. Cleanup, always, even after a failed step: cancel every issue this run created, by
-   the identifiers noted in step 2, then search for the marker and confirm every issue
-   it finds is canceled.
+   the identifiers noted in step 2, then search for the marker and confirm every match is
+   canceled.
 
 If any step fails, the connector answers differently from the adapter's contract, or the
-cleanup leaves an issue that is not canceled, send the owner a push notification naming
+cleanup leaves a match that is not canceled, send the owner a push notification naming
 the step and what it saw, and end the run as failed. Report only through the
 notification and this run's result, never through a Linear entity. Write nothing to the
 repository, and keep no tokens, keys, identifiers or host payloads after the run.

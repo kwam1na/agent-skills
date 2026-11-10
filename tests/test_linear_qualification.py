@@ -1283,16 +1283,23 @@ class LinearQualificationTests(unittest.TestCase):
         # The on-demand check is what a person runs by hand, so its whole text, steps included, is pinned exactly.
         on_demand = document[:document.index("## Scheduled run")].strip()
         self.assertEqual(re.findall(r"(?<= )(\d+)\. ", on_demand), ["1", "2", "3", "4", "5", "6"])
+        # Linear's search matches loosely, so each of the three searches counts only issues carrying the marker.
+        self._assert_searches_count_only_marked_issues(on_demand, (
+            "6. Cancel both issues, then search for the marker and confirm every match is canceled.",
+        ))
         self.assertEqual(on_demand, (
             "# Linear connector check Run this by hand when the host's Linear connector changes, or when "
             "Linear-facing skill text changes, such as `skills/linear-tracker-adapter/` or a workflow that reaches "
             "the tracker through it. Offline qualification proves the adapter's boundary, not that a live connector "
             "works. It gates nothing and retains no attestation. No release waits for it, and its result is not "
-            "evidence for one. In a host with the connector configured, on clearly disposable work: 1. Choose a "
-            "random marker and search for it, expecting nothing. 2. Create a primary issue and a dependency issue, "
-            "each carrying the marker. 3. Read both, update one, and search for the marker again, expecting both. "
-            "4. Relate them, and read the relation back. 5. Reconcile: confirm each operation's result by reading "
-            "it rather than trusting the response. 6. Cancel both issues. If a step fails, or the connector answers "
+            "evidence for one. Run these steps in a host with the connector configured, on clearly disposable work. "
+            "Linear's search matches loosely, so in every search below a match is an issue whose title or "
+            "description carries the run's marker, and any other issue the search returns is ignored. 1. Choose a "
+            "random marker and search for it, expecting no match. 2. Create a primary issue and a dependency issue, "
+            "each carrying the marker. 3. Read both, update one, and search for the marker again, expecting exactly "
+            "those two matches. 4. Relate them, and read the relation back. 5. Reconcile: confirm each operation's "
+            "result by reading it rather than trusting the response. 6. Cancel both issues, then search for the "
+            "marker and confirm every match is canceled. If a step fails, or the connector answers "
             "differently from `skills/linear-tracker-adapter/references/adapter-contract.json`, report it as a "
             "defect against the adapter or the skill text that changed. Keep no host payloads, identifiers or "
             "credentials from the run in this repository."
@@ -1313,7 +1320,8 @@ class LinearQualificationTests(unittest.TestCase):
             "result, which the owner reads within a day. It never reports through a Linear entity, since the "
             "connector may be what failed.",
             "**Cleanup.** The run ends by cancelling every issue it created, by the identifiers it noted when "
-            "creating them, then searching for its marker and finding only canceled issues.",
+            "creating them, then searching for its marker and finding only canceled matches: issues whose title or "
+            "description carries the marker.",
             "leaving no entities behind means leaving no open entity behind. The cleanup runs after a failed step "
             "too, for whatever the run has created.",
             "one deliberate failing run, with a team name that does not exist in place of `<disposable team>`, "
@@ -1329,7 +1337,7 @@ class LinearQualificationTests(unittest.TestCase):
             "2. Create a primary issue and a dependency issue in that team, each carrying the marker, and note "
             "each issue's identifier for this run.",
             "6. Cleanup, always, even after a failed step: cancel every issue this run created, by the "
-            "identifiers noted in step 2, then search for the marker and confirm every issue it finds is canceled.",
+            "identifiers noted in step 2, then search for the marker and confirm every match is canceled.",
             "send the owner a push notification naming the step and what it saw, and end the run as failed.",
             "Report only through the notification and this run's result, never through a Linear entity. Write "
             "nothing to the repository, and keep no tokens, keys, identifiers or host payloads after the run.",
@@ -1338,23 +1346,28 @@ class LinearQualificationTests(unittest.TestCase):
                 self.assertIn(phrase, prompt)
         # Exactly the check's six steps, so nothing follows the cleanup.
         self.assertEqual(re.findall(r"(?<= )(\d+)\. ", prompt), ["1", "2", "3", "4", "5", "6"])
+        self._assert_searches_count_only_marked_issues(prompt, (
+            "then search for the marker and confirm every match is canceled.",
+            "or the cleanup leaves a match that is not canceled,",
+        ))
         # The failure paragraph follows the cleanup directly, and the prompt ends with it, so no instruction in any
         # form comes after the cleanup.
-        self.assertIn("then search for the marker and confirm every issue it finds is canceled. If any step fails",
-                      prompt)
+        self.assertIn("then search for the marker and confirm every match is canceled. If any step fails", prompt)
         self.assertTrue(prompt.rstrip().endswith("keep no tokens, keys, identifiers or host payloads after the run."))
         # And the whole prompt is this text, so nothing is inserted anywhere in what the routine runs.
         self.assertEqual(prompt[len("```text"):].strip(), (
             "Run the Linear connector check described in docs/linear-connector-check.md of the agent-skills "
             "repository, against the disposable Linear team <disposable team>, using only the host's Linear "
-            "connector. 1. Choose a random marker and search for it, expecting nothing. 2. Create a primary issue "
-            "and a dependency issue in that team, each carrying the marker, and note each issue's identifier for "
-            "this run. 3. Read both, update one, and search for the marker again, expecting both. 4. Relate them, "
-            "and read the relation back. 5. Reconcile: confirm each operation's result by reading it rather than "
-            "trusting the response. 6. Cleanup, always, even after a failed step: cancel every issue this run "
-            "created, by the identifiers noted in step 2, then search for the marker and confirm every issue it "
-            "finds is canceled. If any step fails, the connector answers differently from the adapter's contract, "
-            "or the cleanup leaves an issue that is not canceled, send the owner a push notification naming the "
+            "connector. Linear's search matches loosely, so in every search below a match is an issue whose title "
+            "or description carries the run's marker, and any other issue the search returns is ignored. 1. Choose "
+            "a random marker and search for it, expecting no match. 2. Create a primary issue and a dependency "
+            "issue in that team, each carrying the marker, and note each issue's identifier for this run. 3. Read "
+            "both, update one, and search for the marker again, expecting exactly those two matches. 4. Relate "
+            "them, and read the relation back. 5. Reconcile: confirm each operation's result by reading it rather "
+            "than trusting the response. 6. Cleanup, always, even after a failed step: cancel every issue this run "
+            "created, by the identifiers noted in step 2, then search for the marker and confirm every match is "
+            "canceled. If any step fails, the connector answers differently from the adapter's contract, or the "
+            "cleanup leaves a match that is not canceled, send the owner a push notification naming the "
             "step and what it saw, and end the run as failed. Report only through the notification and this run's "
             "result, never through a Linear entity. Write nothing to the repository, and keep no tokens, keys, "
             "identifiers or host payloads after the run."
@@ -1363,6 +1376,22 @@ class LinearQualificationTests(unittest.TestCase):
                        "tracker_linear", "linear_api_key", "graphql"):
             with self.subTest(absent=marker):
                 self.assertNotIn(marker, prompt.lower())
+
+    def _assert_searches_count_only_marked_issues(self, text: str, cleanup: tuple[str, ...]) -> None:
+        """Each marker search in ``text`` counts a match, and a match is an issue that carries the marker."""
+        for phrase in (
+            "Linear's search matches loosely, so in every search below a match is an issue whose title or "
+            "description carries the run's marker, and any other issue the search returns is ignored.",
+            "1. Choose a random marker and search for it, expecting no match.",
+            "search for the marker again, expecting exactly those two matches.",
+            *cleanup,
+        ):
+            with self.subTest(match=phrase[:48]):
+                self.assertIn(phrase, text)
+        # The loose wording the first run showed a stricter reader could fail on, or count unrelated issues by.
+        for loose in ("expecting nothing", "expecting both.", "every issue it finds", "an issue that is not canceled"):
+            with self.subTest(loose=loose):
+                self.assertNotIn(loose, text)
 
     def test_durable_corpus_contains_no_plan_or_ticket_ids(self) -> None:
         durable_paths = [ROOT / "README.md"]
