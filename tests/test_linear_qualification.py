@@ -1277,7 +1277,7 @@ class LinearQualificationTests(unittest.TestCase):
 
     def test_the_connector_check_runs_on_a_schedule_that_gates_nothing_and_cleans_up(self) -> None:
         document = " ".join((ROOT / "docs" / "linear-connector-check.md").read_text(encoding="utf-8").split())
-        # The on-demand check keeps its own wording; the scheduled run is read from its own section onward.
+        # The on-demand check keeps its own wording; the scheduled run is read from its own section.
         self.assertIn("It gates nothing and retains no attestation.", document)
         self.assertIn("## Scheduled run", document)
         # The section runs from its heading to the next one, so a phrase moved under a later heading fails.
@@ -1321,7 +1321,9 @@ class LinearQualificationTests(unittest.TestCase):
                 self.assertIn(phrase, prompt)
         # Exactly the check's six steps, so nothing follows the cleanup.
         self.assertEqual(re.findall(r"(?<= )(\d+)\. ", prompt), ["1", "2", "3", "4", "5", "6"])
-        self.assertLess(prompt.index("6. Cleanup"), prompt.index("If any step fails"))
+        # The failure paragraph follows the cleanup directly, so no instruction in any form comes after it.
+        self.assertIn("then search for the marker and confirm every issue it finds is canceled. If any step fails",
+                      prompt)
         for marker in ("api.linear.app", "linear.app/api", "linear.app/graphql", "@linear/sdk", "curl", "token=",
                        "tracker_linear", "linear_api_key", "graphql"):
             with self.subTest(absent=marker):

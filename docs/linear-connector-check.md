@@ -26,8 +26,8 @@ or credentials from the run in this repository.
 ## Scheduled run
 
 The same check also runs on a schedule, so a connector change is noticed without anyone
-starting it. The scheduled run gates nothing either: no release waits for it, and a failure
-reaches its owner without blocking anything.
+starting it. The scheduled run gates nothing either: no release waits for it, and a
+failure reaches its owner without blocking anything.
 
 It runs as a scheduled cloud agent, a routine on the owner's account, because it needs a
 host with the Linear connector configured. Its parts are:
@@ -42,9 +42,10 @@ host with the Linear connector configured. Its parts are:
   failure in the routine's own run result, which the owner reads within a day. It never
   reports through a Linear entity, since the connector may be what failed.
 - **Cleanup.** The run ends by cancelling every issue it created, by the identifiers it
-  noted when creating them, then searching for its marker and finding only canceled issues. The connector offers no issue delete, so
-  leaving no entities behind means leaving no open entity behind. The cleanup runs after a
-  failed step too, for whatever the run has created.
+  noted when creating them, then searching for its marker and finding only canceled
+  issues. The connector offers no issue delete, so leaving no entities behind means
+  leaving no open entity behind. The cleanup runs after a failed step too, for whatever
+  the run has created.
 
 The routine's prompt:
 
