@@ -129,6 +129,9 @@
     "V26-3331": {
       "title": "Fix main: the outside-adopter line map tests fail since the tracker snapshot reads the parent's state",
       "lane": "lane-1",
+      "after": [
+        "V26-3257"
+      ],
       "inApp": "none",
       "why": "V26-3257's merge (415fe33) turned main red: three outside-adopter line-map tests fail because the tracker snapshot step leaves no file; this delivery's own regression, fixed in this delivery under the no-deferrals ruling",
       "criteria": [
