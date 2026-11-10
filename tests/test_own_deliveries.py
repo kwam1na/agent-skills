@@ -219,6 +219,8 @@ class StandingBinding(unittest.TestCase):
                 self.assertEqual(entry["argv"], [".venv/bin/python", "-B", "scripts/run-tests.py", "--workers", "4", "-p",
                                                  source.name])
             self.assertEqual((entry["cwd"], entry["prerequisites"]), (".", []), module)
+            # The run-delivery module is the slowest, so it alone gets the ceiling.
+            self.assertEqual(entry["timeoutSeconds"], 5400 if module == "tests.test_run_delivery" else 3600, module)
             self.assertLessEqual(entry["timeoutSeconds"], binding["checkTimeoutCeiling"], module)
             self.assertTrue(entry["reasons"], module)
         self.assertEqual(selection["guards"], GUARDS)
@@ -288,6 +290,21 @@ class StandingBinding(unittest.TestCase):
             self.assertEqual([check["id"] for check in done["item"]["leadSelection"]["checks"]],
                              ["tests.test_run_delivery", *GUARDS, "tests.test_delivery_views_adopter",
                               "tests.test_delivery_views_snapshots"])
+
+    def test_the_checks_section_names_the_binding_s_guards_and_readers(self) -> None:
+        binding = json.loads((ROOT / ".agents/orchestration.json").read_text(encoding="utf-8"))
+        selection = binding["selection"]
+        text = " ".join((ROOT / "docs/own-deliveries.md").read_text(encoding="utf-8").split())
+        section = text[text.index("## Checks"):text.index("## Later deliveries")]
+        first, second = selection["guards"]
+        self.assertIn(f"Two guards join every selection, named or not: `{first}`,", section)
+        self.assertIn(f"and `{second}`.", section)
+        self.assertEqual(len(selection["guards"]), 2)
+        (reader,) = selection["readers"]
+        (path,) = reader["paths"]
+        adopter, snapshots = reader["checks"]
+        self.assertIn(f"A change to `{path}` also brings `{adopter}` and `{snapshots}`,", section)
+        self.assertIn("The lead selects by catalogue id.", section)
 
     def test_the_delivery_folders_are_ignored(self) -> None:
         for path in (".orchestration/lanes/x", ".orchestration/state/state.json", ".worktrees/x", ".claude/worktrees/x"):
