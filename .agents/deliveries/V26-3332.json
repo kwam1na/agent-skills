@@ -39,7 +39,11 @@
         "tests/test_delivery_views_render.py",
         "tests/test_core_boundary.py",
         "tests/test_review_bound_corpus.py",
-        "tests/test_release_integration.py"
+        "tests/test_release_integration.py",
+        ".agents/orchestration.json",
+        "tests/test_own_deliveries.py",
+        "tests/test_compound_learning_corpus.py",
+        "docs/own-deliveries.md"
       ]
     },
     "lane-2": {
@@ -105,6 +109,26 @@
         {
           "id": "v26-3334-manual",
           "text": "tracker.updates manual still prints the start, post and review moves for people to make"
+        }
+      ]
+    },
+    "V26-3342": {
+      "title": "Repair main: give V26-3269's solution notes the corpus's note shape, and select the corpus check for notes",
+      "lane": "lane-1",
+      "inApp": "none",
+      "why": "fullHealth failed at c16bded, V26-3269's merge, on tests.test_compound_learning_corpus; the base-broken rules repair forward and close the gap (Decision 10).",
+      "criteria": [
+        {
+          "id": "v26-3342-notes",
+          "text": "Both of V26-3269's solution notes pass tests.test_compound_learning_corpus and keep what each teaches"
+        },
+        {
+          "id": "v26-3342-readers",
+          "text": "The binding's selection.readers maps docs/solutions/* to tests.test_compound_learning_corpus, so select adds it for any change to a note, with any readers pin updated"
+        },
+        {
+          "id": "v26-3342-repaired",
+          "text": "It lands through the queue and fullHealth passes on the new base, journaling base.repaired"
         }
       ]
     },
@@ -194,6 +218,22 @@
         {
           "id": "v26-3083-clean",
           "text": "A run leaves no open entity, its issues canceled and found only canceled by its marker (the lead's recorded reading of AC3)"
+        }
+      ]
+    },
+    "V26-3343": {
+      "title": "Make the connector check's marker searches count only issues that carry the marker",
+      "lane": "lane-2",
+      "inApp": "none",
+      "why": "V26-3083's first deliberate failing run found Linear's search matches loosely, so step 1's 'expecting nothing' and the cleanup search could miscount (Decision 11).",
+      "criteria": [
+        {
+          "id": "v26-3343-marked",
+          "text": "The on-demand steps and the routine prompt say a match is an issue carrying the run's marker, in step 1, step 3 and the cleanup search"
+        },
+        {
+          "id": "v26-3343-pins",
+          "text": "The doc's exact pins are updated, each proven red by a mutant"
         }
       ]
     }

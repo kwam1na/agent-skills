@@ -1479,6 +1479,14 @@
           "tests.test_delivery_views_adopter",
           "tests.test_delivery_views_snapshots"
         ]
+      },
+      {
+        "paths": [
+          "docs/solutions/**"
+        ],
+        "checks": [
+          "tests.test_compound_learning_corpus"
+        ]
       }
     ]
   },

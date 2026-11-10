@@ -54,3 +54,28 @@ An agent-facing rule that gets read as a fact about the provider blocks
 unattended automation, which never needed the rule. If the two are kept apart
 and each is pinned separately, a reader can't take one for the other. A later
 change also can't loosen the agent rule while it widens the machine path.
+
+## Prevention
+
+Pin each half on its own. A presence pin keeps the agent-facing rule word for word
+(`LinearWordingTests.test_the_linear_skills_mcp_only_rule_stays`). An absence pin, over
+every file the profiles ship, keeps the widened claim from coming back
+(`test_the_withdrawn_claim_is_absent_from_every_shipped_file`). When a ruling withdraws
+a rule's reach, search by meaning across the profiles for the claim and its synonyms,
+as AGENTS.md asks, rather than grepping for one phrase.
+
+## Examples
+
+- Jira: `jira-tracker-adapter` is MCP-only for agents, while
+  `skills/run-delivery/adapters/tracker_jira.py` writes to Jira's REST API with a token
+  from the environment.
+- Linear, once its adapter shipped: `linear-tracker-adapter` keeps "use only the host's native
+  Linear MCP capability", while `skills/run-delivery/adapters/tracker_linear.py` writes
+  to Linear's GraphQL API with the personal key the snapshot already reads with.
+
+## Related
+
+- [Fake a tracker's moves as the tracker lists them, not as its workflow defines them](../best-practices/fake-trackers-list-moves-as-the-tracker-does-2026-11-03.md),
+  the contract-only stubs the adapter's rows are built beside.
+- [A test helper named `fail` swallows every assertion in its class](../test-failures/a-helper-named-fail-swallows-every-assertion-2026-11-09.md),
+  learned while pinning this split.
