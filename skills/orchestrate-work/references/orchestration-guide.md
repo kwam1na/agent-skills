@@ -1140,7 +1140,8 @@ It is off unless the binding sets `selection: {"lead": true}`.
   `{by: "lead", head, reason}` or `{by: "provider"}`; the views say the checks
   were selected by the lead, with the reason, and the stats carry
   `checksSelectedBy`. So a lead's choice never passes for the provider's. A
-  row the lead selected nothing for, whose checks widened to `fallback`, is
+  row the lead selected nothing for, whose checks the runner widened to
+  `fallback` for one of its `fallbackReasons`, is
   `{by: "provider", fallback: [ids]}`, and the views and run-delivery's
   supervisor status line say it checks on the fallback, naming it. A hand-off
   may name the checks its lane ran, `handoff --checks`, kept as the row's

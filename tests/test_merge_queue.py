@@ -261,7 +261,7 @@ if mode == "ceiling":
     checks = [check("long", timeoutSeconds=999)]
 if mode == "slow-child":
     checks = [check("slow", "--sleep-child", "src/app.txt", timeoutSeconds=2)]
-print(json.dumps({"checks": checks, "widened": False, "uncovered": uncovered}))
+print(json.dumps({"checks": checks, "widened": mode == "widened", "uncovered": uncovered}))
 """,
     "forge.py": """
 import json, os, subprocess, sys
@@ -5796,6 +5796,14 @@ class LeadSelectionTests(MergeQueueTestCase):
         fallback = [check["id"] for check in adopter.binding["fallback"]]
         self.assertTrue(selection["widened"])
         self.assertEqual(adopter.item("feature")["checkSelection"], {"by": "provider", "fallback": fallback})
+        # A provider that widened its own answer added no fallback, so the row doesn't say it runs one.
+        self.fresh()
+        adopter = self.adopter(self.LEAD, mode="widened")
+        self.candidate(adopter)
+        selection = self.checked(self.run_queue(adopter, "feature"))["selection"]
+        self.assertEqual((selection["widened"], selection["fallbackReasons"]), (True, []))
+        self.assertNotIn("fallback", selection["checks"])
+        self.assertEqual(adopter.item("feature")["checkSelection"], {"by": "provider"})
         # Without lead selection the row says nothing, as before.
         self.fresh()
         adopter = self.adopter({"provider": None})

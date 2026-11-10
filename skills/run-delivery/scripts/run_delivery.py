@@ -3167,15 +3167,15 @@ def handoff_and_post(c, key: str, lane: str, head: str, pr: str, rounds: int, po
     lane posts it (no publisher) or the publisher will (the call failed, so no line was written)."""
     conf = tracker_conf(c)
     lead_moves = ((conf["transitions"].get("lead") or {}).get("candidate.handed")) if not conf["problems"] else None
+    handed = ["handoff", "--lane", lane, "--subject", key, "--head", head, "--change-request", pr, "--rounds",
+              str(rounds), *(["--checks", ",".join(checks)] if checks else [])]
     if conf["mode"] != "publisher" or conf["problems"] or lead_moves:
         # With lead moves for a hand-off, the publisher makes them and posts the update with what they did.
-        state_tool("handoff", "--lane", lane, "--subject", key, "--head", head, "--change-request", pr,
-                   "--rounds", str(rounds), *(["--checks", ",".join(checks)] if checks else []))
+        state_tool(*handed)
         return ("Tracker post: the tracker publisher posts the hand-off update, with its moves." if lead_moves
                 and conf["mode"] == "publisher" else None)
     with tracker_publisher.ledger_lock(c.state, wait=True):
-        state_tool("handoff", "--lane", lane, "--subject", key, "--head", head, "--change-request", pr,
-                   "--rounds", str(rounds), *(["--checks", ",".join(checks)] if checks else []))
+        state_tool(*handed)
         doc = load_state()
         journal = sorted(doc["journal"], key=lambda e: e["id"])
         entry = [e for e in journal if e["kind"] == "candidate.handed" and e.get("subject") == key][-1]
@@ -3514,6 +3514,12 @@ def check_ids(c, text: str, what: str) -> list[str]:
         raise Stop(f"{what} names checks the binding's catalogue doesn't have: {', '.join(unknown)} (it has "
                    f"{', '.join(known)})")
     return names
+
+
+def provider_selects(c) -> bool:
+    """Whether the binding names a provider: then a candidate with no lead selection runs the provider's answer, and
+    the fallback only when it can't be had."""
+    return (c.binding or {}).get("provider") is not None
 
 
 def fallback_ids(c) -> list[str]:
@@ -5535,6 +5541,10 @@ def lead_accept(args) -> None:
     if (args.checks is not None or args.full_suite) and not lead_selects(c):
         raise Stop("the binding doesn't enable lead selection (selection.lead), so the queue selects the checks: "
                    "accept with neither --checks nor --full-suite")
+    if args.full_suite and provider_selects(c):
+        raise Stop("the binding names a provider, so a candidate with no lead selection runs the provider's answer, "
+                   "and the fallback only when the provider can't give one: --full-suite can't promise the fallback; "
+                   "choose the checks with --checks")
     chosen = check_ids(c, args.checks, "--checks") if args.checks is not None else None
     doc = load_state()
     item = next((q for q in doc["state"]["queue"] if q["subject"] == key), None)
@@ -5604,9 +5614,14 @@ def lead_accept(args) -> None:
     if lead_selects(c) and not merged and chosen is None and not args.full_suite:
         # Under lead selection, a candidate accepted with no choice would check on the fallback: the lead says which.
         proposal = proposed_checks(c, changed, item.get("namedChecks") or [])
-        problems.append(f"choose {key}'s checks: the binding enables lead selection, and a candidate accepted with "
-                        f"none checks on the fallback ({', '.join(fallback_ids(c))}); accept with --checks, or with "
-                        "--full-suite to run the fallback")
+        if provider_selects(c):
+            problems.append(f"choose {key}'s checks: the binding enables lead selection, and a candidate accepted with "
+                            "none checks on the provider's selection, widened to the fallback "
+                            f"({', '.join(fallback_ids(c))}) only when it fails; accept with --checks")
+        else:
+            problems.append(f"choose {key}'s checks: the binding enables lead selection, and a candidate accepted with "
+                            f"none checks on the fallback ({', '.join(fallback_ids(c))}); accept with --checks, or "
+                            "with --full-suite to run the fallback")
     lane_root = c.lane_checkout(key)
     accepted_blocked = set(args.accept_blocked or [])
     if lane_root.exists():
@@ -5647,11 +5662,13 @@ def lead_accept(args) -> None:
     else:
         problems.append(f"can't read the lane's gate, in-app and review evidence: no checkout at {lane_root}")
     selected = False
+    before = item.get("leadSelection") if item else None
     if chosen is not None and not merged and not problems:
-        # Through the state tool's own select, with its validation, guards and readers: what it refuses, this refuses.
+        # Through the state tool's own select, with its validation, guards and readers (read from this checkout, the
+        # one the command runs in): what it refuses, this refuses.
         reason = args.reason or f"chosen at acceptance from {key}'s diff and its hand-off's checks"
         done = state_tool("select", "--subject", key, "--binding", str(c.binding_path), "--head", head, "--checks",
-                          ",".join(chosen), "--reason", reason, "--repo", str(c.root), check=False)
+                          ",".join(chosen), "--reason", reason, check=False)
         answer = json.loads(done.stdout or "{}") if done.stdout.strip().startswith("{") else {}
         if done.returncode != 0:
             problems.append(f"the selection was refused: {answer.get('error') or (done.stderr or done.stdout).strip()[-400:]}")
@@ -5673,15 +5690,24 @@ def lead_accept(args) -> None:
             decisions.append(f"marked {item.get('changeRequest')} ready under the delivery's readyPullRequests grant")
     if problems:
         if selected:
-            # Not accepted after all: a selection left behind would check the candidate the next time it is accepted.
-            state_tool("select", "--subject", key, "--clear", check=False)
+            # Not accepted after all: the selection this made is undone, and one that stood before it is put back.
+            if before and before.get("head") == head:
+                state_tool("select", "--subject", key, "--binding", str(c.binding_path), "--head", head, "--checks",
+                           json.dumps(before["checks"]), "--reason", before["reason"], check=False)
+            else:
+                state_tool("select", "--subject", key, "--clear", check=False)
         print(f"NOT accepted: {key}")
         for p in problems:
             print(f"  - {p}")
         if proposal is not None:
+            alternative = "" if provider_selects(c) else (", or" if proposal else "") + " --full-suite"
             print(f"  proposed: lead-accept {key} " + (f"--checks {','.join(proposal)} " if proposal else "")
-                  + "--reason \"<why these cover the diff>\"" + (", or" if proposal else "") + " --full-suite")
+                  + "--reason \"<why these cover the diff>\"" + alternative)
         sys.exit(1)
+    if args.full_suite and not merged and before:
+        # A selection still standing would be what the runner runs: the fallback the lead chose wouldn't.
+        state_tool("select", "--subject", key, "--clear")
+        decisions.append(f"cleared the lead selection recorded at {str(before.get('head'))[:10]}, so the fallback runs")
     if not merged:
         state_tool("handoff", "--accept", key)
     # What the plan's producer proofs are judged by: the accepted head and the in-app items accepted as blocked.
@@ -6121,7 +6147,7 @@ def on_fallback(c) -> str:
     state = load_json(c.state / "state.json") or {}
     named = [(item.get("subject"), (item.get("checkSelection") or {}).get("fallback"))
              for item in state.get("queue") or [] if isinstance(item, dict)
-             and item.get("stage") in ("syncing", "synced", "checking", "checked")]
+             and item.get("stage") in ("checking", "checked")]
     named = [(subject, checks) for subject, checks in named if isinstance(checks, list) and checks]
     if not named:
         return ""

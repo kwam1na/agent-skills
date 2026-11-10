@@ -199,6 +199,27 @@ test("says when the piece being checked runs on the fallback because the lead ch
   }
 });
 
+test("in a batch, the fallback note names the pieces on the fallback, or says it is every piece", async () => {
+  const document = fixtureDocument();
+  const summary = "Checking Retry card payments once on a dropped connection, Keep the order number on the receipt page as one batch";
+  document.state.queue[3].stage = "checking";
+  document.journal.push(
+    { at: "2026-10-22T05:05:00Z", id: 43, kind: "check.started", lane: "payments", subject: "PAY-2361", summary },
+    { at: "2026-10-22T05:05:00Z", id: 44, kind: "check.started", lane: "storefront", subject: "PAY-2362", summary },
+  );
+  const fallback = { by: "provider", fallback: ["full-suite"] };
+  const piece = (subject) => document.state.queue.find((entry) => entry.subject === subject);
+  piece("PAY-2362").checkSelection = fallback;
+  const [{ app: one }] = await open(document);
+  expect(one.querySelector(".checking .ck-h-words")?.textContent).toBe("Being checked together · 2 pieces");
+  expect(one.querySelector(".checking .ck-fallback")?.textContent).toBe(
+    "Checking on the fallback, full-suite for Keep the order number on the receipt page: the lead selected no checks");
+  piece("PAY-2361").checkSelection = fallback;
+  const [{ app: both }] = await open(document);
+  expect(both.querySelector(".checking .ck-fallback")?.textContent).toBe(
+    "Checking on the fallback, full-suite for every piece: the lead selected no checks");
+});
+
 test("shows a ticket's own title and summary when its id is hovered, wherever the id appears", async () => {
   const document = fixtureDocument();
   document.state.tickets["PAY-2360"] = { title: "Calm decline message", summary: HOSTILE };

@@ -8100,12 +8100,12 @@ class SupervisorLineFallbackTests(unittest.TestCase):
         self.assertEqual(self.line([row("FX-2", "checking", fallback)]),
                          "supervisor: running (pid 42); live view http://127.0.0.1:1; FX-2 checks on the fallback, "
                          "tests.full-suite, lint: the lead selected no checks")
-        for stage in ("syncing", "synced", "checked"):
-            with self.subTest(stage=stage):
-                self.assertIn("FX-2 checks on the fallback", self.line([row("FX-2", stage, fallback)]))
+        self.assertIn("FX-2 checks on the fallback", self.line([row("FX-2", "checked", fallback)]))
+        # A row syncing again keeps the last run's selection until the runner selects anew: it isn't named from it.
         quiet = [row("FX-2", "checking", {"by": "provider"}), row("FX-3", "checking", {"by": "lead", "head": "a" * 40,
                                                                                        "reason": "r"}),
-                 row("FX-4", "merged", fallback), row("FX-5", "queued", fallback), {"subject": "FX-6", "stage": "checking"}]
+                 row("FX-4", "merged", fallback), row("FX-5", "queued", fallback), row("FX-7", "syncing", fallback),
+                 row("FX-8", "synced", fallback), {"subject": "FX-6", "stage": "checking"}]
         self.assertEqual(self.line(quiet), "supervisor: running (pid 42); live view http://127.0.0.1:1")
 
 

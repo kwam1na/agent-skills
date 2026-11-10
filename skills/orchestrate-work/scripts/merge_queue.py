@@ -1903,11 +1903,12 @@ class Runner:
         """Say on each queue row whose choice its checks are, so the lead's never passes for the provider's.
 
         Written only under a binding that enables lead selection; elsewhere every check is the provider's. A row
-        with no lead selection whose checks widened to the binding's fallback names it, so the views can say so.
+        with no lead selection whose checks the runner widened to the binding's fallback, for a reason, names it, so
+        the views can say so; a provider that widened its own answer adds no fallback.
         """
         by_subject = {member["subject"]: member for member in members or []}
         fallback = ([check["id"] for check in self.binding["fallback"]]
-                    if members is None and (selection or {}).get("widened") else [])
+                    if members is None and (selection or {}).get("fallbackReasons") else [])
 
         def build(current: dict) -> tuple[dict, dict]:
             queue = [dict(item) for item in current["queue"]]

@@ -334,7 +334,8 @@ def _selection_texts(item: dict) -> list[str]:
         texts.append(f"checks selected by the lead at {used.get('head')}, not the provider · why: {used.get('reason')}")
     elif isinstance(used, dict) and used.get("by") == "provider" and used.get("outcome") == "provider_refused":
         texts.append(f"the provider refused its checks, and it is held until the lead selects them · {used.get('detail')}")
-    elif isinstance(used, dict) and used.get("by") == "provider" and used.get("fallback"):
+    elif isinstance(used, dict) and used.get("by") == "provider" and isinstance(used.get("fallback"), list) \
+            and used["fallback"]:
         names = ", ".join(str(name) for name in used["fallback"])
         texts.append(f"checking on the fallback, {names}: the lead selected no checks")
     elif isinstance(used, dict) and used.get("by") == "provider":

@@ -1014,6 +1014,14 @@ class CheckVisibilityViewTests(unittest.TestCase):
         view = render_state.render_markdown(fallback_document())
         self.assertIn(render_state._markdown_text(FALLBACK_LINE), view)
         self.assertNotIn(render_state._markdown_text("checks selected by the provider"), view)
+        # A fallback that isn't a list of names is the provider's selection, as the page reads it.
+        for odd in ("full-suite", [], {"id": "full-suite"}):
+            with self.subTest(fallback=odd):
+                document = fallback_document()
+                document["state"]["queue"][1]["checkSelection"]["fallback"] = odd
+                view = render_state.render_markdown(document)
+                self.assertNotIn("on the fallback", view)
+                self.assertIn(render_state._markdown_text("checks selected by the provider"), view)
 
     def test_the_markdown_view_says_the_provider_refused_and_never_that_it_selected(self) -> None:
         view = render_state.render_markdown(refusal_document())

@@ -3177,6 +3177,51 @@ def planned(subject: str, lane_id: str | None = "lane-1") -> dict:
     return {"subject": subject, "title": f"Work {subject}", "lane": lane_id, "stage": "review"}
 
 
+class HandoffNamedChecksTests(unittest.TestCase):
+    """A hand-off may name the checks its lane ran, each once: kept on the row and in the entry, and dropped by a
+    later hand-off that names none."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.directory = Path(self.temporary.name) / "state"
+        state_tool.init(self.directory, "Epic underway")
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer="lead", version=version, changes={
+            "lanes": [lane("lane-1")],
+            "planned": [{"subject": "work-a", "title": "Work A", "lane": "lane-1", "stage": "building"}]})
+
+    def hand(self, *extra: str, head: str = "b" * 40) -> tuple[int, dict]:
+        return run_tool(self.directory, "handoff", "--lane", "lane-1", "--subject", "work-a", "--head", head,
+                        "--change-request", "cr 1", "--rounds", "1", *extra)
+
+    def row(self) -> dict:
+        return next(item for item in state_tool.show(self.directory)["state"]["queue"] if item["subject"] == "work-a")
+
+    def test_named_checks_are_kept_each_once_and_dropped_by_a_hand_off_naming_none(self) -> None:
+        before = state_tool.show(self.directory)
+        for bad in ("a,a", "", " ", "a,,b"):
+            with self.subTest(checks=bad):
+                code, result = self.hand("--checks", bad)
+                self.assertEqual((code, result["code"]), (1, "handoff_invalid"), result)
+                self.assertIn("--checks names each check the lane ran once", result["error"])
+        self.assertEqual(state_tool.show(self.directory), before, "a refused hand-off writes nothing")
+        code, result = self.hand("--checks", "tests.test_two, tests.test_one")
+        self.assertEqual(code, 0, result)
+        self.assertEqual(self.row()["namedChecks"], ["tests.test_two", "tests.test_one"])
+        handed = [e for e in state_tool.read_journal(self.directory) if e["kind"] == "candidate.handed"]
+        self.assertIn("; the lane ran tests.test_two, tests.test_one", handed[-1]["summary"])
+        # Stopped and handed off again with none named: the earlier names go, so no acceptance proposes stale checks.
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer="runner", version=version, changes={},
+                         selector="queue[subject=work-a]", assignments={"/stage": "stopped"})
+        code, result = self.hand(head="c" * 40)
+        self.assertEqual(code, 0, result)
+        self.assertNotIn("namedChecks", self.row())
+        handed = [e for e in state_tool.read_journal(self.directory) if e["kind"] == "candidate.handed"]
+        self.assertNotIn("the lane ran", handed[-1]["summary"])
+
+
 class NoChangeHandoffTests(unittest.TestCase):
     """A story whose criteria already hold hands off with no change: it never enters the queue, and once the lead
     accepts it the record holds it settled, never removed."""
