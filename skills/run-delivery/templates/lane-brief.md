@@ -91,7 +91,10 @@ approved, is judged on scope before it blocks.
 
 ## Hand-off
 
-`{{flow}} handoff <key> --pr <PR link> [--findings "<expensive non-blocking findings>"] [--blocked <name>=<reason> ...]`
+`{{flow}} handoff <key> --pr <PR link> [--checks <catalogue ids you ran>] [--findings "<expensive non-blocking findings>"] [--blocked <name>=<reason> ...]`
+
+`--checks` names the test modules you ran by the binding's catalogue ids, comma-separated: the lead's acceptance proposes
+them for the candidate's checks.
 
 Every `--blocked` item, and every restarted review round, is the lead's decision: the lead accepts each one by
 name, or sends the story back. It refuses unless the checkout is clean (untracked files included), your branch on `{{remote}}` is at HEAD, the PR is

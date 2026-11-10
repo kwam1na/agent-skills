@@ -5788,6 +5788,21 @@ class LeadSelectionTests(MergeQueueTestCase):
         self.assertEqual(selection["providers"][0]["outcome"], "selected")
         self.assertEqual(adopter.item("feature")["checkSelection"], {"by": "provider"})
 
+    def test_without_a_selection_a_candidate_widened_to_the_fallback_names_it_on_its_row(self) -> None:
+        adopter = self.adopter({**self.LEAD, "provider": None})
+        self.candidate(adopter)
+        results = self.run_queue(adopter, "feature")
+        selection = self.checked(results)["selection"]
+        fallback = [check["id"] for check in adopter.binding["fallback"]]
+        self.assertTrue(selection["widened"])
+        self.assertEqual(adopter.item("feature")["checkSelection"], {"by": "provider", "fallback": fallback})
+        # Without lead selection the row says nothing, as before.
+        self.fresh()
+        adopter = self.adopter({"provider": None})
+        self.candidate(adopter)
+        self.run_queue(adopter, "feature")
+        self.assertNotIn("checkSelection", adopter.item("feature"))
+
     def test_a_selection_made_at_another_head_is_void(self) -> None:
         adopter = self.adopter(self.LEAD)
         self.candidate(adopter)

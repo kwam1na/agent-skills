@@ -181,6 +181,24 @@ test("says when the checks being run were chosen by the lead, with the lead's re
   expect(provider.querySelector(".checking").textContent).not.toContain("chosen by the lead");
 });
 
+test("says when the piece being checked runs on the fallback because the lead chose no checks, naming it", async () => {
+  const document = fixtureDocument();
+  const subject = document.state.meta.checking.now.subject;
+  const item = document.state.queue.find((entry) => entry.subject === subject);
+  item.checkSelection = { by: "provider", fallback: ["full-suite", "lint"] };
+  const [{ app }] = await open(document);
+  const panel = app.querySelector(".checking");
+  expect(panel.querySelector(".ck-fallback")?.textContent).toBe(
+    "Checking on the fallback, full-suite, lint: the lead selected no checks");
+  expect(panel.textContent).not.toContain("chosen by the lead");
+  // The provider's own selection, and a lead's, say nothing of the fallback.
+  for (const selection of [{ by: "provider" }, { by: "lead", head: item.head, reason: "only the retry path changed" }]) {
+    item.checkSelection = selection;
+    const [{ app: other }] = await open(document);
+    expect(other.querySelector(".checking .ck-fallback")).toBeNull();
+  }
+});
+
 test("shows a ticket's own title and summary when its id is hovered, wherever the id appears", async () => {
   const document = fixtureDocument();
   document.state.tickets["PAY-2360"] = { title: "Calm decline message", summary: HOSTILE };

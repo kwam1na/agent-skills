@@ -3160,7 +3160,8 @@ def review_move(c, key: str, when: str, last: bool = False) -> None:
     print(f"Tracker move (your story {key}): " + (" ".join(notes) or "made."))
 
 
-def handoff_and_post(c, key: str, lane: str, head: str, pr: str, rounds: int, post: str) -> str | None:
+def handoff_and_post(c, key: str, lane: str, head: str, pr: str, rounds: int, post: str,
+                     checks: list[str] | None = None) -> str | None:
     """Hand off to the record and, with the tracker publisher, post the hand-off update under the entry it journals,
     holding the ledger's lock across the journal write, the post and its line. Returns what was posted, or None when the
     lane posts it (no publisher) or the publisher will (the call failed, so no line was written)."""
@@ -3169,12 +3170,12 @@ def handoff_and_post(c, key: str, lane: str, head: str, pr: str, rounds: int, po
     if conf["mode"] != "publisher" or conf["problems"] or lead_moves:
         # With lead moves for a hand-off, the publisher makes them and posts the update with what they did.
         state_tool("handoff", "--lane", lane, "--subject", key, "--head", head, "--change-request", pr,
-                   "--rounds", str(rounds))
+                   "--rounds", str(rounds), *(["--checks", ",".join(checks)] if checks else []))
         return ("Tracker post: the tracker publisher posts the hand-off update, with its moves." if lead_moves
                 and conf["mode"] == "publisher" else None)
     with tracker_publisher.ledger_lock(c.state, wait=True):
         state_tool("handoff", "--lane", lane, "--subject", key, "--head", head, "--change-request", pr,
-                   "--rounds", str(rounds))
+                   "--rounds", str(rounds), *(["--checks", ",".join(checks)] if checks else []))
         doc = load_state()
         journal = sorted(doc["journal"], key=lambda e: e["id"])
         entry = [e for e in journal if e["kind"] == "candidate.handed" and e.get("subject") == key][-1]
@@ -3484,6 +3485,51 @@ def no_change_handoff(c, key: str, lane: str, args) -> None:
     print(f"\nTracker post (your story): {post}")
 
 
+def selection_of(c) -> dict:
+    selection = (c.binding or {}).get("selection")
+    return selection if isinstance(selection, dict) else {}
+
+
+def lead_selects(c) -> bool:
+    """Whether the binding lets the lead choose a candidate's checks: then one accepted without a choice checks on the
+    fallback."""
+    return selection_of(c).get("lead") is True
+
+
+def catalogue_ids(c) -> list[str]:
+    return [entry["id"] for entry in selection_of(c).get("catalogue") or []
+            if isinstance(entry, dict) and isinstance(entry.get("id"), str)]
+
+
+def check_ids(c, text: str, what: str) -> list[str]:
+    """A comma-separated list of the binding's catalogue ids, each once, in the order given; refused naming any other."""
+    known = catalogue_ids(c)
+    if not known:
+        raise Stop(f"{what} takes catalogue ids, and the binding declares no selection.catalogue")
+    names = [name.strip() for name in text.split(",")]
+    if not all(names) or len(set(names)) != len(names):
+        raise Stop(f"{what} is a comma-separated list of catalogue ids, each once: {text!r}")
+    unknown = [name for name in names if name not in known]
+    if unknown:
+        raise Stop(f"{what} names checks the binding's catalogue doesn't have: {', '.join(unknown)} (it has "
+                   f"{', '.join(known)})")
+    return names
+
+
+def fallback_ids(c) -> list[str]:
+    return [str(entry.get("id")) for entry in (c.binding or {}).get("fallback") or [] if isinstance(entry, dict)]
+
+
+def proposed_checks(c, changed: list[str], named: list[str]) -> list[str]:
+    """What lead-accept proposes when the lead chose nothing: the catalogue ids of the test modules the diff changes,
+    then the checks the lane named at hand-off, each once. select adds the guards and the readers' checks."""
+    known = set(catalogue_ids(c))
+    ids = [f"tests.{match.group(1)}" for path in changed
+           for match in [re.fullmatch(r"tests/(test_\w+)\.py", path)] if match]
+    ids += list(named)
+    return [name for index, name in enumerate(ids) if name in known and name not in ids[:index]]
+
+
 def handoff(args) -> None:
     c = cfg()
     key = c.require(args.key)
@@ -3494,6 +3540,7 @@ def handoff(args) -> None:
     if not args.pr:
         raise Stop("a hand-off needs --pr, the story's open PR; a story that needs no change hands off with "
                    "--no-change --evidence")
+    ran = check_ids(c, args.checks, "--checks") if args.checks is not None else []
     folder = review_dir(key)
     head = clean_head()
     pushed(key, head)
@@ -3540,7 +3587,7 @@ def handoff(args) -> None:
         # A review move a refused call left owed is retried here, at the latest.
         review_move(c, key, when, last=True)
     post = f"hand-off: {args.pr}, head {head[:10]}, {len(rounds)} review round(s); {validation}."
-    posted = handoff_and_post(c, key, lane, head, args.pr, len(rounds), post)
+    posted = handoff_and_post(c, key, lane, head, args.pr, len(rounds), post, ran)
     histories = [f"r{o['round']}: {round_history_text(o)}" for o in outcomes if round_history_text(o)]
     print("\n".join([
         f"**Hand-off: {key}** ({c.label(key)}, {lane})",
@@ -3549,6 +3596,7 @@ def handoff(args) -> None:
         "- review rounds: " + "; ".join(f"r{o['round']} {o['outcome']}" for o in outcomes) + " (review evidence captured)"
         + (f"; history: {'; '.join(histories)}" if histories else ""),
         f"- validation: {validation}",
+        *([f"- checks run: {', '.join(ran)}"] if ran else []),
         *([f"- PR review: {pr_line}"] if pr_line else []),
         "- in-app checks: " + ("; ".join(lines) or "none required"),
         "- run: none",
@@ -5482,6 +5530,12 @@ def lead_accept(args) -> None:
     if not args.key:
         raise Stop("name the story to accept, or --requeue a stopped one")
     key = c.require(args.key)
+    if args.checks is not None and args.full_suite:
+        raise Stop("choose one: --checks, the candidate's checks, or --full-suite, the binding's fallback")
+    if (args.checks is not None or args.full_suite) and not lead_selects(c):
+        raise Stop("the binding doesn't enable lead selection (selection.lead), so the queue selects the checks: "
+                   "accept with neither --checks nor --full-suite")
+    chosen = check_ids(c, args.checks, "--checks") if args.checks is not None else None
     doc = load_state()
     item = next((q for q in doc["state"]["queue"] if q["subject"] == key), None)
     waiting = next((p for p in doc["state"].get("planned", []) if p["subject"] == key and p.get("noChange")), None)
@@ -5546,6 +5600,13 @@ def lead_accept(args) -> None:
     outside = [f for f in changed if not any(fnmatch.fnmatch(f, g) for g in owns)]
     if outside:
         problems.append(f"the branch changes files outside {c.lane_of(key)}'s: {outside}")
+    proposal = None
+    if lead_selects(c) and not merged and chosen is None and not args.full_suite:
+        # Under lead selection, a candidate accepted with no choice would check on the fallback: the lead says which.
+        proposal = proposed_checks(c, changed, item.get("namedChecks") or [])
+        problems.append(f"choose {key}'s checks: the binding enables lead selection, and a candidate accepted with "
+                        f"none checks on the fallback ({', '.join(fallback_ids(c))}); accept with --checks, or with "
+                        "--full-suite to run the fallback")
     lane_root = c.lane_checkout(key)
     accepted_blocked = set(args.accept_blocked or [])
     if lane_root.exists():
@@ -5585,6 +5646,22 @@ def lead_accept(args) -> None:
             decisions.append("accepted review restarts (" + "; ".join(histories) + ")")
     else:
         problems.append(f"can't read the lane's gate, in-app and review evidence: no checkout at {lane_root}")
+    selected = False
+    if chosen is not None and not merged and not problems:
+        # Through the state tool's own select, with its validation, guards and readers: what it refuses, this refuses.
+        reason = args.reason or f"chosen at acceptance from {key}'s diff and its hand-off's checks"
+        done = state_tool("select", "--subject", key, "--binding", str(c.binding_path), "--head", head, "--checks",
+                          ",".join(chosen), "--reason", reason, "--repo", str(c.root), check=False)
+        answer = json.loads(done.stdout or "{}") if done.stdout.strip().startswith("{") else {}
+        if done.returncode != 0:
+            problems.append(f"the selection was refused: {answer.get('error') or (done.stderr or done.stdout).strip()[-400:]}")
+        else:
+            selected = True
+            ids = [check.get("id") for check in (answer.get("item") or {}).get("leadSelection", {}).get("checks", [])]
+            decisions.append(f"checks selected at {head[:10]}: {', '.join(map(str, ids or chosen))}")
+    if args.full_suite and not merged:
+        decisions.append(f"checks: the binding's fallback ({', '.join(fallback_ids(c))}), the lead's decision"
+                         + (f": {args.reason}" if args.reason else ""))
     ready = bool(authority().get("readyPullRequests"))
     if ready and not merged and not problems and pr.get("draft") is not False:
         # Before the hand-off is released, so the runner never takes a draft the merge step would refuse.
@@ -5595,9 +5672,15 @@ def lead_accept(args) -> None:
         else:
             decisions.append(f"marked {item.get('changeRequest')} ready under the delivery's readyPullRequests grant")
     if problems:
+        if selected:
+            # Not accepted after all: a selection left behind would check the candidate the next time it is accepted.
+            state_tool("select", "--subject", key, "--clear", check=False)
         print(f"NOT accepted: {key}")
         for p in problems:
             print(f"  - {p}")
+        if proposal is not None:
+            print(f"  proposed: lead-accept {key} " + (f"--checks {','.join(proposal)} " if proposal else "")
+                  + "--reason \"<why these cover the diff>\"" + (", or" if proposal else "") + " --full-suite")
         sys.exit(1)
     if not merged:
         state_tool("handoff", "--accept", key)
@@ -6032,15 +6115,29 @@ def waits_on(c) -> str:
     return f". The close waits on: {shown}"
 
 
+def on_fallback(c) -> str:
+    """Under selection.lead, the candidates checking on the binding's fallback because the lead selected no checks for
+    them, as the runner records it on each row; empty when none is."""
+    state = load_json(c.state / "state.json") or {}
+    named = [(item.get("subject"), (item.get("checkSelection") or {}).get("fallback"))
+             for item in state.get("queue") or [] if isinstance(item, dict)
+             and item.get("stage") in ("syncing", "synced", "checking", "checked")]
+    named = [(subject, checks) for subject, checks in named if isinstance(checks, list) and checks]
+    if not named:
+        return ""
+    return "; " + "; ".join(f"{subject} checks on the fallback, {', '.join(map(str, checks))}: the lead selected no "
+                            "checks" for subject, checks in named)
+
+
 def supervisor_line(c) -> str | None:
-    """What every lead command repeats: the supervisor's state, the live view's address and what the close waits on,
-    or how to restart it."""
+    """What every lead command repeats: the supervisor's state, the live view's address, any candidate checking on the
+    fallback, and what the close waits on, or how to restart it."""
     if not (c.state / "state.json").exists():
         return None
     held, recorded = read_lock(supervisor_lock_path(c))
     if held:
         return (f"supervisor: running (pid {recorded.get('pid')}); live view {recorded.get('address') or 'starting'}"
-                + waits_on(c))
+                + on_fallback(c) + waits_on(c))
     said = closed_status(c)
     if said is not None:
         return "supervisor: " + said
@@ -8510,6 +8607,8 @@ def main(argv: list[str] | None = None) -> None:
     p = command(sub, "pr-review"); p.add_argument("key"); p.add_argument("--wait", action="store_true")
     p.set_defaults(fn=pr_review)
     p = command(sub, "handoff"); p.add_argument("key"); p.add_argument("--pr")
+    p.add_argument("--checks", help="the checks the lane ran, by catalogue id, comma-separated: shown in the hand-off "
+                   "and the record, and proposed at acceptance")
     p.add_argument("--no-change", action="store_true", help="the story's criteria already hold on the base: hand it "
                    "off with --evidence, no branch, PR or review")
     p.add_argument("--evidence", help="with --no-change: what shows the criteria already hold, as text or @FILE")
@@ -8552,7 +8651,12 @@ def main(argv: list[str] | None = None) -> None:
     p = command(sub, "lead-accept"); p.add_argument("key", nargs="?"); p.add_argument("--accept-blocked", action="append")
     p.add_argument("--requeue", metavar="KEY", help="re-queue a stopped candidate you resolved, with no new hand-off")
     p.add_argument("--accept-restarts", action="store_true")
-    p.add_argument("--accept-discarded", action="append", type=int, metavar="ROUND"); p.set_defaults(fn=lead_accept)
+    p.add_argument("--accept-discarded", action="append", type=int, metavar="ROUND")
+    p.add_argument("--checks", help="under selection.lead: the candidate's checks, by catalogue id, comma-separated, "
+                   "recorded through the state tool's select at the handed head")
+    p.add_argument("--full-suite", action="store_true", help="under selection.lead: check on the binding's fallback, "
+                   "journalled as the lead's decision")
+    p.add_argument("--reason", help="with --checks or --full-suite: why"); p.set_defaults(fn=lead_accept)
     p = command(sub, "lead-carry-review", help="carry a story's captured review to its queued head across commits that "
                 "need no new round, showing their diff first")
     p.add_argument("key"); p.add_argument("--from", dest="from_head", required=True, help="the head the evidence covers")

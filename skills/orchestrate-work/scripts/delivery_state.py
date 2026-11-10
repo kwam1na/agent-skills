@@ -937,6 +937,7 @@ def handoff(
     rounds: int | None = None,
     evidence: list[dict] | None = None,
     run: str | None = None,
+    checks: list[str] | None = None,
 ) -> dict:
     """A lane hands its reviewed work to the queue, and the hand-off is journaled.
 
@@ -946,9 +947,14 @@ def handoff(
     each with the head and tree it ran on; a hand-off without it keeps none.
     ``run`` names the run that built the work; a hand-off without it keeps the
     run already stored, from an earlier hand-off or the lead's plan. A run another
-    planned or queued subject holds is refused with ``run_bound``.
+    planned or queued subject holds is refused with ``run_bound``. ``checks`` names
+    the checks the lane ran, by catalogue id, for the lead's selection at acceptance;
+    a hand-off without it names none.
     """
     problems = evidence_errors(evidence or [])
+    if checks is not None and (not checks or not all(isinstance(name, str) and name.strip() for name in checks)
+                               or len(set(checks)) != len(checks)):
+        problems.append("--checks names each check the lane ran once, by catalogue id")
     if problems:
         raise StateError("handoff_invalid", "; ".join(problems))
 
@@ -997,6 +1003,9 @@ def handoff(
         item.pop("evidence", None)
         if evidence:
             item["evidence"] = [{**entry, "recordedAt": now()} for entry in evidence]
+        item.pop("namedChecks", None)
+        if checks:
+            item["namedChecks"] = list(checks)
         # The lead's own policy, from the record, so no caller can leave it out; only the lead clears the wait.
         if state["meta"].get("handoffsNeedAcceptance"):
             item["pending"] = True
@@ -1021,8 +1030,9 @@ def handoff(
     rounds_text = f" after {rounds} review rounds" if rounds is not None else ""
     proof = "".join(f"; suite evidence for {entry['check']} ({entry['result']}) at {entry['head']}"
                     for entry in evidence or [])
+    ran = f"; the lane ran {', '.join(checks)}" if checks else ""
     append_journal(directory, kind="candidate.handed", lane=lane, subject=subject,
-                   summary=f"{lane} handed {subject} at {head} ({change_request}){rounds_text}{proof}{waiting}")
+                   summary=f"{lane} handed {subject} at {head} ({change_request}){rounds_text}{proof}{ran}{waiting}")
     return item  # type: ignore[return-value]
 
 
@@ -4077,8 +4087,10 @@ def _handoff_command(args: argparse.Namespace) -> dict:
             evidence.append(json.loads(text))
         except json.JSONDecodeError as error:
             raise StateError("handoff_invalid", f"--evidence is not JSON: {error}") from None
+    checks = None if args.checks is None else [name.strip() for name in args.checks.split(",")]
     return handoff(args.dir, lane=args.lane, subject=args.subject, head=args.head,
-                   change_request=args.change_request, rounds=args.rounds, evidence=evidence, run=args.run)
+                   change_request=args.change_request, rounds=args.rounds, evidence=evidence, run=args.run,
+                   checks=checks)
 
 
 def _select_command(args: argparse.Namespace) -> dict:
@@ -4429,6 +4441,7 @@ def main(argv: list[str] | None = None) -> int:
     hand.add_argument("--change-request")
     hand.add_argument("--rounds", type=int)
     hand.add_argument("--run", help="the id of the run that built the work; kept from before when left out")
+    hand.add_argument("--checks", help="the checks the lane ran, by catalogue id, comma-separated")
     hand.add_argument("--evidence", action="append",
                       help="the lane's evidence of a reusable check's run, as merge_queue.py evidence prints it; once a check")
     hand.add_argument("--no-change", action="store_true",

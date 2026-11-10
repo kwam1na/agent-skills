@@ -907,6 +907,16 @@ def selection_lines(document: dict) -> tuple[str, ...]:
     )
 
 
+def fallback_document() -> dict:
+    """The fixed state with one row checking on the binding's fallback because the lead selected no checks for it."""
+    state = copy.deepcopy(FIXED_STATE)
+    state["queue"][1]["checkSelection"] = {"by": "provider", "fallback": ["full-suite", "lint"]}
+    return {"state": state, "journal": FIXED_JOURNAL}
+
+
+FALLBACK_LINE = "checking on the fallback, full-suite, lint: the lead selected no checks"
+
+
 def refusal_document() -> dict:
     """The fixed state with one row the provider refused under selection.refusalStops."""
     state = copy.deepcopy(FIXED_STATE)
@@ -999,6 +1009,11 @@ class CheckVisibilityViewTests(unittest.TestCase):
         self.assertNotIn("<b>", view)
         self.assertNotIn(LONG_TITLE, view)
         self.assertNotIn("suite: failed", view)
+
+    def test_the_markdown_view_says_a_row_checks_on_the_fallback_naming_it(self) -> None:
+        view = render_state.render_markdown(fallback_document())
+        self.assertIn(render_state._markdown_text(FALLBACK_LINE), view)
+        self.assertNotIn(render_state._markdown_text("checks selected by the provider"), view)
 
     def test_the_markdown_view_says_the_provider_refused_and_never_that_it_selected(self) -> None:
         view = render_state.render_markdown(refusal_document())
@@ -2247,6 +2262,11 @@ setTimeout(async () => {
             with self.subTest(line=line):
                 self.assertIn(line, shown["text"])
         self.assertNotIn(f"lead selection for {document['state']['queue'][0]['head']}", shown["text"])
+
+    def test_the_page_says_a_row_checks_on_the_fallback_as_the_markdown_does(self) -> None:
+        shown = self.run_page({}, fallback_document())
+        self.assertIn(FALLBACK_LINE, shown["text"])
+        self.assertNotIn("checks selected by the provider", shown["text"])
 
     def test_the_page_says_the_provider_refused_as_the_markdown_does(self) -> None:
         shown = self.run_page({}, refusal_document())

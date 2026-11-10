@@ -793,7 +793,23 @@
                 "detail": {
                   "type": "string",
                   "minLength": 1
+                },
+                "fallback": {
+                  "description": "Under selection.lead, with no lead selection for the candidate: the binding's fallback checks it runs instead, named so the views say the candidate checks on the fallback. Absent otherwise.",
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
                 }
+              }
+            },
+            "namedChecks": {
+              "description": "Written only by a hand-off: the checks the lane ran, by catalogue id, which the lead's acceptance proposes beside the checks matching the diff. A hand-off without them drops them. Absent otherwise.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
               }
             }
           }
