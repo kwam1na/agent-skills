@@ -226,7 +226,9 @@ class StandingBinding(unittest.TestCase):
         self.assertEqual(selection["guards"], GUARDS)
         self.assertEqual(selection["readers"], [{"paths": ["skills/delivery-views/scripts/snapshot.py"],
                                                  "checks": ["tests.test_delivery_views_adopter",
-                                                            "tests.test_delivery_views_snapshots"]}])
+                                                            "tests.test_delivery_views_snapshots"]},
+                                                {"paths": ["docs/solutions/**"],
+                                                 "checks": ["tests.test_compound_learning_corpus"]}])
         # A runner entry's pattern selects its own module's units and nothing else.
         guard = next(entry for entry in catalogue if entry["id"] == "tests.test_linear_qualification")
         listed = subprocess.run([sys.executable, "-B", *guard["argv"][2:], "--list"], cwd=ROOT, capture_output=True, text=True,
@@ -291,6 +293,28 @@ class StandingBinding(unittest.TestCase):
                              ["tests.test_run_delivery", *GUARDS, "tests.test_delivery_views_adopter",
                               "tests.test_delivery_views_snapshots"])
 
+    def test_a_changed_note_brings_the_corpus_check_and_only_a_note_does(self) -> None:
+        # Through the installed generation's own resolver, as select resolves a lead's selection.
+        import importlib.util
+        previous = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        try:
+            spec = importlib.util.spec_from_file_location("own_delivery_state", ROOT / STATE_TOOL)
+            tool = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(tool)
+        finally:
+            sys.dont_write_bytecode = previous
+        binding = json.loads((ROOT / ".agents/orchestration.json").read_text(encoding="utf-8"))
+        for changed, brought in ((["docs/solutions/test-failures/a-note-2026-11-10.md"], True),
+                                 (["docs/solutions/best-practices/another-2026-11-10.md", "README.md"], True),
+                                 (["docs/solutions.md", "docs/own-deliveries.md"], False)):
+            with self.subTest(changed=changed):
+                checks, added = tool.resolve_selection([], binding, lambda: changed)
+                ids = [check["id"] for check in checks]
+                self.assertEqual("tests.test_compound_learning_corpus" in ids, brought, ids)
+                if brought:
+                    self.assertIn({"id": "tests.test_compound_learning_corpus", "why": f"reads {changed[0]}"}, added)
+
     def test_the_checks_section_names_the_binding_s_guards_and_readers(self) -> None:
         binding = json.loads((ROOT / ".agents/orchestration.json").read_text(encoding="utf-8"))
         selection = binding["selection"]
@@ -300,10 +324,14 @@ class StandingBinding(unittest.TestCase):
         self.assertIn(f"Two guards join every selection, named or not: `{first}`,", section)
         self.assertIn(f"and `{second}`.", section)
         self.assertEqual(len(selection["guards"]), 2)
-        (reader,) = selection["readers"]
-        (path,) = reader["paths"]
-        adopter, snapshots = reader["checks"]
+        snapshot, notes = selection["readers"]
+        (path,) = snapshot["paths"]
+        adopter, snapshots = snapshot["checks"]
         self.assertIn(f"A change to `{path}` also brings `{adopter}` and `{snapshots}`,", section)
+        (folder,) = notes["paths"]
+        (corpus,) = notes["checks"]
+        self.assertIn(f"A change under `{folder.removesuffix('**')}` brings `{corpus}`, which pins each note's shape.",
+                      section)
         self.assertIn("The lead selects by catalogue id.", section)
 
     def test_the_delivery_folders_are_ignored(self) -> None:
