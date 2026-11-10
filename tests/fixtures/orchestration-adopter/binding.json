@@ -130,8 +130,14 @@
     ],
     "publishers": [
       {
-        "id": "live",
-        "kind": "host"
+        "id": "mirror",
+        "argv": [
+          "python3",
+          "-B",
+          "-c",
+          "import pathlib, sys; pathlib.Path(sys.argv[1]).write_bytes(sys.stdin.buffer.read())",
+          "{stateDirectory}/../mirror.json"
+        ]
       }
     ]
   }

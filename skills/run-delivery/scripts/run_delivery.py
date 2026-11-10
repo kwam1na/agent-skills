@@ -3067,11 +3067,6 @@ def said_moves(names: list[str]) -> str:
     return ", then ".join(f'"{n}"' for n in names)
 
 
-def lane_print(c, key: str, what: dict) -> None:
-    """Record what a command printed for the lane to make with its own tracker tools (a host or manual tracker)."""
-    tracker_publisher.append_flow(c.flow_log, c.delivery, "lane-prints", {"subject": key, **what})
-
-
 def review_move_made(c, key: str, names: list[str]) -> bool:
     """Whether this record's ledger holds the story's whole review move: every step made or made by someone else, or
     the move found made or not offered. A move a refusal stopped partway isn't made: the next run resumes it."""
@@ -3122,12 +3117,7 @@ def review_move(c, key: str, when: str, last: bool = False) -> None:
     if configured != when:
         return
     if conf["mode"] != "publisher":
-        if conf["mode"] == "host" and any(p.get("subject") == key and p.get("move") == "review" for p in
-                                          tracker_publisher.read_flow(c.flow_log, c.delivery, "lane-prints")):
-            return  # Printed once already; handoff's retry doesn't print it again.
         print(f"Tracker move (your story {key}): {said_moves(names)}, with your tracker tools.")
-        if conf["mode"] == "host":
-            lane_print(c, key, {"move": "review", "transitions": names})
         return
     if review_move_made(c, key, names):
         print(f"{key}'s review move is already made.")
@@ -3266,15 +3256,13 @@ def lane_start(args) -> None:
         tracker_publisher.record_lane_start(c.flow_log, c.delivery, key, lane)
         did.append("recorded the start")
         conf = tracker_conf(c)
-        # Made by hand, through the host's tools or the lane's own: the publisher makes it in publisher mode.
-        if conf["mode"] in ("host", "manual"):
+        # Made by hand, with the lane's own tracker tools: the publisher makes it in publisher mode.
+        if conf["mode"] == "manual":
             moves = conf["transitions"].get("start") or []
             update = f"Started ({lane}): {c.label(key)}: {c.stories[key]['title']}"
             if moves:
                 print(f"Tracker move (your story {key}): {said_moves(moves)}, with your tracker tools.")
             print(f"Tracker post (your story {key}): {update}")
-            if conf["mode"] == "host":
-                lane_print(c, key, {"move": "start", "transitions": moves, "post": update})
     print(f"{key}: " + ("; ".join(did) if did else "already started; nothing to do") + f". Work in {path}.")
 
 
@@ -3571,8 +3559,6 @@ def handoff(args) -> None:
         print(f"\n{posted}")
     else:
         print(f"\nTracker post (your story): {post}")
-        if conf["mode"] == "host":
-            lane_print(c, key, {"post": post, "kind": "candidate.handed"})
 
 
 # -- the delivery posture ---------------------------------------------------------------------
@@ -4772,6 +4758,9 @@ def lead_setup(args) -> None:
                    "the one this delivery lands on")
     if args.base and c.binding_base and not serves(c.binding, args.base):
         raise unserved(c.binding, args.base)
+    if tracker_conf(c)["unrunnable"]:
+        # Refused before anything is drafted: a binding naming a publisher that runs nothing no longer validates.
+        raise Stop(tracker_publisher.refusal(tracker_conf(c)))
     key = args.key
     path = c.deliveries / f"{key}.json"
     if path.exists() and not args.force:
@@ -6459,13 +6448,11 @@ def blocker_resolved(c, doc: dict, entry: dict, resolutions: set[int]) -> bool:
 FULL_HEALTH_RUNNING_CLEARS = "the run ending, or lead-close, which stops it"
 
 
-def tracker_item(item: dict, mode: str | None) -> dict:
+def tracker_item(item: dict) -> dict:
     """A tracker "Needs you" item with where it comes from and what clears it: the publisher's lag clears when it
-    posts, the host outbox's when it is posted and acknowledged; a ledger line is only shown, and stays."""
+    posts; a ledger line is only shown, and stays."""
     if not item["holding"]:
         return {**item, "source": "tracker ledger", "clears": "nothing: it stays listed for the friction note"}
-    if mode == "host":
-        return {**item, "source": "host outbox", "clears": "posting the updates with your tracker tools, then ack"}
     return {**item, "source": "tracker publisher", "clears": "the publisher posting those entries on a later pass"}
 
 
@@ -6474,7 +6461,7 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
     shown ones are listed in the friction note. The close condition, the supervisor's pass log and the line map read
     this same list."""
     conf = tracker_conf(c)
-    items = [tracker_item(item, conf.get("mode")) for item in
+    items = [tracker_item(item) for item in
              tracker_publisher.needs_you(doc, c.state, c.flow_log, c.delivery, conf, closing=closing)]
     head = base_head(c)
     running = full_health_running(c)
@@ -7044,8 +7031,8 @@ FOLLOWUP = "Deferred finding {finding} of {story} becomes follow-up {story}-{fin
 def followups_step(c, doc: dict) -> tuple[bool, str]:
     """One follow-up item per deferred finding, keyed by story and finding id, which is also its followups[] id.
     Each is journalled as a decision marked for the tracker publisher to file; the step holds until the publisher's
-    ledger covers every one: a transient failure is retried by its next run, and a permanent one is shown. Through
-    the host, the outbox carries the filings; by hand, the record's followups are all there is."""
+    ledger covers every one: a transient failure is retried by its next run, and a permanent one is shown. By hand,
+    the record's followups are all there is."""
     have = {item["id"] for item in doc["state"]["followups"]}
     missing = [f for f in deferred_findings(c) if f"{f['story']}-{f['finding']}" not in have]
     for finding in missing:
@@ -7100,10 +7087,6 @@ def tracker_owed(c, doc: dict, closed: dict) -> str | None:
         owed = [e["id"] for e in journal if e["id"] <= closed["id"] and e["id"] not in done]
         if owed:
             return f"the tracker publisher to cover journal entries {', '.join(map(str, owed[:10]))}"
-    elif mode == "host":
-        through = (load_json(c.state / "published.json") or {}).get("journalThrough", 0)
-        if through < closed["id"]:
-            return f"the host outbox to be acked through journal entry {closed['id']}"
     return None
 
 
@@ -8017,6 +8000,10 @@ class Doctor:
         sys.dont_write_bytecode = True  # the release's modules leave no bytecode in the installed generation
         import merge_queue  # noqa: E402  (the installed release's own binding check)
         errors = merge_queue.binding_errors(binding)
+        unrunnable = tracker_publisher.settings(self.root, self.c.flow_raw if self.c else None, binding)
+        if errors and unrunnable["unrunnable"]:
+            # The schema refuses it too, but only this says what replaces it.
+            return "wrong", f"{path.name} doesn't validate: {tracker_publisher.refusal(unrunnable)}"
         if errors:
             return "wrong", (f"{path.name} doesn't validate: {'; '.join(errors[:3])}"
                              f"{f' (and {len(errors) - 3} more)' if len(errors) > 3 else ''}; fix: correct it against "
@@ -8183,7 +8170,6 @@ class Doctor:
         state = self.binding.get("state") or {}
         conf = tracker_publisher.settings(self.root, self.c.flow_raw, self.binding or {})
         updates = {"publisher": f"the {conf['publisher']} tracker publisher posts tracker updates",
-                   "host": f"the {conf['host']} host publisher's outbox carries tracker updates",
                    "manual": f"the lead posts tracker updates by hand ({self.c.name} sets tracker.updates to manual)"}
         said = [*(["a forge snapshot"] if state.get("forgeSnapshot") else []),
                 *([updates[conf["mode"]]] if conf["mode"] in updates else [])]

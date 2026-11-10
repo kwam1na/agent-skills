@@ -56,7 +56,8 @@ JOURNAL_FILE = "journal.jsonl"
 STATE_LOCK = "state.lock"
 # Reserved for the merge-queue runner, which holds it for a whole run.
 QUEUE_LOCK = "queue.lock"
-# What was last published, and the outbox a host publisher leaves for the lead.
+# What an earlier generation's `ack` recorded as posted by hand. Nothing writes it now: the tracker publisher reads it
+# once, so a record opened under that generation never posts those entries again.
 PUBLISHED_FILE = "published.json"
 # One line per successful write, for a live view to wait on: never read as the record.
 CHANGES_FILE = "changes.jsonl"
@@ -68,8 +69,9 @@ CHANGES_LIMIT_BYTES = 64 * 1024
 # once its journal entry is appended, and finished by the next reconcile.
 RECOVERY_FILE = "recovery.json"
 RECOVERY_QUARANTINE = "recovery.json.invalid"
+# The folder an earlier generation's render wrapper left beside a record for the lead to post by hand. Nothing reads or
+# writes it now; it is named only so a reopened record's old files are never written over.
 OUTBOX_DIRECTORY = "outbox"
-OUTBOX_FILE = "outbox.json"
 # A snapshot older than this is refused, so a skipped listing fails loudly.
 SNAPSHOT_MAX_AGE_SECONDS = 900.0
 # How far ahead of this machine a snapshot's clock may run before it is refused.
@@ -3013,54 +3015,6 @@ def _finish_intent(directory: Path, intent: dict, finished: list[dict], reports:
     (directory / RECOVERY_FILE).unlink(missing_ok=True)
 
 
-def read_outbox(directory: Path) -> dict | None:
-    """The outbox a host publisher last wrote, or None."""
-    try:
-        outbox = json.loads((directory / OUTBOX_DIRECTORY / OUTBOX_FILE).read_bytes().decode("utf-8"))
-    except FileNotFoundError:
-        return None
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        raise StateError("state_invalid", f"{OUTBOX_DIRECTORY}/{OUTBOX_FILE} is not JSON") from None
-    if (not isinstance(outbox, dict)
-            or not all(isinstance(outbox.get(key), int) and not isinstance(outbox.get(key), bool)
-                       and outbox[key] >= 0 for key in ("version", "journalThrough"))
-            or not (outbox.get("publisher") is None or isinstance(outbox["publisher"], str))):
-        raise StateError("state_invalid", f"{OUTBOX_DIRECTORY}/{OUTBOX_FILE} is malformed")
-    return outbox
-
-
-def retire_outbox(directory: Path, publisher: str, *, force: bool = False) -> dict:
-    """Remove a host publisher's outbox, so it no longer caps ``ack``.
-
-    Explicit, never implied: a render without a binding cannot tell a removed
-    publisher from one it was simply not given, so only this removes an outbox.
-    An outbox written before outboxes named their publisher is retired by any id.
-    ``force`` retires one that cannot be read, which no render would rewrite.
-    """
-    with file_lock(directory / STATE_LOCK):
-        read_state(directory)
-        try:
-            outbox = read_outbox(directory)
-        except StateError:
-            if not force:
-                raise
-            (directory / OUTBOX_DIRECTORY / OUTBOX_FILE).unlink()
-            with contextlib.suppress(OSError):
-                (directory / OUTBOX_DIRECTORY).rmdir()
-            _note_change(directory, "outbox")
-            return {"publisher": None, "version": None, "journalThrough": None, "unreadable": True}
-        if outbox is None:
-            raise StateError("outbox_missing", "there is no outbox to retire")
-        owner = outbox.get("publisher")
-        if owner is not None and owner != publisher:
-            raise StateError("outbox_not_owned", f"the outbox is {owner}'s, not {publisher}'s")
-        (directory / OUTBOX_DIRECTORY / OUTBOX_FILE).unlink()
-        with contextlib.suppress(OSError):
-            (directory / OUTBOX_DIRECTORY).rmdir()
-        _note_change(directory, "outbox")
-    return {"publisher": owner, "version": outbox["version"], "journalThrough": outbox["journalThrough"]}
-
-
 def binding_state(path: Path) -> dict:
     """The binding's ``state`` member, for the two fields the state tool reads from it."""
     try:
@@ -3102,8 +3056,7 @@ def bound_directory(path: Path, member: dict) -> Path:
 def require_bound(path: Path, member: dict, directory: Path) -> None:
     """Refuse a binding that keeps its state somewhere other than ``directory``.
 
-    A binding from another checkout would judge this record's outbox against
-    publishers that are not this record's.
+    A binding from another checkout describes another record.
     """
     bound = bound_directory(path, member)
     shown = Path(directory).resolve()
@@ -3117,11 +3070,6 @@ def require_bound(path: Path, member: dict, directory: Path) -> None:
             "binding_invalid",
             f"{Path(path).name} keeps its state in {bound}, not in {shown}, the directory being shown",
         )
-
-
-def host_publishers(member: dict) -> set[str]:
-    return {entry["id"] for entry in member.get("publishers", [])
-            if isinstance(entry, dict) and entry.get("kind") == "host" and isinstance(entry.get("id"), str)}
 
 
 # ---------------------------------------------------------------------------
@@ -4050,109 +3998,13 @@ def _set_sources(directory: Path, statuses: dict[str, dict], reports: list[dict]
 
 
 # ---------------------------------------------------------------------------
-# Publication: what went out, so an unpublished view is visible
+# What `show` adds beside the record
 
 
-def read_published(directory: Path) -> dict | None:
-    try:
-        published = json.loads((directory / PUBLISHED_FILE).read_bytes().decode("utf-8"))
-    except FileNotFoundError:
-        return None
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        raise StateError("state_invalid", f"{PUBLISHED_FILE} is not JSON") from None
-    if (not isinstance(published, dict) or set(published) != {"version", "journalThrough", "at"}
-            or not all(isinstance(published[key], int) and not isinstance(published[key], bool)
-                       and published[key] >= 0 for key in ("version", "journalThrough"))
-            or not isinstance(published["at"], str)):
-        raise StateError("state_invalid", f"{PUBLISHED_FILE} is malformed")
-    return published
-
-
-def ack(directory: Path, *, version: int | None = None, through: int | None = None) -> dict:
-    """Record that ``version`` and the journal through entry ``through`` were published.
-
-    Either left out is the outbox's own: what a host publisher last wrote is what
-    it published. Without an outbox, both are needed.
-
-    Kept beside the state, not in it: an acknowledgement that wrote the state
-    would make the record newer than what it acknowledges.
-    """
-    with file_lock(directory / STATE_LOCK):
-        state = read_state(directory)
-        journal = read_journal(directory)
-        outbox = read_outbox(directory)
-        if version is None or through is None:
-            if outbox is None:
-                raise StateError("ack_invalid", "there is no outbox to acknowledge: pass --version and --through, "
-                                                "the version and journal entry that were published")
-            version = outbox["version"] if version is None else version
-            through = outbox["journalThrough"] if through is None else through
-        try:
-            previous = read_published(directory) or {"version": 0, "journalThrough": 0}
-        except StateError:
-            # An unreadable acknowledgement is replaced: the ack is its repair.
-            previous = {"version": 0, "journalThrough": 0}
-        last = journal[-1]["id"] if journal else 0
-        problems = []
-        if version > state["version"]:
-            problems.append(f"version {version} is ahead of the record's {state['version']}")
-        if version < max(1, previous["version"]):
-            problems.append(f"version {version} is before the published {previous['version']}")
-        if through > last:
-            problems.append(f"journal entry {through} does not exist; the last is {last}")
-        if through < previous["journalThrough"]:
-            problems.append(f"journal entry {through} is before the published {previous['journalThrough']}")
-        if outbox is not None and (version > outbox["version"] or through > outbox["journalThrough"]):
-            hint = (f"; if {outbox['publisher']} is no longer bound, retire its outbox with outbox --retire "
-                    f"{outbox['publisher']}") if outbox.get("publisher") else ""
-            problems.append(
-                f"the outbox holds version {outbox['version']} through entry {outbox['journalThrough']}: "
-                f"acknowledge only what was published, with ack --version {outbox['version']} --through "
-                f"{outbox['journalThrough']}, or ack with neither to take the outbox's own{hint}")
-        elif problems and outbox is not None:  # whatever was refused, the outbox says what was published
-            problems.append(f"the outbox holds version {outbox['version']} through entry {outbox['journalThrough']}")
-        if problems:
-            raise StateError("ack_invalid", "; ".join(problems))
-        published = {"version": version, "journalThrough": through, "at": now()}
-        _write_atomically(directory / PUBLISHED_FILE, dumps(published))
-        _note_change(directory, "ack", version=state["version"], journal=through)
-    return published
-
-
-def publication(directory: Path, shown: dict, hosts: set[str] | None = None) -> dict:
-    """Whether what was published, and the outbox, lag the record.
-
-    The record is fine when only an acknowledgement or an outbox is unreadable:
-    each is reported as an error and counted as a lag, never as a failure.
-    """
-    last = shown["journal"][-1]["id"] if shown["journal"] else 0
-    version = shown["state"]["version"]
-    errors = {}
-    try:
-        published = read_published(directory)
-    except StateError as error:
-        published, errors["error"] = None, str(error)
-    try:
-        outbox = read_outbox(directory)
-    except StateError as error:
-        outbox, errors["outboxError"] = None, str(error)
-    through = published["journalThrough"] if published else 0
-    unpublished = sum(1 for entry in shown["journal"] if entry["id"] > through)
-    return {
-        "publishedVersion": published["version"] if published else None,
-        "journalThrough": through,
-        "unpublishedEntries": unpublished,
-        "outboxVersion": outbox["version"] if outbox else None,
-        "outboxPublisher": outbox.get("publisher") if outbox else None,
-        # A recovery a crash interrupted: its merge may be recorded and not yet journaled.
-        "recoveryPending": (directory / RECOVERY_FILE).exists() or bool(_set_aside_intents(directory)),
-        # Known only against a binding: an outbox whose host publisher it no longer names.
-        "outboxOrphaned": None if hosts is None or outbox is None else outbox.get("publisher") not in hosts,
-        "outboxLags": "outboxError" in errors or (
-            outbox is not None and (outbox["version"] < version or outbox["journalThrough"] < last)),
-        "lags": published is None or published["version"] < version or unpublished > 0,
-        **errors,
-    }
+def publication(directory: Path) -> dict:
+    """What `show` reports beside the record: a recovery a crash interrupted, whose merge may be recorded and not
+    yet journaled."""
+    return {"recoveryPending": (directory / RECOVERY_FILE).exists() or bool(_set_aside_intents(directory))}
 
 
 def _review_argument(value: str | None) -> dict | None:
@@ -4618,8 +4470,8 @@ def main(argv: list[str] | None = None) -> int:
     binding_run.add_argument("--lane", required=True)
     binding_run.add_argument("--subject", required=True)
     binding_run.add_argument("--run", required=True, help="the id of the run, in the adopter's delivery product")
-    display = commands.add_parser("show", help="print the validated state and journal, and whether publication lags")
-    display.add_argument("--binding", type=Path, help="the repository binding, to tell whether the outbox is orphaned")
+    display = commands.add_parser("show", help="print the validated state and journal, and any recovery pending")
+    display.add_argument("--binding", type=Path, help="the repository binding, which must keep its state in --dir")
     sync = commands.add_parser("reconcile", help="bring the record up to date with forge and tracker snapshots")
     sync.add_argument("--snapshot", action="append", type=Path, required=True, help="a work-snapshot/1 file")
     sync.add_argument("--max-age", type=float,
@@ -4642,14 +4494,6 @@ def main(argv: list[str] | None = None) -> int:
     forge.add_argument("--binding", type=Path, required=True, help="the repository binding, with state.forgeSnapshot")
     forge.add_argument("--output", type=Path, required=True, help="where the snapshot is written; kept on a failure")
     forge.add_argument("--max-age", type=float, help="refuse a snapshot older than this; overrides the binding")
-    retire = commands.add_parser("outbox", help="manage a host publisher's outbox")
-    retire.add_argument("--retire", required=True, metavar="PUBLISHER", help="remove this publisher's outbox")
-    retire.add_argument("--force", action="store_true", help="also remove an outbox that cannot be read")
-    published = commands.add_parser("ack", help="record which version and journal entries were published")
-    published.add_argument("--version", type=int,
-                           help="the version published: the outbox's version when left out, not the record's")
-    published.add_argument("--through", type=int,
-                           help="the last journal id published: the outbox's journalThrough when left out")
     args = parser.parse_args(argv)
     try:
         if args.command == "init":
@@ -4744,18 +4588,11 @@ def main(argv: list[str] | None = None) -> int:
             age = args.max_age if args.max_age is not None else bound
             result = take_snapshot(args.dir, member, args.output, source=args.command.split("-")[0],
                                    max_age=SNAPSHOT_MAX_AGE_SECONDS if age is None else float(age))
-        elif args.command == "outbox":
-            result = {"ok": True, "retired": retire_outbox(args.dir, args.retire, force=args.force)}
-        elif args.command == "ack":
-            result = {"ok": True, "published": ack(args.dir, version=args.version, through=args.through)}
         else:
-            hosts = None
             if args.binding is not None:
-                member = binding_state(args.binding)
-                require_bound(args.binding, member, args.dir)
-                hosts = host_publishers(member)
+                require_bound(args.binding, binding_state(args.binding), args.dir)
             shown = show(args.dir)
-            result = {**shown, "publication": publication(args.dir, shown, hosts)}
+            result = {**shown, "publication": publication(args.dir)}
     except StateError as error:
         emit({"ok": False, "code": error.code, "error": str(error)})
         return 1

@@ -672,6 +672,27 @@ PULLS = "https://api.github.com/repos/example-org/example-repo/pulls?"
 
 
 class LinearTests(SnapshotCase):
+    def test_site_names_the_graphql_origin_the_linear_adapter_posts_to(self) -> None:
+        site = "https://linear.example.test"
+        transport = Transport((site + "/graphql", 200, LINEAR["page-1"]), (site + "/graphql", 200, LINEAR["page-2"]))
+        code, out, _ = self.run_kind([*LINEAR_ARGS, "--site", site + "/"], transport, LINEAR_ENV)
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out), CAPTURED["tracker"])
+        self.assertEqual([url for url, _ in transport.requests], [site + "/graphql"] * 2)
+        # The key goes to whatever --site names, so only an https origin or this machine's loopback is taken.
+        for bad in ("http://linear.example.test", "https://linear.example.test/api", "ftp://linear.example.test",
+                    "https://linear.example.test?x=1", "https://linear.example.test#x"):
+            with self.subTest(site=bad):
+                code, _, err = self.run_kind([*LINEAR_ARGS, "--site", bad], Transport(), LINEAR_ENV)
+                self.assertNotEqual(code, 0)
+                self.assertIn("--site must be an https origin", err)
+        for loopback in ("http://127.0.0.1:9", "http://localhost:9", "http://[::1]:9"):
+            with self.subTest(site=loopback):
+                code, _, _ = self.run_kind([*LINEAR_ARGS, "--site", loopback], Transport(
+                    (loopback + "/graphql", 200, LINEAR["page-1"]), (loopback + "/graphql", 200, LINEAR["page-2"])),
+                    LINEAR_ENV)
+                self.assertEqual(code, 0)
+
     def test_the_tracker_snapshot_equals_the_captured_command_output(self) -> None:
         transport = Transport((GRAPHQL, 200, LINEAR["page-1"]), (GRAPHQL, 200, LINEAR["page-2"]))
         code, out, _ = self.run_kind(LINEAR_ARGS, transport, LINEAR_ENV)
