@@ -409,7 +409,9 @@ class TrackerUpdatesAndCredentials(unittest.TestCase):
         self.assertIn('security add-generic-password -a "$USER" -s LINEAR_API_KEY -w', section)
         self.assertIn('export LINEAR_API_KEY="$(security find-generic-password -a "$USER" -s LINEAR_API_KEY -w)"', section)
         self.assertIn('export GITHUB_TOKEN="$(gh auth token)"', section)
-        self.assertIn("`~/.zshenv`", section)
+        self.assertIn("Then export both from `~/.zshenv`:", section)
+        # The interactive-only file is named once, as what an agent's shell doesn't read.
+        self.assertEqual(section.count("~/.zshrc"), 1, section)
         self.assertIn("zsh reads `~/.zshenv` for every shell, the non-interactive one an agent's tool runs included, "
                       "and `~/.zshrc` only for an interactive one.", section)
 
