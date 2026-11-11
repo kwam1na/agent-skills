@@ -436,6 +436,77 @@ def test_unmodified_persona_set_is_accepted() -> None:
     print("verified acceptance: unmodified reviewer charter set")
 
 
+HOOK_SKILL = "orchestrate-work"
+
+
+def hook_entry(name: str, **changes: object) -> dict[str, object]:
+    return {"argv": ["scripts/delivery_state.py", "focus"], "event": "stop", "hosts": ["claude-code"],
+            "id": f"{HOOK_SKILL}.{name}", **changes}
+
+
+def add_hooks(root: Path, document: object, *, hosts: list[str] | None = None) -> None:
+    """Give the copy's orchestrate-work a hooks.json, catalogued, digested and profiled like any output."""
+    contents = json.dumps(document, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
+    output = f"skills/{HOOK_SKILL}/hooks.json"
+    (root / output).write_text(contents, encoding="utf-8")
+    catalog_path = root / "catalog.json"
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    skill = next(skill for skill in catalog["skills"] if skill["id"] == HOOK_SKILL)
+    if hosts is not None:
+        skill["hosts"] = hosts
+        write_json(catalog_path, catalog)
+    provenance_path = root / "provenance.lock.json"
+    provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+    entry = next(entry for entry in provenance["entries"] if entry["id"] == skill["provenanceId"])
+    entry["outputs"] = sorted([*entry["outputs"], {"path": output, "sha256": hashlib.sha256(contents.encode()).hexdigest()}],
+                              key=lambda item: item["path"])
+    write_json(provenance_path, provenance)
+    for profile_id in skill["profiles"]:
+        profile_path = root / "profiles" / f"{profile_id}.json"
+        profile = json.loads(profile_path.read_text(encoding="utf-8"))
+        if profile.get("expectedFiles") is not None:
+            profile["expectedFiles"] = sorted([*profile["expectedFiles"], output])
+            write_json(profile_path, profile)
+
+
+def hook_codes(result: subprocess.CompletedProcess[str]) -> list[str]:
+    return sorted(finding["ruleId"] for finding in json.loads(result.stdout)["findings"]
+                  if finding["ruleId"].startswith("hooks."))
+
+
+def manifest_of(*entries: object) -> dict[str, object]:
+    return {"hooks": list(entries), "schemaVersion": "skill-hooks/1"}
+
+
+def test_a_hook_manifest_validates() -> None:
+    document = manifest_of(hook_entry("may-stop"), hook_entry("orient", event="session-start",
+                                                              hosts=["claude-code", "codex"]))
+    result = with_copy(lambda root: add_hooks(root, document))
+    require(result.returncode == 0, result.stdout)
+    print("verified acceptance: a skill-hooks/1 manifest")
+
+
+def test_hook_manifest_refusals_each_have_their_own_code() -> None:
+    cases = {
+        "schema failure": (manifest_of(hook_entry("may-stop", matcher="*")), None, ["hooks.schema"]),
+        "duplicate id across the profile": (manifest_of(hook_entry("may-stop"), hook_entry("may-stop")), None,
+                                            ["hooks.duplicate_id"] * 5),
+        "unknown event": (manifest_of(hook_entry("may-stop", event="pre-tool-use")), None, ["hooks.event"]),
+        "host outside the skill's hosts": (manifest_of(hook_entry("may-stop", hosts=["codex"])), ["claude-code"],
+                                           ["hooks.host"]),
+        "unknown host": (manifest_of(hook_entry("may-stop", hosts=["cursor"])), None, ["hooks.host"]),
+        "script outside the skill": (manifest_of(hook_entry("may-stop", argv=["../run-delivery/scripts/run_delivery.py"])),
+                                     None, ["hooks.argv"]),
+        "script not among the outputs": (manifest_of(hook_entry("may-stop", argv=["scripts/absent.py"])), None,
+                                         ["hooks.argv"]),
+    }
+    for name, (document, hosts, expected) in cases.items():
+        result = with_copy(lambda root: add_hooks(root, document, hosts=hosts))
+        require(result.returncode == 1, f"{name}: {result.stdout}")
+        require(hook_codes(result) == expected, f"{name}: {hook_codes(result)} != {expected}\n{result.stdout}")
+    print("verified rejection: each hook manifest refusal by its own code")
+
+
 def main() -> int:
     tests = [
         test_missing_provenance_rejects,
@@ -460,6 +531,8 @@ def main() -> int:
         test_unadjudicated_charter_rejects,
         test_excluded_source_without_a_declared_rule_rejects,
         test_unmodified_persona_set_is_accepted,
+        test_a_hook_manifest_validates,
+        test_hook_manifest_refusals_each_have_their_own_code,
     ]
     for test in tests:
         test()

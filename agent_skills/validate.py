@@ -10,6 +10,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from .catalog import dependency_findings, resolve_profile
 from .errors import Finding
+from .hooks import MANIFEST_NAME, manifest_findings, manifest_hook_ids
 
 
 BASELINE_REVISION = "342850073464a2c9b6198d32d11475f5fa5cbe53"
@@ -893,7 +894,7 @@ def validate_corpus(root: Path) -> ValidationResult:
     catalog = reader.load_json("catalog.json")
     provenance_document = reader.load_json("provenance.lock.json")
     profiles = _load_profiles(reader)
-    for schema_name in ("catalog", "profile", "provenance", "receipt", "release-manifest"):
+    for schema_name in ("catalog", "profile", "provenance", "receipt", "release-manifest", "skill-hooks"):
         relative = f"schemas/{schema_name}.schema.json"
         schema = reader.load_json(relative)
         if not isinstance(schema, dict) or not isinstance(schema.get("$id"), str):
@@ -1137,12 +1138,59 @@ def validate_corpus(root: Path) -> ValidationResult:
             findings.append(Finding("profile.closure", skill_id, "releasable skill lacks profile"))
         if distribution == "source-only" and selected_by:
             findings.append(Finding("profile.closure", skill_id, "source-only skill is selected"))
+    _validate_hooks(reader, profiles, skills, provenance)
     _validate_scenarios(reader, profiles, skills)
     findings.extend(dependency_findings(skills, profiles))
     _validate_skills(reader, skills)
     _validate_core_leakage(reader, profiles, skills, provenance)
     _validate_personas(reader, provenance)
     return _result(findings, profiles, skills, scan_roots)
+
+
+def _validate_hooks(
+    reader: CorpusReader,
+    profiles: dict[str, dict],
+    skills: dict[str, dict],
+    provenance: dict[str, dict],
+) -> None:
+    """Check each skill's hook manifest, then each profile's hook ids for duplicates."""
+    declared: dict[str, list[str]] = {}
+    for skill_id, skill in sorted(skills.items()):
+        relative = skill.get("path")
+        if not safe_relative_path(relative):
+            continue
+        folder = PurePosixPath(relative).parent.as_posix()
+        manifest = reader.root / folder / MANIFEST_NAME
+        if not manifest.is_file() or not manifest.resolve().is_relative_to(reader.root):
+            continue
+        document = reader.load_json(f"{folder}/{MANIFEST_NAME}")
+        if document is None:
+            continue
+        provenance_id = skill.get("provenanceId")
+        entry = provenance.get(provenance_id, {}) if isinstance(provenance_id, str) else {}
+        outputs = [
+            output["path"]
+            for output in entry.get("outputs", [])
+            if isinstance(output, dict) and isinstance(output.get("path"), str)
+        ]
+        hosts = skill.get("hosts") if isinstance(skill.get("hosts"), list) else []
+        reader.findings.extend(
+            manifest_findings(document, skill_id=skill_id, skill_folder=folder, skill_hosts=hosts, outputs=outputs)
+        )
+        declared[skill_id] = manifest_hook_ids(document)
+    for profile_id in sorted(profiles):
+        try:
+            members = resolve_profile(profile_id, profiles)
+        except (KeyError, ValueError):
+            continue
+        seen: set[str] = set()
+        for member in members:
+            for hook_id in declared.get(member, []):
+                if hook_id in seen:
+                    reader.findings.append(
+                        Finding("hooks.duplicate_id", profile_id, f"hook id {hook_id} is declared more than once")
+                    )
+                seen.add(hook_id)
 
 
 def _result(

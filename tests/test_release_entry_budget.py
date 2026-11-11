@@ -61,6 +61,18 @@ class EntryBudgetTests(unittest.TestCase):
             with self.subTest(profile=profile, entries=entries, remaining=MAX_ENTRIES - entries):
                 self.assertIsNone(budget_problem(profile, entries))
 
+    def test_every_release_carries_the_hook_dispatcher_and_its_schema_within_the_limit(self) -> None:
+        for profile in PROFILES:
+            with self.subTest(profile=profile), tempfile.TemporaryDirectory() as temporary:
+                archive = Path(temporary) / "release.zip"
+                build_release(ROOT, archive, Path(temporary) / "release.json", release_id="entry-budget",
+                              profile_id=profile)
+                with zipfile.ZipFile(archive) as opened:
+                    names = opened.namelist()
+                self.assertIn("agent_skills/hooks.py", names)
+                self.assertIn("schemas/skill-hooks.schema.json", names)
+                self.assertLessEqual(len(names) + len(RUNTIME_FILES), MAX_ENTRIES)
+
     def test_the_budget_fails_with_the_overrun_named_when_a_change_goes_over(self) -> None:
         original = release._release_view
         baseline = product_entries(ROOT, "linear")
