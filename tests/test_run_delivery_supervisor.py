@@ -237,6 +237,13 @@ def hand_off(fx: Fixture, key: str, lane: str, assign: bool = True, deferred: bo
     return out if checks is not None else wt
 
 
+def deferred_id(wt: Path, key: str = "FX-2") -> str:
+    """The id of the one finding hand_off(deferred=True) filed as deferred."""
+    review = wt / ".orchestration/review" / key
+    return next(f["id"] for path in review.glob("result-r1-*.json") for f in json.loads(path.read_text())["findings"]
+                if f.get("state") == "deferred")
+
+
 def record(fx: Fixture) -> dict:
     return json.loads(sh(sys.executable, "-B", fx.release / "skills/orchestrate-work/scripts/delivery_state.py",
                          "--dir", fx.tmp / "record", "show").stdout)
@@ -1869,7 +1876,8 @@ class SupervisorTrackerTests(unittest.TestCase):
         for name, value in vars(installed_release()).items():
             setattr(cls, name, value)
 
-    def fixture(self, backend_class=FileBackend, updates: str | None = None) -> tuple[Fixture, object]:
+    def fixture(self, backend_class=FileBackend, updates: str | None = None,
+                follow_ups: str | None = None) -> tuple[Fixture, object]:
         fx = Fixture(self.generation, self.receipt)
         self.addCleanup(fx.close)
         self.addCleanup(stop_supervisors, fx.tmp)
@@ -1879,6 +1887,8 @@ class SupervisorTrackerTests(unittest.TestCase):
         path = fx.main / ".agents/deliveries/FX-1.json"
         d = json.loads(path.read_text())
         d["finish"] = []
+        if follow_ups is not None:
+            d["followUps"] = follow_ups
         path.write_text(json.dumps(d, indent=2))
         commit(fx.main, "FX-1: no finish lines")
         sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
@@ -1891,11 +1901,14 @@ class SupervisorTrackerTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         return listed(self, passes(fx)[-1])
 
-    def closable(self, fx: Fixture, deferred: bool = False) -> None:
-        """FX-2 merged, its lane done, and FX-3 removed: nothing but the tracker can hold the close."""
+    def closable(self, fx: Fixture, deferred: bool = False, drop: str | None = None) -> None:
+        """FX-2 merged, its lane done, and FX-3 removed: nothing but the tracker can hold the close. With `drop`, the
+        lead drops the deferred finding at acceptance for that reason. The acceptance's output is kept as self.accepted."""
         wt = hand_off(fx, "FX-2", "lane-1", deferred=deferred)
-        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        dropping = ["--drop-finding", f"{deferred_id(wt)}={drop}"] if drop is not None else []
+        code, out = fx.flow("lead-accept", "FX-2", *dropping, cwd=fx.main)
         self.assertEqual(code, 0, out)
+        self.accepted = out
         queue_run(fx, "FX-2")
         self.assertTrue(kinds(fx, "candidate.merged"))
         state_tool(fx, "focus", "--lane", "lane-1", "--text", "done", "--state", "done")
@@ -2008,6 +2021,93 @@ class SupervisorTrackerTests(unittest.TestCase):
         followups = [f["id"] for f in record(fx)["state"]["followups"]]
         self.assertEqual(len(followups), 1, followups)
         self.assertTrue(followups[0].startswith("FX-2-"), followups)
+
+    def closed(self, fx: Fixture) -> dict:
+        for _ in range(4):
+            last = self.once(fx)
+            if (fx.tmp / "flow-log/FX-1.closed.json").exists():
+                break
+        self.assertTrue((fx.tmp / "flow-log/FX-1.closed.json").exists(), last)
+        return last
+
+    def assert_nothing_filed(self, fx: Fixture, backend) -> None:
+        """No follow-up in the record, the journal, the publisher's marks or the tracker, under any of its names."""
+        self.assertEqual([call for call in backend.read()["calls"] if call[0] == "create"], [])
+        self.assertEqual(record(fx)["state"]["followups"], [])
+        summaries = [e.get("summary", "") for e in record(fx)["journal"]]
+        for words in ("becomes follow-up", "follow-up FX-2-", "agent-followup", "files it as follow-up"):
+            self.assertFalse([s for s in summaries if words in s], f"the journal still says {words!r}")
+        marks = fx.tmp / "flow-log/FX-1.tracker-marks.jsonl"
+        self.assertFalse([line for line in (marks.read_text().splitlines() if marks.exists() else [])
+                          if '"followup"' in line], "the publisher was asked to file a follow-up")
+
+    def test_by_default_acceptance_says_the_close_out_files_each_deferred_finding(self) -> None:
+        fx, backend = self.fixture()
+        wt = self.closable(fx, deferred=True)
+        finding = deferred_id(wt)
+        self.assertIn(f"deferred: {finding} (P3): the close-out files it as follow-up FX-2-{finding}", self.accepted)
+        self.closed(fx)
+        self.assertEqual([f["id"] for f in record(fx)["state"]["followups"]], [f"FX-2-{finding}"])
+
+    def test_a_finding_the_lead_dropped_at_acceptance_is_never_filed(self) -> None:
+        fx, backend = self.fixture()
+        wt = self.closable(fx, deferred=True, drop="the operator's ruling bars it, and status already catches it")
+        finding = deferred_id(wt)
+        self.assertIn(f"dropped: {finding} (P3): the close-out files no follow-up for it", self.accepted)
+        accepted = [e for e in kinds(fx, "decision.recorded") if e.get("subject") == "FX-2"
+                    and e["summary"].startswith("Hand-off checked as a claim")]
+        self.assertIn(f"dropped deferred finding {finding}: the operator's ruling bars it, and status already "
+                      "catches it", accepted[-1]["summary"])
+        self.closed(fx)
+        self.assert_nothing_filed(fx, backend)
+
+    def test_dropping_a_finding_the_review_didnt_defer_or_without_a_reason_is_refused_and_records_nothing(self) -> None:
+        fx, backend = self.fixture()
+        wt = hand_off(fx, "FX-2", "lane-1", deferred=True)
+        before = record(fx)
+        for value, said in (("no-such-finding=a reason", "no-such-finding is not a finding FX-2's review deferred"),
+                            (f"{deferred_id(wt)}=", "--drop-finding needs ID=REASON"),
+                            (deferred_id(wt), "--drop-finding needs ID=REASON")):
+            code, out = fx.flow("lead-accept", "FX-2", "--drop-finding", value, cwd=fx.main)
+            self.assertEqual(code, 1, out)
+            self.assertIn(said, out)
+            self.assertEqual(record(fx), before, "a refused drop recorded something")
+
+    def test_with_follow_ups_none_the_close_out_files_nothing_and_the_lead_is_told_first(self) -> None:
+        fx, backend = self.fixture(follow_ups="none")
+        wt = self.closable(fx, deferred=True)
+        finding = deferred_id(wt)
+        # The lens is told before it defers, in place of what its follow-up item must say.
+        briefs = [p.read_text() for p in (wt / ".orchestration/review/FX-2").glob("brief-r1-*.md")]
+        self.assertTrue(briefs)
+        for text in briefs:
+            self.assertIn("This delivery files no follow-up item: its followUps is none", " ".join(text.split()))
+            self.assertNotIn("what its follow-up item must say", " ".join(text.split()))
+        self.assertIn(f"deferred: {finding} (P3): the close-out files no follow-up for it: the delivery's "
+                      "followUps is none", self.accepted)
+        self.assertNotIn("files it as follow-up", self.accepted)
+        last = self.closed(fx)
+        self.assertIn("follow-ups: none filed, as the delivery's followUps is none; 1 deferred finding left unfiled",
+                      last["closeOut"])
+        self.assert_nothing_filed(fx, backend)
+        unfiled = [e for e in kinds(fx, "decision.recorded") if e["summary"].startswith("No follow-up filed")]
+        self.assertEqual(len(unfiled), 1, unfiled)
+        self.assertIn(f"FX-2 {finding} (Tidy the one copy)", unfiled[0]["summary"])
+        archive = Path(json.loads((fx.tmp / "flow-log/FX-1.closed.json").read_text())["archive"])
+        self.assertIn(f"FX-2 {finding}", Path(str(archive) + ".friction.md").read_text())
+
+    def test_a_follow_ups_setting_other_than_deferred_or_none_is_refused(self) -> None:
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        self.addCleanup(stop_supervisors, fx.tmp)
+        supervised(fx)
+        path = fx.main / ".agents/deliveries/FX-1.json"
+        path.write_text(json.dumps({**json.loads(path.read_text()), "followUps": "never"}, indent=2))
+        commit(fx.main, "FX-1: an unknown followUps")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+        code, out = fx.flow("lead-init", cwd=fx.main)
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("followUps must be deferred or none, not 'never'", out)
 
     def test_a_follow_up_refused_for_good_is_shown_not_retried_and_doesnt_hold_the_close(self) -> None:
         fx, backend = self.fixture()

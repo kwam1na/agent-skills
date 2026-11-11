@@ -175,6 +175,7 @@ checks may need no file at all.
     { "id": "approval-1", "text": "The Product Owner signs off the copy", "state": "waiting", "blocking": true }
   ],
   "outOfScope": ["A per-delivery base branch"], // drafted by lead-setup --out-of-scope-section; optional
+  "followUps": "deferred",                    // deferred (the default) | none: whether the close-out files deferrals
   "authority": {                              // the operator's grant to lanes; absent: lanes don't push
     "push": true,                             // each lane's own story branch, never forced (run_delivery.py push)
     "draftPullRequests": true,                // its draft PR into the delivery base (run_delivery.py open-pr)
@@ -222,6 +223,20 @@ nothing and says so. `lead-setup --force` keeps `planReview`, `approvals` and `o
 are blocking work" until `run_delivery.py lead-plan approval <id> --state done` marks it done. An approval that isn't
 blocking stays in the chapter's "Approvals ahead" fold. `lead-plan approval` commits the delivery file in the lead's
 clean checkout, as `lead-plan change` does, and never pushes; an approval without an `id` is changed by hand.
+
+`followUps` says what the close-out does with a finding a story's review deferred. `deferred`, the default, files
+each one the lead didn't drop as a follow-up item, keyed `<story>-<finding id>`, through the tracker publisher.
+`none` withdraws deferral for the delivery, as an operator ruling of no deferral tickets asks: the close-out files
+no follow-up and marks nothing for the publisher. It journals one `decision.recorded` naming each deferral left
+unfiled, with what its lens said was left undone, and every round brief tells the lens so in place of asking what
+a follow-up item must say. Any other value is refused when the delivery file is read.
+
+The lead learns this before the close. `lead-accept` lists each deferred finding of the story it accepts and what
+the close-out will do with it, and "Needs you" shows the deferrals still pending, never holding, so the live view
+and the friction note list them. `lead-accept <key> --drop-finding ID=REASON`, once per finding, drops one: the
+id must be a finding that story's review deferred and the reason must be given, or the acceptance is refused and
+records nothing. A dropped finding is never filed, under either setting; its reason is journalled with the
+acceptance and kept in the story's acceptance log.
 
 ## The forge contract
 
@@ -290,7 +305,8 @@ The close condition: every planned and queued story merged or removed, every mer
 finish line met, every lane idle or done, and no "Needs you" item holding. "Needs you" is derived each pass, and its file is only that pass's view of it,
 never read back: a failed `fullHealth` at the
 current base head, unless the base declares the `focused` posture, a broken base, a blocked lane or one waiting on the lead, an unresolved `blocker.recorded`, a
-child that won't stay up, and the tracker publisher's own items. `lead-resolve <journal id> --why TEXT` resolves a
+child that won't stay up, and the tracker publisher's own items. The deferred findings still pending are shown, never
+holding, with what the close-out does with them. `lead-resolve <journal id> --why TEXT` resolves a
 blocker; `lead-resolve full-health --why TEXT` asks the next pass to rerun a failed `fullHealth` (under the `focused` posture, once
 the base returns to `gate`). The runner's own
 blocker clears when its hold does, or with `base.repaired`. Each item says whether it holds the close or is only
@@ -299,7 +315,7 @@ from a supervisor that has stopped, or one more than a pass overdue, is shown as
 
 The close-out runs in order, each step succeeding before the next: `fullHealth`, once per base head, in a fresh
 checkout of the base, or skipped under the `focused` posture, which after a merge has already run at that head, so
-it starts a run only for a delivery that merged nothing or a head that moved since; a follow-up for each deferred finding, keyed `<story>-<finding id>`; `delivery.closed`, then
+it starts a run only for a delivery that merged nothing or a head that moved since; a follow-up for each deferred finding the lead didn't drop at acceptance, keyed `<story>-<finding id>`, or, under `"followUps": "none"`, one `decision.recorded` naming the deferrals left unfiled and no follow-up; `delivery.closed`, then
 waiting for the tracker to have it; releasing the lead's leases, archiving the record and fast-forwarding the
 operator's checkout if it is clean and on the base; a friction note stub beside the archive; then the supervisor
 stops. Each pass writes what it did to the flow log's `<delivery>.supervisor.jsonl`.

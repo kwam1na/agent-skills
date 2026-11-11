@@ -8628,6 +8628,35 @@ class DeliveryPostureReaderTests(unittest.TestCase):
                       "a broken base", config)
 
 
+    def test_every_page_that_describes_the_close_says_a_dropped_or_withdrawn_deferral_is_never_filed(self) -> None:
+        # The close-out once filed every deferred finding, whatever the lead or the operator ruled; each page that says
+        # what it files now carries both exceptions, and none promises a follow-up for every deferral unqualified.
+        def normal(path: str) -> str:
+            return " ".join((ROOT / path).read_text(encoding="utf-8").split())
+        config = normal("skills/run-delivery/references/config.md")
+        self.assertIn("a follow-up for each deferred finding the lead didn't drop at acceptance, keyed `<story>-<finding "
+                      "id>`, or, under `\"followUps\": \"none\"`, one `decision.recorded` naming the deferrals left "
+                      "unfiled and no follow-up", config)
+        self.assertIn("`none` withdraws deferral for the delivery, as an operator ruling of no deferral tickets asks: the "
+                      "close-out files no follow-up and marks nothing for the publisher.", config)
+        self.assertIn("A dropped finding is never filed, under either setting", config)
+        self.assertIn('"followUps": "deferred", // deferred (the default) | none', config)
+        skill = normal("skills/run-delivery/SKILL.md")
+        self.assertIn("`--drop-finding ID=REASON` drops a deferred finding, journalling the reason, so the close-out "
+                      "never files it", skill)
+        self.assertIn("[--drop-finding ID=REASON]...", skill)
+        adopting = normal("skills/run-delivery/references/adopting.md")
+        self.assertIn("a follow-up for each deferred finding the lead didn't drop at acceptance (none when the delivery "
+                      "file sets `\"followUps\": \"none\"`)", adopting)
+        guide = normal("skills/orchestrate-work/references/orchestration-guide.md")
+        self.assertIn("files a follow-up for each deferred finding the lead didn't drop at acceptance, or none when the "
+                      "delivery withdraws deferral", guide)
+        for name, text in (("config.md", config), ("adopting.md", adopting), ("orchestration-guide.md", guide)):
+            for unqualified in ("a follow-up for each deferred finding,", "a follow-up for each deferred finding;",
+                                "follow-up for every deferred finding", "files every deferred finding",
+                                "each deferred finding becomes a follow-up", "for each deferred finding, `delivery.closed`"):
+                self.assertNotIn(unqualified, text, f"{name} still files every deferral")
+
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
 class LaneStartAndReadinessTests(unittest.TestCase):
