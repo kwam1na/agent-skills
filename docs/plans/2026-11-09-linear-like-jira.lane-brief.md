@@ -34,7 +34,7 @@ assemble briefs, round files or records by hand, and don't edit what they write.
 
 | Lane | Stories | Owns |
 | --- | --- | --- |
-| lane-1 | V26-3269, V26-3334, V26-3342, V26-3339, V26-3333 | `skills/run-delivery/*`, `skills/orchestrate-work/*`, `skills/delivery-views/*`, `skills/linear-tracker-adapter/*`, `tests/test_run_delivery.py`, `tests/test_run_delivery_tracker.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_orchestration_render.py`, `tests/test_orchestration_state.py`, `tests/test_orchestration_adopter.py`, `tests/fixtures/orchestration-adopter/*`, `tests/test_merge_queue.py`, `tests/delivery_views_page/*`, `docs/solutions/*`, `catalog.json`, `profiles/*`, `provenance.lock.json`, `scripts/validate-registry.py`, `scripts/build-release.py`, `tests/test_registry.py`, `tests/test_delivery_views_snapshots.py`, `tests/test_delivery_views_render.py`, `tests/test_core_boundary.py`, `tests/test_review_bound_corpus.py`, `tests/test_release_integration.py`, `.agents/orchestration.json`, `tests/test_own_deliveries.py`, `tests/test_compound_learning_corpus.py`, `docs/own-deliveries.md` |
+| lane-1 | V26-3269, V26-3334, V26-3342, V26-3339, V26-3333, V26-3358, V26-3359 | `skills/run-delivery/*`, `skills/orchestrate-work/*`, `skills/delivery-views/*`, `skills/linear-tracker-adapter/*`, `tests/test_run_delivery.py`, `tests/test_run_delivery_tracker.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_orchestration_render.py`, `tests/test_orchestration_state.py`, `tests/test_orchestration_adopter.py`, `tests/fixtures/orchestration-adopter/*`, `tests/test_merge_queue.py`, `tests/delivery_views_page/*`, `docs/solutions/*`, `catalog.json`, `profiles/*`, `provenance.lock.json`, `scripts/validate-registry.py`, `scripts/build-release.py`, `tests/test_registry.py`, `tests/test_delivery_views_snapshots.py`, `tests/test_delivery_views_render.py`, `tests/test_core_boundary.py`, `tests/test_review_bound_corpus.py`, `tests/test_release_integration.py`, `.agents/orchestration.json`, `tests/test_own_deliveries.py`, `tests/test_compound_learning_corpus.py`, `docs/own-deliveries.md`, `.agent-skills/*` |
 | lane-2 | V26-3097, V26-3083, V26-3343 | `scripts/qualify-linear.py`, `tests/test_linear_qualification.py`, `docs/linear-connector-check.md`, `README.md`, `tests/test_provider_qualification.py`, `tests/test_qualification.py` |
 
 | Story | Label | Pinned request patterns | In-app checks its hand-off needs |
@@ -47,6 +47,8 @@ assemble briefs, round files or records by hand, and don't edit what they write.
 | V26-3097 | V26-3097 | - | none |
 | V26-3083 | V26-3083 | - | none |
 | V26-3343 | V26-3343 | - | none |
+| V26-3358 | V26-3358 | - | none |
+| V26-3359 | V26-3359 | - | none |
 
 ## The focused lane profile
 
@@ -100,7 +102,10 @@ approved, is judged on scope before it blocks.
 
 ## Hand-off
 
-`python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py handoff <key> --pr <PR link> [--findings "<expensive non-blocking findings>"] [--blocked <name>=<reason> ...]`
+`python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py handoff <key> --pr <PR link> [--checks <catalogue ids you ran>] [--findings "<expensive non-blocking findings>"] [--blocked <name>=<reason> ...]`
+
+`--checks` names the test modules you ran by the binding's catalogue ids, comma-separated: the lead's acceptance proposes
+them for the candidate's checks.
 
 Every `--blocked` item, and every restarted review round, is the lead's decision: the lead accepts each one by
 name, or sends the story back. It refuses unless the checkout is clean (untracked files included), your branch on `origin` is at HEAD, the PR is
