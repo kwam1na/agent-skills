@@ -43,7 +43,8 @@
         ".agents/orchestration.json",
         "tests/test_own_deliveries.py",
         "tests/test_compound_learning_corpus.py",
-        "docs/own-deliveries.md"
+        "docs/own-deliveries.md",
+        ".agent-skills/*"
       ]
     },
     "lane-2": {
