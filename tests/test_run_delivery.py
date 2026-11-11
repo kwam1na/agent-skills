@@ -8069,6 +8069,46 @@ class RunDeliveryArgumentTests(unittest.TestCase):
         self.assertEqual(received, ["--path", "/other"])
 
 
+class SupervisorLineFallbackTests(unittest.TestCase):
+    """The supervisor's status line names each candidate checking on the binding's fallback because the lead selected
+    no checks for it, as the runner records it on the candidate's row."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        spec = importlib.util.spec_from_file_location("run_delivery_for_status", ROOT / "skills/run-delivery/scripts/run_delivery.py")
+        cls.tool = importlib.util.module_from_spec(spec)
+        previous = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        try:
+            spec.loader.exec_module(cls.tool)
+        finally:
+            sys.dont_write_bytecode = previous
+
+    def line(self, queue: list[dict]) -> str:
+        with tempfile.TemporaryDirectory() as folder:
+            state = Path(folder)
+            (state / "state.json").write_text(json.dumps({"queue": queue}))
+            c = types.SimpleNamespace(state=state)
+            with mock.patch.object(self.tool, "read_lock", lambda _: (True, {"pid": 42, "address": "http://127.0.0.1:1"})), \
+                    mock.patch.object(self.tool, "supervisor_lock_path", lambda _: state / "lock"), \
+                    mock.patch.object(self.tool, "waits_on", lambda _: ""):
+                return self.tool.supervisor_line(c)
+
+    def test_a_candidate_checking_on_the_fallback_is_named_with_the_fallback(self) -> None:
+        row = lambda subject, stage, selection: {"subject": subject, "stage": stage, "checkSelection": selection}
+        fallback = {"by": "provider", "fallback": ["tests.full-suite", "lint"]}
+        self.assertEqual(self.line([row("FX-2", "checking", fallback)]),
+                         "supervisor: running (pid 42); live view http://127.0.0.1:1; FX-2 checks on the fallback, "
+                         "tests.full-suite, lint: the lead selected no checks")
+        self.assertIn("FX-2 checks on the fallback", self.line([row("FX-2", "checked", fallback)]))
+        # A row syncing again keeps the last run's selection until the runner selects anew: it isn't named from it.
+        quiet = [row("FX-2", "checking", {"by": "provider"}), row("FX-3", "checking", {"by": "lead", "head": "a" * 40,
+                                                                                       "reason": "r"}),
+                 row("FX-4", "merged", fallback), row("FX-5", "queued", fallback), row("FX-7", "syncing", fallback),
+                 row("FX-8", "synced", fallback), {"subject": "FX-6", "stage": "checking"}]
+        self.assertEqual(self.line(quiet), "supervisor: running (pid 42); live view http://127.0.0.1:1")
+
+
 class RunDeliveryRenderHalvesTests(unittest.TestCase):
     """A supervisor pass publishes, derives "Needs you", then renders: each half runs only its own entries."""
 

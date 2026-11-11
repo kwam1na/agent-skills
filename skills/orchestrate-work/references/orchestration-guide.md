@@ -1139,7 +1139,13 @@ It is off unless the binding sets `selection: {"lead": true}`.
   that enables the option, the runner writes each row's `checkSelection`,
   `{by: "lead", head, reason}` or `{by: "provider"}`; the views say the checks
   were selected by the lead, with the reason, and the stats carry
-  `checksSelectedBy`. So a lead's choice never passes for the provider's.
+  `checksSelectedBy`. So a lead's choice never passes for the provider's. A
+  row the lead selected nothing for, whose checks the runner widened to
+  `fallback` for one of its `fallbackReasons`, is
+  `{by: "provider", fallback: [ids]}`, and the views and run-delivery's
+  supervisor status line say it checks on the fallback, naming it. A hand-off
+  may name the checks its lane ran, `handoff --checks`, kept as the row's
+  `namedChecks`.
 - **Failures.** A lead-selected check that fails is classified as any other:
   `base_broken` when the base fails it unchanged, `check_failed` otherwise.
 - **The trade-off.** A selection is the lead's judgment, not the repository's

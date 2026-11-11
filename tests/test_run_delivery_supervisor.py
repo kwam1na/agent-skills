@@ -189,9 +189,11 @@ def running(fx: Fixture) -> dict[str, str]:
     return {key: value for key, value in fx.env.items() if key != "RUN_DELIVERY_SUPERVISOR"}
 
 
-def hand_off(fx: Fixture, key: str, lane: str, assign: bool = True, deferred: bool = False) -> Path:
-    """A lane's whole flow for one story: its change, its gate, one approved review round (with one finding deferred
-    to a follow-up, when asked), its draft PR, its hand-off."""
+def hand_off(fx: Fixture, key: str, lane: str, assign: bool = True, deferred: bool = False,
+             files: dict | None = None, checks: str | None = None, before=None):
+    """A lane's whole flow for one story: its change (and any `files` beside it), its gate, one approved review round
+    (with one finding deferred to a follow-up, when asked), its draft PR, its hand-off, naming `checks` when given.
+    `before(wt, url)` runs just before the hand-off. Returns the checkout, or with `checks` the hand-off's output."""
     m = fx.main
     if assign:
         code, out = fx.flow("lead-assign", key, "--lane", lane, "--title", lane, cwd=m)
@@ -199,6 +201,9 @@ def hand_off(fx: Fixture, key: str, lane: str, assign: bool = True, deferred: bo
     wt = fx.lane(key)
     name = {"lane-1": "one", "lane-2": "two"}[lane]
     (wt / f"src/{name}.txt").write_text(f"{name}\n")
+    for rel, text in (files or {}).items():
+        (wt / rel).parent.mkdir(parents=True, exist_ok=True)
+        (wt / rel).write_text(text)
     commit(wt, f"{key}: {name}")
     review = wt / ".orchestration/review" / key
     review.mkdir(parents=True, exist_ok=True)
@@ -223,9 +228,11 @@ def hand_off(fx: Fixture, key: str, lane: str, assign: bool = True, deferred: bo
     code, out = fx.flow("open-pr", key, "--title", f"{key}: {name}", "--body-file", body, cwd=wt)
     assert code == 0, out
     url = next(u for u, pr in json.loads((fx.tmp / "forge.json").read_text()).items() if pr["source"] == f"feature/{key}")
-    code, out = fx.flow("handoff", key, "--pr", url, cwd=wt)
+    if before is not None:
+        before(wt, url)
+    code, out = fx.flow("handoff", key, "--pr", url, *(["--checks", checks] if checks is not None else []), cwd=wt)
     assert code == 0, out
-    return wt
+    return out if checks is not None else wt
 
 
 def record(fx: Fixture) -> dict:
@@ -791,6 +798,245 @@ class HeldRunLockTests(unittest.TestCase):
         self.assertEqual(self.run_lock(fx, seconds=0.5), {"held": True})
         self.assertGreaterEqual(time.monotonic() - started, 0.5)
         self.assertLess(time.monotonic() - started, 5)
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class LeadAcceptChoosesChecksTests(unittest.TestCase):
+    """Under selection.lead, the lead's acceptance chooses a candidate's checks or the fallback, never neither; the
+    lane's hand-off names the checks it ran; and a binding without the option accepts as before."""
+
+    run_serially = True
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        for name, value in vars(installed_release()).items():
+            setattr(cls, name, value)
+
+    def fixture(self, lead: bool = True, catalogue_extra: dict | None = None, provider: bool = False,
+                readers: list | None = None) -> Fixture:
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        self.addCleanup(stop_supervisors, fx.tmp)
+        path = supervised(fx)
+        m = fx.main
+        binding_path = m / ".agents/orchestration.json"
+        binding = json.loads(binding_path.read_text())
+        entry = lambda name: {"id": name, "argv": [sys.executable, "-B", "tools/check.py"], "cwd": ".",
+                              "reasons": [name], "prerequisites": []}
+        if lead:
+            binding["selection"] = {"lead": True, "catalogue": [entry("tests.test_one"), entry("tests.test_two"),
+                                                                 *([{**entry("tests.test_odd"), **catalogue_extra}]
+                                                                   if catalogue_extra else [])],
+                                    **({"readers": readers} if readers else {})}
+        else:
+            binding["selection"] = {"catalogue": [entry("tests.test_one"), entry("tests.test_two")]}
+        if provider:
+            binding["provider"] = {"argv": [sys.executable, "-B", "tools/check.py"], "cwd": ".", "timeoutSeconds": 30,
+                                   "providerInputs": []}
+            # With a provider, the lane gates are no longer the fallback, so the configuration names them.
+            conf_path = m / ".agents/run-delivery.json"
+            conf_path.write_text(json.dumps({**json.loads(conf_path.read_text()), "gates": [
+                {"id": "check", "argv": [sys.executable, "-B", "tools/check.py"]}]}, indent=2))
+        binding_path.write_text(json.dumps(binding, indent=2))
+        d = json.loads(path.read_text())
+        d["lanes"]["lane-1"]["owns"] = [*d["lanes"]["lane-1"]["owns"], "tests/test_one.py", "tests/test_three.py"]
+        path.write_text(json.dumps(d, indent=2))
+        commit(m, "FX-1: lead selection, with a catalogue")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        return fx
+
+    def item(self, fx: Fixture, key: str = "FX-2") -> dict:
+        return next(q for q in record(fx)["state"]["queue"] if q["subject"] == key)
+
+    def draft(self, fx: Fixture) -> bool:
+        return json.loads((fx.tmp / "forge.json").read_text())["https://forge.test/pr/1"]["draft"]
+
+    def test_without_a_choice_acceptance_is_refused_records_nothing_and_proposes_checks(self) -> None:
+        fx = self.fixture()
+        hand_off(fx, "FX-2", "lane-1", files={"tests/test_one.py": "# one\n", "tests/test_three.py": "# three\n"},
+                 checks="tests.test_two,tests.test_one")
+        before = (record(fx), self.draft(fx))
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 1, out)
+        self.assertIn("NOT accepted: FX-2", out)
+        self.assertIn("choose FX-2's checks: the binding enables lead selection, and a candidate accepted with none "
+                      "checks on the fallback (check)", out)
+        self.assertIn('proposed: lead-accept FX-2 --checks tests.test_one,tests.test_two --reason "<why these cover '
+                      'the diff>", or --full-suite', out)
+        self.assertEqual((record(fx), self.draft(fx)), before, "a refused acceptance records nothing, and marks no draft")
+        self.assertTrue(self.item(fx)["pending"])
+        code, out = fx.flow("lead-accept", "FX-2", "--checks", "tests.test_one", "--full-suite", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("choose one", out)
+
+    def test_checks_are_recorded_through_select_at_the_handed_head_and_the_queue_runs_them(self) -> None:
+        fx = self.fixture()
+        hand_off(fx, "FX-2", "lane-1")
+        head = self.item(fx)["head"]
+        code, out = fx.flow("lead-accept", "FX-2", "--checks", "tests.test_nope", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("--checks names checks the binding's catalogue doesn't have: tests.test_nope", out)
+        code, out = fx.flow("lead-accept", "FX-2", "--checks", "tests.test_one", "--reason", "only one changed",
+                            cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        item = self.item(fx)
+        self.assertEqual((item["leadSelection"]["head"], [c["id"] for c in item["leadSelection"]["checks"]],
+                          item["leadSelection"]["reason"]), (head, ["tests.test_one"], "only one changed"))
+        selected = kinds(fx, "check.selected")
+        self.assertEqual(len(selected), 1)
+        self.assertIn(f"The lead selected checks for FX-2 at {head}: tests.test_one", selected[0]["summary"])
+        decision = [e for e in kinds(fx, "decision.recorded") if e.get("subject") == "FX-2"][-1]
+        self.assertIn(f"checks selected at {head[:10]}: tests.test_one", decision["summary"])
+        queue_run(fx, "FX-2")
+        item = self.item(fx)
+        self.assertEqual((item["stage"], item["checkSelection"]),
+                         ("merged", {"by": "lead", "head": head, "reason": "only one changed"}))
+
+    def select(self, fx: Fixture, checks: str, reason: str) -> None:
+        state_tool(fx, "select", "--subject", "FX-2", "--binding", str(fx.main / ".agents/orchestration.json"),
+                   "--head", self.item(fx)["head"], "--checks", checks, "--reason", reason, "--repo", str(fx.main))
+
+    def test_a_selection_standing_before_a_refused_ready_is_put_back_and_one_made_by_it_cleared(self) -> None:
+        fx = self.fixture()
+        hand_off(fx, "FX-2", "lane-1")
+        self.select(fx, "tests.test_two", "the lead's earlier choice")
+        code, out = fx.flow("lead-accept", "FX-2", "--checks", "tests.test_one", "--reason", "only one changed",
+                            cwd=fx.main, env={**fx.env, "FAKE_FORGE_READY": "refuse"})
+        self.assertEqual(code, 1, out)
+        kept = self.item(fx)["leadSelection"]
+        self.assertEqual(([c["id"] for c in kept["checks"]], kept["reason"]), (["tests.test_two"], "the lead's earlier choice"))
+
+    def test_a_selection_made_before_a_refused_ready_is_cleared_so_nothing_is_left_selected(self) -> None:
+        fx = self.fixture()
+        hand_off(fx, "FX-2", "lane-1")
+        code, out = fx.flow("lead-accept", "FX-2", "--checks", "tests.test_one", "--reason", "only one changed",
+                            cwd=fx.main, env={**fx.env, "FAKE_FORGE_READY": "refuse"})
+        self.assertEqual(code, 1, out)
+        self.assertIn("couldn't be marked ready, so the hand-off stays pending", out)
+        item = self.item(fx)
+        self.assertTrue(item["pending"])
+        self.assertNotIn("leadSelection", item, "a selection for a hand-off not accepted is cleared")
+        self.assertEqual([e["summary"].split(";")[0] for e in kinds(fx, "check.selected")],
+                         [f"The lead selected checks for FX-2 at {item['head']}: tests.test_one. Why: only one changed",
+                          "Cleared the lead's check selection for FX-2"])
+
+    def test_acceptance_refuses_what_select_refuses_and_records_nothing(self) -> None:
+        # A catalogue entry naming a profile the binding lacks: select refuses every selection under this binding.
+        fx = self.fixture(catalogue_extra={"environmentProfile": "missing"})
+        hand_off(fx, "FX-2", "lane-1")
+        before = (record(fx), self.draft(fx))
+        code, out = fx.flow("lead-accept", "FX-2", "--checks", "tests.test_one", "--reason", "why", cwd=fx.main)
+        self.assertEqual(code, 1, out)
+        self.assertIn("the selection was refused: /selection/catalogue: tests.test_odd names unknown environment "
+                      "profile missing", out)
+        self.assertEqual((record(fx), self.draft(fx)), before)
+
+    def test_full_suite_accepts_on_the_fallback_as_the_lead_s_decision_and_the_row_says_so(self) -> None:
+        fx = self.fixture()
+        hand_off(fx, "FX-2", "lane-1")
+        code, out = fx.flow("lead-accept", "FX-2", "--full-suite", "--reason", "a shared file moved", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        item = self.item(fx)
+        self.assertNotIn("leadSelection", item)
+        decision = [e for e in kinds(fx, "decision.recorded") if e.get("subject") == "FX-2"][-1]
+        self.assertIn("checks: the binding's fallback (check), the lead's decision: a shared file moved",
+                      decision["summary"])
+        self.assertFalse(kinds(fx, "check.selected"))
+        queue_run(fx, "FX-2")
+        self.assertEqual(self.item(fx)["checkSelection"], {"by": "provider", "fallback": ["check"]})
+
+    def test_full_suite_clears_a_selection_still_standing_so_the_fallback_runs(self) -> None:
+        fx = self.fixture()
+        hand_off(fx, "FX-2", "lane-1")
+        head = self.item(fx)["head"]
+        self.select(fx, "tests.test_one", "a narrower choice, made before accepting")
+        code, out = fx.flow("lead-accept", "FX-2", "--full-suite", "--reason", "run everything after all", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("leadSelection", self.item(fx))
+        decision = [e for e in kinds(fx, "decision.recorded") if e.get("subject") == "FX-2"][-1]
+        self.assertIn(f"cleared the lead selection recorded at {head[:10]}, so the fallback runs", decision["summary"])
+        queue_run(fx, "FX-2")
+        self.assertEqual(self.item(fx)["checkSelection"], {"by": "provider", "fallback": ["check"]})
+
+    def test_with_a_provider_full_suite_is_refused_and_the_refusal_says_the_provider_selects(self) -> None:
+        fx = self.fixture(provider=True)
+        hand_off(fx, "FX-2", "lane-1")
+        code, out = fx.flow("lead-accept", "FX-2", "--full-suite", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("the binding names a provider", out)
+        self.assertIn("choose the checks with --checks", out)
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 1, out)
+        self.assertIn("checks on the provider's selection, widened to the fallback (check) only when it fails; accept "
+                      "with --checks", out)
+        self.assertIn('proposed: lead-accept FX-2 --reason "<why these cover the diff>"', out)
+        self.assertNotIn("--full-suite", out.split("proposed:", 1)[1])
+
+    def test_work_merged_outside_the_queue_is_accepted_with_no_choice(self) -> None:
+        fx = self.fixture()
+        wt = hand_off(fx, "FX-2", "lane-1")
+        head = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+        sh("git", "push", "-q", "origin", "HEAD:refs/heads/feature/FX-1", cwd=wt)
+        forge = json.loads((fx.tmp / "forge.json").read_text())
+        url = next(u for u, pr in forge.items() if pr["source"] == "feature/FX-2")
+        forge[url].update(state="merged", head=head)
+        (fx.tmp / "forge.json").write_text(json.dumps(forge))
+        (fx.main / "tools/snapshot.py").write_text(
+            "import datetime, json\n"
+            "print(json.dumps({'takenAt': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'), "
+            f"'source': 'forge', 'items': [{{'subject': 'FX-2', 'state': 'merged', 'head': {head!r}, "
+            f"'changeRequest': {url!r}}}]}}))\n")
+        code, out = fx.flow("lead-run", "--once", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.item(fx)["stage"], "merged")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("accepted FX-2 after its merge", out)
+        self.assertNotIn("choose", out)
+
+    def test_checks_are_selected_with_the_readers_of_the_change_from_anywhere_in_the_checkout(self) -> None:
+        fx = self.fixture(readers=[{"paths": ["src/one.txt"], "checks": ["tests.test_two"]}])
+        hand_off(fx, "FX-2", "lane-1")
+        code, out = fx.flow("lead-accept", "FX-2", "--checks", "tests.test_one", "--reason", "one changed",
+                            cwd=fx.main / "src")
+        self.assertEqual(code, 0, out)
+        self.assertEqual([c["id"] for c in self.item(fx)["leadSelection"]["checks"]], ["tests.test_one", "tests.test_two"])
+        self.assertIn("tests.test_two (reads src/one.txt)", kinds(fx, "check.selected")[-1]["summary"])
+
+    def test_handoff_names_the_checks_the_lane_ran_and_refuses_an_unknown_one(self) -> None:
+        fx = self.fixture()
+
+        def refused(wt: Path, url: str) -> None:
+            for bad, said in (("tests.test_two,tests.test_nope", "doesn't have: tests.test_nope"),
+                              ("tests.test_two,tests.test_two", "each once"), ("", "each once")):
+                code, out = fx.flow("handoff", "FX-2", "--pr", url, "--checks", bad, cwd=wt)
+                self.assertEqual(code, 2, out)
+                self.assertIn(said, out)
+            self.assertNotIn("FX-2", [q["subject"] for q in record(fx)["state"]["queue"]], "nothing was handed off")
+
+        out = hand_off(fx, "FX-2", "lane-1", checks="tests.test_two, tests.test_one", before=refused)
+        self.assertIn("- checks run: tests.test_two, tests.test_one", out)
+        self.assertEqual(self.item(fx)["namedChecks"], ["tests.test_two", "tests.test_one"])
+        handed = kinds(fx, "candidate.handed")[-1]
+        self.assertIn("; the lane ran tests.test_two, tests.test_one", handed["summary"])
+
+    def test_without_lead_selection_acceptance_is_as_before_and_refuses_a_choice(self) -> None:
+        fx = self.fixture(lead=False)
+        hand_off(fx, "FX-2", "lane-1")
+        for flags in (["--checks", "tests.test_one"], ["--full-suite"]):
+            with self.subTest(flags=flags):
+                code, out = fx.flow("lead-accept", "FX-2", *flags, cwd=fx.main)
+                self.assertEqual(code, 2, out)
+                self.assertIn("the binding doesn't enable lead selection (selection.lead)", out)
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("accepted FX-2; the runner may take it", out)
+        self.assertNotIn("choose", out)
+        self.assertNotIn("leadSelection", self.item(fx))
+        queue_run(fx, "FX-2")
+        self.assertNotIn("checkSelection", self.item(fx), "a binding without the option gains nothing on its rows")
 
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)

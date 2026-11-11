@@ -181,6 +181,45 @@ test("says when the checks being run were chosen by the lead, with the lead's re
   expect(provider.querySelector(".checking").textContent).not.toContain("chosen by the lead");
 });
 
+test("says when the piece being checked runs on the fallback because the lead chose no checks, naming it", async () => {
+  const document = fixtureDocument();
+  const subject = document.state.meta.checking.now.subject;
+  const item = document.state.queue.find((entry) => entry.subject === subject);
+  item.checkSelection = { by: "provider", fallback: ["full-suite", "lint"] };
+  const [{ app }] = await open(document);
+  const panel = app.querySelector(".checking");
+  expect(panel.querySelector(".ck-fallback")?.textContent).toBe(
+    "Checking on the fallback, full-suite, lint: the lead selected no checks");
+  expect(panel.textContent).not.toContain("chosen by the lead");
+  // The provider's own selection, and a lead's, say nothing of the fallback.
+  for (const selection of [{ by: "provider" }, { by: "lead", head: item.head, reason: "only the retry path changed" }]) {
+    item.checkSelection = selection;
+    const [{ app: other }] = await open(document);
+    expect(other.querySelector(".checking .ck-fallback")).toBeNull();
+  }
+});
+
+test("in a batch, the fallback note names the pieces on the fallback, or says it is every piece", async () => {
+  const document = fixtureDocument();
+  const summary = "Checking Retry card payments once on a dropped connection, Keep the order number on the receipt page as one batch";
+  document.state.queue[3].stage = "checking";
+  document.journal.push(
+    { at: "2026-10-22T05:05:00Z", id: 43, kind: "check.started", lane: "payments", subject: "PAY-2361", summary },
+    { at: "2026-10-22T05:05:00Z", id: 44, kind: "check.started", lane: "storefront", subject: "PAY-2362", summary },
+  );
+  const fallback = { by: "provider", fallback: ["full-suite"] };
+  const piece = (subject) => document.state.queue.find((entry) => entry.subject === subject);
+  piece("PAY-2362").checkSelection = fallback;
+  const [{ app: one }] = await open(document);
+  expect(one.querySelector(".checking .ck-h-words")?.textContent).toBe("Being checked together · 2 pieces");
+  expect(one.querySelector(".checking .ck-fallback")?.textContent).toBe(
+    "Checking on the fallback, full-suite for Keep the order number on the receipt page: the lead selected no checks");
+  piece("PAY-2361").checkSelection = fallback;
+  const [{ app: both }] = await open(document);
+  expect(both.querySelector(".checking .ck-fallback")?.textContent).toBe(
+    "Checking on the fallback, full-suite for every piece: the lead selected no checks");
+});
+
 test("shows a ticket's own title and summary when its id is hovered, wherever the id appears", async () => {
   const document = fixtureDocument();
   document.state.tickets["PAY-2360"] = { title: "Calm decline message", summary: HOSTILE };

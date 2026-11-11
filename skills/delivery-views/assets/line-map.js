@@ -834,6 +834,16 @@
         chosenNotes.push(chosenFold(subjectOf(item), "Checks chosen by the lead, not the usual selection" + (reason ? ": " + reason : "")));
       });
     }
+    // Under lead selection, a piece the lead chose no checks for runs the binding's fallback: the note names it.
+    var fallbackItems = (batch || (byId[current.subject] ? [byId[current.subject]] : [])).filter(function (item) {
+      return isObject(item.checkSelection) && item.checkSelection.by === "provider" && list(item.checkSelection.fallback).length > 0;
+    });
+    if (fallbackItems.length) {
+      var fallbackNames = list(fallbackItems[0].checkSelection.fallback).map(function (name) { return text(name); }).join(", ");
+      var whose = batch && batch.length > 1 ? (fallbackItems.length === batch.length ? " for every piece" : " for " +
+        fallbackItems.map(function (item) { return titleOf(doc, item); }).join(", ")) : "";
+      chosenNotes.push(el("p", "ck-fallback", "Checking on the fallback, " + fallbackNames + whose + ": the lead selected no checks"));
+    }
     var steps = list(current.steps).filter(function (step) { return isObject(step) && step.label !== "selecting checks"; });
     if (steps.length) {
       var done = steps.filter(function (step) { return DONE[step.state]; }).length;

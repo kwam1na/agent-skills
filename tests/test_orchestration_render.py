@@ -612,11 +612,11 @@ EMPTY_STATE = {
 }
 PINNED_EMPTY_VIEWS = {
     "delivery.md": "bf22eae1f7b5115650ba06265e138d9b9ed720f44158d1fc761ba4df356507c9",
-    "delivery.html": "f16a712aecbf01ea05fe644d690082c296d838380ce68162d1fcc367016132b7",
+    "delivery.html": "da926593eced820ff2fabdec675f0233a368f9e08194da3ccc12488c6670a615",
 }
 PINNED_VIEWS = {
     "delivery.md": "412c01eecfbdcfba6f1f5f650a0368c29c40e3e7cf3b0ef44d0687e68115d79c",
-    "delivery.html": "94b6925208c7ac4ec3743ae61e3524bfd59dbe3f9da2d2fe7ae0d00fac36a6c0",
+    "delivery.html": "0e29c5443ed4895b2f39fb7a7336a92602b8d7fa7fe9b4aa2b76b55bc79bf849",
 }
 
 
@@ -907,6 +907,16 @@ def selection_lines(document: dict) -> tuple[str, ...]:
     )
 
 
+def fallback_document() -> dict:
+    """The fixed state with one row checking on the binding's fallback because the lead selected no checks for it."""
+    state = copy.deepcopy(FIXED_STATE)
+    state["queue"][1]["checkSelection"] = {"by": "provider", "fallback": ["full-suite", "lint"]}
+    return {"state": state, "journal": FIXED_JOURNAL}
+
+
+FALLBACK_LINE = "checking on the fallback, full-suite, lint: the lead selected no checks"
+
+
 def refusal_document() -> dict:
     """The fixed state with one row the provider refused under selection.refusalStops."""
     state = copy.deepcopy(FIXED_STATE)
@@ -999,6 +1009,19 @@ class CheckVisibilityViewTests(unittest.TestCase):
         self.assertNotIn("<b>", view)
         self.assertNotIn(LONG_TITLE, view)
         self.assertNotIn("suite: failed", view)
+
+    def test_the_markdown_view_says_a_row_checks_on_the_fallback_naming_it(self) -> None:
+        view = render_state.render_markdown(fallback_document())
+        self.assertIn(render_state._markdown_text(FALLBACK_LINE), view)
+        self.assertNotIn(render_state._markdown_text("checks selected by the provider"), view)
+        # A fallback that isn't a list of names is the provider's selection, as the page reads it.
+        for odd in ("full-suite", [], {"id": "full-suite"}):
+            with self.subTest(fallback=odd):
+                document = fallback_document()
+                document["state"]["queue"][1]["checkSelection"]["fallback"] = odd
+                view = render_state.render_markdown(document)
+                self.assertNotIn("on the fallback", view)
+                self.assertIn(render_state._markdown_text("checks selected by the provider"), view)
 
     def test_the_markdown_view_says_the_provider_refused_and_never_that_it_selected(self) -> None:
         view = render_state.render_markdown(refusal_document())
@@ -2247,6 +2270,11 @@ setTimeout(async () => {
             with self.subTest(line=line):
                 self.assertIn(line, shown["text"])
         self.assertNotIn(f"lead selection for {document['state']['queue'][0]['head']}", shown["text"])
+
+    def test_the_page_says_a_row_checks_on_the_fallback_as_the_markdown_does(self) -> None:
+        shown = self.run_page({}, fallback_document())
+        self.assertIn(FALLBACK_LINE, shown["text"])
+        self.assertNotIn("checks selected by the provider", shown["text"])
 
     def test_the_page_says_the_provider_refused_as_the_markdown_does(self) -> None:
         shown = self.run_page({}, refusal_document())

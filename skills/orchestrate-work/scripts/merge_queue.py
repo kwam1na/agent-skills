@@ -1899,12 +1899,16 @@ class Runner:
             raise Stop("selection_invalid", "the lead's check selection: " + "; ".join(problems)[:800])
         return checks
 
-    def record_selection(self, subjects: list[str], members: list[dict] | None) -> None:
+    def record_selection(self, subjects: list[str], members: list[dict] | None, selection: dict | None = None) -> None:
         """Say on each queue row whose choice its checks are, so the lead's never passes for the provider's.
 
-        Written only under a binding that enables lead selection; elsewhere every check is the provider's.
+        Written only under a binding that enables lead selection; elsewhere every check is the provider's. A row
+        with no lead selection whose checks the runner widened to the binding's fallback, for a reason, names it, so
+        the views can say so; a provider that widened its own answer adds no fallback.
         """
         by_subject = {member["subject"]: member for member in members or []}
+        fallback = ([check["id"] for check in self.binding["fallback"]]
+                    if members is None and (selection or {}).get("fallbackReasons") else [])
 
         def build(current: dict) -> tuple[dict, dict]:
             queue = [dict(item) for item in current["queue"]]
@@ -1912,7 +1916,7 @@ class Runner:
                 if item["subject"] in subjects:
                     member = by_subject.get(item["subject"])
                     item["checkSelection"] = ({"by": "lead", "head": member["head"], "reason": member["reason"]}
-                                              if member else {"by": "provider"})
+                                              if member else {"by": "provider", **({"fallback": fallback} if fallback else {})})
             return {"queue": queue}, {}
 
         self.write(build=build)
@@ -1928,7 +1932,7 @@ class Runner:
         else:
             selection, ordered = self.select_by_provider(base_head, synced, changes, checkout, context, subjects)
         if self.binding.get("selection", {}).get("lead"):
-            self.record_selection(subjects, members)
+            self.record_selection(subjects, members, selection)
         return selection, ordered
 
     def select_by_lead(self, members: list[dict], checkout: Path) -> tuple[dict, list[dict]]:
