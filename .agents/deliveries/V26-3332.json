@@ -237,6 +237,50 @@
           "text": "The doc's exact pins are updated, each proven red by a mutant"
         }
       ]
+    },
+    "V26-3358": {
+      "title": "Clean up a story its forge merged by squash",
+      "lane": "lane-1",
+      "inApp": "none",
+      "why": "The operator's ruling of 2026-11-11, \"Fix it in this run\": cleanup counts only ancestry, so this repository's squash merges left every merged story unmerged and the close held (Decision 12).",
+      "criteria": [
+        {
+          "id": "v26-3358-squash",
+          "text": "A story whose change request the forge reports merged, with every tip at or below its head, is cleaned: evidence kept, checkout removed, local branch deleted"
+        },
+        {
+          "id": "v26-3358-past-head",
+          "text": "A merged request with a tip past its head stays unmerged, naming that tip, and nothing is removed"
+        },
+        {
+          "id": "v26-3358-unmerged",
+          "text": "An open or closed-unmerged request stays unmerged"
+        },
+        {
+          "id": "v26-3358-ancestry",
+          "text": "A story whose tips are on the base is cleaned with no forge call, and a dirty checkout is still refused"
+        },
+        {
+          "id": "v26-3358-close",
+          "text": "The supervisor's cleanup pass and the bare sweep take the same path, so closeHeldBy clears once each squash-merged story is cleaned"
+        }
+      ]
+    },
+    "V26-3359": {
+      "title": "Apply the release candidate carrying the squash-merge cleanup here",
+      "lane": "lane-1",
+      "inApp": "none",
+      "why": "V26-3358's fix reaches this delivery's close only from an applied generation (Decision 12).",
+      "criteria": [
+        {
+          "id": "v26-3359-doctor",
+          "text": "run_delivery.py doctor --delivery V26-3332 reports linear-v2.0.0-rc.2 as the running generation and the installed generation on origin/main"
+        },
+        {
+          "id": "v26-3359-cleaned",
+          "text": "Once it merges and the supervisor resumes on it, lead-cleanup cleans this delivery's squash-merged stories, recorded on the item"
+        }
+      ]
     }
   },
   "finish": [

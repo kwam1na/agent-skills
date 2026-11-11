@@ -9,7 +9,8 @@ same way jira works", and reshaped by the operator's second ruling the same day,
 the api? doesn't make sense to support both modes". So every tracker run-delivery ships posts through the tracker publisher, and the host
 publisher mode goes. The items are V26-3269 (the Linear adapter), V26-3334 (removing host mode, which supersedes the canceled V26-3261),
 V26-3333 (this repository's switch, split from V26-3269's Scope 4), V26-3097 (the Linear qualifier), V26-3083 (the scheduled connector
-check) V26-3339 (the lead's check choice at acceptance, added by the operator's third ruling) V26-3342 (repairing `main` after V26-3269) and V26-3343 (the connector check's marker searches). Each item's tracker scope and acceptance criteria bind what it does. This plan decides only what the items leave open: how the
+check) V26-3339 (the lead's check choice at acceptance, added by the operator's third ruling) V26-3342 (repairing `main` after V26-3269), V26-3343 (the connector check's marker searches), and V26-3358 and V26-3359 (cleaning up
+squash-merged stories, and applying the candidate that carries it, added by the operator's fourth ruling). Each item's tracker scope and acceptance criteria bind what it does. This plan decides only what the items leave open: how the
 rulings read in the corpus, the choices two items share, order, file ownership while another delivery holds some of the same files, and
 how the work reaches `main`.
 
@@ -160,6 +161,14 @@ how the work reaches `main`.
     but the text would let a stricter reader fail the weekly check, or count unrelated issues in the cleanup. V26-3343 says, in the
     on-demand steps and the routine prompt alike, that a match is an issue carrying the run's marker. Lane 2 owns the doc and its pins.
     Once it merges, the lead updates the two scheduled tasks' prompts to the merged text.
+12. **The fourth ruling adds V26-3358 and V26-3359.** After V26-3333 merged, the close stayed held because cleanup reported all eight
+    merged stories "unmerged": this repository's binding merges with `--squash`, and cleanup counts a story as merged only when its tips
+    are ancestors of the base, which a squash merge never makes them. On the operator's ruling (2026-11-11), "Fix it in this run",
+    V26-3358 lets cleanup accept a story whose change request the forge reports merged when every tip it still has is that request's
+    head or below it, and leaves the ancestry path as it is. The fix reaches this delivery's close only from an applied generation, so
+    after it merges the lead runs the full suite and tags `v2.0.0-rc.2`, and V26-3359 applies it here the way V26-3333 applied rc.1,
+    with nothing else in the change. The supervisor keeps running across that merge, since rc.2 changes no record shape, and resumes on
+    the new generation with `lead-run --resume` once it merges.
 
 ## Units and order
 
@@ -169,7 +178,7 @@ them in order and then V26-3333. Lane 2 holds the qualifier and the connector ch
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
 | 1 | 1 | V26-3269, V26-3334, V26-3342, V26-3339 | `skills/run-delivery/`, `skills/orchestrate-work/`, `skills/delivery-views/`, `skills/linear-tracker-adapter/`, `tests/test_run_delivery.py`, `tests/test_run_delivery_tracker.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_orchestration_render.py`, `tests/test_orchestration_state.py`, `tests/test_orchestration_adopter.py`, `tests/fixtures/orchestration-adopter/`, `tests/test_merge_queue.py`, `tests/delivery_views_page/`, `docs/solutions/`, `catalog.json`, `profiles/` |
-| 2 | 1 | V26-3333 | `.agent-skills/`, `.agents/skills/`, `.claude/skills/`, `.agents/orchestration.json`, `.agents/run-delivery.json`, `docs/own-deliveries.md`, `tests/test_own_deliveries.py` |
+| 2 | 1 | V26-3333, then V26-3358 and V26-3359 in tier 3 | `.agent-skills/`, `.agents/skills/`, `.claude/skills/`, `.agents/orchestration.json`, `.agents/run-delivery.json`, `docs/own-deliveries.md`, `tests/test_own_deliveries.py` |
 | 1 | 2 | V26-3097, V26-3083, V26-3343 | `scripts/qualify-linear.py`, `tests/test_linear_qualification.py`, `docs/linear-connector-check.md` |
 
 **Another delivery on `main`.** V26-3250 runs at the same time with its own queue. Its lane 1 holds `skills/run-delivery/`,
@@ -283,9 +292,27 @@ is an issue whose title or description carries the run's marker, in step 1, step
 `tests/test_linear_qualification.py` updated and each proven red by a mutant. Files: `docs/linear-connector-check.md`,
 `tests/test_linear_qualification.py`. Sensors: `tests.test_linear_qualification`, `scripts/validate-registry.py`.
 
+### V26-3358. Clean up a story its forge merged by squash
+
+Lane 1, tier 3, per the item and Decision 12. Test-first. Rows: a story whose change request the forge reports merged, with every tip
+at or below its head, is cleaned (evidence kept, checkout removed, local branch deleted); a merged request with a tip past its head
+stays unmerged, naming that tip, and nothing is removed; an open or closed-unmerged request stays unmerged; a story whose tips are on
+the base is cleaned with no forge call; a dirty checkout is still refused; and the supervisor's cleanup pass and the bare sweep take
+the same path, so `closeHeldBy` clears. Files: `skills/run-delivery/`, `tests/test_run_delivery.py`,
+`tests/test_run_delivery_supervisor.py`, `catalog.json`, `profiles/` and `provenance.lock.json`. Sensors: those test modules,
+`scripts/validate-registry.py`.
+
+### V26-3359. Apply the release candidate carrying the squash-merge cleanup here
+
+Lane 1, tier 3, after V26-3358, once the lead has tagged and published `v2.0.0-rc.2`. Sensor-only. The lane applies the candidate as
+`docs/own-deliveries.md` says and commits the generation, with nothing else in the change. Files: `.agent-skills/`, `.agents/skills/`
+and `.claude/skills/`. Sensors: `tests/test_own_deliveries.py`, `scripts/validate-registry.py`, `run_delivery.py doctor`, and, after
+it merges, `lead-cleanup` cleaning this delivery's squash-merged stories.
+
 ## Execution posture
 
-`test-first` for V26-3269, V26-3334, V26-3342, V26-3339, V26-3333 and V26-3097, and `sensor-only` for V26-3083 and V26-3343. Lanes work to the focused lane profile: no
+`test-first` for V26-3269, V26-3334, V26-3342, V26-3339, V26-3333, V26-3097 and V26-3358, and `sensor-only` for V26-3083, V26-3343 and
+V26-3359. Lanes work to the focused lane profile: no
 full suite in a lane. The queue runs the selected checks on the synced head, `fullHealth` runs after each merge, and the lead runs the
 full suite before tagging.
 
@@ -300,6 +327,6 @@ full suite before tagging.
 
 ## Tracking
 
-The epic and its items are in Linear: V26-3269, V26-3334, V26-3342, V26-3339, V26-3333, V26-3097, V26-3083 and V26-3343, with V26-3261 canceled as superseded. Until
+The epic and its items are in Linear: V26-3269, V26-3334, V26-3342, V26-3339, V26-3333, V26-3097, V26-3083, V26-3343, V26-3358 and V26-3359, with V26-3261 canceled as superseded. Until
 the switch, the lead posts at each milestone with the host's Linear tools and moves items to their final state. After it, the tracker
 publisher does.
