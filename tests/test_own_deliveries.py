@@ -399,7 +399,15 @@ class TrackerUpdatesAndCredentials(unittest.TestCase):
         self.assertIn("A record a host-mode generation opened is seeded on the publisher's first run: every entry at or "
                       "below the `journalThrough` the last acknowledgement left in `published.json` is skipped, and "
                       "nothing is posted twice.", section)
-        self.assertIn("markers --ticket", section)
+        adapter = ".agent-skills/current/skills/run-delivery/adapters/tracker_linear.py"
+        self.assertIn(f"python3 -B {adapter} markers --ticket <key>", section)
+        self.assertTrue((ROOT / adapter).is_file(), adapter)
+        # The ledger the lead reads is the one the installed publisher writes.
+        tracker = _generation_module("own_tracker_publisher", PUBLISHER)
+        self.assertIn(f"and records it in the ledger, `{tracker.LEDGER}` beside the record.", section)
+        self.assertIn("A post Linear refuses shows in the line map's Needs you box.", section)
+        self.assertIn("The binding configures no status moves, so starting, reviewing and closing a ticket stay with "
+                      "people and Linear's GitHub integration.", section)
 
     def test_the_credentials_give_an_agent_shell_the_key_from_the_keychain(self) -> None:
         section = _section("Credentials", "Tracker updates")
@@ -409,6 +417,8 @@ class TrackerUpdatesAndCredentials(unittest.TestCase):
         self.assertIn('security add-generic-password -a "$USER" -s LINEAR_API_KEY -w', section)
         self.assertIn('export LINEAR_API_KEY="$(security find-generic-password -a "$USER" -s LINEAR_API_KEY -w)"', section)
         self.assertIn('export GITHUB_TOKEN="$(gh auth token)"', section)
+        # How the plan's doctor fix line is met here: the setup check names the variable, and this recipe sets it.
+        self.assertIn("The setup check names `LINEAR_API_KEY` when it's unset, and this recipe is its fix here.", section)
         self.assertIn("Then export both from `~/.zshenv`:", section)
         # The interactive-only file is named once, as what an agent's shell doesn't read.
         self.assertEqual(section.count("~/.zshrc"), 1, section)
