@@ -1,0 +1,568 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3406",
+  "headline": "V26-3406: make host hooks a first-class part of the workflow",
+  "plan": "docs/plans/2026-11-11-host-hooks.md",
+  "laneBrief": "docs/plans/2026-11-11-host-hooks.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-11-host-hooks.lane-notes.md"
+  },
+  "context": {
+    "sections": [
+      "Decisions"
+    ]
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "agent_skills/*",
+        "schemas/*",
+        "tests/test_hooks.py",
+        "tests/test_lifecycle.py",
+        "tests/lifecycle_support.py",
+        "tests/test_host_exposure.py",
+        "tests/test_receipt.py",
+        "tests/test_registry.py",
+        "tests/test_release_archive.py",
+        "tests/test_release_entry_budget.py",
+        "tests/test_release_integration.py",
+        "docs/product-generation.md",
+        ".agent-skills/*",
+        ".agents/skills/*",
+        ".claude/skills/*",
+        ".claude/settings.json",
+        ".agents/run-delivery.json",
+        "docs/own-deliveries.md",
+        "tests/test_own_deliveries.py"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "skills/run-delivery/*",
+        "skills/orchestrate-work/*",
+        "skills/delivery-views/*",
+        "tests/test_run_delivery.py",
+        "tests/test_run_delivery_supervisor.py",
+        "tests/test_lead_wait.py",
+        "tests/test_run_delivery_hooks.py",
+        "tests/test_orchestration_render.py",
+        "tests/test_orchestration_state.py",
+        "tests/delivery_views_page/*",
+        "catalog.json",
+        "profiles/*",
+        "docs/solutions/*",
+        "provenance.lock.json"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3407": {
+      "title": "Let a skill declare host hooks, and run them through one dispatcher",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "v26-3407-1",
+          "text": "A manifest matching Decision 2 validates. Each refusal Decision 2 lists has its own row and finding code:"
+        },
+        {
+          "id": "v26-3407-2",
+          "text": "a schema failure;"
+        },
+        {
+          "id": "v26-3407-3",
+          "text": "a duplicate id across the profile;"
+        },
+        {
+          "id": "v26-3407-4",
+          "text": "an unknown event;"
+        },
+        {
+          "id": "v26-3407-5",
+          "text": "a host outside the skill's hosts;"
+        },
+        {
+          "id": "v26-3407-6",
+          "text": "an argv script outside the skill or not among its outputs."
+        },
+        {
+          "id": "v26-3407-7",
+          "text": "agent-skills hook claude-code stop, run against a fixture generation, produces Claude Code's output for each case below. Every row sends a payload shaped like Claude Code's real Stop payload, with session_id, cwd, hook_event_name and stop_hook_active present, and that key is false unless the row says otherwise."
+        },
+        {
+          "id": "v26-3407-8",
+          "text": "Single hook: allow, warn and block. The block prints {\"decision\": \"block\", ...} with stop_hook_active: false present."
+        },
+        {
+          "id": "v26-3407-9",
+          "text": "stop_hook_active: true: turns a block into a warn."
+        },
+        {
+          "id": "v26-3407-10",
+          "text": "Join order: two blocks and a warn. Both block reasons are joined in run order, in a fixture whose run order (sorted skill ids, then manifest order) differs from directory order and catalog order."
+        },
+        {
+          "id": "v26-3407-11",
+          "text": "Faults: each fault Decision 3 lists, one row each. Each counts as allow, with one stderr line naming the hook. One of these rows also holds a valid block, which still blocks."
+        },
+        {
+          "id": "v26-3407-12",
+          "text": "Budget: several hooks whose combined run exceeds the overall budget, with the budget constants scaled down in-process."
+        },
+        {
+          "id": "v26-3407-13",
+          "text": "The dispatcher finishes within the overall budget."
+        },
+        {
+          "id": "v26-3407-14",
+          "text": "A hook that would start with less than the minimum left is skipped and counted as allow, with its stderr line."
+        },
+        {
+          "id": "v26-3407-15",
+          "text": "A block from an earlier hook still blocks."
+        },
+        {
+          "id": "v26-3407-16",
+          "text": "Hosts filter: a hook declaring only codex is neither run nor counted."
+        },
+        {
+          "id": "v26-3407-17",
+          "text": "No hook: with no hook for the event, the dispatcher prints nothing, exits 0 and starts no process."
+        },
+        {
+          "id": "v26-3407-18",
+          "text": "Project root: with CLAUDE_PROJECT_DIR unset, the dispatcher takes the root from the git top level of the payload's cwd, and the process's own working directory is elsewhere."
+        },
+        {
+          "id": "v26-3407-19",
+          "text": "No shell: an argv item containing shell metacharacters reaches the hook verbatim."
+        },
+        {
+          "id": "v26-3407-20",
+          "text": "agent-skills hook claude-code session-start joins context strings in run order, cuts them at 9,000 characters, and prints hookSpecificOutput."
+        },
+        {
+          "id": "v26-3407-21",
+          "text": "The dispatcher exits 0 in every row, including one where every hook fails."
+        },
+        {
+          "id": "v26-3407-22",
+          "text": "After a dispatch against a fixture generation whose hook imports a sibling module and starts a Python child, the generation holds no _pycache_ folder and no .pyc file."
+        },
+        {
+          "id": "v26-3407-23",
+          "text": "The release archive carries agent_skills/hooks.py and schemas/skill-hooks.schema.json, within the entry budget."
+        }
+      ],
+      "inApp": "none"
+    },
+    "V26-3408": {
+      "title": "Install, record and remove Claude Code hook entries with the generation",
+      "lane": "lane-1",
+      "after": [
+        "V26-3407"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3408-1",
+          "text": "Install. Installing a generation whose profile declares a stop hook writes exactly the Stop entry of Decision 4. It records hooks in the receipt, and records .claude/ in createdDirectories when it created it. Every other key and entry is equal after parsing, including a user's own entry already in hooks.Stop."
+        },
+        {
+          "id": "v26-3408-2",
+          "text": "Update, remove and rollback."
+        },
+        {
+          "id": "v26-3408-3",
+          "text": "Updating to a generation that adds session-start adds only that entry."
+        },
+        {
+          "id": "v26-3408-4",
+          "text": "Updating between two generations that declare the same events leaves the file byte-identical."
+        },
+        {
+          "id": "v26-3408-5",
+          "text": "Updating to a generation with no hooks removes both entries, and so does removing a generation. Each follows Decision 4's emptying rule, with one row for each case:"
+        },
+        {
+          "id": "v26-3408-6",
+          "text": "a user entry beside the owned one in hooks.Stop is kept, and parses equal, after the update and, separately, after the removal;"
+        },
+        {
+          "id": "v26-3408-7",
+          "text": "with created true, a user key added after install keeps the file, with that key;"
+        },
+        {
+          "id": "v26-3408-8",
+          "text": "with created false, a file left with only {} is kept;"
+        },
+        {
+          "id": "v26-3408-9",
+          "text": "with created true and nothing else added, the file is deleted."
+        },
+        {
+          "id": "v26-3408-10",
+          "text": "A rollback restores the prior receipt's entries."
+        },
+        {
+          "id": "v26-3408-11",
+          "text": "Recovery. A fault is injected at every journal phase, exposing-claude-code-hooks included, between two endpoints that declare different event sets (none, and stop). After recovery, the owned entries equal exactly the events of the receipt recovery commits."
+        },
+        {
+          "id": "v26-3408-12",
+          "text": "Refusals. Preflight refuses each case Decision 4 lists, one row each and naming the fix:"
+        },
+        {
+          "id": "v26-3408-13",
+          "text": "a non-object file;"
+        },
+        {
+          "id": "v26-3408-14",
+          "text": "a hooks that isn't an object;"
+        },
+        {
+          "id": "v26-3408-15",
+          "text": "an event list that isn't a list;"
+        },
+        {
+          "id": "v26-3408-16",
+          "text": "an altered owned entry. A change to the file between preflight and the rename refuses with exposure-conflict. After that refusal, the file, the receipt and the skill exposures are all the prior endpoint's."
+        },
+        {
+          "id": "v26-3408-17",
+          "text": "The installed command. Each row runs the exact installed C through sh -c, with CLAUDE_PROJECT_DIR set to the temporary repository:"
+        },
+        {
+          "id": "v26-3408-18",
+          "text": "against an installed hook-bearing fixture generation, it prints the block output;"
+        },
+        {
+          "id": "v26-3408-19",
+          "text": "with .agent-skills/current removed, it exits 1, not 2;"
+        },
+        {
+          "id": "v26-3408-20",
+          "text": "with current naming a generation that has no hook command, it exits 1, not 2."
+        },
+        {
+          "id": "v26-3408-21",
+          "text": "Reports. plan and diff report hooks.added and hooks.removed. Their other members are unchanged, which the characterization rows pin."
+        },
+        {
+          "id": "v26-3408-22",
+          "text": "Divergence. status reports local-divergence: hooks when an owned entry is removed, and when one is edited by hand. It reports no divergence after the user adds an unrelated top-level key and their own entry under hooks.Stop."
+        },
+        {
+          "id": "v26-3408-23",
+          "text": "Adoption. Adopting a skill whose hooks.json declares a claude-code stop hook writes no .claude/settings.json entry and no receipt hooks member. Beside it, a generation install carrying the same skill does write the entry."
+        },
+        {
+          "id": "v26-3408-24",
+          "text": "Documentation. docs/product-generation.md says what an apply writes to .claude/settings.json, how to remove it, and that downgrading goes through rollback."
+        }
+      ],
+      "inApp": "none"
+    },
+    "V26-3270": {
+      "title": "Make the lead's wait impossible to miss: printed and visible when absent",
+      "lane": "lane-2",
+      "criteria": [
+        {
+          "id": "v26-3270-1",
+          "text": "lead-init, lead-assign, lead-accept and lead-run --resume each print the background lead-wait command, with the right --after, when lanes work or a candidate is queued, and print nothing about it otherwise."
+        },
+        {
+          "id": "v26-3270-2",
+          "text": "With a lane working and no live lease, the supervisor's \"Needs you\" and the live view both name the missing listener, and a running lead-wait clears both."
+        },
+        {
+          "id": "v26-3270-3",
+          "text": "The lease boundary:"
+        },
+        {
+          "id": "v26-3270-4",
+          "text": "a lease whose pid has died counts as absent;"
+        },
+        {
+          "id": "v26-3270-5",
+          "text": "a lease whose updatedAt is 180 seconds old counts as absent;"
+        },
+        {
+          "id": "v26-3270-6",
+          "text": "a lease 179 seconds old with a live pid counts as live;"
+        },
+        {
+          "id": "v26-3270-7",
+          "text": "with a dead pid's lease, the supervisor, the live view and the lease function all report the listener missing."
+        },
+        {
+          "id": "v26-3270-8",
+          "text": "The guide's \"The lead's wake\", run-delivery's SKILL.md Lead row and orchestrate-work's Lead authority sentence name lead-wait, and the corpus pins the wording. The hook's own wording belongs to V26-3409."
+        }
+      ],
+      "inApp": "none"
+    },
+    "V26-3409": {
+      "title": "Hold a lead's stop while nobody listens, and orient every session in a delivery",
+      "lane": "lane-2",
+      "after": [
+        "V26-3270",
+        "V26-3407"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3409-1",
+          "text": "Block. lead-may-stop returns block, with the delivery key and its exact lead-wait command, for a lead checkout with one open delivery, no live lease and mode enforce. There is one row with a lane working and one with a candidate queued. A further row puts the payload's cwd in a subfolder of the lead checkout, and it blocks too."
+        },
+        {
+          "id": "v26-3409-2",
+          "text": "Modes. It returns warn with the same reason under mode warn, and with the key missing. Under off it returns {\"verdict\": \"allow\"} and appends no hook.held."
+        },
+        {
+          "id": "v26-3409-3",
+          "text": "Allow. It returns {\"verdict\": \"allow\"} in each of these cases, one row each:"
+        },
+        {
+          "id": "v26-3409-4",
+          "text": "a live lease;"
+        },
+        {
+          "id": "v26-3409-5",
+          "text": "a lane worktree created under the lead checkout's own .worktrees/;"
+        },
+        {
+          "id": "v26-3409-6",
+          "text": "a lane worktree in a sibling folder;"
+        },
+        {
+          "id": "v26-3409-7",
+          "text": "a folder with no delivery;"
+        },
+        {
+          "id": "v26-3409-8",
+          "text": "a closed delivery;"
+        },
+        {
+          "id": "v26-3409-9",
+          "text": "nothing waiting on the lead."
+        },
+        {
+          "id": "v26-3409-10",
+          "text": "Lease boundary. A dead pid's lease and a lease 180 seconds old are each treated as absent and return block. A lease 179 seconds old with a live pid returns allow."
+        },
+        {
+          "id": "v26-3409-11",
+          "text": "Journaling. A block with stop_hook_active: false appends exactly one hook.held, and so does a warn under mode warn. The following stop, with stop_hook_active: true, appends none. An allow appends nothing, and a running wait does not end on hook.held."
+        },
+        {
+          "id": "v26-3409-12",
+          "text": "Shared checkout. Two open deliveries in one checkout return warn, naming each that lacks a listener, under enforce too."
+        },
+        {
+          "id": "v26-3409-13",
+          "text": "Orientation. delivery-orient prints Decision 8's fields for a lead and for a lane. It prints {\"verdict\": \"allow\"} with no context for any other session and under mode off."
+        },
+        {
+          "id": "v26-3409-14",
+          "text": "There is one row for each source: startup, resume, clear, compact and fork."
+        },
+        {
+          "id": "v26-3409-15",
+          "text": "One row checks the 4,000-character cut."
+        },
+        {
+          "id": "v26-3409-16",
+          "text": "The hostile-text row runs once as the lead and once as the lane. Hostile text is planted in that lane's own story: its journal entries, its hand-off and its tracker title. The same output shows that role's Decision 8 fields present and every hostile string absent."
+        },
+        {
+          "id": "v26-3409-17",
+          "text": "One row reaches the payload's cwd through a symlink."
+        },
+        {
+          "id": "v26-3409-18",
+          "text": "doctor."
+        },
+        {
+          "id": "v26-3409-19",
+          "text": "It refuses an unknown hook id or mode in .agents/run-delivery.json, naming the fix."
+        },
+        {
+          "id": "v26-3409-20",
+          "text": "It reports, without refusing, when the installed generation's .claude/settings.json lacks the entries the receipt records."
+        },
+        {
+          "id": "v26-3409-21",
+          "text": "It reports, without refusing, when python3 on PATH is below 3.11."
+        },
+        {
+          "id": "v26-3409-22",
+          "text": "Through the dispatcher. The hook is run through the shipped dispatcher against a fixture generation, with a real Stop payload carrying stop_hook_active: false."
+        },
+        {
+          "id": "v26-3409-23",
+          "text": "Its block reaches Claude Code's output as {\"decision\": \"block\", ...}."
+        },
+        {
+          "id": "v26-3409-24",
+          "text": "The second stop, with stop_hook_active: true, comes out as a warn."
+        },
+        {
+          "id": "v26-3409-25",
+          "text": "Afterwards the fixture generation holds no _pycache_ folder and no .pyc file."
+        },
+        {
+          "id": "v26-3409-26",
+          "text": "Documentation. references/config.md documents hooks in .agents/run-delivery.json, and the guide documents what each hook does and when it holds a stop."
+        }
+      ],
+      "inApp": "none"
+    },
+    "V26-3410": {
+      "title": "Apply the hooks candidate here and enforce the lead's wait",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "v26-3410-1",
+          "text": "StandingBinding rows in tests/test_own_deliveries.py pin lead.may-stop: enforce in .agents/run-delivery.json, and pin exactly Decision 4's two entries in the committed .claude/settings.json."
+        },
+        {
+          "id": "v26-3410-2",
+          "text": "The applied generation is the tagged candidate, and run_delivery.py doctor passes."
+        },
+        {
+          "id": "v26-3410-3",
+          "text": "The live check is recorded on V26-3406. Each stop's payload and the journal's hook.held count are captured by a logging wrapper that logs stdin and then runs the installed command unchanged:"
+        },
+        {
+          "id": "v26-3410-4",
+          "text": "a claude -p session in a scratch clone with a fixture delivery, held once with the lead-wait command named, appending one hook.held;"
+        },
+        {
+          "id": "v26-3410-5",
+          "text": "a new turn of that session (claude -p --resume) taken while lead-wait runs, which stops freely, with stop_hook_active: false in its payload and no hook.held appended;"
+        },
+        {
+          "id": "v26-3410-6",
+          "text": "a lane session and a session with no delivery, which stop freely;"
+        },
+        {
+          "id": "v26-3410-7",
+          "text": "one interactive resume, which receives the orientation text."
+        }
+      ],
+      "after": [
+        "V26-3407",
+        "V26-3408",
+        "V26-3270",
+        "V26-3409"
+      ],
+      "inApp": "none"
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "Every story",
+      "text": "Each item merged to main through the merge queue, or closed with a recorded reason",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "main-ci",
+      "label": "Main CI",
+      "text": "main's CI on the last merged commit passes on the Ubuntu job and cut-release, with the run linked on the epic",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the commit the release candidate is tagged on",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "release",
+      "label": "Release",
+      "text": "A minor release candidate carrying hooks is tagged, published and applied here; .claude/settings.json then holds exactly Decision 4's two entries, and .agents/run-delivery.json sets lead.may-stop to enforce",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "live-check",
+      "label": "Live check",
+      "text": "V26-3410's live check is recorded on the epic: a lead with a working lane and no listener is held once with one hook.held; a resumed turn while lead-wait runs stops freely with stop_hook_active false and no hook.held; a lane session and a session with no delivery stop freely; a resumed session receives the orientation text",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "no-deferrals",
+      "label": "No deferrals",
+      "text": "No finding any review in this delivery raised is deferred: each is fixed in the story that found it, and no follow-up item is filed",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "grantedBy": "the operator",
+    "grantedOn": "2026-11-11"
+  },
+  "approvals": [
+    {
+      "id": "approval-1",
+      "text": "The plan itself, before `lead-setup`. Approving it is the separately approved unit AGENTS.md requires.",
+      "state": "done",
+      "who": "the operator, 2026-11-11, after the plan review aligned in round 2"
+    },
+    {
+      "id": "approval-2",
+      "text": "Creating the epic and V26-3407 to V26-3410 in Linear from this plan's sections, moving V26-3270 here from V26-3306, and narrowing its title and Scope 3 as Decision 9 says. Done on 2026-11-11.",
+      "state": "done",
+      "who": "the operator, 2026-11-11"
+    },
+    {
+      "id": "approval-3",
+      "text": "The minor release candidate's tag, and its apply here in V26-3410.",
+      "state": "waiting"
+    },
+    {
+      "id": "approval-4",
+      "text": "Turning `lead.may-stop` to `enforce` in this repository (V26-3410).",
+      "state": "waiting"
+    }
+  ],
+  "outOfScope": [
+    "Codex hooks. Codex documents its own hooks (`.codex/hooks.json`, trusted through `/hooks`), so a Codex adapter is possible, but it is a later unit. V26-3270's \"Codex has no equivalent hook\" is corrected in the guide (Decision 9), and no Codex file changes.",
+    "Any event other than Claude Code's `Stop` and `SessionStart`: no `PreToolUse` guards, no `PreCompact`, no `SubagentStop`, and no lane stop hook. The manifest's event list holds only `stop` and `session-start` (Decision 2), so adding an event is a deliberate change.",
+    "Hooks for a single-skill adoption receipt (`adoption` present). Such a generation installs no hooks.",
+    "A release-gating host qualifier. The host's behaviour is proven by the recorded live check in V26-3410, not by a qualification record.",
+    "`.claude/settings.local.json` and the user's own `~/.claude/settings.json`. The lifecycle writes only the project file (Decision 4).",
+    "Windows, which is not validated (AGENTS.md).",
+    "A final (non-candidate) release. The candidate is promoted at a later batch boundary."
+  ],
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  },
+  "outcome": {
+    "summary": "A skill declares host hooks, the lifecycle installs them, and a lead can't stop while nobody listens.",
+    "text": "Skills declare Claude Code Stop and SessionStart hooks run through one dispatcher; the generation lifecycle installs, records and removes their entries in .claude/settings.json; run-delivery ships lead.may-stop and delivery.orient, the lead's wait is printed and its absence shown; and this repository applies the candidate with lead.may-stop enforced."
+  }
+}
