@@ -1,0 +1,172 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "writtenBy": "run-delivery plan-review",
+  "plan": "docs/plans/2026-11-11-host-hooks.md",
+  "planSha256": "d044e32f8d398c569feef908c663254524e9b629bbac40742c8e683e1a47027e",
+  "planCommit": "a8308f69690b0d69e8a6a6dfc649d1640660e96d",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": [
+    "lens.outcome-correctness",
+    "lens.adversarial-testing"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "candidate": "0f32508b8911ade91c5faf4d5076d5fec3f8d2e9",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-11T22:52:55.812808Z",
+      "finishedAt": "2026-11-11T22:56:47.270095Z",
+      "open": [
+        "outcome-correctness-r1-1",
+        "outcome-correctness-r1-2",
+        "outcome-correctness-r1-3",
+        "adversarial-testing-r1-1",
+        "adversarial-testing-r1-2",
+        "adversarial-testing-r1-3",
+        "adversarial-testing-r1-4",
+        "adversarial-testing-r1-5",
+        "adversarial-testing-r1-6",
+        "adversarial-testing-r1-7",
+        "adversarial-testing-r1-8",
+        "adversarial-testing-r1-9",
+        "adversarial-testing-r1-10"
+      ]
+    },
+    {
+      "round": 2,
+      "candidate": "a8308f69690b0d69e8a6a6dfc649d1640660e96d",
+      "outcome": "aligned",
+      "startedAt": "2026-11-11T22:58:50.835354Z",
+      "finishedAt": "2026-11-11T23:00:15.365890Z",
+      "open": []
+    }
+  ],
+  "reviews": [
+    {
+      "lens": "lens.outcome-correctness",
+      "round": 2,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.outcome-correctness",
+        "subjectRef": "host-hooks.plan",
+        "candidateRef": "a8308f69690b0d69e8a6a6dfc649d1640660e96d",
+        "round": 2,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [
+          {
+            "id": "outcome-correctness-r1-1",
+            "state": "fixed",
+            "resolution": "Adopted as written. Decision 2 (lines 64-67) runs each hook as [sys.executable, \"-B\", <script>, ...] with PYTHONDONTWRITEBYTECODE=1 in the hook's environment, which covers grandchildren such as the state tool. Decision 4 (lines 115-116) now limits -B to the dispatcher's own bytecode and points to Decision 2 for the rest. HOOK-1 AC5 (lines 253-254) uses a hook that imports a sibling module and starts a Python child, then checks for no __pycache__ or .pyc. HOOK-3 AC9 (line 364) adds the same check after a real dispatch."
+          },
+          {
+            "id": "outcome-correctness-r1-2",
+            "state": "fixed",
+            "resolution": "Adopted as written. C is now `python3 -B \"${CLAUDE_PROJECT_DIR}/.agent-skills/current/__main__.py\" hook claude-code stop || exit 1` (lines 113-114), and ownership matches that exact string (line 121). Decision 3 (lines 99-102) names both exit-2 sources, a script that cannot be opened and argparse on a generation without `hook`. HOOK-2 AC5 (lines 286-290) runs the installed C through sh -c and checks exit 1, not 2, with current removed and with current naming a generation that has no hook command."
+          },
+          {
+            "id": "outcome-correctness-r1-3",
+            "state": "fixed",
+            "resolution": "Adopted as written. The finish line (lines 29-36) and HOOK-4 (lines 377-383) now require the free stop to happen in a new turn (`claude -p --resume`) while lead-wait runs. The record must show stop_hook_active: false and no hook.held appended. Payloads and the hook.held count are captured in the record, so a free stop that came only from the one-hold rule can no longer satisfy the criterion."
+          }
+        ],
+        "evidence": [
+          "Reviewed tree SHA cb9ca455041e2260de89ef1aa8252bfd2392ac06. Start check: HEAD a8308f69690b0d69e8a6a6dfc649d1640660e96d, `git rev-parse HEAD^{tree}` matched, `git status --porcelain` empty. End check: the same, and it passed. No probes, mutants or added files.",
+          "Delta derived with `git diff 0f32508b8911ade91c5faf4d5076d5fec3f8d2e9..a8308f69690b0d69e8a6a6dfc649d1640660e96d`. It changes only docs/plans/2026-11-11-host-hooks.md (+177/-81). I reviewed the whole revised plan, with closest attention to the delta.",
+          "Re-check of carried findings: outcome-correctness-r1-1, r1-2 and r1-3 are each adopted as their approval condition states (see resolvedFindings).",
+          "Round-1 P2 note (hooks that 'print nothing' contradicting Decision 3) is fixed. Decision 3 (lines 77-82) now requires one JSON object and exit 0 in every case, and the dispatcher prints nothing when everything allows (line 97). Decision 7 (line 165), Decision 8 (lines 174-175), HOOK-3 AC2 and HOOK-3 AC7 now return {\"verdict\": \"allow\"}.",
+          "Round-1 P3 note (two hook.held entries per held stop) is fixed. Decision 9 (lines 184-188) journals only when stop_hook_active is not true. HOOK-3 AC5 (lines 349-351) pins that the re-stop appends none.",
+          "Delta reviewed for new defects, none filed: the fault list and the strict verdict grammar (Decision 3); the stop_hook_active-exactly-true rule; the emptying rule and its HOOK-2 AC2 rows; the refusal ending at the prior endpoint including skill exposures (HOOK-2 AC4); divergence that compares only entries with exactly C; adoption installing no hooks beside a generation install that does (HOOK-2 AC8); lane matched before lead for nested lane worktrees, plus the subfolder-cwd block row (Decision 7, HOOK-3 AC1/AC3); the 179/180-second lease boundary rows; the orientation rows for each source and for hostile text. Each is consistent with its decision and has a row that would fail if it were broken.",
+          "Declined, not filed: HOOK-4 line 378 captures payloads 'from a logging copy of the hook'. If an executor replaced the shipped hook script with an edited copy, the live check would exercise the copy rather than the shipped code. But a wrapper that logs stdin and then runs the installed C satisfies the text, and I cannot state a sequence where following the plan as written produces a false record. Declined as not concrete.",
+          "Declined, not filed: in the HOOK-4 new-turn check, a lead-wait started as a background task of the first `claude -p` turn may not outlive that process. The plan only requires that lead-wait 'runs' during the new turn, and the executor can start it independently. A dead lead-wait would make the check fail visibly (the stop would be held), not pass falsely.",
+          "Model class: Claude Opus-class (claude-opus-5-5) as a native subagent. No progress or permission signals were exposed to this host; recorded as a limitation. Realization basis: host-convention. Run ID: none; activityId review-host-hooks.plan, attemptId 1, roundId host-hooks.plan-r2, round 2.",
+          "Checks: none run. A plan review has no scoped sensors or in-scope test files, and no mutation or fault injection was performed.",
+          "Approval conditions: no findings raised this round, so there are no conditions. All three carried findings are fixed as their round-1 approval conditions required."
+        ]
+      },
+      "resultSha256": "01a6a028b1553f6c90b5cc732976c381286290f49978146a34c05013312b8f27"
+    },
+    {
+      "lens": "lens.adversarial-testing",
+      "round": 2,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.adversarial-testing",
+        "subjectRef": "host-hooks.plan",
+        "candidateRef": "a8308f69690b0d69e8a6a6dfc649d1640660e96d",
+        "round": 2,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [
+          {
+            "id": "adversarial-testing-r1-1",
+            "state": "fixed",
+            "resolution": "Adopted with one difference from the approval condition, and re-checked. Decision 3 (lines 99-102) and Decision 4 (lines 113, 117) end C with `|| exit 1` rather than `|| exit 0`. Exit 1 is Claude Code's non-blocking error for Stop, so the stop still proceeds, and the guarantee the condition asked for, that C never exits 2, holds. HOOK-2 AC5 (lines 286-290) runs the exact C through `sh -c` with `CLAUDE_PROJECT_DIR` set. With an installed fixture generation it asserts the block output, and with `current` removed or naming a generation without `hook` it asserts exit 1, not 2. The planted failures from round 1 (exit 2) would now turn those rows red. The false 'non-blocking' sentence is gone."
+          },
+          {
+            "id": "adversarial-testing-r1-2",
+            "severity": "P1",
+            "state": "fixed",
+            "resolution": "Adopted as written. HOOK-1 AC2 (lines 233-236) sends a real-shaped Stop payload with `stop_hook_active: false` present in every row, and the block row asserts `{\"decision\": \"block\"}`. HOOK-3 AC9 (lines 362-364) does the same for the first stop. Decision 3 (lines 103-105) defines the downgrade as triggered only when the value is exactly `true`. The key-presence mutation now turns the block rows red."
+          },
+          {
+            "id": "adversarial-testing-r1-3",
+            "state": "fixed",
+            "resolution": "Adopted as written. HOOK-1 AC2 has a Budget row (lines 242-244) with in-process scaled constants. It asserts that the dispatcher finishes within the overall budget, that a hook starting with less than the minimum left is skipped as allow with a stderr line, and that an earlier block still blocks. Mutating the budget to a fixed per-hook timeout now fails the row."
+          },
+          {
+            "id": "adversarial-testing-r1-4",
+            "state": "fixed",
+            "resolution": "Adopted as written and widened. Decision 3 (lines 77-90) lists every fault: a non-object value, a missing or unknown verdict (case-sensitive), a missing or empty reason, and a context on stop or a non-string context. HOOK-1 AC2 (lines 240-241) has one row per fault, and one of those rows holds a valid block that still blocks. The 'anything not allow is block' mutation now fails, and so does the 'allow everything' mutation."
+          },
+          {
+            "id": "adversarial-testing-r1-5",
+            "state": "fixed",
+            "resolution": "Adopted as written. Decision 7 (lines 166-168) resolves the role from the payload's cwd, checks the lane before the lead, and defines 'inside' with symlinks resolved. HOOK-3 runs every role row with a process working directory different from the payload's cwd (line 333). It has a subfolder-cwd lead row that blocks (lines 336-337), and a nested `.worktrees/` lane row and a sibling-folder lane row that both allow (lines 342-343). Mutations A, B and C from round 1 each fail a named row."
+          },
+          {
+            "id": "adversarial-testing-r1-6",
+            "state": "fixed",
+            "resolution": "Adopted as written. Decision 4 now ends with an emptying rule (lines 132-134): an empty event list is removed, then an empty `hooks`, and the file is deleted only when `created` is true and the object left is exactly `{}`. That gives 'nothing else is left' a single meaning. HOOK-2 AC1 (lines 268-270) and AC2 (lines 274-279) pin four cases: a user entry beside the owned one, kept after both update and removal; `created` true with a user key added, file kept; `created` false leaving `{}`, file kept; and `created` true with nothing added, file deleted."
+          },
+          {
+            "id": "adversarial-testing-r1-7",
+            "state": "fixed",
+            "resolution": "Adopted as written. HOOK-2 AC3 (lines 281-282) injects a fault at every phase between endpoints with different event sets (none and `stop`), and asserts that after recovery the owned entries equal the events of the committed receipt. Decision 4 (lines 129-131) and AC4 (lines 284-285) end a refusal between preflight and rename at the prior endpoint: file, receipt and skill exposures. That AC4 row now asserts all three."
+          },
+          {
+            "id": "adversarial-testing-r1-8",
+            "state": "fixed",
+            "resolution": "Adopted as written. Decision 4 (lines 142-143) compares only entries whose command is exactly C. HOOK-2 AC7 (lines 293-294) adds the allow-side row: an unrelated top-level key plus a user `hooks.Stop` entry report no divergence. The whole-file-digest mutation now fails that row."
+          },
+          {
+            "id": "adversarial-testing-r1-9",
+            "state": "fixed",
+            "resolution": "Adopted as written. HOOK-2 AC8 (lines 295-296) adopts a skill whose `hooks.json` declares a `claude-code` `stop` hook, and asserts no settings entry and no receipt `hooks`, beside a generation install of the same skill that writes the entry. Removing the adoption guard now fails the row."
+          },
+          {
+            "id": "adversarial-testing-r1-10",
+            "state": "fixed",
+            "resolution": "Adopted as written. HOOK-3 AC7 (lines 357-359) runs the hostile-text row as the lead and as the lane, with the hostile text planted in that lane's own journal entries, hand-off and tracker title. The same output must show the role's Decision 8 fields present and every hostile string absent. Printing the title or hand-off next to the key now fails the row, and a session resolved to 'other' fails the positive-field assertion."
+          }
+        ],
+        "evidence": [
+          "Reviewed tree SHA cb9ca455041e2260de89ef1aa8252bfd2392ac06. The start identity check passed (`git rev-parse HEAD^{tree}` matched and `git status --porcelain` was empty), and the end check passed the same way after the review.",
+          "Delta derived by this lens: `git diff 0f32508b8911ade91c5faf4d5076d5fec3f8d2e9..a8308f69690b0d69e8a6a6dfc649d1640660e96d` touches only `docs/plans/2026-11-11-host-hooks.md` (177 insertions, 81 deletions). I re-checked all ten carried findings against the revised plan. Each is fixed (see resolvedFindings). r1-1 was adopted with `|| exit 1` in place of the proposed `|| exit 0`. That still meets its approval condition, a command that never exits 2 with rows that execute C against a present, a missing and an older generation, because exit 1 is non-blocking for a Claude Code Stop.",
+          "Model class: Claude Opus (claude-opus-5-5), running as a native subagent. Realization basis: host-convention. The host exposes no progress or permission signals to this lens. No run ID was available, since the repository declares no run-event command. activityId review-host-hooks.plan, attemptId 1, roundId host-hooks.plan-r2.",
+          "Checks: as the brief says, there is no scoped sensor command and no test file in scope. No suite or test file was run and no mutant was planted this round. The only reads outside the plan were greps of `skills/run-delivery/scripts/run_delivery.py` and `skills/orchestrate-work/scripts/delivery_state.py`. They confirm that the shipped hook script imports a sibling module (`tracker_publisher`) at load, and that every Python child it starts already passes `-B`. So HOOK-3 AC9's bytecode assertion through the dispatcher is not vacuous against removing the dispatcher's own `-B` from hook argv. Nothing was modified, so there was nothing to revert.",
+          "Delta review, P2 notes, not filed (plan review has no deferral): (a) Decision 8 names five SessionStart sources, but HOOK-3 AC7 has rows only for `startup`, `resume` and `compact`. A filter that drops `clear` and `fork` survives. (b) Decision 7's 'after resolving symlinks' has no row with a payload cwd reached through a symlink. On Linux CI, where the temporary folder is not a symlink, dropping the resolution survives, though macOS temp paths (/var to /private/var) may happen to exercise it locally.",
+          "Delta review, P3 notes: (c) HOOK-1 AC5's 'starts a Python child' must have the child import a generation module without `-B`, or dropping `PYTHONDONTWRITEBYTECODE` survives. That is harmless today, because every child the shipped hook starts already passes `-B`. (d) A string-prefix test of 'inside' (`repo` against `repo-other`) is not pinned on the boundary. The impact is low, because only this repository's own worktrees are compared.",
+          "No late findings: nothing filed this round.",
+          "Approval conditions: no finding is raised this round, so none is outstanding. All ten round-1 findings are fixed by the revision as adopted."
+        ]
+      },
+      "resultSha256": "0523330c63c624cdc431dfb135a0a05568ad96e138a72f59a98ef18259fba28a"
+    }
+  ],
+  "residualRisks": [
+    "2 review rounds; findings open after each round: 13, 0."
+  ]
+}
