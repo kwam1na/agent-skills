@@ -39,8 +39,10 @@ def parser() -> argparse.ArgumentParser:
     harness.add_argument("arguments", nargs=argparse.REMAINDER)
     commands.add_parser("recovery-plan")
     hook = commands.add_parser("hook", help="run the active generation's hooks for one host event")
-    hook.add_argument("host", choices=DISPATCHED_HOSTS)
-    hook.add_argument("event", choices=EVENTS)
+    # Plain strings, not choices: argparse exits 2 on a bad choice, which a
+    # host reads as a block. The dispatcher answers an unknown pair itself.
+    hook.add_argument("host", help=f"one of: {', '.join(DISPATCHED_HOSTS)}")
+    hook.add_argument("event", help=f"one of: {', '.join(EVENTS)}")
     validate = commands.add_parser("validate")
     _release_arguments(validate)
     plan = commands.add_parser("plan")

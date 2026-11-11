@@ -162,6 +162,14 @@ def _alive(pid: int) -> bool:
     return bool(state.stdout.strip()) and not state.stdout.strip().startswith("Z")
 
 
+def _stop_pid(pid: int) -> None:
+    """Stop a process this test started, by its recorded pid."""
+    try:
+        os.kill(pid, 9)
+    except ProcessLookupError:
+        pass
+
+
 def stderr_lines(result: subprocess.CompletedProcess[str]) -> list[str]:
     return [line for line in result.stderr.splitlines() if line]
 
@@ -322,6 +330,33 @@ class FaultTests(DispatcherCase):
         for name, line in zip(names, lines):
             self.assertIn(f"alpha.{name}", line)
 
+    def test_deeply_nested_json_is_that_hooks_fault_and_a_valid_block_still_blocks(self) -> None:
+        nested = "import sys\nsys.stdout.write('[' * 200000 + ']' * 200000)\n"
+        skills = {"alpha": ("alpha", ["claude-code"], manifest(hook("alpha", "gate"), hook("alpha", "nested")),
+                            {"scripts/gate.py": verdict_script({"verdict": "block", "reason": "real block"}),
+                             "scripts/nested.py": nested})}
+        repository = self.repository(skills)
+        result = repository.run("stop", stop_payload(repository.root))
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(json.loads(result.stdout), {"decision": "block", "reason": "real block"})
+        lines = stderr_lines(result)
+        self.assertEqual(len(lines), 1, result.stderr)
+        self.assertIn("alpha.nested", lines[0])
+        self.assertIn("printed something other than one JSON object (RecursionError)", lines[0])
+
+    def test_an_unknown_host_or_event_exits_zero_with_one_line(self) -> None:
+        repository = self.repository(single("gate", verdict_script({"verdict": "block", "reason": "x"})))
+        for host, event in (("codex", "stop"), ("claude-code", "pre-tool-use"), ("Claude-Code", "Stop")):
+            with self.subTest(host=host, event=event):
+                result = subprocess.run(
+                    [sys.executable, "-B", str(repository.root / ".agent-skills" / "current" / "__main__.py"),
+                     "hook", host, event],
+                    input=json.dumps(stop_payload(repository.root)), capture_output=True, text=True,
+                    cwd=repository.root, env=clean_environment(CLAUDE_PROJECT_DIR=str(repository.root)),
+                    timeout=60, check=False)
+                self.assertEqual((result.returncode, result.stdout), (0, ""))
+                self.assertEqual(len(stderr_lines(result)), 1, result.stderr)
+
     def test_a_missing_script_is_a_fault(self) -> None:
         skills = {"alpha": ("alpha", ["claude-code"], manifest(hook("alpha", "gone")), {})}
         repository = self.repository(skills)
@@ -361,7 +396,7 @@ class BudgetTests(InProcess):
             started = time.monotonic()
             output, errors = self.dispatch(repository, "stop", stop_payload(repository.root))
             elapsed = time.monotonic() - started
-        self.assertLess(elapsed, 3.0 + 0.5)
+        self.assertLess(elapsed, 3.0)
         self.assertEqual(json.loads(output), {"decision": "block", "reason": "early block"})
         self.assertEqual(len(errors), 3, errors)
         self.assertIn("alpha.slow-one", errors[0])
@@ -371,6 +406,29 @@ class BudgetTests(InProcess):
         self.assertIn("alpha.late", errors[2])
         self.assertIn("skipped", errors[2])
         self.assertFalse((repository.root / "late-ran").exists())
+
+    def test_a_hook_started_with_less_than_its_budget_left_gets_only_what_is_left(self) -> None:
+        # slow-two starts with less than HOOK_BUDGET left, so the cap on what
+        # is left binds; giving it the whole HOOK_BUDGET would overrun.
+        sleeper = "import time\ntime.sleep(30)\n"
+        names = ["block", "slow-one", "slow-two"]
+        scripts = {"scripts/block.py": verdict_script({"verdict": "block", "reason": "early block"}),
+                   "scripts/slow-one.py": sleeper, "scripts/slow-two.py": sleeper}
+        skills = {"alpha": ("alpha", ["claude-code"], manifest(*(hook("alpha", name) for name in names)), scripts)}
+        repository = self.repository(skills, runtime=False)
+        with mock.patch.multiple(hooks, OVERALL_BUDGET=3.0, HOOK_BUDGET=2.0, MINIMUM_START=0.5, REAP_WAIT=0.1,
+                                 EXIT_MARGIN=0.1):
+            started = time.monotonic()
+            output, errors = self.dispatch(repository, "stop", stop_payload(repository.root))
+            elapsed = time.monotonic() - started
+        self.assertLess(elapsed, 3.0)
+        self.assertEqual(json.loads(output), {"decision": "block", "reason": "early block"})
+        self.assertEqual(len(errors), 2, errors)
+        self.assertIn("alpha.slow-one", errors[0])
+        self.assertIn("timed out after 2.0s", errors[0])
+        self.assertIn("alpha.slow-two", errors[1])
+        seconds = float(errors[1].split("timed out after ")[1].rstrip("s"))
+        self.assertLess(seconds, 2.0)
 
     def test_a_timed_out_hook_whose_child_holds_its_output_still_returns(self) -> None:
         # The hook leaves a child behind that keeps the hook's stdout open. The
@@ -396,8 +454,114 @@ class BudgetTests(InProcess):
             time.sleep(0.05)
         self.assertFalse(_alive(child), f"the hook's child {child} is still running")
 
+    def test_a_child_that_escapes_the_group_and_holds_the_output_costs_no_more_than_the_budget(self) -> None:
+        # The child starts its own session, so the group kill misses it, and it
+        # keeps the hook's stdout open: the dispatcher abandons the pipe after
+        # REAP_WAIT, which each hook's budget leaves room for.
+        script = ("import subprocess, sys, time\n"
+                  "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(20)'],"
+                  " start_new_session=True)\n"
+                  "open('child.pid', 'w').write(str(child.pid))\n"
+                  "time.sleep(30)\n")
+        repository = self.repository(single("escaper", script), runtime=False)
+        with mock.patch.multiple(hooks, OVERALL_BUDGET=2.0, HOOK_BUDGET=20.0, MINIMUM_START=1.0):
+            started = time.monotonic()
+            output, errors = self.dispatch(repository, "stop", stop_payload(repository.root))
+            elapsed = time.monotonic() - started
+        child = int((repository.root / "child.pid").read_text(encoding="utf-8"))
+        self.addCleanup(_stop_pid, child)
+        self.assertLess(elapsed, 2.0)
+        self.assertEqual(output, "")
+        self.assertEqual(len(errors), 1)
+        self.assertIn("alpha.escaper", errors[0])
+        self.assertIn("timed out", errors[0])
+
+    def test_an_error_inside_the_dispatcher_costs_only_that_hook(self) -> None:
+        skills = {"alpha": ("alpha", ["claude-code"], manifest(hook("alpha", "breaks"), hook("alpha", "gate")),
+                            {"scripts/breaks.py": ALLOW,
+                             "scripts/gate.py": verdict_script({"verdict": "block", "reason": "real block"})})}
+        repository = self.repository(skills, runtime=False)
+        original = hooks.run_hook
+
+        def failing(hook, *arguments, **options):
+            if hook.id == "alpha.breaks":
+                raise RuntimeError("an unexpected failure")
+            return original(hook, *arguments, **options)
+
+        with mock.patch.object(hooks, "run_hook", failing):
+            output, errors = self.dispatch(repository, "stop", stop_payload(repository.root))
+        self.assertEqual(json.loads(output), {"decision": "block", "reason": "real block"})
+        self.assertEqual(len(errors), 1)
+        self.assertIn("alpha.breaks", errors[0])
+
     def test_the_real_budget_sits_under_the_entry_timeout(self) -> None:
         self.assertEqual((hooks.OVERALL_BUDGET, hooks.HOOK_BUDGET, hooks.MINIMUM_START), (25.0, 20.0, 2.0))
+
+
+class CatchAllTests(InProcess):
+    def test_run_command_exits_zero_with_one_line_when_the_dispatch_raises(self) -> None:
+        import io
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with mock.patch.object(hooks, "dispatch", side_effect=RuntimeError("boom")):
+            code = hooks.run_command("claude-code", "stop", stdin=io.BytesIO(b"{}"), stdout=stdout, stderr=stderr,
+                                     environment={})
+        self.assertEqual((code, stdout.getvalue()), (0, ""))
+        lines = stderr.getvalue().splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertIn("dispatcher", lines[0])
+
+    def test_a_malformed_catalog_entry_costs_only_that_skills_hooks(self) -> None:
+        skills = {
+            "alpha": ("alpha", ["claude-code"], manifest(hook("alpha", "gate")),
+                      {"scripts/gate.py": verdict_script({"verdict": "block", "reason": "alpha blocks"})}),
+            "bravo": ("bravo", ["claude-code"], manifest(hook("bravo", "gate")),
+                      {"scripts/gate.py": verdict_script({"verdict": "block", "reason": "bravo blocks"})}),
+        }
+        repository = self.repository(skills, runtime=False)
+        path = repository.generation / "catalog.json"
+        catalog = json.loads(path.read_text(encoding="utf-8"))
+        catalog["skills"][0]["hosts"] = [{"unhashable": True}, "claude-code"]
+        catalog["skills"][1]["path"] = 7
+        path.write_text(json.dumps(catalog), encoding="utf-8")
+        output, errors = self.dispatch(repository, "stop", stop_payload(repository.root))
+        self.assertEqual(json.loads(output), {"decision": "block", "reason": "alpha blocks"})
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("bravo", errors[0])
+
+
+    def test_an_error_reading_one_skills_hooks_costs_only_that_skill(self) -> None:
+        skills = {
+            "alpha": ("alpha", ["claude-code"], manifest(hook("alpha", "gate")),
+                      {"scripts/gate.py": verdict_script({"verdict": "block", "reason": "alpha blocks"})}),
+            "bravo": ("bravo", ["claude-code"], manifest(hook("bravo", "gate")),
+                      {"scripts/gate.py": verdict_script({"verdict": "block", "reason": "bravo blocks"})}),
+        }
+        repository = self.repository(skills, runtime=False)
+        original = hooks.hook_problems
+
+        def failing(entry, *, skill_id, **options):
+            if skill_id == "alpha":
+                raise RuntimeError("an unexpected failure")
+            return original(entry, skill_id=skill_id, **options)
+
+        with mock.patch.object(hooks, "hook_problems", failing):
+            output, errors = self.dispatch(repository, "stop", stop_payload(repository.root))
+        self.assertEqual(json.loads(output), {"decision": "block", "reason": "bravo blocks"})
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("agent-skills hook: alpha:", errors[0])
+
+    def test_a_script_path_holding_a_nul_byte_is_that_hooks_fault(self) -> None:
+        skills = {
+            "alpha": ("alpha", ["claude-code"], manifest(hook("alpha", "nul", argv=["scripts/a\u0000b.py"])),
+                      {"scripts/present.py": ALLOW}),
+            "bravo": ("bravo", ["claude-code"], manifest(hook("bravo", "gate")),
+                      {"scripts/gate.py": verdict_script({"verdict": "block", "reason": "bravo blocks"})}),
+        }
+        repository = self.repository(skills, runtime=False)
+        output, errors = self.dispatch(repository, "stop", stop_payload(repository.root))
+        self.assertEqual(json.loads(output), {"decision": "block", "reason": "bravo blocks"})
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("alpha.nul", errors[0])
 
 
 class FilterTests(InProcess):
@@ -485,6 +649,24 @@ class NoShellTests(DispatcherCase):
         repository = self.repository(single("stdin", script))
         result = repository.run("stop", stop_payload(repository.root))
         self.assertEqual(json.loads(json.loads(result.stdout)["reason"]), ["0b8f2c1e-session", "1", True])
+
+    def test_a_script_symlinked_outside_the_skill_is_not_run(self) -> None:
+        skills = {
+            "alpha": ("alpha", ["claude-code"], manifest(hook("alpha", "link")), {}),
+            "beta": ("beta", ["claude-code"], None,
+                     {"scripts/x.py": "open('escaped', 'w').close()\n"
+                                      + verdict_script({"verdict": "block", "reason": "escaped"})}),
+        }
+        repository = self.repository(skills)
+        link = repository.generation / "skills" / "alpha" / "scripts" / "link.py"
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(repository.generation / "skills" / "beta" / "scripts" / "x.py")
+        result = repository.run("stop", stop_payload(repository.root))
+        self.assertEqual((result.returncode, result.stdout), (0, ""))
+        self.assertFalse((repository.root / "escaped").exists())
+        lines = stderr_lines(result)
+        self.assertEqual(len(lines), 1, result.stderr)
+        self.assertIn("alpha.link", lines[0])
 
     def test_a_script_outside_the_skill_is_not_run(self) -> None:
         for argv in (["../beta/scripts/x.py"], ["/bin/sh"], ["scripts/../../beta/scripts/x.py"]):

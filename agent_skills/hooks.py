@@ -51,6 +51,10 @@ MINIMUM_START = 2.0
 CONTEXT_LIMIT = 9000
 # Seconds to wait for a killed hook's output to close before abandoning it.
 REAP_WAIT = 0.5
+# Seconds each hook's budget also leaves for stopping, reaping and combining,
+# so the dispatcher ends within OVERALL_BUDGET. REAP_WAIT and this together
+# stay below MINIMUM_START, so every hook that starts has a positive budget.
+EXIT_MARGIN = 0.25
 PROJECT_VARIABLE = "CLAUDE_PROJECT_DIR"
 
 
@@ -95,7 +99,7 @@ def hook_problems(entry: object, *, skill_id: str, skill_folder: str, skill_host
             or len(set(hosts)) != len(hosts)):
         problems.append(("hooks.schema", "hosts must be a non-empty list of distinct strings"))
     else:
-        allowed = set(skill_hosts)
+        allowed = {host for host in skill_hosts if isinstance(host, str)}
         for host in hosts:
             if host not in HOSTS or host not in allowed:
                 problems.append(("hooks.host", f"host {host!r} is not among the skill's hosts"))
@@ -170,48 +174,58 @@ def declared_hooks(generation: Path, host: str, event: str) -> tuple[list[Hook],
     found: list[Hook] = []
     errors: list[str] = []
     for member in members:
-        skill = catalog.get(member)
-        path = skill.get("path") if isinstance(skill, dict) else None
-        folder = PurePosixPath(path).parent if isinstance(path, str) else None
-        if folder is None or script_problem(folder.as_posix(), "", None) is not None:
-            errors.append(_line(member, "the catalog gives no folder inside the generation"))
-            continue
-        skill_folder = generation / folder
-        manifest = skill_folder / MANIFEST_NAME
-        if not manifest.is_file():
-            continue
         try:
-            document = _read_json(manifest)
-        except (OSError, ValueError) as error:
-            errors.append(_line(f"{member}/{MANIFEST_NAME}", f"cannot be read: {error}"))
-            continue
-        if (not isinstance(document, dict) or document.get("schemaVersion") != SCHEMA_VERSION
-                or not isinstance(document.get("hooks"), list)):
-            errors.append(_line(f"{member}/{MANIFEST_NAME}", "is not a skill-hooks/1 manifest"))
-            continue
-        hosts = skill.get("hosts") if isinstance(skill.get("hosts"), list) else []
-        for index, entry in enumerate(document["hooks"]):
-            if not isinstance(entry, dict):
-                errors.append(_line(f"{member}/{MANIFEST_NAME}", f"hooks[{index}] is not an object"))
-                continue
-            if entry.get("event") != event or not isinstance(entry.get("hosts"), list) or host not in entry["hosts"]:
-                continue
-            hook_id = entry.get("id") if isinstance(entry.get("id"), str) else f"{member}/hooks[{index}]"
-            problems = hook_problems(entry, skill_id=member, skill_folder=folder.as_posix(), skill_hosts=hosts,
-                                     outputs=None)
-            if problems:
-                found.append(Hook(hook_id, (), "; ".join(message for _, message in problems)))
-                continue
-            script = skill_folder / entry["argv"][0]
-            try:
-                contained = script.resolve(strict=True).is_relative_to(skill_folder.resolve(strict=True))
-            except OSError:
-                contained = False
-            if not contained or not script.is_file():
-                found.append(Hook(hook_id, (), f"the script {entry['argv'][0]!r} is missing or outside the skill"))
-                continue
-            found.append(Hook(hook_id, (sys.executable, "-B", str(script), *entry["argv"][1:])))
+            _member_hooks(generation, member, catalog.get(member), host, event, found, errors)
+        except Exception as error:  # noqa: BLE001 - one malformed skill never costs the others their hooks
+            errors.append(_line(member, f"its hooks cannot be read: {type(error).__name__}: {error}"))
     return found, errors
+
+
+def _member_hooks(generation: Path, member: str, skill: object, host: str, event: str, found: list[Hook],
+                  errors: list[str]) -> None:
+    """Add one profile member's hooks for ``host`` and ``event`` to ``found``, in manifest order."""
+    path = skill.get("path") if isinstance(skill, dict) else None
+    folder = PurePosixPath(path).parent if isinstance(path, str) else None
+    if folder is None or script_problem(folder.as_posix(), "", None) is not None:
+        errors.append(_line(member, "the catalog gives no folder inside the generation"))
+        return
+    skill_folder = generation / folder
+    manifest = skill_folder / MANIFEST_NAME
+    if not manifest.is_file():
+        return
+    try:
+        document = _read_json(manifest)
+    except (OSError, ValueError, RecursionError) as error:
+        errors.append(_line(f"{member}/{MANIFEST_NAME}", f"cannot be read: {type(error).__name__}"))
+        return
+    if (not isinstance(document, dict) or document.get("schemaVersion") != SCHEMA_VERSION
+            or not isinstance(document.get("hooks"), list)):
+        errors.append(_line(f"{member}/{MANIFEST_NAME}", "is not a skill-hooks/1 manifest"))
+        return
+    hosts = skill.get("hosts") if isinstance(skill.get("hosts"), list) else []
+    for index, entry in enumerate(document["hooks"]):
+        if not isinstance(entry, dict):
+            errors.append(_line(f"{member}/{MANIFEST_NAME}", f"hooks[{index}] is not an object"))
+            continue
+        if entry.get("event") != event or not isinstance(entry.get("hosts"), list) or host not in entry["hosts"]:
+            continue
+        hook_id = entry["id"] if isinstance(entry.get("id"), str) else f"{member}/hooks[{index}]"
+        problems = hook_problems(entry, skill_id=member, skill_folder=folder.as_posix(), skill_hosts=hosts,
+                                 outputs=None)
+        if problems:
+            found.append(Hook(hook_id, (), "; ".join(message for _, message in problems)))
+            continue
+        # The lexical check above can't see a symlink: the resolved script must
+        # still lie inside the resolved skill folder.
+        script = skill_folder / entry["argv"][0]
+        try:
+            contained = script.resolve(strict=True).is_relative_to(skill_folder.resolve(strict=True))
+        except (OSError, ValueError):  # ValueError: a path holding a NUL byte
+            contained = False
+        if not contained or not script.is_file():
+            found.append(Hook(hook_id, (), f"the script {entry['argv'][0]!r} is missing or outside the skill"))
+            continue
+        found.append(Hook(hook_id, (sys.executable, "-B", str(script), *entry["argv"][1:])))
 
 
 # Dispatch -----------------------------------------------------------------------
@@ -235,8 +249,8 @@ def _line(name: str, message: str) -> str:
 def parse_verdict(stdout: bytes, event: str) -> Verdict:
     try:
         value = json.loads(stdout.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError) as error:
-        raise HookFault(f"printed something other than one JSON object ({error})") from error
+    except (UnicodeDecodeError, ValueError, RecursionError) as error:
+        raise HookFault(f"printed something other than one JSON object ({type(error).__name__})") from None
     if not isinstance(value, dict):
         raise HookFault(f"printed a JSON {type(value).__name__}, not an object")
     verdict = value.get("verdict")
@@ -372,13 +386,19 @@ def dispatch(host: str, event: str, payload: bytes, environment: Mapping[str, st
             errors.append(_line(hook.id, hook.problem))
             continue
         remaining = OVERALL_BUDGET - (time.monotonic() - started)
-        if remaining < MINIMUM_START:
+        # A killed hook may take REAP_WAIT more to give up its output, and
+        # stopping it takes a little more, so its own budget leaves that room
+        # inside the overall one.
+        budget = min(HOOK_BUDGET, remaining - REAP_WAIT - EXIT_MARGIN)
+        if remaining < MINIMUM_START or budget <= 0:
             errors.append(_line(hook.id, f"skipped: {max(remaining, 0):.1f}s of the budget left"))
             continue
         try:
-            verdicts.append(run_hook(hook, event, payload, root, environment, min(HOOK_BUDGET, remaining)))
+            verdicts.append(run_hook(hook, event, payload, root, environment, budget))
         except HookFault as fault:
             errors.append(_line(hook.id, str(fault)))
+        except Exception as error:  # noqa: BLE001 - one hook's failure never costs the others their verdicts
+            errors.append(_line(hook.id, f"failed in the dispatcher: {type(error).__name__}: {error}"))
     output = combine(verdicts, stop_hook_active=event == "stop" and document.get("stop_hook_active") is True)
     return (json.dumps(output, ensure_ascii=False) + "\n" if output else ""), errors
 
