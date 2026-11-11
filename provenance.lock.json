@@ -1018,7 +1018,7 @@
       "outputs": [
         {
           "path": "skills/run-delivery/SKILL.md",
-          "sha256": "7247315c0f92a188b6b24e551907f9a64d61ef0dcbc99a794d4652d79e4c944b"
+          "sha256": "2c0ffba7da0dd07e26d2136cf984bbda5faa69207d6200dc6794b325f3d4864e"
         },
         {
           "path": "skills/run-delivery/adapters/forge_bitbucket.py",
@@ -1050,7 +1050,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "e5633f49aa9b8c95e6ff1aa139d1d2a5cb48e1226ccbc7996e04abd0cf7b2890"
+          "sha256": "fe3d9e64fae2596cc20ad25b1649eeee4cb664eb71cdafedecbb43f9af5d5f49"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
