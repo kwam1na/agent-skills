@@ -1578,7 +1578,14 @@
     "publishers": [
       {
         "id": "tracker",
-        "kind": "host"
+        "argv": [
+          "python3",
+          "-B",
+          ".agent-skills/current/skills/run-delivery/scripts/tracker_publisher.py",
+          "--state-dir",
+          "{stateDirectory}"
+        ],
+        "timeoutSeconds": 600
       }
     ],
     "trackerSnapshot": {

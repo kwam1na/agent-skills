@@ -32,27 +32,57 @@ in `skills/` shows in a delivery here only after this.
 
 ## Credentials
 
-Nothing here reads a `.env`, this repository's or another's. Export two variables in
-the lead's shell, from wherever you keep such things:
+Nothing here reads a `.env`, this repository's or another's. Two variables reach the
+lead's shell, from wherever you keep such things:
 
-- `LINEAR_API_KEY`, a personal key from Linear's settings, for the tracker snapshot.
+- `LINEAR_API_KEY`, a personal key from Linear's settings, for the tracker publisher and
+  the tracker snapshot.
 - `GITHUB_TOKEN`, for the forge snapshot. `gh auth token` prints one for a signed-in
   `gh`, which the merge queue's `ready` and `merge` steps use as well.
 
+An agent's shell never sees a variable exported in the operator's terminal. On macOS,
+keep the key in the login keychain, where the command asks for it so it lands in no
+shell history:
+
 ```bash
+security add-generic-password -a "$USER" -s LINEAR_API_KEY -w
+```
+
+Then export both from `~/.zshenv`:
+
+```bash
+export LINEAR_API_KEY="$(security find-generic-password -a "$USER" -s LINEAR_API_KEY -w)"
 export GITHUB_TOKEN="$(gh auth token)"
 ```
 
-The setup check names `LINEAR_API_KEY` when it's unset. It doesn't check
-`GITHUB_TOKEN`, and a missing one shows up when the forge snapshot runs. The views
-scrub both from what they show.
+zsh reads `~/.zshenv` for every shell, the non-interactive one an agent's tool runs
+included, and `~/.zshrc` only for an interactive one.
+
+The setup check names `LINEAR_API_KEY` when it's unset, and this recipe is its fix here.
+It doesn't check `GITHUB_TOKEN`, and a missing one shows up when the forge snapshot
+runs. The views scrub both from what they show, and the publisher writes the key to no
+output, log or ledger line.
 
 ## Tracker updates
 
-Linear is reachable only through the host's tools here, so the binding names a host
-publisher. Its outbox holds the delivery's tracker updates and moves, and the lead posts
-them with those tools. The close waits on them, and the line map's Needs you box shows
-what is still held.
+The binding names run-delivery's tracker publisher, which posts this repository's
+deliveries' Linear updates and moves through Linear's API with `LINEAR_API_KEY`, with
+no lead action. It runs whenever the render wrapper does, so a running supervisor posts
+each new journal entry on its next pass, and records it in the ledger,
+`tracker-published.jsonl` beside the record. Each post carries a marker, which the
+adapter reads back from Linear:
+
+```bash
+python3 -B .agent-skills/current/skills/run-delivery/adapters/tracker_linear.py markers --ticket <key>
+```
+
+A post Linear refuses shows in the line map's Needs you box.
+
+A record a host-mode generation opened is seeded on the publisher's first run: every
+entry at or below the `journalThrough` the last acknowledgement left in
+`published.json` is skipped, and nothing is posted twice. The binding configures no
+status moves, so starting, reviewing and closing a ticket stay with people and Linear's
+GitHub integration.
 
 ## Checks
 
@@ -60,25 +90,29 @@ The binding declares no affected-checks provider, on purpose. Nearly every test 
 reads the corpus or a release built from all of it, so working out what a change
 affects from its paths would either select most of the suite or miss what a shared
 file moves. Instead every candidate runs corpus validation, and the lead selects
-each candidate's checks from its unit's sensors, as `selection.lead` allows. With no
-selection the queue runs the whole suite.
+each candidate's checks from its unit's sensors, as `selection.lead` allows, when it
+accepts the candidate.
 
 The lead selects by catalogue id. `selection.catalogue` holds one check per test
 module, its id the module's name, such as `tests.test_run_delivery`, so a selection
 is a comma-separated list:
 
 ```bash
-python3 -B .agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py \
-  --dir .orchestration/state select --subject <key> --binding .agents/orchestration.json \
-  --head <reviewed head> --checks tests.test_run_delivery,tests.test_lead_wait \
-  --reason "<why these cover the diff>"
+python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py \
+  lead-accept <key> --checks tests.test_run_delivery,tests.test_lead_wait --reason "<why these cover the diff>"
 ```
+
+`lead-accept` refuses a candidate with neither `--checks` nor `--full-suite`, and prints a
+proposed `--checks`: the catalogue ids of the test modules the diff changes, then the
+checks the hand-off named. `--checks` records the selection at the handed head, through
+the state tool's own validation. `--full-suite` accepts it on the fallback, the whole
+suite, as the lead's recorded decision. A lane names the catalogue ids it ran with
+`handoff --checks`, and they show in the hand-off and on the queue row.
 
 Each entry runs its module through `scripts/run-tests.py --workers 4`, as the full
 suite does, except `tests.test_registry`, which holds no unittest case and runs as
 the script it is. A module added later is selectable by id once its entry is added
-to the catalogue and to the pin in `tests/test_own_deliveries.py`. Until then, a
-JSON list of full entries still selects it.
+to the catalogue and to the pin in `tests/test_own_deliveries.py`.
 
 Two guards join every selection, named or not: `tests.test_linear_qualification`,
 which holds the corpus pins any doc or skill change can break, and
@@ -86,8 +120,7 @@ which holds the corpus pins any doc or skill change can break, and
 brings `tests.test_delivery_views_adopter` and `tests.test_delivery_views_snapshots`,
 the line map's outside adopter among them. A change under `docs/solutions/` brings
 `tests.test_compound_learning_corpus`, which pins each note's shape. Corpus validation stays in `alwaysRun`.
-`select` says what it added and why, and warns when a selected check failed its last
-base re-run at the current base head.
+The acceptance's decision names every check it selected, those added with them.
 
 A lane's gates are in `.agents/run-delivery.json`: corpus validation and the
 provenance check, both of which run on a fresh clone's standard library. The lane

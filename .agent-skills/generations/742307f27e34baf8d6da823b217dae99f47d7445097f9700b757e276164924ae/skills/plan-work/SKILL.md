@@ -1,0 +1,185 @@
+---
+name: plan-work
+description: Create a bounded implementation plan with an explicit finish line, dependencies, execution posture, repository sensors, and approval handoffs.
+---
+
+# Plan Work
+
+## Purpose
+
+Turn an approved outcome into the smallest plan that can be executed without
+re-deriving scope. Apply `$compound-delivery-kernel` for the shared delivery
+posture. This workflow plans only; it does not edit implementation files or run
+the planned work.
+
+## Discover Repository Authority
+
+Read the adopting repository's instructions before choosing paths, commands,
+or sensors. Repository rules and named sensors outrank generic examples. Keep
+repository-specific commands in the plan as discovered inputs rather than
+making them part of this workflow.
+
+## Bound the Plan
+
+Record:
+
+- the requested outcome and explicit in-scope work;
+- clear out-of-scope boundaries;
+- an observable finish line;
+- real dependencies and their order;
+- representative test scenarios;
+- required approval handoffs;
+- the smallest honest repository sensors; and
+- one execution posture: `test-first`, `characterization-first`, or
+  `sensor-only`.
+
+Use `characterization-first` when existing or unclear behavior must be captured
+before it changes. Use `test-first` for a new behavior with a clear expected
+outcome. Use `sensor-only` only when no runtime behavior changes.
+
+If scope or the finish line is unresolved, return a concise handoff naming the
+missing decision. Do not hide an assumption that would materially change the
+outcome. Plans contain decisions and evidence targets, not implementation code
+or command choreography.
+
+## Review the Plan Without a Round Bound
+
+Plan review carries no round bound: it runs until its lenses align unless the
+operator ends it by decision, and no round count ends it. Plan review is
+separate from the delivery review that `$review-work` bounds; the absence of a
+count for plan review changes nothing about delivery review. Leaving plan
+review unbounded is a recorded decision rather than an omission, so a later
+plan review does not re-derive the question.
+
+A plan review that is not converging may end by operator decision rather than
+by count; termination is not guaranteed. One sufficient signal is a round after
+the first that raises a finding not raised before while leaving the number of
+open findings no lower than the round before it. Surfacing that signal to the
+operator is the caller's responsibility; supplying the channel is outside this
+workflow's scope: a plan-review round is realized outside this workflow, which
+neither carries a channel to the operator nor assumes one. The caller running the loop is what
+puts each round in front of the operator who may end it, and where the caller
+surfaces nothing the loop still runs to alignment with no one positioned to end
+it early.
+
+In place of a bound, every lens reviewing a plan optimizes for the lowest number
+of rounds: every finding a lens can raise against the plan as it stands is
+raised in the current round, not held for a later one. A lens that withholds a
+finding it could already state spends a round the plan did not need. Each
+plan-review lens carries this mandate in its own round brief, so a lens holding
+only its brief can act on it.
+
+Every plan-review lens ends its result's `evidence` with approval conditions:
+for each finding, whether the change it proposes, adopted as written, resolves
+it. A follow-up round re-checks each carried finding and its approval condition
+against the delta the lens derives itself, and a change adopted differently or
+declined is re-checked like any carried finding. In a follow-up round, a new
+finding against unchanged plan text is raised only at P0 or P1, because a plan
+has no deferral path.
+
+Where the run-delivery tool is installed, its `plan-review` command runs these
+rounds for any plan, before the plan is a delivery and with no delivery file,
+binding or record: `plan-review prepare --plan <path> --lenses <ids>` for each
+round, `plan-review reduce --plan <path>` once its lenses return, and
+`plan-review end --plan <path> --reason <text>` when the operator ends a review
+that is not converging. The plan names its review with `reviewSlug: <slug>` in
+its front matter, committed before round 1, so renaming the plan file keeps its
+review. The rounds are kept in the work directory's `plan-review/<slug>/` store,
+and when the plan becomes a delivery, its `lead-setup` or `lead-init` adopts that
+store, so the delivery's plan chapter shows every round.
+
+## Plan Extension Pins and Shared Resources
+
+For each unit that extends a registry, enum, or counted collection, search the
+existing tests for literal identifiers, arrays, and counts that will become
+stale. Assign those test-pin updates to the unit or derive them beforehand;
+include the affected assertions in its test disposition inventory.
+
+Distinguish a production-logic boundary from a test-pin boundary. For example,
+"no production logic change under the worker directory; related test pins may
+be re-derived" permits the expected assertion update without widening the
+feature. Preserve any stricter boundary the caller explicitly imposed.
+
+For parallel units and review lenses, list shared ports, browser sessions,
+databases, and caches alongside file ownership. Allocate separate resources or
+name the repository or host mechanism that serializes their use, including its
+owner and release point. Serialize only the sensor that needs the resource.
+Record sensors whose assertions compare to the merge base, and require a fresh
+base check before their final validation; upstream movement invalidates the
+earlier result according to that sensor's contract.
+
+## Plan Format for a Delivery
+
+A plan that an `orchestrate-work` delivery runs through `run-delivery` keeps its
+stories, their order and the lanes' files in one format. `lead-setup` drafts the
+delivery file from it, so no lane, file list or order is typed twice:
+
+- Each story is a `### KEY. Title` heading under `## Stories`, where `KEY` is its
+  tracker key.
+- Its section opens with one sentence: `Lane N, tier T, not blocked.`, or
+  `Lane N, tier T, after KEY.` with several keys written `after KEY and KEY.` or
+  `after KEY, KEY and KEY.`. `Lane N` is lane `lane-N`; the `after` keys become
+  the story's order, which `next` reads without the tracker. A section without
+  this sentence leaves its story unassigned, and `lead-setup` says so.
+- A sentence starting `Files:` lists the story's files as backticked repository
+  paths, comma-separated, with `and` before the last. A path ending `/` names a
+  folder.
+- The `## Units and order` table has the columns `Tier`, `Lane`,
+  `Items, in order` and `Owns`, with `Owns` in the same path form. A lane's
+  lowest-tier row is its `owns`; a later row lists only what the lane gains when
+  an earlier item merges, which the lead applies then.
+- Each story's criteria come from its tracker item's Acceptance Criteria
+  section, through the tracker snapshot. Without one, `lead-setup` drafts none
+  and says so.
+
+```markdown example plan-format
+## Units and order
+
+| Tier | Lane | Items, in order | Owns |
+| --- | --- | --- | --- |
+| 1 | 1 | EX-2 | `src/api/`, `tests/test_api.py` |
+| 1 | 2 | EX-3 | `src/web/`, `tests/test_web.py` |
+| 2 | 2 | EX-4 | `src/api/` |
+
+## Stories
+
+### EX-2. Serve the greeting from the API
+
+Lane 1, tier 1, not blocked. Test-first. Files: `src/api/greeting.py` and
+`tests/test_api.py`.
+
+### EX-3. Show the greeting on the front page
+
+Lane 2, tier 1, after EX-2. Test-first. Files: `src/web/front.py`,
+`src/web/templates/` and `tests/test_web.py`.
+
+### EX-4. Greet a returning visitor by name
+
+Lane 2, tier 2, after EX-2 and EX-3. Test-first. Files: `src/api/visitor.py`.
+```
+
+## Resolve Optional Operations
+
+Tracking is optional unless repository authority or the user makes it required.
+When selected, use only the neutral tracker operations and normalized outcomes
+declared by the delivery router. If tracking is unavailable, finish the plan,
+report that no tracking mutation occurred, and give an actionable handoff.
+
+Treat specialized external sensors the same way: an unavailable optional sensor
+is reported honestly; an unavailable required sensor remains visible as a
+completion blocker.
+
+## Handoff
+
+Save the plan in the planning folder the repository's instructions declare,
+otherwise at `docs/plans/<key>.md`, where `<key>` names the work, and report the
+path. A plan left only in the conversation or a scratch directory can be lost.
+Where the repository tracks plans, commit the saved plan under its rules before
+plan review or removing the checkout: an untracked plan goes with its checkout,
+and a tool that needs a clean checkout refuses it. Whether plans are tracked stays
+the repository's call.
+
+Return the normalized scope, non-goals, finish line, dependencies, scenarios,
+posture, sensors, approval handoffs, and any unavailable optional operations.
+The plan is ready when execution can start without inventing coverage or success
+criteria.
