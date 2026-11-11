@@ -107,6 +107,10 @@ Each escalation is one consolidated question with a recommendation; while it
 waits, the lead keeps every unblocked lane working, giving a lane blocked on
 it other unblocked work. Lanes escalate to the lead, never to the operator; a
 question only the operator can answer reaches the operator through the lead.
+The lead keeps its wake while a lane works or a candidate is queued: with
+run-delivery, `run_delivery.py lead-wait` runs in the background, which wraps
+the `wait` below and keeps a lease that shows when the lead isn't listening
+([Keeping the lead's wake](#keeping-the-leads-wake)).
 
 - **Never hold approved work.** An approved, handed-off candidate enters the
   queue at once, not batched behind unrelated work or held for a convenient
@@ -210,6 +214,11 @@ background, the lead tells the operator that it won't wake on its own.
 ```bash
 python3 -B scripts/delivery_state.py --dir <state directory> wait [--after <journal id>] [--timeout <seconds>]
 ```
+
+With run-delivery the wait is `run_delivery.py lead-wait`, which wraps it,
+keeps its arguments, output and exit, and holds a lease in the record while it
+runs, so the supervisor's "Needs you" and the live view say when the lead isn't
+listening, and the lead commands print the exact `lead-wait` to start.
 
 The wait reads the record and the machine only, and returns on a hand-off, a
 failed check, a merge, a stop, a broken base, a blocker, a blocked lane, or

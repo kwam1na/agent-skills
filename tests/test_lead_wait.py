@@ -824,6 +824,192 @@ class RealMachineTests(RecordCase):
         self.assertIsNone(state_tool._swap_from_swapusage("sysctl: unknown oid"))
 
 
+RUN_DELIVERY = ROOT / "skills/run-delivery/scripts/run_delivery.py"
+RUN_DELIVERY_SKILL = ROOT / "skills/run-delivery/SKILL.md"
+LEASE_FIELDS = {"pid", "startedAt", "updatedAt", "after", "checkout"}
+
+
+def _load_run_delivery():
+    spec = importlib.util.spec_from_file_location("run_delivery_for_the_lease", RUN_DELIVERY)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+flow = _load_run_delivery()
+
+
+def _dead_pid() -> int:
+    """A pid that was a process of this case's and has ended."""
+    done = subprocess.Popen([sys.executable, "-c", "pass"])
+    done.wait()
+    return done.pid
+
+
+class FakeWait:
+    """A wait that times out `ticks` times, calling `on_tick` each time, then ends with `code` after `on_end` (or raises
+    `raises`)."""
+
+    def __init__(self, ticks: int, code: int = 0, on_tick=None, raises: BaseException | None = None,
+                 on_end=None) -> None:
+        self.ticks, self.code, self.on_tick, self.raises, self.on_end = ticks, code, on_tick, raises, on_end
+        self.ended = False
+        self.terminated = False
+
+    def wait(self, timeout: float | None = None) -> int:
+        if self.terminated:
+            self.ended = True
+            return -15
+        if self.ticks > 0:
+            self.ticks -= 1
+            if self.on_tick:
+                self.on_tick()
+            raise subprocess.TimeoutExpired("wait", timeout)
+        if self.raises is not None:
+            raise self.raises
+        if self.on_end:
+            self.on_end()
+        self.ended = True
+        return self.code
+
+    def poll(self) -> int | None:
+        return self.code if self.ended else None
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+    def kill(self) -> None:
+        self.terminated = True
+
+
+class LeaseTests(unittest.TestCase):
+    """The lead's listener: the lease `lead-wait` keeps, and the one function every reader goes through."""
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.state = Path(temporary.name) / "state"
+        self.state.mkdir()
+        self.at = float(int(time.time()))  # whole seconds: a stamp reads back exactly, so the boundary is exact
+
+    def lease(self, **fields) -> dict:
+        lease = {"pid": os.getpid(), "startedAt": flow.utc_stamp(self.at - 300), "updatedAt": flow.utc_stamp(self.at),
+                 "after": 4, "checkout": "/checkout", **fields}
+        (self.state / "lead-wait.json").write_text(json.dumps(lease))
+        return lease
+
+    def test_the_lease_is_the_named_file_and_its_limits_are_the_decided_ones(self) -> None:
+        self.assertEqual(flow.LEAD_WAIT_LEASE, "lead-wait.json")
+        self.assertEqual((flow.LEAD_WAIT_REFRESH_SECONDS, flow.LEAD_WAIT_LIVE_SECONDS), (60, 180))
+
+    def test_no_lease_is_no_listener(self) -> None:
+        self.assertIsNone(flow.lead_listener(self.state, self.at))
+
+    def test_a_lease_179_seconds_old_with_a_live_pid_is_live(self) -> None:
+        lease = self.lease(updatedAt=flow.utc_stamp(self.at - 179))
+        self.assertEqual(flow.lead_listener(self.state, self.at), lease)
+
+    def test_a_lease_180_seconds_old_is_absent_though_its_pid_lives(self) -> None:
+        self.lease(updatedAt=flow.utc_stamp(self.at - 180))
+        self.assertIsNone(flow.lead_listener(self.state, self.at))
+
+    def test_a_lease_whose_pid_has_died_is_absent_though_it_is_fresh(self) -> None:
+        self.lease(pid=_dead_pid())
+        self.assertIsNone(flow.lead_listener(self.state, self.at))
+
+    def test_a_stamp_without_its_fraction_reads_the_same(self) -> None:
+        moment = int(self.at) - 100
+        self.lease(updatedAt=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(moment)))
+        self.assertIsNotNone(flow.lead_listener(self.state, moment + 179.5))
+        self.assertIsNone(flow.lead_listener(self.state, moment + 180))
+
+    def test_a_malformed_lease_is_absent(self) -> None:
+        cases = {"not json": "{", "a list": "[]", "no pid": json.dumps({"updatedAt": flow.utc_stamp(self.at)})}
+        for name, text in cases.items():
+            with self.subTest(name):
+                (self.state / "lead-wait.json").write_text(text)
+                self.assertIsNone(flow.lead_listener(self.state, self.at))
+        for name, fields in {"a boolean pid": {"pid": True}, "pid 1": {"pid": 1}, "a text pid": {"pid": str(os.getpid())},
+                             "no stamp": {"updatedAt": None}, "a bad stamp": {"updatedAt": "soon"},
+                             "a stamp past a refresh ahead": {"updatedAt": flow.utc_stamp(self.at + 61)}}.items():
+            with self.subTest(name):
+                self.lease(**fields)
+                self.assertIsNone(flow.lead_listener(self.state, self.at))
+
+    def test_the_lease_is_written_refreshed_through_a_temporary_file_and_removed_when_the_wait_ends(self) -> None:
+        seen: list[dict] = []
+        moments = iter(range(1000, 2000, 60))
+        read = lambda: seen.append(json.loads((self.state / "lead-wait.json").read_text()))
+        proc = FakeWait(ticks=3, code=3, on_tick=read)
+        replaced: list[tuple[str, str]] = []
+        real_replace = os.replace
+
+        def replace(source, target):
+            replaced.append((Path(source).name, Path(target).name))
+            return real_replace(source, target)
+
+        with mock.patch.object(flow.os, "replace", side_effect=replace):
+            code = flow.hold_lease(self.state, proc, after=7, checkout=Path("/lead"), every=0.01,
+                                   clock=lambda: float(next(moments)))
+        self.assertEqual(code, 3)
+        self.assertEqual(len(seen), 3)
+        for lease in seen:
+            self.assertEqual(set(lease), LEASE_FIELDS)
+            self.assertEqual((lease["pid"], lease["after"], lease["checkout"]), (os.getpid(), 7, "/lead"))
+            self.assertEqual(lease["startedAt"], flow.utc_stamp(1000))
+        self.assertEqual([lease["updatedAt"] for lease in seen],
+                         [flow.utc_stamp(1000), flow.utc_stamp(1060), flow.utc_stamp(1120)])
+        # One write at the start and one per refresh, each a whole file moved onto the lease in one call.
+        self.assertEqual(replaced, [(f".lead-wait.json.{os.getpid()}", "lead-wait.json")] * 4)
+        self.assertFalse((self.state / "lead-wait.json").exists(), "the lease outlived its wait")
+        self.assertEqual(sorted(p.name for p in self.state.iterdir()), ["state.lock"])
+
+    def test_a_refresh_keeps_a_long_wait_live_past_the_live_limit(self) -> None:
+        live: list[bool] = []
+        clock = iter(range(0, 10_000, 60))
+        state = self.state
+        moments: list[float] = []
+
+        def now() -> float:
+            moments.append(float(next(clock)))
+            return moments[-1]
+
+        proc = FakeWait(ticks=5, on_tick=lambda: live.append(
+            flow.lead_listener(state, moments[-1] + 59) is not None))
+        flow.hold_lease(state, proc, after=0, checkout=Path("/lead"), every=0.01, clock=now)
+        self.assertEqual(live, [True] * 5)
+        self.assertGreater(moments[-1], flow.LEAD_WAIT_LIVE_SECONDS)
+
+    def test_a_stopped_lead_wait_stops_its_wait_and_removes_the_lease(self) -> None:
+        proc = FakeWait(ticks=1, raises=SystemExit(143))
+        with self.assertRaises(SystemExit):
+            flow.hold_lease(self.state, proc, after=0, checkout=Path("/lead"), every=0.01)
+        self.assertTrue(proc.terminated, "the wait outlived the lead-wait that started it")
+        self.assertFalse((self.state / "lead-wait.json").exists())
+
+    def test_a_later_lead_wait_s_lease_is_left_in_place(self) -> None:
+        other = {"pid": os.getppid(), "startedAt": "x", "updatedAt": flow.utc_stamp(self.at), "after": 9,
+                 "checkout": "/other"}
+        # Another lead-wait took the lease after this one's last refresh: ending, this one leaves it.
+        proc = FakeWait(ticks=1, on_end=lambda: (self.state / "lead-wait.json").write_text(json.dumps(other)))
+        flow.hold_lease(self.state, proc, after=0, checkout=Path("/lead"), every=0.01)
+        self.assertEqual(json.loads((self.state / "lead-wait.json").read_text()), other)
+
+    def test_what_needs_a_listener_is_a_lane_at_work_or_a_candidate_not_merged(self) -> None:
+        lane = lambda name, state: {"id": name, "state": state}
+        state = {"lanes": [lane("lane-1", "idle"), lane("lane-2", "done")], "queue": [{"subject": "A", "stage": "merged"}]}
+        self.assertEqual(flow.listener_needed(state), [])
+        for name in ("assigned", "working", "reviewing", "handed", "blocked"):
+            with self.subTest(lane=name):
+                self.assertEqual(flow.listener_needed({**state, "lanes": [lane("lane-1", name)]}), [f"lane-1 ({name})"])
+        for stage in ("queued", "syncing", "synced", "checking", "checked", "merging", "stopped"):
+            with self.subTest(stage=stage):
+                self.assertEqual(flow.listener_needed({**state, "queue": [{"subject": "A", "stage": stage}]}),
+                                 [f"A ({stage})"])
+
+
 class StandingTextTests(unittest.TestCase):
     def assert_phrases(self, path: Path, *phrases: str) -> None:
         text = " ".join(path.read_text(encoding="utf-8").split())
@@ -877,6 +1063,49 @@ class StandingTextTests(unittest.TestCase):
             "One whose report fails returns to the lane on a host that can still message it, and otherwise waits for "
             "the operator's answer",
         )
+
+    @staticmethod
+    def section(path: Path, heading: str) -> str:
+        """One section's text, whitespace-normalized: from its heading to the next heading of its level or above."""
+        text = path.read_text(encoding="utf-8")
+        level = heading.split(" ")[0]
+        start = text.index(heading + "\n")
+        ends = [found.start() for found in re.finditer(rf"^#{{1,{len(level)}}} ", text[start + len(heading):], re.M)]
+        return " ".join(text[start:start + len(heading) + (ends[0] if ends else len(text))].split())
+
+    def test_lead_wait_is_named_where_the_lead_reads_the_rule(self) -> None:
+        wake = self.section(GUIDE, "### The lead's wake")
+        for phrase in (
+            "With run-delivery, the wait a lead starts is `lead-wait`, which wraps this `wait`",
+            "run_delivery.py --delivery <key> lead-wait [<wait arguments>]",
+            "keeps a lease in the record, `<state>/lead-wait.json`, holding its `pid`, `startedAt`, `updatedAt`, `after` "
+            "and `checkout`, rewritten through a temporary file every 60 seconds and removed when it ends or is stopped",
+            "A lease is live while its pid is alive and its `updatedAt` is under 180 seconds old",
+            "`lead-init`, `lead-assign`, `lead-accept` and `lead-run --resume` end, while a lane works or a candidate is "
+            "queued, with the exact `lead-wait` to start in the background",
+            "says \"The lead isn't listening\" with that command",
+            "A running `lead-wait` clears both",
+            "Codex documents hooks of its own, but this generation installs none there",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, wake)
+        rows = [" ".join(line.split()) for line in RUN_DELIVERY_SKILL.read_text(encoding="utf-8").splitlines()
+                if line.startswith("| Lead | `lead-wait")]
+        self.assertEqual(len(rows), 1, "run-delivery's SKILL.md has no Lead row for lead-wait")
+        for phrase in (
+            "The lead's wake: `delivery_state.py wait`, which it wraps",
+            "A lead never ends its turn while a lane works or a candidate is queued unless `lead-wait` runs in the "
+            "background",
+            "end with the exact `lead-wait` to start",
+            "say \"The lead isn't listening\"",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, rows[0])
+        authority = self.section(SKILL, "## Lead authority")
+        self.assertIn("The lead keeps its wake while a lane works or a candidate is queued: with run-delivery, "
+                      "`run_delivery.py lead-wait` runs in the background", authority)
+        self.assertIn("With run-delivery the wait is `run_delivery.py lead-wait`, which wraps it",
+                      self.section(SKILL, "## Keeping the lead's wake"))
 
     def test_the_guide_gives_the_command_and_its_exits(self) -> None:
         text = GUIDE.read_text(encoding="utf-8")

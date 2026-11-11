@@ -6192,11 +6192,11 @@ def supervisor_line(c) -> str | None:
     held, recorded = read_lock(supervisor_lock_path(c))
     if held:
         return (f"supervisor: running (pid {recorded.get('pid')}); live view {recorded.get('address') or 'starting'}"
-                + on_fallback(c) + waits_on(c))
+                + on_fallback(c) + listener_words(c) + waits_on(c))
     said = closed_status(c)
     if said is not None:
         return "supervisor: " + said
-    return f"supervisor: down; restart it with {flow_command()} lead-run --resume" + waits_on(c)
+    return f"supervisor: down; restart it with {flow_command()} lead-run --resume" + listener_words(c) + waits_on(c)
 
 
 def close_progress(doc: dict) -> str | None:
@@ -6557,6 +6557,191 @@ def copy_latest(c) -> Path:
     return target
 
 
+# The lead's listener. `lead-wait` wraps the state tool's `wait` and keeps a lease in the record while it runs; the
+# supervisor's "Needs you", the live view, the status line and the lead commands all read it through lead_listener.
+
+LEAD_WAIT_LEASE = "lead-wait.json"
+LEAD_WAIT_REFRESH_SECONDS = 60
+LEAD_WAIT_LIVE_SECONDS = 180
+
+
+def utc_stamp(at: float) -> str:
+    return datetime.datetime.fromtimestamp(at, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def stamp_seconds(value: object) -> float | None:
+    """A UTC stamp as epoch seconds, with or without its fraction; None for anything else."""
+    if not isinstance(value, str):
+        return None
+    for pattern in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ"):
+        try:
+            return datetime.datetime.strptime(value, pattern).replace(tzinfo=datetime.timezone.utc).timestamp()
+        except ValueError:
+            continue
+    return None
+
+
+def lead_listener(state: Path, at: float | None = None) -> dict | None:
+    """The live lease, or None: a lease is live while its pid is alive and its `updatedAt` is under
+    LEAD_WAIT_LIVE_SECONDS old. A missing, unreadable or malformed lease, or one stamped in the future past a refresh,
+    is absent."""
+    try:
+        lease = json.loads((state / LEAD_WAIT_LEASE).read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(lease, dict) or not valid_pid(lease.get("pid")):
+        return None
+    updated = stamp_seconds(lease.get("updatedAt"))
+    if updated is None:
+        return None
+    age = (time.time() if at is None else at) - updated
+    if not -LEAD_WAIT_REFRESH_SECONDS <= age < LEAD_WAIT_LIVE_SECONDS or process_gone(lease["pid"]):
+        return None
+    return lease
+
+
+def write_lease(state: Path, lease: dict) -> None:
+    """Rewrite the lease through a temporary file, under the state lock the record's copies take."""
+    path = state / LEAD_WAIT_LEASE
+    staging = path.with_name(f".{LEAD_WAIT_LEASE}.{os.getpid()}")
+    with open(state / "state.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            staging.write_text(json.dumps(lease, indent=2) + "\n")
+            os.replace(staging, path)
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def drop_lease(state: Path, pid: int) -> None:
+    """Remove the lease if it is still this pid's: a later lead-wait's lease is its own."""
+    path = state / LEAD_WAIT_LEASE
+    with open(state / "state.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            try:
+                held = json.loads(path.read_text())
+            except (OSError, ValueError):
+                return
+            if isinstance(held, dict) and held.get("pid") == pid:
+                path.unlink(missing_ok=True)
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def hold_lease(state: Path, proc, *, after: int, checkout: Path, every: float | None = None,
+               clock: Callable[[], float] = time.time) -> int:
+    """Keep this process's lease while `proc` runs, rewriting it every `every` seconds, and remove it when `proc` ends
+    or this process is stopped; returns `proc`'s exit code."""
+    every = LEAD_WAIT_REFRESH_SECONDS if every is None else every
+    pid = os.getpid()
+    started = utc_stamp(clock())
+    lease = {"pid": pid, "startedAt": started, "updatedAt": started, "after": after, "checkout": str(checkout)}
+    try:
+        write_lease(state, lease)
+        while True:
+            try:
+                return proc.wait(timeout=every)
+            except subprocess.TimeoutExpired:
+                lease["updatedAt"] = utc_stamp(clock())
+                write_lease(state, lease)
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+        drop_lease(state, pid)
+
+
+def listener_needed(state: dict) -> list[str]:
+    """What needs the lead to listen: each lane that isn't idle or done, and each candidate not yet merged."""
+    return ([f"{lane['id']} ({lane.get('state')})" for lane in state.get("lanes", []) if lane.get("state") not in LANE_DONE]
+            + [f"{item['subject']} ({item.get('stage')})" for item in state.get("queue", []) if item.get("stage") != "merged"])
+
+
+def wait_output(c) -> Path:
+    """Where lead-wait writes the wait's one result document by default: beside the flow logs, outside the record."""
+    return lead_file(c, "wait.json")
+
+
+def last_restart(c, journal: list[dict]) -> list[str] | None:
+    """The `restart` arguments the last wait into the default output printed, while they still fit this journal."""
+    try:
+        result = json.loads(wait_output(c).read_text())
+    except (OSError, ValueError):
+        return None
+    restart = result.get("restart") if isinstance(result, dict) else None
+    if not isinstance(restart, list) or not all(isinstance(word, str) for word in restart) or "--after" not in restart:
+        return None
+    try:
+        after = int(restart[restart.index("--after") + 1])
+    except (IndexError, ValueError):
+        return None
+    through = journal[-1]["id"] if journal else 0
+    return restart if 0 <= after <= through else None
+
+
+def lead_wait_command(c, doc: dict) -> str:
+    """The exact lead-wait to start: the last wait's own restart, so nothing journalled since it read is missed, or,
+    with none, one starting after the journal's last entry."""
+    start = f"{flow_command()} --delivery {c.delivery} lead-wait"
+    restart = last_restart(c, doc["journal"])
+    if restart is not None:
+        return f"{start} {shlex.join(restart)}"
+    through = doc["journal"][-1]["id"] if doc["journal"] else 0
+    return f"{start} --after {through} --output {shlex.quote(str(wait_output(c)))}"
+
+
+def listener_lines(c) -> list[str]:
+    """What a lead command ends with while a lane works or a candidate is queued: the lead-wait to start in the
+    background, or that one listens. Nothing otherwise."""
+    if not (c.state / "state.json").exists():
+        return []
+    doc = load_state()
+    needed = listener_needed(doc["state"])
+    if not needed:
+        return []
+    lease = lead_listener(c.state)
+    if lease is not None:
+        return [f"The lead's wake: {', '.join(needed)}; lead-wait is listening (pid {lease['pid']}, after journal entry "
+                f"{lease.get('after')}). When it ends, start it again with the arguments its result's `restart` names."]
+    return [f"The lead's wake: {', '.join(needed)}, and no lead-wait is listening. Start this in the background before "
+            "you end your turn, and after each wake start it again with the arguments its result's `restart` names:",
+            f"  {lead_wait_command(c, doc)}"]
+
+
+def listener_words(c) -> str:
+    """The status line's word on the listener: empty while one listens or nothing needs one."""
+    if not (c.state / "state.json").exists() or lead_listener(c.state) is not None:
+        return ""
+    needed = listener_needed(load_state()["state"])
+    return f"; the lead isn't listening: no lead-wait runs while {', '.join(needed)}" if needed else ""
+
+
+def lead_wait(args) -> None:
+    """`delivery_state.py wait`, with a lease in the record while it runs. Takes the wait's own arguments; without
+    `--after` it starts after the journal's last entry, and without `--output` it writes the default output."""
+    c = cfg()
+    if not (c.state / "state.json").exists():
+        raise Stop(f"no record at {c.state}: lead-init starts it")
+    passed = list(args.wait_args)
+    parsed = _validator().wait_arguments(passed)
+    after = parsed.after
+    if after is None:
+        journal = load_state()["journal"]
+        after = journal[-1]["id"] if journal else 0
+        passed = ["--after", str(after), *passed]
+    if parsed.output is None:
+        wait_output(c).parent.mkdir(parents=True, exist_ok=True)
+        passed.append(f"--output={wait_output(c)}")
+    script = c.release / "skills/orchestrate-work/scripts/delivery_state.py"
+    proc = subprocess.Popen([sys.executable, "-B", str(script), "--dir", str(c.state), "wait", *passed])
+    sys.exit(hold_lease(c.state, proc, after=after, checkout=c.root))
+
+
 # "Needs you": derived each pass from live conditions, never stored.
 
 def full_health_entries(c) -> list[dict]:
@@ -6673,6 +6858,12 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                           f"lead-resolve {entry['id']} --why TEXT",
                           "clears": ("the runner's hold clearing, journalling base.repaired, or " if runners else "")
                           + f"{flow_command()} lead-resolve {entry['id']} --why TEXT"})
+    needed = listener_needed(doc["state"])
+    if needed and lead_listener(c.state) is None:
+        items.append({"holding": False, "source": f"{LEAD_WAIT_LEASE} in the record",
+                      "text": f"The lead isn't listening: no lead-wait runs while {', '.join(needed)}. Start one in the "
+                      f"background: {lead_wait_command(c, doc)}",
+                      "clears": "a running lead-wait, or nothing left working or queued"})
     for name in flapping:
         items.append({"holding": True, "source": f"the supervisor's {name}", "clears": f"the {name} staying up",
                       "text": f"The supervisor's {name} won't stay up; its log is "
@@ -7637,7 +7828,7 @@ def lead_run(args) -> None:
         for line in stop_orphans(c):
             print(line)
         address = start_supervisor(c)
-        print(f"supervisor: running; live view {address}")
+        print(f"supervisor: running; live view {address}" + listener_words(c))
         return
     Supervisor(c, once=args.once).run()
 
@@ -8695,6 +8886,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--resume", action="store_true", help="stop what an earlier supervisor left, then start it again")
     p.add_argument("--once", action="store_true", help="run one pass in the foreground, then stop")
     p.set_defaults(fn=lead_run)
+    p = command(sub, "lead-wait", help="the state tool's wait, with a lease in the record while it runs; takes the "
+                "wait's own arguments")
+    p.set_defaults(fn=lead_wait, wait_args=[])
     p = command(sub, "full-health-run", help="one post-merge fullHealth run at a base head, as the supervisor starts it")
     p.add_argument("--head", required=True); p.add_argument("--record", required=True); p.set_defaults(fn=full_health_run)
     p = command(sub, "lead-brief"); p.set_defaults(fn=lead_brief)
@@ -8771,6 +8965,15 @@ def main(argv: list[str] | None = None) -> None:
     if argv[first:first + 1] in (["app-check"], ["app-video"]):
         args = parser.parse_args(argv[:separator])
         args.passthrough = [*args.passthrough, *argv[separator + 1:]]
+    elif argv[first:first + 1] == ["lead-wait"]:
+        # Everything after the command is the wait's, but --delivery, which the wait doesn't take.
+        rest, own = argv[first + 1:], []
+        while any(word == "--delivery" or word.startswith("--delivery=") for word in rest):
+            at = next(i for i, word in enumerate(rest) if word == "--delivery" or word.startswith("--delivery="))
+            width = 1 if rest[at].startswith("--delivery=") else 2
+            own, rest = [*own, *rest[at:at + width]], [*rest[:at], *rest[at + width:]]
+        args = parser.parse_args([*argv[:first + 1], *own, *(["--help"] if {"-h", "--help"} & set(rest) else [])])
+        args.wait_args = rest
     else:
         args = parser.parse_args(argv)
     later = getattr(args, "delivery_after", None)
@@ -8784,7 +8987,11 @@ def main(argv: list[str] | None = None) -> None:
     except Stop as error:
         print(f"run-delivery: {error}", file=sys.stderr)
         sys.exit(2)
-    if args.command.startswith("lead-") and args.command not in ("lead-setup", "lead-init", "lead-run"):
+    if args.command in ("lead-init", "lead-assign", "lead-accept") or (args.command == "lead-run" and args.resume):
+        with contextlib.suppress(Stop, ValueError, OSError):
+            for line in listener_lines(cfg()):
+                print(line)
+    if args.command.startswith("lead-") and args.command not in ("lead-setup", "lead-init", "lead-run", "lead-wait"):
         with contextlib.suppress(Stop, ValueError, OSError):
             line = supervisor_line(cfg())
             if line:
