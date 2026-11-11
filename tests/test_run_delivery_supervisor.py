@@ -93,7 +93,9 @@ if not tip or tip[0] != expected:
     sys.exit(branch + " moved after its check")
 git("fetch", "--quiet", "origin", "+refs/heads/" + branch + ":refs/merge-queue/candidate")
 tree = git("rev-parse", expected + "^{tree}")
-commit = git("commit-tree", tree, "-p", base_head, "-p", expected, "-m", "Merge " + branch)
+# A squash, as this repository's own binding merges: the base gains the tree, and no commit of the branch.
+parents = ["-p", base_head] + ([] if os.environ.get("FAKE_MERGE_SQUASH") else ["-p", expected])
+commit = git("commit-tree", tree, *parents, "-m", "Merge " + branch)
 git("push", "--quiet", "--force-with-lease=refs/heads/" + base + ":" + base_head, "origin", commit + ":refs/heads/" + base)
 pr["state"] = "merged"
 json.dump(prs, open(state, "w"))
@@ -1361,6 +1363,30 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertFalse(wt.exists(), "the pass closed without cleaning up the merged story's checkout")
         self.assertEqual(last["closeHeldBy"], [], last)
         self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)
+
+    def test_a_story_its_forge_merged_by_squash_is_cleaned_by_the_pass_and_the_close_follows(self) -> None:
+        fx = self.fixture()
+        fx.env["FAKE_MERGE_SQUASH"] = "1"
+        self.closable(fx)
+        wt = fx.main / "lanes/FX-2"
+        head = next(q for q in record(fx)["state"]["queue"] if q["subject"] == "FX-2")["head"]
+        sh("git", "fetch", "-q", "origin", cwd=fx.main)
+        self.assertFalse(sh("git", "merge-base", "--is-ancestor", head, "origin/feature/FX-1", cwd=fx.main,
+                            check=False).returncode == 0, "the fixture's merge wasn't a squash")
+        # Not merged, as the forge says: cleanup leaves the checkout, and the close waits for it.
+        prs = json.loads((fx.tmp / "forge.json").read_text())
+        prs["https://forge.test/pr/1"]["state"] = "open"
+        (fx.tmp / "forge.json").write_text(json.dumps(prs))
+        self.holds_alone(fx, "not cleaned up: FX-2")
+        self.assertTrue(wt.exists(), "the pass removed a story its forge doesn't report merged")
+        prs["https://forge.test/pr/1"]["state"] = "merged"
+        (fx.tmp / "forge.json").write_text(json.dumps(prs))
+        last = self.once(fx)
+        self.assertFalse(wt.exists(), "the pass left the squash-merged story's checkout")
+        self.assertEqual(last["closeHeldBy"], [], last)
+        self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)
+        cleaned = [e for e in kinds(fx, "decision.recorded") if e.get("subject") == "FX-2" and "Cleaned up" in e["summary"]]
+        self.assertTrue(cleaned and "https://forge.test/pr/1 merged at" in cleaned[-1]["summary"], cleaned)
 
     def test_only_the_delivery_s_merged_stories_hold_the_close_for_their_checkouts(self) -> None:
         fx = self.fixture()

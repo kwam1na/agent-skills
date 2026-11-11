@@ -5754,9 +5754,34 @@ def evidence_dir(key: str) -> Path:
     return cfg().flow_log.parent / "evidence" / key
 
 
+def squash_merged(key: str, tips: dict[str, str]) -> tuple[str | None, list[str]]:
+    """For a story with tips off the base: (what merged it, None) when the forge reports its change request merged and
+    every tip is that request's head or below it, as a squash merge leaves them; otherwise (None, why not)."""
+    item = next((q for q in load_state()["state"]["queue"] if q["subject"] == key), None)
+    url = (item or {}).get("changeRequest")
+    if not url or not forge_answers("get"):
+        return None, []
+    try:
+        pr = forge("get", "--url", url)
+    except Stop as error:
+        return None, [f"couldn't read {url}: {error}"]
+    if pr.get("state") != "merged":
+        return None, [f"{url} is {pr.get('state') or 'in no state the forge names'}, not merged"]
+    reported = pr.get("head")
+    head = git("rev-parse", "--verify", "--quiet", f"{reported}^{{commit}}", check=False) \
+        if isinstance(reported, str) and len(reported) >= 7 else ""
+    if not same_commit(reported, head):
+        return None, [f"{url}'s merged head {reported or '(none)'} isn't a commit in this repository"]
+    past = [f"{name} ({sha[:10]})" for name, sha in tips.items() if not is_ancestor(sha, head)]
+    if past:
+        return None, [f"{', '.join(past)} {'is' if len(past) == 1 else 'are'} past {url}'s merged head {head[:10]}"]
+    return f"{url} merged at {head[:10]}, and every tip of {key} is at or below it", []
+
+
 def clean_story(key: str) -> tuple[str, list[str], list[str]]:
     """Remove one merged story's checkout and branches. Returns (status, done, left); status is cleaned, nothing,
-    unmerged or refused. Nothing is removed unless every tip of the story is already on the delivery base."""
+    unmerged or refused. Nothing is removed unless every tip of the story is already on the delivery base, or its change
+    request merged (by squash, say) at a head every tip is at or below: the forge is asked only in that second case."""
     c = cfg()
     branch, checkout = c.branch(key), c.lane_checkout(key)
     git("fetch", "-q", c.remote, c.base_branch)
@@ -5776,8 +5801,11 @@ def clean_story(key: str) -> tuple[str, list[str], list[str]]:
     if not tips and not left:
         return "nothing", [], []
     off_base = [f"{name} ({sha[:10]})" for name, sha in tips.items() if not is_ancestor(sha, c.base_ref)]
+    merged_by = None
     if off_base:
-        return "unmerged", [], [f"not on {c.base_ref}: {', '.join(off_base)}"] + left
+        merged_by, why = squash_merged(key, tips)
+        if merged_by is None:
+            return "unmerged", [], [f"not on {c.base_ref}: {', '.join(off_base)}"] + why + left
     if left:
         return "refused", [], left
     done = []
@@ -5796,7 +5824,7 @@ def clean_story(key: str) -> tuple[str, list[str], list[str]]:
             return "refused", done, [f"git worktree remove {checkout} failed: {removed.stderr.strip()[-300:]}"]
         done.append(f"removed {checkout}")
     if local:
-        git("branch", "-D", branch)  # -D: its tip is on the base (checked above), which -d can't see from here
+        git("branch", "-D", branch)  # -D: its tip is on the base or at or below the merged head (checked above)
         done.append(f"deleted the local branch {branch} ({local[:10]})")
     if remote:
         allowed = (c.flow_raw.get("cleanup") or {}).get("deleteRemoteBranches") is True
@@ -5811,6 +5839,7 @@ def clean_story(key: str) -> tuple[str, list[str], list[str]]:
     if not done:  # already cleaned: nothing new to journal, only what still waits (a PR not yet closed)
         left = [line for line in left if "deleteRemoteBranches is not true" not in line]
         return ("waiting" if left else "nothing"), [], left
+    done = ([merged_by] if merged_by else []) + done
     state_tool("journal", "--kind", "decision.recorded", "--subject", key, "--summary",
                f"Cleaned up {key} after it merged into {c.base_branch}: " + "; ".join(done + left) + ".", check=False)
     return "cleaned", done, left

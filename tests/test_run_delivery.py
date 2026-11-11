@@ -2148,6 +2148,135 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         self.assertEqual(staged["src/app.txt"], "app, on main\nand the delivery\n")
         self.assertNotIn("changed after the tooling commit", out, "a later tooling change outside the ship paths was named")
 
+    def test_cleanup_takes_a_story_its_forge_merged_by_squash_only_at_or_below_the_merged_head(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        setup_delivery(fx)
+        code, out = fx.flow("lead-init", cwd=m); expect(code == 0, out)
+        wt = fx.lane("FX-2")
+        (wt / "src/one.txt").write_text("one\n")
+        commit(wt, "FX-2: one")
+        sh("git", "push", "-q", "origin", "feature/FX-2", cwd=wt)
+        code, out = fx.flow("open-pr", "FX-2", "--title", "FX-2: one", "--body-file", "/dev/null", cwd=wt); expect(code == 0, out)
+        head = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+        (wt / ".orchestration/review/FX-2").mkdir(parents=True, exist_ok=True)
+        (wt / ".orchestration/review/FX-2/gates.json").write_text("{}")
+        record = json.loads((fx.tmp / "record/state.json").read_text())
+        record["queue"].append({"subject": "FX-2", "title": "one", "lane": "lane-1", "stage": "merged", "head": head,
+                                "syncedHead": head, "changeRequest": "https://forge.test/pr/1", "checks": [], "runId": None,
+                                "order": 1, "leadInputs": [], "reportedRounds": 1})
+        record["planned"] = [i for i in record.get("planned", []) if i["subject"] != "FX-2"]
+        (fx.tmp / "record/state.json").write_text(json.dumps(record))  # a fixture shortcut for "it merged"
+        # The squash: the story's change lands on the base as a commit of its own, so no tip of the story is on it.
+        sh("git", "fetch", "-q", "origin", cwd=m)
+        (m / "src/one.txt").write_text("one\n")
+        commit(m, "FX-2: one (#1)")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        calls = fx.tmp / "forge-calls.txt"
+        fx.env["FAKE_FORGE_CALLS"] = str(calls)
+
+        def forge_says(**pr) -> None:
+            prs = json.loads((fx.tmp / "forge.json").read_text())
+            prs["https://forge.test/pr/1"].update(pr)
+            (fx.tmp / "forge.json").write_text(json.dumps(prs))
+
+        def untouched(out: str) -> None:
+            expect(wt.exists(), f"the checkout was removed: {out}")
+            expect(sh("git", "branch", "--list", "feature/FX-2", cwd=m).stdout.strip(), f"the local branch was deleted: {out}")
+            expect(not (fx.tmp / "evidence/FX-2").exists(), f"evidence was moved for a story left in place: {out}")
+
+        for state in ("open", "closed"):
+            forge_says(state=state)
+            code, out = fx.flow("lead-cleanup", "FX-2", cwd=m)
+            expect(code == 1 and "FX-2: unmerged" in out and f"https://forge.test/pr/1 is {state}, not merged" in out,
+                   f"the story of a request {state} was taken as merged: {out}")
+            untouched(out)
+        # Merged, with the checkout one commit past the head the forge merged: that commit is on no base.
+        forge_says(state="merged", head=head)
+        (wt / "src/one.txt").write_text("one, after the merge\n")
+        commit(wt, "FX-2: after the merge")
+        later = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()[:10]
+        code, out = fx.flow("lead-cleanup", "FX-2", cwd=m)
+        expect(code == 1 and "FX-2: unmerged" in out
+               and f"the checkout's HEAD ({later}), local feature/FX-2 ({later}) are past "
+                   f"https://forge.test/pr/1's merged head {head[:10]}" in out, f"a commit past the merged head was lost: {out}")
+        untouched(out)
+        # Back at the merged head, but the remote branch carries a commit past it.
+        sh("git", "push", "-q", "origin", "HEAD:feature/FX-2", cwd=wt)
+        sh("git", "reset", "-q", "--hard", head, cwd=wt)
+        code, out = fx.flow("lead-cleanup", "FX-2", cwd=m)
+        expect(code == 1 and f"left: origin/feature/FX-2 ({later}) is past https://forge.test/pr/1's merged head "
+               f"{head[:10]}" in out, f"the remote's later commit was missed: {out}")
+        untouched(out)
+        sh("git", "push", "-q", "-f", "origin", f"{head}:refs/heads/feature/FX-2", cwd=wt)
+        # A dirty checkout is still refused, however its story merged.
+        (wt / "stray.txt").write_text("x\n")
+        code, out = fx.flow("lead-cleanup", "FX-2", cwd=m)
+        expect(code == 1 and "FX-2: refused" in out and "stray.txt" in out, f"removed a dirty checkout: {out}")
+        untouched(out)
+        (wt / "stray.txt").unlink()
+        # A forge that can't say leaves the story where it is, and a sweep goes on past it.
+        def record_request(url: str) -> None:
+            doc = json.loads((fx.tmp / "record/state.json").read_text())
+            next(q for q in doc["queue"] if q["subject"] == "FX-2")["changeRequest"] = url
+            (fx.tmp / "record/state.json").write_text(json.dumps(doc))
+        record_request("https://forge.test/pr/9")
+        code, out = fx.flow("lead-cleanup", "FX-2", cwd=m)
+        expect(code == 1 and "FX-2: unmerged" in out and "couldn't read https://forge.test/pr/9" in out, out)
+        untouched(out)
+        code, out = fx.flow("lead-cleanup", cwd=m)
+        expect(code == 0 and "FX-2: unmerged" in out and "FX-3: nothing to clean" in out, f"the sweep stopped: {out}")
+        untouched(out)
+        record_request("https://forge.test/pr/1")
+        # A forge adapter with no `get` is never asked, and the story stays unmerged as before.
+        flow_json = m / ".agents/run-delivery.json"
+        kept = flow_json.read_bytes()
+        flow_json.write_text(json.dumps({**json.loads(kept), "forge": {"adapter": "none"}}))
+        calls.write_text("")
+        code, out = fx.flow("lead-cleanup", "FX-2", cwd=m)
+        flow_json.write_bytes(kept)
+        expect(code == 1 and "FX-2: unmerged" in out and "https://forge.test/pr/1" not in out and not calls.read_text(),
+               f"a forge with no get was asked, or named: {out}")
+        untouched(out)
+        # The forge's head may be abbreviated, as the fake's and Bitbucket's are.
+        forge_says(state="merged", head=head[:12])
+        code, out = fx.flow("lead-cleanup", "FX-2", cwd=m)
+        expect(code == 0 and "FX-2: cleaned" in out and not wt.exists(), out)
+        expect(f"https://forge.test/pr/1 merged at {head[:10]}" in out, f"the cleanup didn't say why it counted as merged: {out}")
+        expect(not sh("git", "branch", "--list", "feature/FX-2", cwd=m).stdout.strip(), "the local branch survived")
+        expect((fx.tmp / "evidence/FX-2/gates.json").exists(), "the lane's evidence wasn't kept")
+        expect(remote_has(m, "feature/FX-2"), "the remote branch was deleted without the repository allowing it")
+        cleaned = [e for e in map(json.loads, (fx.tmp / "record/journal.jsonl").read_text().splitlines())
+                   if e.get("kind") == "decision.recorded" and e.get("subject") == "FX-2"]
+        expect(cleaned and "https://forge.test/pr/1 merged at" in cleaned[-1]["summary"], cleaned)
+        # Run again, with the remote branch still there: cleaned already, so nothing is said or journalled twice.
+        code, out = fx.flow("lead-cleanup", "FX-2", cwd=m)
+        again = [e for e in map(json.loads, (fx.tmp / "record/journal.jsonl").read_text().splitlines())
+                 if e.get("kind") == "decision.recorded" and e.get("subject") == "FX-2"]
+        expect(code == 0 and "FX-2: cleaned" not in out and len(again) == len(cleaned), f"cleaned twice: {out}")
+        # A story whose tips are on the base is cleaned by ancestry, with no forge call, as before.
+        wt3 = fx.lane("FX-3")
+        (wt3 / "src/two.txt").write_text("two\n")
+        commit(wt3, "FX-3: two")
+        sh("git", "push", "-q", "origin", "feature/FX-3", cwd=wt3)
+        code, out = fx.flow("open-pr", "FX-3", "--title", "FX-3: two", "--body-file", "/dev/null", cwd=wt3); expect(code == 0, out)
+        # Its request is on record, so only the ancestry path keeps the forge out of it.
+        record = json.loads((fx.tmp / "record/state.json").read_text())
+        record["queue"].append({**record["queue"][-1], "subject": "FX-3", "title": "two", "lane": "lane-2",
+                                "changeRequest": "https://forge.test/pr/2", "order": 2})
+        record["planned"] = [i for i in record.get("planned", []) if i["subject"] != "FX-3"]
+        (fx.tmp / "record/state.json").write_text(json.dumps(record))
+        # Before it merges, FX-3 is judged by its own open request, not by FX-2's merged one ahead of it in the queue.
+        code, out = fx.flow("lead-cleanup", "FX-3", cwd=m)
+        expect(code == 1 and "https://forge.test/pr/2 is open, not merged" in out and "pr/1" not in out and wt3.exists(), out)
+        sh("git", "fetch", "-q", "origin", cwd=m)
+        sh("git", "-c", "user.email=t@t", "-c", "user.name=t", "merge", "-q", "--no-ff", "-m", "merge FX-3", "origin/feature/FX-3", cwd=m)
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        calls.write_text("")
+        code, out = fx.flow("lead-cleanup", "FX-3", cwd=m)
+        expect(code == 0 and "FX-3: cleaned" in out and not wt3.exists(), out)
+        expect("get" not in calls.read_text().split(), f"a story on the base asked the forge: {calls.read_text()}")
+
     def test_cleanup_removes_only_merged_clean_work_and_close_archives(self) -> None:
         fx = self.fixture()
         flow_run = fx.flow
