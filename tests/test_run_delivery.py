@@ -2231,6 +2231,13 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         (wt3 / "src/two.txt").write_text("two\n")
         commit(wt3, "FX-3: two")
         sh("git", "push", "-q", "origin", "feature/FX-3", cwd=wt3)
+        code, out = fx.flow("open-pr", "FX-3", "--title", "FX-3: two", "--body-file", "/dev/null", cwd=wt3); expect(code == 0, out)
+        # Its request is on record, so only the ancestry path keeps the forge out of it.
+        record = json.loads((fx.tmp / "record/state.json").read_text())
+        record["queue"].append({**record["queue"][-1], "subject": "FX-3", "title": "two", "lane": "lane-2",
+                                "changeRequest": "https://forge.test/pr/2", "order": 2})
+        record["planned"] = [i for i in record.get("planned", []) if i["subject"] != "FX-3"]
+        (fx.tmp / "record/state.json").write_text(json.dumps(record))
         sh("git", "fetch", "-q", "origin", cwd=m)
         sh("git", "-c", "user.email=t@t", "-c", "user.name=t", "merge", "-q", "--no-ff", "-m", "merge FX-3", "origin/feature/FX-3", cwd=m)
         sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
