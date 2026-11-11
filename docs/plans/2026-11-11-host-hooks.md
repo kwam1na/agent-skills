@@ -4,7 +4,7 @@ reviewSlug: host-hooks
 
 # Make host hooks a first-class part of the workflow
 
-A new epic. The lead's wait has failed twice in real deliveries, each time because a rule written only in prose was never met: on
+Epic V26-3406. The lead's wait has failed twice in real deliveries, each time because a rule written only in prose was never met: on
 2026-11-07 (V26-3265) and on 2026-11-11 in an outside adopter's delivery on v1.6.0-rc.6 (V26-3270's comment). A skill has no way to have
 the host run a check at a point in a session. The generation lifecycle exposes skills to Claude Code as symlinks under `.claude/skills/`
 (`agent_skills/hosts/claude.py`) and never touches a host's settings. The bundled harness runtime does write hooks, but only into a
@@ -15,9 +15,11 @@ two hooks: `lead.may-stop` and `delivery.orient`.
 This plan is the separately approved unit AGENTS.md requires before the release surface gains a host integration. It adds no host: it
 adds one exposure kind, Claude Code hooks, to a host the lifecycle already exposes.
 
-The items are V26-3270, moved here from V26-3306 and narrowed by Decision 9, and four new items, written below as HOOK-1 to HOOK-4 until
-the tracker items exist. Each story's criteria are written in full in its section, so its tracker item can be created from it word for
-word.
+The items are V26-3270, moved here from V26-3306 and narrowed by Decision 9, and four new items, V26-3407 to V26-3410. Each story's
+criteria are written in full in its section, and its tracker item was created from it word for word on the operator's approval
+(2026-11-11). The tracker items add the rows the second review round left as notes:
+- V26-3409 has an orientation row for every `SessionStart` source, and one with the payload's `cwd` reached through a symlink.
+- V26-3410's live check runs the installed command unchanged behind a logging wrapper.
 
 ## Finish line
 
@@ -26,7 +28,7 @@ word.
 - The full local suite passes on macOS with Python 3.11 at the commit the release candidate is tagged on.
 - A minor release candidate carrying hooks is tagged, published and applied here. `.claude/settings.json` then holds exactly the two
   entries Decision 4 names, and `.agents/run-delivery.json` sets `lead.may-stop` to `enforce`.
-- The live check in HOOK-4 is recorded on the epic:
+- The live check in V26-3410 is recorded on the epic:
   - In a Claude Code session in this repository, a lead with a working lane and no listener is held once, with the `lead-wait` command
     named, and that hold appends one `hook.held`.
   - In a new turn of the same session (`claude -p --resume`), taken while `lead-wait` runs, the lead stops freely. The recorded payload
@@ -44,15 +46,15 @@ word.
 - Any event other than Claude Code's `Stop` and `SessionStart`: no `PreToolUse` guards, no `PreCompact`, no `SubagentStop`, and no lane
   stop hook. The manifest's event list holds only `stop` and `session-start` (Decision 2), so adding an event is a deliberate change.
 - Hooks for a single-skill adoption receipt (`adoption` present). Such a generation installs no hooks.
-- A release-gating host qualifier. The host's behaviour is proven by the recorded live check in HOOK-4, not by a qualification record.
+- A release-gating host qualifier. The host's behaviour is proven by the recorded live check in V26-3410, not by a qualification record.
 - `.claude/settings.local.json` and the user's own `~/.claude/settings.json`. The lifecycle writes only the project file (Decision 4).
 - Windows, which is not validated (AGENTS.md).
 - A final (non-candidate) release. The candidate is promoted at a later batch boundary.
 
 ## Decisions
 
-1. **One contract, three owners.** A skill declares its hooks in a manifest (HOOK-1). The lifecycle installs, records and removes one
-   dispatcher entry per host event (HOOK-2). A delivery's own settings switch each hook `off`, `warn` or `enforce` (HOOK-3). Decision
+1. **One contract, three owners.** A skill declares its hooks in a manifest (V26-3407). The lifecycle installs, records and removes one
+   dispatcher entry per host event (V26-3408). A delivery's own settings switch each hook `off`, `warn` or `enforce` (V26-3409). Decision
    logic lives in the skill's own script and is tested without a host. Only the dispatcher knows Claude Code's input and output shapes.
 2. **The manifest is `skills/<id>/hooks.json`, schema `skill-hooks/1`.** It is a provenance output of its skill, so it is catalogued,
    profiled, digested and archived like any other skill file. A skill without the file declares no hooks. Its document is
@@ -151,7 +153,7 @@ word.
 6. **A delivery switches each hook in `.agents/run-delivery.json`.** The file gains `hooks: {"lead.may-stop": M, "delivery.orient": M}`,
    where `M` is `off`, `warn` or `enforce`. A missing key means `warn` for `lead.may-stop` and `enforce` for `delivery.orient`, which
    only ever allows. `warn` returns `warn` where `enforce` would return `block`. `references/config.md` documents the field, and `doctor`
-   refuses an unknown hook id or mode. This repository sets `enforce` for `lead.may-stop` in HOOK-4.
+   refuses an unknown hook id or mode. This repository sets `enforce` for `lead.may-stop` in V26-3410.
 7. **Roles come from the payload's `cwd`, never from the session.** Claude Code's payload carries `cwd` and `session_id`, but no lead
    command can learn its own session id. The hook lists the repository's checkouts with `git worktree list --porcelain`, and reads the
    open deliveries in each checkout's state directory, resolved as run-delivery resolves it today. So:
@@ -173,7 +175,7 @@ word.
    context through a hook. The text is cut at 4,000 characters. It runs on every `SessionStart` source (`startup`, `resume`, `clear`,
    `compact` and `fork`), so a compacted or resumed session is told again. Under mode `off` it returns `{"verdict": "allow"}` with no
    `context`.
-9. **V26-3270 moves here, narrowed to its Scopes 1 and 2 and its AC1, AC2 and AC4.** Its Scope 3 and AC3, the Stop hook, become HOOK-3,
+9. **V26-3270 moves here, narrowed to its Scopes 1 and 2 and its AC1, AC2 and AC4.** Its Scope 3 and AC3, the Stop hook, become V26-3409,
    built on the manifest and the dispatcher rather than a one-off entry "in the Claude projection".
    - **The lease** is `<state>/lead-wait.json`: `{"pid", "startedAt", "updatedAt", "after", "checkout"}`, rewritten through a temporary
      file every 60 seconds while `lead-wait` runs.
@@ -187,40 +189,40 @@ word.
      `off`, and any stop with `stop_hook_active: true` write nothing. `hook.held` is not in `WAIT_KINDS`, so it never wakes a `wait`, and
      the record's history shows it as any other entry.
 10. **The release is a minor candidate, applied here in the change that turns enforcement on.** The receipt and the archive's file set
-    change, so the candidate is applied here before promotion, as AGENTS.md requires of a record-shape change. Once HOOK-1, HOOK-2,
-    V26-3270 and HOOK-3 have merged, the lead runs the full suite on macOS with Python 3.11 and tags the next minor candidate on a commit CI
-    passed as the tip of a push to `main`. HOOK-4 then applies it on its branch, which writes the two entries into `.claude/settings.json`
+    change, so the candidate is applied here before promotion, as AGENTS.md requires of a record-shape change. Once V26-3407, V26-3408,
+    V26-3270 and V26-3409 have merged, the lead runs the full suite on macOS with Python 3.11 and tags the next minor candidate on a commit CI
+    passed as the tip of a push to `main`. V26-3410 then applies it on its branch, which writes the two entries into `.claude/settings.json`
     and commits them with the generation, and sets `lead.may-stop` to `enforce`. This delivery's own lead runs on the old generation until
-    HOOK-4 merges, then restarts its supervisor with `lead-run --resume`.
+    V26-3410 merges, then restarts its supervisor with `lead-run --resume`.
 
 ## Units and order
 
-Two lanes. Lane 1 holds the lifecycle and release tooling, and lane 2 the delivery skills. HOOK-3 needs HOOK-1's manifest schema and
-V26-3270's lease, so it goes last on lane 2, after HOOK-1 merges. HOOK-4 needs every other item and the tagged candidate.
+Two lanes. Lane 1 holds the lifecycle and release tooling, and lane 2 the delivery skills. V26-3409 needs V26-3407's manifest schema and
+V26-3270's lease, so it goes last on lane 2, after V26-3407 merges. V26-3410 needs every other item and the tagged candidate.
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | HOOK-1, HOOK-2 | `agent_skills/`, `schemas/`, `tests/test_hooks.py`, `tests/test_lifecycle.py`, `tests/lifecycle_support.py`, `tests/test_host_exposure.py`, `tests/test_receipt.py`, `tests/test_registry.py`, `tests/test_release_archive.py`, `tests/test_release_entry_budget.py`, `tests/test_release_integration.py`, `docs/product-generation.md` |
-| 1 | 2 | V26-3270, HOOK-3 | `skills/run-delivery/`, `skills/orchestrate-work/`, `skills/delivery-views/`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_lead_wait.py`, `tests/test_run_delivery_hooks.py`, `tests/test_orchestration_render.py`, `tests/test_orchestration_state.py`, `tests/delivery_views_page/`, `catalog.json`, `profiles/`, `docs/solutions/` |
-| 2 | 1 | HOOK-4 | `.agent-skills/`, `.agents/skills/`, `.claude/skills/`, `.claude/settings.json`, `.agents/run-delivery.json`, `docs/own-deliveries.md`, `tests/test_own_deliveries.py` |
+| 1 | 1 | V26-3407, V26-3408 | `agent_skills/`, `schemas/`, `tests/test_hooks.py`, `tests/test_lifecycle.py`, `tests/lifecycle_support.py`, `tests/test_host_exposure.py`, `tests/test_receipt.py`, `tests/test_registry.py`, `tests/test_release_archive.py`, `tests/test_release_entry_budget.py`, `tests/test_release_integration.py`, `docs/product-generation.md` |
+| 1 | 2 | V26-3270, V26-3409 | `skills/run-delivery/`, `skills/orchestrate-work/`, `skills/delivery-views/`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_lead_wait.py`, `tests/test_run_delivery_hooks.py`, `tests/test_orchestration_render.py`, `tests/test_orchestration_state.py`, `tests/delivery_views_page/`, `catalog.json`, `profiles/`, `docs/solutions/` |
+| 2 | 1 | V26-3410 | `.agent-skills/`, `.agents/skills/`, `.claude/skills/`, `.claude/settings.json`, `.agents/run-delivery.json`, `docs/own-deliveries.md`, `tests/test_own_deliveries.py` |
 
 **Shared files.** `provenance.lock.json` is regenerated by the writer at sync and never merged by hand. `catalog.json` and `profiles/` are
-lane 2's. HOOK-1 changes neither, because its rows build fixture corpora. No test writes `.claude/settings.json` in the repository root;
+lane 2's. V26-3407 changes neither, because its rows build fixture corpora. No test writes `.claude/settings.json` in the repository root;
 every lifecycle row works in its own temporary repository. The hook rows run scripts in temporary folders with their own state
 directories and never start a Claude Code session. No shared ports, browsers or databases.
 
 **Pins that will go stale.** Each item re-derives the pins its change makes stale and names them in its hand-off:
-- HOOK-1: the archive's `agent_skills/` file list in `release.py` and the entry budget in `tests/test_release_entry_budget.py`.
-- HOOK-2: `JOURNAL_PHASES`, the receipt schema's members, and the `agent-skills-plan/1` and `agent-skills-diff/1` shapes, which gain one
+- V26-3407: the archive's `agent_skills/` file list in `release.py` and the entry budget in `tests/test_release_entry_budget.py`.
+- V26-3408: `JOURNAL_PHASES`, the receipt schema's members, and the `agent-skills-plan/1` and `agent-skills-diff/1` shapes, which gain one
   member each.
-- HOOK-3: the journal-kind enum in `skills/orchestrate-work/references/schemas.json`, and the provenance outputs, which gain
+- V26-3409: the journal-kind enum in `skills/orchestrate-work/references/schemas.json`, and the provenance outputs, which gain
   `skills/run-delivery/hooks.json`. That entry is added to `provenance.lock.json` by hand, as adding an output always is, and then
   digested by the writer.
 - V26-3270: the lead commands' printed output.
 
 ## Stories
 
-### HOOK-1. Let a skill declare host hooks, and run them through one dispatcher
+### V26-3407. Let a skill declare host hooks, and run them through one dispatcher
 
 Lane 1, tier 1, not blocked. Test-first, per Decisions 1, 2 and 3. Files: `agent_skills/hooks.py`, `agent_skills/cli.py`,
 `agent_skills/validate.py`, `agent_skills/release.py`, `schemas/skill-hooks.schema.json`, `tests/test_hooks.py`, `tests/test_registry.py`,
@@ -257,9 +259,9 @@ Acceptance criteria:
 Sensors: `tests/test_hooks.py`, `tests/test_registry.py`, `tests/test_release_archive.py`, `tests/test_release_entry_budget.py`,
 `scripts/validate-registry.py`.
 
-### HOOK-2. Install, record and remove Claude Code hook entries with the generation
+### V26-3408. Install, record and remove Claude Code hook entries with the generation
 
-Lane 1, tier 1, after HOOK-1. Test-first for the new behaviour, characterization-first for the `plan`, `diff` and receipt shapes it
+Lane 1, tier 1, after V26-3407. Test-first for the new behaviour, characterization-first for the `plan`, `diff` and receipt shapes it
 extends. Per Decision 4. Files: `agent_skills/hosts/`, `agent_skills/lifecycle.py`, `agent_skills/journal.py`,
 `agent_skills/receipt.py`, `agent_skills/release.py`, `schemas/receipt.schema.json`, `tests/test_release_entry_budget.py`, `tests/test_lifecycle.py`, `tests/lifecycle_support.py`,
 `tests/test_host_exposure.py`, `tests/test_receipt.py`, `tests/test_release_integration.py` and `docs/product-generation.md`.
@@ -319,9 +321,9 @@ Files: `skills/run-delivery/`, `skills/orchestrate-work/`, `skills/delivery-view
 `tests/test_run_delivery_supervisor.py`, `tests/test_lead_wait.py`, `tests/test_orchestration_render.py`, `tests/delivery_views_page/`,
 `catalog.json` and `profiles/`. Sensors: those test modules, the page lane, `scripts/validate-registry.py`.
 
-### HOOK-3. Hold a lead's stop while nobody listens, and orient every session in a delivery
+### V26-3409. Hold a lead's stop while nobody listens, and orient every session in a delivery
 
-Lane 2, tier 1, after V26-3270 and HOOK-1. Test-first, per Decisions 6, 7 and 8. `skills/run-delivery/hooks.json` declares
+Lane 2, tier 1, after V26-3270 and V26-3407. Test-first, per Decisions 6, 7 and 8. `skills/run-delivery/hooks.json` declares
 `run-delivery.lead-may-stop` (`stop`) and `run-delivery.delivery-orient` (`session-start`), both for `claude-code`. Their scripts are
 `run_delivery.py hook lead-may-stop` and `run_delivery.py hook delivery-orient`, which read the payload and print the neutral verdict.
 Their ids in `.agents/run-delivery.json` are `lead.may-stop` and `delivery.orient`. Files: `skills/run-delivery/`,
@@ -367,9 +369,9 @@ Every role row below runs the hook script with a working directory different fro
 
 Sensors: `tests/test_run_delivery_hooks.py`, `tests/test_run_delivery.py`, `tests/test_hooks.py`, `scripts/validate-registry.py`.
 
-### HOOK-4. Apply the hooks candidate here and enforce the lead's wait
+### V26-3410. Apply the hooks candidate here and enforce the lead's wait
 
-Lane 1, tier 2, after HOOK-1, HOOK-2, V26-3270 and HOOK-3, once the lead has tagged and published the candidate (Decision 10).
+Lane 1, tier 2, after V26-3407, V26-3408, V26-3270 and V26-3409, once the lead has tagged and published the candidate (Decision 10).
 Test-first: `StandingBinding` rows in `tests/test_own_deliveries.py` pin `lead.may-stop: enforce` in `.agents/run-delivery.json`, and pin
 exactly Decision 4's two entries in the committed `.claude/settings.json`. Then the lane applies the candidate as
 `docs/own-deliveries.md` says, which writes those entries, and commits the generation, the settings file and the binding change together.
@@ -386,7 +388,7 @@ trusted. Before it hands off, the lane records the live check of the finish line
 
 ## Execution posture
 
-`test-first` for HOOK-1, V26-3270, HOOK-3 and HOOK-4. HOOK-2 is `test-first` for the hook exposure, and characterization-first for
+`test-first` for V26-3407, V26-3270, V26-3409 and V26-3410. V26-3408 is `test-first` for the hook exposure, and characterization-first for
 the `plan`, `diff` and receipt shapes it extends, pinned before they change. Lanes work to the focused lane profile, with no full suite
 in a lane. The queue runs the selected checks on the synced head, `fullHealth` runs after each merge, and the lead runs the full suite
 before tagging.
@@ -394,10 +396,10 @@ before tagging.
 ## Approval handoffs
 
 - The plan itself, before `lead-setup`. Approving it is the separately approved unit AGENTS.md requires.
-- Creating the epic and HOOK-1 to HOOK-4 in Linear from this plan's sections, moving V26-3270 here from V26-3306, and narrowing its title
-  and Scope 3 as Decision 9 says. The lead then replaces the HOOK keys in this plan with the tracker keys before `lead-setup`.
-- The minor release candidate's tag, and its apply here in HOOK-4.
-- Turning `lead.may-stop` to `enforce` in this repository (HOOK-4).
+- Creating the epic and V26-3407 to V26-3410 in Linear from this plan's sections, moving V26-3270 here from V26-3306, and narrowing its
+  title and Scope 3 as Decision 9 says. Done on 2026-11-11.
+- The minor release candidate's tag, and its apply here in V26-3410.
+- Turning `lead.may-stop` to `enforce` in this repository (V26-3410).
 - Nothing else is outward-facing beyond the merge queue's own merges, which the binding already authorizes.
 
 ## Plan review
