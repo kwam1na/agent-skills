@@ -150,6 +150,18 @@ def single(name: str, script: str, event: str = "stop", *, extra: dict[str, str]
     return {"alpha": ("alpha", ["claude-code", "codex"], manifest(hook("alpha", name, event, argv=argv)), scripts)}
 
 
+def _alive(pid: int) -> bool:
+    """Whether ``pid`` is a running process; a zombie waiting for its parent counts as stopped."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False)
+    return bool(state.stdout.strip()) and not state.stdout.strip().startswith("Z")
+
+
 def stderr_lines(result: subprocess.CompletedProcess[str]) -> list[str]:
     return [line for line in result.stderr.splitlines() if line]
 
@@ -364,7 +376,8 @@ class BudgetTests(InProcess):
         # The hook leaves a child behind that keeps the hook's stdout open. The
         # dispatcher must not wait for that pipe to close.
         script = ("import subprocess, sys, time\n"
-                  "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+                  "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+                  "open('child.pid', 'w').write(str(child.pid))\n"
                   "time.sleep(30)\n")
         repository = self.repository(single("holder", script), runtime=False)
         with mock.patch.multiple(hooks, OVERALL_BUDGET=3.0, HOOK_BUDGET=1.0, MINIMUM_START=0.5):
@@ -376,6 +389,12 @@ class BudgetTests(InProcess):
         self.assertEqual(len(errors), 1)
         self.assertIn("alpha.holder", errors[0])
         self.assertIn("timed out", errors[0])
+        # The child the hook left behind was stopped with it, not orphaned.
+        child = int((repository.root / "child.pid").read_text(encoding="utf-8"))
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and _alive(child):
+            time.sleep(0.05)
+        self.assertFalse(_alive(child), f"the hook's child {child} is still running")
 
     def test_the_real_budget_sits_under_the_entry_timeout(self) -> None:
         self.assertEqual((hooks.OVERALL_BUDGET, hooks.HOOK_BUDGET, hooks.MINIMUM_START), (25.0, 20.0, 2.0))
