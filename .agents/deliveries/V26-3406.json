@@ -33,7 +33,8 @@
         ".claude/settings.json",
         ".agents/run-delivery.json",
         "docs/own-deliveries.md",
-        "tests/test_own_deliveries.py"
+        "tests/test_own_deliveries.py",
+        "validation-inventory.json"
       ]
     },
     "lane-2": {
