@@ -43,7 +43,8 @@
         ".agents/orchestration.json",
         "tests/test_own_deliveries.py",
         "tests/test_compound_learning_corpus.py",
-        "docs/own-deliveries.md"
+        "docs/own-deliveries.md",
+        ".agent-skills/*"
       ]
     },
     "lane-2": {
@@ -304,12 +305,14 @@
     {
       "id": "approval-2",
       "text": "The major release candidate's tag, agreed with V26-3250's lead, and its apply here in V26-3333.",
-      "state": "waiting"
+      "state": "done",
+      "who": "the lead, under the operator's 2026-11-09 grant, which the operator restated as 'good to release'"
     },
     {
       "id": "approval-3",
       "text": "Creating the scheduled connector-check routine on the operator's account (V26-3083).",
-      "state": "waiting"
+      "state": "done",
+      "who": "the lead, under the operator's 2026-11-09 grant; the operator approved the task's tool prompt"
     }
   ],
   "outOfScope": [
