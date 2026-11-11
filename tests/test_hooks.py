@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -22,6 +21,7 @@ from pathlib import Path
 from unittest import mock
 
 from agent_skills import hooks
+from tests.corpus_copy import copy_corpus
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -87,8 +87,7 @@ class FixtureRepository:
         self.generation.mkdir(parents=True)
         (managed / "current").symlink_to(Path("generations") / GENERATION)
         if runtime:
-            shutil.copytree(ROOT / "agent_skills", self.generation / "agent_skills",
-                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+            copy_corpus(self.generation / "agent_skills", source=ROOT / "agent_skills")
             (self.generation / "__main__.py").write_text(
                 "import os, sys\nsys.path[0] = os.path.realpath(sys.path[0])\n"
                 "from agent_skills.cli import main\nraise SystemExit(main())\n", encoding="utf-8")

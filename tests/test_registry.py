@@ -507,6 +507,22 @@ def test_hook_manifest_refusals_each_have_their_own_code() -> None:
     print("verified rejection: each hook manifest refusal by its own code")
 
 
+def test_each_hook_rule_must_stay_in_the_inventory() -> None:
+    for rule_id in ("hooks.argv", "hooks.duplicate_id", "hooks.event", "hooks.host", "hooks.schema"):
+        def mutate(root: Path, rule_id: str = rule_id) -> None:
+            path = root / "validation-inventory.json"
+            inventory = json.loads(path.read_text(encoding="utf-8"))
+            inventory["rules"] = [rule for rule in inventory["rules"] if rule["id"] != rule_id]
+            write_json(path, inventory)
+
+        result = with_copy(mutate)
+        require(result.returncode == 1, result.stdout)
+        findings = json.loads(result.stdout)["findings"]
+        require({"artifact": rule_id, "exitClass": "invalid-corpus", "message": "checked rule is absent from inventory",
+                 "ruleId": "inventory.anti_vacuity"} in findings, result.stdout)
+    print("verified rejection: a hook rule missing from the inventory")
+
+
 def main() -> int:
     tests = [
         test_missing_provenance_rejects,
@@ -533,6 +549,7 @@ def main() -> int:
         test_unmodified_persona_set_is_accepted,
         test_a_hook_manifest_validates,
         test_hook_manifest_refusals_each_have_their_own_code,
+        test_each_hook_rule_must_stay_in_the_inventory,
     ]
     for test in tests:
         test()

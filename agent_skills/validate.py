@@ -25,6 +25,7 @@ PROVENANCE_VERSIONS = {"agent-skills-provenance/1", "agent-skills-provenance/2"}
 RULE_IDS = (
     "catalog.complete", "core.boundary", "core.leakage", "dependency.cycle",
     "dependency.reference", "dependency.required_closure", "document.canonical",
+    "hooks.argv", "hooks.duplicate_id", "hooks.event", "hooks.host", "hooks.schema",
     "inventory.anti_vacuity", "path.case_unique", "path.safe",
     "path.symlink_contained", "persona.manifest", "persona.neutrality",
     "profile.closure", "profile.reference",
