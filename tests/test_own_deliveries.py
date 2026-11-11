@@ -39,11 +39,33 @@ GUARDS = ["tests.test_linear_qualification", "tests.test_registry"]
 # Modules that run as scripts, holding no unittest case.
 SCRIPT_MODULES = ("tests.test_registry",)
 STATE_TOOL = ".agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py"
+PUBLISHER = ".agent-skills/current/skills/run-delivery/scripts/tracker_publisher.py"
 
 
 def _git(cwd: Path, *args: str) -> str:
     identity = ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false"]
     return subprocess.run(["git", *identity, *args], cwd=cwd, check=True, capture_output=True, text=True).stdout
+
+
+def _generation_module(name: str, path: str):
+    """A script of the installed generation, imported as its own commands run it, without writing bytecode into it."""
+    import importlib.util
+    previous, folder = sys.dont_write_bytecode, str((ROOT / path).parent)
+    sys.dont_write_bytecode = True
+    sys.path.insert(0, folder)
+    try:
+        spec = importlib.util.spec_from_file_location(name, ROOT / path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    finally:
+        sys.dont_write_bytecode = previous
+        sys.path.remove(folder)
+    return module
+
+
+def _section(heading: str, following: str) -> str:
+    text = " ".join((ROOT / "docs/own-deliveries.md").read_text(encoding="utf-8").split())
+    return text[text.index(f"## {heading}"):text.index(f"## {following}")]
 
 
 class FreshClone(unittest.TestCase):
@@ -130,6 +152,24 @@ class StandingBinding(unittest.TestCase):
         # Any later delivery's tickets, not this one's.
         pattern = binding["state"]["forgeSnapshot"]["argv"]
         self.assertEqual(pattern[pattern.index("--subject-pattern") + 1], "V26-[0-9]+")
+
+    def test_the_tracker_publisher_posts_linear_updates_and_no_host_publisher_is_left(self) -> None:
+        binding = json.loads((ROOT / ".agents/orchestration.json").read_text(encoding="utf-8"))
+        publishers = binding["state"]["publishers"]
+        # The entry lead-setup adds, from the generation this repository runs, and nothing else.
+        tracker = _generation_module("own_tracker_publisher", PUBLISHER)
+        self.assertEqual(publishers, [tracker.publisher_entry(PUBLISHER)])
+        self.assertEqual(publishers[0]["argv"][:3], ["python3", "-B", PUBLISHER])
+        self.assertFalse([entry for entry in publishers if "kind" in entry or "argv" not in entry], publishers)
+        # The Linear snapshot implies the adapter, reading its token from the variable the snapshot names.
+        flow = json.loads((ROOT / ".agents/run-delivery.json").read_text(encoding="utf-8"))
+        self.assertNotIn("tracker", flow)
+        conf = tracker.settings(ROOT, flow, binding)
+        self.assertEqual((conf["mode"], conf["problems"], conf["unrunnable"], conf["publisher"]),
+                         ("publisher", [], [], "tracker"), conf)
+        self.assertEqual((conf["adapter"]["name"], conf["adapter"]["tokenEnv"]), ("linear", "LINEAR_API_KEY"), conf)
+        snapshot = binding["state"]["trackerSnapshot"]["argv"]
+        self.assertEqual(snapshot[snapshot.index("--token-env") + 1], "LINEAR_API_KEY")
 
     def test_the_candidate_step_takes_the_key_only_where_a_title_opens_with_it(self) -> None:
         def candidate(key: str, *titles: str) -> subprocess.CompletedProcess:
@@ -338,6 +378,58 @@ class StandingBinding(unittest.TestCase):
         for path in (".orchestration/lanes/x", ".orchestration/state/state.json", ".worktrees/x", ".claude/worktrees/x"):
             done = subprocess.run(["git", "check-ignore", "-q", "--no-index", path], cwd=ROOT)
             self.assertEqual(done.returncode, 0, path)
+
+
+class TrackerUpdatesAndCredentials(unittest.TestCase):
+    """The document says what the switched binding does: the tracker publisher posts with LINEAR_API_KEY, and an agent
+    shell gets the key the way the operator's never reaches it."""
+
+    def test_nothing_says_linear_is_reached_only_through_the_host(self) -> None:
+        text = " ".join((ROOT / "docs/own-deliveries.md").read_text(encoding="utf-8").split()).lower()
+        for phrase in ("reachable only through the host", "only through the host's connector", "only through the host's tools",
+                       "host-only tracker", "by this corpus's rule", "linear needs a host publisher", "host publisher",
+                       "host outbox", "outbox", "the host's tools", "with those tools", "acks", "`ack`"):
+            with self.subTest(phrase=phrase):
+                self.assertFalse(phrase in text, phrase)
+
+    def test_the_tracker_publisher_posts_with_the_linear_key(self) -> None:
+        section = _section("Tracker updates", "Checks")
+        self.assertIn("The binding names run-delivery's tracker publisher, which posts this repository's deliveries' "
+                      "Linear updates and moves through Linear's API with `LINEAR_API_KEY`, with no lead action.", section)
+        self.assertIn("A record a host-mode generation opened is seeded on the publisher's first run: every entry at or "
+                      "below the `journalThrough` the last acknowledgement left in `published.json` is skipped, and "
+                      "nothing is posted twice.", section)
+        self.assertIn("markers --ticket", section)
+
+    def test_the_credentials_give_an_agent_shell_the_key_from_the_keychain(self) -> None:
+        section = _section("Credentials", "Tracker updates")
+        self.assertIn("`LINEAR_API_KEY`, a personal key from Linear's settings, for the tracker publisher and the tracker "
+                      "snapshot.", section)
+        self.assertIn("An agent's shell never sees a variable exported in the operator's terminal.", section)
+        self.assertIn('security add-generic-password -a "$USER" -s LINEAR_API_KEY -w', section)
+        self.assertIn('export LINEAR_API_KEY="$(security find-generic-password -a "$USER" -s LINEAR_API_KEY -w)"', section)
+        self.assertIn('export GITHUB_TOKEN="$(gh auth token)"', section)
+        self.assertIn("`~/.zshenv`", section)
+        self.assertIn("zsh reads `~/.zshenv` for every shell, the non-interactive one an agent's tool runs included, "
+                      "and `~/.zshrc` only for an interactive one.", section)
+
+
+class LeadChoosesChecksAtAcceptance(unittest.TestCase):
+    """Under selection.lead the lead names a candidate's checks, or the fallback, as it accepts it; a lane names the
+    checks it ran as it hands off."""
+
+    def test_the_checks_section_says_acceptance_chooses_the_checks_or_the_full_suite(self) -> None:
+        section = _section("Checks", "Later deliveries")
+        self.assertIn("lead-accept <key> --checks tests.test_run_delivery,tests.test_lead_wait --reason \"<why these "
+                      "cover the diff>\"", section)
+        self.assertIn("`lead-accept` refuses a candidate with neither `--checks` nor `--full-suite`, and prints a "
+                      "proposed `--checks`", section)
+        self.assertIn("`--full-suite` accepts it on the fallback, the whole suite, as the lead's recorded decision.",
+                      section)
+        self.assertIn("A lane names the catalogue ids it ran with `handoff --checks`", section)
+        # The selection is made at acceptance, not by a separate call to the state tool.
+        self.assertNotIn(" select --subject", section)
+        self.assertNotIn("With no selection the queue runs the whole suite.", section)
 
 
 if __name__ == "__main__":
