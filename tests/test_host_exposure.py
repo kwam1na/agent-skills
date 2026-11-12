@@ -741,13 +741,11 @@ class ClaudeHookExposureTests(LifecycleFixture, unittest.TestCase):
                         if phase == boundary:
                             raise RuntimeError(f"interrupted:{phase}")
 
-                    try:
+                    with self.assertRaisesRegex(RuntimeError, f"interrupted:{boundary}"):
                         if operation == "install":
                             lifecycle.install(*self.stop_a, maintainer=True, fault=interrupt)
                         else:
                             lifecycle.remove(maintainer=True, fault=interrupt)
-                    except RuntimeError:
-                        pass
                     lifecycle.recover(maintainer=True)
                     self.assertEqual(self.owned_events(), self.receipt_events())
                     if not (self.repository / ".agent-skills" / "active.json").exists():
@@ -816,7 +814,12 @@ class ClaudeHookExposureTests(LifecycleFixture, unittest.TestCase):
                 self.assertFalse((self.repository / ".claude" / "skills").exists())
 
     def test_a_settings_change_between_preflight_and_the_write_ends_at_the_prior_endpoint(self) -> None:
-        for start, change in ((None, "rewrite"), ("v1", "rewrite"), ("v1", "delete")):
+        # Each racer's file is one restoring the prior entries with settings reconciled would change or refuse:
+        # not an object, and an owned entry the prior generation doesn't declare.
+        racer = {"rewrite": {"racer": True}, "non-object": [], "owned entry": {"hooks": {"Stop": [owned_entry("stop")]}}}
+        racer_bytes = {name: (json.dumps(value, indent=2) + "\n").encode() for name, value in racer.items()}
+        for start, change in ((None, "rewrite"), ("v1", "rewrite"), ("v1", "delete"), ("v1", "non-object"),
+                              ("v1", "owned entry")):
             with self.subTest(start=start, change=change):
                 self.fresh()
                 lifecycle = Lifecycle(self.repository)
@@ -841,7 +844,7 @@ class ClaudeHookExposureTests(LifecycleFixture, unittest.TestCase):
                     if change == "delete":
                         self.settings.unlink()
                     else:
-                        self.write_settings({"racer": True})
+                        self.write_settings(racer[change])
 
                 with self.assertRaisesRegex(ValueError, "exposure-conflict: .claude/settings.json changed"):
                     lifecycle.update(*self.stop_a, maintainer=True, fault=race) if start else lifecycle.install(
@@ -849,7 +852,7 @@ class ClaudeHookExposureTests(LifecycleFixture, unittest.TestCase):
                 if change == "delete":
                     self.assertFalse(self.settings.exists(), "the deletion stands")
                 else:
-                    self.assertEqual(self.read_settings(), {"racer": True})
+                    self.assertEqual(self.settings.read_bytes(), racer_bytes[change], "the racer's file is untouched")
                 self.assertFalse(lifecycle.journal_path.exists())
                 if start:
                     self.assertEqual((self.repository / ".agent-skills" / "active.json").read_bytes(), prior_receipt)
@@ -863,6 +866,59 @@ class ClaudeHookExposureTests(LifecycleFixture, unittest.TestCase):
                     for host in HOSTS
                 }
                 self.assertEqual(links, prior_links)
+
+    def test_a_settings_change_before_the_deletion_refuses_and_keeps_the_racers_file(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.stop_a, maintainer=True)
+        self.assertTrue(self.receipt()["hooks"]["created"])
+        prior_receipt = (self.repository / ".agent-skills" / "active.json").read_bytes()
+        racer = {"model": "opus", "hooks": {"Stop": [owned_entry("stop")]}}
+
+        def race(phase: str) -> None:
+            if phase == "exposing-claude-code":
+                self.write_settings(racer)
+
+        with self.assertRaisesRegex(ValueError, "exposure-conflict: .claude/settings.json changed"):
+            lifecycle.update(*self.v1, maintainer=True, fault=race)
+        self.assertEqual(self.read_settings(), racer)
+        self.assertEqual((self.repository / ".agent-skills" / "active.json").read_bytes(), prior_receipt)
+        self.assertFalse(lifecycle.journal_path.exists())
+
+    def test_preflight_refuses_a_settings_path_that_is_not_a_plain_file(self) -> None:
+        cases = ("settings is a symlink", "settings is a directory", ".claude is a symlink", ".claude is a file")
+        messages = {
+            "settings is a symlink": "exposure-conflict: .claude/settings.json is a symlink; replace it",
+            "settings is a directory": "exposure-conflict: .claude/settings.json is not a file; replace it",
+            ".claude is a symlink": "exposure-conflict: .claude is not a directory; make it a plain directory",
+            ".claude is a file": "exposure-conflict: .claude is not a directory; make it a plain directory",
+        }
+        for case in cases:
+            with self.subTest(case=case):
+                self.fresh()
+                elsewhere = self.base / f"elsewhere-{self.fresh_count}"
+                elsewhere.mkdir()
+                (elsewhere / "settings.json").write_text("{}\n", encoding="utf-8")
+                folder = self.repository / ".claude"
+                if case == "settings is a symlink":
+                    folder.mkdir()
+                    self.settings.symlink_to(elsewhere / "settings.json")
+                elif case == "settings is a directory":
+                    self.settings.mkdir(parents=True)
+                elif case == ".claude is a symlink":
+                    folder.symlink_to(elsewhere, target_is_directory=True)
+                else:
+                    folder.write_text("not a folder\n", encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, messages[case]):
+                    Lifecycle(self.repository).install(*self.stop_a, maintainer=True)
+                self.assertFalse((self.repository / ".agent-skills").exists())
+                self.assertEqual((elsewhere / "settings.json").read_text(encoding="utf-8"), "{}\n")
+
+    def test_writing_entries_keeps_the_files_mode(self) -> None:
+        self.write_settings({"model": "opus"})
+        self.settings.chmod(0o600)
+        Lifecycle(self.repository).install(*self.stop_a, maintainer=True)
+        self.assertEqual(self.settings.stat().st_mode & 0o7777, 0o600)
+        self.assertEqual(self.owned_events(), ["stop"])
 
     # 5. The installed command ------------------------------------------------
 
@@ -954,6 +1010,19 @@ class ClaudeHookExposureTests(LifecycleFixture, unittest.TestCase):
         self.assertEqual(status["blockers"], [])
         self.assertEqual(status["lifecycle"], "current")
 
+        self.write_settings([])
+        self.assertEqual(lifecycle.status().as_dict()["blockers"], ["local-divergence: hooks"])
+
+    def test_an_unreadable_settings_file_is_no_hook_divergence_when_no_entries_are_expected(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.v1, maintainer=True)
+        for contents in ("[]\n", "{not json\n", '{"hooks": []}\n'):
+            with self.subTest(contents=contents):
+                self.settings.parent.mkdir(exist_ok=True)
+                self.settings.write_text(contents, encoding="utf-8")
+                status = lifecycle.status().as_dict()
+                self.assertEqual((status["blockers"], status["lifecycle"]), ([], "current"))
+
     # 8. Adoption -------------------------------------------------------------
 
     def test_adopting_a_hook_bearing_skill_writes_no_entry_while_installing_it_does(self) -> None:
@@ -968,6 +1037,11 @@ class ClaudeHookExposureTests(LifecycleFixture, unittest.TestCase):
         self.assertNotIn("hooks", self.receipt())
         self.assertEqual(lifecycle.plan(*self.stop_b)["hooks"], {"added": [], "removed": []})
         lifecycle.update(*self.stop_b, maintainer=True)
+        self.assertFalse(self.settings.exists())
+        self.assertNotIn("hooks", self.receipt())
+        lifecycle.rollback(maintainer=True)
+        self.assertEqual(self.receipt()["release"]["releaseId"], "core-stop-a")
+        self.assertEqual(self.receipt()["adoption"]["skill"], HOOK_SKILL)
         self.assertFalse(self.settings.exists())
         self.assertNotIn("hooks", self.receipt())
 

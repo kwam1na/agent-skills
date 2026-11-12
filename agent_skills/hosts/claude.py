@@ -195,7 +195,7 @@ class HookSettings:
             document["hooks"] = hooks
         else:
             document.pop("hooks", None)
-        if not document and (delete_if_empty or snapshot.contents is None):
+        if not document and delete_if_empty:
             return None
         return document
 
