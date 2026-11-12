@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -B \"${CLAUDE_PROJECT_DIR}/.agent-skills/current/__main__.py\" hook claude-code session-start || exit 1",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -B \"${CLAUDE_PROJECT_DIR}/.agent-skills/current/__main__.py\" hook claude-code stop || exit 1",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

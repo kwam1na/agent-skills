@@ -133,6 +133,47 @@ integration base changes `base.ref` on that base, in that delivery's first commi
 and removes the change when it integrates. Its record lives in the lead's checkout,
 `.orchestration/lanes/<delivery>/.orchestration/state`, which git ignores.
 
+## Hooks
+
+The installed generation puts two entries into the committed `.claude/settings.json`,
+one under `Stop` and one under `SessionStart`. Each runs the generation's hook
+dispatcher:
+
+```bash
+python3 -B "${CLAUDE_PROJECT_DIR}/.agent-skills/current/__main__.py" hook claude-code stop || exit 1
+```
+
+The dispatcher runs the hooks run-delivery declares:
+
+- **`lead.may-stop`, on every stop.** It holds a lead's stop once while a lane works
+  or a candidate is queued and no `lead-wait` listens. The hold names the delivery and
+  its exact `lead-wait` command, and the delivery's journal records it as one
+  `hook.held`. A lane session, a session outside a delivery, and a lead with a
+  listener stop freely. This repository sets it to `enforce` in
+  `.agents/run-delivery.json`, where the default is `warn`.
+- **`delivery.orient`, on every session start, resume, clear, compact and fork.** It
+  tells a session in a delivery its role and next command. It only ever allows.
+
+The entries belong to the generation, so an update rewrites them and nothing else
+edits them by hand. [The product generation guide](product-generation.md#claude-code-hook-entries)
+says what an apply writes, and that a downgrade goes through `rollback`.
+
+To turn a hook off, or to `warn`, for one delivery, set it in `hooks` in
+`.agents/run-delivery.json` on that delivery's base. Run-delivery reads the
+configuration from there:
+
+```json
+"hooks": {"lead.may-stop": "off"}
+```
+
+The standing base is `main`, so a change there reaches every delivery. A delivery
+that lands through its own integration base changes `hooks` on that base in its
+first commit, as it does `base.ref`, and removes the change when it integrates.
+`doctor` names any unknown hook id or mode.
+
+Claude Code runs a project's hooks only once the folder is trusted. Lead each
+delivery from a trusted checkout. A `claude -p` session counts as trusted.
+
 ## Setting a machine up
 
 ```bash
