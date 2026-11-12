@@ -61,8 +61,8 @@ replaced with them word for word, so `lead-setup` drafts them from the tracker s
    - The port is derived from the repository's top-level path and the delivery key: the first eight bytes of the sha256 of
      `<path>\0<key>`, read as a big-endian integer, modulo 10000, plus 20000. The same delivery in the same checkout always asks for the
      same port. Two deliveries can still derive the same port; the fallback below handles that.
-   - The supervisor records the port it bound in `live.json` in the delivery's state directory: `port`, the view's `pid`, the path of the
-     `render_state.py` it runs, and when it started. A restart asks for the recorded port before the derived one.
+   - The supervisor records the port it bound in `live.json` in the delivery's state directory: `port`, the view's `pid`, the resolved path
+     (symlinks followed) of the `render_state.py` it runs, and when it started. A restart asks for the recorded port before the derived one.
    - When that port is held by a process that isn't this delivery's view, the supervisor binds a free port instead and records it. It
      says so on its own output and in the next status line, naming the port it wanted and who holds it (`port_holders`). Because the new
      port is recorded, later restarts keep it.
@@ -97,6 +97,8 @@ replaced with them word for word, so `lead-setup` drafts them from the tracker s
    - Down with the view serving: `supervisor: down (<why>); live view <address>; restart it with ... lead-run --resume`, reading the
      address from `live.json`.
    - Down with the view gone too: the same line without an address.
+   - When `closed_status` has a line (the delivery closed, or a close stopped partway), the status line is that line, as today; the
+     down forms apply only when it has none.
    - The line is `supervisor_line`, which every lead command but `lead-setup` and `lead-init` already prints, so one change reaches all.
 6. **"The Node a process uses" is the first `node` on that process's `PATH`.** Children resolve `node` through `PATH`, so an nvm Node
    further down doesn't count.
@@ -123,7 +125,8 @@ replaced with them word for word, so `lead-setup` drafts them from the tracker s
 9. **The queue records each check's Node, and marks one below the minimum.**
    - Each check result entry in the record gains an optional `node` member: the version of the first `node` on the `PATH` the check ran
      with, after the binding's and its profile's environment. It is `null` when there was none.
-   - When the runtime declares a `nodeMinimum` and `node` is below it, the entry also carries `nodeBelowMinimum: true`. The check's own
+   - When the runtime declares a `nodeMinimum` and `node` is below it, the entry also carries `nodeBelowMinimum: true`. Otherwise,
+     including a `null` `node`, the entry has no such member. The check's own
      verdict is unchanged: the mark explains a failure, it doesn't cause one.
    - orchestrate-work's state schema gains both members as optional, `node` a string or `null` and `nodeBelowMinimum` a boolean, so
      existing records still validate.
@@ -171,7 +174,8 @@ Acceptance criteria:
 10. A queue check whose profile environment puts a different `node` first on `PATH` records that node's version, not the queue's. With no
     `node` on that `PATH`, it records `null`.
 11. A queue check whose recorded `node` is below the minimum carries `nodeBelowMinimum: true`, and its pass or failure is what the check
-    itself returned.
+    itself returned. A check whose recorded `node` meets the minimum, one whose `node` is `null`, and any check under a generation whose
+    runtime declares no `nodeMinimum` carry no `nodeBelowMinimum` member.
 12. A record without `node` on its check results still validates. One whose `node` is neither a string nor `null` is refused.
 13. The live view shows a check's Node in its detail, and the below-minimum mark when it is set.
 14. A generation whose runtime declares no `nodeMinimum` makes no Node refusal in `lead-run`, `lead-init` or `lane-start`.
@@ -189,8 +193,8 @@ Acceptance criteria:
 1. Stopping the supervisor and resuming it with `lead-run --resume` keeps the same live view address, and the view is the same process.
 2. A resume under a generation whose `render_state.py` path differs from the one `live.json` records replaces the view, keeping the
    address.
-3. The derived port for a fixed top-level path and key equals a literal computed from Decision 2's rule. The same key under a different
-   top-level path derives a different port. Deriving again with no `live.json` gives the same port.
+3. The derived port for a fixed top-level path and key equals a literal computed from Decision 2's rule. The same key under a second fixed
+   top-level path derives the literal Decision 2's rule gives for that path, which differs from the first. Deriving again with no `live.json` gives the same port.
 4. With the supervisor and its view both stopped, and `live.json` recording a port other than the derived one, as after a fallback, a
    restart binds the recorded port.
 5. With that port held by another process, the restart binds a free port, records it, and says on its output and in the next status line
@@ -209,8 +213,9 @@ Acceptance criteria:
     - after `lead-close`'s stop request, `held`;
     - after a SIGTERM, `signal`, naming it.
 11. The status line names the live view's address while the view serves, both with the supervisor running and down. With the supervisor
-    and its view both stopped, it reads `supervisor: down (<why>)`, names `lead-run --resume`, and names no address. This holds for at
-    least `lead-assign`, `lead-accept` and `lead-reconcile`.
+    and its view both stopped in a delivery that is not closed, it reads `supervisor: down (<why>)`, names `lead-run --resume`, and names
+    no address. This holds for at least `lead-assign`, `lead-accept` and `lead-reconcile`. A closed or partway-closed delivery's line is
+    unchanged.
 12. The supervisor's own close-out and `lead-close` each stop the view last, by its recorded pid. The view was listening before; afterwards
     its pid is gone and nothing listens on its port.
 13. `lead-init --replace` stops the replaced delivery's view.
