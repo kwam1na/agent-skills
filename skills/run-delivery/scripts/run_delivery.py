@@ -5993,8 +5993,8 @@ def pr_review_acceptance(conf: dict, url: str, head: str, recorded: dict,
             # silent. Otherwise the lane recorded it silent and handed off as if it weren't.
             if not on_silent:
                 problems.append(f"the lane recorded {rid} silent at {head[:10]} but didn't hand off blocked on it")
-        elif on_silent and pr_review_gates.unread_when_stopped(entry):
-            pass  # not yet read when a reviewer's errored report stopped the read: the block is the lead's decision
+        elif on_silent and pr_review_gates.unread_when_stopped(entry) and live["state"] != "current":
+            pass  # not yet in when an errored report stopped the read, nor since: the block is the lead's decision
         elif entry.get("state") != "current":
             if reviewer["required"]:
                 problems.append(f"{rid} is required, but the lane recorded it {entry.get('state')}")

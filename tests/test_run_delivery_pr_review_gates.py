@@ -648,6 +648,14 @@ class ReportEndToEndTests(PrReviewCase):
         code, out = self.accept()
         self.assertEqual(code, 1, out)
         self.assertIn("the lane blocked 'pr-review'", out)
+        # The unread reviewer has since posted, the report still FAILED: the lane must read and triage it first.
+        self.answer([PASSED, LINT], [by_codex(body="Codex says: P1 bug in x", at="2026-01-01T00:03:00")],
+                    reports=[insight("FAILED")])
+        code, out = self.flow("lead-accept", "FX-2", "--accept-blocked", "pr-review", cwd=self.fx.main)
+        self.assertEqual(code, 1, out)
+        self.assertIn("codex is required, but the lane recorded it pending", out)
+        # Still not in: the lead accepts the block.
+        self.answer([PASSED, {**LINT, "state": "pending"}], [], reports=[insight("FAILED")])
         code, out = self.flow("lead-accept", "FX-2", "--accept-blocked", "pr-review", cwd=self.fx.main)
         self.assertEqual(code, 0, out)
 
