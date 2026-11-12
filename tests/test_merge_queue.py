@@ -2776,6 +2776,21 @@ class CheckNodeTests(MergeQueueTestCase):
             self.assertEqual([check for check, entry in found.items() if "nodeBelowMinimum" in entry], [])
             self.assertEqual(found["old-fails"]["state"], "failed")
 
+    def test_a_node_is_asked_its_version_in_the_folder_the_check_ran_in(self) -> None:
+        """A version manager's shim picks its Node by the folder it runs in: here a pin the candidate adds."""
+        shim = self.directory / "shim"
+        shim.mkdir()
+        (shim / "node").write_text("#!/bin/sh\nif [ -f .node-pin ]; then echo v$(cat .node-pin); else echo v22.6.0; fi\n")
+        (shim / "node").chmod(0o755)
+        profiles = {"default": {"environment": {"MQ_PROFILE_HEAD": "{head}"}},
+                    "shim": {"environment": {"PATH": f"{shim}{os.pathsep}{os.environ.get('PATH', '')}"}}}
+        adopter = self.adopter({"profiles": profiles, "alwaysRun": [check_entry("pinned", environmentProfile="shim")]})
+        self.candidate(adopter, {"src/app.txt": "app two\n", ".node-pin": "20.1.0\n"})
+        with mock.patch.object(queue, "RUNTIME_DESCRIPTOR", self.runtime("22.6.0")):
+            self.run_queue(adopter, "feature")
+        row = {row["id"]: row for row in adopter.item("feature")["checks"]}["pinned"]
+        self.assertEqual((row["node"], row.get("nodeBelowMinimum")), ("20.1.0", True), row)
+
     def test_a_number_compares_number_by_number(self) -> None:
         self.assertEqual(queue.node_fields("100.0.0", (9, 0, 0)), {"node": "100.0.0"})
         self.assertEqual(queue.node_fields("9.0.0", (9, 0, 0)), {"node": "9.0.0"})

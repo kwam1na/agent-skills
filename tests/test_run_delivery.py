@@ -9481,6 +9481,9 @@ class NodeAndPythonMinimumTests(unittest.TestCase):
              ["is Python 3.10.12, below 3.11", "fix: put Python 3.11 or newer's bin folder first on PATH"]),
             ("the interpreter running the tool below 3.11", node_environment(fx, fx.env, "22.6.0"), "3.10.4",
              ["is 3.10.4, below 3.11", "fix: run it with Python 3.11 or newer"]),
+            ("no python3 on PATH", {**node_environment(fx, fx.env, "22.6.0"), "PATH": os.pathsep.join(
+                [str(fx.tmp / "stubs/node-22.6.0-python-None"), path_without(fx.tmp / "stubs/without-python3", "python3")])},
+             None, ["no python3 on PATH; fix: put Python 3.11 or newer's bin folder first on PATH"]),
         ]
         for label, env, interpreter, said in cases:
             with self.subTest(label):
@@ -9510,6 +9513,34 @@ class NodeAndPythonMinimumTests(unittest.TestCase):
                 self.assertFalse((fx.tmp / "flow-log").exists() and any((fx.tmp / "flow-log").iterdir()), out)
         code, out = fx.flow("lead-init", cwd=fx.main, env=node_environment(fx, fx.env, "22.6.0"))
         self.assertEqual(code, 0, out)
+
+    def test_a_node_first_on_path_that_prints_no_version_is_refused(self) -> None:
+        fx = self.delivery(init=False)
+        silent = fx.tmp / "stubs/silent"
+        stub_program(silent, "node", "")
+        env = {**node_environment(fx, fx.env, "22.6.0"), "PATH": f"{silent}{os.pathsep}{os.environ.get('PATH', '')}"}
+        said = f"{silent / 'node'}, the first node on PATH, from the PATH entry {silent}, prints no version"
+        code, out = fx.flow("doctor", "--offline", cwd=fx.main, env=env)
+        self.assertEqual(doctor_lines(out)["Node"][0], "wrong", out)
+        self.assertIn(said, doctor_lines(out)["Node"][1])
+        code, out = fx.flow("lead-init", cwd=fx.main, env=env)
+        self.assertEqual(code, 2, out)
+        self.assertIn(f"lead-init refuses: {said}", out)
+        self.assertFalse((fx.tmp / "record").exists(), out)
+
+    def test_the_installed_queue_reads_its_generation_s_node_minimum(self) -> None:
+        """The queue's mark depends on finding the runtime from where its script really sits in an installed
+        generation, unpatched."""
+        scripts = self.generation / "skills/orchestrate-work/scripts"
+        probe = ("import json, sys; sys.path.insert(0, sys.argv[1]); import merge_queue as q; "
+                 "print(json.dumps([str(q.RUNTIME_DESCRIPTOR), q.node_minimum()]))")
+        done = subprocess.run([sys.executable, "-B", "-c", probe, str(scripts)], capture_output=True, text=True,
+                              env=clean_environment(), cwd=tempfile.gettempdir(), timeout=120)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        descriptor, minimum = json.loads(done.stdout)
+        self.assertEqual(Path(descriptor), self.generation / "runtime/runtime.json")
+        wanted = json.loads((self.generation / "runtime/runtime.json").read_text())["nodeMinimum"]
+        self.assertEqual(minimum, [int(n) for n in wanted.split(".")])
 
     def test_doctor_judges_the_node_first_on_path_and_names_the_nvm_folder_to_put_first(self) -> None:
         fx = self.delivery(init=False)

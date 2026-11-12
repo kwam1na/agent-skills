@@ -667,14 +667,16 @@ def node_minimum() -> tuple[int, ...] | None:
     return version_numbers(wanted) if isinstance(wanted, str) else None
 
 
-def node_on(environment: dict[str, str]) -> str | None:
-    """The version of the first `node` on an environment's PATH, as `node --version` prints it less its `v`; None
-    when that PATH holds no `node`, or the one there prints nothing."""
+def node_on(environment: dict[str, str], cwd: Path) -> str | None:
+    """The version of the first `node` on an environment's PATH, as `node --version` prints it less its `v`, asked in
+    `cwd`, the check's own folder, where a version manager's shim picks the Node it runs; None when that PATH holds no
+    `node`, or the one there prints nothing."""
     node = shutil.which("node", path=environment.get("PATH", ""))
     if node is None:
         return None
     try:
-        done = subprocess.run([node, "--version"], env=environment, capture_output=True, text=True, timeout=30)
+        done = subprocess.run([node, "--version"], cwd=cwd, env=environment, capture_output=True, text=True,
+                              timeout=30)
     except (OSError, subprocess.SubprocessError):
         return None
     said = done.stdout.strip()
@@ -2115,11 +2117,11 @@ class Runner:
     def profile_environment(self, check: dict) -> dict[str, str]:
         return self.binding["profiles"].get(check.get("environmentProfile", ""), {"environment": {}})["environment"]
 
-    def check_node(self, check: dict, context: Context) -> str | None:
+    def check_node(self, check: dict, checkout: Path, context: Context) -> str | None:
         """The Node a check runs: the first `node` on the PATH it gets, after the binding's and its profile's
-        environment, which may put another first."""
+        environment, which may put another first, asked in the folder the check ran in."""
         extra = {key: context.element(value) for key, value in self.profile_environment(check).items()}
-        return node_on(self.environment(extra))
+        return node_on(self.environment(extra), inside(checkout, check["cwd"]) or checkout)
 
     def run_checks(
         self, subjects: list[str], checks: list[dict], checkout: Path, context: Context, result: Result,
@@ -2153,7 +2155,7 @@ class Runner:
             state = "timed_out" if completed.timed_out else "passed" if completed.returncode == 0 else "failed"
             record = records[check["id"]]
             record.update(state=state, finishedAt=now())
-            node = node_fields(self.check_node(check, context), minimum)
+            node = node_fields(self.check_node(check, checkout, context), minimum)
             record.update(node)
             entry = {"id": check["id"], "state": state, "exitCode": completed.returncode,
                      "seconds": round(completed.seconds, 3), **node}
