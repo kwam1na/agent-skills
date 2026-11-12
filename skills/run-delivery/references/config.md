@@ -171,6 +171,8 @@ checks may need no file at all.
   inside it. After it, an optional reviewer with no current review is `absent`; a required one stays `pending`. Before
   it, or while any check is pending, a reviewer with no current review is `pending`. `pr-review --wait` waits until none
   is pending and no check is, or until `waitSeconds`; without `--wait`, it reads once. A failed check refuses at once.
+  Every wait reads its time, sleeps and poll interval through one clock, which `RUN_DELIVERY_CLOCK` replaces with
+  a file's for the tool's own tests; never set it in a delivery.
 - **What the adapter must return.** A reviewer with `account` needs `account` on each comment from `reviews`; a gate
   `"approval"` needs `approvals`; `report` needs `reports`. A member the adapter doesn't return at all is refused,
   naming it; one returned empty is not. The single `{author}` shape reads none of them.

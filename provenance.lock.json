@@ -1046,7 +1046,7 @@
         },
         {
           "path": "skills/run-delivery/references/config.md",
-          "sha256": "4fb24ccb4e3cbdf54a4cc0ae19d1a4608ef6c4b256fb9d3628fb403f695699f3"
+          "sha256": "03fc4ac781b19500bbfdddb0f009abbf744ea64e9c9fb63791afe882c0c8db89"
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
