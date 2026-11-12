@@ -857,8 +857,8 @@ never disagree:
   works or a candidate is queued and no lease is live, and every lead command's status line says the lead isn't
   listening. A running `lead-wait` clears both.
 
-Codex documents hooks of its own, but this generation installs none there, so on Codex the printed command, the
-status line and "Needs you" are what keep the rule.
+On a host whose own hooks this generation doesn't install, the printed command, the status line and "Needs you"
+are what keep the rule.
 
 `wait` reads the record and the machine only, writes nothing but its own `--output`
 file, and reads no CI or forge. It returns on the first thing needing the lead:

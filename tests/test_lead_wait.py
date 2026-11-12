@@ -826,6 +826,7 @@ class RealMachineTests(RecordCase):
 
 RUN_DELIVERY = ROOT / "skills/run-delivery/scripts/run_delivery.py"
 RUN_DELIVERY_SKILL = ROOT / "skills/run-delivery/SKILL.md"
+ADOPTING = ROOT / "skills/run-delivery/references/adopting.md"
 LEASE_FIELDS = {"pid", "startedAt", "updatedAt", "after", "checkout"}
 
 
@@ -1092,7 +1093,8 @@ class StandingTextTests(unittest.TestCase):
             "queued, with the exact `lead-wait` to start in the background",
             "says \"The lead isn't listening\" with that command",
             "A running `lead-wait` clears both",
-            "Codex documents hooks of its own, but this generation installs none there",
+            "On a host whose own hooks this generation doesn't install, the printed command, the status line and "
+            "\"Needs you\" are what keep the rule.",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, wake)
@@ -1113,6 +1115,11 @@ class StandingTextTests(unittest.TestCase):
                       "`run_delivery.py lead-wait` runs in the background", authority)
         self.assertIn("With run-delivery the wait is `run_delivery.py lead-wait`, which wraps it",
                       self.section(SKILL, "## Keeping the lead's wake"))
+        notes = self.section(ADOPTING, "## 9. Host notes")
+        self.assertIn("**The lead's wake on Codex.** Codex documents hooks of its own, but this generation installs none "
+                      "there, so on Codex the `lead-wait` command each lead command prints, its status line and \"Needs "
+                      "you\" are what keep the lead's wake.", notes)
+        self.assertNotIn("Codex", wake)
 
     def test_the_guide_gives_the_command_and_its_exits(self) -> None:
         text = GUIDE.read_text(encoding="utf-8")
