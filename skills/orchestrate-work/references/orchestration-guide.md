@@ -835,6 +835,31 @@ background, the lead tells the operator that it won't wake on its own.
 python3 -B <skill>/scripts/delivery_state.py --dir <state> wait [--after <journal id>] [--timeout <seconds>] [--poll <seconds>] [--output <file>]
 ```
 
+With run-delivery, the wait a lead starts is `lead-wait`, which wraps this `wait`:
+
+```bash
+python3 -B <run-delivery skill>/scripts/run_delivery.py --delivery <key> lead-wait [<wait arguments>]
+```
+
+It passes its arguments to `wait` and keeps the wait's output and exit. Without `--after` it starts after the
+journal's last entry, and without `--output` it writes the result to the flow log's `<delivery>.wait.json`. While it
+runs it keeps a lease in the record, `<state>/lead-wait.json`, holding its `pid`, `startedAt`, `updatedAt`, `after`
+and `checkout`, rewritten through a temporary file every 60 seconds and removed when it ends or is stopped. A lease is
+live while its pid is alive and its `updatedAt` is under 180 seconds old; a lease whose pid has died, or one 180
+seconds old, is no listener. The supervisor, the live view and the lead commands read it through one function, so they
+never disagree:
+
+- `lead-init`, `lead-assign`, `lead-accept` and `lead-run --resume` end, while a lane works or a candidate is queued,
+  with the exact `lead-wait` to start in the background: the last wait's `restart`, so nothing journalled since that
+  wait read is missed, or, with none, one after the journal's last entry. While one listens they name it instead, and
+  they print nothing about it when nothing works or is queued.
+- The supervisor's "Needs you", and so the live view, says "The lead isn't listening" with that command while a lane
+  works or a candidate is queued and no lease is live, and every lead command's status line says the lead isn't
+  listening. A running `lead-wait` clears both.
+
+On a host whose own hooks this generation doesn't install, the printed command, the status line and "Needs you"
+are what keep the rule.
+
 `wait` reads the record and the machine only, writes nothing but its own `--output`
 file, and reads no CI or forge. It returns on the first thing needing the lead:
 

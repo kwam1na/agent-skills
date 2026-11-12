@@ -8220,7 +8220,8 @@ class SupervisorLineFallbackTests(unittest.TestCase):
             c = types.SimpleNamespace(state=state)
             with mock.patch.object(self.tool, "read_lock", lambda _: (True, {"pid": 42, "address": "http://127.0.0.1:1"})), \
                     mock.patch.object(self.tool, "supervisor_lock_path", lambda _: state / "lock"), \
-                    mock.patch.object(self.tool, "waits_on", lambda _: ""):
+                    mock.patch.object(self.tool, "waits_on", lambda _: ""), \
+                    mock.patch.object(self.tool, "lead_listener", lambda *_: {"pid": 42}):  # a lead listens here
                 return self.tool.supervisor_line(c)
 
     def test_a_candidate_checking_on_the_fallback_is_named_with_the_fallback(self) -> None:
@@ -8236,6 +8237,29 @@ class SupervisorLineFallbackTests(unittest.TestCase):
                  row("FX-4", "merged", fallback), row("FX-5", "queued", fallback), row("FX-7", "syncing", fallback),
                  row("FX-8", "synced", fallback), {"subject": "FX-6", "stage": "checking"}]
         self.assertEqual(self.line(quiet), "supervisor: running (pid 42); live view http://127.0.0.1:1")
+
+
+class SupervisorLineListenerTests(unittest.TestCase):
+    """The status line names a missing listener from the record it is given, never from another delivery's."""
+
+    def test_the_status_line_reads_the_listener_from_its_own_record(self) -> None:
+        spec = importlib.util.spec_from_file_location("run_delivery_for_listener_line", ROOT / "skills/run-delivery/scripts/run_delivery.py")
+        tool = importlib.util.module_from_spec(spec)
+        previous, sys.dont_write_bytecode = sys.dont_write_bytecode, True
+        try:
+            spec.loader.exec_module(tool)
+        finally:
+            sys.dont_write_bytecode = previous
+        with tempfile.TemporaryDirectory() as folder:
+            state = Path(folder)
+            c = types.SimpleNamespace(state=state)
+            (state / "state.json").write_text(json.dumps({"lanes": [{"id": "lane-9", "state": "working"}], "queue": []}))
+            with mock.patch.object(tool, "load_state", side_effect=AssertionError("read another record")):
+                self.assertEqual(tool.listener_words(c), "; the lead isn't listening: no lead-wait runs while lane-9 (working)")
+                (state / "state.json").write_text(json.dumps({"lanes": [{"id": "lane-9", "state": "idle"}], "queue": []}))
+                self.assertEqual(tool.listener_words(c), "")
+                (state / "state.json").write_text("{")
+                self.assertEqual(tool.listener_words(c), "")
 
 
 class RunDeliveryRenderHalvesTests(unittest.TestCase):
