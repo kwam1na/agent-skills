@@ -988,6 +988,30 @@ class SilentReviewerTests(PrReviewCase):
         self.assertEqual(code, 0, out)
         self.assertIn("accepted blocked 'pr-review'", self.decisions())
 
+    def test_a_block_on_the_pr_review_needs_a_silent_reviewer(self) -> None:
+        self.answer([check(T - 600, T)], [])
+        self.clock(T + 60)  # inside the settle: nobody is silent
+        code, out = self.flow("handoff", "FX-2", "--pr", PR, "--blocked", "pr-review=impatient")
+        self.assertEqual(code, 2, out)
+        self.assertIn(f"--blocked pr-review is for a required reviewer silent after the settle, and none is silent at "
+                      f"{self.head[:10]}", out)
+        with self.subTest("the legacy shape has no such block: its review is required as ever"):
+            self.configure(LEGACY)
+            code, out = self.flow("handoff", "FX-2", "--pr", PR, "--blocked", "pr-review=impatient")
+            self.assertEqual(code, 2, out)
+            self.assertIn(f"no PR review recorded at {self.head[:10]}", out)
+
+    def test_a_silent_reviewer_that_posts_before_acceptance_sends_the_lane_back(self) -> None:
+        self.answer([check(T - 600, T)], [])
+        code, out = self.read(T + SETTLE + 1)
+        line = next(l for l in out.splitlines() if l.startswith(SILENT))[len("run-delivery: "):]
+        self.assertEqual(self.flow("handoff", "FX-2", "--pr", PR, "--blocked", f"pr-review={line}")[0], 0)
+        self.answer([check(T - 600, T)], [by_primary(at=stamp(T + 400))])  # its step re-run: it has posted now
+        code, out = self.flow("lead-accept", "FX-2", "--accept-blocked", "pr-review", cwd=self.fx.main)
+        self.assertEqual(code, 1, out)
+        self.assertIn(f"the lane blocked on a silent PR reviewer, but none is silent at {self.head[:10]} now "
+                      "(primary current, codex absent): send the lane back to read and triage its review", out)
+
     def test_the_brief_tells_the_lane_to_escalate_and_not_wait_again(self) -> None:
         self.assertEqual(self.fx.flow("lead-brief", cwd=self.fx.main)[0], 0)
         brief = " ".join((self.fx.main / "docs/lane-brief.md").read_text().split())

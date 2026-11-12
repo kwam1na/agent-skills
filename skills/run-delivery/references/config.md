@@ -175,9 +175,11 @@ checks may need no file at all.
 - **A silent reviewer.** A required reviewer `silent` stops `pr-review`, with or without `--wait`, and
   `pr-review-current`, with exit 3 where every other refusal exits 2. The stderr line starts `run-delivery: silent
   reviewer`: the pipeline is green at the head but that reviewer posted nothing since. The lane doesn't run the wait
-  again: it hands off with `--blocked pr-review="<that line>"`, which `handoff` takes in place of a recorded review,
-  and the lead decides it at `lead-accept`, with `--accept-blocked pr-review` or by sending the story back. Re-running
-  the reviewer's step is the usual answer. An optional reviewer never stops a wait this way.
+  again: it hands off with `--blocked pr-review="<that line>"`, which `handoff` takes in place of a recorded review
+  while a required reviewer is silent at the head, and refuses otherwise. The lead decides it at `lead-accept`, with
+  `--accept-blocked pr-review` or by sending the story back. Re-running the reviewer's step is the usual answer; once
+  it has posted, `lead-accept` refuses the block and sends the lane back to read and triage the review. An optional
+  reviewer never stops a wait this way, and the legacy shape takes no such block.
   Every wait reads its time, sleeps and poll interval through one clock, which `RUN_DELIVERY_CLOCK` replaces with
   a file's for the tool's own tests; never set it in a delivery.
 - **What the adapter must return.** A reviewer with `account` needs `account` on each comment from `reviews`; a gate

@@ -3944,8 +3944,14 @@ def handoff(args) -> None:
                    f"{head[:10]}; review the new head")
     validation, gate_problems = gates_summary(key, repo(), head)
     pr_line = None
-    # A lane stopped by a silent reviewer hands off blocked on it: the lead decides, so no review is required here.
-    if review_conf and PR_REVIEW_BLOCK not in parse_blocked(args.blocked):
+    # A lane stopped by a silent reviewer hands off blocked on it, and the lead decides: no review is required here,
+    # so long as a required reviewer is silent at the head. The legacy shape has no settle, and no such block.
+    on_silent = bool(review_conf) and not review_conf["legacy"] and PR_REVIEW_BLOCK in parse_blocked(args.blocked)
+    if on_silent and silent_refusal(read_pr_reviews(args.pr, head, review_conf, None), head) is None:
+        gate_problems.append(f"--blocked {PR_REVIEW_BLOCK} is for a required reviewer silent after the settle, and none "
+                             f"is silent at {head[:10]}: run {flow_command()} pr-review {key} --wait, and triage what it "
+                             "shows")
+    if review_conf and not on_silent:
         saved = folder / "pr-review.json"
         recorded = json.loads(saved.read_text()) if saved.exists() else {}
         if recorded.get("head") != head:
@@ -6014,8 +6020,15 @@ def lead_accept(args) -> None:
     conf = review_conf
     lane_blocked = c.lane_checkout(key) / c.work / "review" / key / "blocked.json"
     held = json.loads(lane_blocked.read_text()) if lane_blocked.exists() else {}
-    if conf and held.get("head") == head and PR_REVIEW_BLOCK in held.get("blocked", {}):
-        conf = None  # blocked on the PR review: the blocked items below are the lead's decision, this one included
+    if conf and not conf["legacy"] and held.get("head") == head and PR_REVIEW_BLOCK in held.get("blocked", {}):
+        # Blocked on a silent reviewer: while one is still silent, the block below is the lead's decision. Once none is,
+        # its review has arrived (or the pipeline moved), and the lane must read and triage it.
+        live = read_pr_reviews(item.get("changeRequest") or "", head, conf, None)
+        if silent_refusal(live, head) is None:
+            states = ", ".join(f"{rid} {r['state']}" for rid, r in live["reviewers"].items()) or live["status"]
+            problems.append(f"the lane blocked on a silent PR reviewer, but none is silent at {head[:10]} now ({states}): "
+                            "send the lane back to read and triage its review")
+        conf = None
     if conf and not conf["legacy"]:
         lane_root_ = c.lane_checkout(key)
         saved = lane_root_ / c.work / "review" / key / "pr-review.json"
