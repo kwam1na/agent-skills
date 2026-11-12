@@ -753,6 +753,21 @@ class ClaudeHookExposureTests(LifecycleFixture, unittest.TestCase):
                     if not (self.repository / ".agent-skills" / "active.json").exists():
                         self.assertFalse(self.settings.exists(), "a created file left empty is deleted")
 
+    def test_recovery_completing_the_target_writes_the_entries_it_commits(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.v1, maintainer=True)
+
+        def interrupt(phase: str) -> None:
+            if phase == "marker-committed":
+                raise RuntimeError("interrupted")
+
+        with self.assertRaisesRegex(RuntimeError, "interrupted"):
+            lifecycle.update(*self.stop_a, maintainer=True, fault=interrupt)
+        self.settings.unlink()
+        self.assertEqual(lifecycle.recover(maintainer=True)["action"], "complete-current")
+        self.assertEqual(self.receipt_events(), ["stop"])
+        self.assertEqual(self.read_settings(), {"hooks": {"Stop": [owned_entry("stop")]}})
+
     def test_an_unfinished_operation_over_a_malformed_settings_file_is_a_conflict_to_review(self) -> None:
         lifecycle = Lifecycle(self.repository)
         lifecycle.install(*self.v1, maintainer=True)
