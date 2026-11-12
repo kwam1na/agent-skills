@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Resolve a ticket to the branch and head of its one open change request into the delivery base."""
+"""Resolve a ticket to the branch and head of its one open change request into the delivery base: the base the queue
+names as the second argument (`{base}`), or else the binding's base.ref."""
 
 import json
 import re
@@ -8,7 +9,7 @@ import sys
 from pathlib import Path
 
 binding = json.loads((Path(__file__).resolve().parents[1] / "orchestration.json").read_text(encoding="utf-8"))
-listed = subprocess.run(["gh", "pr", "list", "--repo", "kwam1na/agent-skills", "--base", binding["base"]["ref"],
+listed = subprocess.run(["gh", "pr", "list", "--repo", "kwam1na/agent-skills", "--base", sys.argv[2] if len(sys.argv) > 2 else binding["base"]["ref"],
                          "--state", "open", "--limit", "100", "--json", "headRefName,headRefOid,title"],
                         capture_output=True, text=True, check=True).stdout
 
