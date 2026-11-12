@@ -458,9 +458,23 @@ class GitHubApprovalsTests(unittest.TestCase):
              "commit": {"oid": OTHER}},
             {"author": {"login": "chatty"}, "state": "COMMENTED", "submittedAt": "2026-11-11T12:00:00Z", "body": "hm",
              "commit": {"oid": HEAD}}]}
+        # In the order they were given.
         self.assertEqual(self.reviews(view)["approvals"], [
-            {"account": "codex-bot", "name": "codex-bot", "at": "2026-11-11T10:00:00Z", "commit": HEAD},
-            {"account": "claude-bot", "name": "Claude", "at": "2026-11-11T09:00:00Z", "commit": OTHER}])
+            {"account": "claude-bot", "name": "Claude", "at": "2026-11-11T09:00:00Z", "commit": OTHER},
+            {"account": "codex-bot", "name": "codex-bot", "at": "2026-11-11T10:00:00Z", "commit": HEAD}])
+
+    def test_a_later_request_for_changes_withdraws_an_approval_and_a_later_approval_restores_it(self) -> None:
+        def by(state: str, at: str, commit: str = HEAD) -> dict:
+            return {"author": {"login": "codex-bot"}, "state": state, "submittedAt": at, "body": "",
+                    "commit": {"oid": commit}}
+        # Listed out of time order: the latest by submittedAt decides, and a comment decides nothing.
+        withdrawn = [by("CHANGES_REQUESTED", "2026-11-11T11:00:00Z"), by("APPROVED", "2026-11-11T10:00:00Z"),
+                     by("COMMENTED", "2026-11-11T12:00:00Z")]
+        self.assertEqual(self.reviews({"headRefOid": HEAD, "statusCheckRollup": [], "reviews": withdrawn})["approvals"],
+                         [])
+        restored = [*withdrawn, by("APPROVED", "2026-11-11T13:00:00Z", OTHER)]
+        self.assertEqual(self.reviews({"headRefOid": HEAD, "statusCheckRollup": [], "reviews": restored})["approvals"],
+                         [{"account": "codex-bot", "name": "codex-bot", "at": "2026-11-11T13:00:00Z", "commit": OTHER}])
 
     def test_no_approval_is_an_empty_list(self) -> None:
         found = self.reviews({"headRefOid": HEAD, "statusCheckRollup": [], "reviews": []})

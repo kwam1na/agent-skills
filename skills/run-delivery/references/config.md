@@ -331,7 +331,8 @@ gate is checked nowhere. Without `gate`, the review only has to be current, as b
   don't. A review with no such line is unmet, saying the line is missing.
 - `"approval"` needs the reviewer's `account`, and is met when one of the PR's approvals has that `account`. Display
   names are never compared. For it, `reviews` also prints `"approvals": [{account, name, at, commit?}]`: the GitHub
-  adapter's are the PR's reviews in state `APPROVED`, each with the `commit` it was given at, and the Bitbucket
+  adapter's are each account's latest review in state `APPROVED`, unless a later one requested changes, each with the
+  `commit` it was given at, and the Bitbucket
   adapter's are the PR's participants with `approved`, with no `commit`. An approval that names a `commit` counts only
   when that commit is the head. **On Bitbucket an approval is only as fresh as the forge makes it:** Bitbucket ties no
   approval to a commit, so an approval given at an earlier head still counts after a new push. An adapter that prints no

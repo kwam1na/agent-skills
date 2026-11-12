@@ -1026,7 +1026,7 @@
         },
         {
           "path": "skills/run-delivery/adapters/forge_github.py",
-          "sha256": "50c09c51b01e1ee9b6dcd288c59958d5336b62b8aa3da4e220dc645e8b49f106"
+          "sha256": "6e444d3697dc430245564043a1f9df891dde9e96a89e6a47bec8a5ff6c2706a9"
         },
         {
           "path": "skills/run-delivery/adapters/tracker_jira.py",
@@ -1046,7 +1046,7 @@
         },
         {
           "path": "skills/run-delivery/references/config.md",
-          "sha256": "01a338df21eb3471865c1183679a6697d139f987bd3436c949fbbc1885f99a6b"
+          "sha256": "5f2efaaaedeab7d222e7899d820976937e79c396093540aa180ed23308477475"
         },
         {
           "path": "skills/run-delivery/scripts/pr_review_gates.py",

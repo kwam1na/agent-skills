@@ -144,11 +144,15 @@ def main():
         reviews = [{"author": (entry.get("author") or {}).get("login", ""),
                     "account": (entry.get("author") or {}).get("login", ""), "at": entry.get("submittedAt", ""),
                     "body": entry.get("body", "")} for entry in pr.get("reviews") or []]
-        # An approval is a review in state APPROVED, tied to the commit it was given at.
-        approvals = [{"account": (entry.get("author") or {}).get("login", ""),
-                      "name": (entry.get("author") or {}).get("name") or (entry.get("author") or {}).get("login", ""),
+        # An approval is an account's latest deciding review, when it is APPROVED, tied to the commit it was given at:
+        # a later CHANGES_REQUESTED withdraws it, as GitHub counts it, and a dismissed one is DISMISSED already.
+        deciding = {}
+        for entry in sorted(pr.get("reviews") or [], key=lambda entry: entry.get("submittedAt") or ""):
+            if entry.get("state") in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
+                deciding[(entry.get("author") or {}).get("login", "")] = entry
+        approvals = [{"account": login, "name": (entry.get("author") or {}).get("name") or login,
                       "at": entry.get("submittedAt", ""), "commit": (entry.get("commit") or {}).get("oid", "")}
-                     for entry in pr.get("reviews") or [] if entry.get("state") == "APPROVED"]
+                     for login, entry in deciding.items() if entry.get("state") == "APPROVED"]
         print(json.dumps({"checks": checks, "reviews": reviews, "approvals": approvals}))
     elif args.command == "ready":
         gh("pr", "ready", pull_request(args.url))
