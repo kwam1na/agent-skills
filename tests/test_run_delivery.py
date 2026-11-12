@@ -30,6 +30,7 @@ import inspect
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import socket
@@ -394,8 +395,9 @@ class Fixture:
         self.temp = self.tmp / "temp"
         self.temp.mkdir()
         # The supervisor's own cases start it; every other case runs the lead's commands by hand.
+        # A supervisor's live view binds a free port unless a case is about the derived or recorded one.
         self.env = {**clean_environment(), "FAKE_FORGE_STATE": str(self.tmp / "forge.json"), "RUN_DELIVERY_SUPERVISOR": "off",
-                    "TMPDIR": str(self.temp)}
+                    "RUN_DELIVERY_LIVE_PORT": "0", "TMPDIR": str(self.temp)}
         sh("git", "init", "-q", "--bare", "-b", "main", self.origin)
         quieten(self.origin)
         sh("git", "clone", "-q", self.origin, self.main)
@@ -545,6 +547,19 @@ def stop_supervisors(root: Path) -> None:
         if held or any(in_group(child) for child in recorded.get("children") or []):
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(pid, signal.SIGKILL)
+    # A supervisor's live view leads a session of its own and outlives it: stop each view a live.json under this folder
+    # names, by that pid, while the pid still runs the live view.
+    for record in locks_under(root, "live.json"):
+        try:
+            pid = json.loads(record.read_text()).get("pid")
+        except (OSError, ValueError, AttributeError):
+            continue
+        if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1:
+            continue
+        command = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout
+        if "render_state.py" in command and any(str(path) in command for path in (root, root.resolve())):
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(pid, signal.SIGKILL)
     # A post-merge fullHealth run leads a session of its own, so it outlives its supervisor: stop it while it holds its
     # lock, and only then.
     for lock in locks_under(root, ".full-health.lock"):
@@ -660,6 +675,44 @@ def setup_delivery(fx: Fixture) -> Path:
     commit(m, "FX-1: delivery")
     sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
     return path
+
+
+def stub_program(folder: Path, name: str, said: str) -> None:
+    """A program that prints what a real one says of its version, and nothing else."""
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / name).write_text(f"#!/bin/sh\necho {shlex.quote(said)}\n")
+    (folder / name).chmod(0o755)
+
+
+def path_without(folder: Path, *names: str) -> str:
+    """A PATH holding every program the runner's own PATH has, linked into one folder, except these."""
+    if not folder.exists():
+        folder.mkdir(parents=True)
+        for directory in os.environ.get("PATH", "").split(os.pathsep):
+            for program in (Path(directory).iterdir() if Path(directory).is_dir() else []):
+                target = folder / program.name
+                if program.name in names or target.exists() or not os.access(program, os.X_OK):
+                    continue
+                target.symlink_to(program)
+    return str(folder)
+
+
+def node_environment(fx: "Fixture", base: dict[str, str], node: str | None, python3: str | None = None,
+                     nvm: str | None = "22.6.0") -> dict[str, str]:
+    """`base` with the Node first on PATH printing `node`'s version, or no node on PATH at all; `python3` stubbed first
+    when given; and HOME holding an nvm Node of version `nvm` that meets the minimum, which the checks must ignore."""
+    folder = fx.tmp / "stubs" / f"node-{node}-python-{python3}"
+    if node:
+        stub_program(folder, "node", f"v{node}")
+    if python3:
+        stub_program(folder, "python3", f"Python {python3}")
+    folder.mkdir(parents=True, exist_ok=True)
+    rest = base.get("PATH", os.environ.get("PATH", "")) if node else path_without(fx.tmp / "stubs/without-node", "node")
+    home = fx.tmp / "home"
+    if nvm:
+        stub_program(home / f".nvm/versions/node/v{nvm}/bin", "node", f"v{nvm}")
+    home.mkdir(parents=True, exist_ok=True)
+    return {**base, "PATH": f"{folder}{os.pathsep}{rest}", "HOME": str(home)}
 
 
 POSTURE_VECTORS = ROOT / "tests/fixtures/delivery-posture-vectors.json"
@@ -5507,7 +5560,8 @@ TROUBLESHOOTING_KEYS = [
     "the binding has no state.forgeSnapshot", "the binding has no tracker publisher", "and the runtime needs Node",
     "is below the runtime's nodeMinimum", "stories with no plan section", "context.sections the plan lacks",
     "no plan at", "has no configuration for lanes", "forge.mergeNeedsReady says the merge step refuses a draft",
-    "the supervisor is down", "don't have the default signal dispositions",
+    "the supervisor is down", "don't have the default signal dispositions", "it runs Node",
+    "it runs with no node on its PATH", "it recorded no Node", "supervisor: down (<why>)", "it wanted port",
     "binding doesn't serve the base", "isn't offered; refine it first",
 ]
 
@@ -8916,8 +8970,8 @@ class LaneStartAndReadinessTests(unittest.TestCase):
 
 # Every setting the tool's Config or setting() reads from the environment, current and earlier names alike. Each one
 # set in the test runner's own environment would point the fixtures' commands somewhere other than the fixture.
-TOOL_SETTINGS = ("DELIVERY_STATE", "RUN_DELIVERY_BASE", "RUN_DELIVERY_SUPERVISOR", "RUN_DELIVERY_CONFIG",
-                 "DELIVERY_FLOW_CONFIG", "RUN_DELIVERY_DELIVERY", "DELIVERY_FLOW_DELIVERY", "RUN_DELIVERY_LOCAL",
+TOOL_SETTINGS = ("DELIVERY_STATE", "RUN_DELIVERY_BASE", "RUN_DELIVERY_SUPERVISOR", "RUN_DELIVERY_LIVE_PORT",
+                 "RUN_DELIVERY_CONFIG", "DELIVERY_FLOW_CONFIG", "RUN_DELIVERY_DELIVERY", "DELIVERY_FLOW_DELIVERY", "RUN_DELIVERY_LOCAL",
                  "DELIVERY_FLOW_LOCAL")
 PLANTED_KEY = "PLANTED-9"
 PLANTED_MARKER = "planted-live-delivery-7f3c"
@@ -9018,7 +9072,8 @@ class LiveDeliveryOutOfReachTests(unittest.TestCase):
                     "RUN_DELIVERY_CONFIG": str(main / ".agents/run-delivery.json"),
                     "DELIVERY_FLOW_CONFIG": str(main / ".agents/run-delivery.json"),
                     "RUN_DELIVERY_DELIVERY": PLANTED_KEY, "DELIVERY_FLOW_DELIVERY": PLANTED_KEY,
-                    "RUN_DELIVERY_LOCAL": "1", "DELIVERY_FLOW_LOCAL": "1", "RUN_DELIVERY_SUPERVISOR": "on"}
+                    "RUN_DELIVERY_LOCAL": "1", "DELIVERY_FLOW_LOCAL": "1", "RUN_DELIVERY_SUPERVISOR": "on",
+                    "RUN_DELIVERY_LIVE_PORT": "0"}
         self.assertEqual(set(settings), set(TOOL_SETTINGS))
         return main, worktree, settings
 
@@ -9405,6 +9460,187 @@ class InProcessCallsStayInTheirCaseTests(unittest.TestCase):
 
         self.assertEqual(released(reap=True), [])
         self.assertTrue(any("is still running" in message for message in released(reap=False)), "the control didn't warn")
+
+
+# Runs the tool's command line with the interpreter's version stood in, through the one function that reads it.
+STAND_IN = r'''
+import sys
+sys.path.insert(0, sys.argv[1])
+import run_delivery as flow
+flow.interpreter_version = lambda: tuple(int(n) for n in sys.argv[2].split("."))
+flow.main(sys.argv[3:])
+'''
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class NodeAndPythonMinimumTests(unittest.TestCase):
+    """The Node a process uses is the first `node` on its PATH: lead-init and lane-start refuse one below the runtime's
+    nodeMinimum, or none, even with an nvm Node that meets it, before they write anything; lane-start refuses a Python
+    below 3.11 too; doctor's Node row judges the same Node, and names the nvm Node's folder to put first."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        for name, value in vars(installed_release()).items():
+            setattr(cls, name, value)
+
+    def delivery(self, init: bool = True) -> Fixture:
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        setup_delivery(fx)
+        if init:
+            code, out = fx.flow("lead-init", cwd=fx.main, env=node_environment(fx, fx.env, "22.6.0"))
+            self.assertEqual(code, 0, out)
+            self.assign(fx, fx.env)
+        return fx
+
+    def assign(self, fx: Fixture, env: dict[str, str]) -> None:
+        code, out = fx.flow("lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2", cwd=fx.main, env=env)
+        self.assertEqual(code, 0, out)
+
+    def lane_start(self, fx: Fixture, env: dict[str, str], interpreter: str | None = None) -> tuple[int, str]:
+        argv = ["lane-start", "FX-3", "--base", "feature/FX-1"]
+        if interpreter is None:
+            return fx.flow(*argv, cwd=fx.main, env=env)
+        done = subprocess.run([sys.executable, "-B", "-c", STAND_IN, str(fx.tool.parent), interpreter, *argv],
+                              cwd=fx.main, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              timeout=300)
+        return done.returncode, done.stdout
+
+    def not_started(self, fx: Fixture, out: str) -> None:
+        """lane-start made no checkout, recorded no start and left the story planned."""
+        self.assertFalse((fx.main / "lanes/FX-3").exists(), out)
+        starts = fx.tmp / "flow-log/FX-1.lane-starts.jsonl"
+        self.assertFalse(starts.exists() and "FX-3" in starts.read_text(), out)
+        doc = json.loads(sh(sys.executable, "-B", fx.release / "skills/orchestrate-work/scripts/delivery_state.py",
+                            "--dir", fx.tmp / "record", "show").stdout)["state"]
+        self.assertEqual(next(e["stage"] for e in doc["planned"] if e["subject"] == "FX-3"), "planned", out)
+
+    def test_lane_start_refuses_a_node_or_python_below_the_minimum_before_it_makes_or_records_anything(self) -> None:
+        fx = self.delivery()
+        nvm_bin = fx.tmp / "home/.nvm/versions/node/v22.6.0/bin"
+        old = node_environment(fx, fx.env, "20.0.0")
+        cases = [
+            ("a Node below the minimum first on PATH", old, None,
+             ["Node 20.0.0 is below the runtime's nodeMinimum 22.6.0", f"from the PATH entry {fx.tmp / 'stubs'}",
+              f"fix: put {nvm_bin} first on PATH"]),
+            ("python3 below 3.11 first on PATH", node_environment(fx, fx.env, "22.6.0", python3="3.10.12"), None,
+             ["is Python 3.10.12, below 3.11", "fix: put Python 3.11 or newer's bin folder first on PATH"]),
+            ("the interpreter running the tool below 3.11", node_environment(fx, fx.env, "22.6.0"), "3.10.4",
+             ["is 3.10.4, below 3.11", "fix: run it with Python 3.11 or newer"]),
+            ("no python3 on PATH", {**node_environment(fx, fx.env, "22.6.0"), "PATH": os.pathsep.join(
+                [str(fx.tmp / "stubs/node-22.6.0-python-None"), path_without(fx.tmp / "stubs/without-python3", "python3")])},
+             None, ["no python3 on PATH; fix: put Python 3.11 or newer's bin folder first on PATH"]),
+        ]
+        for label, env, interpreter, said in cases:
+            with self.subTest(label):
+                code, out = self.lane_start(fx, env, interpreter)
+                self.assertEqual(code, 2, out)
+                self.assertIn("lane-start refuses FX-3", out)
+                for words in said:
+                    self.assertIn(words, out)
+                self.not_started(fx, out)
+        # At the minimum exactly, nothing is refused, and the story starts.
+        code, out = self.lane_start(fx, node_environment(fx, fx.env, "22.6.0", python3="3.11.0"), "3.11.0")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("refuses", out)
+        self.assertTrue((fx.main / "lanes/FX-3").is_dir(), out)
+
+    def test_lead_init_refuses_a_node_below_the_minimum_first_on_path_before_it_writes_the_record(self) -> None:
+        fx = self.delivery(init=False)
+        nvm_bin = fx.tmp / "home/.nvm/versions/node/v22.6.0/bin"
+        for node, said in (("20.0.0", "Node 20.0.0 is below the runtime's nodeMinimum 22.6.0"),
+                           (None, "no node on PATH, and the runtime needs Node 22.6.0")):
+            with self.subTest(node=node):
+                code, out = fx.flow("lead-init", cwd=fx.main, env=node_environment(fx, fx.env, node))
+                self.assertEqual(code, 2, out)
+                self.assertIn(f"lead-init refuses: {said}", out)
+                self.assertIn(f"fix: put {nvm_bin} first on PATH", out)
+                self.assertFalse((fx.tmp / "record").exists(), out)
+                self.assertFalse((fx.tmp / "flow-log").exists() and any((fx.tmp / "flow-log").iterdir()), out)
+        code, out = fx.flow("lead-init", cwd=fx.main, env=node_environment(fx, fx.env, "22.6.0"))
+        self.assertEqual(code, 0, out)
+
+    def test_a_node_first_on_path_that_prints_no_version_is_refused(self) -> None:
+        fx = self.delivery(init=False)
+        silent = fx.tmp / "stubs/silent"
+        stub_program(silent, "node", "")
+        env = {**node_environment(fx, fx.env, "22.6.0"), "PATH": f"{silent}{os.pathsep}{os.environ.get('PATH', '')}"}
+        said = f"{silent / 'node'}, the first node on PATH, from the PATH entry {silent}, prints no version"
+        code, out = fx.flow("doctor", "--offline", cwd=fx.main, env=env)
+        self.assertEqual(doctor_lines(out)["Node"][0], "wrong", out)
+        self.assertIn(said, doctor_lines(out)["Node"][1])
+        code, out = fx.flow("lead-init", cwd=fx.main, env=env)
+        self.assertEqual(code, 2, out)
+        self.assertIn(f"lead-init refuses: {said}", out)
+        self.assertFalse((fx.tmp / "record").exists(), out)
+
+    def test_the_installed_queue_reads_its_generation_s_node_minimum(self) -> None:
+        """The queue's mark depends on finding the runtime from where its script really sits in an installed
+        generation, unpatched."""
+        scripts = self.generation / "skills/orchestrate-work/scripts"
+        probe = ("import json, sys; sys.path.insert(0, sys.argv[1]); import merge_queue as q; "
+                 "print(json.dumps([str(q.RUNTIME_DESCRIPTOR), q.node_minimum()]))")
+        done = subprocess.run([sys.executable, "-B", "-c", probe, str(scripts)], capture_output=True, text=True,
+                              env=clean_environment(), cwd=tempfile.gettempdir(), timeout=120)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        descriptor, minimum = json.loads(done.stdout)
+        self.assertEqual(Path(descriptor), self.generation / "runtime/runtime.json")
+        wanted = json.loads((self.generation / "runtime/runtime.json").read_text())["nodeMinimum"]
+        self.assertEqual(minimum, [int(n) for n in wanted.split(".")])
+
+    def test_doctor_judges_the_node_first_on_path_and_names_the_nvm_folder_to_put_first(self) -> None:
+        fx = self.delivery(init=False)
+        nvm_bin = fx.tmp / "home/.nvm/versions/node/v22.6.0/bin"
+        for node, status, said in (("20.0.0", "wrong", "Node 20.0.0 is below the runtime's nodeMinimum 22.6.0"),
+                                   (None, "missing", "no node on PATH, and the runtime needs Node 22.6.0"),
+                                   ("22.6.0", "ok", "meets the runtime's nodeMinimum 22.6.0")):
+            with self.subTest(node=node):
+                code, out = fx.flow("doctor", "--offline", cwd=fx.main, env=node_environment(fx, fx.env, node))
+                row = doctor_lines(out)["Node"]
+                self.assertEqual(row[0], status, out)
+                self.assertIn(said, row[1])
+                if status == "ok":
+                    self.assertEqual(row[1], f"{fx.tmp / 'stubs/node-22.6.0-python-None/node'} meets the runtime's "
+                                             "nodeMinimum 22.6.0")
+                else:
+                    self.assertIn(f"nvm's {nvm_bin / 'node'} meets it", row[1])
+                    self.assertTrue(row[1].endswith(f"fix: put {nvm_bin} first on PATH, the nvm Node that meets it"), row)
+
+    def test_versions_compare_number_by_number(self) -> None:
+        tool = lambda *args, **kw: call(self.tool, *args, cwd=Path(tempfile.gettempdir()), **kw)
+        self.assertTrue(tool("meets", [100, 0, 0], [9, 0, 0]))
+        self.assertTrue(tool("meets", [22, 6], [22, 6, 0]))
+        self.assertFalse(tool("meets", [22, 5, 99], [22, 6, 0]))
+        self.assertEqual(tool("numbers", "v100.0.0"), [100, 0, 0])
+        # A Node v100.0.0 first on PATH meets a runtime whose minimum is 9.0.0.
+        folder = Path(tempfile.mkdtemp(prefix="run-delivery-node-"))
+        self.addCleanup(shutil.rmtree, folder, True)
+        stub_program(folder / "bin", "node", "v100.0.0")
+        (folder / "release/runtime").mkdir(parents=True)
+        (folder / "release/runtime/runtime.json").write_text(json.dumps({"nodeMinimum": "9.0.0"}))
+        env = {**clean_environment(), "PATH": f"{folder / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}",
+               "HOME": str(folder)}
+        self.assertIsNone(tool("node_problem", folder / "release", env=env))
+        stub_program(folder / "bin", "node", "v8.99.0")
+        self.assertEqual(tool("node_problem", folder / "release", env=env)[0], "wrong")
+
+    def test_a_generation_without_a_runtime_asks_for_no_node(self) -> None:
+        fx = self.delivery(init=False)
+        bare = fx.tmp / "bare-generation"
+        shutil.copytree(self.generation, bare, symlinks=True, ignore=lambda folder, names:
+                        ["runtime"] if Path(folder) == self.generation else [])
+        own = fx.tmp / "run-delivery.json"
+        conf = json.loads((fx.main / ".agents/run-delivery.json").read_text())
+        own.write_text(json.dumps({**conf, "release": str(bare)}, indent=2))
+        env = node_environment(fx, {**fx.env, "RUN_DELIVERY_CONFIG": str(own)}, None, nvm=None)
+        code, out = fx.flow("lead-init", cwd=fx.main, env=env)
+        self.assertEqual(code, 0, out)
+        self.assign(fx, env)
+        code, out = fx.flow("lane-start", "FX-3", "--base", "feature/FX-1", cwd=fx.main, env=env)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-run", "--once", cwd=fx.main, env=env)
+        self.assertNotIn("refuses", out)
+        self.assertEqual(code, 0, out)
 
 
 if __name__ == "__main__":

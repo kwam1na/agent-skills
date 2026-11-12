@@ -2708,6 +2708,99 @@ class HostileConfigTests(MergeQueueTestCase):
         self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
 
 
+@unittest.skipIf(os.name == "nt", "the stub nodes are shell scripts")
+class CheckNodeTests(MergeQueueTestCase):
+    """Each check the runner runs records the Node first on the PATH it ran with, after its profile's environment, and
+    marks one below the runtime's nodeMinimum without changing the check's own verdict."""
+
+    def stub_node(self, version: str) -> str:
+        folder = self.directory / f"node-{version}"
+        folder.mkdir()
+        (folder / "node").write_text(f"#!/bin/sh\necho v{version}\n")
+        (folder / "node").chmod(0o755)
+        return str(folder)
+
+    def runtime(self, minimum: str | None) -> Path:
+        """A runtime descriptor declaring this nodeMinimum, or none at all."""
+        path = self.directory / "runtime" / "runtime.json"
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(json.dumps({"nodeMinimum": minimum} if minimum else {"runtimeVersion": "1"}))
+        return path
+
+    def run_checks(self, minimum: str | None) -> tuple[dict, dict]:
+        """The result's and the queue row's check entries, by id, from one run whose checks put an old Node, a new
+        Node or none first on their PATH; one of the old Node's checks fails on its own."""
+        old, new = self.stub_node("20.0.0"), self.stub_node("22.6.0")
+        empty = self.directory / "no-node"
+        empty.mkdir()
+        inherited = os.environ.get("PATH", "")
+        profiles = {"default": {"environment": {"MQ_PROFILE_HEAD": "{head}"}},
+                    "old": {"environment": {"PATH": f"{old}{os.pathsep}{inherited}"}},
+                    "new": {"environment": {"PATH": f"{new}{os.pathsep}{inherited}"}},
+                    "none": {"environment": {"PATH": str(empty)}}}
+        always = [check_entry("old", environmentProfile="old"), check_entry("new", environmentProfile="new"),
+                  check_entry("none", environmentProfile="none"),
+                  check_entry("old-fails", "--always-fail", environmentProfile="old", prerequisites=["old", "new", "none"])]
+        adopter = self.adopter({"profiles": profiles, "alwaysRun": always})
+        self.candidate(adopter)
+        with mock.patch.object(queue, "RUNTIME_DESCRIPTOR", self.runtime(minimum)):
+            results = self.run_queue(adopter, "feature")
+        checked = next(result.document() for result in results if result.document()["checks"])
+        for document in (result.document() for result in results):
+            self.assertEqual(list(Draft202012Validator(schema("merge-queue-result")).iter_errors(document)), [])
+        rows = {row["id"]: row for row in adopter.item("feature")["checks"]}
+        return {entry["id"]: entry for entry in checked["checks"]}, rows
+
+    def test_each_check_records_the_node_its_profile_puts_first_and_marks_one_below_the_minimum(self) -> None:
+        entries, rows = self.run_checks("22.6.0")
+        own = shutil.which("node")
+        for found in (entries, rows):
+            self.assertEqual(found["old"]["node"], "20.0.0", found["old"])
+            self.assertIs(found["old"]["nodeBelowMinimum"], True)
+            self.assertEqual(found["new"]["node"], "22.6.0")
+            self.assertNotIn("nodeBelowMinimum", found["new"])
+            self.assertIsNone(found["none"]["node"], found["none"])
+            self.assertNotIn("nodeBelowMinimum", found["none"])
+            # The mark explains; the verdict is the check's own.
+            self.assertEqual(found["old"]["state"], "passed")
+            self.assertEqual(found["old-fails"]["state"], "failed")
+            self.assertIs(found["old-fails"]["nodeBelowMinimum"], True)
+        # The queue's own Node is not what the profile's check recorded.
+        if own:
+            self.assertNotEqual(subprocess.run([own, "--version"], capture_output=True, text=True).stdout.strip(), "v20.0.0")
+
+    def test_without_a_minimum_no_check_is_marked(self) -> None:
+        entries, rows = self.run_checks(None)
+        for found in (entries, rows):
+            self.assertEqual((found["old"]["node"], found["new"]["node"], found["none"]["node"]), ("20.0.0", "22.6.0", None))
+            self.assertEqual([check for check, entry in found.items() if "nodeBelowMinimum" in entry], [])
+            self.assertEqual(found["old-fails"]["state"], "failed")
+
+    def test_a_node_is_asked_its_version_in_the_folder_the_check_ran_in(self) -> None:
+        """A version manager's shim picks its Node by the folder it runs in: here a pin the candidate adds."""
+        shim = self.directory / "shim"
+        shim.mkdir()
+        (shim / "node").write_text("#!/bin/sh\nif [ -f .node-pin ]; then echo v$(cat .node-pin); else echo v22.6.0; fi\n")
+        (shim / "node").chmod(0o755)
+        profiles = {"default": {"environment": {"MQ_PROFILE_HEAD": "{head}"}},
+                    "shim": {"environment": {"PATH": f"{shim}{os.pathsep}{os.environ.get('PATH', '')}"}}}
+        # The check runs in src/, the pin's folder; the checkout's root has none, so asking there would read 22.6.0.
+        pinned = check_entry("pinned", environmentProfile="shim", cwd="src")
+        pinned["argv"] = [PY, "-c", "pass"]
+        adopter = self.adopter({"profiles": profiles, "alwaysRun": [pinned]})
+        self.candidate(adopter, {"src/app.txt": "app two\n", "src/.node-pin": "20.1.0\n"})
+        with mock.patch.object(queue, "RUNTIME_DESCRIPTOR", self.runtime("22.6.0")):
+            self.run_queue(adopter, "feature")
+        row = {row["id"]: row for row in adopter.item("feature")["checks"]}["pinned"]
+        self.assertEqual((row["node"], row.get("nodeBelowMinimum")), ("20.1.0", True), row)
+
+    def test_a_number_compares_number_by_number(self) -> None:
+        self.assertEqual(queue.node_fields("100.0.0", (9, 0, 0)), {"node": "100.0.0"})
+        self.assertEqual(queue.node_fields("9.0.0", (9, 0, 0)), {"node": "9.0.0"})
+        self.assertEqual(queue.node_fields("8.99.1", (9, 0, 0)), {"node": "8.99.1", "nodeBelowMinimum": True})
+        self.assertEqual(queue.node_fields(None, (9, 0, 0)), {"node": None})
+
+
 class LiveCheckStateTests(MergeQueueTestCase):
     """While checks run, the checking panel and the queue row name them, live, and agree."""
 

@@ -337,6 +337,15 @@ renders, publishers included, after each of its own writes.
 - Start the live view at the beginning of the delivery and point the
   operator at its address; it re-renders on every record write, so it is
   never stale.
+- `render_state.py live --status-file PATH` re-reads a supervisor's status
+  file on every page it serves: `pid`, `state` (`running` or `stopped`),
+  `at`, and optionally `why`, `said` and `restart`. While it says `running`
+  and its pid runs, the page shows no banner. Once it says `stopped`, the page
+  says the supervisor is down, since when and why; a file still marked
+  `running` for a pid that no longer runs says the supervisor stopped without
+  recording why. Each names the file's `restart` command, and an open page
+  follows the file without a reload. Without the option the view renders as
+  it always has.
 - The live view is sized for a handful of pages on this machine. Each open
   page holds one connection and one thread, and each update carries the
   whole record. A page that reconnects gets the whole current record at
@@ -1289,6 +1298,17 @@ binding declares may change.
   whole seconds, and mark one that has run over: the markdown view as of the
   record's last write, the page as of the moment it draws, on load and at
   each update it receives, by its own clock.
+- **The Node a check ran.** Each check the runner runs records `node` on its
+  result and its queue row: the version of the first `node` on the `PATH` it
+  ran with, after the binding's `environment` and its profile's, as
+  `node --version` prints it without the `v`, or `null` when that `PATH` held
+  none. When the generation's runtime declares a `nodeMinimum` and `node` is
+  below it, the entry also carries `nodeBelowMinimum: true`; otherwise,
+  including a `null` `node`, it has no such member. The mark explains a
+  failure and never causes one: the check's state is what the check returned.
+  A skipped or reused check records neither, and a record written before the
+  runner recorded them still validates. The views show the Node in the check's
+  detail, with the mark beside it.
 - **History.** `meta.checkHistory` keeps each check's last five passing
   durations and how often a declared flake made it retry, and the last five
   whole check runs. Only the runner writes it.

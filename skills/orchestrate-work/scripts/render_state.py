@@ -297,6 +297,10 @@ def _check_text(check: dict) -> str:
         text += " · failing " + ", ".join(check["failures"])
     if check.get("log"):
         text += f" · log {check['log']}"
+    if "node" in check:
+        text += f" · Node {check['node']}" if isinstance(check["node"], str) else " · no node on its PATH"
+        if check.get("nodeBelowMinimum") is True:
+            text += ", below the runtime's nodeMinimum"
     return text
 
 
@@ -592,6 +596,10 @@ _PAGE_PROGRAM = """
     if (check.state === "reused" && typeof check.reusedFrom === "string") { text += " \\u00b7 reused from the lane's run at " + check.reusedFrom; }
     if (isArray(check.failures) && check.failures.length) { text += " \\u00b7 failing " + check.failures.map(show).join(", "); }
     if (typeof check.log === "string") { text += " \\u00b7 log " + check.log; }
+    if (Object.prototype.hasOwnProperty.call(check, "node")) {
+      text += typeof check.node === "string" ? " \\u00b7 Node " + check.node : " \\u00b7 no node on its PATH";
+      if (check.nodeBelowMinimum === true) { text += ", below the runtime's nodeMinimum"; }
+    }
     return text;
   }
   /* The median of the last five runs, or null with none: no history means no estimate, never a guess. */
@@ -760,7 +768,7 @@ _PAGE_PROGRAM = """
       selectionTexts(item).forEach(function (text) { entry.appendChild(el("div", text, "detail")); });
       item.checks.forEach(function (check) {
         if ((isArray(check.failures) && check.failures.length) || typeof check.log === "string" ||
-            typeof check.reusedFrom === "string") {
+            typeof check.reusedFrom === "string" || Object.prototype.hasOwnProperty.call(check, "node")) {
           entry.appendChild(el("div", checkText(check), "detail"));
         }
       });
@@ -916,7 +924,9 @@ _LIVE_ADAPTER = """
 """.strip()
 
 
-def render_static_page(document: dict, *, live: bool = False, flags: tuple[str, ...] = ()) -> str:
+def render_static_page(document: dict, *, live: bool = False, flags: tuple[str, ...] = (),
+                       banner: str | None = None) -> str:
+    """The page. `banner` is the supervisor's banner markup, given only when the view reads a status file."""
     adapter = f"<script>\n{_LIVE_ADAPTER}\n</script>\n" if live else ""
     return (
         "<!doctype html>\n"
@@ -928,7 +938,8 @@ def render_static_page(document: dict, *, live: bool = False, flags: tuple[str, 
         f"<style>\n{_PAGE_STYLE}\n</style>\n"
         "</head>\n"
         "<body>\n"
-        + "".join(f'<p role="alert"><strong>{html.escape(flag)}</strong></p>\n' for flag in flags) +
+        + "".join(f'<p role="alert"><strong>{html.escape(flag)}</strong></p>\n' for flag in flags)
+        + (banner or "") +
         '<main id="app" data-source="embedded"></main>\n'
         '<p id="live-status" class="status" hidden></p>\n'
         f'<script type="application/json" id="delivery-state">{_page_embed(document)}</script>\n'
@@ -1463,14 +1474,87 @@ LIVE_POLL_SECONDS = 0.25
 LIVE_KEEPALIVE_SECONDS = 15.0
 # An HTML view opts in to the live stream with this in its head.
 LIVE_OPT_IN = '<meta name="delivery-state-live">'
+# How often an open page asks whether the supervisor is still up, when the view reads a status file.
+SUPERVISOR_POLL_MS = 5000
+
+# The banner's own script: it asks the view for the banner and shows or clears it, so an open page follows the
+# supervisor without a reload. Loaded only when the view reads a status file.
+_SUPERVISOR_WATCH = """
+(function () {
+  "use strict";
+  function show(text) {
+    var banner = document.getElementById("supervisor-banner");
+    if (!banner) { return; }
+    banner.textContent = text || "";
+    banner.hidden = !text;
+  }
+  function ask() {
+    fetch("/supervisor", { cache: "no-store" })
+      .then(function (answer) { return answer.json(); })
+      .then(function (said) { show(said.banner); })
+      .catch(function () {});
+  }
+  setInterval(ask, %d);
+})();
+""".strip() % SUPERVISOR_POLL_MS
+
+
+def _pid_runs(pid: object) -> bool:
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def supervisor_banner(status_file: Path | None) -> str | None:
+    """What the page says of the supervisor, from the status file it writes: nothing while the file says `running`
+    and its pid runs; that it is down, since when and why, once it says `stopped`; and that it stopped without
+    recording why when it says `running` for a pid that no longer runs. Each names the file's restart command."""
+    if status_file is None:
+        return None
+    try:
+        status = json.loads(Path(status_file).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(status, dict):
+        return None
+    restart = status.get("restart")
+    tail = f" Restart it with {restart}." if isinstance(restart, str) and restart else ""
+    if status.get("state") == "running":
+        if _pid_runs(status.get("pid")):
+            return None
+        return f"The supervisor (pid {status.get('pid')}) stopped without recording why." + tail
+    if status.get("state") == "stopped":
+        why = status.get("said") or status.get("why") or "no reason recorded"
+        return f"The supervisor is down since {status.get('at') or 'an unrecorded time'}: {why}." + tail
+    return None
+
+
+def _banner_markup(status_file: Path | None) -> str:
+    """The banner element and its script; empty without a status file, so such a page is as it was."""
+    if status_file is None:
+        return ""
+    text = supervisor_banner(status_file)
+    hidden = "" if text else " hidden"
+    return (f'<p role="alert" id="supervisor-banner" style="font-weight:bold"{hidden}>{html.escape(text or "")}</p>\n'
+            f"<script>\n{_SUPERVISOR_WATCH}\n</script>\n")
 
 
 class LiveView:
     """The latest valid document, re-read and re-rendered when the record changes."""
 
-    def __init__(self, directory: Path, config: object) -> None:
+    def __init__(self, directory: Path, config: object, status_file: Path | None = None) -> None:
         self.directory = Path(directory)
         self.config = config
+        # The supervisor's status file, re-read on every page served; None leaves the pages as they were.
+        self.status_file = status_file
         self.changed = threading.Condition()
         self.generation = 0
         self.document: dict | None = None
@@ -1576,7 +1660,8 @@ def _live_handler(view: LiveView, accepts: Callable[[str], bool], flags: tuple[s
                 if document is None:
                     self._plain(503, b"the record is not readable yet\n")
                     return
-                page = render_static_page(document, live=True, flags=flags).encode("utf-8")
+                page = render_static_page(document, live=True, flags=flags,
+                                          banner=_banner_markup(view.status_file)).encode("utf-8")
                 self._plain(200, page, "text/html; charset=utf-8")
             elif path == "/document":
                 with view.changed:
@@ -1584,6 +1669,9 @@ def _live_handler(view: LiveView, accepts: Callable[[str], bool], flags: tuple[s
                 self._plain(200 if encoded else 503, encoded or b"{}", "application/json")
             elif path == "/events":
                 self._events()
+            elif path == "/supervisor" and view.status_file is not None:
+                said = json.dumps({"banner": supervisor_banner(view.status_file)}, ensure_ascii=True)
+                self._plain(200, said.encode("ascii"), "application/json")
             elif path.startswith("/view/"):
                 # A browser encodes an output's name; only a configured output is ever matched.
                 name = _view_name(path[len("/view/"):])
@@ -1608,6 +1696,11 @@ def _live_handler(view: LiveView, accepts: Callable[[str], bool], flags: tuple[s
                 self._plain(404, b"this view does not opt in to the live stream\n")
                 return
             page = page.replace(LIVE_OPT_IN, LIVE_OPT_IN + f"\n<script>\n{_LIVE_ADAPTER}\n</script>", 1)
+            banner = _banner_markup(view.status_file)
+            if banner:
+                opened = re.search(r"<body[^>]*>", page, re.I)
+                at = opened.end() if opened else len(page)
+                page = page[:at] + "\n" + banner + page[at:]
             self._plain(200, page.encode("utf-8"), "text/html; charset=utf-8")
 
         def _events(self) -> None:
@@ -1760,9 +1853,10 @@ def _live_hosts(host: str, port: int) -> Callable[[str], bool]:
 
 
 def serve_live(directory: Path, config: object, *, host: str, port: int, announce: Callable[[str], None],
-               flags: tuple[str, ...] = ()) -> None:
-    """Serve the live view until interrupted. Renders on every record change; never writes the record."""
-    view = LiveView(directory, config)
+               flags: tuple[str, ...] = (), status_file: Path | None = None) -> None:
+    """Serve the live view until interrupted. Renders on every record change; never writes the record. With a
+    status file, every page carries the supervisor's banner, read from it as the page is served."""
+    view = LiveView(directory, config, status_file)
     view.refresh()
     server = (_LiveServer6 if ":" in host else _LiveServer)((host, port), _live_handler(view, lambda header: False, flags))
     if _is_wildcard(str(server.server_address[0])):
@@ -1803,6 +1897,8 @@ def _live_from_args(argv: list[str]) -> tuple[int, dict]:
     parser.add_argument("--host", default="127.0.0.1",
                         help="the address to listen on; anything but this machine's loopback must be named")
     parser.add_argument("--port", type=int, default=0, help="the port; 0 picks a free one")
+    parser.add_argument("--status-file", type=Path,
+                        help="the supervisor's status file, re-read on every page: a banner says when it is down")
     args = parser.parse_args(argv)
     if _is_wildcard(args.host):
         # Every address at once would put the record in front of the network;
@@ -1828,7 +1924,8 @@ def _live_from_args(argv: list[str]) -> tuple[int, dict]:
         sys.stdout.flush()
 
     try:
-        serve_live(args.dir, config, host=args.host, port=args.port, announce=announce, flags=flags)
+        serve_live(args.dir, config, host=args.host, port=args.port, announce=announce, flags=flags,
+                   status_file=args.status_file)
     except OSError as error:
         return 2, {"ok": False, "code": "live_unavailable",
                    "error": f"cannot listen on {args.host}:{args.port}: {error.strerror or error}"}
