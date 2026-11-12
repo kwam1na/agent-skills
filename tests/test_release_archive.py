@@ -57,6 +57,8 @@ class ReleaseArchiveTests(unittest.TestCase):
             self.assertIn("agent_skills/fake_tracker.py", names)
             self.assertIn("agent_skills/router.py", names)
             self.assertIn("agent_skills/workflows.py", names)
+            self.assertIn("agent_skills/hooks.py", names)
+            self.assertIn("schemas/skill-hooks.schema.json", names)
             self.assertIn("docs/delivery-provider-rails-v1.md", names)
             self.assertIn("schemas/delivery-provider-rails.schema.json", names)
             self.assertIn("skills/review-work/SKILL.md", names)

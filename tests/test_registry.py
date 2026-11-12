@@ -436,6 +436,151 @@ def test_unmodified_persona_set_is_accepted() -> None:
     print("verified acceptance: unmodified reviewer charter set")
 
 
+HOOK_SKILL = "orchestrate-work"
+
+
+def hook_entry(name: str, **changes: object) -> dict[str, object]:
+    return {"argv": ["scripts/delivery_state.py", "focus"], "event": "stop", "hosts": ["claude-code"],
+            "id": f"{HOOK_SKILL}.{name}", **changes}
+
+
+def add_hooks(root: Path, document: object, *, hosts: list[str] | None = None) -> None:
+    """Give the copy's orchestrate-work a hooks.json, catalogued, digested and profiled like any output."""
+    contents = json.dumps(document, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
+    output = f"skills/{HOOK_SKILL}/hooks.json"
+    (root / output).write_text(contents, encoding="utf-8")
+    catalog_path = root / "catalog.json"
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    skill = next(skill for skill in catalog["skills"] if skill["id"] == HOOK_SKILL)
+    if hosts is not None:
+        skill["hosts"] = hosts
+        write_json(catalog_path, catalog)
+    provenance_path = root / "provenance.lock.json"
+    provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+    entry = next(entry for entry in provenance["entries"] if entry["id"] == skill["provenanceId"])
+    entry["outputs"] = sorted([*entry["outputs"], {"path": output, "sha256": hashlib.sha256(contents.encode()).hexdigest()}],
+                              key=lambda item: item["path"])
+    write_json(provenance_path, provenance)
+    for profile_id in skill["profiles"]:
+        profile_path = root / "profiles" / f"{profile_id}.json"
+        profile = json.loads(profile_path.read_text(encoding="utf-8"))
+        if profile.get("expectedFiles") is not None:
+            profile["expectedFiles"] = sorted([*profile["expectedFiles"], output])
+            write_json(profile_path, profile)
+
+
+def hook_codes(result: subprocess.CompletedProcess[str]) -> list[str]:
+    return sorted(finding["ruleId"] for finding in json.loads(result.stdout)["findings"]
+                  if finding["ruleId"].startswith("hooks."))
+
+
+def manifest_of(*entries: object) -> dict[str, object]:
+    return {"hooks": list(entries), "schemaVersion": "skill-hooks/1"}
+
+
+def test_a_hook_manifest_validates() -> None:
+    document = manifest_of(hook_entry("may-stop"), hook_entry("orient", event="session-start",
+                                                              hosts=["claude-code", "codex"]))
+    result = with_copy(lambda root: add_hooks(root, document))
+    require(result.returncode == 0, result.stdout)
+    print("verified acceptance: a skill-hooks/1 manifest")
+
+
+def test_hook_manifest_refusals_each_have_their_own_code() -> None:
+    cases = {
+        "schema failure": (manifest_of(hook_entry("may-stop", matcher="*")), None, ["hooks.schema"]),
+        "duplicate id across the profile": (manifest_of(hook_entry("may-stop"), hook_entry("may-stop")), None,
+                                            ["hooks.duplicate_id"] * 5),
+        "unknown event": (manifest_of(hook_entry("may-stop", event="pre-tool-use")), None, ["hooks.event"]),
+        "host outside the skill's hosts": (manifest_of(hook_entry("may-stop", hosts=["codex"])), ["claude-code"],
+                                           ["hooks.host"]),
+        "unknown host": (manifest_of(hook_entry("may-stop", hosts=["cursor"])), None, ["hooks.host"]),
+        "script outside the skill": (manifest_of(hook_entry("may-stop", argv=["../run-delivery/scripts/run_delivery.py"])),
+                                     None, ["hooks.argv"]),
+        "script not among the outputs": (manifest_of(hook_entry("may-stop", argv=["scripts/absent.py"])), None,
+                                         ["hooks.argv"]),
+    }
+    for name, (document, hosts, expected) in cases.items():
+        result = with_copy(lambda root: add_hooks(root, document, hosts=hosts))
+        require(result.returncode == 1, f"{name}: {result.stdout}")
+        require(hook_codes(result) == expected, f"{name}: {hook_codes(result)} != {expected}\n{result.stdout}")
+    print("verified rejection: each hook manifest refusal by its own code")
+
+
+def test_each_hook_rule_must_stay_in_the_inventory() -> None:
+    for rule_id in ("hooks.argv", "hooks.duplicate_id", "hooks.event", "hooks.host", "hooks.schema"):
+        def mutate(root: Path, rule_id: str = rule_id) -> None:
+            path = root / "validation-inventory.json"
+            inventory = json.loads(path.read_text(encoding="utf-8"))
+            inventory["rules"] = [rule for rule in inventory["rules"] if rule["id"] != rule_id]
+            write_json(path, inventory)
+
+        result = with_copy(mutate)
+        require(result.returncode == 1, result.stdout)
+        findings = json.loads(result.stdout)["findings"]
+        require({"artifact": rule_id, "exitClass": "invalid-corpus", "message": "checked rule is absent from inventory",
+                 "ruleId": "inventory.anti_vacuity"} in findings, result.stdout)
+    print("verified rejection: a hook rule missing from the inventory")
+
+
+def test_a_corpus_with_the_dispatcher_needs_the_hook_schema() -> None:
+    result = with_copy(lambda root: (root / "schemas" / "skill-hooks.schema.json").unlink())
+    require(result.returncode == 1, result.stdout)
+    findings = json.loads(result.stdout)["findings"]
+    require({"artifact": "schemas/skill-hooks.schema.json", "exitClass": "invalid-corpus",
+             "message": "missing document", "ruleId": "catalog.complete"} in findings, result.stdout)
+    print("verified rejection: a dispatcher-bearing corpus without the hook schema")
+
+
+def test_a_retained_corpus_without_the_dispatcher_keeps_its_closure() -> None:
+    # A release cut before hooks carries no dispatcher, no hook schema and no
+    # hook rules, and still validates, with no hook rule checked.
+    def mutate(root: Path) -> None:
+        (root / "agent_skills" / "hooks.py").unlink()
+        (root / "schemas" / "skill-hooks.schema.json").unlink()
+        path = root / "validation-inventory.json"
+        inventory = json.loads(path.read_text(encoding="utf-8"))
+        inventory["rules"] = [rule for rule in inventory["rules"] if not rule["id"].startswith("hooks.")]
+        write_json(path, inventory)
+
+    result = with_copy(mutate)
+    require(result.returncode == 0, result.stdout)
+    require(not [rule for rule in json.loads(result.stdout)["rulesChecked"] if rule.startswith("hooks.")],
+            result.stdout)
+    print("verified acceptance: a retained corpus without the hook dispatcher")
+
+
+def test_a_corpus_without_the_dispatcher_may_not_claim_the_hook_rules() -> None:
+    # Its inventory would claim rules nobody checks, which anti-vacuity refuses.
+    def mutate(root: Path) -> None:
+        (root / "agent_skills" / "hooks.py").unlink()
+        (root / "schemas" / "skill-hooks.schema.json").unlink()
+
+    result = with_copy(mutate)
+    require(result.returncode == 1, result.stdout)
+    findings = json.loads(result.stdout)["findings"]
+    for rule_id in ("hooks.argv", "hooks.duplicate_id", "hooks.event", "hooks.host", "hooks.schema"):
+        require({"artifact": rule_id, "exitClass": "invalid-corpus", "message": "inventory names an unknown rule",
+                 "ruleId": "inventory.anti_vacuity"} in findings, result.stdout)
+    print("verified rejection: hook rules claimed by a corpus without the dispatcher")
+
+
+def test_a_corpus_without_the_dispatcher_checks_no_manifest() -> None:
+    # The hook rules are not checked there, so a manifest raises none of them.
+    def mutate(root: Path) -> None:
+        add_hooks(root, manifest_of(hook_entry("may-stop", event="pre-tool-use")))
+        (root / "agent_skills" / "hooks.py").unlink()
+        (root / "schemas" / "skill-hooks.schema.json").unlink()
+        path = root / "validation-inventory.json"
+        inventory = json.loads(path.read_text(encoding="utf-8"))
+        inventory["rules"] = [rule for rule in inventory["rules"] if not rule["id"].startswith("hooks.")]
+        write_json(path, inventory)
+
+    result = with_copy(mutate)
+    require(result.returncode == 0, result.stdout)
+    print("verified acceptance: no hook rule checked without the dispatcher")
+
+
 def main() -> int:
     tests = [
         test_missing_provenance_rejects,
@@ -460,6 +605,13 @@ def main() -> int:
         test_unadjudicated_charter_rejects,
         test_excluded_source_without_a_declared_rule_rejects,
         test_unmodified_persona_set_is_accepted,
+        test_a_hook_manifest_validates,
+        test_hook_manifest_refusals_each_have_their_own_code,
+        test_each_hook_rule_must_stay_in_the_inventory,
+        test_a_corpus_with_the_dispatcher_needs_the_hook_schema,
+        test_a_retained_corpus_without_the_dispatcher_keeps_its_closure,
+        test_a_corpus_without_the_dispatcher_may_not_claim_the_hook_rules,
+        test_a_corpus_without_the_dispatcher_checks_no_manifest,
     ]
     for test in tests:
         test()
