@@ -3492,7 +3492,8 @@ def missing_members(found: dict, conf: dict) -> list[str]:
     needed = []
     if any(r.get("account") for r in conf["reviewers"]) and any("account" not in r for r in found.get("reviews", [])):
         needed.append("`account` on each review comment (a reviewer is matched by account)")
-    if any(r.get("gate") == "approval" for r in conf["reviewers"]) and "approvals" not in found:
+    approving = [r for r in conf["reviewers"] if r.get("gate") == "approval" and not r.get("report")]  # a report stands in
+    if approving and "approvals" not in found:
         needed.append("`approvals` (a reviewer has gate \"approval\")")
     if any(r.get("report") for r in conf["reviewers"]) and "reports" not in found:
         needed.append("`reports` (a reviewer has `report`)")
@@ -3525,9 +3526,6 @@ def classify_reviews(found: dict, conf: dict, now: float) -> dict:
         if missing:
             raise Stop("the forge adapter's `reviews` returned no " + "; no ".join(missing) + ": use an adapter that "
                        "returns it, or configure review.pr without it")
-        refused = pr_review_gates.reports_refusal(conf["reviewers"], found)
-        if refused:
-            raise Stop(refused)
         # Only once every check passed, when each carries its time: a pending one may have none yet.
         latest = max((instant(ch["at"]) for ch in checks), default=None) if passed else None
         settled = passed and now > max(instant(ch.get("doneAt") or ch["at"]) for ch in checks) + conf["settleSeconds"]

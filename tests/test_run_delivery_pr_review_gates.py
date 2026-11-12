@@ -137,6 +137,12 @@ class ApprovalGateTests(unittest.TestCase):
                 self.assertIn("returns no `approvals`", refusal)
                 self.assertIn("codex", refusal)
 
+    def test_an_approval_gate_with_a_report_needs_no_approvals_and_one_without_still_does(self) -> None:
+        with_report = {**self.REVIEWER, "report": "codex-review"}
+        self.assertIsNone(gates.members_refusal([with_report], {"checks": [], "reviews": []}))
+        refusal = gates.members_refusal([with_report, {**self.REVIEWER, "id": "other"}], {"checks": [], "reviews": []})
+        self.assertIn("returns no `approvals`, which the approval gate of other needs", refusal)
+
     def test_malformed_approvals_are_refused(self) -> None:
         for approvals in ("codex-bot", [["codex-bot"]], {"account": "codex-bot"}):
             with self.subTest(approvals=approvals):
@@ -311,6 +317,9 @@ class ReportVerdictTests(unittest.TestCase):
         self.assertIn("'Request changes', not approve", verdict["why"])
         self.assertTrue(self.verdict([{"title": "Verdict", "type": "TEXT", "value": "approve"}],
                                      "**Verdict:** Request changes\n")["met"])
+
+    def test_a_padded_verdict_title_is_read(self) -> None:
+        self.assertTrue(self.verdict([{"title": " Verdict ", "type": "TEXT", "value": "Approve"}], "no line")["met"])
 
     def test_without_a_verdict_item_the_body_is_read(self) -> None:
         self.assertEqual(self.verdict([{"title": "Findings", "type": "NUMBER", "value": 0}], "**Verdict:** Approve\n"),
@@ -693,16 +702,47 @@ class ReportEndToEndTests(PrReviewCase):
         code, out = self.flow("pr-review", "FX-2")
         self.assertEqual(code, 2, out)
         self.assertIn("returned no `reports` (a reviewer has `report`)", out)
-        self.answer([PASSED], [by_primary()], reports=None)
+        # Null, as the GitHub adapter returns it: refused at once, even inside a wait.
+        self.configure({"settleSeconds": 300, "waitSeconds": 120, "reviewers": [REPORTING]})
+        self.answer([PASSED, {**LINT, "state": "pending"}], [by_primary()], reports=None)
         for reader in ("pr-review", "gate"):
             with self.subTest(reader):
-                code, out = self.flow("pr-review", "FX-2") if reader == "pr-review" else self.gate()[::2]
+                self.clock(T0_EPOCH + 60)
+                code, out = (self.flow("pr-review", "FX-2", "--wait") if reader == "pr-review"
+                             else self.gate("--wait")[::2])
                 self.assertEqual(code, 2, out)
                 self.assertIn("only the Bitbucket adapter returns reports", out)
+                self.assertEqual(self.sleeps(), [])
         self.answer([PASSED], [by_primary()], reports=[])
         code, out = self.flow("pr-review", "FX-2")
         self.assertEqual(code, 2, out)
         self.assertIn("no current review from primary", out)
+
+    def test_an_approval_gate_with_a_report_reads_no_approvals_from_the_forge(self) -> None:
+        self.configure({"settleSeconds": 300, "reviewers": [REPORTING | {"gate": "approval"}]})
+        self.answer([PASSED], [by_primary()], reports=[insight("PASSED", verdict="Approve")])  # no `approvals`
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 0, out)
+        self.assertIn("approval gate met: report primary-review is PASSED", out)
+        self.configure({"settleSeconds": 300, "reviewers": [REPORTING | {"gate": "approval"}, APPROVAL_CODEX]})
+        self.answer([PASSED], [by_primary(), by_codex()], reports=[insight("PASSED", verdict="Approve")])
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 2, out)
+        self.assertIn("returned no `approvals` (a reviewer has gate \"approval\")", out)
+
+    def test_an_unblocked_hand_off_whose_record_has_a_pending_reviewer_is_refused(self) -> None:
+        """Only a hand-off blocked on pr-review leaves an unread reviewer to the lead."""
+        self.configure({"settleSeconds": 300, "reviewers": [REPORTING, {"id": "codex", "account": "{u-review}"}]})
+        self.answer([PASSED], [by_primary(), by_codex()], reports=[insight("PASSED")])
+        self.assertEqual(self.flow("pr-review", "FX-2")[0], 0)
+        self.assertEqual(self.handoff("primary=fine", "codex=fine")[0], 0)
+        record = self.record()
+        record["reviewers"]["codex"] = {"state": "pending", "required": True}  # as an errored report's stop records it
+        (self.review / "pr-review.json").write_text(json.dumps(record, indent=2))
+        self.answer([PASSED, {**LINT, "state": "pending"}], [by_primary()], reports=[insight("FAILED")])
+        code, out = self.accept()
+        self.assertEqual(code, 1, out)
+        self.assertIn("codex is required, but the lane recorded it pending", out)
 
     def test_the_doctor_refuses_report_under_the_github_adapter(self) -> None:
         for adapter, status in (("github", "wrong"), ("bitbucket", "ok")):

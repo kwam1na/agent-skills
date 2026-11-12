@@ -193,7 +193,7 @@ def report_reading(reviewer: dict, mine: list[dict], found: dict, checks: list[d
 def members_refusal(reviewers: list[dict], found: dict) -> str | None:
     """Why the adapter's `reviews` can't gate these reviewers, or None. A member it doesn't return is refused; an empty
     one is not: then the gate is just unmet."""
-    gated = [r["id"] for r in reviewers if r.get("gate") == "approval"]
+    gated = [r["id"] for r in reviewers if r.get("gate") == "approval" and not r.get("report")]  # a report stands in
     if not gated:
         return None
     approvals = found.get("approvals")

@@ -187,7 +187,7 @@ checks may need no file at all.
   Every wait reads its time, sleeps and poll interval through one clock, which `RUN_DELIVERY_CLOCK` replaces with
   a file's for the tool's own tests; never set it in a delivery.
 - **What the adapter must return.** A reviewer with `account` needs `account` on each comment from `reviews`; a gate
-  `"approval"` needs `approvals`; `report` needs `reports`. A member the adapter doesn't return at all is refused,
+  `"approval"` without `report` needs `approvals`; `report` needs `reports`. A member the adapter doesn't return at all is refused,
   naming it; one returned empty is not. The single `{author}` shape reads none of them.
 - **The record.** `pr-review` saves `{schema: "pr-review/2", head, url, reviewers: {<id>: {state, required, author?,
   account?, at?, body?, triage?}}}`, `state` being `current`, `absent` or `silent`, and prints each review under its id. It makes
@@ -352,7 +352,7 @@ gate is checked nowhere. Without `gate`, the review only has to be current, as b
   adapter's are the PR's participants with `approved`, with no `commit`. An approval that names a `commit` counts only
   when that commit is the head. **On Bitbucket an approval is only as fresh as the forge makes it:** Bitbucket ties no
   approval to a commit, so an approval given at an earlier head still counts after a new push. An adapter that prints no
-  `approvals` member is refused for an approval gate, naming the member; an empty list is not refused, and the gate is
+  `approvals` member is refused for an approval gate without `report`, naming the member; an empty list is not refused, and the gate is
   unmet.
 
 With `report` (Bitbucket's Code Insights reports, in the adopting guide), the verdict is the report's data item titled

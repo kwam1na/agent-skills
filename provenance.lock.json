@@ -1046,15 +1046,15 @@
         },
         {
           "path": "skills/run-delivery/references/config.md",
-          "sha256": "9ff6f7ec5ae6b75fd5d0ad8e6f4b308848fae3c96971abc40e8d92c48be98a56"
+          "sha256": "9d0f4a6f82970b4cbad6129e1b5b414dc12baab5828a48414c60b606c4f954a7"
         },
         {
           "path": "skills/run-delivery/scripts/pr_review_gates.py",
-          "sha256": "ae2d502e37ddb303710900e7be5ddccf77923861f2090774683053803bcb576a"
+          "sha256": "0244be97ce8cdb4ebcd81c051ab002a9b35d1d3fe8def846b195ce8ae596cafa"
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "07184cacbe628ba711789b178f997e6a8ae386f0887c1db418813ef85232d664"
+          "sha256": "5ceb28d6a631a0dcd8490cd990205dd1ab92a6dd5bd2db2359bc68096e0fd953"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
