@@ -85,6 +85,67 @@ grants authority, or creates comparison adjudications. A repository-specific
 comparison report remains an adopter-owned follow-up sensor artifact; ordinary
 product reconciliation accepts its absence and never rewrites one that exists.
 
+## Claude Code hook entries
+
+A skill can declare host hooks in `skills/<id>/hooks.json`. When the profile an
+apply installs declares a Claude Code hook for an event, the apply writes one
+entry for that event into the project's `.claude/settings.json`, and none for an
+event no hook declares. The entry goes under `hooks.Stop` or
+`hooks.SessionStart`, with no `matcher`:
+
+```json
+{"hooks": [{"type": "command", "command": "python3 -B \"${CLAUDE_PROJECT_DIR}/.agent-skills/current/__main__.py\" hook claude-code stop || exit 1", "timeout": 30}]}
+```
+
+The `SessionStart` entry is the same with `session-start` in place of `stop`.
+The command names `current`, so an update between generations that declare the
+same events leaves the file byte-identical. The `|| exit 1` means a missing or
+older generation never blocks a stop.
+
+An entry is the lifecycle's only when its command is exactly that string. The
+lifecycle never reads, moves or rewrites any other key or entry, including your
+own entries in the same list. It writes the file as two-space-indented JSON with
+a final newline, replacing it in one rename, and records what it owns in the
+receipt's `hooks` member: the events, and whether it created the file. It never
+writes `.claude/settings.local.json` or your user settings. Claude Code runs a
+project's hooks only once the folder is trusted.
+
+Before it changes anything, an apply, rollback or removal refuses with
+`exposure-conflict` when the file:
+
+- isn't a JSON object;
+- has a `hooks` that isn't an object;
+- has a `hooks.Stop` or `hooks.SessionStart` that isn't a list;
+- holds an entry running that command that differs from the entry above.
+
+Each refusal names the fix. If the file changes between that check and the
+write, the operation refuses with `exposure-conflict` and ends where it began:
+the file as you left it, the prior receipt and the prior skill exposures.
+
+`status` reports the blocker `local-divergence: hooks`, with the recovery step
+`restore-hook-entries`, when the entries running the command no longer match the
+receipt's events. That happens when one was removed or edited by hand. Put back
+exactly the entry above for each event the receipt lists, and remove any other
+copy. Keys and entries of your own are never divergence.
+
+To take the entries out, apply a generation whose profile declares no hooks, or
+remove the installation:
+
+```sh
+python3 -B /repo/.agent-skills/current --root /repo remove --maintenance
+```
+
+Removing an entry that leaves its event's list empty removes that event's key,
+and an emptied `hooks` loses its key too. The file itself is deleted only when
+the lifecycle created it and nothing else is left in it. Otherwise it stays,
+with whatever you added. A single-skill adoption installs no hook entries.
+
+To downgrade, use `rollback` rather than applying an older archive. A receipt
+with `hooks` fails an older generation's receipt validation, so an older
+archive's own `apply` refuses it. `rollback` runs the newer generation's code:
+it restores the prior receipt and reconciles the entries to it, which removes
+them when that generation declared none.
+
 Workflow-only releases continue to support the original lifecycle commands.
 They intentionally fail product readiness. Final qualification must compare the
 selected profile, exact workflow content digest, runtime descriptor, and outer

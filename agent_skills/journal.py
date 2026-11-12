@@ -15,6 +15,7 @@ JOURNAL_PHASES = (
     "generation-ready",
     "exposing-codex",
     "exposing-claude-code",
+    "exposing-claude-code-hooks",
     "exposure-switched",
     "verifying",
     "marker-committed",
