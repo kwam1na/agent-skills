@@ -1858,7 +1858,6 @@ def epic_comments(backend) -> list[str]:
     return [comment["text"] for comment in backend.read()["issues"]["FX-1"]["comments"]]
 
 
-@unittest.skipIf(os.name == "nt", POSIX_ONLY)
 def draw_line_map(fx: Fixture) -> None:
     """The binding also renders the line map into the record, as an adopter's live view does."""
     m = fx.main
@@ -1891,6 +1890,7 @@ def run_delivery_module(name: str):
 LISTENER = "The lead isn't listening"
 
 
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
 class LeadListenerTests(unittest.TestCase):
     """The lead's listener: the lead commands print the lead-wait to start, and while none runs the supervisor's "Needs
     you", the live view and the status line say so."""
@@ -1993,18 +1993,30 @@ class LeadListenerTests(unittest.TestCase):
                               timeout=120)
         self.assertEqual(woke.returncode, 0, woke.stdout + woke.stderr)
         self.assertIn(handed, [event["id"] for event in json.loads(woke.stdout)["events"]])
-        # Resumed with a candidate queued, the supervisor's start names it too.
+        # Resumed with a candidate queued, the supervisor's start names it too. A last wait whose restart starts past
+        # the journal (a record started again, say) isn't reprinted: the command starts after the journal's last entry.
+        before = self.last_id(fx)
+        output.write_text(json.dumps({**json.loads(woke.stdout), "restart": ["--after", str(before + 5),
+                                                                           f"--output={output}"]}))
         code, out = fx.flow("lead-run", "--resume", cwd=fx.main, env=running(fx))
         self.assertEqual(code, 0, out)
         self.assertIn("FX-2 (queued)", out)
+        words = self.printed(out)
+        after = int(words[words.index("--after") + 1])
+        # The supervisor it starts may journal as it goes, so the last entry is read on either side of the print.
+        self.assertTrue(before <= after <= self.last_id(fx) < before + 5, (before, after, self.last_id(fx)))
+        self.assertEqual(words[words.index("lead-wait") + 1:], ["--after", str(after), "--output", str(output)])
         self.assertIn("the lead isn't listening", out)
         self.assertIn("lead-wait", self.printed(out))
-        # While one listens, the commands say so and print no second one to start.
-        listening = self.start_lead_wait(fx, "--timeout", "60", "--poll", "0.1")
+        # While one listens, the commands say so and print no second one to start. Its lease keeps the --after it was
+        # given, below the journal's last entry, not that entry.
+        given = self.last_id(fx) - 2
+        listening = self.start_lead_wait(fx, "--after", str(given), "--timeout", "60", "--poll", "0.1")
         wait_for(lambda: (fx.tmp / "record/lead-wait.json").exists(), "the lease")
+        self.assertEqual(json.loads((fx.tmp / "record/lead-wait.json").read_text())["after"], given)
         code, out = fx.flow("lead-assign", "FX-3", "--lane", "lane-2", "--title", "lane-2", cwd=fx.main)
         self.assertEqual(code, 0, out)
-        self.assertIn(f"lead-wait is listening (pid {listening.pid}", out)
+        self.assertIn(f"lead-wait is listening (pid {listening.pid}, after journal entry {given})", out)
         self.assertNotIn(" lead-wait --", out)
         self.assertNotIn("isn't listening", out)
 
@@ -2043,19 +2055,24 @@ class LeadListenerTests(unittest.TestCase):
         proc.communicate(timeout=60)
         self.assertFalse(lease_path.exists(), "the lease outlived its lead-wait")
         self.shown(fx, True)
+        # Each planted lease below starts from views that show a listener, so it is what turns them back.
+        fresh = lambda: lease_path.write_text(json.dumps({**lease, "pid": os.getpid(),
+                                                          "updatedAt": self.flow.utc_stamp(time.time())}))
+        fresh()
+        self.shown(fx, False)
         # A lease whose pid has died is no listener: the lease function, the supervisor and the live view agree.
         dead = subprocess.Popen([sys.executable, "-c", "pass"])
         dead.wait()
         lease_path.write_text(json.dumps({**lease, "pid": dead.pid, "updatedAt": self.flow.utc_stamp(time.time())}))
         self.assertIsNone(self.flow.lead_listener(fx.tmp / "record"))
         self.shown(fx, True)
-        # As is one whose last refresh is 180 seconds old, though its pid lives; a fresh one with that pid listens.
+        fresh()
+        self.shown(fx, False)
+        # As is one whose last refresh is 180 seconds old, though its pid lives.
         lease_path.write_text(json.dumps({**lease, "pid": os.getpid(),
                                           "updatedAt": self.flow.utc_stamp(time.time() - 180)}))
         self.assertIsNone(self.flow.lead_listener(fx.tmp / "record"))
         self.shown(fx, True)
-        lease_path.write_text(json.dumps({**lease, "pid": os.getpid(), "updatedAt": self.flow.utc_stamp(time.time())}))
-        self.shown(fx, False)
 
     def test_lead_wait_is_the_wait_and_ends_with_it(self) -> None:
         fx, _ = self.fixture()
@@ -2065,6 +2082,10 @@ class LeadListenerTests(unittest.TestCase):
         self.assertEqual(result["through"], self.last_id(fx))
         self.assertIn(f"--output={(fx.tmp / 'flow-log/FX-1.wait.json').resolve()}", result["restart"])
         self.assertFalse((fx.tmp / "record/lead-wait.json").exists())
+        # The one-word --delivery form is run-delivery's, and the wait still gets what follows it.
+        code, out = fx.flow("lead-wait", "--delivery=FX-1", "--timeout", "0.2", "--poll", "0.05", cwd=fx.main)
+        self.assertEqual(code, 3, out)
+        self.assertEqual(json.loads(out)["restart"][2:6], ["--timeout", "0.2", "--poll", "0.05"])
         # A usage error is the wait's, and starts nothing.
         code, out = fx.flow("lead-wait", "--timeout", "never", cwd=fx.main)
         self.assertEqual(code, 2, out)
@@ -2079,6 +2100,7 @@ class LeadListenerTests(unittest.TestCase):
         self.assertFalse((fx.tmp / "record/lead-wait.json").exists())
 
 
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
 class SupervisorTrackerTests(unittest.TestCase):
     """What the supervisor reads of the tracker publisher: its "Needs you", its follow-up filings, and its ledger's
     cover of delivery.closed."""

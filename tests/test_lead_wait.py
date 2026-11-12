@@ -925,6 +925,13 @@ class LeaseTests(unittest.TestCase):
         self.assertIsNotNone(flow.lead_listener(self.state, moment + 179.5))
         self.assertIsNone(flow.lead_listener(self.state, moment + 180))
 
+    def test_a_stamp_up_to_one_refresh_ahead_is_live_and_past_it_absent(self) -> None:
+        # A reader whose clock runs behind the writer's still sees a listener, up to one refresh.
+        self.lease(updatedAt=flow.utc_stamp(self.at + 60))
+        self.assertIsNotNone(flow.lead_listener(self.state, self.at))
+        self.lease(updatedAt=flow.utc_stamp(self.at + 61))
+        self.assertIsNone(flow.lead_listener(self.state, self.at))
+
     def test_a_malformed_lease_is_absent(self) -> None:
         cases = {"not json": "{", "a list": "[]", "no pid": json.dumps({"updatedAt": flow.utc_stamp(self.at)})}
         for name, text in cases.items():
