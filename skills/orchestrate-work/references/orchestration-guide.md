@@ -336,6 +336,15 @@ renders, publishers included, after each of its own writes.
 - Start the live view at the beginning of the delivery and point the
   operator at its address; it re-renders on every record write, so it is
   never stale.
+- `render_state.py live --status-file PATH` re-reads a supervisor's status
+  file on every page it serves: `pid`, `state` (`running` or `stopped`),
+  `at`, and optionally `why`, `said` and `restart`. While it says `running`
+  and its pid runs, the page shows no banner. Once it says `stopped`, the page
+  says the supervisor is down, since when and why; a file still marked
+  `running` for a pid that no longer runs says the supervisor stopped without
+  recording why. Each names the file's `restart` command, and an open page
+  follows the file without a reload. Without the option the view renders as
+  it always has.
 - The live view is sized for a handful of pages on this machine. Each open
   page holds one connection and one thread, and each update carries the
   whole record. A page that reconnects gets the whole current record at

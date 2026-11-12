@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import datetime
 import fcntl
+import html
 import importlib.util
 import json
 import os
 import re
 import shutil
 import signal
+import socket
 import contextlib
 import subprocess
 import sys
@@ -545,13 +547,25 @@ class SupervisorProcessTests(unittest.TestCase):
         self.assertIn(f"a supervisor already runs (pid {first['pid']})", out)
         code, out = fx.flow("lead-init", cwd=m, env=running(fx))
         self.assertEqual(code, 2, out)
+        view = live_of(fx)["pid"]
+        self.assertIn({"name": "live", "pid": view}, first["children"])
+        self.assertNotEqual(os.getpgid(view), first["pid"])
         code, out = fx.flow("lead-init", "--replace", cwd=m, env=running(fx))
         self.assertEqual(code, 0, out)
         second = lock_of(fx)
         self.assertNotEqual(second["pid"], first["pid"])
         for pid in [first["pid"], *(child["pid"] for child in first["children"])]:
             wait_for(lambda: not alive(pid), f"the first supervisor's process {pid} to stop", 30)
+        self.assertIn(f"stopped the live view (pid {view})", out)
+        self.assertNotEqual(live_of(fx)["pid"], view)
         self.assertEqual(len(list(fx.tmp.rglob("*.supervisor.lock"))), 2, "the archive keeps the first lock")
+        # The replaced record says who stopped its supervisor; the fresh one's says it runs.
+        archived = [path.parent for path in (fx.tmp / "archive").rglob("supervisor.json") if "-replaced" in str(path)]
+        self.assertEqual(len(archived), 1, archived)
+        replaced = status_of(archived[0])
+        self.assertEqual((replaced["pid"], replaced["state"], replaced["why"]), (first["pid"], "stopped", "replaced"))
+        self.assertEqual((status_of(fx.tmp / "record")["pid"], status_of(fx.tmp / "record")["state"]),
+                         (second["pid"], "running"))
 
     def test_children_start_with_default_signals_and_an_accepted_draft_is_made_ready_and_merged(self) -> None:
         fx = self.fixture()
@@ -614,13 +628,16 @@ class SupervisorProcessTests(unittest.TestCase):
         first = lock_of(fx)
         os.kill(first["pid"], signal.SIGKILL)
         wait_for(lambda: not alive(first["pid"]), "the supervisor to die")
-        orphans = [child["pid"] for child in first["children"]]
+        # The view runs in a session of its own: not an orphan of the supervisor's group, and never swept as one.
+        view = live_of(fx)["pid"]
+        orphans = [child["pid"] for child in first["children"] if child["pid"] != view]
         self.assertTrue(all(alive(pid) for pid in orphans), "its children died with it")
         code, out = fx.flow("doctor", "--delivery", "FX-1", "--offline", cwd=m)
         self.assertIn("the supervisor is down; fix:", out)
         self.assertIn("lead-run --resume", out)
         code, out = fx.flow("lead-brief", cwd=m)
-        self.assertIn("supervisor: down; restart it with", out)
+        self.assertIn(f"supervisor: down (stopped without recording why); live view {first['address']}; restart it with",
+                      out)
         code, out = fx.flow("lead-run", cwd=m, env=running(fx))
         self.assertEqual(code, 2, out)
         self.assertIn("left children running", out)
@@ -688,11 +705,19 @@ class SupervisorProcessTests(unittest.TestCase):
         code, out = fx.flow("lead-init", cwd=m, env=running(fx))
         self.assertEqual(code, 0, out)
         wait_for(lambda: passes(fx), "a first pass")
-        first = lock_of(fx)
+        first, live = lock_of(fx), live_of(fx)
+        self.assertEqual(listeners(live["port"]), [live["pid"]])
         state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "closed early")
         code, out = fx.flow("lead-close", cwd=m)
         self.assertEqual(code, 0, out)
         self.assertIn(f"stopped the supervisor (pid {first['pid']}) after its pass", out)
+        status = status_of(fx.tmp / "record")
+        self.assertEqual((status["pid"], status["state"], status["why"]), (first["pid"], "stopped", "held"))
+        # The view last, by its recorded pid: after the final render and the archive.
+        done = [line for line in out.splitlines() if line.startswith("  done: ")]
+        self.assertEqual(done[-1], f"  done: stopped the live view (pid {live['pid']}) on port {live['port']}")
+        self.assertFalse(alive(live["pid"]))
+        self.assertFalse(answers(live["port"]), "something still listens on the view's port")
         for pid in [first["pid"], *(child["pid"] for child in first["children"])]:
             wait_for(lambda: not alive(pid), f"process {pid} to stop", 30)
         self.assertIn("supervisor: stopped; the delivery is closed. Archive", out)
@@ -730,10 +755,17 @@ class SupervisorProcessTests(unittest.TestCase):
         with open(fx.tmp / "flow-log/plan-changes.jsonl", "a") as changes:
             changes.write(json.dumps({"type": "change", "id": "c1", "kind": "removed", "subjects": ["FX-3"], "by": "lead",
                                       "why": "Out of scope.", "at": "2026-01-01T00:00:00Z"}) + "\n")
+        live = live_of(fx)
+        self.assertEqual(listeners(live["port"]), [live["pid"]])
         wait_for(lambda: (fx.tmp / "flow-log/FX-1.closed.json").exists(), "the supervisor to close the delivery")
         for pid in [first["pid"], *(child["pid"] for child in first["children"])]:
             wait_for(lambda: not alive(pid), f"process {pid} to stop once the delivery closed", 30)
         self.assertEqual(len(kinds(fx, "delivery.closed")), 1)
+        status = status_of(fx.tmp / "record")
+        self.assertEqual((status["pid"], status["state"], status["why"]), (first["pid"], "stopped", "close"))
+        self.assertFalse(answers(live["port"]), "something still listens on the view's port")
+        log = (fx.tmp / "flow-log/FX-1.supervisor.log").read_text()
+        self.assertIn(f"supervisor: stopped the live view (pid {live['pid']}) on port {live['port']}", log)
 
 
 class SupervisorNodeTests(unittest.TestCase):
@@ -837,6 +869,339 @@ class SupervisorNodeTests(unittest.TestCase):
                 self.assertIn(said, words)
                 if status != "ok":
                     self.assertIn("lead-run --resume", words)
+
+
+def tool_module(name: str):
+    """run_delivery.py from this tree, imported under its own name."""
+    path = Path(__file__).resolve().parents[1] / "skills" / "run-delivery" / "scripts" / "run_delivery.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.modules.pop(spec.name, None)
+    return module
+
+
+class LivePortTests(unittest.TestCase):
+    """Decision 2's port: derived from the repository's top-level path and the delivery key, until one is recorded."""
+
+    def setUp(self) -> None:
+        self.module = tool_module("run_delivery_for_live_port")
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.state = Path(folder.name)
+
+    def test_the_port_is_derived_from_the_path_and_the_key_until_one_is_recorded(self) -> None:
+        derive = self.module.derived_live_port
+        # sha256("<path>\0<key>"), first eight bytes big-endian, modulo 10000, plus 20000.
+        self.assertEqual(derive("/fixture/one", "FX-1"), 24756)
+        self.assertEqual(derive("/fixture/two", "FX-1"), 24737)
+        # Two deliveries in one checkout each derive their own.
+        self.assertEqual(derive("/fixture/one", "FX-2"), 22114)
+        wanted = self.module.wanted_live_port
+        self.assertEqual(wanted(self.state, "/fixture/one", "FX-1"), 24756)
+        self.assertEqual(wanted(self.state, "/fixture/one", "FX-1"), 24756, "deriving again moved the port")
+        # A recorded port, as after a fallback, is asked for before the derived one.
+        (self.state / "live.json").write_text(json.dumps({"port": 51234, "pid": 4242}))
+        self.assertEqual(wanted(self.state, "/fixture/one", "FX-1"), 51234)
+        for broken in ({"port": 0, "pid": 4242}, {"port": 51234, "pid": 1}, {"port": True, "pid": 4242}, []):
+            with self.subTest(broken=broken):
+                (self.state / "live.json").write_text(json.dumps(broken))
+                self.assertEqual(wanted(self.state, "/fixture/one", "FX-1"), 24756)
+
+    def test_only_zero_is_taken_from_the_environment(self) -> None:
+        for value, port in (("", None), ("0", 0), (" 0 ", 0)):
+            with self.subTest(value=value), mock.patch.dict(os.environ, {"RUN_DELIVERY_LIVE_PORT": value}):
+                self.assertEqual(self.module.live_port_setting(), port)
+        with mock.patch.dict(os.environ, {"RUN_DELIVERY_LIVE_PORT": "24756"}):
+            with self.assertRaisesRegex(self.module.Stop, "it takes 0 alone"):
+                self.module.live_port_setting()
+
+
+def live_of(fx: Fixture) -> dict:
+    path = fx.tmp / "record/live.json"
+    return json.loads(path.read_text()) if path.exists() else {}
+
+
+def status_of(folder: Path) -> dict:
+    path = folder / "supervisor.json"
+    return json.loads(path.read_text()) if path.exists() else {}
+
+
+def page_of(address: str) -> str:
+    with urllib.request.urlopen(address, timeout=10) as page:
+        return page.read().decode("utf-8")
+
+
+def banner_of(address: str) -> str | None:
+    with urllib.request.urlopen(address + "supervisor", timeout=10) as answer:
+        return json.loads(answer.read())["banner"]
+
+
+def port_of(address: str) -> int:
+    return int(address.rstrip("/").rsplit(":", 1)[1])
+
+
+def listeners(port: int) -> list[int]:
+    found = subprocess.run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"], capture_output=True, text=True).stdout
+    return sorted(int(pid) for pid in found.split() if pid.isdigit())
+
+
+def answers(port: int) -> bool:
+    with socket.socket() as probe:
+        probe.settimeout(0.5)
+        return probe.connect_ex(("127.0.0.1", port)) == 0
+
+
+def without_live_port(env: dict[str, str]) -> dict[str, str]:
+    """The environment with no RUN_DELIVERY_LIVE_PORT: the view asks for its recorded port, else the derived one."""
+    return {key: value for key, value in env.items() if key != "RUN_DELIVERY_LIVE_PORT"}
+
+
+# Listens on 127.0.0.1:<port> until stopped, as another delivery's server or anything else on the port would.
+HOLD_PORT = r"""
+import socket, sys, time
+s = socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("127.0.0.1", int(sys.argv[1])))
+s.listen()
+print("listening", flush=True)
+time.sleep(300)
+"""
+
+
+class LiveViewAddressTests(unittest.TestCase):
+    """The live view runs in a session of its own, keeps one address across supervisor restarts, and says why the
+    supervisor is down. Cases that bind a derived or recorded port run here, serially."""
+
+    run_serially = True
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        for name, value in vars(installed_release()).items():
+            setattr(cls, name, value)
+
+    def fixture(self) -> Fixture:
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        self.addCleanup(stop_supervisors, fx.tmp)
+        supervised(fx)
+        return fx
+
+    def started(self, argv: list[str], **kwargs) -> subprocess.Popen:
+        """A process the case starts and stops itself, by the pid it holds."""
+        proc = subprocess.Popen(argv, start_new_session=True, **kwargs)
+        self.addCleanup(stop_and_reap, proc)
+        return proc
+
+    def hold(self, port: int) -> subprocess.Popen:
+        holder = self.started([sys.executable, "-B", "-c", HOLD_PORT, str(port)], stdout=subprocess.PIPE, text=True)
+        self.assertEqual(holder.stdout.readline().strip(), "listening")
+        holder.stdout.close()
+        return holder
+
+    def stop_supervisor(self, fx: Fixture, sig: int = signal.SIGTERM) -> int:
+        """Signal the supervisor's process group, as a stop does, and wait until it is gone. Returns its pid."""
+        pid = lock_of(fx)["pid"]
+        os.killpg(pid, sig)
+        wait_for(lambda: not alive(pid), f"the supervisor (pid {pid}) to stop", 30)
+        return pid
+
+    def stop_view(self, fx: Fixture) -> int:
+        """Stop the view live.json names, by that pid, and wait until it is gone and its port is free."""
+        live = live_of(fx)
+        os.kill(live["pid"], signal.SIGTERM)
+        wait_for(lambda: not alive(live["pid"]) and not answers(live["port"]), "the view to stop", 30)
+        return live["pid"]
+
+    def test_a_restart_keeps_the_address_and_the_view_and_the_view_says_why_the_supervisor_is_down(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        code, out = fx.flow("lead-init", cwd=m, env=running(fx))
+        self.assertEqual(code, 0, out)
+        first, live = lock_of(fx), live_of(fx)
+        view, address = live["pid"], first["address"]
+        self.assertEqual(live["address"], address)
+        self.assertEqual(live["port"], port_of(address))
+        self.assertEqual(listeners(live["port"]), [view])
+        self.assertNotEqual(os.getpgid(view), first["pid"], "the view runs in the supervisor's group")
+        self.assertEqual(live["renderState"],
+                         str((self.generation / "skills/orchestrate-work/scripts/render_state.py").resolve()))
+        status = status_of(fx.tmp / "record")
+        self.assertEqual((status["pid"], status["state"]), (first["pid"], "running"))
+        self.assertIsNone(banner_of(address))
+        self.assertNotIn("The supervisor", page_of(address))
+        # Stopped on a named signal: recorded, and the same view says so, with when and how to restart it.
+        self.stop_supervisor(fx)
+        status = status_of(fx.tmp / "record")
+        self.assertEqual((status["pid"], status["state"], status["why"], status["signal"]),
+                         (first["pid"], "stopped", "signal", "SIGTERM"))
+        said = banner_of(address)
+        self.assertIn(f"The supervisor is down since {status['at']}: it received SIGTERM.", said)
+        self.assertIn("lead-run --resume", said)
+        self.assertIn(html.escape(said), page_of(address))
+        # Every lead command's line names the address while the view serves.
+        down = f"supervisor: down (it received SIGTERM); live view {address}; restart it with "
+        code, out = fx.flow("lead-reconcile", cwd=m)
+        self.assertIn(down, out)
+        code, out = fx.flow("lead-assign", "FX-2", "--lane", "lane-1", "--title", "lane-1", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertIn(down, out)
+        hand_off(fx, "FX-2", "lane-1", assign=False)
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertIn(down, out)
+        # A resume keeps the address, and the view is the same process.
+        code, out = fx.flow("lead-run", "--resume", cwd=m, env=running(fx))
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"supervisor: running; live view {address}", out)
+        second = lock_of(fx)
+        self.assertNotEqual(second["pid"], first["pid"])
+        self.assertEqual(second["address"], address)
+        self.assertEqual(live_of(fx)["pid"], view)
+        self.assertEqual(listeners(port_of(address)), [view])
+        self.assertIn({"name": "live", "pid": view}, second["children"])
+        self.assertEqual(status_of(fx.tmp / "record")["state"], "running")
+        self.assertIsNone(banner_of(address))
+
+    def test_a_killed_group_leaves_the_view_and_a_dead_or_deaf_view_is_replaced_without_a_signal(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        code, out = fx.flow("lead-init", cwd=m, env=running(fx))
+        self.assertEqual(code, 0, out)
+        address, view = lock_of(fx)["address"], live_of(fx)["pid"]
+        # SIGKILL to the whole group: the supervisor records nothing, and its view still serves the same address.
+        self.stop_supervisor(fx, signal.SIGKILL)
+        self.assertTrue(alive(view))
+        self.assertEqual(listeners(port_of(address)), [view])
+        self.assertEqual(status_of(fx.tmp / "record")["state"], "running")
+        said = banner_of(address)
+        self.assertIn("stopped without recording why", said)
+        self.assertIn("lead-run --resume", said)
+        self.assertIn(html.escape(said), page_of(address))
+        code, out = fx.flow("lead-reconcile", cwd=m)
+        self.assertIn(f"supervisor: down (stopped without recording why); live view {address}; restart it with ", out)
+        # The view gone too: the line names no address.
+        self.stop_view(fx)
+        code, out = fx.flow("lead-reconcile", cwd=m)
+        line = next(l for l in out.splitlines() if l.startswith("supervisor:"))
+        self.assertTrue(line.startswith("supervisor: down (stopped without recording why); restart it with "), line)
+        self.assertIn("lead-run --resume", line)
+        self.assertNotIn("live view", line)
+        # live.json naming a pid that runs but doesn't listen on its port: a new view, and that pid is never signalled.
+        deaf = self.started(["sleep", "300"])
+        record = live_of(fx)
+        (fx.tmp / "record/live.json").write_text(json.dumps({**record, "pid": deaf.pid}))
+        code, out = fx.flow("lead-run", "--resume", cwd=m, env=running(fx))
+        self.assertEqual(code, 0, out)
+        new = live_of(fx)
+        self.assertNotEqual(new["pid"], deaf.pid)
+        self.assertEqual(listeners(new["port"]), [new["pid"]])
+        self.assertIsNone(deaf.poll(), "the deaf pid was signalled")
+        log = (fx.tmp / "flow-log/FX-1.supervisor.log").read_text()
+        self.assertIn(f"live.json's pid {deaf.pid} runs but doesn't listen on port {record['port']}", log)
+
+    def test_a_retargeted_generation_replaces_the_view_on_its_port_and_the_same_one_is_adopted(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        other = fx.tmp / "generation-b" / self.generation.name
+        shutil.copytree(self.generation, other, symlinks=True)
+        link = m / ".agent-skills/current"
+        through = link / "skills/run-delivery/scripts/run_delivery.py"
+        code, out = fx.flow("lead-init", cwd=m, tool=through, env=running(fx))
+        self.assertEqual(code, 0, out)
+        address, first = lock_of(fx)["address"], live_of(fx)
+        # Not retargeted: the resumed supervisor adopts the same view.
+        self.stop_supervisor(fx)
+        code, out = fx.flow("lead-run", "--resume", cwd=m, tool=through, env=running(fx))
+        self.assertEqual(code, 0, out)
+        self.assertEqual(live_of(fx)["pid"], first["pid"])
+        self.assertEqual(lock_of(fx)["address"], address)
+        # Retargeted: the view of the old generation is stopped by its pid and replaced on the same port.
+        self.stop_supervisor(fx)
+        link.unlink()
+        link.symlink_to(other)
+        code, out = fx.flow("lead-run", "--resume", cwd=m, tool=through, env=running(fx))
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"supervisor: running; live view {address}", out)
+        second = live_of(fx)
+        self.assertNotEqual(second["pid"], first["pid"])
+        wait_for(lambda: not alive(first["pid"]), "the old generation's view to stop", 30)
+        self.assertEqual(second["port"], first["port"])
+        self.assertEqual(second["renderState"], str((other / "skills/orchestrate-work/scripts/render_state.py").resolve()))
+        self.assertEqual(listeners(second["port"]), [second["pid"]])
+        self.assertEqual(lock_of(fx)["address"], address)
+
+    def test_a_recorded_port_is_kept_and_a_held_one_falls_back_to_a_free_port_and_says_who_holds_it(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        derived = tool_module("run_delivery_for_live_fallback").derived_live_port(str(m.resolve()), "FX-1")
+        # A first start on a free port records it, as a fallback would.
+        code, out = fx.flow("lead-init", cwd=m, env=running(fx))
+        self.assertEqual(code, 0, out)
+        recorded = live_of(fx)["port"]
+        self.assertNotEqual(recorded, derived)
+        self.stop_supervisor(fx)
+        self.stop_view(fx)
+        # With the supervisor and its view both stopped, a restart binds the recorded port, not the derived one.
+        code, out = fx.flow("lead-run", "--resume", cwd=m, env=without_live_port(running(fx)))
+        self.assertEqual(code, 0, out)
+        self.assertEqual(live_of(fx)["port"], recorded)
+        self.assertEqual(lock_of(fx)["address"], f"http://127.0.0.1:{recorded}/")
+        self.assertNotIn("it wanted port", out)
+        # That port held by another process: a free port, recorded, and said on its output and the next status line.
+        self.stop_supervisor(fx)
+        self.stop_view(fx)
+        holder = self.hold(recorded)
+        code, out = fx.flow("lead-run", "--resume", cwd=m, env=without_live_port(running(fx)))
+        self.assertEqual(code, 0, out)
+        moved = live_of(fx)
+        self.assertNotEqual(moved["port"], recorded)
+        self.assertEqual(listeners(moved["port"]), [moved["pid"]])
+        self.assertEqual(moved["fallback"]["wanted"], recorded)
+        self.assertEqual([item["pid"] for item in moved["fallback"]["heldBy"]], [holder.pid])
+        words = f"the live view it wanted port {recorded}, held by pid {holder.pid} ("
+        self.assertIn(f"supervisor: running; live view {moved['address']}; {words}", out)
+        log = (fx.tmp / "flow-log/FX-1.supervisor.log").read_text()
+        self.assertIn(f"the live view serves on {moved['address']}: it wanted port {recorded}, held by pid {holder.pid}",
+                      log)
+        code, out = fx.flow("lead-reconcile", cwd=m)
+        self.assertIn(f"live view {moved['address']}; {words}", out)
+        # Because the new port is recorded, the next restart keeps it.
+        self.stop_supervisor(fx)
+        self.stop_view(fx)
+        code, out = fx.flow("lead-run", "--resume", cwd=m, env=without_live_port(running(fx)))
+        self.assertEqual(code, 0, out)
+        self.assertEqual(live_of(fx)["port"], moved["port"])
+
+    def test_a_delivery_whose_derived_port_another_delivery_s_view_holds_binds_a_free_one(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        module = tool_module("run_delivery_for_two_deliveries")
+        derived = module.derived_live_port(str(m.resolve()), "FX-1")
+        self.assertNotEqual(module.derived_live_port(str(m.resolve()), "FX-2"), derived)
+        code, out = fx.flow("lead-init", cwd=m, env=running(fx))
+        self.assertEqual(code, 0, out)
+        self.stop_supervisor(fx)
+        self.stop_view(fx)
+        (fx.tmp / "record/live.json").unlink()
+        # Another delivery's view, of its own record, serving on the port this delivery derives.
+        neighbour = fx.tmp / "neighbour-record"
+        shutil.copytree(fx.tmp / "record", neighbour)
+        view = self.started([sys.executable, "-B", str(self.generation / "skills/orchestrate-work/scripts/render_state.py"),
+                             "live", "--dir", str(neighbour), "--port", str(derived)], stdout=subprocess.PIPE, text=True)
+        self.assertTrue(json.loads(view.stdout.readline())["ok"])
+        view.stdout.close()
+        code, out = fx.flow("lead-run", "--resume", cwd=m, env=without_live_port(running(fx)))
+        self.assertEqual(code, 0, out)
+        moved = live_of(fx)
+        self.assertNotEqual(moved["port"], derived)
+        self.assertEqual(moved["fallback"]["wanted"], derived)
+        self.assertEqual([item["pid"] for item in moved["fallback"]["heldBy"]], [view.pid])
+        self.assertIn(f"it wanted port {derived}, held by pid {view.pid} (", out)
+        self.assertIsNone(view.poll(), "the other delivery's view was signalled")
 
 
 class SettledLockTests(unittest.TestCase):

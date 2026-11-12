@@ -309,6 +309,52 @@ back. `lead-run --resume` stops what an earlier supervisor left running and star
 pass in the foreground. `lead-close` asks a running supervisor to stop after its pass, and refuses while the lead's
 settings have uncommitted changes. `lead-init --no-supervisor`, or `RUN_DELIVERY_SUPERVISOR=off`, starts none.
 
+### The live view's address
+
+The live view keeps one address for the whole delivery, across supervisor restarts:
+
+- **It outlives the supervisor.** The supervisor starts the view in a session of its own, so a stopped or killed
+  supervisor, a signal to its whole group included, leaves it serving. The view stays read-only.
+- **`live.json` says where it is.** The supervisor writes `live.json` in the record's folder: the view's `port`, its
+  `pid`, the resolved path of the `render_state.py` it runs (`renderState`), when it started and its address.
+- **A starting supervisor adopts it.** When `live.json`'s pid runs, listens on its recorded port and runs this
+  generation's `render_state.py`, the supervisor adopts that view rather than starting another. A view of another
+  generation, as after `.agent-skills/current` moved, is stopped by its recorded pid and replaced on the same port. A
+  recorded pid that runs but doesn't listen on its port is left alone, and a new view is started and recorded.
+- **The port is derived, then recorded.** A new view asks for the port `live.json` records, else the delivery's derived
+  port: the first eight bytes of the sha256 of `<main checkout's top-level path>\0<delivery key>`, read as a big-endian
+  integer, modulo 10000, plus 20000. The same delivery in the same checkout always asks for the same port.
+- **A held port falls back.** When another process holds that port, the view binds a free one, which is recorded, so
+  later restarts keep it. The supervisor says so on its output, and the status line names the port it wanted and who
+  holds it until a view starts on its own port again.
+- **`RUN_DELIVERY_LIVE_PORT=0`** makes a view with no recorded port bind a free one instead of the derived one, for
+  tests or a lead who wants that; it is recorded and kept as any other. It takes `0` alone.
+- **The close stops it last.** The supervisor's own close-out and `lead-close` each stop the view by its recorded pid,
+  after the final render and the archive. `lead-init --replace` stops the replaced delivery's view with its supervisor.
+  Nothing stops it by pattern.
+
+### Why the supervisor is down
+
+The supervisor writes `supervisor.json` beside `live.json`: its `pid`, `running` or `stopped`, when (`at`), why, and
+the command that restarts it. Each reason is written by what stops it:
+
+- `close`: the supervisor's own close-out, before it stops the view;
+- `replaced`: `lead-init --replace`, before it signals the supervisor, so it lands in the archived record;
+- `held`: `lead-close`'s stop request, which carries the reason to the supervisor;
+- `signal`: any other SIGTERM, SIGINT or SIGHUP the supervisor receives, naming it.
+
+The view reads the file on every page it serves (`render_state.py live --status-file`). While the supervisor runs, the
+page shows no banner. Once it is down, the page says so, since when and why, and names `lead-run --resume`; a file
+still marked `running` for a pid that no longer runs says the supervisor stopped without recording why, as a killed
+one leaves it.
+
+Every lead command's status line names the view's address while the view serves:
+
+- running: `supervisor: running (pid N); live view <address>`;
+- down, with the view serving: `supervisor: down (<why>); live view <address>; restart it with ... lead-run --resume`;
+- down, with the view gone too: the same line with no address;
+- closed, or a close stopped partway: as before, that line.
+
 ## The delivery posture
 
 `.agents/delivery-posture.json`, read from the tip of the delivery's own `<remote>/<base>` and nowhere else, decides

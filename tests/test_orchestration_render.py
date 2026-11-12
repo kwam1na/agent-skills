@@ -4,6 +4,7 @@ import contextlib
 import copy
 import datetime
 import hashlib
+import html
 import http.client
 import http.server
 import importlib.util
@@ -1412,6 +1413,78 @@ class LiveTests(DeliveryStateFixture):
         self.assertIn(b"own home", page)
         self.assertIn(b'EventSource("/events")', page)
         self.assertEqual(client.get("index.html")[1], page)
+
+    def test_without_a_status_file_the_page_and_its_routes_are_as_before(self) -> None:
+        _, url = self.start()
+        client = self.client(url)
+        status, page = client.get("")
+        self.assertEqual(status, 200)
+        shown = json.loads(client.get("document")[1])
+        # Any flag this checkout's binding raises is shown as before; the page is otherwise the built-in one, unchanged.
+        flags = tuple(html.unescape(flag) for flag in re.findall(r'<p role="alert"><strong>(.*?)</strong></p>',
+                                                                  page.decode("utf-8")))
+        self.assertEqual(page.decode("utf-8"), render_state.render_static_page(shown, live=True, flags=flags))
+        self.assertNotIn(b"supervisor-banner", page)
+        self.assertEqual(client.get("supervisor")[0], 404)
+
+    def status_file(self, **status) -> Path:
+        path = self.root / "supervisor.json"
+        path.write_text(json.dumps({"restart": "python3 -B tool.py lead-run --resume", **status}), encoding="utf-8")
+        return path
+
+    def banner(self, client: LiveClient) -> tuple[bytes, str | None]:
+        status, page = client.get("")
+        self.assertEqual(status, 200)
+        return page, json.loads(client.get("supervisor")[1])["banner"]
+
+    def test_the_banner_follows_the_status_file_on_every_page_served(self) -> None:
+        path = self.status_file(pid=os.getpid(), state="running", at="2026-11-11T10:00:00Z")
+        _, url = self.start("--status-file", str(path))
+        client = self.client(url)
+        page, said = self.banner(client)
+        self.assertIsNone(said)
+        self.assertIn(b'id="supervisor-banner" style="font-weight:bold" hidden></p>', page)
+        self.assertIn(b'fetch("/supervisor"', page)
+        # Stopped on a named signal: the same view says so on the next page, with when and how to restart it.
+        self.status_file(pid=os.getpid(), state="stopped", at="2026-11-11T10:05:00Z", why="signal", signal="SIGTERM",
+                         said="it received SIGTERM")
+        page, said = self.banner(client)
+        self.assertEqual(said, "The supervisor is down since 2026-11-11T10:05:00Z: it received SIGTERM. Restart it "
+                               "with python3 -B tool.py lead-run --resume.")
+        self.assertIn(said.encode("utf-8"), page)
+        self.assertNotIn(b"font-weight:bold\" hidden", page)
+        # Still marked running, by a pid that no longer runs: killed, so it recorded nothing.
+        gone = subprocess.Popen([sys.executable, "-c", "pass"])
+        gone.wait(10)
+        self.status_file(pid=gone.pid, state="running", at="2026-11-11T10:00:00Z")
+        page, said = self.banner(client)
+        self.assertEqual(said, f"The supervisor (pid {gone.pid}) stopped without recording why. Restart it with "
+                               "python3 -B tool.py lead-run --resume.")
+        self.assertIn(said.encode("utf-8"), page)
+        # Running again: the banner clears.
+        self.status_file(pid=os.getpid(), state="running", at="2026-11-11T10:10:00Z")
+        self.assertIsNone(self.banner(client)[1])
+
+    def test_the_home_view_carries_the_banner_just_inside_its_body(self) -> None:
+        own = {"id": "own", "argv": python_argv(
+            "import sys\nsys.stdout.write('<html><head><meta name=\"delivery-state-live\"></head><body class=\"x\">own "
+            "home</body></html>')\n", self.tools, "own"), "output": "own.html"}
+        config = json.loads(self.config([own]))
+        path = self.status_file(pid=os.getpid(), state="stopped", at="2026-11-11T10:05:00Z", why="held",
+                                said="lead-close asked it to stop")
+        _, url = self.start("--state-config", json.dumps({**config, "liveHome": "own"}), "--status-file", str(path))
+        client = self.client(url)
+        deadline = time.monotonic() + 5
+        status, page = client.get("")
+        while status != 200 and time.monotonic() < deadline:
+            time.sleep(0.2)
+            status, page = client.get("")
+        self.assertEqual(status, 200)
+        text = page.decode("utf-8")
+        self.assertIn('<body class="x">\n<p role="alert" id="supervisor-banner" style="font-weight:bold">The supervisor '
+                      "is down since 2026-11-11T10:05:00Z: lead-close asked it to stop. Restart it with python3 -B "
+                      "tool.py lead-run --resume.</p>", text)
+        self.assertLess(text.index("supervisor-banner"), text.index("own home"))
 
     def test_without_a_home_view_the_front_page_is_the_built_in_page(self) -> None:
         _, url = self.start()

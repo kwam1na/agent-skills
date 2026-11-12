@@ -395,8 +395,9 @@ class Fixture:
         self.temp = self.tmp / "temp"
         self.temp.mkdir()
         # The supervisor's own cases start it; every other case runs the lead's commands by hand.
+        # A supervisor's live view binds a free port unless a case is about the derived or recorded one.
         self.env = {**clean_environment(), "FAKE_FORGE_STATE": str(self.tmp / "forge.json"), "RUN_DELIVERY_SUPERVISOR": "off",
-                    "TMPDIR": str(self.temp)}
+                    "RUN_DELIVERY_LIVE_PORT": "0", "TMPDIR": str(self.temp)}
         sh("git", "init", "-q", "--bare", "-b", "main", self.origin)
         quieten(self.origin)
         sh("git", "clone", "-q", self.origin, self.main)
@@ -537,6 +538,19 @@ def stop_supervisors(root: Path) -> None:
             except (ProcessLookupError, PermissionError, TypeError):
                 return False
         if held or any(in_group(child) for child in recorded.get("children") or []):
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(pid, signal.SIGKILL)
+    # A supervisor's live view leads a session of its own and outlives it: stop each view a live.json under this folder
+    # names, by that pid, while the pid still runs the live view.
+    for record in locks_under(root, "live.json"):
+        try:
+            pid = json.loads(record.read_text()).get("pid")
+        except (OSError, ValueError, AttributeError):
+            continue
+        if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1:
+            continue
+        command = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout
+        if "render_state.py" in command and any(str(path) in command for path in (root, root.resolve())):
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(pid, signal.SIGKILL)
     # A post-merge fullHealth run leads a session of its own, so it outlives its supervisor: stop it while it holds its
@@ -5540,7 +5554,7 @@ TROUBLESHOOTING_KEYS = [
     "is below the runtime's nodeMinimum", "stories with no plan section", "context.sections the plan lacks",
     "no plan at", "has no configuration for lanes", "forge.mergeNeedsReady says the merge step refuses a draft",
     "the supervisor is down", "don't have the default signal dispositions", "it runs Node",
-    "it runs with no node on its PATH", "it recorded no Node",
+    "it runs with no node on its PATH", "it recorded no Node", "supervisor: down (<why>)", "it wanted port",
     "binding doesn't serve the base", "isn't offered; refine it first",
 ]
 
