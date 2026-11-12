@@ -409,6 +409,13 @@ class Fixture:
         (m / ".agent-skills").mkdir()
         (m / ".agent-skills/current").symlink_to(generation)
         shutil.copy2(receipt, m / ".agent-skills/active.json")
+        # The settings file the receipt's hooks member names, as the generation's install wrote it beside the receipt,
+        # so the fixture's generation and its receipt agree on the hook entries it holds.
+        hooks = json.loads(receipt.read_text()).get("hooks")
+        if isinstance(hooks, dict) and isinstance(hooks.get("file"), str):
+            installed = receipt.parent.parent / hooks["file"]
+            (m / hooks["file"]).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(installed, m / hooks["file"])
         (m / "tools").mkdir()
         (m / "tools/fake_forge.py").write_text(FAKE_FORGE)
         (m / "tools/fake_check.py").write_text(FAKE_CHECK)

@@ -522,22 +522,31 @@ class HookDoctorTests(HookCase):
 
     def test_a_settings_file_lacking_the_receipts_entries_is_reported_not_refused(self) -> None:
         fx = self.fixture()
-        receipt_path = fx.main / ".agent-skills/active.json"
-        receipt = json.loads(receipt_path.read_text())
-        receipt["hooks"] = {"created": True, "events": ["session-start", "stop"], "file": ".claude/settings.json"}
-        receipt_path.write_text(json.dumps(receipt, indent=2))
+        # The fixture's generation agrees with its receipt: the receipt records both events, and the settings file it
+        # names holds the entries the install wrote for them, so the baseline is ok.
+        receipt = json.loads((fx.main / ".agent-skills/active.json").read_text())
+        self.assertEqual(sorted(receipt["hooks"]["events"]), ["session-start", "stop"])
+        settings_path = fx.main / receipt["hooks"]["file"]
+        self.assertTrue(settings_path.is_relative_to(fx.tmp), settings_path)
+        installed = json.loads(settings_path.read_text())
+        self.assertTrue(self.doctor_line(fx).startswith("ok"), self.doctor_line(fx))
+        # The settings file gone: both events are named, and doctor warns without refusing.
+        settings_path.unlink()
         line = self.doctor_line(fx)
         self.assertTrue(line.startswith("warn"), line)
         self.assertIn("the settings file the receipt's hooks.file names lacks the hook entries the receipt records for "
                       "session-start, stop", line)
-        command = 'python3 -B "${CLAUDE_PROJECT_DIR}/.agent-skills/current/__main__.py" hook claude-code stop || exit 1'
-        (fx.main / ".claude").mkdir()
-        (fx.main / ".claude/settings.json").write_text(json.dumps(
-            {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": command, "timeout": 30}]}],
-                       "SessionStart": [{"hooks": [{"type": "command", "command": "echo hi", "timeout": 30}]}]}}))
+        # The install's own Stop entry kept and its SessionStart entry swapped for a foreign command: only
+        # session-start is named.
+        partial = {"hooks": {"Stop": installed["hooks"]["Stop"],
+                             "SessionStart": [{"hooks": [{"type": "command", "command": "echo hi", "timeout": 30}]}]}}
+        settings_path.write_text(json.dumps(partial))
         line = self.doctor_line(fx)
-        self.assertIn("for session-start,", line)
-        self.assertNotIn("session-start, stop", line)
+        self.assertTrue(line.startswith("warn"), line)
+        self.assertIn("records for session-start, so those hooks don't run", line)
+        # The install's file restored: ok again.
+        settings_path.write_text(json.dumps(installed))
+        self.assertTrue(self.doctor_line(fx).startswith("ok"), self.doctor_line(fx))
 
     def test_a_python3_on_path_below_3_11_is_reported_not_refused(self) -> None:
         fx = self.fixture()
