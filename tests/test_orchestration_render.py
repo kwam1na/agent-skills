@@ -4,6 +4,7 @@ import contextlib
 import copy
 import datetime
 import hashlib
+import html
 import http.client
 import http.server
 import importlib.util
@@ -612,11 +613,11 @@ EMPTY_STATE = {
 }
 PINNED_EMPTY_VIEWS = {
     "delivery.md": "bf22eae1f7b5115650ba06265e138d9b9ed720f44158d1fc761ba4df356507c9",
-    "delivery.html": "da926593eced820ff2fabdec675f0233a368f9e08194da3ccc12488c6670a615",
+    "delivery.html": "a1b2b2add853334633832b0678e9f5ca8cb86ece80cbffc0c5d208c4b326a7e5",
 }
 PINNED_VIEWS = {
     "delivery.md": "412c01eecfbdcfba6f1f5f650a0368c29c40e3e7cf3b0ef44d0687e68115d79c",
-    "delivery.html": "0e29c5443ed4895b2f39fb7a7336a92602b8d7fa7fe9b4aa2b76b55bc79bf849",
+    "delivery.html": "a64e2f95193dd212e493a67e0d291bf2994ce4d35baa6078ee107b68a77203a1",
 }
 
 
@@ -860,6 +861,26 @@ TITLED_LINES = (
 )
 
 
+def node_document() -> dict:
+    """Checks carrying the Node they ran: below the minimum, meeting it, none on their PATH, and one from a record
+    written before the runner recorded it."""
+    state = copy.deepcopy(FIXED_STATE)
+    state["queue"][0]["checks"] = [
+        {"id": "old", "state": "failed", "node": "20.0.0", "nodeBelowMinimum": True},
+        {"id": "new", "state": "passed", "node": "22.6.0"},
+        {"id": "none", "state": "passed", "node": None},
+        {"id": "before", "state": "passed"},
+    ]
+    return {"state": state, "journal": FIXED_JOURNAL}
+
+
+NODE_LINES = (
+    "old: failed · Node 20.0.0, below the runtime's nodeMinimum",
+    "new: passed · Node 22.6.0",
+    "none: passed · no node on its PATH",
+)
+
+
 def ticket_document() -> dict:
     """The fixed state with the tracker's own titles and summaries for its queued, planned and follow-up work."""
     state = copy.deepcopy(FIXED_STATE)
@@ -1000,6 +1021,14 @@ class CheckVisibilityViewTests(unittest.TestCase):
                 self.assertIn(render_state._markdown_text(line), view)
         # The selection the lead's checks came from is said once, not again as waiting.
         self.assertNotIn(render_state._markdown_text(f"lead selection for {document['state']['queue'][0]['head']}"), view)
+
+    def test_the_markdown_view_shows_each_check_s_node_and_its_mark(self) -> None:
+        view = render_state.render_markdown(node_document())
+        for line in NODE_LINES:
+            with self.subTest(line=line):
+                self.assertIn(render_state._markdown_text(line), view)
+        self.assertEqual(view.count("below the runtime"), 1, view)
+        self.assertIn(render_state._markdown_text("before: passed") + "\n", view)
 
     def test_the_markdown_view_names_checks_by_title_and_by_id_without_one(self) -> None:
         view = render_state.render_markdown(titled_document())
@@ -1384,6 +1413,78 @@ class LiveTests(DeliveryStateFixture):
         self.assertIn(b"own home", page)
         self.assertIn(b'EventSource("/events")', page)
         self.assertEqual(client.get("index.html")[1], page)
+
+    def test_without_a_status_file_the_page_and_its_routes_are_as_before(self) -> None:
+        _, url = self.start()
+        client = self.client(url)
+        status, page = client.get("")
+        self.assertEqual(status, 200)
+        shown = json.loads(client.get("document")[1])
+        # Any flag this checkout's binding raises is shown as before; the page is otherwise the built-in one, unchanged.
+        flags = tuple(html.unescape(flag) for flag in re.findall(r'<p role="alert"><strong>(.*?)</strong></p>',
+                                                                  page.decode("utf-8")))
+        self.assertEqual(page.decode("utf-8"), render_state.render_static_page(shown, live=True, flags=flags))
+        self.assertNotIn(b"supervisor-banner", page)
+        self.assertEqual(client.get("supervisor")[0], 404)
+
+    def status_file(self, **status) -> Path:
+        path = self.root / "supervisor.json"
+        path.write_text(json.dumps({"restart": "python3 -B tool.py lead-run --resume", **status}), encoding="utf-8")
+        return path
+
+    def banner(self, client: LiveClient) -> tuple[bytes, str | None]:
+        status, page = client.get("")
+        self.assertEqual(status, 200)
+        return page, json.loads(client.get("supervisor")[1])["banner"]
+
+    def test_the_banner_follows_the_status_file_on_every_page_served(self) -> None:
+        path = self.status_file(pid=os.getpid(), state="running", at="2026-11-11T10:00:00Z")
+        _, url = self.start("--status-file", str(path))
+        client = self.client(url)
+        page, said = self.banner(client)
+        self.assertIsNone(said)
+        self.assertIn(b'id="supervisor-banner" style="font-weight:bold" hidden></p>', page)
+        self.assertIn(b'fetch("/supervisor"', page)
+        # Stopped on a named signal: the same view says so on the next page, with when and how to restart it.
+        self.status_file(pid=os.getpid(), state="stopped", at="2026-11-11T10:05:00Z", why="signal", signal="SIGTERM",
+                         said="it received SIGTERM")
+        page, said = self.banner(client)
+        self.assertEqual(said, "The supervisor is down since 2026-11-11T10:05:00Z: it received SIGTERM. Restart it "
+                               "with python3 -B tool.py lead-run --resume.")
+        self.assertIn(said.encode("utf-8"), page)
+        self.assertNotIn(b"font-weight:bold\" hidden", page)
+        # Still marked running, by a pid that no longer runs: killed, so it recorded nothing.
+        gone = subprocess.Popen([sys.executable, "-c", "pass"])
+        gone.wait(10)
+        self.status_file(pid=gone.pid, state="running", at="2026-11-11T10:00:00Z")
+        page, said = self.banner(client)
+        self.assertEqual(said, f"The supervisor (pid {gone.pid}) stopped without recording why. Restart it with "
+                               "python3 -B tool.py lead-run --resume.")
+        self.assertIn(said.encode("utf-8"), page)
+        # Running again: the banner clears.
+        self.status_file(pid=os.getpid(), state="running", at="2026-11-11T10:10:00Z")
+        self.assertIsNone(self.banner(client)[1])
+
+    def test_the_home_view_carries_the_banner_just_inside_its_body(self) -> None:
+        own = {"id": "own", "argv": python_argv(
+            "import sys\nsys.stdout.write('<html><head><meta name=\"delivery-state-live\"></head><body class=\"x\">own "
+            "home</body></html>')\n", self.tools, "own"), "output": "own.html"}
+        config = json.loads(self.config([own]))
+        path = self.status_file(pid=os.getpid(), state="stopped", at="2026-11-11T10:05:00Z", why="held",
+                                said="lead-close asked it to stop")
+        _, url = self.start("--state-config", json.dumps({**config, "liveHome": "own"}), "--status-file", str(path))
+        client = self.client(url)
+        deadline = time.monotonic() + 5
+        status, page = client.get("")
+        while status != 200 and time.monotonic() < deadline:
+            time.sleep(0.2)
+            status, page = client.get("")
+        self.assertEqual(status, 200)
+        text = page.decode("utf-8")
+        self.assertIn('<body class="x">\n<p role="alert" id="supervisor-banner" style="font-weight:bold">The supervisor '
+                      "is down since 2026-11-11T10:05:00Z: lead-close asked it to stop. Restart it with python3 -B "
+                      "tool.py lead-run --resume.</p>", text)
+        self.assertLess(text.index("supervisor-banner"), text.index("own home"))
 
     def test_without_a_home_view_the_front_page_is_the_built_in_page(self) -> None:
         _, url = self.start()
@@ -2234,6 +2335,46 @@ setTimeout(async () => {
         document["state"]["schemaVersion"] = schema_version
         return document
 
+    WATCH_SHIM = r"""
+const fs = require("fs");
+const [scriptPath] = process.argv.slice(2);
+const program = fs.readFileSync(scriptPath, "utf8");
+const banner = { textContent: "", hidden: true };
+globalThis.document = { getElementById: (id) => (id === "supervisor-banner" ? banner : null) };
+const answers = [{ banner: "The supervisor is down since then: it received SIGTERM." }, { banner: null }];
+const asked = [];
+globalThis.fetch = (url) => {
+  asked.push(url);
+  const answer = answers.shift();
+  return Promise.resolve({ json: () => Promise.resolve(answer) });
+};
+globalThis.setInterval = (callback, ms) => { globalThis.__tick = callback; globalThis.__every = ms; return 1; };
+new Function(program)();
+(async () => {
+  const seen = [];
+  for (let i = 0; i < 2; i++) {
+    globalThis.__tick();
+    await new Promise((r) => setTimeout(r, 10));
+    seen.push({ text: banner.textContent, hidden: banner.hidden });
+  }
+  process.stdout.write(JSON.stringify({ every: globalThis.__every, asked, seen }));
+})();
+"""
+
+    def test_an_open_page_shows_and_clears_the_supervisor_banner_from_what_the_view_answers(self) -> None:
+        markup = render_state._banner_markup(self.root / "no-such-status.json")
+        program = re.search(r"<script>\n(.*?)\n</script>", markup, re.S).group(1)
+        script, shim = self.root / "watch.js", self.root / "watch-shim.cjs"
+        script.write_text(program, encoding="utf-8")
+        shim.write_text(self.WATCH_SHIM, encoding="utf-8")
+        result = run(["node", str(shim), str(script)])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        shown = json.loads(result.stdout)
+        self.assertEqual(shown["every"], render_state.SUPERVISOR_POLL_MS)
+        self.assertEqual(shown["asked"], ["/supervisor", "/supervisor"])
+        self.assertEqual(shown["seen"], [{"text": "The supervisor is down since then: it received SIGTERM.", "hidden": False},
+                                         {"text": "", "hidden": True}])
+
     def test_large_counts_are_whole_numbers_never_exponents(self) -> None:
         document = copy.deepcopy(self.document)
         subject = document["state"]["queue"][0]["subject"]
@@ -2252,6 +2393,14 @@ setTimeout(async () => {
         for line in VISIBILITY_LINES:
             with self.subTest(line=line):
                 self.assertIn(line, shown["text"])
+
+    def test_the_page_shows_each_check_s_node_and_its_mark_as_the_markdown_does(self) -> None:
+        shown = self.run_page({"now": "2026-10-20T12:00:00Z"}, node_document())
+        for line in NODE_LINES:
+            with self.subTest(line=line):
+                self.assertIn(line, shown["text"])
+        self.assertEqual(shown["text"].count("below the runtime"), 1, shown["text"])
+        self.assertNotIn("before: passed", shown["text"])  # a check that recorded no Node has no detail line
 
     def test_the_page_names_checks_by_title_as_the_markdown_does(self) -> None:
         shown = self.run_page({"now": "2026-10-20T12:00:00Z"}, titled_document())

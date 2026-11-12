@@ -22,15 +22,20 @@ RECORDS = CORPUS / "plan-records"
 HEX = re.compile(r"\b[0-9a-f]{40}\b|\b[0-9a-f]{64}\b")
 TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z")
 SECONDS = re.compile(r'"(?:\w*[Ss]econds|runs)": (?:\d+|\[[\d\s,]*\])')
+# The Node a check ran under, and whether it was below the runtime's minimum, are the machine's, not the record's shape.
+NODE = re.compile(r'"node": (?:"[^"]*"|null)')
+BELOW = re.compile(r'\n *"nodeBelowMinimum": (?:true|false),?')
 
 
 def shape(text: str) -> str:
-    """A captured document with its commit ids, digests and times replaced by their order of first appearance."""
+    """A captured document with its commit ids, digests and times replaced by their order of first appearance, and the
+    Node each check ran under left out."""
     seen: dict[str, str] = {}
 
     def token(match: re.Match) -> str:
         return seen.setdefault(match.group(0), f"<{len(seen)}>")
 
+    text = NODE.sub('"node": <node>', BELOW.sub("", text))
     return SECONDS.sub(lambda match: re.sub(r"\d+", "0", match.group(0)), TIME.sub("<time>", HEX.sub(token, text)))
 
 

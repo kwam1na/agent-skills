@@ -16,3 +16,7 @@ class HostProjection:
             "mode": self.mode,
             "root": self.root.as_posix(),
         }
+
+
+class ExposureError(ValueError):
+    pass

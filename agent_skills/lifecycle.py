@@ -14,6 +14,17 @@ from .generations import (
     GenerationStore,
     inspect_adoption_release,
     inspect_release,
+    inspect_release_hook_events,
+)
+from .hooks import declared_events
+from .hosts.claude import (
+    CLAUDE_CODE,
+    HookSettings,
+    SettingsChanged,
+    Snapshot,
+    hooks_member,
+    receipt_created,
+    receipt_events,
 )
 from .hosts.exposure import HOSTS, ExposureError, ExposureManager
 from .journal import (
@@ -39,12 +50,15 @@ ACTIVATION_BOUNDARIES = (
     "generation-ready",
     "exposing-codex",
     "exposing-claude-code",
+    "exposing-claude-code-hooks",
     "verifying",
     "marker-published",
     "marker-committed",
     "cleanup",
 )
 FaultHook = Callable[[str], None]
+HOOKS_PHASE = "exposing-claude-code-hooks"
+HOOK_DIVERGENCE = "local-divergence: hooks"
 
 
 class LifecycleError(ValueError):
@@ -119,6 +133,19 @@ def _same_receipt(left: dict | None, right: dict | None) -> bool:
     return left == right
 
 
+def _adopted(*receipts: dict | None) -> bool:
+    """Whether a single-skill adoption is either endpoint. Such a generation installs no hooks."""
+    return any(receipt is not None and "adoption" in receipt for receipt in receipts)
+
+
+def _hook_change(current: dict | None, target_events: list[str]) -> dict[str, list[str]]:
+    current_events = set(receipt_events(current))
+    return {
+        "added": sorted(set(target_events) - current_events),
+        "removed": sorted(current_events - set(target_events)),
+    }
+
+
 def _generation_blocker(error: GenerationError) -> tuple[str, tuple[str, ...]]:
     code = str(error).split(":", 1)[0]
     if code == "local-bytecode-divergence":
@@ -137,6 +164,7 @@ class Lifecycle:
         self.store = GenerationStore(self.managed_root, self.git_path)
         self.predecessors = PredecessorStore(self.managed_root, self.git_path)
         self.exposure = ExposureManager(self.root)
+        self.settings = HookSettings(self.root)
 
     def _created_directories(self, prior: dict | None) -> list[str] | None:
         if prior is not None:
@@ -292,6 +320,7 @@ class Lifecycle:
             exposure_status, exposure_conflict = self.exposure.status(active)
             try:
                 self.exposure.preflight(journal["target"], journal["prior"])
+                self.settings.snapshot()
             except ExposureError:
                 return Status(
                     _active_summary(active),
@@ -374,6 +403,15 @@ class Lifecycle:
                     "externally-transitioned",
                     ("review-orphaned-generations",),
                 )
+            if self._hooks_diverged(active):
+                return Status(
+                    _active_summary(active),
+                    (HOOK_DIVERGENCE,),
+                    tuple(exposure_status),
+                    None,
+                    "externally-transitioned",
+                    ("restore-hook-entries",),
+                )
             return Status(
                 _active_summary(active),
                 (),
@@ -400,11 +438,13 @@ class Lifecycle:
                 "action": "blocked",
                 "blockers": list(before.blockers),
                 "current": before.active,
+                "hooks": {"added": [], "removed": []},
                 "schemaVersion": "agent-skills-plan/1",
                 "target": None,
             }
         target = inspect_release(archive, metadata)
         current = self._active()
+        hooks = _hook_change(current, self._release_hook_events(archive, metadata, current))
         if current is None:
             action = "install"
         elif current["generation"] == target["generation"]:
@@ -415,6 +455,7 @@ class Lifecycle:
             "action": action,
             "blockers": [],
             "current": _active_summary(current),
+            "hooks": hooks,
             "schemaVersion": "agent-skills-plan/1",
             "target": {
                 "archiveSha256": target["release"]["archiveSha256"],
@@ -443,9 +484,85 @@ class Lifecycle:
                 for path in set(current_files) & set(target_files)
                 if current_files[path] != target_files[path]
             ),
+            "hooks": _hook_change(current, self._release_hook_events(archive, metadata, current)),
             "removed": sorted(set(current_files) - set(target_files)),
             "schemaVersion": "agent-skills-diff/1",
         }
+
+    @staticmethod
+    def _release_hook_events(archive: Path, metadata: Path, current: dict | None) -> list[str]:
+        """The events a release would install over ``current``: none over an adoption, which keeps its single skill."""
+        if _adopted(current):
+            return []
+        return inspect_release_hook_events(archive, metadata)
+
+    def _hooks_diverged(self, active: dict) -> bool:
+        """Whether the owned entries in the settings file differ from the receipt's events.
+
+        Only entries running the lifecycle's own command count. A file the
+        lifecycle can't read diverges only when the receipt expects entries.
+        """
+        expected = receipt_events(active)
+        owned = self.settings.owned_events()
+        if owned is None:
+            return bool(expected)
+        return owned != expected
+
+    def _target_hooks(
+        self,
+        events: list[str],
+        snapshot: Snapshot,
+        prior: dict | None,
+        target_adopted: bool,
+    ) -> dict | None:
+        """The target receipt's ``hooks`` member, for writing ``events`` over ``snapshot`` after ``prior``."""
+        if target_adopted:
+            return None
+        planned = HookSettings.planned(snapshot, events, delete_if_empty=receipt_created(prior))
+        if planned is None:
+            created = False
+        elif snapshot.contents is None:
+            created = True
+        else:
+            created = receipt_created(prior)
+        return hooks_member(events, created)
+
+    def _expose_hooks(
+        self,
+        journal: dict,
+        snapshot: Snapshot,
+        fault: FaultHook | None,
+    ) -> dict:
+        """Write the target's entries from the preflight ``snapshot``, then journal the phase.
+
+        A change to the file since preflight ends the whole operation at the
+        prior endpoint, with nothing written to the file, and refuses.
+        """
+        target = journal["target"]
+        prior = journal["prior"]
+        if not _adopted(target, prior):
+            try:
+                self.settings.reconcile(
+                    snapshot,
+                    receipt_events(target),
+                    delete_if_empty=receipt_created(prior),
+                )
+            except SettingsChanged:
+                self._restore_prior(journal, settings=False)
+                raise
+        journal = write_journal(self.journal_path, journal, HOOKS_PHASE)
+        self._fault(fault, HOOKS_PHASE)
+        return journal
+
+    def _reconcile_settings(self, committed: dict | None, other: dict | None) -> None:
+        """Make the owned entries exactly ``committed``'s events, deleting a file either endpoint created once it is empty."""
+        if _adopted(committed, other):
+            return
+        self.settings.reconcile(
+            self.settings.snapshot(),
+            receipt_events(committed),
+            delete_if_empty=receipt_created(committed) or receipt_created(other),
+        )
 
     @staticmethod
     def _fault(fault: FaultHook | None, phase: str) -> None:
@@ -546,6 +663,7 @@ class Lifecycle:
                 if target["previous"] is not None:
                     self.store.verify(target["previous"])
             self._reconcile_target(target, prior)
+            self._reconcile_settings(target, prior)
             journal = write_journal(self.journal_path, journal, "marker-committed")
             self._finish_cleanup(journal)
             write_journal(self.journal_path, journal, "cleanup")
@@ -555,26 +673,7 @@ class Lifecycle:
                 "schemaVersion": "agent-skills-operation/1",
             }
         if _same_receipt(active, prior):
-            if prior is not None:
-                self.store.verify(version_from_receipt(prior))
-            else:
-                self._write_active(None)
-            self._reconcile_target(prior, target)
-            self.store.cleanup(self._keep_for(prior), journal["operationId"])
-            self.store.cleanup_staging(journal["operationId"])
-            self.predecessors.cleanup_staging(journal["operationId"])
-            if (
-                target is not None
-                and "adoption" in target
-                and (prior is None or "adoption" not in prior)
-            ):
-                self.predecessors.remove(
-                    target["adoption"],
-                    journal["operationId"],
-                )
-            if prior is None:
-                self._prune_created_directories(target)
-            self.journal_path.unlink()
+            self._restore_prior(journal, settings=True)
             return {
                 "action": "restore-prior",
                 "schemaVersion": "agent-skills-operation/1",
@@ -582,6 +681,37 @@ class Lifecycle:
         raise LifecycleError(
             "local-divergence: active marker matches neither recovery endpoint"
         )
+
+    def _restore_prior(self, journal: dict, *, settings: bool) -> None:
+        """Return to the journal's prior endpoint, whose receipt is still the active one.
+
+        ``settings`` is false only when the operation wrote nothing to the
+        settings file, which then stays exactly as its user left it.
+        """
+        target = journal["target"]
+        prior = journal["prior"]
+        if prior is not None:
+            self.store.verify(version_from_receipt(prior))
+        else:
+            self._write_active(None)
+        self._reconcile_target(prior, target)
+        if settings:
+            self._reconcile_settings(prior, target)
+        self.store.cleanup(self._keep_for(prior), journal["operationId"])
+        self.store.cleanup_staging(journal["operationId"])
+        self.predecessors.cleanup_staging(journal["operationId"])
+        if (
+            target is not None
+            and "adoption" in target
+            and (prior is None or "adoption" not in prior)
+        ):
+            self.predecessors.remove(
+                target["adoption"],
+                journal["operationId"],
+            )
+        if prior is None:
+            self._prune_created_directories(target)
+        self.journal_path.unlink()
 
     def recover(
         self,
@@ -625,11 +755,19 @@ class Lifecycle:
                 }
             adoption = prior.get("adoption") if prior is not None else None
             created_directories = self._created_directories(prior)
+            snapshot = self.settings.snapshot()
+            hooks = self._target_hooks(
+                self._release_hook_events(archive, metadata, prior),
+                snapshot,
+                prior,
+                adoption is not None,
+            )
             inspected_target = make_receipt(
                 inspected,
                 version_from_receipt(prior) if prior is not None else None,
                 adoption,
                 created_directories,
+                hooks,
             )
             self.exposure.preflight(inspected_target, prior)
             operation_id = uuid.uuid4().hex
@@ -641,6 +779,7 @@ class Lifecycle:
                     version_from_receipt(prior) if prior is not None else None,
                     adoption,
                     created_directories,
+                    hooks,
                 )
                 self.exposure.preflight(target, prior)
             except (ExposureError, ReceiptError):
@@ -657,6 +796,7 @@ class Lifecycle:
                 phase = f"exposing-{host.host}"
                 journal = write_journal(self.journal_path, journal, phase)
                 self._fault(fault, phase)
+            journal = self._expose_hooks(journal, snapshot, fault)
             self.store.verify(version)
             journal = write_journal(self.journal_path, journal, "verifying")
             self._fault(fault, "verifying")
@@ -798,6 +938,7 @@ class Lifecycle:
                 phase = f"exposing-{host.host}"
                 journal = write_journal(self.journal_path, journal, phase)
                 self._fault(fault, phase)
+            journal = self._expose_hooks(journal, Snapshot(None, None), fault)
             self.store.verify(version)
             self.predecessors.verify(adoption)
             journal = write_journal(self.journal_path, journal, "verifying")
@@ -840,11 +981,19 @@ class Lifecycle:
                     "rollback-unavailable: no verified prior generation is retained; "
                     "use remove --maintenance to return to absent"
                 )
+            self.store.verify(prior["previous"])
+            snapshot = self.settings.snapshot()
+            adopted = "adoption" in prior
+            events = [] if adopted else declared_events(
+                self.store.generation_path(prior["previous"]["generation"]),
+                CLAUDE_CODE.host,
+            )
             target = make_receipt(
                 prior["previous"],
                 version_from_receipt(prior),
                 prior.get("adoption"),
                 prior.get("createdDirectories"),
+                self._target_hooks(events, snapshot, prior, adopted),
             )
             self.store.verify(version_from_receipt(target))
             self.exposure.preflight(target, prior)
@@ -858,6 +1007,7 @@ class Lifecycle:
                 phase = f"exposing-{host.host}"
                 journal = write_journal(self.journal_path, journal, phase)
                 self._fault(fault, phase)
+            journal = self._expose_hooks(journal, snapshot, fault)
             self.store.verify(version_from_receipt(target))
             journal = write_journal(self.journal_path, journal, "verifying")
             self._fault(fault, "verifying")
@@ -899,6 +1049,7 @@ class Lifecycle:
             phase = f"exposing-{host.host}"
             journal = write_journal(self.journal_path, journal, phase)
             self._fault(fault, phase)
+        journal = self._expose_hooks(journal, Snapshot(None, None), fault)
         self._write_active(None)
         self._fault(fault, "marker-published")
         journal = write_journal(self.journal_path, journal, "marker-committed")
@@ -933,6 +1084,7 @@ class Lifecycle:
                 return self._deactivate_adoption_locked(prior, "remove", fault)
             operation_id = uuid.uuid4().hex
             self.exposure.preflight(None, prior)
+            snapshot = self.settings.snapshot()
             journal = self._new_journal("remove", operation_id, prior, None)
             for phase in ("staged", "generation-ready"):
                 journal = write_journal(self.journal_path, journal, phase)
@@ -949,6 +1101,7 @@ class Lifecycle:
                 phase = f"exposing-{host.host}"
                 journal = write_journal(self.journal_path, journal, phase)
                 self._fault(fault, phase)
+            journal = self._expose_hooks(journal, snapshot, fault)
             self._write_active(None)
             self._fault(fault, "marker-published")
             journal = write_journal(self.journal_path, journal, "marker-committed")

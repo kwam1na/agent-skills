@@ -117,6 +117,10 @@ checks may need no file at all.
   },
   "forge": { "mergeNeedsReady": true },       // optional: the binding's merge step refuses a draft pull request
   "supervisor": { "passSeconds": 60 },        // optional: how long the supervisor waits between passes
+  "hooks": {                                  // optional: each host hook's mode, off, warn or enforce (below)
+    "lead.may-stop": "enforce",               // default warn
+    "delivery.orient": "enforce"              // default enforce
+  },
   "inApp": {                                  // optional; its "lease" must name one of the binding's leases
     "lease": "app-session",
     "lock": "~/.cache/my-app-session.lock",   // an OS lock, held for each check; the serve's output is kept
@@ -413,6 +417,84 @@ The lead's commands keep working while it is down, and the supervisor skips what
 back. `lead-run --resume` stops what an earlier supervisor left running and starts it again; `lead-run --once` runs one
 pass in the foreground. `lead-close` asks a running supervisor to stop after its pass, and refuses while the lead's
 settings have uncommitted changes. `lead-init --no-supervisor`, or `RUN_DELIVERY_SUPERVISOR=off`, starts none.
+
+### The live view's address
+
+The live view keeps one address for the whole delivery, across supervisor restarts:
+
+- **It outlives the supervisor.** The supervisor starts the view in a session of its own, so a stopped or killed
+  supervisor, a signal to its whole group included, leaves it serving. The view stays read-only.
+- **`live.json` says where it is.** The supervisor writes `live.json` in the record's folder: the view's `port`, its
+  `pid`, the resolved path of the `render_state.py` it runs (`renderState`), when it started and its address.
+- **A starting supervisor adopts it.** When `live.json`'s pid runs, listens on its recorded port and runs this
+  generation's `render_state.py`, the supervisor adopts that view rather than starting another. A view of another
+  generation, as after `.agent-skills/current` moved, is stopped by its recorded pid and replaced on the same port. A
+  recorded pid that runs but doesn't listen on its port is left alone, and a new view is started and recorded.
+- **The port is derived, then recorded.** A new view asks for the port `live.json` records, else the delivery's derived
+  port: the first eight bytes of the sha256 of `<main checkout's top-level path>\0<delivery key>`, read as a big-endian
+  integer, modulo 10000, plus 20000. The same delivery in the same checkout always asks for the same port.
+- **A held port falls back.** When another process holds that port, the view binds a free one, which is recorded, so
+  later restarts keep it. The supervisor says so on its output, and the status line names the port it wanted and who
+  holds it until a view starts on its own port again.
+- **`RUN_DELIVERY_LIVE_PORT=0`** makes a view with no recorded port bind a free one instead of the derived one, for
+  tests or a lead who wants that; it is recorded and kept as any other. It takes `0` alone.
+- **The close stops it last.** The supervisor's own close-out and `lead-close` each stop the view by its recorded pid,
+  after the final render and the archive. `lead-init --replace` stops the replaced delivery's view with its supervisor.
+  Nothing stops it by pattern.
+
+### Why the supervisor is down
+
+The supervisor writes `supervisor.json` beside `live.json`: its `pid`, `running` or `stopped`, when (`at`), why, and
+the command that restarts it. Each reason is written by what stops it:
+
+- `close`: the supervisor's own close-out, before it stops the view;
+- `replaced`: `lead-init --replace`, before it signals the supervisor, so it lands in the archived record;
+- `held`: `lead-close`'s stop request, which carries the reason to the supervisor;
+- `signal`: any other SIGTERM, SIGINT or SIGHUP the supervisor receives, naming it.
+
+The view reads the file on every page it serves (`render_state.py live --status-file`). While the supervisor runs, the
+page shows no banner. Once it is down, the page says so, since when and why, and names `lead-run --resume`; a file
+still marked `running` for a pid that no longer runs says the supervisor stopped without recording why, as a killed
+one leaves it.
+
+Every lead command's status line names the view's address while the view serves:
+
+- running: `supervisor: running (pid N); live view <address>`;
+- down, with the view serving: `supervisor: down (<why>); live view <address>; restart it with ... lead-run --resume`;
+- down, with the view gone too: the same line with no address;
+- never started, as after `lead-init --no-supervisor`: `supervisor: down (not started); restart it with ...`;
+- closed, or a close stopped partway: as before, that line.
+
+## Host hooks
+
+run-delivery declares two hooks in its `hooks.json`. Where the installed generation installs host hooks, the host runs
+them through the generation's dispatcher, which hands each the host's payload and reads one verdict back. `hooks` in
+`.agents/run-delivery.json` switches each, by its id, to `off`, `warn` or `enforce`; `doctor` refuses any other id or
+mode, naming the fix.
+
+| Id | Event | Default | What it does |
+| --- | --- | --- | --- |
+| `lead.may-stop` | stop | `warn` | Holds a lead's stop while a lane works or a candidate is queued and no `lead-wait` listens, naming the delivery and its exact `lead-wait` command. `enforce` holds it; `warn` says the same without holding; `off` says nothing. |
+| `delivery.orient` | session start | `enforce` | Tells a session in a delivery its role and next command, on every start: a new, resumed, cleared, compacted or forked session. It only ever allows, so `warn` and `enforce` are alike; `off` says nothing. |
+
+A session's role comes from the payload's working folder, never the hook's own: the folder's checkout is the deepest
+one holding it, after resolving symlinks. A story's checkout of an open delivery is that story's lane, matched first,
+so a lane checkout nested in the lead's is a lane. The checkout holding an open delivery's record is that delivery's
+lead. Any other session, and a closed delivery, is neither, and both hooks allow it.
+
+- **When a stop is held.** With one open delivery in the lead's checkout, a lane not idle or done, or a candidate not
+  merged, and no live `lead-wait` lease, `lead.may-stop` returns `block` under `enforce` and `warn` under `warn`. When
+  two or more open deliveries share the checkout, which one the session leads can't be told, so it returns `warn`
+  even under `enforce`, naming each delivery without a listener: lead each from its own checkout. The host holds a
+  stop at most once in a row: the next stop, which the host marks as following a hold, is a warn.
+- **What a hold records.** A hold or warn that doesn't follow another appends one `hook.held` entry to each named
+  delivery's journal, naming the hook, its verdict and what needed the listener. `hook.held` never wakes a `wait`.
+- **What orientation says.** Structured fields only, cut at 4,000 characters. For a lead: the delivery key, its stage
+  (`starting`, `delivering` or `finishing`), how many items "Needs you" holds, and the exact `lead-wait` command when
+  a listener is needed and none listens. For a lane: the delivery key, the story key, the lane brief's path, and the
+  next lane command. It never repeats journal, hand-off or tracker text.
+- **What doctor reports.** Besides refusing a bad `hooks`, it reports as `warn`, without refusing, a host settings file
+  that lacks an entry the receipt records, and a `python3` on `PATH` below 3.11, which the installed command runs.
 
 ## The delivery posture
 

@@ -680,6 +680,22 @@
                         "minLength": 1
                       }
                     }
+                  },
+                  "node": {
+                    "description": "The version of the first node on the PATH the check ran with, after the binding's and its profile's environment, as node --version prints it less its v; null when that PATH held no node. Absent on a check that didn't run, and on a record written before the runner recorded it.",
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "nodeBelowMinimum": {
+                    "description": "Set only when the runtime declares a nodeMinimum and node is below it. It explains a failure; the check's state is still what the check itself returned. Absent otherwise.",
+                    "type": "boolean"
                   }
                 }
               }
@@ -1136,7 +1152,8 @@
           "delivery.closed",
           "review.evidence",
           "check.selected",
-          "selection.refused"
+          "selection.refused",
+          "hook.held"
         ]
       },
       "lane": {
@@ -1857,6 +1874,22 @@
                   "$ref": "#/$defs/commit"
                 }
               }
+            },
+            "node": {
+              "description": "The version of the first node on the PATH the check ran with, after the binding's and its profile's environment, as node --version prints it less its v; null when that PATH held no node. Absent on a check that didn't run, and on a record written before the runner recorded it.",
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "nodeBelowMinimum": {
+              "description": "Set only when the runtime declares a nodeMinimum and node is below it. It explains a failure; the check's state is still what the check itself returned. Absent otherwise.",
+              "type": "boolean"
             }
           }
         }

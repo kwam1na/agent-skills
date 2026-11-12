@@ -87,6 +87,7 @@ class ReleaseIntegrationTests(unittest.TestCase):
             "skills/run-delivery/adapters/tracker_jira.py",
             "skills/run-delivery/adapters/tracker_linear.py",
             "skills/run-delivery/assets/adapter-fixture/index.html",
+            "skills/run-delivery/hooks.json",
             "skills/run-delivery/references/adopting.md",
             "skills/run-delivery/references/config.md",
             "skills/run-delivery/scripts/pr_review_gates.py",

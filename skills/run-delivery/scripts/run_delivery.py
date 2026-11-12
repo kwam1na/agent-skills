@@ -42,6 +42,7 @@ if os.name == "nt":
 
 import argparse
 import contextlib
+import copy
 import datetime
 import fcntl
 import collections
@@ -348,41 +349,131 @@ def shelf_for(root: Path) -> Shelf:
     return Shelf(root, ref, base, bool(named))
 
 
+def meets(version: tuple[int, ...], minimum: tuple[int, ...]) -> bool:
+    """Whether a version meets a minimum, compared number by number, a missing number counting as 0: the one
+    comparison doctor and every Node and Python refusal use, so 100.0.0 meets 9.0.0."""
+    width = max(len(version), len(minimum))
+    return tuple(version) + (0,) * (width - len(version)) >= tuple(minimum) + (0,) * (width - len(minimum))
+
+
+def numbers(text: str) -> tuple[int, ...] | None:
+    """The dotted version a program printed or a descriptor names (`v22.6.0`, `Python 3.11.4`, `22.6.0`), or None."""
+    found = re.search(r"(\d+(?:\.\d+)*)", text or "")
+    return tuple(int(n) for n in found.group(1).split(".")) if found else None
+
+
+def dotted(version: tuple[int, ...] | None) -> str:
+    return ".".join(map(str, version)) if version else "of no readable version"
+
+
+def node_version(node: str) -> tuple[int, ...] | None:
+    """What `node --version` says, as numbers; None when it says nothing a version reads from."""
+    try:
+        done = subprocess.run([node, "--version"], text=True, capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return numbers(done.stdout.strip()) if re.match(r"v\d", done.stdout.strip()) else None
+
+
 def node_versions() -> list[tuple[str, tuple[int, ...]]]:
-    """Each Node the tool may run, with its version: the one on PATH, then nvm's, newest first."""
-    candidates = [shutil.which("node")] + sorted(str(p) for p in Path.home().glob(".nvm/versions/node/v*/bin/node"))[::-1]
+    """Each Node the tool may run itself, with its version: the one on PATH, then nvm's, newest first."""
+    candidates = [shutil.which("node")] + nvm_nodes()
     found = []
     for node in filter(None, candidates):
-        done = subprocess.run([node, "--version"], text=True, capture_output=True)
-        m = re.match(r"v(\d+)\.(\d+)\.(\d+)", done.stdout.strip())
-        if m:
-            found.append((node, tuple(int(n) for n in m.groups())))
+        version = node_version(node)
+        if version:
+            found.append((node, version))
     return found
 
 
+def nvm_nodes() -> list[str]:
+    """nvm's Nodes, newest first by number."""
+    nodes = [str(p) for p in Path.home().glob(".nvm/versions/node/v*/bin/node")]
+    return sorted(nodes, key=lambda node: numbers(Path(node).parents[1].name) or (), reverse=True)
+
+
 def find_node(minimum: tuple[int, ...]) -> str | None:
-    return next((node for node, version in node_versions() if version >= minimum), None)
+    return next((node for node, version in node_versions() if meets(version, minimum)), None)
 
 
 def find_node22() -> str | None:
     return find_node((22, 6))
 
 
+def node_on_path() -> tuple[str, tuple[int, ...] | None] | None:
+    """The Node a process here uses, and every child it starts: the first `node` on its PATH, with its version (None
+    when it prints none). None when PATH holds no `node`. An nvm Node further down doesn't count."""
+    node = shutil.which("node")
+    return (node, node_version(node)) if node else None
+
+
+def node_minimum(release: Path) -> str | None:
+    """The runtime's nodeMinimum; None for a generation without a runtime, which asks for no Node."""
+    return (load_json(release / "runtime/runtime.json") or {}).get("nodeMinimum") or None
+
+
 def node_problem(release: Path) -> tuple[str, str] | None:
-    """Why no Node here meets the runtime's nodeMinimum, as (status, detail), or None. A generation without a runtime
-    asks for none."""
-    wanted = (load_json(release / "runtime/runtime.json") or {}).get("nodeMinimum")
+    """Why the Node first on PATH doesn't meet the runtime's nodeMinimum, as (status, detail), or None: `missing` with
+    no `node` on PATH, `wrong` below the minimum, even with an nvm Node that meets it, which the fix then names."""
+    wanted = node_minimum(release)
     if not wanted:
         return None
-    minimum = tuple(int(n) for n in wanted.split("."))
-    versions = node_versions()
-    if any(version >= minimum for _, version in versions):
+    minimum = numbers(wanted) or ()
+    found = node_on_path()
+    if found and found[1] and meets(found[1], minimum):
         return None
-    fix = f"fix: install Node {wanted} or newer, on PATH or under nvm"
-    if not versions:
-        return "missing", f"no Node on PATH or under nvm, and the runtime needs Node {wanted}; {fix}"
-    seen = ", ".join(sorted({".".join(map(str, version)) for _, version in versions}))
-    return "wrong", f"Node {seen} is below the runtime's nodeMinimum {wanted}; {fix}"
+    nvm = next((node for node in nvm_nodes() if meets(node_version(node) or (0,), minimum)), None)
+    fix = (f"fix: put {Path(nvm).parent} first on PATH, the nvm Node that meets it" if nvm else
+           f"fix: install Node {wanted} or newer and put its bin folder first on PATH")
+    elsewhere = (f"; nvm's {nvm} meets it, but a process and its children run the node first on PATH" if nvm else "")
+    if not found:
+        return "missing", f"no node on PATH, and the runtime needs Node {wanted}{elsewhere}; {fix}"
+    node, version = found
+    where = f"{node}, the first node on PATH, from the PATH entry {Path(node).parent}"
+    if not version:
+        return "wrong", (f"{where}, prints no version to compare with the runtime's nodeMinimum {wanted}{elsewhere}; "
+                         f"{fix}")
+    return "wrong", f"Node {dotted(version)} is below the runtime's nodeMinimum {wanted}: it is {where}{elsewhere}; {fix}"
+
+
+def require_node(release: Path, command: str) -> None:
+    """Refuse a command whose processes would run a Node below the runtime's minimum, before it writes or starts
+    anything."""
+    problem = node_problem(release)
+    if problem:
+        raise Stop(f"{command} refuses: {problem[1]}")
+
+
+# The Python a lane's tools and the repository's sensors need, the minimum doctor holds.
+PYTHON_MINIMUM = (3, 11)
+
+
+def interpreter_version() -> tuple[int, ...]:
+    """The version of the Python running this tool. Read only through here, so a test can stand in another."""
+    return tuple(sys.version_info[:3])
+
+
+def python_problems() -> list[str]:
+    """Each Python a lane runs that is below PYTHON_MINIMUM, each with its fix: the interpreter running this tool, and
+    the first `python3` on PATH, which the lane's gates and sensors run."""
+    wanted = dotted(PYTHON_MINIMUM)
+    problems = []
+    running = interpreter_version()
+    if not meets(running, PYTHON_MINIMUM):
+        problems.append(f"the Python running this tool, {sys.executable}, is {dotted(running)}, below {wanted}; fix: "
+                        f"run it with Python {wanted} or newer")
+    python = shutil.which("python3")
+    if not python:
+        problems.append(f"no python3 on PATH; fix: put Python {wanted} or newer's bin folder first on PATH")
+    else:
+        # Python before 3.4 says its version on stderr.
+        done = run([python, "--version"], check=False)
+        version = numbers(done.stdout + done.stderr) if done.returncode == 0 else None
+        if not version or not meets(version, PYTHON_MINIMUM):
+            problems.append(f"python3 first on PATH, {python}, from the PATH entry {Path(python).parent}, is Python "
+                            f"{dotted(version)}, below {wanted}; fix: put Python {wanted} or newer's bin folder first "
+                            "on PATH")
+    return problems
 
 
 def load_harness(root: Path, release: Path) -> tuple[dict | None, str]:
@@ -3236,6 +3327,12 @@ def lane_start(args) -> None:
     served = c.binding if c.binding_base else {"base": {"ref": c.base_branch}}
     if not serves(served, base):
         raise unserved(served, base)
+    # Before the checkout or the start: the lane's gates and sensors run the node and python3 first on its PATH.
+    node = node_problem(c.release)
+    problems = [node[1]] if node else []
+    problems += python_problems()
+    if problems:
+        raise Stop(f"lane-start refuses {key} until each of these is fixed:" + "".join(f"\n  - {p}" for p in problems))
     path, branch = c.lane_checkout(key), c.branch(key)
     did = []
     if path.exists():
@@ -4948,7 +5045,11 @@ def archive_root(c) -> Path:
 def replace_record(c) -> list[str]:
     """lead-init --replace: stop any supervisor, then move the record and the flow log into the archive. Nothing
     carries over: every flow-log file names entries of the archived journal, whose ids the fresh one reuses."""
-    said = [line for line in [stop_supervisor(c), stop_full_health_run(c)] if line]
+    held, recorded = read_lock(supervisor_lock_path(c))
+    if held:
+        # Before the signal, so the supervisor's own handler finds it and the archived record keeps it.
+        write_supervisor_status(c.state, recorded.get("pid"), False, "replaced")
+    said = [line for line in [stop_supervisor(c), stop_view(c.state), stop_full_health_run(c)] if line]
     present = [path for path in (c.state, c.flow_log) if path.exists()]
     if present:
         archive = archive_root(c) / (datetime.datetime.now().strftime("%Y%m%dT%H%M%S.%f") + "-replaced")
@@ -5636,6 +5737,8 @@ def lead_carry_review(args) -> None:
 
 def lead_init(args) -> None:
     c = cfg()
+    # Before anything is written, a plan review adopted included: the supervisor it starts runs the Node on this PATH.
+    require_node(c.release, "lead-init")
     c.check_lanes()
     if c.ship and not c.ship.get("toolingCommit"):
         raise Stop(f"{c.delivery_where}: ship.toolingCommit isn't set")
@@ -5683,7 +5786,7 @@ def lead_init(args) -> None:
     if args.no_supervisor or supervisor_off():
         print(f"supervisor: not started; start it with {flow_command()} lead-run --resume")
     else:
-        print(f"supervisor: running; live view {start_supervisor(c)}")
+        print(f"supervisor: running; live view {start_supervisor(c)}{live_fallback(c.state)}")
 
 
 def planned_entry(c, key: str) -> dict:
@@ -6535,7 +6638,7 @@ def lead_close(args) -> None:
     # The run is stopped while the supervisor finishes its pass, which under --once waits on it, and again once the
     # supervisor has stopped, in case that pass started one.
     runs: list[str | None] = []
-    stopped = ask_supervisor_to_stop(c, meanwhile=lambda: runs.append(stop_full_health_run(c)))
+    stopped = ask_supervisor_to_stop(c, meanwhile=lambda: runs.append(stop_full_health_run(c)), why="held")
     for line in (stopped, *runs, stop_full_health_run(c)):
         if line:
             print(line)
@@ -6579,7 +6682,10 @@ def lead_close(args) -> None:
                                                        "at": now(), "entry": closed["id"], **closed_full_health(c)},
                                                       indent=2) + "\n")
     render("rendered the views again, with the close marked finished")
+    view = recorded_live(c.state).get("pid")
     for pid, command in delivery_processes(lead, c.state, c.delivery, c.main):
+        if pid == view:
+            continue  # the live view is stopped last, below, by its recorded pid
         try:
             os.kill(pid, signal.SIGTERM)
             done.append(f"stopped {pid}: {command[:120]}")
@@ -6620,6 +6726,13 @@ def lead_close(args) -> None:
         else:
             if port_open(port):
                 left.append(port_busy(port))
+    # The live view last, by the pid live.json records: it served the close until now.
+    try:
+        said = stop_view(c.state)
+        if said:
+            done.append(said)
+    except Stop as error:
+        left.append(str(error))
     print(f"{c.delivery}: closed out")
     for line in done:
         print(f"  done: {line}")
@@ -6660,6 +6773,176 @@ def group_of(pid: int) -> int | None:
         return None
 
 
+# -- lead: the live view's address, and the supervisor's last word -------------------------------
+#
+# The view runs in a session of its own, so it outlives the supervisor that started it, and serves until the delivery
+# closes. `live.json` in the record's folder says where: its port, its pid, the render_state.py it runs and when it
+# started. `supervisor.json` beside it says whether the supervisor runs and, once it stopped, who stopped it.
+
+LIVE_FILE, SUPERVISOR_FILE = "live.json", "supervisor.json"
+LIVE_HOST = "127.0.0.1"
+# The range a delivery's port is derived in: below the ephemeral ports every host hands out for port 0.
+LIVE_PORT_BASE, LIVE_PORT_SPAN = 20000, 10000
+# What each recorded reason says, in the status line and on the view's banner.
+STOPPED_WORDS = {"close": "it closed the delivery", "replaced": "lead-init --replace replaced the record",
+                 "held": "lead-close asked it to stop"}
+UNRECORDED_STOP = "stopped without recording why"
+NOT_STARTED = "not started"
+
+
+def derived_live_port(top: str, key: str) -> int:
+    """The port a delivery's live view asks for when none is recorded: the first eight bytes of the sha256 of
+    `<top>\\0<key>`, big-endian, modulo the span, above the base. The same delivery in the same checkout always asks
+    for the same port; two deliveries can still derive one port, and the second then binds a free one."""
+    hashed = hashlib.sha256(f"{top}\0{key}".encode("utf-8")).digest()
+    return int.from_bytes(hashed[:8], "big") % LIVE_PORT_SPAN + LIVE_PORT_BASE
+
+
+def live_top(c) -> str:
+    """The repository's top-level path the port is derived from: the main checkout, symlinks followed, so the lead's
+    own checkout and the main one ask for the same port."""
+    return str(c.main.resolve())
+
+
+def valid_port(port: object) -> bool:
+    return isinstance(port, int) and not isinstance(port, bool) and 0 < port < 65536
+
+
+def json_object(path: Path) -> dict:
+    """A small JSON file as an object; empty when it is missing, unreadable or not an object."""
+    try:
+        found = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    return found if isinstance(found, dict) else {}
+
+
+def recorded_live(state: Path) -> dict:
+    """What `live.json` records, when it names a usable port and pid; empty otherwise."""
+    live = json_object(state / LIVE_FILE)
+    return live if valid_port(live.get("port")) and valid_pid(live.get("pid")) else {}
+
+
+def wanted_live_port(state: Path, top: str, key: str) -> int:
+    """The port a starting view asks for: the one `live.json` records, else the derived one."""
+    return recorded_live(state).get("port") or derived_live_port(top, key)
+
+
+def live_port_setting() -> int | None:
+    """RUN_DELIVERY_LIVE_PORT=0: a view with no recorded port binds a free one instead of the derived one, and records
+    it. Unset, it asks for the derived one."""
+    value = os.environ.get("RUN_DELIVERY_LIVE_PORT", "").strip()
+    if not value:
+        return None
+    if value != "0":
+        raise Stop(f"RUN_DELIVERY_LIVE_PORT is {value!r}: it takes 0 alone, for a free port; unset it for the recorded "
+                   "or derived one")
+    return 0
+
+
+def live_address(port: int) -> str:
+    return f"http://{LIVE_HOST}:{port}/"
+
+
+def port_of_address(address: str | None) -> int:
+    with contextlib.suppress(ValueError, AttributeError):
+        return int(str(address).rstrip("/").rsplit(":", 1)[1])
+    return 0
+
+
+def pid_runs(pid: int) -> bool:
+    return not process_gone(pid)
+
+
+def listens(pid: int, port: int) -> bool:
+    """Whether `pid` is among the processes listening on `port`, as the host names them."""
+    return any(holder == pid for holder, _ in port_holders(port))
+
+
+def port_takers(port: int) -> list[tuple[int | None, str]]:
+    """Who holds `port`: its listeners, or one this host can't name when the port answers and none is named."""
+    holders: list[tuple[int | None, str]] = list(port_holders(port))
+    if not holders and port_open(port):
+        holders = [(None, "a process this host can't name")]
+    return holders
+
+
+def held_words(wanted: int, holders: list) -> str:
+    named = ", ".join(f"pid {pid} ({short_command(command)})" if pid else command for pid, command in holders)
+    return f"it wanted port {wanted}, held by {named or 'a process this host cannot name'}"
+
+
+def view_serving(state: Path) -> dict | None:
+    """`live.json`'s view, while its pid runs and listens on its recorded port; None otherwise."""
+    live = recorded_live(state)
+    return live if live and pid_runs(live["pid"]) and listens(live["pid"], live["port"]) else None
+
+
+def is_view(pid: int) -> bool:
+    """Whether `pid` runs orchestrate-work's live view, by its command line: a recorded pid the host has since given
+    to another process is never signalled."""
+    command = run(["ps", "-o", "command=", "-p", str(pid)], check=False).stdout
+    return "render_state.py" in command and " live " in f"{command} "
+
+
+def stop_view(state: Path, proc: subprocess.Popen | None = None) -> str | None:
+    """Stop `live.json`'s view by its recorded pid, and its session with it, then confirm it is gone. `proc` is the
+    view's handle when this process started it, so it is reaped. Nothing is stopped by pattern."""
+    live = recorded_live(state)
+    if not live:
+        return None
+    return stop_view_process(live["pid"], live["port"], proc)
+
+
+def stop_view_process(pid: int, port: int, proc: subprocess.Popen | None = None) -> str | None:
+    """Stop the view running as `pid`, on `port`, and its session with it; None when it no longer runs."""
+    if not pid_runs(pid):
+        return None
+    if proc is None and not is_view(pid):
+        return f"left pid {pid} alone: live.json names it, but it no longer runs the live view"
+    for sig, wait in ((signal.SIGTERM, 10), (signal.SIGKILL, 5)):
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            if group_of(pid) == pid:
+                os.killpg(pid, sig)  # it leads its own session: what it started goes with it
+            else:
+                os.kill(pid, sig)
+        deadline = time.monotonic() + wait
+        while time.monotonic() < deadline:
+            if proc is not None:
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    proc.wait(timeout=0.1)
+            if process_gone(pid):
+                return f"stopped the live view (pid {pid}) on port {port}"
+            time.sleep(0.1)
+    raise Stop(f"the live view (pid {pid}) is still running after SIGKILL; stop it, then run this again")
+
+
+def write_supervisor_status(state: Path, pid: object, running: bool, why: str | None = None,
+                            signal_name: str | None = None) -> None:
+    """`supervisor.json`: the supervisor's pid, `running` or `stopped`, when, why, and the command that restarts it.
+    Written whole, so the view never reads half of it. Not written into a record that is gone."""
+    if not (state / "state.json").is_file():
+        return
+    said = f"it received {signal_name}" if why == "signal" else STOPPED_WORDS.get(why or "")
+    doc = {"pid": pid, "state": "running" if running else "stopped", "at": now(),
+           **({"why": why} if why else {}), **({"signal": signal_name} if signal_name else {}),
+           **({"said": said} if said else {}), "restart": f"{flow_command()} lead-run --resume"}
+    staging = state / f".{SUPERVISOR_FILE}.{os.getpid()}"
+    staging.write_text(json.dumps(doc, indent=2) + "\n")
+    os.replace(staging, state / SUPERVISOR_FILE)
+
+
+def supervisor_down_words(state: Path) -> str:
+    """Why the supervisor is down, as `supervisor.json` records it: not started when no supervisor ever wrote it, as
+    after lead-init --no-supervisor."""
+    if not (state / SUPERVISOR_FILE).exists():
+        return NOT_STARTED
+    status = json_object(state / SUPERVISOR_FILE)
+    if status.get("state") == "stopped":
+        return str(status.get("said") or status.get("why") or UNRECORDED_STOP)
+    return UNRECORDED_STOP
+
+
 def waits_on(c) -> str:
     """What the supervisor's last pass found holding the close: its "Needs you", and the close condition's open parts.
     Read from its pass log, where each pass writes it; empty before the first pass, or once nothing holds it."""
@@ -6698,11 +6981,24 @@ def supervisor_line(c) -> str | None:
     held, recorded = read_lock(supervisor_lock_path(c))
     if held:
         return (f"supervisor: running (pid {recorded.get('pid')}); live view {recorded.get('address') or 'starting'}"
-                + on_fallback(c) + waits_on(c))
+                + live_fallback(c.state) + on_fallback(c) + listener_words(c) + waits_on(c))
     said = closed_status(c)
     if said is not None:
         return "supervisor: " + said
-    return f"supervisor: down; restart it with {flow_command()} lead-run --resume" + waits_on(c)
+    serving = view_serving(c.state)
+    address = f"; live view {live_address(serving['port'])}" if serving else ""
+    return (f"supervisor: down ({supervisor_down_words(c.state)}){address}; restart it with {flow_command()} "
+            "lead-run --resume" + listener_words(c) + waits_on(c))
+
+
+def live_fallback(state: Path) -> str:
+    """When the view serves on a port other than the one it asked for: which it wanted, and who held it."""
+    fallback = recorded_live(state).get("fallback")
+    if not isinstance(fallback, dict) or not valid_port(fallback.get("wanted")):
+        return ""
+    holders = [(item.get("pid"), str(item.get("command") or "")) for item in fallback.get("heldBy") or []
+               if isinstance(item, dict)]
+    return f"; the live view {held_words(fallback['wanted'], holders)}"
 
 
 def close_progress(doc: dict) -> str | None:
@@ -6775,7 +7071,9 @@ def supervisor_off() -> bool:
 
 
 def start_supervisor(c) -> str:
-    """Start `lead-run` detached, in a session of its own, and return the live view's address once it holds the lock."""
+    """Start `lead-run` detached, in a session of its own, and return the live view's address once it holds the lock.
+    Its Node is checked here first, so a refusal reaches the lead's shell rather than its log."""
+    require_node(c.release, "the supervisor")
     log = lead_file(c, "supervisor.log")
     log.parent.mkdir(parents=True, exist_ok=True)
     argv = [sys.executable, "-B", str(Path(__file__).resolve()), "--delivery", c.delivery, "lead-run"]
@@ -6829,15 +7127,16 @@ def stop_orphans(c) -> list[str]:
             for child in left]
 
 
-def ask_supervisor_to_stop(c, meanwhile: Callable[[], None] | None = None) -> str | None:
-    """Ask a running supervisor to stop after its pass, and wait for it to release its lock. `meanwhile` runs once the
-    request is written, and again while the wait goes on, for what the pass may be waiting on or just starting."""
+def ask_supervisor_to_stop(c, meanwhile: Callable[[], None] | None = None, why: str = "held") -> str | None:
+    """Ask a running supervisor to stop after its pass, and wait for it to release its lock. The request carries
+    `why`, which the supervisor records in supervisor.json as it stops. `meanwhile` runs once the request is written,
+    and again while the wait goes on, for what the pass may be waiting on or just starting."""
     lock = supervisor_lock_path(c)
     held, recorded = read_lock(lock)
     if not held:
         return None
     request = lead_file(c, "supervisor.stop")
-    request.write_text(now() + "\n")
+    request.write_text(json.dumps({"at": now(), "why": why}) + "\n")
     if meanwhile:
         meanwhile()
     deadline = time.monotonic() + SUPERVISOR_WAIT_SECONDS + supervisor_pass_seconds(c)
@@ -7063,6 +7362,480 @@ def copy_latest(c) -> Path:
     return target
 
 
+# The lead's listener. `lead-wait` wraps the state tool's `wait` and keeps a lease in the record while it runs; the
+# supervisor's "Needs you", the live view, the status line and the lead commands all read it through lead_listener.
+
+LEAD_WAIT_LEASE = "lead-wait.json"
+LEAD_WAIT_REFRESH_SECONDS = 60
+LEAD_WAIT_LIVE_SECONDS = 180
+
+
+def utc_stamp(at: float) -> str:
+    return datetime.datetime.fromtimestamp(at, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def stamp_seconds(value: object) -> float | None:
+    """A UTC stamp as epoch seconds, with or without its fraction; None for anything else."""
+    if not isinstance(value, str):
+        return None
+    for pattern in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ"):
+        try:
+            return datetime.datetime.strptime(value, pattern).replace(tzinfo=datetime.timezone.utc).timestamp()
+        except ValueError:
+            continue
+    return None
+
+
+def lead_listener(state: Path, at: float | None = None) -> dict | None:
+    """The live lease, or None: a lease is live while its pid is alive and its `updatedAt` is under
+    LEAD_WAIT_LIVE_SECONDS old. A missing, unreadable or malformed lease, or one stamped in the future past a refresh,
+    is absent."""
+    try:
+        lease = json.loads((state / LEAD_WAIT_LEASE).read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(lease, dict) or not valid_pid(lease.get("pid")):
+        return None
+    updated = stamp_seconds(lease.get("updatedAt"))
+    if updated is None:
+        return None
+    age = (time.time() if at is None else at) - updated
+    if not -LEAD_WAIT_REFRESH_SECONDS <= age < LEAD_WAIT_LIVE_SECONDS or process_gone(lease["pid"]):
+        return None
+    return lease
+
+
+def write_lease(state: Path, lease: dict) -> None:
+    """Rewrite the lease through a temporary file, under the state lock the record's copies take."""
+    path = state / LEAD_WAIT_LEASE
+    staging = path.with_name(f".{LEAD_WAIT_LEASE}.{os.getpid()}")
+    with open(state / "state.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            staging.write_text(json.dumps(lease, indent=2) + "\n")
+            os.replace(staging, path)
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def drop_lease(state: Path, pid: int) -> None:
+    """Remove the lease if it is still this pid's: a later lead-wait's lease is its own."""
+    path = state / LEAD_WAIT_LEASE
+    with open(state / "state.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            try:
+                held = json.loads(path.read_text())
+            except (OSError, ValueError):
+                return
+            if isinstance(held, dict) and held.get("pid") == pid:
+                path.unlink(missing_ok=True)
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def hold_lease(state: Path, proc, *, after: int, checkout: Path, every: float | None = None,
+               clock: Callable[[], float] = time.time) -> int:
+    """Keep this process's lease while `proc` runs, rewriting it every `every` seconds, and remove it when `proc` ends
+    or this process is stopped; returns `proc`'s exit code."""
+    every = LEAD_WAIT_REFRESH_SECONDS if every is None else every
+    pid = os.getpid()
+    started = utc_stamp(clock())
+    lease = {"pid": pid, "startedAt": started, "updatedAt": started, "after": after, "checkout": str(checkout)}
+    try:
+        write_lease(state, lease)
+        while True:
+            try:
+                return proc.wait(timeout=every)
+            except subprocess.TimeoutExpired:
+                lease["updatedAt"] = utc_stamp(clock())
+                write_lease(state, lease)
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+        drop_lease(state, pid)
+
+
+def listener_needed(state: dict) -> list[str]:
+    """What needs the lead to listen: each lane that isn't idle or done, and each candidate not yet merged."""
+    return ([f"{lane['id']} ({lane.get('state')})" for lane in state.get("lanes", []) if lane.get("state") not in LANE_DONE]
+            + [f"{item['subject']} ({item.get('stage')})" for item in state.get("queue", []) if item.get("stage") != "merged"])
+
+
+def wait_output(c) -> Path:
+    """Where lead-wait writes the wait's one result document by default: beside the flow logs, outside the record."""
+    return lead_file(c, "wait.json")
+
+
+def last_restart(c, journal: list[dict]) -> list[str] | None:
+    """The `restart` arguments the last wait into the default output printed, while they still fit this journal."""
+    try:
+        result = json.loads(wait_output(c).read_text())
+    except (OSError, ValueError):
+        return None
+    restart = result.get("restart") if isinstance(result, dict) else None
+    if not isinstance(restart, list) or not all(isinstance(word, str) for word in restart) or "--after" not in restart:
+        return None
+    try:
+        after = int(restart[restart.index("--after") + 1])
+    except (IndexError, ValueError):
+        return None
+    through = journal[-1]["id"] if journal else 0
+    return restart if 0 <= after <= through else None
+
+
+def lead_wait_command(c, doc: dict) -> str:
+    """The exact lead-wait to start: the last wait's own restart, so nothing journalled since it read is missed, or,
+    with none, one starting after the journal's last entry."""
+    start = f"{flow_command()} --delivery {c.delivery} lead-wait"
+    restart = last_restart(c, doc["journal"])
+    if restart is not None:
+        return f"{start} {shlex.join(restart)}"
+    through = doc["journal"][-1]["id"] if doc["journal"] else 0
+    return f"{start} --after {through} --output {shlex.quote(str(wait_output(c)))}"
+
+
+def listener_lines(c) -> list[str]:
+    """What a lead command ends with while a lane works or a candidate is queued: the lead-wait to start in the
+    background, or that one listens. Nothing otherwise."""
+    if not (c.state / "state.json").exists():
+        return []
+    tool = c.release / "skills/orchestrate-work/scripts/delivery_state.py"
+    doc = json.loads(run([sys.executable, "-B", str(tool), "--dir", str(c.state), "show"]).stdout)
+    needed = listener_needed(doc["state"])
+    if not needed:
+        return []
+    lease = lead_listener(c.state)
+    if lease is not None:
+        return [f"The lead's wake: {', '.join(needed)}; lead-wait is listening (pid {lease['pid']}, after journal entry "
+                f"{lease.get('after')}). When it ends, start it again with the arguments its result's `restart` names."]
+    return [f"The lead's wake: {', '.join(needed)}, and no lead-wait is listening. Start this in the background before "
+            "you end your turn, and after each wake start it again with the arguments its result's `restart` names:",
+            f"  {lead_wait_command(c, doc)}"]
+
+
+def listener_words(c) -> str:
+    """The status line's word on the listener: empty while one listens or nothing needs one."""
+    if lead_listener(c.state) is not None:
+        return ""
+    try:  # read as the record holds it, as on_fallback reads it: a status line never refuses over it
+        state = load_json(c.state / "state.json") or {}
+    except (OSError, ValueError):
+        return ""
+    needed = listener_needed(state) if isinstance(state, dict) else []
+    return f"; the lead isn't listening: no lead-wait runs while {', '.join(needed)}" if needed else ""
+
+
+def lead_wait(args) -> None:
+    """`delivery_state.py wait`, with a lease in the record while it runs. Takes the wait's own arguments; without
+    `--after` it starts after the journal's last entry, and without `--output` it writes the default output."""
+    c = cfg()
+    if not (c.state / "state.json").exists():
+        raise Stop(f"no record at {c.state}: lead-init starts it")
+    passed = list(args.wait_args)
+    parsed = _validator().wait_arguments(passed)
+    after = parsed.after
+    if after is None:
+        journal = load_state()["journal"]
+        after = journal[-1]["id"] if journal else 0
+        passed = ["--after", str(after), *passed]
+    if parsed.output is None:
+        wait_output(c).parent.mkdir(parents=True, exist_ok=True)
+        passed.append(f"--output={wait_output(c)}")
+    script = c.release / "skills/orchestrate-work/scripts/delivery_state.py"
+    proc = subprocess.Popen([sys.executable, "-B", str(script), "--dir", str(c.state), "wait", *passed])
+    sys.exit(hold_lease(c.state, proc, after=after, checkout=c.root))
+
+
+# Host hooks: the decisions behind the hooks this skill declares in hooks.json. Each reads the host's payload on stdin
+# and prints one neutral verdict, {"verdict": "allow" | "warn" | "block", "reason"?, "context"?}; the dispatcher alone
+# knows the host's own shapes. A session's role comes from the payload's cwd, never from this process's own folder.
+
+HOOK_MODES = ("off", "warn", "enforce")
+# Each hook's id in the configuration's `hooks`, and its mode when the key is missing.
+HOOK_DEFAULTS = {"lead.may-stop": "warn", "delivery.orient": "enforce"}
+HOOK_HELD = "hook.held"
+ORIENT_LIMIT = 4000
+# The command the lifecycle installs for each event the receipt records: doctor looks for it in the settings file.
+HOOK_SETTINGS_EVENTS = {"session-start": "SessionStart", "stop": "Stop"}
+HOOK_INSTALLED = 'python3 -B "${{CLAUDE_PROJECT_DIR}}/.agent-skills/current/__main__.py" hook claude-code {event} || exit 1'
+HOOK_PYTHON = (3, 11)
+
+
+def hook_settings_problems(raw: dict) -> list[str]:
+    """What is wrong with the configuration's `hooks`: an unknown hook id or mode, each named."""
+    if "hooks" not in raw:
+        return []
+    hooks = raw["hooks"]
+    if not isinstance(hooks, dict):
+        return [f"`hooks` is {json.dumps(hooks)}, not an object of hook id to mode"]
+    problems = []
+    for hook_id, mode in hooks.items():
+        if hook_id not in HOOK_DEFAULTS:
+            problems.append(f"`hooks` names an unknown hook {hook_id!r}: the hooks are {', '.join(HOOK_DEFAULTS)}")
+        elif mode not in HOOK_MODES:
+            problems.append(f"`hooks.{hook_id}` is {json.dumps(mode)}: a mode is one of {', '.join(HOOK_MODES)}")
+    return problems
+
+
+def hook_mode(raw: dict, hook_id: str) -> str:
+    """A hook's mode: the configuration's, or its default when the key is missing or not a mode doctor accepts."""
+    hooks = raw.get("hooks") if isinstance(raw.get("hooks"), dict) else {}
+    mode = hooks.get(hook_id, HOOK_DEFAULTS[hook_id])
+    return mode if mode in HOOK_MODES else HOOK_DEFAULTS[hook_id]
+
+
+def real(path: str | Path) -> Path:
+    return Path(os.path.realpath(path))
+
+
+def within(path: Path, folder: Path) -> bool:
+    """Whether `path` is `folder` or below it; both already resolved."""
+    return path == folder or folder in path.parents
+
+
+def checkouts_of(cwd: Path) -> list[Path]:
+    """Every checkout of the repository at `cwd`, resolved, from `git worktree list`; none outside a repository."""
+    done = run(["git", "worktree", "list", "--porcelain"], cwd=cwd, check=False, timeout=10)
+    if done.returncode != 0:
+        return []
+    found = [real(line[len("worktree "):]) for line in done.stdout.splitlines() if line.startswith("worktree ")]
+    return [path for path in found if path.is_dir()]
+
+
+def deepest(path: Path, checkouts: list[Path]) -> Path | None:
+    """The checkout `path` lies in: the deepest that holds it, so a checkout nested in another is its own."""
+    holders = [checkout for checkout in checkouts if within(path, checkout)]
+    return max(holders, key=lambda checkout: len(checkout.parts)) if holders else None
+
+
+class Seat:
+    """A session's place in a delivery: `lead` of each delivery open in its checkout, or `lane` on one story."""
+
+    def __init__(self, role: str, configs: list[Config], story: str | None = None):
+        self.role, self.configs, self.story = role, configs, story
+
+
+def seat_of(cwd_text: object) -> Seat | None:
+    """The session's seat, from the payload's cwd: a lane when the cwd lies in the checkout of a story of an open
+    delivery, matched first; else the lead of each delivery whose record is open in the cwd's checkout; else none.
+    A cwd's checkout is the deepest one holding it, after resolving symlinks, so a lane nested in the lead's
+    checkout is a lane, and any other checkout nested there is neither."""
+    global OFFLINE
+    OFFLINE = True  # a hook reads what this machine has; it never fetches
+    if not isinstance(cwd_text, str) or not os.path.isabs(cwd_text) or not os.path.isdir(cwd_text):
+        return None
+    cwd = real(cwd_text)
+    checkouts = checkouts_of(cwd)
+    owner = deepest(cwd, checkouts)
+    if owner is None:
+        return None
+    configs: dict[Path, Config | None] = {}
+
+    def config_at(root: Path) -> Config | None:
+        if root not in configs:
+            try:
+                configs[root] = Config(root, need_delivery=False, tolerant=True, pick=False)
+            except (Stop, ValueError, OSError, KeyError, TypeError, subprocess.SubprocessError):
+                configs[root] = None
+        return configs[root]
+
+    def loaded(root: Path, key: str) -> Config | None:
+        base = config_at(root)
+        if base is None:
+            return None
+        c = copy.copy(base)
+        c.sources, c.conflicts = dict(base.sources), []
+        try:
+            c.load_delivery(key)
+        except (Stop, ValueError, OSError, KeyError, TypeError):
+            return None
+        return c
+
+    here = config_at(owner)
+    if here is None:
+        return None
+    lanes: list[tuple[Path, str, str]] = []
+    leads: list[str] = []
+    for key, d in here.delivery_files().items():
+        lead_root = deepest(real(here.state_of(key, d)), checkouts)
+        lead = config_at(lead_root) if lead_root is not None else None
+        if lead is None:
+            continue
+        files = lead.delivery_files()
+        if key not in files or not lead.open_here(key, files[key]):
+            continue
+        for story in files[key].get("stories") or {}:
+            if real(lead.lane_checkout(story)) == owner:
+                lanes.append((lead_root, key, story))
+        if lead_root == owner:
+            leads.append(key)
+    for lead_root, key, story in lanes:
+        c = loaded(lead_root, key)
+        if c is not None:
+            return Seat("lane", [c], story)
+    found = [c for c in (loaded(owner, key) for key in leads) if c is not None]
+    return Seat("lead", found) if found else None
+
+
+def record_of(c) -> dict:
+    """The record as the state tool shows it: {"state", "journal"}."""
+    tool = c.release / "skills/orchestrate-work/scripts/delivery_state.py"
+    return json.loads(run([sys.executable, "-B", str(tool), "--dir", str(c.state), "show"], timeout=10).stdout)
+
+
+def as_lead(c) -> None:
+    """Make `c` the configuration the printed commands name (flow_command reads it)."""
+    global CFG
+    CFG = c
+
+
+def missing_listener(c) -> tuple[dict, list[str]] | None:
+    """The record and what needs the lead to listen, when something does and no lead-wait listens; else None."""
+    doc = record_of(c)
+    needed = listener_needed(doc["state"])
+    return (doc, needed) if needed and lead_listener(c.state) is None else None
+
+
+def lead_may_stop(payload: dict) -> dict:
+    """lead.may-stop: hold a lead's stop while a lane works or a candidate is queued and no lead-wait listens.
+    `block` under enforce with one open delivery in the checkout; `warn` under warn, and whenever two or more open
+    deliveries share the checkout, since which one this session leads can't be told. A hold the session hasn't
+    already been held for journals one hook.held in each delivery it names."""
+    seat = seat_of(payload.get("cwd"))
+    if seat is None or seat.role != "lead":
+        return {"verdict": "allow"}
+    mode = hook_mode(seat.configs[0].flow_raw, "lead.may-stop")
+    if mode == "off":
+        return {"verdict": "allow"}
+    missing = []
+    for c in seat.configs:
+        found = missing_listener(c)
+        if found is not None:
+            missing.append((c, *found))
+    if not missing:
+        return {"verdict": "allow"}
+    shared = len(seat.configs) > 1
+    verdict = "block" if mode == "enforce" and not shared else "warn"
+    reasons = []
+    for c, doc, needed in missing:
+        as_lead(c)
+        reasons.append(f"Delivery {c.delivery}: the lead isn't listening: no lead-wait runs while {', '.join(needed)}. "
+                       "Start this in the background before you stop, and after each wake start it again with the "
+                       f"arguments its result's `restart` names: {lead_wait_command(c, doc)}")
+    if shared:
+        reasons.insert(0, f"{len(seat.configs)} open deliveries share this checkout "
+                          f"({', '.join(c.delivery for c in seat.configs)}), so which one this session leads can't be "
+                          "told; lead each from its own checkout.")
+    if payload.get("stop_hook_active") is not True:
+        for c, _, needed in missing:
+            what = "the lead's stop was held" if verdict == "block" else "the lead stopped with a warning"
+            summary = f"lead.may-stop returned {verdict}: {what} while no lead-wait listened, with {', '.join(needed)}"
+            tool = c.release / "skills/orchestrate-work/scripts/delivery_state.py"
+            done = run([sys.executable, "-B", str(tool), "--dir", str(c.state), "journal", "--kind", HOOK_HELD,
+                        "--summary", summary], check=False, timeout=10)
+            if done.returncode != 0:
+                print(f"run-delivery: {HOOK_HELD} not journalled in {c.delivery}: "
+                      f"{(done.stderr or done.stdout).strip()[-300:]}", file=sys.stderr)
+    return {"verdict": verdict, "reason": "\n".join(reasons)}
+
+
+def delivery_stage(state: dict) -> str:
+    """The delivery's stage, from the record's structure alone."""
+    work = [*state.get("planned", []), *state.get("queue", [])]
+    if (any(lane.get("state") not in LANE_DONE for lane in state.get("lanes", []))
+            or any(item.get("stage") not in ("merged", "settled") for item in work)):
+        return "delivering"
+    return "finishing: every story merged or settled" if work else "starting: no story assigned yet"
+
+
+def needs_count(c) -> str:
+    """How many items "Needs you" holds, from the supervisor's list, or why that isn't known. Never their text."""
+    resume = f"{flow_command()} --delivery {c.delivery} lead-run --resume"
+    try:
+        needs = json.loads((c.state / NEEDS_FILE).read_text())
+    except (OSError, ValueError):
+        return f"not known: no supervisor has listed it; {resume} starts one"
+    items = needs.get("items") if isinstance(needs, dict) else None
+    if not isinstance(items, list) or not needs.get("running"):
+        return f"not known: the supervisor isn't running; {resume} starts it"
+    stale = stamp_seconds(needs.get("staleAfter"))
+    if stale is not None and stale < time.time():
+        return f"not known: the supervisor's list is out of date; {resume} starts it again"
+    return f"{len(items)} item{'' if len(items) == 1 else 's'}"
+
+
+def lane_next(c, state: dict, story: str) -> str:
+    """The next lane command for `story`, from the record's structure alone."""
+    start = f"{flow_command()} --delivery {c.delivery}"
+    item = next((item for item in state.get("queue", []) if item.get("subject") == story), None)
+    if item is not None and item.get("stage") == "merged":
+        return "none: the story has merged"
+    if item is not None and item.get("stage") != "stopped":
+        return f"none while the story is {item.get('stage')} in the merge queue; the lead answers"
+    planned = next((entry for entry in state.get("planned", []) if entry.get("subject") == story), None)
+    stage = planned.get("stage") if planned else None
+    if stage == "settled":
+        return "none: the story settled with no change needed"
+    if planned and planned.get("noChange"):
+        return "none while the story's no-change hand-off waits for the lead to accept it; the lead answers"
+    if item is None and stage in (None, "planned"):
+        return f"{start} lane-start {story} --base {c.base_branch}"
+    return f"{start} gate {story}"
+
+
+def orientation(seat: Seat) -> str:
+    """delivery.orient's context: only structured fields, never free text from the journal, a hand-off or a tracker."""
+    lines = []
+    for c in seat.configs:
+        as_lead(c)
+        doc = record_of(c)
+        if seat.role == "lane":
+            story = seat.story or ""
+            lane = c.stories.get(story, {}).get("lane", "")
+            lines += [f"run-delivery: this session is {lane} of delivery {c.delivery}, on story {story}.",
+                      f"- delivery: {c.delivery}", f"- story: {story}", f"- lane brief: {c.lane_brief.as_posix()}",
+                      f"- next lane command: {lane_next(c, doc['state'], story)}"]
+            continue
+        lines += [f"run-delivery: this session leads delivery {c.delivery}.", f"- delivery: {c.delivery}",
+                  f"- stage: {delivery_stage(doc['state'])}", f"- Needs you: {needs_count(c)}"]
+        needed = listener_needed(doc["state"])
+        lease = lead_listener(c.state)
+        if needed and lease is None:
+            lines.append(f"- lead-wait: none listens while {', '.join(needed)}; start this in the background before "
+                         f"you end your turn: {lead_wait_command(c, doc)}")
+        elif needed:
+            lines.append(f"- lead-wait: listening (pid {lease['pid']})")
+    return "\n".join(lines)[:ORIENT_LIMIT]
+
+
+def delivery_orient(payload: dict) -> dict:
+    """delivery.orient: tell a starting, resumed, cleared, compacted or forked session its role and next command.
+    It only ever allows; under mode off it says nothing."""
+    seat = seat_of(payload.get("cwd"))
+    if seat is None or hook_mode(seat.configs[0].flow_raw, "delivery.orient") == "off":
+        return {"verdict": "allow"}
+    return {"verdict": "allow", "context": orientation(seat)}
+
+
+HOOKS = {"lead-may-stop": lead_may_stop, "delivery-orient": delivery_orient}
+
+
+def hook(args) -> None:
+    """`hook <name>`: one hook's neutral verdict for the host payload on stdin, as one JSON object."""
+    try:
+        payload = json.loads(sys.stdin.buffer.read().decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        payload = None
+    verdict = HOOKS[args.name](payload if isinstance(payload, dict) else {})
+    print(json.dumps(verdict, ensure_ascii=False))
+
+
 # "Needs you": derived each pass from live conditions, never stored.
 
 def full_health_entries(c) -> list[dict]:
@@ -7179,6 +7952,12 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                           f"lead-resolve {entry['id']} --why TEXT",
                           "clears": ("the runner's hold clearing, journalling base.repaired, or " if runners else "")
                           + f"{flow_command()} lead-resolve {entry['id']} --why TEXT"})
+    needed = listener_needed(doc["state"])
+    if needed and lead_listener(c.state) is None:
+        items.append({"holding": False, "source": f"{LEAD_WAIT_LEASE} in the record",
+                      "text": f"The lead isn't listening: no lead-wait runs while {', '.join(needed)}. Start one in the "
+                      f"background: {lead_wait_command(c, doc)}",
+                      "clears": "a running lead-wait, or nothing left working or queued"})
     for name in flapping:
         items.append({"holding": True, "source": f"the supervisor's {name}", "clears": f"the {name} staying up",
                       "text": f"The supervisor's {name} won't stay up; its log is "
@@ -7902,15 +8681,26 @@ def close_out(c, flapping: tuple[str, ...] = (), wait: bool = False) -> tuple[li
 class Supervisor:
     """lead-run: one process per record. It holds the flow log's supervisor lock, recording its pid, start time,
     children and the live view's address; keeps `serve` and the live view running; and runs one pass after another
-    until the delivery closes or lead-close asks it to stop."""
+    until the delivery closes or lead-close asks it to stop. The view runs in a session of its own and outlives it:
+    a starting supervisor adopts the view `live.json` names while it serves, and the delivery's close stops it."""
 
     def __init__(self, c, once: bool):
         self.c, self.once = c, once
         self.children: dict[str, subprocess.Popen] = {}
+        # The live view: its pid, and its handle when this supervisor started it rather than adopting it.
+        self.view_pid: int | None = None
+        self.view: subprocess.Popen | None = None
+        # What it says before its first line, the address, is printed: held until then.
+        self.held_lines: list[str] | None = []
+        # The handlers its own signal handler stands in front of.
+        self.before_signals: dict[int, object] = {}
         self.restarts: dict[str, list[float]] = {}
         self.address: str | None = None
         self.handle = None
         self.started = now()
+        # The Node its children run, as it started: recorded in its lock for doctor --delivery to judge.
+        found = node_on_path()
+        self.node = {"path": found[0], "version": dotted(found[1]) if found[1] else None} if found else None
         # Why it stopped serving, once what it serves is gone: then it exits instead of passing on over nothing.
         self.lost: str | None = None
 
@@ -7936,7 +8726,9 @@ class Supervisor:
         self.handle.seek(0)
         self.handle.truncate()
         self.handle.write(json.dumps({"pid": os.getpid(), "startedAt": self.started, "address": self.address,
-                                      "children": [{"name": name, "pid": proc.pid} for name, proc in self.children.items()]}))
+                                      "node": self.node,
+                                      "children": [{"name": name, "pid": proc.pid} for name, proc in self.children.items()]
+                                      + ([{"name": "live", "pid": self.view_pid}] if self.view_pid else [])}))
         self.handle.flush()
 
     def child_argv(self, name: str) -> list[str] | None:
@@ -7964,22 +8756,90 @@ class Supervisor:
         self.write_lock()
 
     def start_live(self) -> None:
-        log = lead_file(self.c, "supervisor.live.log")
+        """Adopt the view `live.json` names while it serves from this generation's render_state.py; otherwise start
+        one, on the recorded port, else the derived one, else, when another process holds that, a free one. A view
+        of another generation is stopped by its pid and replaced on its port; a recorded pid that runs but doesn't
+        listen on its port is left alone."""
+        c = self.c
+        script = str((c.release / "skills/orchestrate-work/scripts/render_state.py").resolve())
+        live = recorded_live(c.state)
+        setting = live_port_setting()
+        if live and pid_runs(live["pid"]) and listens(live["pid"], live["port"]):
+            if live.get("renderState") == script:
+                self.view_pid, self.view = live["pid"], None
+                self.address = live_address(live["port"])
+                self.write_lock()
+                self.say(f"adopted the live view (pid {live['pid']}) on {self.address}")
+                return
+            self.say(f"the live view (pid {live['pid']}) runs {live.get('renderState')}, not this generation's "
+                     f"{script}: {stop_view(c.state)}")
+            free = time.monotonic() + 10
+            while port_open(live["port"]) and time.monotonic() < free:
+                time.sleep(0.1)
+        elif live and pid_runs(live["pid"]):
+            self.say(f"live.json's pid {live['pid']} runs but doesn't listen on port {live['port']}; it is left alone "
+                     "and a new view started")
+        # A recorded port first, so the address survives; RUN_DELIVERY_LIVE_PORT=0 stands in for the derived one.
+        wanted = (live["port"] if live else 0) if setting == 0 else wanted_live_port(c.state, live_top(c), c.delivery)
+        fallback = None
+        holders = port_takers(wanted) if wanted else []
+        if holders:
+            fallback, port = (wanted, holders), 0
+        else:
+            port = wanted
+        started = self.spawn_view(port)
+        if started is None:  # the port was taken between the look and the bind
+            fallback = (port, port_takers(port))
+            started = self.spawn_view(0)
+        proc, bound = started
+        self.view, self.view_pid, self.address = proc, proc.pid, live_address(bound)
+        record = {"port": bound, "pid": proc.pid, "renderState": script, "startedAt": now(), "address": self.address}
+        if fallback:
+            record["fallback"] = {"wanted": fallback[0],
+                                  "heldBy": [{"pid": pid, "command": command} for pid, command in fallback[1]]}
+            self.say(f"the live view serves on {self.address}: {held_words(*fallback)}")
+        staging = c.state / f".{LIVE_FILE}.{os.getpid()}"
+        staging.write_text(json.dumps(record, indent=2) + "\n")
+        os.replace(staging, c.state / LIVE_FILE)
+        self.write_lock()
+
+    def spawn_view(self, port: int) -> tuple[subprocess.Popen, int] | None:
+        """Start the view on `port` (0: a free one) in a session of its own, and wait until it says where it serves.
+        None when it couldn't listen on a port it was given, so the caller binds a free one instead."""
+        c = self.c
+        argv = [*self.child_argv("live"), "--port", str(port), "--status-file", str(c.state / SUPERVISOR_FILE)]
+        log = lead_file(c, "supervisor.live.log")
         offset = log.stat().st_size if log.exists() else 0
-        self.start("live")
+        with open(log, "a") as out:
+            proc = subprocess.Popen(argv, cwd=c.root, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
+                                    start_new_session=True)
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
             for line in log.read_text()[offset:].splitlines():
                 with contextlib.suppress(ValueError):
                     said = json.loads(line)
                     if said.get("live") and said.get("ok"):
-                        self.address = f"http://{said['live']}/"
-                        self.write_lock()
-                        return
-            if self.children["live"].poll() is not None:
+                        return proc, int(str(said["live"]).rsplit(":", 1)[1])
+                    if said.get("code") == "live_unavailable" and port:
+                        proc.wait()
+                        return None
+            if proc.poll() is not None:
                 raise Stop(f"the live view stopped as it started: {log.read_text()[offset:][-400:].strip()}")
             time.sleep(0.1)
+        stop_group(proc)
         raise Stop(f"the live view didn't start within 60s; its log is {log}")
+
+    def say(self, line: str) -> None:
+        """A line on the supervisor's output: held until the address is printed, so that stays its first line."""
+        if self.held_lines is None:
+            print(f"{now()} supervisor: {line}", flush=True)
+        else:
+            self.held_lines.append(line)
+
+    def view_down(self) -> bool:
+        if self.view is not None:
+            return self.view.poll() is not None
+        return self.view_pid is not None and process_gone(self.view_pid)
 
     def flapping(self) -> tuple[str, ...]:
         horizon = time.monotonic() - CHILD_FLAP_SECONDS
@@ -7989,9 +8849,8 @@ class Supervisor:
     def keep_alive(self) -> None:
         """Restart a child that exited, at most once a pass once it has exited CHILD_FLAPS times in the window: a
         child that won't stay up is shown in "Needs you", and a restart that fails never ends the supervisor."""
-        for name, proc in list(self.children.items()):
-            if proc.poll() is None:
-                continue
+        down = [name for name, proc in self.children.items() if proc.poll() is not None]
+        for name in down + (["live"] if self.view_pid and self.view_down() else []):
             times = self.restarts.setdefault(name, [])
             if name in self.flapping() and times and time.monotonic() - times[-1] < supervisor_pass_seconds(self.c):
                 continue
@@ -8004,6 +8863,25 @@ class Supervisor:
 
     def stop_asked(self) -> bool:
         return lead_file(self.c, "supervisor.stop").exists()
+
+    def stop_reason(self) -> str:
+        """The reason the stop request carries; lead-close's `held` when it names none."""
+        why = json_object(lead_file(self.c, "supervisor.stop")).get("why")
+        return why if isinstance(why, str) and why else "held"
+
+    def on_signal(self, number: int, frame) -> None:
+        """Record the signal in supervisor.json, unless whoever sent it recorded why first, then do what the signal
+        did before: the tool's own handler, which unwinds through `finally`, or the default."""
+        status = json_object(self.c.state / SUPERVISOR_FILE)
+        if not (status.get("pid") == os.getpid() and status.get("state") == "stopped"):
+            with contextlib.suppress(OSError):
+                write_supervisor_status(self.c.state, os.getpid(), False, "signal", signal.Signals(number).name)
+        before = self.before_signals.get(number, signal.SIG_DFL)
+        if callable(before):
+            before(number, frame)
+            return
+        signal.signal(number, signal.SIG_DFL)
+        os.kill(os.getpid(), number)
 
     def stop_children(self) -> None:
         for proc in self.children.values():
@@ -8098,25 +8976,36 @@ class Supervisor:
             self.handle.close()
             raise Stop("another supervisor took the lock first")
         lead_file(c, "supervisor.stop").unlink(missing_ok=True)
+        closed, stopped_by = False, None
         try:
             self.write_lock()
             if not self.once:
+                # Who stops it says why in supervisor.json; a signal nobody explained is recorded by the supervisor.
+                write_supervisor_status(c.state, os.getpid(), True)
+                for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+                    self.before_signals[number] = signal.signal(number, self.on_signal)
                 self.start_live()
                 self.start("serve")
                 print(self.address, flush=True)  # the first line: where the delivery is watched
+                lines, self.held_lines = self.held_lines or [], None
+                for line in lines:
+                    self.say(line)
             number = len(read_log("supervisor", c.delivery))
             while True:
                 number += 1
-                if self.one_pass(number) or self.once or self.stop_asked() or self.lose():
-                    return
+                closed = self.one_pass(number)
+                if closed or self.once or self.stop_asked() or self.lose():
+                    break
                 deadline = time.monotonic() + supervisor_pass_seconds(c)
                 while time.monotonic() < deadline and not self.stop_asked():
                     if self.lose():
-                        return
+                        break
                     self.keep_alive()
                     time.sleep(0.2)
-                if self.stop_asked():
-                    return
+                if self.stop_asked() or self.lost:
+                    break
+            if not closed and self.stop_asked():
+                stopped_by = self.stop_reason()
         finally:
             self.stop_children()
             # Drawn and copied once more, so neither the line map nor `latest` keeps the last running list; not when
@@ -8126,6 +9015,26 @@ class Supervisor:
                     write_needs(c, None, len(read_log("supervisor", c.delivery)), time.monotonic())
                     render_views(c, only="renderers")
                     copy_latest(c)
+                    if closed:
+                        print(f"{now()} supervisor: drew the views and copied the record one last time", flush=True)
+            if closed and not self.lost:
+                # The delivery's own close: recorded, then the view stopped last, by its recorded pid.
+                with contextlib.suppress(OSError):
+                    write_supervisor_status(c.state, os.getpid(), False, "close")
+                with contextlib.suppress(OSError, Stop, subprocess.SubprocessError):
+                    said = stop_view(c.state, self.view)
+                    if said:
+                        print(f"{now()} supervisor: {said}", flush=True)
+            elif stopped_by and not self.once and not self.lost:
+                with contextlib.suppress(OSError):
+                    write_supervisor_status(c.state, os.getpid(), False, stopped_by)
+            if self.lost and self.view_pid:
+                # What it served is gone: so is what its view serves. Stopped by the pid it holds, as live.json may
+                # have gone with the record.
+                with contextlib.suppress(OSError, Stop, subprocess.SubprocessError):
+                    said = stop_view_process(self.view_pid, port_of_address(self.address), self.view)
+                    if said:
+                        print(f"{now()} supervisor: {said}", flush=True)
             fcntl.flock(self.handle, fcntl.LOCK_UN)
             self.handle.close()
 
@@ -8139,11 +9048,13 @@ def lead_run(args) -> None:
     closed = kept_close(c, last_close(load_state()["journal"]))
     if closed and closed.get("by") == "lead-close":
         raise Stop("the delivery is closed: lead-close closed it. " + closed_words(closed))
+    # Before the lock, the orphan sweep or any child: the supervisor's children run the Node first on its PATH.
+    require_node(c.release, "lead-run --resume" if args.resume else "lead-run")
     if args.resume:
         for line in stop_orphans(c):
             print(line)
         address = start_supervisor(c)
-        print(f"supervisor: running; live view {address}")
+        print(f"supervisor: running; live view {address}{live_fallback(c.state)}" + listener_words(c))
         return
     Supervisor(c, once=args.once).run()
 
@@ -8538,6 +9449,7 @@ class Doctor:
             ("candidate", "merge queue candidate step", ("binding",), self.candidate_step),
             ("config", "configuration", ("platform",), self.config),
             ("generation", "release generation", ("platform",), self.generation),
+            ("hooks", "host hooks", ("config",), self.hooks),
             ("committed", "release on the delivery base", ("config", "binding", "generation"), self.committed),
             ("gates", "gates", ("config", "binding"), self.gates),
             ("lanes", "lane checkouts ignored", ("config",), self.lanes),
@@ -8592,10 +9504,10 @@ class Doctor:
     def platform(self):
         problems = []
         git_version = version_of(["git", "--version"]) if shutil.which("git") else None
-        if not git_version or git_version < (2, 31):
+        if not git_version or not meets(git_version, (2, 31)):
             problems.append("git 2.31 or newer")
-        if sys.version_info < (3, 11):
-            problems.append("Python 3.11 or newer")
+        if not meets(interpreter_version(), PYTHON_MINIMUM):
+            problems.append(f"Python {dotted(PYTHON_MINIMUM)} or newer")
         problems += [tool for tool in ("ps", "lsof") if not shutil.which(tool)]
         if problems:
             return "missing", f"this host lacks {', '.join(problems)}; fix: install {', '.join(problems)}"
@@ -8643,6 +9555,65 @@ class Doctor:
             return "wrong", (f"the running generation {running} is the receipt's previous one, not its current "
                              f"{receipt.get('generation')}; fix: run the tool as {TOOL_PATH}")
         return "ok", f"{running[:12]} is the current generation in {path.name} ({receipt['release']['releaseId']})"
+
+    def hooks(self):
+        """The configuration's hook modes, refused when one names an unknown hook or mode. Reported, never refused:
+        a settings file lacking an entry the receipt records, and a python3 on PATH below the hooks' minimum."""
+        raw = self.c.flow_raw if self.c else {}
+        problems = hook_settings_problems(raw)
+        if problems:
+            return "wrong", (f"{'; '.join(problems)}; fix: in {CONFIG}, set `hooks` to an object whose keys are among "
+                             f"{', '.join(HOOK_DEFAULTS)} and whose values are among {', '.join(HOOK_MODES)}, or "
+                             "remove the key")
+        modes = ", ".join(f"{hook_id} {hook_mode(raw, hook_id)}" for hook_id in HOOK_DEFAULTS)
+        notes = [note for note in (self.hook_entries_note(), self.hook_python_note()) if note]
+        return ("warn", f"{modes}; {'; '.join(notes)}") if notes else ("ok", modes)
+
+    def hook_entries_note(self) -> str | None:
+        """When the installed generation's receipt records hook entries that its settings file lacks."""
+        try:  # an unreadable receipt is the release generation row's to report
+            receipt = load_json(receipt_path(self.c) if self.c else self.root / RECEIPT)
+        except (OSError, ValueError):
+            return None
+        recorded = receipt.get("hooks") if isinstance(receipt, dict) else None
+        if (not isinstance(recorded, dict) or not isinstance(recorded.get("events"), list)
+                or not isinstance(recorded.get("file"), str)):
+            return None
+        rel = recorded["file"]
+        try:
+            settings = json.loads((self.root / rel).read_text())
+        except (OSError, ValueError):
+            settings = None
+        lists = settings.get("hooks") if isinstance(settings, dict) and isinstance(settings.get("hooks"), dict) else {}
+
+        def present(event: str) -> bool:
+            entries = lists.get(HOOK_SETTINGS_EVENTS.get(event, event))
+            return isinstance(entries, list) and any(
+                isinstance(entry, dict) and isinstance(entry.get("hooks"), list)
+                and any(isinstance(h, dict) and h.get("command") == HOOK_INSTALLED.format(event=event)
+                        for h in entry["hooks"]) for entry in entries)
+        lacking = [event for event in recorded["events"] if not present(event)]
+        if not lacking:
+            return None
+        # Named by the receipt's member, not its path: run-delivery's output names no host's own folders.
+        return (f"the settings file the receipt's hooks.file names lacks the hook entries the receipt records for "
+                f"{', '.join(lacking)}, so those hooks don't run; fix: apply the generation again, which writes them, "
+                "or restore that file from version control")
+
+    def hook_python_note(self) -> str | None:
+        """When the python3 on PATH, which the installed hook command runs, is below the hooks' minimum."""
+        found = shutil.which("python3")
+        if not found:
+            return "no python3 on PATH, so the installed hook command can't start; fix: put Python 3.11 or newer on PATH"
+        done = run([found, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"], check=False, timeout=10)
+        try:
+            version = tuple(int(part) for part in done.stdout.strip().split("."))
+        except ValueError:
+            return f"python3 on PATH ({found}) didn't report its version; fix: put Python 3.11 or newer first on PATH"
+        if version < HOOK_PYTHON:
+            return (f"python3 on PATH ({found}) is {'.'.join(map(str, version))}, below 3.11, and the installed hook "
+                    "command runs it; fix: put Python 3.11 or newer first on PATH")
+        return None
 
     def check_binding(self):
         path = self.root / ".agents/orchestration.json"
@@ -8870,10 +9841,10 @@ class Doctor:
         problem = node_problem(self.release())
         if problem:
             return problem
-        wanted = (load_json(self.release() / "runtime/runtime.json") or {}).get("nodeMinimum")
+        wanted = node_minimum(self.release())
         if not wanted:
             return self.not_applicable("the generation carries no runtime")
-        return "ok", f"{find_node(tuple(int(n) for n in wanted.split('.')))} meets the runtime's nodeMinimum {wanted}"
+        return "ok", f"{node_on_path()[0]} meets the runtime's nodeMinimum {wanted}"
 
     def in_app(self):
         ia = self.c.in_app
@@ -9078,23 +10049,47 @@ class Doctor:
             if said is not None:
                 return ("wrong" if said.startswith("stopped partway") else "ok"), said
             return "wrong", f"the supervisor is down; fix: {flow_command()} lead-run --resume"
+        status, node = self.supervisor_node(recorded)
+        running = f"running (pid {recorded.get('pid')}); live view {recorded.get('address')}"
+        # A Node it can't keep is the row's last words, so its fix ends the line.
+        said = lambda more="": (f"{running}; {node}{more}{waits_on(d)}" if status == "ok" else
+                                f"{running}{more}{waits_on(d)}; {node}")
         if not Path("/proc/self/status").exists():
-            return "ok", (f"running (pid {recorded.get('pid')}); live view {recorded.get('address')}. Its children's "
-                          "signal dispositions can't be read on this host (no /proc); it starts them with the defaults"
-                          + waits_on(d))
+            return status, said(". Its children's signal dispositions can't be read on this host (no /proc); it starts "
+                                "them with the defaults")
         ignored = []
         for child in recorded.get("children") or []:
-            status = Path(f"/proc/{child.get('pid')}/status")
-            mask = next((int(line.split()[1], 16) for line in status.read_text().splitlines()
-                         if line.startswith("SigIgn:")), 0) if status.exists() else 0
+            status_file = Path(f"/proc/{child.get('pid')}/status")
+            mask = next((int(line.split()[1], 16) for line in status_file.read_text().splitlines()
+                         if line.startswith("SigIgn:")), 0) if status_file.exists() else 0
             names = [name for name, number in (("SIGINT", 2), ("SIGHUP", 1), ("SIGQUIT", 3)) if mask >> (number - 1) & 1]
             if names:
                 ignored.append(f"{child.get('name')} (pid {child.get('pid')}) ignores {', '.join(names)}")
         if ignored:
             return "wrong", (f"the supervisor's children don't have the default signal dispositions: "
-                             f"{'; '.join(ignored)}, so their checks fail as a broken base; fix: lead-close or stop "
-                             f"them, then {flow_command()} lead-run --resume")
-        return "ok", f"running (pid {recorded.get('pid')}); live view {recorded.get('address')}" + waits_on(d)
+                             f"{'; '.join(ignored)}, so their checks fail as a broken base"
+                             + (f"; and {node.split('; fix: ')[0]}" if status != "ok" else "")
+                             + f"; fix: lead-close or stop them, then {flow_command()} lead-run --resume")
+        return status, said()
+
+    def supervisor_node(self, recorded: dict) -> tuple[str, str]:
+        """The Node the running supervisor recorded in its lock as it started, which its queue's checks run unless
+        their profile says otherwise, judged against the runtime's nodeMinimum: (status, words)."""
+        wanted = node_minimum(self.delivery.release)
+        restart = (f"stop it (pid {recorded.get('pid')}), then run {flow_command()} lead-run --resume"
+                   + (f" with Node {wanted} or newer first on PATH" if wanted else ""))
+        if "node" not in recorded:
+            return "warn", f"it recorded no Node, as an older generation's supervisor doesn't; fix: {restart}, which records it"
+        node = recorded["node"]
+        if not isinstance(node, dict):
+            if wanted:
+                return "wrong", f"it runs with no node on its PATH, and the runtime needs Node {wanted}; fix: {restart}"
+            return "ok", "no node on its PATH"
+        version = node.get("version")
+        said = f"Node {version or 'of no readable version'} at {node.get('path')}"
+        if wanted and not meets(numbers(version or "") or (0,), numbers(wanted) or ()):
+            return "wrong", f"it runs {said}, below the runtime's nodeMinimum {wanted}; fix: {restart}"
+        return "ok", said
 
     def base_gates(self):
         if not self.args.run_gates:
@@ -9228,6 +10223,12 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--resume", action="store_true", help="stop what an earlier supervisor left, then start it again")
     p.add_argument("--once", action="store_true", help="run one pass in the foreground, then stop")
     p.set_defaults(fn=lead_run)
+    p = command(sub, "lead-wait", help="the state tool's wait, with a lease in the record while it runs; takes the "
+                "wait's own arguments")
+    p.set_defaults(fn=lead_wait, wait_args=[])
+    p = command(sub, "hook", help="a host hook's neutral verdict for the payload on stdin: lead-may-stop holds a lead's "
+                "stop while nobody listens, delivery-orient tells a session its role and next command")
+    p.add_argument("name", choices=sorted(HOOKS)); p.set_defaults(fn=hook)
     p = command(sub, "full-health-run", help="one post-merge fullHealth run at a base head, as the supervisor starts it")
     p.add_argument("--head", required=True); p.add_argument("--record", required=True); p.set_defaults(fn=full_health_run)
     p = command(sub, "lead-brief"); p.set_defaults(fn=lead_brief)
@@ -9304,6 +10305,15 @@ def main(argv: list[str] | None = None) -> None:
     if argv[first:first + 1] in (["app-check"], ["app-video"]):
         args = parser.parse_args(argv[:separator])
         args.passthrough = [*args.passthrough, *argv[separator + 1:]]
+    elif argv[first:first + 1] == ["lead-wait"]:
+        # Everything after the command is the wait's, but --delivery, which the wait doesn't take.
+        rest, own = argv[first + 1:], []
+        while any(word == "--delivery" or word.startswith("--delivery=") for word in rest):
+            at = next(i for i, word in enumerate(rest) if word == "--delivery" or word.startswith("--delivery="))
+            width = 1 if rest[at].startswith("--delivery=") else 2
+            own, rest = [*own, *rest[at:at + width]], [*rest[:at], *rest[at + width:]]
+        args = parser.parse_args([*argv[:first + 1], *own, *(["--help"] if {"-h", "--help"} & set(rest) else [])])
+        args.wait_args = rest
     else:
         args = parser.parse_args(argv)
     later = getattr(args, "delivery_after", None)
@@ -9317,7 +10327,11 @@ def main(argv: list[str] | None = None) -> None:
     except Stop as error:
         print(f"run-delivery: {error}", file=sys.stderr)
         sys.exit(SILENT_EXIT if isinstance(error, Silent) else 2)
-    if args.command.startswith("lead-") and args.command not in ("lead-setup", "lead-init", "lead-run"):
+    if args.command in ("lead-init", "lead-assign", "lead-accept") or (args.command == "lead-run" and args.resume):
+        with contextlib.suppress(Stop, ValueError, OSError):
+            for line in listener_lines(cfg()):
+                print(line)
+    if args.command.startswith("lead-") and args.command not in ("lead-setup", "lead-init", "lead-run", "lead-wait"):
         with contextlib.suppress(Stop, ValueError, OSError):
             line = supervisor_line(cfg())
             if line:

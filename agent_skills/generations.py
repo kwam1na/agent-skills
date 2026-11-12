@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Callable
 
 from .fs import FileSafetyError, atomic_write, checked_files, contained_path
+from .hooks import declared_events
+from .hosts.claude import CLAUDE_CODE
 from .receipt import DIGEST, OWNERSHIP, validate_version
 from .release import MAX_METADATA_BYTES, VerifiedRelease, _archive_bytes, _bounded_bytes, verify_release
 from .validate import canonical_json
@@ -56,13 +58,14 @@ def _version_from_release(verified: VerifiedRelease, extracted: Path) -> dict:
 
 # Inspections this process has already verified, keyed on the sha256 of the archive bytes and of the metadata bytes
 # the inspection read. Only what a verification that passed computed is kept, in memory: never a path, a time or an
-# extraction, so nothing on disk is trusted on a later inspection.
-_INSPECTED: OrderedDict[tuple[str, str], tuple[dict, bytes]] = OrderedDict()
+# extraction, so nothing on disk is trusted on a later inspection. Each holds the version, the catalog bytes and the
+# Claude Code hook events the release's profile declares.
+_INSPECTED: OrderedDict[tuple[str, str], tuple[dict, bytes, tuple[str, ...]]] = OrderedDict()
 INSPECTED_LIMIT = 16
 
 
-def _inspected(archive: Path, metadata: Path) -> tuple[dict, bytes]:
-    """The version and catalog bytes of a verified release, extracted once per content in this process."""
+def _inspected(archive: Path, metadata: Path) -> tuple[dict, bytes, tuple[str, ...]]:
+    """The version, catalog bytes and Claude Code hook events of a verified release, extracted once per content."""
     try:
         archive_bytes = _archive_bytes(archive)
         metadata_bytes = _bounded_bytes(metadata, MAX_METADATA_BYTES, "release.metadata_limit")
@@ -73,8 +76,8 @@ def _inspected(archive: Path, metadata: Path) -> tuple[dict, bytes]:
     key = (hashlib.sha256(archive_bytes).hexdigest(), hashlib.sha256(metadata_bytes).hexdigest())
     if key in _INSPECTED:
         _INSPECTED.move_to_end(key)
-        version, catalog = _INSPECTED[key]
-        return copy.deepcopy(version), catalog
+        version, catalog, events = _INSPECTED[key]
+        return copy.deepcopy(version), catalog, events
     try:
         with tempfile.TemporaryDirectory() as temporary:
             extracted = Path(temporary) / "release"
@@ -82,6 +85,7 @@ def _inspected(archive: Path, metadata: Path) -> tuple[dict, bytes]:
             if (verified.archive_sha256, verified.metadata_sha256) != key:
                 raise GenerationError("source-changed: the release changed while it was inspected")
             version = _version_from_release(verified, extracted)
+            events = tuple(declared_events(extracted, CLAUDE_CODE.host))
     except FileNotFoundError as error:
         raise GenerationError(
             "source-unavailable: release archive or metadata is unavailable"
@@ -94,14 +98,19 @@ def _inspected(archive: Path, metadata: Path) -> tuple[dict, bytes]:
     }:
         raise GenerationError("generation.invalid: the extracted release differs from its archive")
     catalog = contents.get("catalog.json", b"")
-    _INSPECTED[key] = (copy.deepcopy(version), catalog)
+    _INSPECTED[key] = (copy.deepcopy(version), catalog, events)
     while len(_INSPECTED) > INSPECTED_LIMIT:
         _INSPECTED.popitem(last=False)
-    return version, catalog
+    return version, catalog, events
 
 
 def inspect_release(archive: Path, metadata: Path) -> dict:
     return _inspected(archive, metadata)[0]
+
+
+def inspect_release_hook_events(archive: Path, metadata: Path) -> list[str]:
+    """The Claude Code events, sorted, for which the verified release's profile declares a hook."""
+    return list(_inspected(archive, metadata)[2])
 
 
 def inspect_adoption_release(
@@ -109,7 +118,7 @@ def inspect_adoption_release(
     metadata: Path,
     skill: str,
 ) -> dict:
-    version, catalog_bytes = _inspected(archive, metadata)
+    version, catalog_bytes, _ = _inspected(archive, metadata)
     catalog = json.loads(catalog_bytes.decode("utf-8"))
     members = {
         record["id"]: record

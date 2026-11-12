@@ -23,17 +23,17 @@ CATALOGUE_MODULES = (
     "delivery_provider_rails_contract", "delivery_views", "delivery_views_adopter", "delivery_views_history",
     "delivery_views_page", "delivery_views_plan", "delivery_views_plan_fixtures", "delivery_views_render",
     "delivery_views_review_projection", "delivery_views_snapshots", "diagnosis", "documented_install_surface",
-    "fault_injection", "forge_adapters", "historical_qualifications", "host_exposure", "jira_profile", "lane_rows",
+    "fault_injection", "forge_adapters", "historical_qualifications", "hooks", "host_exposure", "jira_profile", "lane_rows",
     "lane_ruling_corpus", "lead_wait", "lifecycle", "linear_profile", "linear_qualification", "measure_test_writes",
     "merge_occurrence", "merge_queue", "no_current_set_names", "orchestration_adopter", "orchestration_render",
     "orchestration_state", "own_deliveries", "product_descriptors", "product_launcher", "product_release",
     "profile_inventory", "provenance", "provider_qualification", "qualification", "readme", "receipt", "registry",
     "release_archive", "release_channel", "release_entry_budget", "release_integration", "review_and_compounding",
     "review_base_reopening", "review_bound_corpus", "review_grace", "review_orchestration", "round_brief_template_corpus",
-    "router", "run_delivery", "run_delivery_plan_review", "run_delivery_pr_review", "run_delivery_pr_review_gates",
-    "run_delivery_supervisor", "run_delivery_tracker", "run_event_emission_corpus", "run_tests", "runless_reviews",
-    "test_dependency_guard", "test_environment", "tracker_contract", "update_provenance", "validate",
-    "workflow_graph_contract", "workflow_observation", "workflows",
+    "router", "run_delivery", "run_delivery_hooks", "run_delivery_plan_review", "run_delivery_pr_review",
+    "run_delivery_pr_review_gates", "run_delivery_supervisor", "run_delivery_tracker", "run_event_emission_corpus",
+    "run_tests", "runless_reviews", "test_dependency_guard", "test_environment", "tracker_contract", "update_provenance",
+    "validate", "workflow_graph_contract", "workflow_observation", "workflows",
 )
 CATALOGUE_IDS = tuple("tests.test_" + name for name in CATALOGUE_MODULES)
 GUARDS = ["tests.test_linear_qualification", "tests.test_registry"]
@@ -137,7 +137,61 @@ class FreshClone(unittest.TestCase):
             self.assertTrue((Path(out) / "release/linear-v99.0.0-rc.1.zip").is_file())
 
 
+# linear-v2.1.0-rc.1's archive, as the v2.1.0-rc.1 release publishes and attests it.
+CANDIDATE_SHA256 = "e7feafe885899be8bbb2ec76b27eff4d2a27c4b75fe0fbdb080565c49685ea1c"
+HOOK_COMMAND = 'python3 -B "${CLAUDE_PROJECT_DIR}/.agent-skills/current/__main__.py" hook claude-code %s || exit 1'
+
+
+def _hook_entry(event: str) -> dict:
+    return {"hooks": [{"type": "command", "command": HOOK_COMMAND % event, "timeout": 30}]}
+
+
 class StandingBinding(unittest.TestCase):
+    def test_this_repository_enforces_the_lead_s_wait(self) -> None:
+        settings = json.loads((ROOT / ".agents/run-delivery.json").read_text(encoding="utf-8"))
+        self.assertEqual(settings["hooks"], {"lead.may-stop": "enforce"})
+
+    def test_the_committed_settings_hold_exactly_the_two_dispatcher_entries(self) -> None:
+        settings = json.loads((ROOT / ".claude/settings.json").read_text(encoding="utf-8"))
+        self.assertEqual(settings, {"hooks": {"SessionStart": [_hook_entry("session-start")],
+                                              "Stop": [_hook_entry("stop")]}})
+        receipt = json.loads((ROOT / ".agent-skills/active.json").read_text(encoding="utf-8"))
+        self.assertEqual(receipt["hooks"], {"created": True, "events": ["session-start", "stop"],
+                                            "file": ".claude/settings.json"})
+
+    def test_the_installed_generation_is_the_hooks_candidate(self) -> None:
+        receipt = json.loads((ROOT / ".agent-skills/active.json").read_text(encoding="utf-8"))
+        self.assertEqual(receipt["release"]["releaseId"], "linear-v2.1.0-rc.1")
+        # The attested archive's own digest, which the release notes and its .release.json carry: a generation
+        # holding the same release id but other bytes fails here. Applying a later release updates this pin with it.
+        self.assertEqual(receipt["generation"], CANDIDATE_SHA256)
+        self.assertEqual(receipt["release"]["archiveSha256"], CANDIDATE_SHA256)
+        # The installed lifecycle's own verdict: every committed generation file matches the receipt's digests,
+        # the projections are current, and the hook entries match the receipt.
+        done = subprocess.run(["python3", "-B", ".agent-skills/current/__main__.py", "--root", str(ROOT), "status"],
+                              cwd=ROOT, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}, capture_output=True,
+                              text=True, timeout=120)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        status = json.loads(done.stdout)
+        self.assertEqual((status["blockers"], status["lifecycle"]), ([], "current"), done.stdout)
+        self.assertEqual(status["active"]["generation"], CANDIDATE_SHA256)
+        self.assertEqual(receipt["release"]["profile"], "linear")
+        current = os.readlink(ROOT / ".agent-skills/current")
+        self.assertEqual(current, "generations/" + receipt["generation"])
+        manifest = json.loads((ROOT / ".agent-skills/current/skills/run-delivery/hooks.json").read_text(encoding="utf-8"))
+        self.assertEqual(sorted(hook["event"] for hook in manifest["hooks"]), ["session-start", "stop"])
+
+    def test_the_hooks_section_says_what_runs_how_to_turn_it_off_and_that_the_folder_is_trusted(self) -> None:
+        section = _section("Hooks", "Setting a machine up")
+        self.assertIn(" ".join((HOOK_COMMAND % "stop").split()), section)
+        for phrase in ("`lead.may-stop`, on every stop.", "`delivery.orient`, on every session start",
+                       "This repository sets it to `enforce` in `.agents/run-delivery.json`",
+                       "To turn a hook off, or to `warn`, for one delivery, set it in `hooks` in "
+                       "`.agents/run-delivery.json` on that delivery's base.",
+                       '"hooks": {"lead.may-stop": "off"}',
+                       "Claude Code runs a project's hooks only once the folder is trusted."):
+            self.assertIn(phrase, section)
+
     def test_it_holds_no_machine_and_no_delivery(self) -> None:
         for name in ("orchestration.json", "delivery-views.json", "run-delivery.json", "delivery/candidate.py"):
             text = (ROOT / ".agents" / name).read_text(encoding="utf-8")
@@ -278,8 +332,9 @@ class StandingBinding(unittest.TestCase):
         units = [line.split()[0] for line in listed.stdout.splitlines() if line.strip()]
         self.assertTrue(units, listed.stdout)
         self.assertEqual([unit for unit in units if not unit.startswith("tests.test_linear_qualification.")], [], units)
-        # Corpus validation still runs on every candidate, as it did before the catalogue.
-        self.assertEqual([entry["id"] for entry in binding["alwaysRun"]], ["validate-registry"])
+        # Corpus validation still runs on every candidate, as it did before the catalogue, and so do the plan-record
+        # fixtures, so every change to a record's shape is checked against them.
+        self.assertEqual([entry["id"] for entry in binding["alwaysRun"]], ["validate-registry", "plan-record-fixtures"])
         self.assertNotIn("validate-registry", CATALOGUE_IDS)
 
         with tempfile.TemporaryDirectory() as folder:

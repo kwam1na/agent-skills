@@ -196,6 +196,56 @@
     },
     {
       "enabled": true,
+      "id": "hooks.argv",
+      "negativeFixtures": [
+        "invalid-corpora/focused-mutations"
+      ],
+      "positiveFixtures": [
+        "valid-corpus/checked-in"
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "hooks.duplicate_id",
+      "negativeFixtures": [
+        "invalid-corpora/focused-mutations"
+      ],
+      "positiveFixtures": [
+        "valid-corpus/checked-in"
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "hooks.event",
+      "negativeFixtures": [
+        "invalid-corpora/focused-mutations"
+      ],
+      "positiveFixtures": [
+        "valid-corpus/checked-in"
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "hooks.host",
+      "negativeFixtures": [
+        "invalid-corpora/focused-mutations"
+      ],
+      "positiveFixtures": [
+        "valid-corpus/checked-in"
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "hooks.schema",
+      "negativeFixtures": [
+        "invalid-corpora/focused-mutations"
+      ],
+      "positiveFixtures": [
+        "valid-corpus/checked-in"
+      ]
+    },
+    {
+      "enabled": true,
       "id": "inventory.anti_vacuity",
       "negativeFixtures": [
         "invalid-corpora/focused-mutations"

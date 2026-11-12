@@ -5383,7 +5383,7 @@ VALID_FIXTURES = {
     "valid", "fresh", "version as whole float", "long head", "null rounds", "checking now null", "with lane",
     "with tickets", "snapshot with a summary", "planned with a run", "planned with its ticket started",
     "queued with its ticket started", "lane wait set by the queue", "a decision carrying a review",
-    "queue check with a title", "step with a title", "a close started", "a close finished", "queue check with its base re-run",
+    "queue check with a title", "queue check with its node", "step with a title", "a close started", "a close finished", "queue check with its base re-run",
     "checking now awaiting the base rerun",
 }
 JOURNAL_KINDS = [
@@ -5392,7 +5392,7 @@ JOURNAL_KINDS = [
     "base.repaired", "base.rerun.started", "base.rerun.finished",
     "lease.granted", "lease.released", "release.started", "release.finished",
     "finish.met", "decision.recorded", "blocker.recorded", "delivery.closed", "review.evidence", "check.selected",
-    "selection.refused",
+    "selection.refused", "hook.held",
 ]
 
 
@@ -5437,6 +5437,15 @@ class SchemaAgreementTests(unittest.TestCase):
                     {"id": "unit", "state": "failed", "baseRerun": {"failures": ["test_a"]}}])),
                 ("base re-run with an unknown field", with_change(state, ("queue", 0, "checks"), [
                     {"id": "unit", "state": "failed", "baseRerun": {"log": "logs/b.log", "verdict": "broken"}}])),
+                ("queue check with its node", with_change(state, ("queue", 0, "checks"), [
+                    {"id": "unit", "state": "failed", "node": "20.0.0", "nodeBelowMinimum": True},
+                    {"id": "lint", "state": "passed", "node": None}, {"id": "docs", "state": "passed"}])),
+                ("queue check with its node as a number", with_change(state, ("queue", 0, "checks"),
+                                                                      [{"id": "unit", "state": "passed", "node": 22}])),
+                ("queue check with its node as an object", with_change(state, ("queue", 0, "checks"),
+                                                                       [{"id": "unit", "state": "passed", "node": {}}])),
+                ("queue check with its node mark as text", with_change(state, ("queue", 0, "checks"), [
+                    {"id": "unit", "state": "passed", "node": "20.0.0", "nodeBelowMinimum": "yes"}])),
                 ("queue check with an empty title", with_change(state, ("queue", 0, "checks"),
                                                                 [{"id": "unit", "state": "passed", "title": ""}])),
                 ("queue check title over long", with_change(state, ("queue", 0, "checks"),
@@ -5651,7 +5660,9 @@ def bullets_after(text: str, lead_in: str) -> list[str]:
 # acknowledgement, or beside it, as the close's closed.json; none
 # is shipped with the skill.
 ADOPTER_FILES = frozenset({".agents/orchestration.json", ".agents/delivery-posture.json", "delivery.md", "delivery.html",
-                           "published.json", "recovery.json", "changes.jsonl", "plan.json", "closed.json"})
+                           "published.json", "recovery.json", "changes.jsonl", "plan.json", "closed.json",
+                           # run-delivery's lead-wait: its lease in the record and its default output beside the flow logs
+                           "<state>/lead-wait.json", "<delivery>.wait.json"})
 
 
 def review_round(number: int, candidate: str, *, finding: bool = False, resolved: bool = False) -> dict:

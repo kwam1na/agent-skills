@@ -386,6 +386,10 @@ trusted. Before it hands off, the lane records the live check of the finish line
 `.agents/run-delivery.json`, `docs/own-deliveries.md` and `tests/test_own_deliveries.py`. Sensors: `tests/test_own_deliveries.py`,
 `scripts/validate-registry.py`, `run_delivery.py doctor`, and the recorded live check.
 
+### V26-3420. Give the hook doctor rows a fixture whose settings file holds the receipt's hook entries
+
+Lane 2, tier 1, after V26-3409. Added mid-delivery: The merged head of V26-3408 and V26-3409 fails two HookDoctorTests rows locally and on CI's Ubuntu job (run 43188723809): the fixture copies the receipt, which now records hook events, but not the settings file it names. It blocks the minor candidate's tag. The operator chose a new item fixed by lane 2.
+
 ## Execution posture
 
 `test-first` for V26-3407, V26-3270, V26-3409 and V26-3410. V26-3408 is `test-first` for the hook exposure, and characterization-first for

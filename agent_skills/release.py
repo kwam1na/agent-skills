@@ -204,6 +204,7 @@ def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
         "schemas/provenance.schema.json",
         "schemas/receipt.schema.json",
         "schemas/release-manifest.schema.json",
+        "schemas/skill-hooks.schema.json",
     ):
         files[relative] = _packaged_bytes(root, relative)
     for relative in (
@@ -232,6 +233,7 @@ def _release_view(root: Path, profile_id: str) -> dict[str, bytes]:
         "agent_skills/fake_tracker.py",
         "agent_skills/fs.py",
         "agent_skills/generations.py",
+        "agent_skills/hooks.py",
         "agent_skills/hosts/__init__.py",
         "agent_skills/hosts/base.py",
         "agent_skills/hosts/claude.py",

@@ -25,7 +25,6 @@
         "tests/test_registry.py",
         "tests/test_release_archive.py",
         "tests/test_release_entry_budget.py",
-        "tests/test_release_integration.py",
         "docs/product-generation.md",
         ".agent-skills/*",
         ".agents/skills/*",
@@ -34,7 +33,9 @@
         ".agents/run-delivery.json",
         "docs/own-deliveries.md",
         "tests/test_own_deliveries.py",
-        "validation-inventory.json"
+        "validation-inventory.json",
+        "tests/test_fault_injection.py",
+        "scripts/validate-registry.py"
       ]
     },
     "lane-2": {
@@ -52,7 +53,8 @@
         "catalog.json",
         "profiles/*",
         "docs/solutions/*",
-        "provenance.lock.json"
+        "provenance.lock.json",
+        "tests/test_release_integration.py"
       ]
     }
   },
@@ -456,6 +458,20 @@
         "V26-3409"
       ],
       "inApp": "none"
+    },
+    "V26-3420": {
+      "title": "Give the hook doctor rows a fixture whose settings file holds the receipt's hook entries",
+      "lane": "lane-2",
+      "why": "The merged head of V26-3408 and V26-3409 fails two HookDoctorTests rows locally and on CI's Ubuntu job (run 43188723809): the fixture copies the receipt, which now records hook events, but not the settings file it names. It blocks the minor candidate's tag. The operator chose a new item fixed by lane 2.",
+      "criteria": [
+        {
+          "id": "v26-3420-1",
+          "text": "Both HookDoctorTests rows that fail on dcf632e pass, each with an ok host hooks baseline; a fixture generation whose settings file lacks the receipt's entries still reports warn naming the missing events; tests/test_run_delivery_hooks.py and tests/test_run_delivery.py pass in full on macOS with Python 3.11 and Node 22; no row writes .claude/settings.json in the repository root."
+        }
+      ],
+      "after": [
+        "V26-3409"
+      ]
     }
   },
   "finish": [
