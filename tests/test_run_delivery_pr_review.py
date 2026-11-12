@@ -574,8 +574,8 @@ class WaitTests(PrReviewCase):
         with self.subTest("a review between the two checks' creation isn't current"):
             self.answer([first, second], [by_primary(at="2026-01-01T00:00:30")])
             code, out = self.flow("pr-review", "FX-2")
-            self.assertEqual(code, 2, out)
-            self.assertIn("no current review from primary", out)
+            self.assertEqual(code, 3, out)  # past the settle, a required reviewer with no current review is silent
+            self.assertIn("but primary posted nothing since", out)
 
     def test_a_pending_check_with_no_time_yet_keeps_the_wait_going(self) -> None:
         """A queued check may carry no time (GitHub's rollup, before it starts): the wait goes on, never refused."""
@@ -895,7 +895,8 @@ class SilentReviewerTests(PrReviewCase):
                 self.assertEqual(code, 2, out)
                 self.assertIn(f"no Pipeline Bot review after the pipeline for {self.head[:10]} yet", out)
                 self.assertNotIn("silent reviewer", out)
-        self.assertEqual(self.sleeps(), [30, 30, 30, 30])  # with --wait, the whole wait, to its deadline
+                if argv:  # with --wait, the whole wait, to its deadline
+                    self.assertEqual(self.sleeps(), [30, 30, 30, 30])
         with self.subTest("the same reviewer in a list"):
             self.configure({"reviewers": [{"id": "review", "author": "Pipeline Bot"}]})
             code, out = self.read(T + 301)

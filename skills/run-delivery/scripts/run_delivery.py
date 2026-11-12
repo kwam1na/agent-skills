@@ -116,6 +116,15 @@ class Stop(Exception):
     pass
 
 
+class Silent(Stop):
+    """A required PR reviewer posted nothing within the settle after the pipeline went green: a refusal of its own,
+    exit 3, which the lane escalates to the lead rather than waiting again."""
+
+
+SILENT_EXIT = 3
+PR_REVIEW_BLOCK = "pr-review"  # the --blocked label a lane hands off with when a reviewer is silent
+
+
 class Transient(Stop):
     """An adapter's transient failure: it exited 75 (EX_TEMPFAIL) for a timeout, a connection error, or an HTTP 5xx or
     429. A PR-review wait's loop tries it again; everywhere else it refuses at once, as any Stop does."""
@@ -3494,8 +3503,9 @@ def classify_reviews(found: dict, conf: dict, now: float) -> dict:
 
     status is `failed` when a check at the head failed, `pending` while a check or a reviewer is, and `done` otherwise.
     A reviewer is `current` once every check passed and its latest matching review is no earlier than the latest
-    check. In the list, an optional reviewer with none once the settle has passed is `absent`: the settle starts when
-    the last check finished (its doneAt, else its at) and runs settleSeconds by `now`, its end belonging to it."""
+    check. In the list, once the settle has passed, a reviewer with none is `absent` when optional and `silent` when
+    required: the settle starts when the last check finished (its doneAt, else its at) and runs settleSeconds by `now`,
+    its end belonging to it. The legacy shape has no settle: its reviewer is pending until current."""
     checks = found.get("checks", [])
     out = {"checks": checks, "reviewers": {}}
     if any(ch["state"] == "failed" for ch in checks):
@@ -3522,14 +3532,24 @@ def classify_reviews(found: dict, conf: dict, now: float) -> dict:
             review = max(mine, key=lambda r: instant(r["at"]), default=None)
             if passed and review is not None and instant(review["at"]) >= latest:
                 state = "current"
-            elif settled and not reviewer["required"]:
-                state = "absent"
+            elif settled:
+                state = "silent" if reviewer["required"] else "absent"
             else:
-                state = "pending"  # a required reviewer past the settle too, until it posts
+                state = "pending"
             out["reviewers"][reviewer["id"]] = {"state": state, "review": review}
     waiting = not passed or any(r["state"] == "pending" for r in out["reviewers"].values())
     out["status"] = "pending" if waiting else "done"
     return out
+
+
+def silent_refusal(read: dict, head: str) -> Silent | None:
+    """The refusal for required reviewers silent after the settle, or None. Its line starts `silent reviewer`."""
+    silent = [rid for rid, r in read["reviewers"].items() if r["state"] == "silent"]
+    if not silent:
+        return None
+    states = ", ".join(f"{rid} {r['state']}" for rid, r in read["reviewers"].items())
+    return Silent(f"silent reviewer: the pipeline is green at {head[:10]} but {', '.join(silent)} posted nothing "
+                  f"since; re-run its step or ask the lead (reviewers: {states})")
 
 
 def retried(call: Callable[[], dict], deadline: float) -> dict:
@@ -3637,7 +3657,10 @@ def pr_review_text() -> str:
             "and fix or defer the rest, deferring only with a follow-up. Pass one `--pr-review-triage <id>=\"<what "
             "you fixed, deferred and why>\"` to `handoff` for each current review (a bare text only when exactly one "
             "is current). The lead's acceptance re-checks that each is still current and unchanged at your head, and "
-            "sends you back to read an optional review recorded absent that has since arrived.\n")
+            "sends you back to read an optional review recorded absent that has since arrived. If `pr-review` "
+            "exits 3 with a `silent reviewer` line, a required reviewer posted nothing after the pipeline went green: "
+            "don't run the wait again. Hand off blocked on it, `--blocked pr-review=\"<that line>\"`, and the lead "
+            "decides.\n")
 
 
 def pr_review(args) -> None:
@@ -3679,6 +3702,9 @@ def pr_review(args) -> None:
         print("\nTriage every finding like a lens finding: fix what blocks in the lane (then gates, a lens round and this "
               "review again at the new head), and fix or defer the rest. Hand off with --pr-review-triage saying which.")
         return
+    silent = silent_refusal(read, head)
+    if silent:
+        raise silent
     if read["status"] == "pending":
         waiting = [rid for rid, r in read["reviewers"].items() if r["state"] == "pending"]
         said = (f"no current review from {', '.join(waiting)} after the pipeline for {head[:10]} yet" if waiting
@@ -3718,7 +3744,7 @@ def pr_review_current(args) -> None:
     try:
         review_gate(args)
     except Stop as error:
-        raise Stop(" ".join(str(error).split())) from None
+        raise type(error)(" ".join(str(error).split())) from None
 
 
 def review_gate(args) -> None:
@@ -3764,6 +3790,9 @@ def review_gate(args) -> None:
         print(f"{author} review of {args.head[:10]} at {review['at']} is current: {states}")
         return
     # Only required reviewers block: an optional one absent, or not yet in, never does (triage is lead-accept's).
+    silent = silent_refusal(read, args.head)
+    if silent:
+        raise silent
     required = [r["id"] for r in conf["reviewers"] if r["required"]]
     missing = [rid for rid in required if read["reviewers"][rid]["state"] != "current"]
     if missing or any(ch["state"] != "passed" for ch in read["checks"]) or not read["checks"]:
@@ -3915,7 +3944,8 @@ def handoff(args) -> None:
                    f"{head[:10]}; review the new head")
     validation, gate_problems = gates_summary(key, repo(), head)
     pr_line = None
-    if review_conf:
+    # A lane stopped by a silent reviewer hands off blocked on it: the lead decides, so no review is required here.
+    if review_conf and PR_REVIEW_BLOCK not in parse_blocked(args.blocked):
         saved = folder / "pr-review.json"
         recorded = json.loads(saved.read_text()) if saved.exists() else {}
         if recorded.get("head") != head:
@@ -5982,6 +6012,10 @@ def lead_accept(args) -> None:
     if pr.get("destination") != c.base_branch or pr.get("source") != branch:
         problems.append(f"the PR is {pr.get('source')} -> {pr.get('destination')}, not {branch} -> {c.base_branch}")
     conf = review_conf
+    lane_blocked = c.lane_checkout(key) / c.work / "review" / key / "blocked.json"
+    held = json.loads(lane_blocked.read_text()) if lane_blocked.exists() else {}
+    if conf and held.get("head") == head and PR_REVIEW_BLOCK in held.get("blocked", {}):
+        conf = None  # blocked on the PR review: the blocked items below are the lead's decision, this one included
     if conf and not conf["legacy"]:
         lane_root_ = c.lane_checkout(key)
         saved = lane_root_ / c.work / "review" / key / "pr-review.json"
@@ -9208,7 +9242,7 @@ def main(argv: list[str] | None = None) -> None:
         args.fn(args)
     except Stop as error:
         print(f"run-delivery: {error}", file=sys.stderr)
-        sys.exit(2)
+        sys.exit(SILENT_EXIT if isinstance(error, Silent) else 2)
     if args.command.startswith("lead-") and args.command not in ("lead-setup", "lead-init", "lead-run"):
         with contextlib.suppress(Stop, ValueError, OSError):
             line = supervisor_line(cfg())

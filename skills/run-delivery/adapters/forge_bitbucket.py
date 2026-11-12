@@ -6,7 +6,8 @@
   open --source B --destination D --title T --body-file F -> {"url": ...}  (opened as a draft)
   get  --url URL                                          -> {"url", "state": open|merged|closed, "draft", "head", "source",
                                                               "destination"}
-  reviews --url URL --head SHA                            -> {"checks": [{"name", "state": passed|failed|pending, "at"}],
+  reviews --url URL --head SHA                            -> {"checks": [{"name", "state": passed|failed|pending, "at",
+                                                                         "doneAt"?}],
                                                               "reviews": [{"author", "account", "at", "body"}]}
   ready --url URL                                         -> {"url", "draft": false}
   merge --url URL --strategy merge|squash [--head SHA]    -> {"url", "state": "merged"}
@@ -15,7 +16,8 @@
 Environment: FLOW_FORGE_REPOSITORY (workspace/repo) and FLOW_FORGE_TOKEN_ENV (the name of the variable holding a
 token Bitbucket accepts as a bearer token). Prints JSON on stdout; exits 1 with a message on stderr otherwise, or 75
 (EX_TEMPFAIL) when the failure is transient: a timeout, a connection error, or an HTTP 5xx or 429, which a PR-review
-wait retries. A review's `account` is its author's `user.uuid`, which a rename doesn't change.
+wait retries. A review's `account` is its author's `user.uuid`, which a rename doesn't change. A check's `at` is when
+its status was created, and `doneAt`, once it is no longer in progress, when it was last updated: when it finished.
 `candidate` is a merge queue's candidate step for the conventional branch: it prints the branch `--prefix` + `--key`
 names and that branch's full tip, and refuses when no branch has that name or when several answer to it, differing
 only in case, as a case-insensitive checkout would mix them. It writes three ways: it opens a pull request as a draft (a lane's open-pr), marks one ready (the lead's acceptance,
@@ -150,7 +152,8 @@ def main():
         print(json.dumps({"url": pr["links"]["html"]["href"]}))
     elif args.command == "reviews":
         number = pr_number(args.url)
-        checks = [{"name": s["name"], "state": CHECK_STATES.get(s["state"], s["state"].lower()), "at": s["created_on"]}
+        checks = [{"name": s["name"], "state": CHECK_STATES.get(s["state"], s["state"].lower()), "at": s["created_on"],
+                   **({"doneAt": s["updated_on"]} if s["state"] != "INPROGRESS" and s.get("updated_on") else {})}
                   for s in pages(f"/commit/{args.head}/statuses?pagelen=100")]
         reviews = [{"author": c["user"]["display_name"], "account": c["user"].get("uuid", ""), "at": c["updated_on"],
                     "body": c["content"]["raw"]}

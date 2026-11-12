@@ -3989,9 +3989,11 @@ class RunDeliveryReleaseAndNamesTests(unittest.TestCase):
             self.assertIn("--draft", calls[2])
             self.assertEqual(calls[5][2:], [url, "--squash", "--match-head-commit", "abc", "--repo", "o/n"])
             self.assertTrue(said["get"]["draft"])
-            self.assertEqual(said["reviews"], {"checks": [{"name": "build", "state": "passed", "at": "2026-01-01T00:00:01Z"},
+            self.assertEqual(said["reviews"], {"checks": [{"name": "build", "state": "passed", "at": "2026-01-01T00:00:01Z",
+                                                           "doneAt": "2026-01-01T00:00:01Z"},
                                                           {"name": "lint", "state": "pending", "at": ""},
-                                                          {"name": "test", "state": "failed", "at": "2026-01-01T00:00:03Z"}],
+                                                          {"name": "test", "state": "failed", "at": "2026-01-01T00:00:03Z",
+                                                           "doneAt": "2026-01-01T00:00:03Z"}],
                                                "reviews": [{"author": "pipeline-bot", "account": "pipeline-bot",
                                                             "at": "2026-01-01T00:00:02Z", "body": "Looks fine"}]})
             self.assertEqual((said["ready"], said["merge"]), ({"url": url, "draft": False}, {"url": url, "state": "merged"}))

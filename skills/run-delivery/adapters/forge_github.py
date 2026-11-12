@@ -6,7 +6,8 @@
   open --source B --destination D --title T --body-file F -> {"url": ...}  (opened as a draft)
   get  --url URL                                          -> {"url", "state": open|merged|closed, "draft", "head", "source",
                                                               "destination"}
-  reviews --url URL --head SHA                            -> {"checks": [{"name", "state": passed|failed|pending, "at"}],
+  reviews --url URL --head SHA                            -> {"checks": [{"name", "state": passed|failed|pending, "at",
+                                                                         "doneAt"?}],
                                                               "reviews": [{"author", "account", "at", "body"}]}
   ready --url URL                                         -> {"url", "draft": false}
   merge --url URL --strategy merge|squash [--head SHA]    -> {"url", "state": "merged"}
@@ -14,7 +15,8 @@
 
 Environment: FLOW_FORGE_REPOSITORY (owner/name). Prints JSON on stdout; exits 1 with a message on stderr otherwise, or
 75 (EX_TEMPFAIL) when gh's failure is transient: a timeout, a connection error, or an HTTP 5xx or 429, which a
-PR-review wait retries. A review's `account` is its author's login.
+PR-review wait retries. A review's `account` is its author's login. A check's `doneAt` is its completedAt, once it
+has a real one (an unfinished check run reports 0001-01-01).
 `candidate` is a merge queue's candidate step for the conventional branch: it prints the branch `--prefix` + `--key`
 names and that branch's tip, and refuses when no branch has that name or when several answer to it, differing only in
 case, as a case-insensitive checkout would mix them. It writes three ways: it opens a pull request as a draft (a lane's open-pr), marks one ready (the lead's acceptance,
@@ -82,6 +84,11 @@ CHECK_STATES = {"SUCCESS": "passed", "NEUTRAL": "passed", "SKIPPED": "passed", "
                 "CANCELLED": "failed", "TIMED_OUT": "failed", "ACTION_REQUIRED": "failed", "STARTUP_FAILURE": "failed"}
 
 
+def finished(entry):
+    """Whether a rollup entry has finished: a real completedAt, not the zero time an unfinished check run reports."""
+    return bool(entry.get("completedAt")) and not entry["completedAt"].startswith("0001-")
+
+
 def resolve_candidate(forge, branch, tips):
     """The candidate step's answer from the forge's branches and their tips: exactly the one named, at a full hash."""
     answering = sorted(name for name in tips if name.lower() == branch.lower())
@@ -139,7 +146,8 @@ def main():
         rollup = (pr.get("statusCheckRollup") or []) if pr["headRefOid"].startswith(args.head) else []
         checks = [{"name": entry.get("name") or entry.get("context") or "",
                    "state": CHECK_STATES.get(entry.get("conclusion") or entry.get("state") or "", "pending"),
-                   "at": entry.get("completedAt") or entry.get("startedAt") or ""} for entry in rollup]
+                   "at": entry.get("completedAt") or entry.get("startedAt") or "",
+                   **({"doneAt": entry["completedAt"]} if finished(entry) else {})} for entry in rollup]
         reviews = [{"author": (entry.get("author") or {}).get("login", ""),
                     "account": (entry.get("author") or {}).get("login", ""), "at": entry.get("submittedAt", ""),
                     "body": entry.get("body", "")} for entry in pr.get("reviews") or []]
