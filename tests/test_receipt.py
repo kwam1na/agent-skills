@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from pathlib import Path
 
 from agent_skills.lifecycle import Lifecycle
 from agent_skills.receipt import validate_receipt
@@ -38,6 +39,26 @@ class ReceiptContractTests(LifecycleFixture, unittest.TestCase):
         )
         document["createdDirectories"] = list(reversed(document["createdDirectories"]))
         self.assertEqual(validate_receipt(document), document)
+
+    def test_the_receipt_members_are_pinned(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.v1, maintainer=True)
+        marker = self.repository / ".agent-skills" / "active.json"
+        document = json.loads(marker.read_text(encoding="utf-8"))
+        self.assertEqual(
+            sorted(document),
+            ["createdDirectories", "exposures", "files", "generation", "ownership", "previous", "release",
+             "schemaVersion"],
+        )
+        schema = json.loads((Path(__file__).resolve().parents[1] / "schemas" / "receipt.schema.json")
+                            .read_text(encoding="utf-8"))
+        self.assertEqual(
+            sorted(schema["properties"]),
+            ["adoption", "createdDirectories", "exposures", "files", "generation", "ownership", "previous",
+             "release", "schemaVersion"],
+        )
+        with self.assertRaisesRegex(ValueError, "receipt shape is malformed"):
+            validate_receipt({**document, "unknown": True})
 
     def test_corrupt_future_or_forged_receipt_never_authorizes_mutation(self) -> None:
         lifecycle = Lifecycle(self.repository)

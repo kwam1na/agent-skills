@@ -934,5 +934,60 @@ class InspectionCacheTests(LifecycleFixture, unittest.TestCase):
             self.assertEqual(verify.call_count, 1)
 
 
+class ReportShapeTests(LifecycleFixture, unittest.TestCase):
+    """The members of each report and record, pinned so that a change to any of them is deliberate."""
+
+    def test_the_journal_phases_in_order(self) -> None:
+        from agent_skills.journal import JOURNAL_PHASES
+        from agent_skills.lifecycle import ACTIVATION_BOUNDARIES
+
+        self.assertEqual(
+            JOURNAL_PHASES,
+            ("staged", "generation-ready", "exposing-codex", "exposing-claude-code", "exposure-switched",
+             "verifying", "marker-committed", "cleanup"),
+        )
+        self.assertEqual(
+            ACTIVATION_BOUNDARIES,
+            ("staged", "generation-ready", "exposing-codex", "exposing-claude-code", "verifying",
+             "marker-published", "marker-committed", "cleanup"),
+        )
+
+    def test_each_plan_action_has_the_same_members(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        members = ["action", "blockers", "current", "schemaVersion", "target"]
+        target = ["archiveSha256", "generation", "profile", "releaseId"]
+        install = lifecycle.plan(*self.v1)
+        self.assertEqual(sorted(install), members)
+        self.assertEqual((install["action"], install["blockers"], install["current"]), ("install", [], None))
+        self.assertEqual(install["schemaVersion"], "agent-skills-plan/1")
+        self.assertEqual(sorted(install["target"]), target)
+
+        lifecycle.install(*self.v1, maintainer=True)
+        for archive, action in ((self.v1, "no-op"), (self.v2, "update")):
+            with self.subTest(action=action):
+                plan = lifecycle.plan(*archive)
+                self.assertEqual(sorted(plan), members)
+                self.assertEqual(plan["action"], action)
+                self.assertEqual(sorted(plan["current"]), target)
+                self.assertEqual(sorted(plan["target"]), target)
+
+        (self.repository / ".agent-skills" / "current").unlink()
+        blocked = lifecycle.plan(*self.v2)
+        self.assertEqual(sorted(blocked), members)
+        self.assertEqual((blocked["action"], blocked["target"]), ("blocked", None))
+        self.assertEqual(blocked["blockers"], ["exposure-conflict"])
+
+    def test_diff_has_its_members(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        install = lifecycle.diff(*self.v1)
+        self.assertEqual(sorted(install), ["added", "changed", "removed", "schemaVersion"])
+        self.assertEqual(install["schemaVersion"], "agent-skills-diff/1")
+        self.assertEqual((install["changed"], install["removed"]), ([], []))
+        self.assertIn("skills/deliver-work/SKILL.md", install["added"])
+        lifecycle.install(*self.v1, maintainer=True)
+        same = lifecycle.diff(*self.v2)
+        self.assertEqual(sorted(same), ["added", "changed", "removed", "schemaVersion"])
+
+
 if __name__ == "__main__":
     unittest.main()
