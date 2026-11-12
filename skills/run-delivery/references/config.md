@@ -355,6 +355,10 @@ gate is checked nowhere. Without `gate`, the review only has to be current, as b
   `approvals` member is refused for an approval gate, naming the member; an empty list is not refused, and the gate is
   unmet.
 
+With `report` (Bitbucket's Code Insights reports, in the adopting guide), the verdict is the report's data item titled
+`Verdict`, in any case, when it has one, and wins over the body's line; an `"approval"` gate then reads the report's
+result and verdict instead of the PR's approvals, since a report is tied to its commit.
+
 `pr-review` prints each gate beside its review, met or unmet, with why. With a gate unmet, `handoff`, `lead-accept` and
 the `pr-review-current` reviewGate refuse, naming the reviewer and what it needs: fix and push, so the reviewer runs
 again. The record keeps each gate as `{kind, met, why}`.

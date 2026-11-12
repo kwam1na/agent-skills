@@ -684,6 +684,32 @@ run_delivery.py lead-setup <delivery-key> --base integration-2 --plan docs/plans
 The grant includes `readyPullRequests`, since the merge step refuses drafts. Every settings
 change and the delivery file reach `main`, and each integration base, through a reviewed pull request (section 8).
 
+### A reviewer that posts a Code Insights report
+
+On Bitbucket a reviewer may also post a Code Insights report on the commit it reviewed, and `review.pr.reviewers` can
+name it with `report`, the report's external id. The report is then what says the review is done, rather than the
+comment's timestamp. The reviewer's side of the contract:
+
+- **External id.** The report's `external_id` is the reviewer's `report`, the same on every commit.
+- **Result.** `PENDING` while it reviews. `PASSED` once its review comment is posted, whatever the verdict. `FAILED`
+  when the reviewer errored and has no review to give.
+- **Verdict.** A data item titled `Verdict` (matched in any case) whose value is the verdict, such as `Approve` or
+  `Request changes`. It wins over the comment's `**Verdict:**` line.
+- **Its comment.** Posted on the PR, matched to the reviewer as any review is, after the head's pipeline started and
+  before or as the report turns `PASSED`.
+
+The Bitbucket adapter's `reviews` reads the reports at exactly the head it is given, from `/commit/<head>/reports`, and
+prints them as `"reports": [{id, result, at, data: [{title, type, value}]}]`. With `report` set, the reviewer is current
+once its report is `PASSED` at the head and every check has passed, and its text is its latest comment since the head's
+earliest check. A `PENDING` report, or none yet, waits like any review until the settle. A `FAILED` one stops the wait at
+once: a required reviewer is reported as errored and an optional one is absent. A `PASSED` report with no comment from
+the head's pipeline waits until the settle and is then refused, since it names a review that wasn't posted. With a
+`verdict` gate the report's `Verdict` is read, and an `approval` gate reads the report's result and verdict instead of
+the forge's approvals. A reviewer without `report` is read from its comment's timestamp as before.
+
+GitHub has no Code Insights reports: its adapter prints `"reports": null`, and a reviewer with `report` there is
+refused, naming Bitbucket as the forge that has them.
+
 ## 8. Running deliveries
 
 - **Settings land through reviewed pull requests.** On a protected base, the binding, `.agents/run-delivery.json`, the

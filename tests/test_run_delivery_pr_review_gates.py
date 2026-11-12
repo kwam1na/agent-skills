@@ -168,6 +168,190 @@ class BriefTextTests(unittest.TestCase):
         self.assertEqual(gates.brief_text([{"id": "third"}]), "")
 
 
+
+# Decision 9: a reviewer with `report` read from its Code Insights report at the head.
+T_CHECK1, T_COMMENT, T_CHECK2, T_REPORT = ("2026-11-11T10:00:00+00:00", "2026-11-11T10:02:00+00:00",
+                                           "2026-11-11T10:05:00+00:00", "2026-11-11T10:06:00+00:00")
+T_EARLIER = "2026-11-11T09:00:00+00:00"
+REPORTER = {"id": "primary", "account": "{u-primary}", "required": True, "report": "primary-review"}
+
+
+def when(stamp: object) -> float:
+    import datetime
+    return datetime.datetime.fromisoformat(str(stamp)).timestamp()
+
+
+def checks(*states: str) -> list[dict]:
+    return [{"name": f"build-{i}", "state": state, "at": (T_CHECK1, T_CHECK2)[i % 2]} for i, state in enumerate(states)]
+
+
+def report(result: str, external_id: str = "primary-review", at: str = T_REPORT, data: list | None = None) -> dict:
+    return {"id": external_id, "result": result, "at": at, "data": data or []}
+
+
+def comment(at: str, body: str = "Primary says: fine\n**Verdict:** Approve\n") -> dict:
+    return {"author": "Primary", "account": "{u-primary}", "at": at, "body": body}
+
+
+class ReportReadingTests(unittest.TestCase):
+    """A reviewer with `report` is current exactly when its report is PASSED at the head and every check passed; its
+    text is its latest comment from the head's pipeline. PENDING or no report waits for the settle; FAILED is at once."""
+
+    def read(self, reports: list, mine: list, the_checks: list, settled: bool = False,
+             reviewer: dict = REPORTER) -> dict:
+        return gates.report_reading(reviewer, mine, {"reports": reports}, the_checks, settled, when)
+
+    def test_passed_with_a_comment_between_the_earliest_and_latest_check_is_current_with_that_text(self) -> None:
+        mine = [comment(T_COMMENT)]
+        read = self.read([report("PASSED")], mine, checks("passed", "passed"))
+        self.assertEqual(read["state"], "current")
+        self.assertIs(read["review"], mine[0])
+        self.assertEqual(read["report"]["result"], "PASSED")
+
+    def test_the_latest_comment_of_the_pipeline_is_the_text(self) -> None:
+        mine = [comment(T_CHECK2, "later"), comment(T_COMMENT, "earlier"), comment(T_EARLIER, "older head")]
+        self.assertEqual(self.read([report("PASSED")], mine, checks("passed", "passed"))["review"]["body"], "later")
+
+    def test_passed_with_a_check_still_pending_waits(self) -> None:
+        read = self.read([report("PASSED")], [comment(T_COMMENT)], checks("passed", "pending"))
+        self.assertEqual(read["state"], "pending")
+
+    def test_pending_waits_until_the_settle_then_a_required_reviewer_is_silent(self) -> None:
+        self.assertEqual(self.read([report("PENDING")], [comment(T_COMMENT)], checks("passed"))["state"], "pending")
+        after = self.read([report("PENDING")], [comment(T_COMMENT)], checks("passed"), settled=True)
+        self.assertEqual(after["state"], "silent")
+        self.assertIn("still PENDING after the settle", after["why"])
+
+    def test_no_report_yet_and_an_empty_list_wait_like_pending(self) -> None:
+        for reports in ([], [report("PASSED", "another-report")]):
+            with self.subTest(reports=reports):
+                self.assertEqual(self.read(reports, [comment(T_COMMENT)], checks("passed"))["state"], "pending")
+                after = self.read(reports, [comment(T_COMMENT)], checks("passed"), settled=True)
+                self.assertEqual(after["state"], "silent")
+                self.assertIn("not at the head", after["why"])
+
+    def test_an_optional_reviewer_is_absent_after_the_settle(self) -> None:
+        optional = {**REPORTER, "required": False}
+        after = self.read([report("PENDING")], [], checks("passed"), settled=True, reviewer=optional)
+        self.assertEqual(after["state"], "absent")
+
+    def test_failed_is_silent_at_once_when_required_and_absent_when_optional(self) -> None:
+        for the_checks in (checks("passed"), checks("pending")):
+            with self.subTest(checks=the_checks):
+                read = self.read([report("FAILED")], [comment(T_COMMENT)], the_checks)
+                self.assertEqual(read["state"], "silent")
+                self.assertIn("PR reviewer primary errored: its report primary-review is FAILED", read["why"])
+                optional = self.read([report("FAILED")], [comment(T_COMMENT)], the_checks,
+                                     reviewer={**REPORTER, "required": False})
+                self.assertEqual(optional["state"], "absent")
+
+    def test_a_comment_from_before_the_heads_pipeline_never_counts(self) -> None:
+        read = self.read([report("PASSED")], [comment(T_EARLIER)], checks("passed", "passed"))
+        self.assertEqual(read["state"], "pending")
+        refused = self.read([report("PASSED")], [comment(T_EARLIER)], checks("passed", "passed"), settled=True)
+        self.assertEqual(set(refused), {"refusal"})
+        self.assertIn("PR reviewer primary's report primary-review is PASSED, but names a review that wasn't posted",
+                      refused["refusal"])
+
+    def test_a_comment_posted_before_the_report_turned_passed_counts(self) -> None:
+        read = self.read([report("PASSED", at=T_REPORT)], [comment(T_COMMENT)], checks("passed"))
+        self.assertEqual(read["state"], "current")
+
+    def test_the_timestamps_of_the_report_do_not_decide_currency(self) -> None:
+        read = self.read([report("PASSED", at=T_EARLIER)], [comment(T_COMMENT)], checks("passed", "passed"))
+        self.assertEqual(read["state"], "current")
+
+    def test_the_report_listed_twice_is_read_at_its_latest(self) -> None:
+        reports = [report("PASSED", at=T_CHECK1), report("FAILED", at=T_REPORT)]
+        self.assertEqual(self.read(reports, [comment(T_COMMENT)], checks("passed"))["state"], "silent")
+
+
+class ReportVerdictTests(unittest.TestCase):
+    """With a report, the verdict is its data item titled Verdict, in any case, and wins over the body."""
+
+    def verdict(self, data: list, body: str, kind: str = "verdict", result: str = "PASSED") -> dict:
+        reviewer = {**REPORTER, "gate": kind}
+        found = {"reports": [report(result, data=data)], "approvals": []}
+        return gates.gate(reviewer, comment(T_COMMENT, body), found, HEAD)
+
+    def test_a_lowercase_verdict_title_is_read(self) -> None:
+        verdict = self.verdict([{"title": "verdict", "type": "TEXT", "value": "Approved"}], "no line here")
+        self.assertEqual(verdict, {"kind": "verdict", "met": True, "why": "report primary-review's Verdict is 'Approved'"})
+
+    def test_the_report_verdict_wins_over_the_body(self) -> None:
+        data = [{"title": "Findings", "type": "NUMBER", "value": 2}, {"title": "VERDICT", "type": "TEXT",
+                                                                       "value": "Request changes"}]
+        verdict = self.verdict(data, "**Verdict:** Approve\n")
+        self.assertFalse(verdict["met"])
+        self.assertIn("'Request changes', not approve", verdict["why"])
+        self.assertTrue(self.verdict([{"title": "Verdict", "type": "TEXT", "value": "approve"}],
+                                     "**Verdict:** Request changes\n")["met"])
+
+    def test_without_a_verdict_item_the_body_is_read(self) -> None:
+        self.assertEqual(self.verdict([{"title": "Findings", "type": "NUMBER", "value": 0}], "**Verdict:** Approve\n"),
+                         {"kind": "verdict", "met": True, "why": "the verdict is 'Approve'"})
+
+    def test_an_empty_report_verdict_is_unmet(self) -> None:
+        self.assertEqual(self.verdict([{"title": "Verdict", "type": "TEXT", "value": None}], "**Verdict:** Approve\n"),
+                         {"kind": "verdict", "met": False, "why": "report primary-review's Verdict is empty"})
+
+    def test_an_approval_gate_with_a_report_reads_the_report_not_the_approvals(self) -> None:
+        approve = [{"title": "Verdict", "type": "TEXT", "value": "Approve"}]
+        met = self.verdict(approve, "", kind="approval")
+        self.assertEqual(met, {"kind": "approval", "met": True,
+                               "why": "report primary-review is PASSED; report primary-review's Verdict is 'Approve'"})
+        unmet = self.verdict([{"title": "Verdict", "type": "TEXT", "value": "Changes"}], "", kind="approval")
+        self.assertFalse(unmet["met"])
+        self.assertEqual(self.verdict(approve, "", kind="approval", result="PENDING"),
+                         {"kind": "approval", "met": False, "why": "report primary-review is PENDING"})
+
+
+class ReportMembersTests(unittest.TestCase):
+    """`reports` absent is refused naming the member, null (GitHub's) naming Bitbucket, present but empty is not."""
+
+    def test_reports_absent_is_refused_naming_the_member(self) -> None:
+        refused = gates.reports_refusal([REPORTER], {})
+        self.assertIn("returns no `reports`, which the `report` of primary needs", refused)
+
+    def test_reports_null_is_refused_naming_bitbucket(self) -> None:
+        refused = gates.reports_refusal([REPORTER], {"reports": None})
+        self.assertIn("only the Bitbucket adapter returns reports", refused)
+        self.assertIn("PR reviewer primary takes `report`", refused)
+
+    def test_reports_present_but_empty_is_not_refused(self) -> None:
+        self.assertIsNone(gates.reports_refusal([REPORTER], {"reports": []}))
+
+    def test_malformed_reports_are_refused(self) -> None:
+        for reports in ("x", [1], [{"id": 1, "result": "PASSED"}], [{"id": "a", "result": "SUCCESS"}]):
+            with self.subTest(reports=reports):
+                self.assertIn("not a list of objects", gates.reports_refusal([REPORTER], {"reports": reports}))
+
+    def test_no_reviewer_with_report_needs_no_reports(self) -> None:
+        self.assertIsNone(gates.reports_refusal([{"id": "x", "author": "X"}], {"reports": None}))
+
+    def test_the_doctor_refuses_report_under_the_github_adapter_naming_bitbucket(self) -> None:
+        refused = gates.forge_refusal([REPORTER, {"id": "codex", "author": "Codex"}], "github")
+        self.assertIn("PR reviewer primary takes `report`", refused)
+        self.assertIn("only the Bitbucket adapter returns them", refused)
+        self.assertIsNone(gates.forge_refusal([REPORTER], "bitbucket"))
+        self.assertIsNone(gates.forge_refusal([{"id": "codex", "author": "Codex"}], "github"))
+
+    def test_the_report_contract_is_documented(self) -> None:
+        adopting = " ".join((PRODUCT_ROOT / "skills/run-delivery/references/adopting.md").read_text().split())
+        for phrase in ("The report's `external_id` is the reviewer's `report`",
+                       "`PASSED` once its review comment is posted, whatever the verdict.",
+                       "`FAILED` when the reviewer errored",
+                       "A data item titled `Verdict` (matched in any case)",
+                       "its adapter prints `\"reports\": null`"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, adopting)
+
+    def test_attach_refuses_reports_null_for_a_reviewer_with_report(self) -> None:
+        read = {"status": "done", "reviewers": {"primary": {"state": "current", "review": comment(T_COMMENT)}}}
+        conf = {"legacy": False, "reviewers": [REPORTER]}
+        self.assertIn("Bitbucket", gates.attach(read, {"reports": None}, conf, HEAD))
+
+
 # The commands, end to end: the tool from an installed release built from this tree, on lane 1's PR-review fixture.
 from tests.test_run_delivery_pr_review import (  # noqa: E402
     AFTER, PASSED, PR, T0_EPOCH, PrReviewCase, by_codex, by_primary,

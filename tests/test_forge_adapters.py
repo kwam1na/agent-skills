@@ -489,6 +489,12 @@ class GitHubApprovalsTests(unittest.TestCase):
         self.assertEqual(found["approvals"], [])
         self.assertEqual(found["reviews"], [])
 
+    def test_github_says_it_has_no_reports(self) -> None:
+        # Null, not empty: a reviewer with `report` is refused under this adapter rather than waited on.
+        found = self.reviews({"headRefOid": HEAD, "statusCheckRollup": [], "reviews": []})
+        self.assertIn("reports", found)
+        self.assertIsNone(found["reports"])
+
     def test_an_approval_without_its_commit_still_names_one(self) -> None:
         # Named empty, so the gate never takes it for an approval the forge ties to no commit.
         view = {"headRefOid": HEAD, "statusCheckRollup": [], "reviews": [
@@ -510,11 +516,13 @@ class BitbucketApprovalsTests(unittest.TestCase):
         self.participants: list[dict] = []
 
     def answer(self, request, timeout=None):
-        # Only the three paths `reviews` reads: the head's statuses, the comments and the pull request itself.
+        # Only the paths `reviews` reads: the head's statuses, the comments, the pull request itself and the head's
+        # reports.
         self.calls.append(request.full_url)
         answers = {f"{self.API}/commit/{HEAD}/statuses?pagelen=100": {"values": []},
                    f"{self.API}/pullrequests/7/comments?pagelen=100": {"values": []},
-                   f"{self.API}/pullrequests/7": {"participants": self.participants}}
+                   f"{self.API}/pullrequests/7": {"participants": self.participants},
+                   f"{self.API}/commit/{HEAD}/reports": {"values": []}}
         assert request.get_method() == "GET" and request.full_url in answers, request.full_url
         return contextlib.closing(io.BytesIO(json.dumps(answers[request.full_url]).encode()))
 
@@ -551,6 +559,95 @@ class BitbucketApprovalsTests(unittest.TestCase):
         self.assertEqual(found["approvals"], [])
         self.assertEqual(found["checks"], [])
         self.assertEqual(found["reviews"], [])
+
+
+class BitbucketReportsTests(unittest.TestCase):
+    """`reviews` returns the Code Insights reports at exactly --head: external id, result, updated time, data."""
+
+    URL = "https://bitbucket.org/ws/repo/pull-requests/7"
+    API = "https://api.bitbucket.org/2.0/repositories/ws/repo"
+    PR_HEAD = OTHER  # what the PR itself says its head is, when it has moved on
+
+    def setUp(self) -> None:
+        self.spec = importlib.util.spec_from_file_location("forge_bitbucket_for_reports_tests",
+                                                           ADAPTERS / "forge_bitbucket.py")
+        self.calls: list[str] = []
+        self.reports: dict[str, list] = {}
+
+    def answer(self, request, timeout=None):
+        self.calls.append(request.full_url)
+        answers = {f"{self.API}/commit/{HEAD}/statuses?pagelen=100": {"values": []},
+                   f"{self.API}/pullrequests/7/comments?pagelen=100": {"values": []},
+                   f"{self.API}/pullrequests/7": {"participants": [], "source": {"commit": {"hash": self.PR_HEAD[:12]}}}}
+        for sha, values in self.reports.items():
+            answers[f"{self.API}/commit/{sha}/reports"] = {"values": values}
+        assert request.get_method() == "GET" and request.full_url in answers, request.full_url
+        return contextlib.closing(io.BytesIO(json.dumps(answers[request.full_url]).encode()))
+
+    def reviews(self) -> dict:
+        module = importlib.util.module_from_spec(self.spec)
+        with mock.patch.dict(os.environ, {"FLOW_FORGE_REPOSITORY": "ws/repo", "FLOW_FORGE_TOKEN_ENV": "FX_TOKEN",
+                                          "FX_TOKEN": "bb-secret"}), \
+                mock.patch.object(sys, "argv", ["forge_bitbucket.py", "reviews", "--url", self.URL, "--head", HEAD]), \
+                mock.patch("urllib.request.urlopen", self.answer), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            previous = sys.dont_write_bytecode
+            sys.dont_write_bytecode = True
+            try:
+                self.spec.loader.exec_module(module)
+                module.main()
+            finally:
+                sys.dont_write_bytecode = previous
+        return json.loads(out.getvalue())
+
+    @staticmethod
+    def insight(external_id: str, result: str | None, updated: str = "2026-11-11T10:06:00+00:00", **extra) -> dict:
+        return {"uuid": "{r-1}", "external_id": external_id, "title": "Review", "report_type": "TEST",
+                "result": result, "created_on": "2026-11-11T10:01:00+00:00", "updated_on": updated, **extra}
+
+    def test_the_heads_reports_are_returned_and_only_its_path_is_read(self) -> None:
+        self.reports = {
+            OTHER: [self.insight("primary-review", "PASSED")],
+            HEAD: [self.insight("primary-review", "FAILED", data=[
+                {"title": "Verdict", "type": "TEXT", "value": "Request changes"},
+                {"title": "Findings", "type": "NUMBER", "value": 3}])],
+        }
+        found = self.reviews()
+        self.assertEqual(found["reports"], [
+            {"id": "primary-review", "result": "FAILED", "at": "2026-11-11T10:06:00+00:00",
+             "data": [{"title": "Verdict", "type": "TEXT", "value": "Request changes"},
+                      {"title": "Findings", "type": "NUMBER", "value": 3}]}])
+        reads = [url for url in self.calls if url.endswith("/reports")]
+        self.assertEqual(reads, [f"{self.API}/commit/{HEAD}/reports"])
+
+    def test_no_report_at_the_head_is_an_empty_list_though_another_sha_has_one(self) -> None:
+        self.reports = {OTHER: [self.insight("primary-review", "PASSED")], HEAD: []}
+        self.assertEqual(self.reviews()["reports"], [])
+
+    def test_each_report_at_the_head_is_listed_and_a_report_without_a_result_is_pending(self) -> None:
+        self.reports = {HEAD: [self.insight("primary-review", "PASSED"), self.insight("codex-review", None),
+                               self.insight("lint", "PENDING")]}
+        found = self.reviews()["reports"]
+        self.assertEqual([(r["id"], r["result"], r["data"]) for r in found],
+                         [("primary-review", "PASSED", []), ("codex-review", "PENDING", []), ("lint", "PENDING", [])])
+
+    def test_the_reports_pages_are_followed(self) -> None:
+        second = f"{self.API}/commit/{HEAD}/reports?page=2"
+        self.reports = {HEAD: [self.insight("a", "PASSED")]}
+        original = self.answer
+
+        def paged(request, timeout=None):
+            if request.full_url == f"{self.API}/commit/{HEAD}/reports":
+                self.calls.append(request.full_url)
+                page = {"values": [self.insight("a", "PASSED")], "next": second}
+                return contextlib.closing(io.BytesIO(json.dumps(page).encode()))
+            if request.full_url == second:
+                self.calls.append(request.full_url)
+                page = {"values": [self.insight("b", "FAILED")]}
+                return contextlib.closing(io.BytesIO(json.dumps(page).encode()))
+            return original(request, timeout)
+        self.answer = paged
+        self.assertEqual([r["id"] for r in self.reviews()["reports"]], ["a", "b"])
 
 
 if __name__ == "__main__":
@@ -636,8 +733,8 @@ class BitbucketReviewsTests(unittest.TestCase):
         self.failure: Exception | None = None
 
     def answer(self, request, timeout=None):
-        """Only the head's statuses, the PR's comments and the PR itself (its approvals) are answered; any other path
-        fails the row."""
+        """Only the head's statuses, the PR's comments, the PR itself (its approvals) and the head's reports are
+        answered; any other path fails the row."""
         self.calls.append(request.full_url)
         if self.failure is not None:
             raise self.failure
@@ -654,6 +751,8 @@ class BitbucketReviewsTests(unittest.TestCase):
                                 "content": {"raw": "fine"}}]}
         elif request.full_url == f"{self.API}/pullrequests/7":
             body = {"participants": []}
+        elif request.full_url == f"{self.API}/commit/{HEAD}/reports":
+            body = {"values": []}
         else:
             raise AssertionError(f"an unexpected path: {request.full_url}")
         return contextlib.closing(io.BytesIO(json.dumps(body).encode()))
