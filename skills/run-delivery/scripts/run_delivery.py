@@ -6700,7 +6700,8 @@ def listener_lines(c) -> list[str]:
     background, or that one listens. Nothing otherwise."""
     if not (c.state / "state.json").exists():
         return []
-    doc = load_state()
+    tool = c.release / "skills/orchestrate-work/scripts/delivery_state.py"
+    doc = json.loads(run([sys.executable, "-B", str(tool), "--dir", str(c.state), "show"]).stdout)
     needed = listener_needed(doc["state"])
     if not needed:
         return []
@@ -6715,9 +6716,13 @@ def listener_lines(c) -> list[str]:
 
 def listener_words(c) -> str:
     """The status line's word on the listener: empty while one listens or nothing needs one."""
-    if not (c.state / "state.json").exists() or lead_listener(c.state) is not None:
+    if lead_listener(c.state) is not None:
         return ""
-    needed = listener_needed(load_state()["state"])
+    try:  # read as the record holds it, as on_fallback reads it: a status line never refuses over it
+        state = load_json(c.state / "state.json") or {}
+    except (OSError, ValueError):
+        return ""
+    needed = listener_needed(state) if isinstance(state, dict) else []
     return f"; the lead isn't listening: no lead-wait runs while {', '.join(needed)}" if needed else ""
 
 

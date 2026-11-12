@@ -5651,7 +5651,9 @@ def bullets_after(text: str, lead_in: str) -> list[str]:
 # acknowledgement, or beside it, as the close's closed.json; none
 # is shipped with the skill.
 ADOPTER_FILES = frozenset({".agents/orchestration.json", ".agents/delivery-posture.json", "delivery.md", "delivery.html",
-                           "published.json", "recovery.json", "changes.jsonl", "plan.json", "closed.json"})
+                           "published.json", "recovery.json", "changes.jsonl", "plan.json", "closed.json",
+                           # run-delivery's lead-wait: its lease in the record and its default output beside the flow logs
+                           "<state>/lead-wait.json", "<delivery>.wait.json"})
 
 
 def review_round(number: int, candidate: str, *, finding: bool = False, resolved: bool = False) -> dict:
