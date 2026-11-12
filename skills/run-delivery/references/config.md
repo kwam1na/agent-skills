@@ -320,6 +320,29 @@ command refuse at once. So a `reviewGate`'s `timeoutSeconds` must exceed `review
 so that the last backoff and one adapter call fit inside it. With `forge.mergeNeedsReady` set, `doctor` reports a delivery without the `readyPullRequests` grant, and
 `lead-init` refuses it.
 
+### A PR reviewer's gate
+
+A reviewer in `review.pr.reviewers` may take `gate`, checked only on its current review; an absent optional reviewer's
+gate is checked nowhere. Without `gate`, the review only has to be current, as before.
+
+- `"verdict"` is met when the review's verdict says approve. The verdict is the body's first line matching
+  `^\*\*Verdict:\*\*\s*(.+)$`; later lines are ignored. It says approve when its first word, lowercased and stripped of
+  punctuation, is `approve` or `approved`: `Approve`, `Approved.` and `APPROVE` do, `Not approved` and `Request changes`
+  don't. A review with no such line is unmet, saying the line is missing.
+- `"approval"` needs the reviewer's `account`, and is met when one of the PR's approvals has that `account`. Display
+  names are never compared. For it, `reviews` also prints `"approvals": [{account, name, at, commit?}]`: the GitHub
+  adapter's are each account's latest deciding review (approved, changes requested or dismissed) when it approved,
+  each with the `commit` it was given at, and the Bitbucket
+  adapter's are the PR's participants with `approved`, with no `commit`. An approval that names a `commit` counts only
+  when that commit is the head. **On Bitbucket an approval is only as fresh as the forge makes it:** Bitbucket ties no
+  approval to a commit, so an approval given at an earlier head still counts after a new push. An adapter that prints no
+  `approvals` member is refused for an approval gate, naming the member; an empty list is not refused, and the gate is
+  unmet.
+
+`pr-review` prints each gate beside its review, met or unmet, with why. With a gate unmet, `handoff`, `lead-accept` and
+the `pr-review-current` reviewGate refuse, naming the reviewer and what it needs: fix and push, so the reviewer runs
+again. The record keeps each gate as `{kind, met, why}`.
+
 ## The supervisor
 
 `lead-init` starts `lead-run`, the delivery's supervisor: one detached process per record, in a session of its own,

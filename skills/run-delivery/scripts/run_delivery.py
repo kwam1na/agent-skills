@@ -61,6 +61,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import pr_review_gates  # noqa: E402
 import tracker_publisher  # noqa: E402
 
 TOOL = Path(__file__).resolve().parent.parent
@@ -3552,7 +3553,11 @@ def read_pr_reviews(url: str, head: str, conf: dict, deadline: float | None) -> 
     def ask() -> dict:
         return forge("reviews", "--url", url, "--head", head)
     found = retried(ask, deadline) if deadline is not None else ask()
-    return classify_reviews(found, conf, clock().time())
+    read = classify_reviews(found, conf, clock().time())
+    refused = pr_review_gates.attach(read, found, conf, head)  # each current review's gate, beside it
+    if refused:
+        raise Stop(refused)
+    return read
 
 
 def pr_review_state(url: str, head: str, conf: dict) -> tuple[str, dict | None, list[dict]]:
@@ -3637,7 +3642,8 @@ def pr_review_text() -> str:
             "and fix or defer the rest, deferring only with a follow-up. Pass one `--pr-review-triage <id>=\"<what "
             "you fixed, deferred and why>\"` to `handoff` for each current review (a bare text only when exactly one "
             "is current). The lead's acceptance re-checks that each is still current and unchanged at your head, and "
-            "sends you back to read an optional review recorded absent that has since arrived.\n")
+            "sends you back to read an optional review recorded absent that has since arrived.\n"
+            + pr_review_gates.brief_text(conf["reviewers"]))
 
 
 def pr_review(args) -> None:
@@ -3692,6 +3698,8 @@ def pr_review(args) -> None:
             review = state["review"]
             entry.update(author=review["author"], **({"account": review["account"]} if "account" in review else {}),
                          at=review["at"], body=review["body"])
+            if state.get("gate"):
+                entry["gate"] = state["gate"]
         entries[reviewer["id"]] = entry
     record = {"schema": RECORD_SCHEMA, "head": head, "url": url, "reviewers": entries}
     (review_dir(key) / "pr-review.json").write_text(json.dumps(record, indent=2))
@@ -3701,7 +3709,8 @@ def pr_review(args) -> None:
     for rid, entry in entries.items():
         kind = "required" if entry["required"] else "optional"
         if entry["state"] == "current":
-            print(f"\n## {rid} ({kind}): {entry['author']} at {entry['at']}\n\n{entry['body']}")
+            gate_line = f"\n{pr_review_gates.shown(entry['gate'])}" if entry.get("gate") else ""
+            print(f"\n## {rid} ({kind}): {entry['author']} at {entry['at']}{gate_line}\n\n{entry['body']}")
         else:
             print(f"\n## {rid} ({kind}): absent, no review within {conf['settleSeconds']}s after the pipeline went "
                   "green")
@@ -3769,6 +3778,9 @@ def review_gate(args) -> None:
     if missing or any(ch["state"] != "passed" for ch in read["checks"]) or not read["checks"]:
         raise Stop(f"no current review at {args.head[:10]} from {', '.join(missing) or 'the pipeline'}"
                    + (f" (waited {wait}s)" if args.wait else "") + f": {states}")
+    unmet = pr_review_gates.live_refusals(conf["reviewers"], read["reviewers"], args.head)
+    if unmet:
+        raise Stop("; ".join(unmet))
     said = [f"{rid} at {r['review']['at']}" if r["state"] == "current" else f"{rid} {r['state']}"
             for rid, r in read["reviewers"].items()]
     print(f"PR reviews of {args.head[:10]} are current ({', '.join(said)}): {states}")
@@ -3931,6 +3943,7 @@ def handoff(args) -> None:
                 pr_line = f"{recorded['author']} at {recorded['at'][:16]}; triage: {recorded['triage']}"
         else:
             pr_line, problems_ = pr_review_handoff(key, review_conf, recorded, args.pr_review_triage or [])
+            problems_ += pr_review_gates.recorded_refusals(review_conf["reviewers"], record_reviewers(recorded), head)
             if problems_:
                 gate_problems += problems_
             else:
@@ -5918,6 +5931,7 @@ def pr_review_acceptance(conf: dict, url: str, head: str, recorded: dict) -> tup
         else:
             decisions.append(f"PR review {rid} by {live['review']['author']} at {live['review']['at'][:16]} triaged: "
                              f"{entry['triage']}")
+    problems += pr_review_gates.live_refusals(conf["reviewers"], read["reviewers"], head)
     return problems, decisions
 
 
