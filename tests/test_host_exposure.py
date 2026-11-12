@@ -3,6 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -10,7 +13,14 @@ from unittest import mock
 from agent_skills.hosts.exposure import HOSTS, _normalized_link
 from agent_skills.lifecycle import Lifecycle
 
-from lifecycle_support import LifecycleFixture, unrelated_digest
+from lifecycle_support import (
+    HOOK_SKILL,
+    LifecycleFixture,
+    build_hooked_version,
+    hooked_corpus,
+    initialize_repository,
+    unrelated_digest,
+)
 
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "hosts"
@@ -452,6 +462,455 @@ class HostExposureTests(LifecycleFixture, unittest.TestCase):
         self.assertTrue(swapped)
         self.assertFalse(outside_current.is_symlink())
         self.assertEqual(outside_current.read_text(encoding="utf-8"), "preserve\n")
+
+
+
+STOP_COMMAND = 'python3 -B "${CLAUDE_PROJECT_DIR}/.agent-skills/current/__main__.py" hook claude-code stop || exit 1'
+START_COMMAND = (
+    'python3 -B "${CLAUDE_PROJECT_DIR}/.agent-skills/current/__main__.py" hook claude-code session-start || exit 1'
+)
+CLAUDE_EVENTS = {"stop": ("Stop", STOP_COMMAND), "session-start": ("SessionStart", START_COMMAND)}
+USER_STOP_ENTRY = {"hooks": [{"command": "echo mine", "type": "command"}]}
+
+
+def owned_entry(event: str) -> dict:
+    return {"hooks": [{"type": "command", "command": CLAUDE_EVENTS[event][1], "timeout": 30}]}
+
+
+class ClaudeHookExposureTests(LifecycleFixture, unittest.TestCase):
+    """Decision 4: the lifecycle installs, records and removes one dispatcher entry per Claude Code event."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.releases_folder = tempfile.TemporaryDirectory()
+        base = Path(cls.releases_folder.name)
+        stop = hooked_corpus(base / "corpus-stop", ("stop",))
+        both = hooked_corpus(base / "corpus-both", ("stop", "session-start"))
+        cls.stop_a = build_hooked_version(stop, base, "core-stop-a")
+        cls.stop_b = build_hooked_version(stop, base, "core-stop-b")
+        cls.both = build_hooked_version(both, base, "core-both")
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.releases_folder.cleanup()
+
+    # Helpers ---------------------------------------------------------------
+
+    def fresh(self) -> None:
+        """Point the row at a new repository of its own, for one sub-case."""
+        self.fresh_count = getattr(self, "fresh_count", 0) + 1
+        self.repository = initialize_repository(self.base / f"fresh-{self.fresh_count}")
+
+    @property
+    def settings(self) -> Path:
+        return self.repository / ".claude" / "settings.json"
+
+    def read_settings(self) -> object:
+        return json.loads(self.settings.read_text(encoding="utf-8"))
+
+    def write_settings(self, value: object) -> None:
+        self.settings.parent.mkdir(exist_ok=True)
+        self.settings.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+
+    def receipt(self) -> dict:
+        return json.loads((self.repository / ".agent-skills" / "active.json").read_text(encoding="utf-8"))
+
+    def receipt_events(self) -> list[str]:
+        marker = self.repository / ".agent-skills" / "active.json"
+        if not marker.exists():
+            return []
+        return self.receipt().get("hooks", {}).get("events", [])
+
+    def owned_events(self) -> list[str]:
+        if not self.settings.exists():
+            return []
+        hooks = self.read_settings().get("hooks", {})
+        return sorted(
+            event
+            for event, (name, _) in CLAUDE_EVENTS.items()
+            if owned_entry(event) in hooks.get(name, [])
+        )
+
+    def without_owned(self, document: dict) -> dict:
+        """The settings with every owned entry taken out, and nothing else changed."""
+        document = json.loads(json.dumps(document))
+        for event, (name, _) in CLAUDE_EVENTS.items():
+            entries = document.get("hooks", {}).get(name)
+            if isinstance(entries, list):
+                document["hooks"][name] = [entry for entry in entries if entry != owned_entry(event)]
+        return document
+
+    # 1. Install --------------------------------------------------------------
+
+    def test_a_fresh_install_writes_the_stop_entry_and_records_it(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.stop_a, maintainer=True)
+
+        self.assertEqual(self.read_settings(), {"hooks": {"Stop": [owned_entry("stop")]}})
+        text = self.settings.read_text(encoding="utf-8")
+        self.assertEqual(text, json.dumps(self.read_settings(), indent=2, ensure_ascii=False) + "\n")
+        receipt = self.receipt()
+        self.assertEqual(receipt["hooks"], {"created": True, "events": ["stop"], "file": ".claude/settings.json"})
+        self.assertIn(".claude", receipt["createdDirectories"])
+        self.assertEqual(lifecycle.status().as_dict()["blockers"], [])
+
+    def test_an_install_keeps_every_other_key_and_entry(self) -> None:
+        user = {
+            "permissions": {"allow": ["Bash(ls:*)"]},
+            "hooks": {"Stop": [USER_STOP_ENTRY], "PreToolUse": [{"matcher": "Bash", "hooks": []}]},
+            "env": {"A": "1"},
+        }
+        self.write_settings(user)
+        Lifecycle(self.repository).install(*self.stop_a, maintainer=True)
+
+        after = self.read_settings()
+        self.assertEqual(self.without_owned(after), user)
+        self.assertEqual(after["hooks"]["Stop"], [USER_STOP_ENTRY, owned_entry("stop")])
+        self.assertEqual(list(after), list(user), "the user's key order is kept")
+        self.assertEqual(self.receipt()["hooks"]["created"], False)
+        self.assertNotIn(".claude", self.receipt()["createdDirectories"])
+
+    def test_a_release_with_no_hooks_writes_nothing_and_records_nothing(self) -> None:
+        Lifecycle(self.repository).install(*self.v1, maintainer=True)
+        self.assertFalse(self.settings.exists())
+        self.assertNotIn("hooks", self.receipt())
+
+    # 2. Update, remove and rollback -----------------------------------------
+
+    def test_an_update_that_adds_session_start_adds_only_that_entry(self) -> None:
+        self.write_settings({"hooks": {"Stop": [USER_STOP_ENTRY]}})
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.stop_a, maintainer=True)
+        before = self.read_settings()
+        lifecycle.update(*self.both, maintainer=True)
+
+        after = self.read_settings()
+        self.assertEqual(after["hooks"]["Stop"], before["hooks"]["Stop"])
+        self.assertEqual(after["hooks"]["SessionStart"], [owned_entry("session-start")])
+        self.assertEqual({**after, "hooks": {"Stop": after["hooks"]["Stop"]}}, before)
+        self.assertEqual(self.receipt()["hooks"]["events"], ["session-start", "stop"])
+
+    def test_an_update_between_generations_with_the_same_events_leaves_the_file_byte_identical(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.stop_a, maintainer=True)
+        before = self.settings.read_bytes()
+        stat_before = self.settings.stat()
+        lifecycle.update(*self.stop_b, maintainer=True)
+        self.assertEqual(self.receipt()["release"]["releaseId"], "core-stop-b")
+        self.assertEqual(self.settings.read_bytes(), before)
+        self.assertEqual(self.settings.stat().st_ino, stat_before.st_ino, "the file is not rewritten")
+
+    def _install_then(self, finish: str, lifecycle: Lifecycle) -> None:
+        if finish == "update":
+            lifecycle.update(*self.v1, maintainer=True)
+        else:
+            lifecycle.remove(maintainer=True)
+
+    def test_a_user_entry_beside_the_owned_one_is_kept_after_an_update_and_after_a_removal(self) -> None:
+        for finish in ("update", "remove"):
+            with self.subTest(finish=finish):
+                self.fresh()
+                user = {"hooks": {"Stop": [USER_STOP_ENTRY]}}
+                self.write_settings(user)
+                lifecycle = Lifecycle(self.repository)
+                lifecycle.install(*self.stop_a, maintainer=True)
+                self._install_then(finish, lifecycle)
+                self.assertEqual(self.read_settings(), user)
+
+    def test_a_created_file_with_a_key_the_user_added_is_kept_with_that_key(self) -> None:
+        for finish in ("update", "remove"):
+            with self.subTest(finish=finish):
+                self.fresh()
+                lifecycle = Lifecycle(self.repository)
+                lifecycle.install(*self.stop_a, maintainer=True)
+                self.assertTrue(self.receipt()["hooks"]["created"])
+                self.write_settings({**self.read_settings(), "model": "opus"})
+                self._install_then(finish, lifecycle)
+                self.assertEqual(self.read_settings(), {"model": "opus"})
+
+    def test_a_file_the_lifecycle_did_not_create_is_kept_when_it_is_left_empty(self) -> None:
+        for finish in ("update", "remove"):
+            with self.subTest(finish=finish):
+                self.fresh()
+                self.write_settings({})
+                lifecycle = Lifecycle(self.repository)
+                lifecycle.install(*self.stop_a, maintainer=True)
+                self.assertFalse(self.receipt()["hooks"]["created"])
+                self._install_then(finish, lifecycle)
+                self.assertEqual(self.read_settings(), {})
+
+    def test_a_created_file_left_empty_is_deleted(self) -> None:
+        for finish in ("update", "remove"):
+            with self.subTest(finish=finish):
+                self.fresh()
+                lifecycle = Lifecycle(self.repository)
+                lifecycle.install(*self.stop_a, maintainer=True)
+                self._install_then(finish, lifecycle)
+                self.assertFalse(self.settings.exists())
+                if finish == "update":
+                    self.assertNotIn("hooks", self.receipt())
+                    self.assertTrue((self.repository / ".claude" / "skills").is_dir())
+                else:
+                    self.assertFalse((self.repository / ".claude").exists())
+
+    def test_a_kept_created_file_is_still_deleted_once_it_is_left_empty(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.stop_a, maintainer=True)
+        self.write_settings({**self.read_settings(), "model": "opus"})
+        lifecycle.update(*self.v1, maintainer=True)
+        self.assertEqual(self.receipt()["hooks"], {"created": True, "events": [], "file": ".claude/settings.json"})
+        self.write_settings({})
+        lifecycle.remove(maintainer=True)
+        self.assertFalse(self.settings.exists())
+
+    def test_a_rollback_restores_the_prior_receipts_entries(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.stop_a, maintainer=True)
+        lifecycle.update(*self.both, maintainer=True)
+        self.assertEqual(self.owned_events(), ["session-start", "stop"])
+        lifecycle.rollback(maintainer=True)
+        self.assertEqual(self.receipt()["release"]["releaseId"], "core-stop-a")
+        self.assertEqual(self.owned_events(), ["stop"])
+        self.assertEqual(self.read_settings(), {"hooks": {"Stop": [owned_entry("stop")]}})
+
+        lifecycle.update(*self.v1, maintainer=True)
+        self.assertEqual(self.owned_events(), [])
+        lifecycle.rollback(maintainer=True)
+        self.assertEqual(self.owned_events(), ["stop"])
+        self.assertEqual(self.receipt_events(), ["stop"])
+
+    # 3. Recovery -------------------------------------------------------------
+
+    def test_a_fault_at_every_phase_recovers_to_exactly_the_committed_events(self) -> None:
+        from agent_skills.lifecycle import ACTIVATION_BOUNDARIES
+
+        self.assertIn("exposing-claude-code-hooks", ACTIVATION_BOUNDARIES)
+        directions = {"none-to-stop": (self.v1, self.stop_a), "stop-to-none": (self.stop_a, self.v1)}
+        for direction, (start, finish) in directions.items():
+            for boundary in ACTIVATION_BOUNDARIES:
+                with self.subTest(direction=direction, boundary=boundary):
+                    self.fresh()
+                    lifecycle = Lifecycle(self.repository)
+                    lifecycle.install(*start, maintainer=True)
+
+                    def interrupt(phase: str, boundary: str = boundary) -> None:
+                        if phase == boundary:
+                            raise RuntimeError(f"interrupted:{phase}")
+
+                    with self.assertRaisesRegex(RuntimeError, f"interrupted:{boundary}"):
+                        lifecycle.update(*finish, maintainer=True, fault=interrupt)
+                    lifecycle.recover(maintainer=True)
+                    self.assertEqual(lifecycle.recover(maintainer=True)["action"], "no-op")
+                    self.assertEqual(self.owned_events(), self.receipt_events())
+                    self.assertEqual(lifecycle.status().as_dict()["blockers"], [])
+
+    def test_a_fault_while_removing_or_installing_recovers_to_the_committed_events(self) -> None:
+        from agent_skills.lifecycle import ACTIVATION_BOUNDARIES
+
+        for operation in ("install", "remove"):
+            for boundary in ACTIVATION_BOUNDARIES:
+                with self.subTest(operation=operation, boundary=boundary):
+                    self.fresh()
+                    lifecycle = Lifecycle(self.repository)
+                    if operation == "remove":
+                        lifecycle.install(*self.stop_a, maintainer=True)
+
+                    def interrupt(phase: str, boundary: str = boundary) -> None:
+                        if phase == boundary:
+                            raise RuntimeError(f"interrupted:{phase}")
+
+                    try:
+                        if operation == "install":
+                            lifecycle.install(*self.stop_a, maintainer=True, fault=interrupt)
+                        else:
+                            lifecycle.remove(maintainer=True, fault=interrupt)
+                    except RuntimeError:
+                        pass
+                    lifecycle.recover(maintainer=True)
+                    self.assertEqual(self.owned_events(), self.receipt_events())
+                    if not (self.repository / ".agent-skills" / "active.json").exists():
+                        self.assertFalse(self.settings.exists(), "a created file left empty is deleted")
+
+    # 4. Refusals -------------------------------------------------------------
+
+    def test_preflight_refuses_each_malformed_settings_file_naming_the_fix(self) -> None:
+        altered = owned_entry("stop")
+        altered["hooks"][0]["timeout"] = 10
+        cases = {
+            "not an object": ([], "is not a JSON object"),
+            "not JSON": ("{not json", "is not a JSON object"),
+            "hooks not an object": ({"hooks": []}, '"hooks" is not an object'),
+            "event list not a list": ({"hooks": {"Stop": {}}}, '"hooks.Stop" is not a list'),
+            "altered owned entry": ({"hooks": {"Stop": [altered]}}, "differs from the entry"),
+        }
+        for name, (contents, message) in cases.items():
+            with self.subTest(case=name):
+                self.fresh()
+                self.settings.parent.mkdir(exist_ok=True)
+                if isinstance(contents, str):
+                    self.settings.write_text(contents, encoding="utf-8")
+                else:
+                    self.write_settings(contents)
+                before = self.settings.read_bytes()
+                with self.assertRaisesRegex(ValueError, f"exposure-conflict: .claude/settings.json {message}.*;"):
+                    Lifecycle(self.repository).install(*self.stop_a, maintainer=True)
+                self.assertEqual(self.settings.read_bytes(), before)
+                self.assertFalse((self.repository / ".agent-skills").exists())
+                self.assertFalse((self.repository / ".claude" / "skills").exists())
+
+    def test_a_settings_change_between_preflight_and_the_write_ends_at_the_prior_endpoint(self) -> None:
+        for start in (None, "v1"):
+            with self.subTest(start=start):
+                self.fresh()
+                lifecycle = Lifecycle(self.repository)
+                if start:
+                    lifecycle.install(*self.v1, maintainer=True)
+                prior_receipt = (self.repository / ".agent-skills" / "active.json").read_bytes() if start else None
+                prior_links = {
+                    host.root.as_posix(): sorted(
+                        (path.name, os.readlink(path)) for path in (self.repository / host.root).iterdir()
+                    ) if (self.repository / host.root).exists() else None
+                    for host in HOSTS
+                }
+                prior_current = (
+                    os.readlink(self.repository / ".agent-skills" / "current") if start else None
+                )
+
+                def race(phase: str) -> None:
+                    if phase == "exposing-claude-code":
+                        self.write_settings({"racer": True})
+
+                with self.assertRaisesRegex(ValueError, "exposure-conflict: .claude/settings.json changed"):
+                    lifecycle.update(*self.stop_a, maintainer=True, fault=race) if start else lifecycle.install(
+                        *self.stop_a, maintainer=True, fault=race)
+                self.assertEqual(self.read_settings(), {"racer": True})
+                self.assertFalse(lifecycle.journal_path.exists())
+                if start:
+                    self.assertEqual((self.repository / ".agent-skills" / "active.json").read_bytes(), prior_receipt)
+                    self.assertEqual(os.readlink(self.repository / ".agent-skills" / "current"), prior_current)
+                else:
+                    self.assertEqual(lifecycle.status().as_dict()["lifecycle"], "absent")
+                links = {
+                    host.root.as_posix(): sorted(
+                        (path.name, os.readlink(path)) for path in (self.repository / host.root).iterdir()
+                    ) if (self.repository / host.root).exists() else None
+                    for host in HOSTS
+                }
+                self.assertEqual(links, prior_links)
+
+    # 5. The installed command ------------------------------------------------
+
+    def _run_installed(self, command: str) -> subprocess.CompletedProcess[str]:
+        environment = {
+            key: value for key, value in os.environ.items()
+            if key not in {"CLAUDE_PROJECT_DIR", "PYTHONDONTWRITEBYTECODE", "PYTHONPYCACHEPREFIX"}
+        }
+        environment["CLAUDE_PROJECT_DIR"] = str(self.repository)
+        environment["PATH"] = os.pathsep.join([str(Path(sys.executable).parent), environment.get("PATH", "")])
+        payload = {"cwd": str(self.repository), "hook_event_name": "Stop", "session_id": "s",
+                   "stop_hook_active": False}
+        return subprocess.run(["sh", "-c", command], input=json.dumps(payload), capture_output=True, text=True,
+                              env=environment, cwd=self.base, timeout=60)
+
+    def test_the_installed_command_runs_the_dispatcher_and_never_exits_2(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.stop_a, maintainer=True)
+        command = self.read_settings()["hooks"]["Stop"][0]["hooks"][0]["command"]
+        self.assertEqual(command, STOP_COMMAND)
+
+        held = self._run_installed(command)
+        self.assertEqual(held.returncode, 0, held.stderr)
+        self.assertEqual(json.loads(held.stdout), {"decision": "block", "reason": "held by the fixture"})
+        self.assertEqual(lifecycle.status().as_dict()["blockers"], [], "the run wrote no bytecode")
+
+        current = self.repository / ".agent-skills" / "current"
+        target = os.readlink(current)
+        current.unlink()
+        missing = self._run_installed(command)
+        self.assertEqual((missing.returncode, missing.stdout), (1, ""))
+
+        older = self.repository / ".agent-skills" / "generations" / ("e" * 64)
+        older.mkdir()
+        (older / "__main__.py").write_text(
+            "import argparse\nparser = argparse.ArgumentParser()\nparser.add_argument('command', choices=['status'])\n"
+            "parser.parse_args()\n",
+            encoding="utf-8",
+        )
+        current.symlink_to(f"generations/{'e' * 64}")
+        without_hook = self._run_installed(command)
+        self.assertEqual((without_hook.returncode, without_hook.stdout), (1, ""))
+        self.assertIn("invalid choice", without_hook.stderr)
+        current.unlink()
+        current.symlink_to(target)
+
+    # 6. Reports --------------------------------------------------------------
+
+    def test_plan_and_diff_report_the_hook_events_added_and_removed(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        none = {"added": [], "removed": []}
+        self.assertEqual(lifecycle.plan(*self.stop_a)["hooks"], {"added": ["stop"], "removed": []})
+        self.assertEqual(lifecycle.diff(*self.stop_a)["hooks"], {"added": ["stop"], "removed": []})
+        self.assertEqual(lifecycle.plan(*self.v1)["hooks"], none)
+        lifecycle.install(*self.stop_a, maintainer=True)
+        self.assertEqual(lifecycle.plan(*self.stop_a)["hooks"], none)
+        self.assertEqual(lifecycle.plan(*self.stop_b)["hooks"], none)
+        self.assertEqual(lifecycle.plan(*self.both)["hooks"], {"added": ["session-start"], "removed": []})
+        self.assertEqual(lifecycle.diff(*self.both)["hooks"], {"added": ["session-start"], "removed": []})
+        lifecycle.update(*self.both, maintainer=True)
+        self.assertEqual(lifecycle.plan(*self.v1)["hooks"], {"added": [], "removed": ["session-start", "stop"]})
+        self.assertEqual(lifecycle.diff(*self.v1)["hooks"], {"added": [], "removed": ["session-start", "stop"]})
+        self.assertEqual(lifecycle.diff(*self.v1)["schemaVersion"], "agent-skills-diff/1")
+
+    # 7. Divergence -----------------------------------------------------------
+
+    def test_status_reports_hook_divergence_only_for_owned_entries(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.stop_a, maintainer=True)
+        installed = self.read_settings()
+
+        self.write_settings({"hooks": {"Stop": []}})
+        status = lifecycle.status().as_dict()
+        self.assertEqual(status["blockers"], ["local-divergence: hooks"])
+        self.assertEqual(status["lifecycle"], "externally-transitioned")
+
+        edited = owned_entry("stop")
+        edited["hooks"][0]["timeout"] = 5
+        self.write_settings({"hooks": {"Stop": [edited]}})
+        self.assertEqual(lifecycle.status().as_dict()["blockers"], ["local-divergence: hooks"])
+
+        renamed = owned_entry("stop")
+        renamed["hooks"][0]["command"] = STOP_COMMAND.replace("|| exit 1", "")
+        self.write_settings({"hooks": {"Stop": [renamed]}})
+        self.assertEqual(lifecycle.status().as_dict()["blockers"], ["local-divergence: hooks"])
+
+        self.write_settings({"theme": "dark", "hooks": {"Stop": [USER_STOP_ENTRY, *installed["hooks"]["Stop"]]}})
+        status = lifecycle.status().as_dict()
+        self.assertEqual(status["blockers"], [])
+        self.assertEqual(status["lifecycle"], "current")
+
+    # 8. Adoption -------------------------------------------------------------
+
+    def test_adopting_a_hook_bearing_skill_writes_no_entry_while_installing_it_does(self) -> None:
+        prior = b"---\nname: compound-delivery-kernel\n---\n\nRepository posture.\n"
+        codex = self.repository / ".agents" / "skills" / HOOK_SKILL / "SKILL.md"
+        codex.parent.mkdir(parents=True)
+        codex.write_bytes(prior)
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.adopt(*self.stop_a, skill=HOOK_SKILL, expected_prior_sha256=hashlib.sha256(prior).hexdigest(),
+                        maintainer=True)
+        self.assertFalse(self.settings.exists())
+        self.assertNotIn("hooks", self.receipt())
+        self.assertEqual(lifecycle.plan(*self.stop_b)["hooks"], {"added": [], "removed": []})
+        lifecycle.update(*self.stop_b, maintainer=True)
+        self.assertFalse(self.settings.exists())
+        self.assertNotIn("hooks", self.receipt())
+
+        beside = initialize_repository(self.base / "beside")
+        Lifecycle(beside).install(*self.stop_a, maintainer=True)
+        self.assertEqual(
+            json.loads((beside / ".claude" / "settings.json").read_text(encoding="utf-8")),
+            {"hooks": {"Stop": [owned_entry("stop")]}},
+        )
 
 
 if __name__ == "__main__":

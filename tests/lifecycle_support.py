@@ -52,6 +52,77 @@ def build_version(parent: Path, release_id: str) -> tuple[Path, Path]:
     return archive, metadata
 
 
+# A core skill with no dependencies, so the same hook-bearing release can be adopted too.
+HOOK_SKILL = "compound-delivery-kernel"
+HOLD_SCRIPT = (
+    "import json, sys\n"
+    "json.load(sys.stdin)\n"
+    'print(json.dumps({"verdict": "block", "reason": "held by the fixture"}))\n'
+)
+ORIENT_SCRIPT = (
+    "import json, sys\n"
+    "json.load(sys.stdin)\n"
+    'print(json.dumps({"verdict": "allow", "context": "oriented by the fixture"}))\n'
+)
+
+
+def _write_json(path: Path, value: object) -> None:
+    path.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def hooked_corpus(target: Path, events: tuple[str, ...]) -> Path:
+    """A copy of the corpus whose ``HOOK_SKILL`` declares one Claude Code hook for each of ``events``."""
+    from corpus_copy import copy_corpus
+
+    copy_corpus(target)
+    scripts = {"stop": ("hold", HOLD_SCRIPT), "session-start": ("orient", ORIENT_SCRIPT)}
+    manifest = {
+        "hooks": [
+            {
+                "argv": [f"scripts/{scripts[event][0]}.py"],
+                "event": event,
+                "hosts": ["claude-code"],
+                "id": f"{HOOK_SKILL}.{scripts[event][0]}",
+            }
+            for event in events
+        ],
+        "schemaVersion": "skill-hooks/1",
+    }
+    outputs = {"hooks.json": json.dumps(manifest, indent=2) + "\n"}
+    for event in events:
+        name, body = scripts[event]
+        outputs[f"scripts/{name}.py"] = body
+    catalog = json.loads((target / "catalog.json").read_text(encoding="utf-8"))
+    skill = next(skill for skill in catalog["skills"] if skill["id"] == HOOK_SKILL)
+    provenance_path = target / "provenance.lock.json"
+    provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+    entry = next(entry for entry in provenance["entries"] if entry["id"] == skill["provenanceId"])
+    added = []
+    for relative, contents in outputs.items():
+        path = target / "skills" / HOOK_SKILL / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(contents, encoding="utf-8")
+        output = f"skills/{HOOK_SKILL}/{relative}"
+        added.append(output)
+        entry["outputs"].append({"path": output, "sha256": hashlib.sha256(contents.encode()).hexdigest()})
+    entry["outputs"].sort(key=lambda item: item["path"])
+    _write_json(provenance_path, provenance)
+    for profile_id in skill["profiles"]:
+        profile_path = target / "profiles" / f"{profile_id}.json"
+        profile = json.loads(profile_path.read_text(encoding="utf-8"))
+        if profile.get("expectedFiles") is not None:
+            profile["expectedFiles"] = sorted([*profile["expectedFiles"], *added])
+            _write_json(profile_path, profile)
+    return target
+
+
+def build_hooked_version(corpus: Path, parent: Path, release_id: str) -> tuple[Path, Path]:
+    archive = parent / f"{release_id}.zip"
+    metadata = parent / f"{release_id}.release.json"
+    build_release(corpus, archive, metadata, release_id=release_id, profile_id="core")
+    return archive, metadata
+
+
 def forge_provenance_failure(archive: Path, metadata: Path) -> None:
     with zipfile.ZipFile(archive) as source:
         entries = {name: source.read(name) for name in source.namelist()}
