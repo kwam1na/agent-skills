@@ -34,8 +34,8 @@ assemble briefs, round files or records by hand, and don't edit what they write.
 
 | Lane | Stories | Owns |
 | --- | --- | --- |
-| lane-1 | V26-3407, V26-3408, V26-3410 | `agent_skills/*`, `schemas/*`, `tests/test_hooks.py`, `tests/test_lifecycle.py`, `tests/lifecycle_support.py`, `tests/test_host_exposure.py`, `tests/test_receipt.py`, `tests/test_registry.py`, `tests/test_release_archive.py`, `tests/test_release_entry_budget.py`, `tests/test_release_integration.py`, `docs/product-generation.md`, `.agent-skills/*`, `.agents/skills/*`, `.claude/skills/*`, `.claude/settings.json`, `.agents/run-delivery.json`, `docs/own-deliveries.md`, `tests/test_own_deliveries.py` |
-| lane-2 | V26-3270, V26-3409 | `skills/run-delivery/*`, `skills/orchestrate-work/*`, `skills/delivery-views/*`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_lead_wait.py`, `tests/test_run_delivery_hooks.py`, `tests/test_orchestration_render.py`, `tests/test_orchestration_state.py`, `tests/delivery_views_page/*`, `catalog.json`, `profiles/*`, `docs/solutions/*`, `provenance.lock.json` |
+| lane-1 | V26-3407, V26-3408, V26-3410 | `agent_skills/*`, `schemas/*`, `tests/test_hooks.py`, `tests/test_lifecycle.py`, `tests/lifecycle_support.py`, `tests/test_host_exposure.py`, `tests/test_receipt.py`, `tests/test_registry.py`, `tests/test_release_archive.py`, `tests/test_release_entry_budget.py`, `docs/product-generation.md`, `.agent-skills/*`, `.agents/skills/*`, `.claude/skills/*`, `.claude/settings.json`, `.agents/run-delivery.json`, `docs/own-deliveries.md`, `tests/test_own_deliveries.py`, `validation-inventory.json`, `tests/test_fault_injection.py` |
+| lane-2 | V26-3270, V26-3409, V26-3420 | `skills/run-delivery/*`, `skills/orchestrate-work/*`, `skills/delivery-views/*`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_lead_wait.py`, `tests/test_run_delivery_hooks.py`, `tests/test_orchestration_render.py`, `tests/test_orchestration_state.py`, `tests/delivery_views_page/*`, `catalog.json`, `profiles/*`, `docs/solutions/*`, `provenance.lock.json`, `tests/test_release_integration.py` |
 
 | Story | Label | Pinned request patterns | In-app checks its hand-off needs |
 | --- | --- | --- | --- |
@@ -44,6 +44,7 @@ assemble briefs, round files or records by hand, and don't edit what they write.
 | V26-3270 | V26-3270 | - | none |
 | V26-3409 | V26-3409 | - | none |
 | V26-3410 | V26-3410 | - | none |
+| V26-3420 | V26-3420 | - | none |
 
 ## The focused lane profile
 
