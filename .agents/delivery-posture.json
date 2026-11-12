@@ -1,0 +1,5 @@
+{
+  "schemaVersion": "delivery-posture/1",
+  "posture": "focused",
+  "reason": "V26-3344, at the operator's word to cut the machine's load: one full suite at close-out instead of one per merge. The queue still runs each candidate's selected checks. The lead flips this to gate before the close, so the close-out runs fullHealth once on the final head, and runs the full suite on macOS with Python 3.11 before the merge into main."
+}
