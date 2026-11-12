@@ -373,6 +373,9 @@ class ConfigurationTests(PrReviewCase):
             ("an unknown top-level member", {"reviewers": [PRIMARY], "author": "X"}, "`author` is not a member"),
             ("a reviewer with neither account nor author", {"reviewers": [{"id": "x", "signature": "s"}]},
              "reviewer 'x': `account`"),
+            ("an unknown gate", {"reviewers": [{**PRIMARY, "gate": "vote"}]}, "reviewer 'primary': `gate`"),
+            ("a required that isn't a boolean", {"reviewers": [{**PRIMARY, "required": "yes"}]},
+             "reviewer 'primary': `required`"),
         ]
         for what, pr, named in cases:
             with self.subTest(what):
@@ -416,6 +419,8 @@ class ConfigurationTests(PrReviewCase):
             ("two sharing an author, neither signed", [{"id": "a", "author": "Bot", "account": "1"},
                                                        {"id": "b", "author": "Bot", "account": "2"}],
              "warn", "a and b share the author 'Bot'"),
+            ("two sharing an account, neither signed", [{"id": "a", "account": "1"}, {"id": "b", "account": "1"}],
+             "warn", "a and b share the account '1'"),
             ("an account", [{"id": "a", "author": "Bot", "account": "1"}], "ok", ""),
             ("a signature", [{"id": "a", "author": "Bot", "signature": "<!-- a -->"}], "ok", ""),
             ("two sharing an author, one signed", [{"id": "a", "author": "Bot", "account": "1"},
@@ -484,10 +489,14 @@ class MatchingTests(PrReviewCase):
         self.assertIn("no current review from primary", out)
 
     def test_the_latest_matching_comment_is_the_review_whatever_the_order(self) -> None:
-        code, out = self.read(by_primary(body="newer", at="2026-01-01T00:00:40"),
-                              by_primary(body="older", at="2026-01-01T00:00:05"))
-        self.assertEqual(code, 0, out)
-        self.assertEqual(self.record()["reviewers"]["primary"]["body"], "newer")
+        newer = by_primary(body="newer", at="2026-01-01T00:00:40")
+        older = by_primary(body="older", at="2026-01-01T00:00:05")
+        middle = by_primary(body="middle", at="2026-01-01T00:00:20")
+        for order in ([newer, older], [older, newer], [older, newer, middle], [middle, newer, older]):
+            with self.subTest(order=[r["body"] for r in order]):
+                code, out = self.read(*order)
+                self.assertEqual(code, 0, out)
+                self.assertEqual(self.record()["reviewers"]["primary"]["body"], "newer")
 
     def test_members_the_adapter_doesnt_return(self) -> None:
         with self.subTest("account configured, comments without it: refused, naming the member"):
@@ -547,6 +556,26 @@ class WaitTests(PrReviewCase):
         code, out = self.flow("pr-review", "FX-2", "--wait")
         self.assertEqual(code, 0, out)
         self.assertEqual(self.sleeps(), [30])
+
+    def test_the_settle_starts_at_the_latest_done_check_and_currency_at_the_latest_created(self) -> None:
+        """Decision 4: the settle starts at the latest doneAt among the head's checks, whichever was created last, and
+        a review is current only from the latest check's `at`."""
+        first = {**PASSED, "doneAt": "2026-01-01T00:03:30"}  # created at T0, done at T0+200
+        second = {"name": "lint", "state": "passed", "at": "2026-01-01T00:01:00", "doneAt": "2026-01-01T00:01:50"}
+        self.answer([first, second], [by_primary(at="2026-01-01T00:01:10")])
+        self.clock(T0_EPOCH + 200 + 300)
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 2, out)
+        self.assertIn("no current review from codex", out)
+        self.clock(T0_EPOCH + 200 + 301)
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.record()["reviewers"]["codex"]["state"], "absent")
+        with self.subTest("a review between the two checks' creation isn't current"):
+            self.answer([first, second], [by_primary(at="2026-01-01T00:00:30")])
+            code, out = self.flow("pr-review", "FX-2")
+            self.assertEqual(code, 2, out)
+            self.assertIn("no current review from primary", out)
 
     def test_a_pending_check_with_no_time_yet_keeps_the_wait_going(self) -> None:
         """A queued check may carry no time (GitHub's rollup, before it starts): the wait goes on, never refused."""
@@ -619,6 +648,9 @@ class TriageTests(PrReviewCase):
         code, out = self.handoff("primary=fixed x", "codex=read it")
         self.assertEqual(code, 2, out)
         self.assertIn("names codex, which was absent: an absent reviewer takes no triage", out)
+        code, out = self.handoff("fixed x", "primary=fixed x")
+        self.assertEqual(code, 2, out)
+        self.assertIn("a bare --pr-review-triage TEXT is accepted only alone", out)
         code, out = self.handoff("fixed x")
         self.assertEqual(code, 0, out)
         self.assertIn("- PR review: primary: Primary Bot at 2026-01-01T00:00, triage: fixed x; codex: absent", out)
@@ -651,6 +683,21 @@ class AcceptanceTests(PrReviewCase):
         self.assertEqual(code, 0, out)
         self.assertIn("PR review primary by Primary Bot at 2026-01-01T00:00 triaged: fixed x", self.decisions())
         self.assertIn("PR review codex by Review Bot at 2026-01-01T00:00 triaged: fine", self.decisions())
+
+    def test_a_review_no_longer_current_or_never_triaged_is_refused(self) -> None:
+        self.configure(LISTED)
+        self.answer([PASSED], [by_primary(), by_codex()])
+        self.hand_off("primary=fixed x", "codex=fine")
+        with self.subTest("the pipeline at the head is running again"):
+            self.answer([PENDING], [by_primary(), by_codex()])
+            code, out = self.accept()
+            self.assertEqual(code, 1, out)
+            self.assertIn(f"primary's PR review isn't current at {self.head[:10]} (pending)", out)
+        self.answer([PASSED], [by_primary(), by_codex()])
+        self.assertEqual(self.flow("pr-review", "FX-2")[0], 0)  # read again: the record has no triage now
+        code, out = self.accept()
+        self.assertEqual(code, 1, out)
+        self.assertIn("the lane recorded no triage of primary's PR review at the handed head", out)
 
     def test_an_optional_reviewer_recorded_absent_that_is_now_current_sends_the_lane_back(self) -> None:
         self.configure(LISTED)
