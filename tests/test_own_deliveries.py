@@ -136,7 +136,35 @@ class FreshClone(unittest.TestCase):
             self.assertTrue((Path(out) / "release/linear-v99.0.0-rc.1.zip").is_file())
 
 
+HOOK_COMMAND = 'python3 -B "${CLAUDE_PROJECT_DIR}/.agent-skills/current/__main__.py" hook claude-code %s || exit 1'
+
+
+def _hook_entry(event: str) -> dict:
+    return {"hooks": [{"type": "command", "command": HOOK_COMMAND % event, "timeout": 30}]}
+
+
 class StandingBinding(unittest.TestCase):
+    def test_this_repository_enforces_the_lead_s_wait(self) -> None:
+        settings = json.loads((ROOT / ".agents/run-delivery.json").read_text(encoding="utf-8"))
+        self.assertEqual(settings["hooks"], {"lead.may-stop": "enforce"})
+
+    def test_the_committed_settings_hold_exactly_the_two_dispatcher_entries(self) -> None:
+        settings = json.loads((ROOT / ".claude/settings.json").read_text(encoding="utf-8"))
+        self.assertEqual(settings, {"hooks": {"SessionStart": [_hook_entry("session-start")],
+                                              "Stop": [_hook_entry("stop")]}})
+        receipt = json.loads((ROOT / ".agent-skills/active.json").read_text(encoding="utf-8"))
+        self.assertEqual(receipt["hooks"], {"created": True, "events": ["session-start", "stop"],
+                                            "file": ".claude/settings.json"})
+
+    def test_the_installed_generation_is_the_hooks_candidate(self) -> None:
+        receipt = json.loads((ROOT / ".agent-skills/active.json").read_text(encoding="utf-8"))
+        self.assertEqual(receipt["release"]["releaseId"], "linear-v2.1.0-rc.1")
+        self.assertEqual(receipt["release"]["profile"], "linear")
+        current = os.readlink(ROOT / ".agent-skills/current")
+        self.assertEqual(current, "generations/" + receipt["generation"])
+        manifest = json.loads((ROOT / ".agent-skills/current/skills/run-delivery/hooks.json").read_text(encoding="utf-8"))
+        self.assertEqual(sorted(hook["event"] for hook in manifest["hooks"]), ["session-start", "stop"])
+
     def test_it_holds_no_machine_and_no_delivery(self) -> None:
         for name in ("orchestration.json", "delivery-views.json", "run-delivery.json", "delivery/candidate.py"):
             text = (ROOT / ".agents" / name).read_text(encoding="utf-8")
