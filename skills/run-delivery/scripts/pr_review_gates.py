@@ -104,3 +104,57 @@ def shown(verdict: dict | None) -> str:
     if verdict is None:
         return ""
     return f"{verdict['kind']} gate {'met' if verdict['met'] else 'UNMET'}: {verdict['why']}"
+
+
+# What run_delivery's PR-review commands call: each takes their own structures and returns what to report.
+
+def attach(read: dict, found: dict, conf: dict, head: str) -> str | None:
+    """Give each current review in a classified read its gate, as `gate` beside its `review` (None for a reviewer that
+    takes none). Returns why the adapter's output can't gate the reviewers, or None. The single `{author}` shape and a
+    failed pipeline take no gates."""
+    if conf.get("legacy") or read.get("status") == "failed":
+        return None
+    refused = members_refusal(conf["reviewers"], found)
+    if refused:
+        return refused
+    for reviewer in conf["reviewers"]:
+        one = read["reviewers"][reviewer["id"]]
+        if one["state"] == "current":
+            one["gate"] = gate(reviewer, one["review"], found, head)
+    return None
+
+
+def live_refusals(reviewers: list[dict], live: dict[str, dict], head: str) -> list[str]:
+    """The refusals for every current review, required or optional, whose gate a read of the forge finds unmet. A
+    reviewer that is not current, an absent optional one among them, has no gate to check."""
+    return [unmet_refusal(r["id"], live[r["id"]]["gate"], head) for r in reviewers
+            if live.get(r["id"], {}).get("state") == "current" and live[r["id"]].get("gate")
+            and not live[r["id"]]["gate"].get("met")]
+
+
+def recorded_refusals(reviewers: list[dict], entries: dict[str, dict], head: str) -> list[str]:
+    """The refusals for the recorded current reviews whose gate is unmet, or that were recorded with no gate though
+    the reviewer now takes one."""
+    problems = []
+    for reviewer in reviewers:
+        entry = entries.get(reviewer["id"]) or {}
+        if entry.get("state") != "current" or not reviewer.get("gate"):
+            continue
+        recorded = entry.get("gate")
+        if not isinstance(recorded, dict) or recorded.get("kind") != reviewer["gate"]:
+            problems.append(f"PR reviewer {reviewer['id']}'s {reviewer['gate']} gate isn't in the PR review recorded "
+                            f"at {head[:10]}: run pr-review again")
+        elif not recorded.get("met"):
+            problems.append(unmet_refusal(reviewer["id"], recorded, head))
+    return problems
+
+
+def brief_text(reviewers: list[dict]) -> str:
+    """The lane brief's sentence on gates, or nothing when no reviewer takes one."""
+    gated = [f"`{r['id']}` ({'its approval' if r['gate'] == 'approval' else 'its **Verdict:** line'})"
+             for r in reviewers if r.get("gate")]
+    if not gated:
+        return ""
+    return ("   Some reviewers gate the hand-off: " + "; ".join(gated) + ". `pr-review` shows each gate beside its "
+            "review; with one unmet, `handoff`, the lead's acceptance and the merge queue refuse, so fix what the "
+            "reviewer found and push, and it runs again.\n")

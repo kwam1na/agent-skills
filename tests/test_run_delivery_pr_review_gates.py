@@ -157,5 +157,156 @@ class RefusalTextTests(unittest.TestCase):
                          "approval gate met: codex-bot approved")
 
 
+
+class BriefTextTests(unittest.TestCase):
+    def test_the_brief_names_each_gated_reviewer_and_says_nothing_without_one(self) -> None:
+        text = gates.brief_text([{"id": "primary", "gate": "verdict"}, {"id": "codex", "gate": "approval"},
+                                 {"id": "third"}])
+        self.assertIn("`primary` (its **Verdict:** line); `codex` (its approval)", text)
+        self.assertIn("fix what the reviewer found and push", text)
+        self.assertNotIn("third", text)
+        self.assertEqual(gates.brief_text([{"id": "third"}]), "")
+
+
+# The commands, end to end: the tool from an installed release built from this tree, on lane 1's PR-review fixture.
+from tests.test_run_delivery_pr_review import (  # noqa: E402
+    AFTER, PASSED, PR, T0_EPOCH, PrReviewCase, by_codex, by_primary,
+)
+
+VERDICT_PRIMARY = {"id": "primary", "account": "{u-primary}", "required": True, "gate": "verdict"}
+APPROVAL_CODEX = {"id": "codex", "account": "{u-review}", "required": True, "gate": "approval"}
+OPTIONAL_CODEX = {"id": "codex", "author": "Review Bot", "signature": "<!-- codex -->", "required": False,
+                  "gate": "verdict"}
+APPROVE = "Primary says: fine\n**Verdict:** Approve\n"
+CHANGES = "Primary says: fix x\n**Verdict:** Request changes\n"
+
+
+def approved(account: str = "{u-review}", **extra) -> dict:
+    return {"account": account, "name": "Review Bot", "at": AFTER, **extra}
+
+
+class GatesEverywhereTests(PrReviewCase):
+    """An unmet gate is shown by pr-review and refused by handoff, lead-accept and the reviewGate, each naming the
+    reviewer and "fix and push"; the same reviewer met passes all four."""
+
+    def test_an_unmet_verdict_gate_is_shown_and_refused_and_met_passes(self) -> None:
+        self.configure({"settleSeconds": 300, "reviewers": [VERDICT_PRIMARY]})
+        self.answer([PASSED], [by_primary(body=CHANGES)])
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 0, out)
+        self.assertIn("## primary (required): Primary Bot at 2026-01-01T00:00:30\nverdict gate UNMET: the verdict is "
+                      "'Request changes', not approve\n", out)
+        self.assertEqual(self.record()["reviewers"]["primary"]["gate"],
+                         {"kind": "verdict", "met": False, "why": "the verdict is 'Request changes', not approve"})
+        refusal = (f"PR reviewer primary's verdict gate is unmet at {self.head[:10]}: the verdict is 'Request "
+                   "changes', not approve; fix and push, so the reviewer runs again")
+        code, out = self.handoff("fixed x")
+        self.assertEqual(code, 2, out)
+        self.assertIn(refusal, out)
+        code, _, err = self.gate()
+        self.assertEqual(code, 2, err)
+        self.assertEqual(err.strip(), "run-delivery: " + refusal)
+        # Met: the review says approve.
+        self.answer([PASSED], [by_primary(body=APPROVE)])
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 0, out)
+        self.assertIn("verdict gate met: the verdict is 'Approve'", out)
+        code, out = self.handoff("fine")
+        self.assertEqual(code, 0, out)
+        code, out, err = self.gate()
+        self.assertEqual((code, err), (0, ""), out)
+        code, out = self.accept()
+        self.assertEqual(code, 0, out)
+
+    def test_lead_accept_rereads_the_gate_at_the_forge(self) -> None:
+        """Handed off with the approval; at acceptance the forge no longer shows it."""
+        self.configure({"settleSeconds": 300, "reviewers": [APPROVAL_CODEX]})
+        self.answer([PASSED], [by_codex()], approvals=[approved(commit=self.head)])
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"approval gate met: {{u-review}} approved {self.head[:10]}", out)
+        self.assertEqual(self.handoff("fine")[0], 0)
+        refusal = (f"PR reviewer codex's approval gate is unmet at {self.head[:10]}: no approval by {{u-review}}; "
+                   "fix and push, so the reviewer runs again")
+        for what, approvals in (("withdrawn", []), ("by another account under the name", [approved("{other}")]),
+                                ("of an older commit", [approved(commit="f" * 40)])):
+            with self.subTest(what):
+                self.answer([PASSED], [by_codex()], approvals=approvals)
+                code, out = self.accept()
+                self.assertEqual(code, 1, out)
+                self.assertIn(refusal if what != "of an older commit" else
+                              "codex's approval gate is unmet", out)
+                self.assertIn("fix and push", out)
+                code, _, err = self.gate()
+                self.assertEqual(code, 2, err)
+                self.assertIn("PR reviewer codex's approval gate is unmet", err)
+        self.answer([PASSED], [by_codex()], approvals=[approved(commit=self.head)])
+        code, out = self.accept()
+        self.assertEqual(code, 0, out)
+
+    def test_handoff_refuses_a_record_made_before_the_reviewer_took_its_gate(self) -> None:
+        self.configure({"settleSeconds": 300, "reviewers": [{"id": "primary", "account": "{u-primary}"}]})
+        self.answer([PASSED], [by_primary(body=APPROVE)])
+        self.assertEqual(self.flow("pr-review", "FX-2")[0], 0)
+        self.assertNotIn("gate", self.record()["reviewers"]["primary"])
+        self.configure({"settleSeconds": 300, "reviewers": [VERDICT_PRIMARY]})
+        code, out = self.handoff("fine")
+        self.assertEqual(code, 2, out)
+        self.assertIn(f"PR reviewer primary's verdict gate isn't in the PR review recorded at {self.head[:10]}: run "
+                      "pr-review again", out)
+
+
+class ApprovalMembersTests(PrReviewCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.configure({"settleSeconds": 300, "reviewers": [APPROVAL_CODEX]})
+
+    def test_approvals_absent_are_refused_naming_the_member(self) -> None:
+        for what, members in (("left out", {}), ("null", {"approvals": None})):
+            with self.subTest(what):
+                self.answer([PASSED], [by_codex()], **members)
+                code, out = self.flow("pr-review", "FX-2")
+                self.assertEqual(code, 2, out)
+                self.assertIn("`approvals`", out)
+                self.assertFalse((self.review / "pr-review.json").exists())
+
+    def test_approvals_present_but_empty_are_an_unmet_gate_not_a_refusal(self) -> None:
+        self.answer([PASSED], [by_codex()], approvals=[])
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 0, out)
+        self.assertIn("approval gate UNMET: no approval by {u-review}", out)
+
+    def test_a_bitbucket_approval_with_no_commit_counts_after_a_new_push(self) -> None:
+        self.answer([PASSED], [by_codex()], approvals=[approved()])
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 0, out)
+        self.assertIn("approval gate met: {u-review} approved (2026-01-01T00:00:30)", out)
+
+
+class AbsentReviewerTests(PrReviewCase):
+    """An absent optional reviewer's gate is checked nowhere."""
+
+    def test_an_absent_optional_reviewer_whose_gate_would_be_unmet_passes(self) -> None:
+        self.configure({"settleSeconds": 300, "reviewers": [{"id": "primary", "account": "{u-primary}"},
+                                                             OPTIONAL_CODEX]})
+        self.clock(T0_EPOCH + 301)
+        self.answer([PASSED], [by_primary()])
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.record()["reviewers"]["codex"], {"state": "absent", "required": False})
+        code, out = self.handoff("fixed x")
+        self.assertEqual(code, 0, out)
+        code, out, err = self.gate()
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertIn("codex absent", out)
+        code, out = self.accept()
+        self.assertEqual(code, 0, out)
+        # Current, the same reviewer's unmet verdict does gate: it is checked on every current review.
+        self.answer([PASSED], [by_primary(), by_codex(body="<!-- codex -->\n**Verdict:** Request changes")])
+        code, _, err = self.gate()
+        self.assertEqual(code, 2, err)
+        self.assertIn("PR reviewer codex's verdict gate is unmet", err)
+
+
 if __name__ == "__main__":
     unittest.main()

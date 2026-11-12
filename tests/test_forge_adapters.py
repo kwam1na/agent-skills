@@ -600,7 +600,8 @@ class BitbucketReviewsTests(unittest.TestCase):
         self.failure: Exception | None = None
 
     def answer(self, request, timeout=None):
-        """Only the head's statuses and the PR's comments are answered; any other path fails the row."""
+        """Only the head's statuses, the PR's comments and the PR itself (its approvals) are answered; any other path
+        fails the row."""
         self.calls.append(request.full_url)
         if self.failure is not None:
             raise self.failure
@@ -609,6 +610,8 @@ class BitbucketReviewsTests(unittest.TestCase):
         elif request.full_url == f"{self.API}/pullrequests/7/comments?pagelen=100":
             body = {"values": [{"user": {"display_name": "Review Bot", "uuid": "{u-1}"}, "updated_on": "2026-01-01T00:00:30+00:00",
                                 "content": {"raw": "fine"}}]}
+        elif request.full_url == f"{self.API}/pullrequests/7":
+            body = {"participants": []}
         else:
             raise AssertionError(f"an unexpected path: {request.full_url}")
         return contextlib.closing(io.BytesIO(json.dumps(body).encode()))
