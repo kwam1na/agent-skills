@@ -178,8 +178,9 @@ grant, stays in Backlog, outside this plan.
 12. **Tests.** New rows go in two new modules. Each is added to the check catalogue in the story that creates it: an entry in
     `.agents/orchestration.json`'s `selection.catalogue` (`run-tests.py` argv and timeout, as their neighbours) and its name in
     `tests/test_own_deliveries.py`'s `CATALOGUE_MODULES`. That pin requires every catalogued module to exist and hold a test, so the
-    lead can't list them ahead of the lanes. Until a module's entry merges, a lane names it to `handoff --checks` as a JSON list, which
-    the pin's comment allows. The lead's acceptance of a story that creates a module checks its entry is in both places. The modules
+    lead can't list them ahead of the lanes. Until a module's entry merges, `handoff --checks` and `lead-accept --checks` can't name it.
+    The lane names the module and its run in its hand-off evidence, and the lead accepts the story that creates it (V26-3345 and
+    V26-3346) with `--full-suite`, the binding's fallback, so the queue runs the module before the merge. The lead's acceptance of a story that creates a module checks its entry is in both places. The modules
     are:
     - `tests/test_run_delivery_pr_review.py` for the wait, the configuration, the record and triage (lane 1);
     - `tests/test_run_delivery_pr_review_gates.py` for gates and reports (lane 2).
@@ -410,7 +411,8 @@ Rows, on the injected clock:
   exits 2 with the legacy "no <author> review after the pipeline ... yet" line, and no silent-reviewer line. The same reviewer under
   `reviewers: [...]` exits 3.
 - **The start**: checks created at T-600 and done at T, first read at T+settleSeconds+1 without `--wait`, required reviewer missing. It
-  exits 3 at once, and the optional reviewer is `absent`. The same read with `doneAt` removed falls back to `at`.
+  exits 3 at once, and the optional reviewer is `absent`. The same read with `doneAt` removed falls back to `at`. With two checks,
+  one without `doneAt`, only that check falls back: the other's `doneAt` still counts.
 - **Several checks**: check A created at T-900 and done at T, check B created at T-600 and done at T-400. A read at T+settleSeconds-1
   without `--wait` is `pending` and exits 2. A read at T+settleSeconds+1 exits 3.
 - **The boundary**:
@@ -455,7 +457,7 @@ Rows:
   `/commit/<head>/reports`. The adapter returns the head's report and requests exactly that path. A run where the PR's reported head
   differs from `--head` reads `--head`'s reports.
 - **Report results**:
-  - `PASSED` with a comment older than the latest check, checks all passed: current;
+  - two checks, all passed, and a `PASSED` report with a comment posted between the earliest check's `at` and the latest's: current;
   - `PASSED` with a check still pending: the wait continues;
   - `PASSED` with a failed check: refused at once;
   - `PENDING` before the settle: `pending`; after it, `silent`;
