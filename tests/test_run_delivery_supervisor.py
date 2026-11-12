@@ -28,7 +28,8 @@ from pathlib import Path
 from unittest import mock
 
 from tests.test_run_delivery import (POSIX_ONLY, Fixture, add_story, commit, doctor_binding, installed_release,
-                                     plan_delivery, setup_delivery, sh, stop_supervisors, write_results)
+                                     node_environment, plan_delivery, setup_delivery, sh, stop_supervisors,
+                                     write_results)
 from tests.test_run_delivery import stop_and_reap  # a process the case started: stopped, then waited for
 from tests.test_run_delivery_tracker import FileBackend, JiraBackend
 
@@ -588,6 +589,7 @@ class SupervisorProcessTests(unittest.TestCase):
         lock.parent.mkdir(parents=True, exist_ok=True)
         holder = subprocess.Popen([sys.executable, "-B", "-c", HOLDER, str(lock), json.dumps(
             {"pid": os.getpid(), "startedAt": "2026-01-01T00:00:00Z", "address": "http://127.0.0.1:1/",
+             "node": {"path": "/fixture/bin/node", "version": "22.6.0"},
              "children": [{"name": "serve", "pid": ignorer.pid}]})], stdout=subprocess.PIPE, text=True)
         self.addCleanup(holder.wait)
         self.addCleanup(holder.kill)
@@ -732,6 +734,109 @@ class SupervisorProcessTests(unittest.TestCase):
         for pid in [first["pid"], *(child["pid"] for child in first["children"])]:
             wait_for(lambda: not alive(pid), f"process {pid} to stop once the delivery closed", 30)
         self.assertEqual(len(kinds(fx, "delivery.closed")), 1)
+
+
+class SupervisorNodeTests(unittest.TestCase):
+    """lead-run, --resume included, refuses a Node below the runtime's nodeMinimum first on its PATH, or none, before it
+    takes the lock, stops anything or starts a child; a supervisor records its Node in its lock, and doctor --delivery
+    judges it."""
+
+    run_serially = True
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        for name, value in vars(installed_release()).items():
+            setattr(cls, name, value)
+
+    def fixture(self) -> Fixture:
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        self.addCleanup(stop_supervisors, fx.tmp)
+        supervised(fx)
+        code, out = fx.flow("lead-init", cwd=fx.main, env=node_environment(fx, fx.env, "22.6.0"))
+        self.assertEqual(code, 0, out)
+        return fx
+
+    def supervisor_row(self, fx: Fixture) -> tuple[str, str]:
+        code, out = fx.flow("doctor", "--delivery", "FX-1", "--offline", cwd=fx.main,
+                            env=node_environment(fx, fx.env, "22.6.0"))
+        line = next(l for l in out.splitlines() if "delivery supervisor:" in l)
+        status, said = line.split(None, 1)
+        return status, said.split("delivery supervisor: ", 1)[1]
+
+    def test_lead_run_refuses_a_node_below_the_minimum_or_none_before_the_lock_or_a_child(self) -> None:
+        fx = self.fixture()
+        lock = fx.tmp / "flow-log/FX-1.supervisor.lock"
+        nvm_bin = fx.tmp / "home/.nvm/versions/node/v22.6.0/bin"
+        for node, said in (("20.0.0", "Node 20.0.0 is below the runtime's nodeMinimum 22.6.0: it is "
+                                      f"{fx.tmp / 'stubs/node-20.0.0-python-None/node'}, the first node on PATH, from "
+                                      f"the PATH entry {fx.tmp / 'stubs/node-20.0.0-python-None'}"),
+                           (None, "no node on PATH, and the runtime needs Node 22.6.0")):
+            for argv in (["lead-run"], ["lead-run", "--resume"]):
+                with self.subTest(node=node, argv=argv):
+                    code, out = fx.flow(*argv, cwd=fx.main, env=node_environment(fx, running(fx), node))
+                    self.assertEqual(code, 2, out)
+                    self.assertIn(f"{' '.join(argv)} refuses: {said}", out)
+                    self.assertIn(f"fix: put {nvm_bin} first on PATH", out)
+                    self.assertFalse(lock.exists(), f"the lock was taken: {out}")
+                    self.assertEqual(sorted(p.name for p in (fx.tmp / "flow-log").glob("FX-1.supervisor*")), [], out)
+
+    def test_a_supervisor_records_its_node_and_resume_below_the_minimum_stops_nothing(self) -> None:
+        fx = self.fixture()
+        good = node_environment(fx, running(fx), "22.6.0")
+        code, out = fx.flow("lead-run", "--resume", cwd=fx.main, env=good)
+        self.assertEqual(code, 0, out)
+        first = settled_lock(fx)
+        stub = fx.tmp / "stubs/node-22.6.0-python-None/node"
+        self.assertEqual(first["node"], {"path": str(stub), "version": "22.6.0"})
+        status, said = self.supervisor_row(fx)
+        self.assertEqual(status, "ok", said)
+        self.assertIn(f"running (pid {first['pid']}); live view {first['address']}; Node 22.6.0 at {stub}", said)
+        # Killed, it leaves its children, the live view among them; a resume with an old Node stops none of them.
+        os.kill(first["pid"], signal.SIGKILL)
+        wait_for(lambda: not alive(first["pid"]), "the supervisor to die")
+        children = {child["name"]: child["pid"] for child in first["children"]}
+        code, out = fx.flow("lead-run", "--resume", cwd=fx.main, env=node_environment(fx, running(fx), "20.0.0"))
+        self.assertEqual(code, 2, out)
+        self.assertIn("lead-run --resume refuses: Node 20.0.0 is below the runtime's nodeMinimum 22.6.0", out)
+        self.assertNotIn("stopped", out)
+        self.assertTrue(all(alive(pid) for pid in children.values()), children)
+        self.assertEqual(lock_of(fx)["pid"], first["pid"], "a supervisor started")
+        with urllib.request.urlopen(first["address"], timeout=10) as page:
+            self.assertEqual(page.status, 200)
+        # With the Node put right, the resume stops what the killed one left and starts again.
+        code, out = fx.flow("lead-run", "--resume", cwd=fx.main, env=good)
+        self.assertEqual(code, 0, out)
+        for pid in children.values():
+            wait_for(lambda: not alive(pid), f"orphan {pid} to stop", 30)
+
+    def test_doctor_marks_a_recorded_node_below_the_minimum_wrong_and_none_recorded_warn(self) -> None:
+        fx = self.fixture()
+        lock = fx.tmp / "flow-log/FX-1.supervisor.lock"
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        cases = [
+            ({"node": {"path": "/old/bin/node", "version": "20.0.0"}}, "wrong",
+             "it runs Node 20.0.0 at /old/bin/node, below the runtime's nodeMinimum 22.6.0; fix: stop it (pid"),
+            ({"node": None}, "wrong", "it runs with no node on its PATH, and the runtime needs Node 22.6.0; fix:"),
+            ({}, "warn", "it recorded no Node, as an older generation's supervisor doesn't; fix: stop it (pid"),
+            ({"node": {"path": "/new/bin/node", "version": "100.0.0"}}, "ok", "Node 100.0.0 at /new/bin/node"),
+        ]
+        for recorded, status, said in cases:
+            with self.subTest(recorded=recorded):
+                holder = subprocess.Popen([sys.executable, "-B", "-c", HOLDER, str(lock), json.dumps(
+                    {"pid": os.getpid(), "startedAt": "2026-01-01T00:00:00Z", "address": "http://127.0.0.1:1/",
+                     "children": [], **recorded})], stdout=subprocess.PIPE, text=True)
+                try:
+                    self.assertEqual(holder.stdout.readline().strip(), "holding")
+                    found, words = self.supervisor_row(fx)
+                finally:
+                    holder.kill()
+                    holder.wait()
+                    holder.stdout.close()
+                self.assertEqual(found, status, words)
+                self.assertIn(said, words)
+                if status != "ok":
+                    self.assertIn("lead-run --resume", words)
 
 
 class SettledLockTests(unittest.TestCase):

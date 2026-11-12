@@ -38,8 +38,12 @@ state tool and merge queue, the `obtain-review` round brief and the lens charter
 - A POSIX host (Linux or macOS). The tool doesn't run on Windows.
 - git 2.31 or newer, Python 3.11 or newer, `ps` and `lsof`.
 - ffmpeg and ffprobe, only for stories that need before/after video evidence.
-- Node at the installed runtime's `nodeMinimum` (22.6 or newer), on `PATH` or under nvm. `doctor` checks it and
-  `lead-init` refuses without it.
+- Node at the installed runtime's `nodeMinimum` (22.6 or newer), first on `PATH`: a process and every child it
+  starts runs the first `node` on its `PATH`, so an nvm Node further down doesn't count. `doctor` checks it;
+  `lead-init`, `lead-run` (`--resume` included) and `lane-start` refuse without it, before they write, stop or start
+  anything. A generation without a runtime asks for no Node.
+- Python 3.11 or newer, both the interpreter running the tool and the first `python3` on `PATH`; `lane-start` refuses
+  without them.
 - `gh`, signed in, only for the GitHub forge adapter.
 - The repository's own in-app build, serve and check programs, only when the delivery declares in-app checks.
 - A remote the lanes push to, and a forge that takes draft change requests.
@@ -452,7 +456,9 @@ chapter flags every change without one. An edit made to the criteria or `covers`
 ### The lane delivers a story
 
 The lane begins its story with `lane-start`, from the main checkout. It makes the story's own checkout from the base,
-runs the prepare step, sets the lane's focus, and records the story's start, which the tracker's start move waits for:
+runs the prepare step, sets the lane's focus, and records the story's start, which the tracker's start move waits for.
+First it checks the lane's Node and Python, and refuses, before it makes or records anything, when the first `node` on
+`PATH` is below the runtime's `nodeMinimum`, or Python is below 3.11:
 
 ```sh example repo
 python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lane-start <story-key> --base main
@@ -849,8 +855,17 @@ do. A line marked `skipped` names the check it waits on: fix that one first.
   `state.publishers`; `lead-setup` adds it, so commit that. Another tracker needs its own adapter, `tracker.argv`,
   and the same publisher. Or set `tracker.updates` to `"manual"` in `.agents/run-delivery.json` to post them by
   hand.
-- **`and the runtime needs Node`** or **`is below the runtime's nodeMinimum`**: install Node at the version the line
-  names or newer, on `PATH` or under nvm.
+- **`and the runtime needs Node`** or **`is below the runtime's nodeMinimum`**: the first `node` on `PATH` is missing
+  or older than the runtime's minimum. Put the `bin` folder the line names first on `PATH` (an nvm Node that meets the
+  minimum), or install Node at the version the line names or newer and put its `bin` folder first. `doctor`,
+  `lead-init`, `lead-run` and `lane-start` all say this the same way.
+- **`below 3.11`** from `lane-start`: the Python running the tool, or the first `python3` on `PATH`, is older than
+  3.11. Run the tool with Python 3.11 or newer, and put its `bin` folder first on `PATH`.
+- **`it runs Node`**, **`it runs with no node on its PATH`** or **`it recorded no Node`**, on the delivery supervisor's
+  line: the running supervisor recorded the Node first on its `PATH` as it started, which its queue's checks run unless
+  their profile puts another first. Below the runtime's minimum, or none, it is `wrong`; an older generation's
+  supervisor records none, which is `warn`. Stop it by its pid (`kill <pid>`), then
+  `lead-run --resume` with the right Node first on `PATH`.
 - **`stories with no plan section`**: each story needs a plan heading that names its key; its lane's review context is
   that section. Add the heading, or correct the story's key. `lead-assign` refuses the story until then.
 - **`context.sections the plan lacks`**: add the heading to the plan, or remove it from `context.sections`.
