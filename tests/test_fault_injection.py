@@ -49,6 +49,7 @@ class FaultInjectionTests(LifecycleFixture, unittest.TestCase):
             "generation-ready",
             "exposing-codex",
             "exposing-claude-code",
+            "exposing-claude-code-hooks",
             "verifying",
         }
         for boundary in ACTIVATION_BOUNDARIES:
