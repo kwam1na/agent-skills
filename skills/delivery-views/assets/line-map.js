@@ -264,7 +264,7 @@
     "lane.assigned": "Assigned", "review.round": "Review round", "candidate.handed": "Handed over", "check.started": "Check started",
     "check.finished": "Check finished", "check.failed": "Check failed", "check.retried": "Check retried", "check.reused": "Check reused", "candidate.merged": "Landed",
     "candidate.stopped": "Stopped", "base.broken": "Base broken", "base.repaired": "Base repaired", "base.rerun.started": "Rerun on the main line", "base.rerun.finished": "Rerun verdict", "base.verified": "Base verified",
-    "selection.refused": "Checks refused", "hook.held": "Stop held", "lease.granted": "Lease granted",
+    "selection.refused": "Checks refused", "hook.held": "Stop flagged", "lease.granted": "Lease granted",
     "lease.released": "Lease released", "release.started": "Release started", "release.finished": "Release finished",
     "finish.met": "Finish line met", "decision.recorded": "Decision", "blocker.recorded": "Blocker", "delivery.closed": "Delivery closed"
   });

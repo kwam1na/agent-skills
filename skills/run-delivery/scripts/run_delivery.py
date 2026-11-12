@@ -6930,8 +6930,8 @@ def lead_may_stop(payload: dict) -> dict:
                           "told; lead each from its own checkout.")
     if payload.get("stop_hook_active") is not True:
         for c, _, needed in missing:
-            summary = (f"lead.may-stop returned {verdict}: the lead's stop was held while no lead-wait listened, "
-                       f"with {', '.join(needed)}")
+            what = "the lead's stop was held" if verdict == "block" else "the lead stopped with a warning"
+            summary = f"lead.may-stop returned {verdict}: {what} while no lead-wait listened, with {', '.join(needed)}"
             tool = c.release / "skills/orchestrate-work/scripts/delivery_state.py"
             done = run([sys.executable, "-B", str(tool), "--dir", str(c.state), "journal", "--kind", HOOK_HELD,
                         "--summary", summary], check=False, timeout=10)
@@ -6978,6 +6978,8 @@ def lane_next(c, state: dict, story: str) -> str:
     stage = planned.get("stage") if planned else None
     if stage == "settled":
         return "none: the story settled with no change needed"
+    if planned and planned.get("noChange"):
+        return "none while the story's no-change hand-off waits for the lead to accept it; the lead answers"
     if item is None and stage in (None, "planned"):
         return f"{start} lane-start {story} --base {c.base_branch}"
     return f"{start} gate {story}"

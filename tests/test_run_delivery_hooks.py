@@ -309,14 +309,16 @@ class LeadMayStopTests(HookCase):
         held = self.held(fx)
         self.assertEqual(len(held), 1, held)
         self.assertIsNone(held[0]["lane"])
-        self.assertIn("lead.may-stop returned block", held[0]["summary"])
+        self.assertIn("lead.may-stop returned block: the lead's stop was held while no lead-wait listened",
+                      held[0]["summary"])
         self.assertIn("lane-1 (working)", held[0]["summary"])
         self.assertEqual(self.stop(fx, stop_hook_active=True)["verdict"], "block")
         self.assertEqual(len(self.held(fx)), 1)
         self.mode(fx, lead_may_stop="warn")
         self.assertEqual(self.stop(fx)["verdict"], "warn")
         self.assertEqual(len(self.held(fx)), 2)
-        self.assertIn("lead.may-stop returned warn", self.held(fx)[-1]["summary"])
+        self.assertIn("lead.may-stop returned warn: the lead stopped with a warning while no lead-wait listened",
+                      self.held(fx)[-1]["summary"])
         self.lease(fx, os.getpid(), 5)
         self.assertEqual(self.stop(fx), {"verdict": "allow"})
         self.assertEqual(len(self.held(fx)), 2)
@@ -460,7 +462,8 @@ class DeliveryOrientTests(HookCase):
                 else:
                     self.assertIn("run-delivery: this session is lane-1 of delivery FX-1, on story FX-2.", context)
                     self.assertIn("- lane brief: docs/lane-brief.md", context)
-                    self.assertIn("- next lane command: ", context)
+                    self.assertIn("- next lane command: none while the story's no-change hand-off waits for the lead "
+                                  "to accept it; the lead answers", context)
                 for text in HOSTILE:
                     self.assertNotIn(text, context)
                 self.assertNotIn("IGNORE", context)
@@ -638,7 +641,7 @@ class HookDocumentationTests(unittest.TestCase):
         self.assertIn("Where this generation installs host hooks, run-delivery's `lead.may-stop` hook also holds a "
                       "lead's stop while a lane works or a candidate is queued and no `lead-wait` listens, and journals "
                       "`hook.held`, which never wakes a `wait`", guide)
-        self.assertIn("| `hook.held` | None: a host hook kept the lead from stopping while no listener ran", guide)
+        self.assertIn("| `hook.held` | None: a host hook held, or warned about, a lead's stop while no listener ran", guide)
 
 
 if __name__ == "__main__":

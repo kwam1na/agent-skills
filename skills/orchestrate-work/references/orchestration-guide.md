@@ -124,7 +124,7 @@ the lead and the lanes make them instead, as the commands print them.
 | `check.reused` | None: the candidate's work item already says it was handed off and is being checked; the reused check shows in the record and the views. |
 | `check.selected` | None: the lead's selection and its reason show in the record and the views, and the checks it ran post with `candidate.merged` or `candidate.stopped`. |
 | `selection.refused` | None: the stop posts with `candidate.stopped`, and the provider's words show in the record and the views. |
-| `hook.held` | None: a host hook kept the lead from stopping while no listener ran, and the entry shows in the record and the views. |
+| `hook.held` | None: a host hook held, or warned about, a lead's stop while no listener ran, and the entry shows in the record and the views. |
 | `candidate.merged` | On the ticket: the merge commit, the checks run, and any check reported but not awaited; the ticket moves to its review or completed state. |
 | `candidate.stopped` | On the ticket: the stop code and what happens next, whether returned to the lane, re-queued or pending a decision. |
 | `base.verified` | None: the post-merge `fullHealth` passed at the base head the named merge reached, and the result shows in the record and the views. |
