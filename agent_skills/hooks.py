@@ -182,6 +182,11 @@ def declared_hooks(generation: Path, host: str, event: str) -> tuple[list[Hook],
     return found, errors
 
 
+def declared_events(generation: Path, host: str) -> list[str]:
+    """The events, sorted, for which ``generation``'s profile declares at least one hook for ``host``."""
+    return [event for event in EVENTS if declared_hooks(generation, host, event)[0]]
+
+
 def _member_hooks(generation: Path, member: str, skill: object, host: str, event: str, found: list[Hook],
                   errors: list[str]) -> None:
     """Add one profile member's hooks for ``host`` and ``event`` to ``found``, in manifest order."""
