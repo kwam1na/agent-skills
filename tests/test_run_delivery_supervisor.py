@@ -765,7 +765,9 @@ class SupervisorProcessTests(unittest.TestCase):
         self.assertEqual((status["pid"], status["state"], status["why"]), (first["pid"], "stopped", "close"))
         self.assertFalse(answers(live["port"]), "something still listens on the view's port")
         log = (fx.tmp / "flow-log/FX-1.supervisor.log").read_text()
-        self.assertIn(f"supervisor: stopped the live view (pid {live['pid']}) on port {live['port']}", log)
+        stopped = log.index(f"supervisor: stopped the live view (pid {live['pid']}) on port {live['port']}")
+        self.assertLess(log.index("supervisor: drew the views and copied the record one last time"), stopped,
+                        "the view was stopped before the final render")
 
 
 class SupervisorNodeTests(unittest.TestCase):
@@ -923,6 +925,47 @@ class LivePortTests(unittest.TestCase):
                 self.module.live_port_setting()
 
 
+class LiveViewStopTests(unittest.TestCase):
+    """stop_view stops live.json's pid only while it runs the live view: a pid the host has given to another process
+    is left alone. Each process here is started detached, as a view outlives what started it, so none is this case's
+    child and none lingers as one."""
+
+    def setUp(self) -> None:
+        self.module = tool_module("run_delivery_for_live_stop")
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.state = Path(folder.name)
+
+    def detached(self, *argv: str) -> int:
+        pid = int(subprocess.run(["sh", "-c", '"$@" >/dev/null 2>&1 & echo $!', "sh", *argv], capture_output=True,
+                                 text=True, check=True).stdout.strip())
+        def stop() -> None:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)
+        self.addCleanup(stop)
+        # Until the background shell has handed the pid to the program itself.
+        expected = "render_state.py" if any(arg.endswith("render_state.py") for arg in argv) else argv[0]
+        command = lambda: subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout
+        wait_for(lambda: expected in command(), f"{expected} to run as pid {pid}", 10)
+        return pid
+
+    def test_a_recorded_pid_that_no_longer_runs_the_view_is_left_alone_and_one_that_does_is_stopped(self) -> None:
+        other = self.detached("sleep", "300")
+        (self.state / "live.json").write_text(json.dumps({"port": 24756, "pid": other}))
+        said = self.module.stop_view(self.state)
+        self.assertEqual(said, f"left pid {other} alone: live.json names it, but it no longer runs the live view")
+        time.sleep(0.5)
+        self.assertTrue(alive(other), "a pid that isn't the view was signalled")
+        # A process that runs a render_state.py live is the view: stopped by that pid.
+        script = self.state / "render_state.py"
+        script.write_text("import time\ntime.sleep(300)\n")
+        view = self.detached(sys.executable, "-B", str(script), "live", "--dir", str(self.state))
+        (self.state / "live.json").write_text(json.dumps({"port": 24756, "pid": view}))
+        self.assertEqual(self.module.stop_view(self.state), f"stopped the live view (pid {view}) on port 24756")
+        self.assertFalse(alive(view))
+        self.assertTrue(alive(other))
+
+
 def live_of(fx: Fixture) -> dict:
     path = fx.tmp / "record/live.json"
     return json.loads(path.read_text()) if path.exists() else {}
@@ -1068,6 +1111,28 @@ class LiveViewAddressTests(unittest.TestCase):
         self.assertIn({"name": "live", "pid": view}, second["children"])
         self.assertEqual(status_of(fx.tmp / "record")["state"], "running")
         self.assertIsNone(banner_of(address))
+        # SIGHUP and SIGINT are recorded the same way, each named; the view stays and is adopted again.
+        for sig, name in ((signal.SIGHUP, "SIGHUP"), (signal.SIGINT, "SIGINT")):
+            with self.subTest(signal=name):
+                stopped = self.stop_supervisor(fx, sig)
+                status = status_of(fx.tmp / "record")
+                self.assertEqual((status["pid"], status["state"], status["why"], status["signal"]),
+                                 (stopped, "stopped", "signal", name))
+                self.assertIn(f"it received {name}.", banner_of(address))
+                code, out = fx.flow("lead-run", "--resume", cwd=m, env=running(fx))
+                self.assertEqual(code, 0, out)
+                self.assertEqual((live_of(fx)["pid"], lock_of(fx)["address"]), (view, address))
+
+    def test_a_supervisor_never_started_reads_not_started(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        code, out = fx.flow("lead-init", "--no-supervisor", cwd=m, env=running(fx))
+        self.assertEqual(code, 0, out)
+        self.assertFalse((fx.tmp / "record/supervisor.json").exists())
+        code, out = fx.flow("lead-reconcile", cwd=m)
+        line = next(l for l in out.splitlines() if l.startswith("supervisor:"))
+        self.assertTrue(line.startswith("supervisor: down (not started); restart it with "), line)
+        self.assertNotIn("live view", line)
 
     def test_a_killed_group_leaves_the_view_and_a_dead_or_deaf_view_is_replaced_without_a_signal(self) -> None:
         fx = self.fixture()

@@ -885,7 +885,7 @@ do. A line marked `skipped` names the check it waits on: fix that one first.
   works by hand.
 - **`supervisor: down (<why>)`**: every lead command's status line says why the supervisor stopped, as
   `supervisor.json` records it, and the live view's address while the view still serves; the view's page shows the
-  same in a banner. `stopped without recording why` is what a killed supervisor leaves. `lead-run --resume` starts it
+  same in a banner. `stopped without recording why` is what a killed supervisor leaves, and `not started` what `lead-init --no-supervisor` leaves. `lead-run --resume` starts it
   again and adopts the view, so the address stays the same.
 - **`it wanted port`**: another process held the live view's port, so the view serves on a free one, which is
   recorded and kept by later restarts. The line names the port it wanted and who held it. To have the view back on

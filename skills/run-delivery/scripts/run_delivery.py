@@ -6280,6 +6280,7 @@ LIVE_PORT_BASE, LIVE_PORT_SPAN = 20000, 10000
 STOPPED_WORDS = {"close": "it closed the delivery", "replaced": "lead-init --replace replaced the record",
                  "held": "lead-close asked it to stop"}
 UNRECORDED_STOP = "stopped without recording why"
+NOT_STARTED = "not started"
 
 
 def derived_live_port(top: str, key: str) -> int:
@@ -6425,7 +6426,10 @@ def write_supervisor_status(state: Path, pid: object, running: bool, why: str | 
 
 
 def supervisor_down_words(state: Path) -> str:
-    """Why the supervisor is down, as `supervisor.json` records it."""
+    """Why the supervisor is down, as `supervisor.json` records it: not started when no supervisor ever wrote it, as
+    after lead-init --no-supervisor."""
+    if not (state / SUPERVISOR_FILE).exists():
+        return NOT_STARTED
     status = json_object(state / SUPERVISOR_FILE)
     if status.get("state") == "stopped":
         return str(status.get("said") or status.get("why") or UNRECORDED_STOP)
@@ -8024,6 +8028,8 @@ class Supervisor:
                     write_needs(c, None, len(read_log("supervisor", c.delivery)), time.monotonic())
                     render_views(c, only="renderers")
                     copy_latest(c)
+                    if closed:
+                        print(f"{now()} supervisor: drew the views and copied the record one last time", flush=True)
             if closed and not self.lost:
                 # The delivery's own close: recorded, then the view stopped last, by its recorded pid.
                 with contextlib.suppress(OSError):

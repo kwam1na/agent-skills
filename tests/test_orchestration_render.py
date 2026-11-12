@@ -2335,6 +2335,46 @@ setTimeout(async () => {
         document["state"]["schemaVersion"] = schema_version
         return document
 
+    WATCH_SHIM = r"""
+const fs = require("fs");
+const [scriptPath] = process.argv.slice(2);
+const program = fs.readFileSync(scriptPath, "utf8");
+const banner = { textContent: "", hidden: true };
+globalThis.document = { getElementById: (id) => (id === "supervisor-banner" ? banner : null) };
+const answers = [{ banner: "The supervisor is down since then: it received SIGTERM." }, { banner: null }];
+const asked = [];
+globalThis.fetch = (url) => {
+  asked.push(url);
+  const answer = answers.shift();
+  return Promise.resolve({ json: () => Promise.resolve(answer) });
+};
+globalThis.setInterval = (callback, ms) => { globalThis.__tick = callback; globalThis.__every = ms; return 1; };
+new Function(program)();
+(async () => {
+  const seen = [];
+  for (let i = 0; i < 2; i++) {
+    globalThis.__tick();
+    await new Promise((r) => setTimeout(r, 10));
+    seen.push({ text: banner.textContent, hidden: banner.hidden });
+  }
+  process.stdout.write(JSON.stringify({ every: globalThis.__every, asked, seen }));
+})();
+"""
+
+    def test_an_open_page_shows_and_clears_the_supervisor_banner_from_what_the_view_answers(self) -> None:
+        markup = render_state._banner_markup(self.root / "no-such-status.json")
+        program = re.search(r"<script>\n(.*?)\n</script>", markup, re.S).group(1)
+        script, shim = self.root / "watch.js", self.root / "watch-shim.cjs"
+        script.write_text(program, encoding="utf-8")
+        shim.write_text(self.WATCH_SHIM, encoding="utf-8")
+        result = run(["node", str(shim), str(script)])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        shown = json.loads(result.stdout)
+        self.assertEqual(shown["every"], render_state.SUPERVISOR_POLL_MS)
+        self.assertEqual(shown["asked"], ["/supervisor", "/supervisor"])
+        self.assertEqual(shown["seen"], [{"text": "The supervisor is down since then: it received SIGTERM.", "hidden": False},
+                                         {"text": "", "hidden": True}])
+
     def test_large_counts_are_whole_numbers_never_exponents(self) -> None:
         document = copy.deepcopy(self.document)
         subject = document["state"]["queue"][0]["subject"]

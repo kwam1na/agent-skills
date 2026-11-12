@@ -353,6 +353,7 @@ Every lead command's status line names the view's address while the view serves:
 - running: `supervisor: running (pid N); live view <address>`;
 - down, with the view serving: `supervisor: down (<why>); live view <address>; restart it with ... lead-run --resume`;
 - down, with the view gone too: the same line with no address;
+- never started, as after `lead-init --no-supervisor`: `supervisor: down (not started); restart it with ...`;
 - closed, or a close stopped partway: as before, that line.
 
 ## The delivery posture
