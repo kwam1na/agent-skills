@@ -70,8 +70,8 @@ def _write_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-def hooked_corpus(target: Path, events: tuple[str, ...]) -> Path:
-    """A copy of the corpus whose ``HOOK_SKILL`` declares one Claude Code hook for each of ``events``."""
+def hooked_corpus(target: Path, events: tuple[str, ...], *, hosts: tuple[str, ...] = ("claude-code",)) -> Path:
+    """A copy of the corpus whose ``HOOK_SKILL`` declares one hook for ``hosts`` for each of ``events``."""
     from corpus_copy import copy_corpus
 
     copy_corpus(target)
@@ -81,7 +81,7 @@ def hooked_corpus(target: Path, events: tuple[str, ...]) -> Path:
             {
                 "argv": [f"scripts/{scripts[event][0]}.py"],
                 "event": event,
-                "hosts": ["claude-code"],
+                "hosts": list(hosts),
                 "id": f"{HOOK_SKILL}.{scripts[event][0]}",
             }
             for event in events

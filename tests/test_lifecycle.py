@@ -943,24 +943,26 @@ class ReportShapeTests(LifecycleFixture, unittest.TestCase):
 
         self.assertEqual(
             JOURNAL_PHASES,
-            ("staged", "generation-ready", "exposing-codex", "exposing-claude-code", "exposure-switched",
-             "verifying", "marker-committed", "cleanup"),
+            ("staged", "generation-ready", "exposing-codex", "exposing-claude-code", "exposing-claude-code-hooks",
+             "exposure-switched", "verifying", "marker-committed", "cleanup"),
         )
         self.assertEqual(
             ACTIVATION_BOUNDARIES,
-            ("staged", "generation-ready", "exposing-codex", "exposing-claude-code", "verifying",
-             "marker-published", "marker-committed", "cleanup"),
+            ("staged", "generation-ready", "exposing-codex", "exposing-claude-code", "exposing-claude-code-hooks",
+             "verifying", "marker-published", "marker-committed", "cleanup"),
         )
 
     def test_each_plan_action_has_the_same_members(self) -> None:
         lifecycle = Lifecycle(self.repository)
-        members = ["action", "blockers", "current", "schemaVersion", "target"]
+        members = ["action", "blockers", "current", "hooks", "schemaVersion", "target"]
+        no_hooks = {"added": [], "removed": []}
         target = ["archiveSha256", "generation", "profile", "releaseId"]
         install = lifecycle.plan(*self.v1)
         self.assertEqual(sorted(install), members)
         self.assertEqual((install["action"], install["blockers"], install["current"]), ("install", [], None))
         self.assertEqual(install["schemaVersion"], "agent-skills-plan/1")
         self.assertEqual(sorted(install["target"]), target)
+        self.assertEqual(install["hooks"], no_hooks)
 
         lifecycle.install(*self.v1, maintainer=True)
         for archive, action in ((self.v1, "no-op"), (self.v2, "update")):
@@ -970,23 +972,26 @@ class ReportShapeTests(LifecycleFixture, unittest.TestCase):
                 self.assertEqual(plan["action"], action)
                 self.assertEqual(sorted(plan["current"]), target)
                 self.assertEqual(sorted(plan["target"]), target)
+                self.assertEqual(plan["hooks"], no_hooks)
 
         (self.repository / ".agent-skills" / "current").unlink()
         blocked = lifecycle.plan(*self.v2)
         self.assertEqual(sorted(blocked), members)
         self.assertEqual((blocked["action"], blocked["target"]), ("blocked", None))
         self.assertEqual(blocked["blockers"], ["exposure-conflict"])
+        self.assertEqual(blocked["hooks"], no_hooks)
 
     def test_diff_has_its_members(self) -> None:
         lifecycle = Lifecycle(self.repository)
         install = lifecycle.diff(*self.v1)
-        self.assertEqual(sorted(install), ["added", "changed", "removed", "schemaVersion"])
+        self.assertEqual(sorted(install), ["added", "changed", "hooks", "removed", "schemaVersion"])
+        self.assertEqual(install["hooks"], {"added": [], "removed": []})
         self.assertEqual(install["schemaVersion"], "agent-skills-diff/1")
         self.assertEqual((install["changed"], install["removed"]), ([], []))
         self.assertIn("skills/deliver-work/SKILL.md", install["added"])
         lifecycle.install(*self.v1, maintainer=True)
         same = lifecycle.diff(*self.v2)
-        self.assertEqual(sorted(same), ["added", "changed", "removed", "schemaVersion"])
+        self.assertEqual(sorted(same), ["added", "changed", "hooks", "removed", "schemaVersion"])
 
 
 if __name__ == "__main__":

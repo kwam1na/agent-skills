@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 from .adoption import AdoptionError, validate_adoption
+from .hosts.claude import HOOK_EVENTS, SETTINGS_FILE
 from .hosts.exposure import exposure_records
 from .validate import canonical_json, safe_relative_path
 
@@ -74,6 +75,20 @@ def _validate_created_directories(value: object) -> None:
         raise ReceiptError("receipt-invalid: created directories are malformed")
 
 
+def _validate_hooks(value: object) -> None:
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"created", "events", "file"}
+        or value["file"] != SETTINGS_FILE
+        or not isinstance(value["created"], bool)
+        or not isinstance(value["events"], list)
+        or any(event not in HOOK_EVENTS for event in value["events"])
+        or value["events"] != sorted(set(value["events"]))
+        or (not value["events"] and not value["created"])
+    ):
+        raise ReceiptError("receipt-invalid: hook entries are malformed")
+
+
 def validate_version(value: object) -> dict:
     if not isinstance(value, dict) or set(value) != {"files", "generation", "release"}:
         raise ReceiptError("receipt-invalid: version record is malformed")
@@ -96,19 +111,12 @@ def validate_receipt(value: object) -> dict:
         "release",
         "schemaVersion",
     }
-    if (
-        not isinstance(value, dict)
-        or frozenset(value)
-        not in {
-            frozenset(required),
-            frozenset(required | {"exposures"}),
-            frozenset(required | {"adoption", "exposures"}),
-            frozenset(required | {"createdDirectories", "exposures"}),
-            frozenset(
-                required | {"adoption", "createdDirectories", "exposures"}
-            ),
-        }
-    ):
+    optional = {"adoption", "createdDirectories", "exposures", "hooks"}
+    if not isinstance(value, dict) or not required <= set(value) <= required | optional:
+        raise ReceiptError("receipt-invalid: receipt shape is malformed")
+    extras = set(value) - required
+    # Every optional member came with exposures, and a single-skill adoption installs no hooks.
+    if (extras and "exposures" not in extras) or {"adoption", "hooks"} <= extras:
         raise ReceiptError("receipt-invalid: receipt shape is malformed")
     if value["schemaVersion"] != RECEIPT_SCHEMA:
         raise ReceiptError("receipt-invalid: unsupported receipt schema")
@@ -118,6 +126,8 @@ def validate_receipt(value: object) -> dict:
         raise ReceiptError("receipt-invalid: host exposure metadata is malformed")
     if "createdDirectories" in value:
         _validate_created_directories(value["createdDirectories"])
+    if "hooks" in value:
+        _validate_hooks(value["hooks"])
     if "adoption" in value:
         try:
             validate_adoption(value["adoption"])
@@ -164,6 +174,7 @@ def make_receipt(
     previous: dict | None,
     adoption: dict | None = None,
     created_directories: list[str] | None = None,
+    hooks: dict | None = None,
 ) -> dict:
     validate_version(version)
     if previous is not None:
@@ -181,5 +192,7 @@ def make_receipt(
         receipt["adoption"] = adoption
     if created_directories is not None:
         receipt["createdDirectories"] = sorted(created_directories)
+    if hooks is not None:
+        receipt["hooks"] = hooks
     validate_receipt(receipt)
     return receipt

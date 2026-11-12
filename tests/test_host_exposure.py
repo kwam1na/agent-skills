@@ -489,6 +489,8 @@ class ClaudeHookExposureTests(LifecycleFixture, unittest.TestCase):
         cls.stop_a = build_hooked_version(stop, base, "core-stop-a")
         cls.stop_b = build_hooked_version(stop, base, "core-stop-b")
         cls.both = build_hooked_version(both, base, "core-both")
+        codex = hooked_corpus(base / "corpus-codex", ("stop",), hosts=("codex",))
+        cls.codex_only = build_hooked_version(codex, base, "core-codex-only")
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -575,7 +577,27 @@ class ClaudeHookExposureTests(LifecycleFixture, unittest.TestCase):
         self.assertFalse(self.settings.exists())
         self.assertNotIn("hooks", self.receipt())
 
+    def test_a_hook_declared_only_for_codex_is_never_installed(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        self.assertEqual(lifecycle.plan(*self.codex_only)["hooks"], {"added": [], "removed": []})
+        lifecycle.install(*self.codex_only, maintainer=True)
+        self.assertFalse(self.settings.exists())
+        self.assertNotIn("hooks", self.receipt())
+
     # 2. Update, remove and rollback -----------------------------------------
+
+    def test_an_update_to_no_hooks_and_a_removal_each_take_out_both_entries(self) -> None:
+        for finish in ("update", "remove"):
+            with self.subTest(finish=finish):
+                self.fresh()
+                user = {"hooks": {"Stop": [USER_STOP_ENTRY], "SessionStart": [USER_STOP_ENTRY]}}
+                self.write_settings(user)
+                lifecycle = Lifecycle(self.repository)
+                lifecycle.install(*self.both, maintainer=True)
+                self.assertEqual(self.owned_events(), ["session-start", "stop"])
+                self._install_then(finish, lifecycle)
+                self.assertEqual(self.read_settings(), user)
+                self.assertEqual(self.owned_events(), [])
 
     def test_an_update_that_adds_session_start_adds_only_that_entry(self) -> None:
         self.write_settings({"hooks": {"Stop": [USER_STOP_ENTRY]}})
@@ -731,6 +753,25 @@ class ClaudeHookExposureTests(LifecycleFixture, unittest.TestCase):
                     if not (self.repository / ".agent-skills" / "active.json").exists():
                         self.assertFalse(self.settings.exists(), "a created file left empty is deleted")
 
+    def test_an_unfinished_operation_over_a_malformed_settings_file_is_a_conflict_to_review(self) -> None:
+        lifecycle = Lifecycle(self.repository)
+        lifecycle.install(*self.v1, maintainer=True)
+
+        def interrupt(phase: str) -> None:
+            if phase == "exposing-claude-code":
+                raise RuntimeError("interrupted")
+
+        with self.assertRaisesRegex(RuntimeError, "interrupted"):
+            lifecycle.update(*self.stop_a, maintainer=True, fault=interrupt)
+        self.write_settings([])
+        status = lifecycle.status().as_dict()
+        self.assertEqual((status["blockers"], status["recoveryPlan"]), (["exposure-conflict"], ["review-host-projections"]))
+        with self.assertRaisesRegex(ValueError, "exposure-conflict: .claude/settings.json is not a JSON object"):
+            lifecycle.recover(maintainer=True)
+        self.write_settings({"model": "opus"})
+        self.assertEqual(lifecycle.recover(maintainer=True)["action"], "restore-prior")
+        self.assertEqual(self.read_settings(), {"model": "opus"})
+
     # 4. Refusals -------------------------------------------------------------
 
     def test_preflight_refuses_each_malformed_settings_file_naming_the_fix(self) -> None:
@@ -741,7 +782,8 @@ class ClaudeHookExposureTests(LifecycleFixture, unittest.TestCase):
             "not JSON": ("{not json", "is not a JSON object"),
             "hooks not an object": ({"hooks": []}, '"hooks" is not an object'),
             "event list not a list": ({"hooks": {"Stop": {}}}, '"hooks.Stop" is not a list'),
-            "altered owned entry": ({"hooks": {"Stop": [altered]}}, "differs from the entry"),
+            "altered owned entry": ({"hooks": {"Stop": [altered]}},
+                                    '"hooks.Stop" holds an entry running the agent-skills dispatcher that differs'),
         }
         for name, (contents, message) in cases.items():
             with self.subTest(case=name):
