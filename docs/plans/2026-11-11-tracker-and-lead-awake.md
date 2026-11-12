@@ -136,7 +136,7 @@ replaced with them word for word, so `lead-setup` drafts them from the tracker s
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | V26-3260, V26-3262 | `skills/run-delivery/`, `skills/orchestrate-work/`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_merge_queue.py`, `tests/test_orchestration_render.py`, `tests/test_orchestration_state.py`, `catalog.json`, `profiles/`, `provenance.lock.json` and `docs/solutions/` |
+| 1 | 1 | V26-3260, V26-3262 | `skills/run-delivery/`, `skills/orchestrate-work/`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_merge_queue.py`, `tests/test_orchestration_render.py`, `tests/test_orchestration_state.py`, `tests/test_registry.py`, `catalog.json`, `profiles/`, `provenance.lock.json` and `docs/solutions/` |
 
 One lane, because both items change `run_delivery.py`, the supervisor and its tests. V26-3260 goes first. V26-3262 rebuilds how the
 supervisor starts the view, and builds on the lock record V26-3260 extends.
