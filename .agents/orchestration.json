@@ -1232,6 +1232,24 @@
         "timeoutSeconds": 5400
       },
       {
+        "id": "tests.test_run_delivery_hooks",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_run_delivery_hooks.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_run_delivery_hooks.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_run_delivery_plan_review",
         "argv": [
           ".venv/bin/python",
