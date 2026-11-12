@@ -9,7 +9,8 @@
   reviews --url URL --head SHA                            -> {"checks": [{"name", "state": passed|failed|pending, "at",
                                                                          "doneAt"?}],
                                                               "reviews": [{"author", "account", "at", "body"}],
-                                                              "approvals": [{"account", "name", "at"}]}
+                                                              "approvals": [{"account", "name", "at"}],
+                                                              "reports": [{"id", "result", "at", "data"}]}
   ready --url URL                                         -> {"url", "draft": false}
   merge --url URL --strategy merge|squash [--head SHA]    -> {"url", "state": "merged"}
   merge --source BRANCH --head SHA --strategy merge|squash [--destination D] -> {"url", "state": "merged"}
@@ -164,7 +165,13 @@ def main():
         participants = call("GET", f"/pullrequests/{number}").get("participants") or []
         approvals = [{"account": (p.get("user") or {}).get("uuid", ""), "name": (p.get("user") or {}).get("display_name", ""),
                       "at": p.get("participated_on") or ""} for p in participants if p.get("approved")]
-        print(json.dumps({"checks": checks, "reviews": reviews, "approvals": approvals}))
+        # The Code Insights reports at exactly --head, whatever head the PR reports: id is the report's external_id,
+        # result PASSED, FAILED or PENDING, at its updated_on, and data its [{title, type, value}].
+        reports = [{"id": r.get("external_id", ""), "result": r.get("result") or "PENDING", "at": r.get("updated_on") or "",
+                    "data": [{"title": d.get("title", ""), "type": d.get("type", ""), "value": d.get("value")}
+                             for d in r.get("data") or []]}
+                   for r in pages(f"/commit/{args.head}/reports")]
+        print(json.dumps({"checks": checks, "reviews": reviews, "approvals": approvals, "reports": reports}))
     elif args.command == "ready":
         call("PUT", f"/pullrequests/{pr_number(args.url)}", {"draft": False})
         print(json.dumps({"url": args.url, "draft": False}))

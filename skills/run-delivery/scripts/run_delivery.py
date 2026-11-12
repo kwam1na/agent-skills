@@ -3492,7 +3492,8 @@ def missing_members(found: dict, conf: dict) -> list[str]:
     needed = []
     if any(r.get("account") for r in conf["reviewers"]) and any("account" not in r for r in found.get("reviews", [])):
         needed.append("`account` on each review comment (a reviewer is matched by account)")
-    if any(r.get("gate") == "approval" for r in conf["reviewers"]) and "approvals" not in found:
+    approving = [r for r in conf["reviewers"] if r.get("gate") == "approval" and not r.get("report")]  # a report stands in
+    if approving and "approvals" not in found:
         needed.append("`approvals` (a reviewer has gate \"approval\")")
     if any(r.get("report") for r in conf["reviewers"]) and "reports" not in found:
         needed.append("`reports` (a reviewer has `report`)")
@@ -3530,6 +3531,12 @@ def classify_reviews(found: dict, conf: dict, now: float) -> dict:
         settled = passed and now > max(instant(ch.get("doneAt") or ch["at"]) for ch in checks) + conf["settleSeconds"]
         for reviewer in conf["reviewers"]:
             mine = [r for r in found.get("reviews", []) if reviewer_matches(reviewer, r, False)]
+            if reviewer.get("report"):  # read from its Code Insights report at the head, not from timestamps
+                reading = pr_review_gates.report_reading(reviewer, mine, found, checks, settled, instant)
+                if "refusal" in reading:
+                    raise Stop(reading["refusal"])
+                out["reviewers"][reviewer["id"]] = reading
+                continue
             review = max(mine, key=lambda r: instant(r["at"]), default=None)
             if passed and review is not None and instant(review["at"]) >= latest:
                 state = "current"
@@ -3539,7 +3546,7 @@ def classify_reviews(found: dict, conf: dict, now: float) -> dict:
                 state = "pending"
             out["reviewers"][reviewer["id"]] = {"state": state, "review": review}
     waiting = not passed or any(r["state"] == "pending" for r in out["reviewers"].values())
-    out["status"] = "pending" if waiting else "done"
+    out["status"] = "pending" if waiting and not pr_review_gates.stops_at_once(out["reviewers"]) else "done"
     return out
 
 
@@ -3551,8 +3558,9 @@ def silent_refusal(read: dict, head: str, reviewers: list[dict]) -> Silent | Non
         return None
     states = ", ".join(f"{rid} {r['state']}" for rid, r in read["reviewers"].items())
     unmet = pr_review_gates.live_refusals(reviewers, read["reviewers"], head)
-    return Silent(f"silent reviewer: the pipeline is green at {head[:10]} but {', '.join(silent)} posted nothing "
-                  f"since; re-run its step or ask the lead (reviewers: {states})"
+    said = (pr_review_gates.silent_reasons(read)  # a report's own reason, such as FAILED, when one has it
+            or f"the pipeline is green at {head[:10]} but {', '.join(silent)} posted nothing since")
+    return Silent(f"silent reviewer: {said}; re-run its step or ask the lead (reviewers: {states})"
                   + "".join(f"; and {refusal}" for refusal in unmet))
 
 
@@ -3676,7 +3684,8 @@ def pr_review_text() -> str:
 
 def pr_review_record(key: str, head: str, url: str, conf: dict, read: dict) -> dict[str, dict]:
     """Write the list's pr-review.json from a classified read: each reviewer current (its review, and its gate),
-    absent, or silent. Returns its entries by id."""
+    absent, or silent, or pending when an errored report stopped the read before it was in. Returns its entries by
+    id."""
     entries: dict[str, dict] = {}
     for reviewer in conf["reviewers"]:
         state = read["reviewers"][reviewer["id"]]
@@ -3687,6 +3696,8 @@ def pr_review_record(key: str, head: str, url: str, conf: dict, read: dict) -> d
                          at=review["at"], body=review["body"])
             if state.get("gate"):
                 entry["gate"] = state["gate"]
+        if pr_review_gates.recorded_report(state):
+            entry["report"] = pr_review_gates.recorded_report(state)
         entries[reviewer["id"]] = entry
     record = {"schema": RECORD_SCHEMA, "head": head, "url": url, "reviewers": entries}
     (review_dir(key) / "pr-review.json").write_text(json.dumps(record, indent=2))
@@ -5980,6 +5991,8 @@ def pr_review_acceptance(conf: dict, url: str, head: str, recorded: dict,
             # silent. Otherwise the lane recorded it silent and handed off as if it weren't.
             if not on_silent:
                 problems.append(f"the lane recorded {rid} silent at {head[:10]} but didn't hand off blocked on it")
+        elif on_silent and pr_review_gates.unread_when_stopped(entry) and live["state"] != "current":
+            pass  # not yet in when an errored report stopped the read, nor since: the block is the lead's decision
         elif entry.get("state") != "current":
             if reviewer["required"]:
                 problems.append(f"{rid} is required, but the lane recorded it {entry.get('state')}")
@@ -8758,6 +8771,9 @@ class Doctor:
                              "or use an adapter that answers `reviews`")
         warnings_ = []
         if not conf["legacy"]:
+            refused = pr_review_gates.forge_refusal(conf["reviewers"], self.c.forge.get("adapter"))
+            if refused:
+                return "wrong", refused
             unsigned = [r for r in conf["reviewers"] if not r.get("signature")]
             alone = [r["id"] for r in unsigned if not r.get("account")]
             if alone:

@@ -9,7 +9,8 @@
   reviews --url URL --head SHA                            -> {"checks": [{"name", "state": passed|failed|pending, "at",
                                                                          "doneAt"?}],
                                                               "reviews": [{"author", "account", "at", "body"}],
-                                                              "approvals": [{"account", "name", "at", "commit"}]}
+                                                              "approvals": [{"account", "name", "at", "commit"}],
+                                                              "reports": null}
   ready --url URL                                         -> {"url", "draft": false}
   merge --url URL --strategy merge|squash [--head SHA]    -> {"url", "state": "merged"}
   merge --source BRANCH --head SHA --strategy merge|squash [--destination D] -> {"url", "state": "merged"}
@@ -161,7 +162,8 @@ def main():
         approvals = [{"account": login, "name": (entry.get("author") or {}).get("name") or login,
                       "at": entry.get("submittedAt", ""), "commit": (entry.get("commit") or {}).get("oid", "")}
                      for login, entry in deciding.items() if entry.get("state") == "APPROVED"]
-        print(json.dumps({"checks": checks, "reviews": reviews, "approvals": approvals}))
+        # GitHub has no Code Insights reports: null, not empty, so a reviewer with `report` is refused, not waited on.
+        print(json.dumps({"checks": checks, "reviews": reviews, "approvals": approvals, "reports": None}))
     elif args.command == "ready":
         gh("pr", "ready", pull_request(args.url))
         print(json.dumps({"url": args.url, "draft": False}))

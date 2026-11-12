@@ -3996,7 +3996,7 @@ class RunDeliveryReleaseAndNamesTests(unittest.TestCase):
                                                            "doneAt": "2026-01-01T00:00:03Z"}],
                                                "reviews": [{"author": "pipeline-bot", "account": "pipeline-bot",
                                                             "at": "2026-01-01T00:00:02Z", "body": "Looks fine"}],
-                                               "approvals": []})
+                                               "approvals": [], "reports": None})
             self.assertEqual((said["ready"], said["merge"]), ({"url": url, "draft": False}, {"url": url, "state": "merged"}))
             # A binding's merge step knows the branch, not the pull request: --source finds its one open pull request
             # and merges it at exactly the checked head.
