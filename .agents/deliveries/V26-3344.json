@@ -24,7 +24,14 @@
         "tests/test_merge_queue.py",
         "tests/test_run_delivery_tracker.py",
         "catalog.json",
-        "docs/solutions/*",
+        "docs/solutions/*"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "skills/run-delivery/scripts/pr_review_gates.py",
+        "tests/test_run_delivery_pr_review_gates.py",
+        "tests/test_release_integration.py",
         "skills/run-delivery/adapters/*",
         "skills/run-delivery/references/*",
         "skills/run-delivery/scripts/run_delivery.py",
@@ -34,13 +41,6 @@
         ".agents/orchestration.json",
         "profiles/*",
         "provenance.lock.json"
-      ]
-    },
-    "lane-2": {
-      "owns": [
-        "skills/run-delivery/scripts/pr_review_gates.py",
-        "tests/test_run_delivery_pr_review_gates.py",
-        "tests/test_release_integration.py"
       ]
     }
   },
