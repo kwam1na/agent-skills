@@ -1036,7 +1036,8 @@ def _render(brief_template: str) -> list[str]:
         (root / "charter.md").write_text("<charter text, verbatim>\n", encoding="utf-8")
         (root / "context.md").write_text("<context refs>\n", encoding="utf-8")
         config = types.SimpleNamespace(lenses={"lens.example": ("example", str(root / "charter.md"))}, bound=4,
-                                       plan="docs/plans/example.md", delivery="EX-1", plan_store=None)
+                                       plan="docs/plans/example.md", delivery="EX-1", plan_store=None,
+                                       follow_ups="deferred")
         release = {name: "<value>" for name in ("releaseId", "profile", "archiveSha256", "metadataSha256")}
         prior = [{"binding": {"round": 1}, "state": "obtained", "result": {"outcome": "aligned"}}]
         story = ("EX-1", "lens.example", "<candidate>", "<tree>", "<merge base>", Path("<checkout>"))

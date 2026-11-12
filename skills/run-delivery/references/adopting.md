@@ -563,7 +563,8 @@ When every story is merged or removed, every merged story's checkout is cleaned 
 lane is idle or done, and nothing in "Needs you" holds it, the supervisor closes the delivery itself, in order: `fullHealth` once per base head (skipped when the
 base declares the `focused` posture, and already run at that head when the delivery merged anything, since the
 supervisor runs it after each merge or batch), a follow-up for
-each deferred finding, `delivery.closed` and then a wait until the tracker has every update, the archive, a friction
+each deferred finding the lead didn't drop at acceptance (none when the delivery file sets `"followUps": "none"`),
+`delivery.closed` and then a wait until the tracker has every update, the archive, a friction
 note stub beside
 it for your `compound-learning` pass, and then it stops. There is nothing to run for the close. `lead-close` is for
 closing early, or with the supervisor down. With the lead's checkout gone, the archived copy still serves the live

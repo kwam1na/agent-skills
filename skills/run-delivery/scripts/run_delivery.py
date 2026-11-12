@@ -19,7 +19,7 @@ Lane:
   handoff        <key> --pr URL [--findings TEXT] [--blocked LABEL=REASON ...]
 Lead:
   lead-setup <key> --plan P --base B --pattern RE ... | lead-init | lead-brief | lead-assign <key...> --lane L --title T
-  lead-accept <key> [--accept-blocked LABEL ...] [--accept-restarts] | ship | adapter-test
+  lead-accept <key> [--accept-blocked LABEL ...] [--accept-restarts] [--drop-finding ID=REASON ...] | ship | adapter-test
   lead-carry-review <key> --from HEAD --to HEAD --reason TEXT
 Merge queue:
   pr-review-current --branch B --head H [--wait]   (a reviewGate: exit 0 only for a current, passing review.pr review)
@@ -101,6 +101,11 @@ STORY_SEVERITIES = (
     "  - P2 and P3 are deferrable: file each with `\"state\": \"deferred\"` and `\"deferredIssue\": \"<what its follow-up item\n"
     "    must say>\"`, and so is that P1, which also lists its id in `lateFindings`. A deferred finding doesn't block\n"
     "    `aligned`.")
+# A delivery whose followUps is none files nothing for a deferral, so its brief asks what is left, not what to file.
+NO_FOLLOW_UP_SEVERITIES = (STORY_SEVERITIES.replace("<what its follow-up item\n    must say>", "<what is left\n    undone>")
+                           + "\n  - This delivery files no follow-up item: its followUps is none. A deferred finding is "
+                           "recorded in the\n    delivery's record and left unfiled.")
+FOLLOW_UPS = ("deferred", "none")
 PLAN_SEVERITIES = (
     "  - P0 and P1 are actionable, and a plan review never defers them.\n" + OUT_OF_DELTA +
     "  - P2 and P3 notes belong in `evidence`, never in `findings`: a plan review has no deferral path, so a result\n"
@@ -712,6 +717,9 @@ class Config:
         self.finish = d.get("finish", [])
         self.ship = d.get("ship")
         self.brief_notes = d.get("brief", {}).get("notes")
+        self.follow_ups = d.get("followUps", "deferred")
+        if self.follow_ups not in FOLLOW_UPS:
+            raise Stop(f"{self.delivery_where}: followUps must be deferred or none, not {self.follow_ups!r}")
         for k in self.stories:
             self.requirements(k)  # validated on load
 
@@ -1139,7 +1147,7 @@ def brief(key: str, round_no: int, lens: str, candidate: str, tree: str, merge_b
         "releaseId": rel["releaseId"], "profile": str(rel["profile"]), "archiveSha256": rel["archiveSha256"],
         "metadataSha256": rel["metadataSha256"], "graph": graph_digest(), "bound_text": bound_text, "kind": kind,
         "carry": carry, "resolutions": resolutions, "charter": charter, "later": later, "checkout": str(checkout),
-        "context": context, "in_app": in_app_summary(key), "severities": STORY_SEVERITIES, "checks": scoped_checks(span),
+        "context": context, "in_app": in_app_summary(key), "severities": NO_FOLLOW_UP_SEVERITIES if c.follow_ups == "none" else STORY_SEVERITIES, "checks": scoped_checks(span),
     }
     return re.sub(r"\{\{(\w+)\}\}", lambda m: values[m.group(1)], template)
 
@@ -5610,6 +5618,21 @@ def lead_accept(args) -> None:
     outside = [f for f in changed if not any(fnmatch.fnmatch(f, g) for g in owns)]
     if outside:
         problems.append(f"the branch changes files outside {c.lane_of(key)}'s: {outside}")
+    # Each deferred finding the lead drops is never filed as a follow-up; the reason is the record of why.
+    deferred = {f["finding"]: f for f in story_deferred(c, key)}
+    dropped: dict[str, str] = {}
+    for value in args.drop_finding or []:
+        finding, _, reason = value.partition("=")
+        finding, reason = finding.strip(), reason.strip()
+        if not finding or not reason:
+            problems.append(f"--drop-finding needs ID=REASON, the finding's id and why it is dropped: got {value!r}")
+        elif finding not in deferred:
+            problems.append(f"{finding} is not a finding {key}'s review deferred"
+                            + (f" (it deferred {', '.join(sorted(deferred))})" if deferred else " (it deferred none)"))
+        else:
+            dropped[finding] = reason
+    decisions += [f"dropped deferred finding {finding}: {reason}; no follow-up is filed for it"
+                  for finding, reason in dropped.items()]
     proposal = None
     if lead_selects(c) and not merged and chosen is None and not args.full_suite:
         # Under lead selection, a candidate accepted with no choice would check on the fallback: the lead says which.
@@ -5712,7 +5735,8 @@ def lead_accept(args) -> None:
         state_tool("handoff", "--accept", key)
     # What the plan's producer proofs are judged by: the accepted head and the in-app items accepted as blocked.
     append_log("acceptance", key, {"head": head, "ready": ready, "blocked": {label: reason for label, reason in
-                                                                           blocked.items() if label in accepted_blocked}})
+                                                                           blocked.items() if label in accepted_blocked},
+                                   **({"dropped": dropped} if dropped else {})})
     state_tool("journal", "--kind", "decision.recorded", "--subject", key, "--summary",
                (f"Hand-off checked as a claim after its merge: its PR merged at {head[:10]} into {c.base_branch}, "
                 f"{len(set(numbers))} round(s) journaled, last approved by every lens, review evidence captured at "
@@ -5729,6 +5753,18 @@ def lead_accept(args) -> None:
     except Unreasoned as error:
         print(f"plan: not rebuilt: {error}")
     print(f"accepted {key} after its merge" if merged else f"accepted {key}; the runner may take it")
+    # What the close-out will do with each deferral, said now rather than found at the close.
+    earlier = dropped_findings(key)
+    for finding in deferred.values():
+        line = (f"dropped: {finding['finding']} ({finding['severity']}): the close-out files no follow-up for it"
+                if finding["finding"] in earlier else
+                f"deferred: {finding['finding']} ({finding['severity']}): {close_out_says(c, finding)}")
+        print(f"  {line}")
+    if deferred and len(earlier) < len(deferred) and c.follow_ups != "none":
+        # Accepted now, so no finding of it can be dropped: only withdrawing deferral keeps these unfiled.
+        print(f"  {key} is accepted, so none of these can be dropped now: to keep them unfiled, withdraw deferral with "
+              "\"followUps\": \"none\" in the delivery file. A finding is dropped as its story is accepted, with "
+              "--drop-finding ID=REASON")
     if needs_video(key):
         print("  once it merges: lead-evidence page, republish the page (same address), lead-evidence published --url, "
               "and link its section from the story in the tracker")
@@ -6615,6 +6651,16 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
     conf = tracker_conf(c)
     items = [tracker_item(item) for item in
              tracker_publisher.needs_you(doc, c.state, c.flow_log, c.delivery, conf, closing=closing)]
+    pending = pending_followups(c, doc)
+    if pending:
+        # Shown, never holding: what the close-out will do with each deferral, while the lead can still drop one.
+        said = ("the close-out files no follow-up for them: the delivery's followUps is none" if c.follow_ups == "none"
+                else "the close-out files each as a follow-up")
+        items.append({"holding": False, "source": "follow-ups",
+                      "text": f"{len(pending)} deferred finding{'' if len(pending) == 1 else 's'} pending, and {said}: "
+                      + "; ".join(f"{f['story']} {f['finding']} ({f['title'][:80]})" for f in pending[:10]),
+                      "clears": "nothing: they are recorded unfiled" if c.follow_ups == "none" else
+                      followups_clear(pending)})
     head = base_head(c)
     running = full_health_running(c)
     if running is not None:
@@ -7161,20 +7207,57 @@ def stop_full_health_run(c) -> str | None:
             + ("it had recorded its result" if recorded_first else "it recorded no result"))
 
 
-def deferred_findings(c) -> list[dict]:
-    """Every finding a story's review deferred, {story, finding, title}: from the lane's review folder, or the
-    evidence kept beside the record once its checkout is gone."""
-    found: dict[tuple[str, str], dict] = {}
-    for key in c.stories:
-        for folder in (c.lane_checkout(key) / c.work / "review" / key, evidence_dir(key)):
-            for path in round_files(folder) if folder.is_dir() else []:
-                outcome = json.loads(path.read_text())
-                for entry in outcome.get("entries", []):
-                    for finding in (entry.get("result") or {}).get("findings", []):
-                        if finding.get("state") == "deferred":
-                            found[(key, finding["id"])] = {"story": key, "finding": finding["id"],
-                                                           "title": str(finding.get("deferredIssue", ""))[:200]}
+def story_deferred(c, key: str) -> list[dict]:
+    """Every finding a story's review deferred, {story, finding, title, severity}: from the lane's review folder, or
+    the evidence kept beside the record once its checkout is gone."""
+    found: dict[str, dict] = {}
+    for folder in (c.lane_checkout(key) / c.work / "review" / key, evidence_dir(key)):
+        for path in round_files(folder) if folder.is_dir() else []:
+            outcome = json.loads(path.read_text())
+            for entry in outcome.get("entries", []):
+                for finding in (entry.get("result") or {}).get("findings", []):
+                    if finding.get("state") == "deferred":
+                        found[finding["id"]] = {"story": key, "finding": finding["id"],
+                                                "title": str(finding.get("deferredIssue", ""))[:200],
+                                                "severity": finding.get("severity")}
     return list(found.values())
+
+
+def dropped_findings(key: str) -> dict[str, str]:
+    """The deferred findings the lead dropped at a story's acceptance, by id, with the reason given."""
+    return {finding: reason for entry in read_log("acceptance", key) for finding, reason in entry.get("dropped", {}).items()}
+
+
+def deferred_findings(c) -> list[dict]:
+    """Every finding a story's review deferred that the lead didn't drop at its acceptance: what the close-out files."""
+    return [f for key in c.stories for dropped in [dropped_findings(key)] for f in story_deferred(c, key)
+            if f["finding"] not in dropped]
+
+
+def close_out_says(c, finding: dict) -> str:
+    """What the close-out does with a deferred finding the lead kept, as lead-accept and "Needs you" tell the lead."""
+    if c.follow_ups == "none":
+        return "the close-out files no follow-up for it: the delivery's followUps is none"
+    return f"the close-out files it as follow-up {finding['story']}-{finding['finding']}"
+
+
+def pending_followups(c, doc: dict) -> list[dict]:
+    """The deferred findings the close-out has yet to file: under followUps none, every one, as none is filed."""
+    have = {item["id"] for item in doc["state"]["followups"]}
+    return [f for f in deferred_findings(c) if f"{f['story']}-{f['finding']}" not in have]
+
+
+def followups_clear(pending: list[dict]) -> str:
+    """What clears the pending follow-ups: the close-out filing them. A story not yet accepted can still drop one; an
+    accepted story can't, so for it only withdrawing deferral keeps one unfiled."""
+    waiting = sorted({f["story"] for f in pending if not read_log("acceptance", f["story"])})
+    return ("the close-out filing them"
+            + (f"; lead-accept --drop-finding ID=REASON keeps one unfiled as {', '.join(waiting)} is accepted"
+               if waiting else "")
+            + "; \"followUps\": \"none\" in the delivery file keeps all of them unfiled")
+
+
+UNFILED = "No follow-up filed, as the delivery's followUps is none, for {count} deferred finding{s}: {findings}"
 
 
 FOLLOWUP = "Deferred finding {finding} of {story} becomes follow-up {story}-{finding}: {title}"
@@ -7185,8 +7268,19 @@ def followups_step(c, doc: dict) -> tuple[bool, str]:
     Each is journalled as a decision marked for the tracker publisher to file; the step holds until the publisher's
     ledger covers every one: a transient failure is retried by its next run, and a permanent one is shown. By hand,
     the record's followups are all there is."""
-    have = {item["id"] for item in doc["state"]["followups"]}
-    missing = [f for f in deferred_findings(c) if f"{f['story']}-{f['finding']}" not in have]
+    missing = pending_followups(c, doc)
+    if c.follow_ups == "none":
+        # The operator withdrew deferral: nothing is filed or marked, and the deferrals are named once in the record.
+        named = " ".join(e.get("summary", "") for e in doc["journal"] if e["kind"] == "decision.recorded"
+                         and e.get("summary", "").startswith("No follow-up filed"))
+        unnamed = [f for f in missing if f"{f['story']} {f['finding']} (" not in named]
+        if unnamed:
+            state_tool("journal", "--kind", "decision.recorded", "--summary", UNFILED.format(
+                count=len(unnamed), s="" if len(unnamed) == 1 else "s",
+                findings="; ".join(f"{f['story']} {f['finding']} ({f['title']})" for f in unnamed)))
+            render_views(c)
+        return True, (f"follow-ups: none filed, as the delivery's followUps is none; {len(missing)} deferred finding"
+                      f"{'' if len(missing) == 1 else 's'} left unfiled")
     for finding in missing:
         with marked_decision(c, followup=finding) as written:
             written.append(journal_id(state_tool("journal", "--kind", "decision.recorded", "--subject",
@@ -8711,7 +8805,10 @@ def main(argv: list[str] | None = None) -> None:
                    "recorded through the state tool's select at the handed head")
     p.add_argument("--full-suite", action="store_true", help="under selection.lead: check on the binding's fallback, "
                    "journalled as the lead's decision")
-    p.add_argument("--reason", help="with --checks or --full-suite: why"); p.set_defaults(fn=lead_accept)
+    p.add_argument("--reason", help="with --checks or --full-suite: why")
+    p.add_argument("--drop-finding", action="append", metavar="ID=REASON",
+                   help="a finding the story's review deferred that the close-out never files as a follow-up, and why")
+    p.set_defaults(fn=lead_accept)
     p = command(sub, "lead-carry-review", help="carry a story's captured review to its queued head across commits that "
                 "need no new round, showing their diff first")
     p.add_argument("key"); p.add_argument("--from", dest="from_head", required=True, help="the head the evidence covers")

@@ -403,7 +403,8 @@ one rather than started again; `lead-close` stops it, and it records no result.
 Once nothing holds the close, the supervisor runs
 `fullHealth` at the final head only when no run at that head has happened, as
 in a delivery that merged nothing, then files a follow-up for each deferred
-finding, journals `delivery.closed` and waits until the tracker has every
+finding the lead didn't drop at acceptance, or none when the delivery withdraws
+deferral, journals `delivery.closed` and waits until the tracker has every
 update, archives the record, aligns the operator's checkout when it is clean,
 and writes a friction note stub for `$compound-learning`, in that order. The lead's part is what holds the close,
 which every lead command names from the supervisor's last pass, and the
