@@ -83,13 +83,14 @@ grant, stays in Backlog, outside this plan.
    text (Decision 7).
 2. **Matching.** A comment belongs to a reviewer when its `account` equals the reviewer's `account`, if set, and otherwise when its
    `author` equals the reviewer's `author`. When `signature` is set, the comment's body must also contain it as a plain substring, not a
-   pattern. A comment with an empty body never matches. This excludes GitHub's bodiless `APPROVED` reviews, which are approvals
-   (Decision 5), not reviews. Among a reviewer's matching comments, the latest by `at` is its review.
+   pattern. In the new shape, a comment with an empty body never matches. This excludes GitHub's bodiless `APPROVED` reviews, which
+   are approvals (Decision 5), not reviews. The legacy shape keeps today's matching, empty bodies included. Among a reviewer's
+   matching comments, the latest by `at` is its review, whatever order the adapter lists them in.
 3. **Freshness, without a report.** A reviewer's review is current when every check at the head has passed and the review's `at` is no
    earlier than the latest check's `at`, as today. A failed check at the head refuses at once, on every path, report or not, as today.
 4. **The poll and the settle.** Each poll classifies every reviewer as `pending`, `current`, `absent` or `silent`.
-   - **When the settle runs.** It starts once every check at the head has passed, at the latest check's `doneAt` (Decision 5), falling
-     back to its `at` when the adapter returns no `doneAt`. It ends `settleSeconds` later by the local UTC clock, and the boundary
+   - **When the settle runs.** It starts once every check at the head has passed, at the latest `doneAt` among all the head's checks
+     (Decision 5), whichever check was created last. A check with no `doneAt` contributes its `at` instead. It ends `settleSeconds` later by the local UTC clock, and the boundary
      belongs to the settle: at exactly `doneAt + settleSeconds` a reviewer is still `pending`.
    - **After the settle.** An optional reviewer with no current review is `absent`, and a required one is `silent` (V26-3347).
    - **Before the settle**, or while any check is pending, a reviewer with no current review is `pending`.
@@ -120,9 +121,11 @@ grant, stays in Backlog, outside this plan.
      failure.
    - **At the deadline**, the refusal carries the last transient error's message.
    - **The legacy shape** is affected too. The only behaviour it changes is a wait that used to end on a transient error and now keeps
-     waiting, which is the fix the epic asks for.
+     waiting, which is the fix the epic asks for. With Decision 2's empty-body rule kept off the legacy shape, retrying is the only
+     legacy difference.
    - **Docs.** `config.md` documents exit 75 for a `forge.argv` adapter. It also says a reviewGate's `timeoutSeconds` must exceed
-     `waitSeconds` by at least 120, so that the last backoff and one adapter call fit.
+     `waitSeconds` by at least 120, so that the last backoff and one adapter call fit, and `adopting.md`'s worked binding moves from
+     1900 to 1920 to match.
 7. **The record.** In the new shape, `pr-review.json` is `{schema: "pr-review/2", head, url, reviewers: {...}}`. Each entry under a
    reviewer's id is `{state, required, author?, account?, at?, body?, report?, gate?, triage?}`, where `state` is `current` or `absent`,
    and `gate` is `{kind, met, why}`.
@@ -147,9 +150,10 @@ grant, stays in Backlog, outside this plan.
      naming Bitbucket as the forge that has reports.
    - **When it is current.** With `report` set, a reviewer is `current` when its report exists at the head with result `PASSED`, whatever
      the timestamps say. Decision 3's failed-check refusal still applies, and Decision 4's wait still waits for pending checks.
-   - **Its text.** The reviewer's text is its latest matching comment whose `at` is no earlier than the report's `at`. With no such
-     comment yet, the reviewer stays `pending` until the settle. After the settle it is refused, saying the report names a review that
-     wasn't posted.
+   - **Its text.** The reviewer's text is its latest matching comment whose `at` is no earlier than the earliest check's `at` at the
+     head, which is when the head's pipeline started. So a comment from an earlier head's pipeline never counts, while a comment posted
+     before its report turned `PASSED`, as the report contract has it, does. With no such comment yet, the reviewer stays `pending`
+     until the settle. After the settle it is refused, saying the report names a review that wasn't posted.
    - **`PENDING`, or no report yet,** is `pending` until the settle, then `silent` or `absent` as in Decision 4.
    - **A `FAILED` report** makes a required reviewer `silent` at once, with the refusal saying the reviewer errored, and an optional one
      `absent` at once.
@@ -164,19 +168,19 @@ grant, stays in Backlog, outside this plan.
       compared. Where an approval names a `commit`, that commit must be the head. Bitbucket ties no approval to a commit, so there an
       approval of an earlier head counts. `config.md` says so in a sentence, which is criterion 4's "the docs say which applies".
 11. **The integration branch and its merge.** Lanes branch from, and the queue merges into, `integrate/pr-reviewers`.
-    - **What is committed there.** The lead commits these to the branch, not to `main`, before `lead-setup`:
-      - the binding's `bases`, `["main", "integrate/*"]`, since the queue reads the binding from the base it merges into;
-      - the catalogue entries for the two new test modules (Decision 12);
-      - the plan.
-
-      The delivery file, brief and notes follow on the branch.
+    - **What is committed there.** The lead commits these to the branch, not to `main`, before `lead-setup`: the plan, and the
+      binding's `bases`, `["main", "integrate/*"]`, since the queue reads the binding from the base it merges into. The delivery file,
+      brief and notes follow on the branch.
     - **The final merge.** It happens once V26-3406 and every other delivery in flight on `main` at approval has landed or closed. It is
       one merge commit by the lead, pushed after the full suite passes on it locally on macOS with Python 3.11. The operator granted that
       merge on 2026-11-11 when approving this delivery. Conflicts in `skills/run-delivery/` are resolved by the lead against both sides'
       tests, and `provenance.lock.json` by the writer. If `main` has gained the same `bases` by then, the binding keeps one copy.
-12. **Tests.** New rows go in two new modules, which the merge queue's catalogue lists before lead-setup (Decision 11), in
-    `.agents/orchestration.json`'s `selection.catalogue` (`run-tests.py` argv and timeout, as their neighbours) and in
-    `tests/test_own_deliveries.py`'s `CATALOGUE_MODULES`:
+12. **Tests.** New rows go in two new modules. Each is added to the check catalogue in the story that creates it: an entry in
+    `.agents/orchestration.json`'s `selection.catalogue` (`run-tests.py` argv and timeout, as their neighbours) and its name in
+    `tests/test_own_deliveries.py`'s `CATALOGUE_MODULES`. That pin requires every catalogued module to exist and hold a test, so the
+    lead can't list them ahead of the lanes. Until a module's entry merges, a lane names it to `handoff --checks` as a JSON list, which
+    the pin's comment allows. The lead's acceptance of a story that creates a module checks its entry is in both places. The modules
+    are:
     - `tests/test_run_delivery_pr_review.py` for the wait, the configuration, the record and triage (lane 1);
     - `tests/test_run_delivery_pr_review_gates.py` for gates and reports (lane 2).
 
@@ -194,6 +198,7 @@ grant, stays in Backlog, outside this plan.
       - `skills/run-delivery/scripts/run_delivery.py`;
       - both forge adapters;
       - `tests/test_forge_adapters.py`;
+      - `.agents/orchestration.json` and `tests/test_own_deliveries.py`, for the catalogue entries;
       - `skills/run-delivery/references/`, `skills/run-delivery/SKILL.md` and `skills/run-delivery/templates/lane-brief.md`.
 
       Before accepting a lane-2 story, the lead moves the shared files its diff touches to lane 2 in one delivery-file commit on the
@@ -224,12 +229,12 @@ grant, stays in Backlog, outside this plan.
 ## Units and order
 
 Two lanes, sharing `run_delivery.py` and the adapters by region (Decision 13). Lane 1 holds the wait, and lane 2 the gates and reports.
-V26-3346 starts at once on its own module and is wired in after V26-3345 merges. V26-3348 starts once V26-3346 is handed off, and is
-wired in after V26-3347 merges.
+V26-3346 starts at once on its own module and is wired in after V26-3345 merges. V26-3348 starts once V26-3346 has merged, so it
+branches with the gates module in place, and is wired in after V26-3347 merges.
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | V26-3345, V26-3347 | `skills/run-delivery/SKILL.md`, `skills/run-delivery/adapters/*`, `skills/run-delivery/assets/*`, `skills/run-delivery/references/*`, `skills/run-delivery/templates/*`, `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/scripts/tracker_publisher.py`, `tests/test_run_delivery.py`, `tests/test_run_delivery_pr_review.py`, `tests/test_forge_adapters.py`, `tests/test_merge_queue.py`, `tests/test_run_delivery_tracker.py`, `catalog.json`, `profiles/*`, `provenance.lock.json`, `docs/solutions/*` |
+| 1 | 1 | V26-3345, V26-3347 | `skills/run-delivery/SKILL.md`, `skills/run-delivery/adapters/*`, `skills/run-delivery/assets/*`, `skills/run-delivery/references/*`, `skills/run-delivery/templates/*`, `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/scripts/tracker_publisher.py`, `tests/test_run_delivery.py`, `tests/test_run_delivery_pr_review.py`, `tests/test_forge_adapters.py`, `tests/test_merge_queue.py`, `tests/test_run_delivery_tracker.py`, `tests/test_own_deliveries.py`, `.agents/orchestration.json`, `catalog.json`, `profiles/*`, `provenance.lock.json`, `docs/solutions/*` |
 | 1 | 2 | V26-3346, V26-3348 | `skills/run-delivery/scripts/pr_review_gates.py`, `tests/test_run_delivery_pr_review_gates.py` |
 
 Lane 1's run-delivery files are named rather than globbed as `skills/run-delivery/*`, which would also match lane 2's module, so the
@@ -254,7 +259,8 @@ Lane 1, tier 1, not blocked. Characterization first, then test-first, per Decisi
 characterization rows pin the legacy configuration's printed text, refusals, record and exit codes for `pr-review`, `handoff`,
 `lead-accept` and `pr-review-current`, before any behaviour changes. Files: `skills/run-delivery/scripts/run_delivery.py`, both forge
 adapters, `skills/run-delivery/templates/lane-brief.md`, `skills/run-delivery/SKILL.md`, `skills/run-delivery/references/config.md`,
-`skills/run-delivery/references/adopting.md`, `tests/test_run_delivery_pr_review.py` and `tests/test_forge_adapters.py`.
+`skills/run-delivery/references/adopting.md`, `tests/test_run_delivery_pr_review.py`, `tests/test_forge_adapters.py`, and the new
+module's catalogue entry in `.agents/orchestration.json` and `tests/test_own_deliveries.py`.
 
 Acceptance criteria:
 1. Each reviewer is matched by `account` (the forge's account id, which both adapters' `reviews` now return) when set, else by `author`,
@@ -284,14 +290,18 @@ Settled by the decisions:
 Rows, each with its allow side beside its deny side:
 - **Configuration**, through every reader Decision 1 names: an unknown member, a duplicate id, an empty list, a bad id, a negative
   `settleSeconds`, and `gate: "approval"` without `account`. Each is refused, naming the reviewer and the member. A valid two-reviewer
-  configuration passes each reader. A legacy configuration with an extra member and a string `waitSeconds` passes as today.
+  configuration passes each reader. A string number for `settleSeconds` or `waitSeconds` in the new shape is refused. A legacy
+  configuration with an extra member and a string `waitSeconds` passes as today.
+- **Docs**: `adopting.md`'s worked reviewGate binding has `timeoutSeconds` at least `waitSeconds` + 120.
 - **Doctor warnings**: a reviewer with neither `account` nor `signature`, and two reviewers sharing an `author` with no `signature`. Each
   is `warn`, and the doctor still exits 0. With an `account` or a `signature`, there is no warning.
 - **Matching**:
   - an `account` match where the display name differs;
   - a same-name comment from another account, which doesn't match;
   - a `signature` containing regex metacharacters, matched as text;
-  - an empty-bodied comment, which never matches.
+  - an empty-bodied comment, which never matches in the new shape and matches as today in the legacy shape;
+  - two matching comments, an older one before the latest check and a newer one after it, with the older listed last: `current`,
+    recording the newer one's body.
 - **Members** (Decision 5):
   - `account` configured, and the adapter returns comments without `account`: refused, naming the member;
   - comments with `account` that match no reviewer: `pending`;
@@ -325,7 +335,7 @@ Rows, each with its allow side beside its deny side:
   - `pr-review --wait` succeeds after two transient failures.
   - `pr-review-current --wait` retries `get` and `reviews` but not `find`.
   - Transient until the deadline: the refusal carries the last transient message.
-  - Each injected sleep is at most 60, and none passes the deadline.
+  - The first injected sleep is 5, each is at most 60, and none passes the deadline.
 
 Sensors: `tests/test_run_delivery_pr_review.py`, `tests/test_run_delivery.py`, `tests/test_forge_adapters.py`,
 `tests/test_merge_queue.py`, `scripts/validate-registry.py`.
@@ -335,7 +345,8 @@ Sensors: `tests/test_run_delivery_pr_review.py`, `tests/test_run_delivery.py`, `
 Lane 2, tier 1, not blocked to start; wired in after V26-3345 merges (Decision 13). Test-first, per Decisions 5 and 10. Files:
 `skills/run-delivery/scripts/pr_review_gates.py`, `tests/test_run_delivery_pr_review_gates.py`, and, under a moved ownership, the
 adapters' `approvals`, the call sites in `pr_review`, `handoff`, `lead_accept` and `review_gate`, `tests/test_forge_adapters.py`,
-`config.md`, `catalog.json`, `profiles/` and `provenance.lock.json`.
+`config.md`, `catalog.json`, `profiles/`, `provenance.lock.json`, and the gates module's catalogue entry in `.agents/orchestration.json`
+and `tests/test_own_deliveries.py`.
 
 Acceptance criteria:
 1. A reviewer takes `gate`: `"approval"` (the reviewer's account has approved the PR), `"verdict"` (the review's `**Verdict:**` line
@@ -400,6 +411,8 @@ Rows, on the injected clock:
   `reviewers: [...]` exits 3.
 - **The start**: checks created at T-600 and done at T, first read at T+settleSeconds+1 without `--wait`, required reviewer missing. It
   exits 3 at once, and the optional reviewer is `absent`. The same read with `doneAt` removed falls back to `at`.
+- **Several checks**: check A created at T-900 and done at T, check B created at T-600 and done at T-400. A read at T+settleSeconds-1
+  without `--wait` is `pending` and exits 2. A read at T+settleSeconds+1 exits 3.
 - **The boundary**:
   - a first read at T+settleSeconds-1 is `pending` and exits 2;
   - a read at exactly T+settleSeconds is `pending`;
@@ -413,7 +426,7 @@ Sensors: `tests/test_run_delivery_pr_review.py`, `tests/test_forge_adapters.py`,
 
 ### V26-3348. Read each PR reviewer's Code Insights report at the commit it reviewed
 
-Lane 2, tier 1, after V26-3346 is handed off; wired in after V26-3347 merges (Decision 13). Test-first, per Decisions 5, 9 and 10.
+Lane 2, tier 1, after V26-3346 merges; wired in after V26-3347 merges (Decision 13). Test-first, per Decisions 5, 9 and 10.
 Files: `skills/run-delivery/scripts/pr_review_gates.py`, `tests/test_run_delivery_pr_review_gates.py`, and, under a moved ownership, the
 adapters' `reports`, the classification call site in `pr_review_state`, `tests/test_forge_adapters.py` and `adopting.md`.
 
@@ -434,7 +447,7 @@ Settled by the decisions:
 - "Exists" means exists with result `PASSED`. A `PENDING` report is the "visible as in progress" case of V26-3347's criterion 3, and
   stays `pending` until the settle.
 - A FAILED report stops the wait for a required reviewer only; an optional one is `absent`.
-- A current report with no comment since the report's `at` waits until the settle, then refuses.
+- A current report with no comment since the head's earliest check's `at` waits until the settle, then refuses.
 - V26-3346's criterion 4 gains its report row here.
 
 Rows:
@@ -448,8 +461,9 @@ Rows:
   - `PENDING` before the settle: `pending`; after it, `silent`;
   - `FAILED` on the first read, before the settle: required exits 3, saying the reviewer errored, and optional is `absent`.
 - **Report text**:
-  - a `PASSED` report whose only matching comment predates the report's `at`: `pending`; after the settle, refused;
-  - a `PASSED` report with a fresh comment: current, with that comment's text.
+  - a `PASSED` report whose only matching comment predates the head's earliest check: `pending`; after the settle, refused;
+  - a `PASSED` report whose comment was posted before the report turned `PASSED`, within the head's pipeline: current, with that
+    comment's text.
 - **Verdict from the report**:
   - a data item titled `verdict` in lowercase is read;
   - a report verdict that disagrees with the body's line wins;
