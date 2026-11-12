@@ -1,0 +1,275 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3344",
+  "headline": "V26-3344: wait for, and gate on, every AI review a PR gets",
+  "baseBranch": "integrate/pr-reviewers",
+  "plan": "docs/plans/2026-11-11-pr-reviewers.md",
+  "laneBrief": "docs/plans/2026-11-11-pr-reviewers.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-11-pr-reviewers.lane-notes.md"
+  },
+  "context": {
+    "sections": [
+      "Decisions"
+    ]
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "skills/run-delivery/SKILL.md",
+        "skills/run-delivery/adapters/*",
+        "skills/run-delivery/assets/*",
+        "skills/run-delivery/references/*",
+        "skills/run-delivery/templates/*",
+        "skills/run-delivery/scripts/run_delivery.py",
+        "skills/run-delivery/scripts/tracker_publisher.py",
+        "tests/test_run_delivery.py",
+        "tests/test_run_delivery_pr_review.py",
+        "tests/test_forge_adapters.py",
+        "tests/test_merge_queue.py",
+        "tests/test_run_delivery_tracker.py",
+        "tests/test_own_deliveries.py",
+        ".agents/orchestration.json",
+        "catalog.json",
+        "profiles/*",
+        "provenance.lock.json",
+        "docs/solutions/*"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "skills/run-delivery/scripts/pr_review_gates.py",
+        "tests/test_run_delivery_pr_review_gates.py"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3345": {
+      "title": "Read several PR reviewers, each required or optional",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "v26-3345-1",
+          "text": "Each reviewer is matched by account (the forge's account id, which both adapters' reviews now return) when set, else by author, and in either case by signature in the body when set. The doctor warns when a reviewer has neither account nor signature, and refuses duplicate ids."
+        },
+        {
+          "id": "v26-3345-2",
+          "text": "Each poll classifies every reviewer as pending, current or (optional only) absent: absent once checks passed and no matching comment arrived within settleSeconds (default 300; Claude lands about 2 minutes after Gemini). The wait ends when no reviewer is pending. A failed check refuses at once, as today."
+        },
+        {
+          "id": "v26-3345-3",
+          "text": "pr-review.json holds every reviewer's review or absent. pr-review prints each under its id, and makes the review move once every required one is current."
+        },
+        {
+          "id": "v26-3345-4",
+          "text": "handoff --pr-review-triage ID=TEXT is repeatable and required for each current review; a bare TEXT still works when exactly one is current."
+        },
+        {
+          "id": "v26-3345-5",
+          "text": "lead-accept and reviewGate check every required reviewer is current, triaged and unchanged. An optional reviewer recorded absent that is now current sends the lane back to read it."
+        },
+        {
+          "id": "v26-3345-6",
+          "text": "A forge call inside the wait is retried with backoff on a timeout, a connection error or a 5xx, until the wait's deadline. A 4xx still refuses at once."
+        },
+        {
+          "id": "v26-3345-7",
+          "text": "The legacy config behaves exactly as today. config.md, adopting.md, SKILL.md and the lane-brief text describe the list."
+        }
+      ]
+    },
+    "V26-3346": {
+      "title": "Gate a PR reviewer on its approval or its verdict",
+      "lane": "lane-2",
+      "criteria": [
+        {
+          "id": "v26-3346-1",
+          "text": "A reviewer takes gate: \"approval\" (the reviewer's account has approved the PR), \"verdict\" (the review's Verdict: line says approve), or absent (no gate, as today)."
+        },
+        {
+          "id": "v26-3346-2",
+          "text": "Both adapters' reviews also return the PR's approvers (account id, display name, when)."
+        },
+        {
+          "id": "v26-3346-3",
+          "text": "With a gate unmet, pr-review says so beside the review, handoff refuses with the reviewer's id and what it needs (fix and push, so the reviewer runs again), and lead-accept and reviewGate refuse the same way."
+        },
+        {
+          "id": "v26-3346-4",
+          "text": "An \"approval\" gate is only as fresh as the forge makes it: Bitbucket doesn't tie an approval to a commit. Where the reviewer posts a report at the commit (the Code Insights story in this epic), the gate reads the report's result there instead of the PR's approvals. The docs say which applies."
+        },
+        {
+          "id": "v26-3346-5",
+          "text": "A \"verdict\" gate on a review with no verdict line is unmet, and says the line is missing."
+        }
+      ]
+    },
+    "V26-3347": {
+      "title": "Stop the PR-review wait when a required reviewer posts nothing after a green pipeline",
+      "lane": "lane-1",
+      "after": [
+        "V26-3345"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3347-1",
+          "text": "Once every check at HEAD passed, a required reviewer with no current review after settleSeconds stops the wait with: the pipeline is green at but posted nothing since; re-run its step or ask the lead."
+        },
+        {
+          "id": "v26-3347-2",
+          "text": "The stop is a distinct refusal the lane brief tells the lane to escalate (blocked, to the lead), not to retry the wait."
+        },
+        {
+          "id": "v26-3347-3",
+          "text": "--wait without the settle having passed keeps waiting as today; a reviewer still running (where its report or step is visible as in progress) is not treated as silent."
+        }
+      ]
+    },
+    "V26-3348": {
+      "title": "Read each PR reviewer's Code Insights report at the commit it reviewed",
+      "lane": "lane-2",
+      "criteria": [
+        {
+          "id": "v26-3348-1",
+          "text": "A reviewer takes an optional report (the report's external_id). The Bitbucket adapter's reviews returns the reports at --head (/commit/{sha}/reports): external id, result, created/updated time, and its data fields. The GitHub adapter maps check runs the same way, or says it can't."
+        },
+        {
+          "id": "v26-3348-2",
+          "text": "With report set, the reviewer is current exactly when its report exists at HEAD; the comment is then read only for its text to triage. A FAILED report result means the reviewer errored, and stops the wait as the silent-reviewer story does, at once rather than after the settle."
+        },
+        {
+          "id": "v26-3348-3",
+          "text": "The report's data carries the verdict; the \"verdict\" gate reads it from there when present."
+        },
+        {
+          "id": "v26-3348-4",
+          "text": "Without report, the comment-and-timestamp rule stays as it is."
+        },
+        {
+          "id": "v26-3348-5",
+          "text": "adopting.md documents the report contract: external id, result PASSED once the review is posted (whatever its verdict), FAILED when the reviewer errored, verdict in data."
+        }
+      ],
+      "after": [
+        "V26-3346"
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "Every story",
+      "text": "Each of V26-3345 to V26-3348 merged to integrate/pr-reviewers through the merge queue, or closed with a recorded reason",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "main-merge",
+      "label": "Merged to main",
+      "text": "integrate/pr-reviewers merged into main once the deliveries in flight on main at approval have landed or closed, with provenance.lock.json regenerated by the writer and the registry validated on the merge",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "legacy",
+      "label": "Legacy config",
+      "text": "The legacy {author, waitSeconds} configuration behaves exactly as before apart from Decision 6's retry, pinned by characterization rows written before any behaviour changed, and by V26-3347's legacy row",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the merge commit on main",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "main-ci",
+      "label": "Main CI",
+      "text": "main's CI at the merge commit passes on the Ubuntu job and cut-release, with the run linked on the epic",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "no-deferrals",
+      "label": "No deferrals",
+      "text": "No finding any review in this delivery raised is deferred: each is fixed in the story that found it, and no follow-up item is filed",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "grantedBy": "the operator",
+    "grantedOn": "2026-11-11"
+  },
+  "approvals": [
+    {
+      "id": "approval-1",
+      "text": "The plan itself, before `lead-setup`, once its review aligns. The operator approved this in advance on 2026-11-11.",
+      "state": "done",
+      "who": "the operator, 2026-11-11, in advance of the plan review, which aligned in round 4"
+    },
+    {
+      "id": "approval-2",
+      "text": "Two lanes coordinated by hand in shared files (Decision 13). The operator asked for this on 2026-11-11.",
+      "state": "done",
+      "who": "the operator, 2026-11-11"
+    },
+    {
+      "id": "approval-3",
+      "text": "The tracker items already exist. No tracker item is created or reworded by this plan.",
+      "state": "done",
+      "who": "nothing to approve: the items existed before the plan, 2026-11-11"
+    },
+    {
+      "id": "approval-4",
+      "text": "The merge of `integrate/pr-reviewers` into `main` once the in-flight deliveries land (Decision 11). The operator granted it on 2026-11-11.",
+      "state": "done",
+      "who": "the operator, 2026-11-11, granted when approving the delivery"
+    },
+    {
+      "id": "approval-5",
+      "text": "The release tag that carries this work, at a later batch boundary. That tag is outside this delivery.",
+      "state": "waiting"
+    },
+    {
+      "id": "approval-6",
+      "text": "Nothing else is outward-facing beyond the merge queue's own merges into `integrate/pr-reviewers`, which the binding authorizes once its `bases` is committed there.",
+      "state": "done",
+      "who": "nothing further to approve, 2026-11-11"
+    }
+  ],
+  "outOfScope": [
+    "V26-3349, a lane re-running the reviewers under a `rerunReviews` grant. It stays in Backlog unless reviewer failures prove common.",
+    "The adopter's reviewers posting Code Insights reports, and the adopter's own `run-delivery.json`.",
+    "GitHub check runs as reports. The GitHub adapter says it has no reports (Decision 9).",
+    "Any forge other than Bitbucket and GitHub, and any change to `forge.argv`'s contract beyond the additions Decisions 5 and 6 name.",
+    "A change to the merge queue itself. Only the `reviewGate` command it runs changes.",
+    "Tooling for two lanes in one file. That is V26-3252. This delivery coordinates it by hand (Decision 13) and logs what that costs as evidence for V26-3252, without changing `lead-accept`, `lead-init` or the doctor.",
+    "Windows, which is not validated (AGENTS.md)."
+  ],
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  }
+}
