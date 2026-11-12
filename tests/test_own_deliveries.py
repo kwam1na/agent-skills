@@ -165,6 +165,17 @@ class StandingBinding(unittest.TestCase):
         manifest = json.loads((ROOT / ".agent-skills/current/skills/run-delivery/hooks.json").read_text(encoding="utf-8"))
         self.assertEqual(sorted(hook["event"] for hook in manifest["hooks"]), ["session-start", "stop"])
 
+    def test_the_hooks_section_says_what_runs_how_to_turn_it_off_and_that_the_folder_is_trusted(self) -> None:
+        section = _section("Hooks", "Setting a machine up")
+        self.assertIn(" ".join((HOOK_COMMAND % "stop").split()), section)
+        for phrase in ("`lead.may-stop`, on every stop.", "`delivery.orient`, on every session start",
+                       "This repository sets it to `enforce` in `.agents/run-delivery.json`",
+                       "To turn a hook off, or to `warn`, for one delivery, set it in `hooks` in "
+                       "`.agents/run-delivery.json` on that delivery's base.",
+                       '"hooks": {"lead.may-stop": "off"}',
+                       "Claude Code runs a project's hooks only once the folder is trusted."):
+            self.assertIn(phrase, section)
+
     def test_it_holds_no_machine_and_no_delivery(self) -> None:
         for name in ("orchestration.json", "delivery-views.json", "run-delivery.json", "delivery/candidate.py"):
             text = (ROOT / ".agents" / name).read_text(encoding="utf-8")
