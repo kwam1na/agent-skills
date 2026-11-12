@@ -231,10 +231,13 @@ class HookSettings:
                 output.write(contents)
                 output.flush()
                 os.fsync(output.fileno())
+            mode = 0o644
             if snapshot.contents is not None:
-                os.chmod(temporary, self.path.stat().st_mode & 0o7777)
-            else:
-                os.chmod(temporary, 0o644)
+                try:
+                    mode = self.path.stat().st_mode & 0o7777
+                except FileNotFoundError as error:
+                    raise SettingsChanged() from error
+            os.chmod(temporary, mode)
             self._check_unchanged(snapshot)
             os.replace(temporary, self.path)
         finally:

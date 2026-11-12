@@ -816,10 +816,12 @@ class ClaudeHookExposureTests(LifecycleFixture, unittest.TestCase):
                 self.assertFalse((self.repository / ".claude" / "skills").exists())
 
     def test_a_settings_change_between_preflight_and_the_write_ends_at_the_prior_endpoint(self) -> None:
-        for start in (None, "v1"):
-            with self.subTest(start=start):
+        for start, change in ((None, "rewrite"), ("v1", "rewrite"), ("v1", "delete")):
+            with self.subTest(start=start, change=change):
                 self.fresh()
                 lifecycle = Lifecycle(self.repository)
+                if change == "delete":
+                    self.write_settings({"model": "opus"})
                 if start:
                     lifecycle.install(*self.v1, maintainer=True)
                 prior_receipt = (self.repository / ".agent-skills" / "active.json").read_bytes() if start else None
@@ -833,14 +835,21 @@ class ClaudeHookExposureTests(LifecycleFixture, unittest.TestCase):
                     os.readlink(self.repository / ".agent-skills" / "current") if start else None
                 )
 
-                def race(phase: str) -> None:
-                    if phase == "exposing-claude-code":
+                def race(phase: str, change: str = change) -> None:
+                    if phase != "exposing-claude-code":
+                        return
+                    if change == "delete":
+                        self.settings.unlink()
+                    else:
                         self.write_settings({"racer": True})
 
                 with self.assertRaisesRegex(ValueError, "exposure-conflict: .claude/settings.json changed"):
                     lifecycle.update(*self.stop_a, maintainer=True, fault=race) if start else lifecycle.install(
                         *self.stop_a, maintainer=True, fault=race)
-                self.assertEqual(self.read_settings(), {"racer": True})
+                if change == "delete":
+                    self.assertFalse(self.settings.exists(), "the deletion stands")
+                else:
+                    self.assertEqual(self.read_settings(), {"racer": True})
                 self.assertFalse(lifecycle.journal_path.exists())
                 if start:
                     self.assertEqual((self.repository / ".agent-skills" / "active.json").read_bytes(), prior_receipt)
