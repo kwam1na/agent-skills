@@ -641,6 +641,19 @@ class TriageTests(PrReviewCase):
         reviewers = self.record()["reviewers"]
         self.assertEqual((reviewers["primary"]["triage"], reviewers["codex"]["triage"]), ("fixed x", "nothing to do"))
 
+    def test_every_current_review_without_a_triage_is_named(self) -> None:
+        third = {"id": "third", "author": "Third Bot", "signature": "<!-- third -->", "required": False}
+        self.configure({**LISTED, "reviewers": [PRIMARY, CODEX, third]})
+        self.answer([PASSED], [by_primary(), by_codex(), {"author": "Third Bot", "account": "{u-third}", "at": AFTER,
+                                                          "body": "<!-- third -->\nThird says: fine"}])
+        self.assertEqual(self.flow("pr-review", "FX-2")[0], 0)
+        code, out = self.handoff("primary=fixed x", "gemini=x")
+        self.assertEqual(code, 2, out)
+        for said in ("names gemini, which is no reviewer", "say how codex's review was handled",
+                     "say how third's review was handled"):
+            self.assertIn(said, out)
+        self.assertEqual(self.handoff("primary=fixed x", "codex=fine", "third=fine")[0], 0)
+
     def test_with_one_current_review_a_bare_text_is_its_and_an_absent_reviewer_takes_none(self) -> None:
         self.clock(T0_EPOCH + 301)
         self.answer([PASSED], [by_primary()])

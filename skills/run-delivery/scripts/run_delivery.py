@@ -3601,16 +3601,18 @@ def triage_by_reviewer(given: list[str], entries: dict[str, dict]) -> tuple[dict
                 named[rid] = text.strip()
         elif item.strip():
             bare.append(item.strip())
+    bare_refused = False
     if bare:
         if len(bare) > 1 or len(current) != 1 or named:
+            bare_refused = True
             problems.append(f"a bare --pr-review-triage TEXT is accepted only alone, with exactly one current review; "
                             f"{len(current)} are current ({', '.join(current) or 'none'}): give each "
                             "--pr-review-triage ID=TEXT")
         else:
             named[current[0]] = bare[0]
-    for rid in current:
-        if rid not in named and not problems:
-            problems.append(f"say how {rid}'s review was handled: --pr-review-triage {rid}=TEXT")
+    if not bare_refused:  # a refused bare text already asks for each one
+        problems += [f"say how {rid}'s review was handled: --pr-review-triage {rid}=TEXT"
+                     for rid in current if rid not in named]
     return named, problems
 
 
