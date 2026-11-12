@@ -21,5 +21,8 @@
       ],
       "timeoutSeconds": 300
     }
-  ]
+  ],
+  "hooks": {
+    "lead.may-stop": "enforce"
+  }
 }
