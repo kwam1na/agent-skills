@@ -548,6 +548,15 @@ class WaitTests(PrReviewCase):
         self.assertEqual(code, 0, out)
         self.assertEqual(self.sleeps(), [30])
 
+    def test_a_pending_check_with_no_time_yet_keeps_the_wait_going(self) -> None:
+        """A queued check may carry no time (GitHub's rollup, before it starts): the wait goes on, never refused."""
+        queued = {"name": "lint", "state": "pending", "at": ""}
+        self.scripted(reviews=[{"answer": {"checks": [PASSED, queued], "reviews": [by_primary(), by_codex()]}},
+                               {"answer": {"checks": [PASSED], "reviews": [by_primary(), by_codex()]}}])
+        code, out = self.flow("pr-review", "FX-2", "--wait")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.sleeps(), [30])
+
     def test_a_failed_check_refuses_at_once(self) -> None:
         self.answer([FAILED], [by_primary(), by_codex()])
         code, out = self.flow("pr-review", "FX-2", "--wait")
@@ -632,6 +641,11 @@ class AcceptanceTests(PrReviewCase):
         self.assertEqual(code, 1, out)
         self.assertIn("codex's PR review changed after the lane read it (2026-01-01T00:00:30 -> 2026-01-01T00:00:50); "
                       "the lane must read and triage it again", out)
+        with self.subTest("its body changed and its time didn't"):
+            self.answer([PASSED], [by_primary(), by_codex(body="<!-- codex -->\nCodex, edited")])
+            code, out = self.accept()
+            self.assertEqual(code, 1, out)
+            self.assertIn("codex's PR review changed after the lane read it", out)
         self.answer([PASSED], [by_primary(), by_codex()])
         code, out = self.accept()
         self.assertEqual(code, 0, out)

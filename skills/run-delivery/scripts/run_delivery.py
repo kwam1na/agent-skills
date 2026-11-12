@@ -3514,7 +3514,8 @@ def classify_reviews(found: dict, conf: dict, now: float) -> dict:
         if missing:
             raise Stop("the forge adapter's `reviews` returned no " + "; no ".join(missing) + ": use an adapter that "
                        "returns it, or configure review.pr without it")
-        latest = max((instant(ch["at"]) for ch in checks), default=None)
+        # Only once every check passed, when each carries its time: a pending one may have none yet.
+        latest = max((instant(ch["at"]) for ch in checks), default=None) if passed else None
         settled = passed and now > max(instant(ch.get("doneAt") or ch["at"]) for ch in checks) + conf["settleSeconds"]
         for reviewer in conf["reviewers"]:
             mine = [r for r in found.get("reviews", []) if reviewer_matches(reviewer, r, False)]
