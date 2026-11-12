@@ -8939,8 +8939,8 @@ class LaneStartAndReadinessTests(unittest.TestCase):
 
 # Every setting the tool's Config or setting() reads from the environment, current and earlier names alike. Each one
 # set in the test runner's own environment would point the fixtures' commands somewhere other than the fixture.
-TOOL_SETTINGS = ("DELIVERY_STATE", "RUN_DELIVERY_BASE", "RUN_DELIVERY_SUPERVISOR", "RUN_DELIVERY_CONFIG",
-                 "DELIVERY_FLOW_CONFIG", "RUN_DELIVERY_DELIVERY", "DELIVERY_FLOW_DELIVERY", "RUN_DELIVERY_LOCAL",
+TOOL_SETTINGS = ("DELIVERY_STATE", "RUN_DELIVERY_BASE", "RUN_DELIVERY_SUPERVISOR", "RUN_DELIVERY_LIVE_PORT",
+                 "RUN_DELIVERY_CONFIG", "DELIVERY_FLOW_CONFIG", "RUN_DELIVERY_DELIVERY", "DELIVERY_FLOW_DELIVERY", "RUN_DELIVERY_LOCAL",
                  "DELIVERY_FLOW_LOCAL")
 PLANTED_KEY = "PLANTED-9"
 PLANTED_MARKER = "planted-live-delivery-7f3c"
@@ -9041,7 +9041,8 @@ class LiveDeliveryOutOfReachTests(unittest.TestCase):
                     "RUN_DELIVERY_CONFIG": str(main / ".agents/run-delivery.json"),
                     "DELIVERY_FLOW_CONFIG": str(main / ".agents/run-delivery.json"),
                     "RUN_DELIVERY_DELIVERY": PLANTED_KEY, "DELIVERY_FLOW_DELIVERY": PLANTED_KEY,
-                    "RUN_DELIVERY_LOCAL": "1", "DELIVERY_FLOW_LOCAL": "1", "RUN_DELIVERY_SUPERVISOR": "on"}
+                    "RUN_DELIVERY_LOCAL": "1", "DELIVERY_FLOW_LOCAL": "1", "RUN_DELIVERY_SUPERVISOR": "on",
+                    "RUN_DELIVERY_LIVE_PORT": "0"}
         self.assertEqual(set(settings), set(TOOL_SETTINGS))
         return main, worktree, settings
 

@@ -6336,6 +6336,12 @@ def live_address(port: int) -> str:
     return f"http://{LIVE_HOST}:{port}/"
 
 
+def port_of_address(address: str | None) -> int:
+    with contextlib.suppress(ValueError, AttributeError):
+        return int(str(address).rstrip("/").rsplit(":", 1)[1])
+    return 0
+
+
 def pid_runs(pid: int) -> bool:
     return not process_gone(pid)
 
@@ -6375,9 +6381,15 @@ def stop_view(state: Path, proc: subprocess.Popen | None = None) -> str | None:
     """Stop `live.json`'s view by its recorded pid, and its session with it, then confirm it is gone. `proc` is the
     view's handle when this process started it, so it is reaped. Nothing is stopped by pattern."""
     live = recorded_live(state)
-    if not live or not pid_runs(live["pid"]):
+    if not live:
         return None
-    pid = live["pid"]
+    return stop_view_process(live["pid"], live["port"], proc)
+
+
+def stop_view_process(pid: int, port: int, proc: subprocess.Popen | None = None) -> str | None:
+    """Stop the view running as `pid`, on `port`, and its session with it; None when it no longer runs."""
+    if not pid_runs(pid):
+        return None
     if proc is None and not is_view(pid):
         return f"left pid {pid} alone: live.json names it, but it no longer runs the live view"
     for sig, wait in ((signal.SIGTERM, 10), (signal.SIGKILL, 5)):
@@ -6392,7 +6404,7 @@ def stop_view(state: Path, proc: subprocess.Popen | None = None) -> str | None:
                 with contextlib.suppress(subprocess.TimeoutExpired):
                     proc.wait(timeout=0.1)
             if process_gone(pid):
-                return f"stopped the live view (pid {pid}) on port {live['port']}"
+                return f"stopped the live view (pid {pid}) on port {port}"
             time.sleep(0.1)
     raise Stop(f"the live view (pid {pid}) is still running after SIGKILL; stop it, then run this again")
 
@@ -7689,6 +7701,8 @@ class Supervisor:
         self.view: subprocess.Popen | None = None
         # What it says before its first line, the address, is printed: held until then.
         self.held_lines: list[str] | None = []
+        # The handlers its own signal handler stands in front of.
+        self.before_signals: dict[int, object] = {}
         self.restarts: dict[str, list[float]] = {}
         self.address: str | None = None
         self.handle = None
@@ -7865,11 +7879,16 @@ class Supervisor:
         return why if isinstance(why, str) and why else "held"
 
     def on_signal(self, number: int, frame) -> None:
-        """Record the signal in supervisor.json, unless whoever sent it recorded why first, then die of it as before."""
+        """Record the signal in supervisor.json, unless whoever sent it recorded why first, then do what the signal
+        did before: the tool's own handler, which unwinds through `finally`, or the default."""
         status = json_object(self.c.state / SUPERVISOR_FILE)
         if not (status.get("pid") == os.getpid() and status.get("state") == "stopped"):
             with contextlib.suppress(OSError):
                 write_supervisor_status(self.c.state, os.getpid(), False, "signal", signal.Signals(number).name)
+        before = self.before_signals.get(number, signal.SIG_DFL)
+        if callable(before):
+            before(number, frame)
+            return
         signal.signal(number, signal.SIG_DFL)
         os.kill(os.getpid(), number)
 
@@ -7973,7 +7992,7 @@ class Supervisor:
                 # Who stops it says why in supervisor.json; a signal nobody explained is recorded by the supervisor.
                 write_supervisor_status(c.state, os.getpid(), True)
                 for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-                    signal.signal(number, self.on_signal)
+                    self.before_signals[number] = signal.signal(number, self.on_signal)
                 self.start_live()
                 self.start("serve")
                 print(self.address, flush=True)  # the first line: where the delivery is watched
@@ -8016,6 +8035,13 @@ class Supervisor:
             elif stopped_by and not self.once and not self.lost:
                 with contextlib.suppress(OSError):
                     write_supervisor_status(c.state, os.getpid(), False, stopped_by)
+            if self.lost and self.view_pid:
+                # What it served is gone: so is what its view serves. Stopped by the pid it holds, as live.json may
+                # have gone with the record.
+                with contextlib.suppress(OSError, Stop, subprocess.SubprocessError):
+                    said = stop_view_process(self.view_pid, port_of_address(self.address), self.view)
+                    if said:
+                        print(f"{now()} supervisor: {said}", flush=True)
             fcntl.flock(self.handle, fcntl.LOCK_UN)
             self.handle.close()
 

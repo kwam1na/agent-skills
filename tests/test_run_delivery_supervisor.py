@@ -824,7 +824,7 @@ class SupervisorNodeTests(unittest.TestCase):
         status, said = self.supervisor_row(fx)
         self.assertEqual(status, "ok", said)
         self.assertIn(f"running (pid {first['pid']}); live view {first['address']}; Node 22.6.0 at {stub}", said)
-        # Killed, it leaves its children, the live view among them; a resume with an old Node stops none of them.
+        # Killed, it leaves its children and its live view; a resume with an old Node stops none of them.
         os.kill(first["pid"], signal.SIGKILL)
         wait_for(lambda: not alive(first["pid"]), "the supervisor to die")
         children = {child["name"]: child["pid"] for child in first["children"]}
@@ -836,11 +836,14 @@ class SupervisorNodeTests(unittest.TestCase):
         self.assertEqual(lock_of(fx)["pid"], first["pid"], "a supervisor started")
         with urllib.request.urlopen(first["address"], timeout=10) as page:
             self.assertEqual(page.status, 200)
-        # With the Node put right, the resume stops what the killed one left and starts again.
+        # With the Node put right, the resume stops what the killed one left, starts again and adopts the view.
         code, out = fx.flow("lead-run", "--resume", cwd=fx.main, env=good)
         self.assertEqual(code, 0, out)
+        view = children.pop("live")
         for pid in children.values():
             wait_for(lambda: not alive(pid), f"orphan {pid} to stop", 30)
+        self.assertEqual(live_of(fx)["pid"], view)
+        self.assertEqual(lock_of(fx)["address"], first["address"])
 
     def test_doctor_marks_a_recorded_node_below_the_minimum_wrong_and_none_recorded_warn(self) -> None:
         fx = self.fixture()
