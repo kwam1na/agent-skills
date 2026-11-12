@@ -612,11 +612,11 @@ EMPTY_STATE = {
 }
 PINNED_EMPTY_VIEWS = {
     "delivery.md": "bf22eae1f7b5115650ba06265e138d9b9ed720f44158d1fc761ba4df356507c9",
-    "delivery.html": "da926593eced820ff2fabdec675f0233a368f9e08194da3ccc12488c6670a615",
+    "delivery.html": "a1b2b2add853334633832b0678e9f5ca8cb86ece80cbffc0c5d208c4b326a7e5",
 }
 PINNED_VIEWS = {
     "delivery.md": "412c01eecfbdcfba6f1f5f650a0368c29c40e3e7cf3b0ef44d0687e68115d79c",
-    "delivery.html": "0e29c5443ed4895b2f39fb7a7336a92602b8d7fa7fe9b4aa2b76b55bc79bf849",
+    "delivery.html": "a64e2f95193dd212e493a67e0d291bf2994ce4d35baa6078ee107b68a77203a1",
 }
 
 
@@ -860,6 +860,26 @@ TITLED_LINES = (
 )
 
 
+def node_document() -> dict:
+    """Checks carrying the Node they ran: below the minimum, meeting it, none on their PATH, and one from a record
+    written before the runner recorded it."""
+    state = copy.deepcopy(FIXED_STATE)
+    state["queue"][0]["checks"] = [
+        {"id": "old", "state": "failed", "node": "20.0.0", "nodeBelowMinimum": True},
+        {"id": "new", "state": "passed", "node": "22.6.0"},
+        {"id": "none", "state": "passed", "node": None},
+        {"id": "before", "state": "passed"},
+    ]
+    return {"state": state, "journal": FIXED_JOURNAL}
+
+
+NODE_LINES = (
+    "old: failed · Node 20.0.0, below the runtime's nodeMinimum",
+    "new: passed · Node 22.6.0",
+    "none: passed · no node on its PATH",
+)
+
+
 def ticket_document() -> dict:
     """The fixed state with the tracker's own titles and summaries for its queued, planned and follow-up work."""
     state = copy.deepcopy(FIXED_STATE)
@@ -1000,6 +1020,14 @@ class CheckVisibilityViewTests(unittest.TestCase):
                 self.assertIn(render_state._markdown_text(line), view)
         # The selection the lead's checks came from is said once, not again as waiting.
         self.assertNotIn(render_state._markdown_text(f"lead selection for {document['state']['queue'][0]['head']}"), view)
+
+    def test_the_markdown_view_shows_each_check_s_node_and_its_mark(self) -> None:
+        view = render_state.render_markdown(node_document())
+        for line in NODE_LINES:
+            with self.subTest(line=line):
+                self.assertIn(render_state._markdown_text(line), view)
+        self.assertEqual(view.count("below the runtime"), 1, view)
+        self.assertIn(render_state._markdown_text("before: passed") + "\n", view)
 
     def test_the_markdown_view_names_checks_by_title_and_by_id_without_one(self) -> None:
         view = render_state.render_markdown(titled_document())
@@ -2252,6 +2280,14 @@ setTimeout(async () => {
         for line in VISIBILITY_LINES:
             with self.subTest(line=line):
                 self.assertIn(line, shown["text"])
+
+    def test_the_page_shows_each_check_s_node_and_its_mark_as_the_markdown_does(self) -> None:
+        shown = self.run_page({"now": "2026-10-20T12:00:00Z"}, node_document())
+        for line in NODE_LINES:
+            with self.subTest(line=line):
+                self.assertIn(line, shown["text"])
+        self.assertEqual(shown["text"].count("below the runtime"), 1, shown["text"])
+        self.assertNotIn("before: passed", shown["text"])  # a check that recorded no Node has no detail line
 
     def test_the_page_names_checks_by_title_as_the_markdown_does(self) -> None:
         shown = self.run_page({"now": "2026-10-20T12:00:00Z"}, titled_document())

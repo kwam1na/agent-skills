@@ -297,6 +297,10 @@ def _check_text(check: dict) -> str:
         text += " · failing " + ", ".join(check["failures"])
     if check.get("log"):
         text += f" · log {check['log']}"
+    if "node" in check:
+        text += f" · Node {check['node']}" if isinstance(check["node"], str) else " · no node on its PATH"
+        if check.get("nodeBelowMinimum") is True:
+            text += ", below the runtime's nodeMinimum"
     return text
 
 
@@ -592,6 +596,10 @@ _PAGE_PROGRAM = """
     if (check.state === "reused" && typeof check.reusedFrom === "string") { text += " \\u00b7 reused from the lane's run at " + check.reusedFrom; }
     if (isArray(check.failures) && check.failures.length) { text += " \\u00b7 failing " + check.failures.map(show).join(", "); }
     if (typeof check.log === "string") { text += " \\u00b7 log " + check.log; }
+    if (Object.prototype.hasOwnProperty.call(check, "node")) {
+      text += typeof check.node === "string" ? " \\u00b7 Node " + check.node : " \\u00b7 no node on its PATH";
+      if (check.nodeBelowMinimum === true) { text += ", below the runtime's nodeMinimum"; }
+    }
     return text;
   }
   /* The median of the last five runs, or null with none: no history means no estimate, never a guess. */
@@ -760,7 +768,7 @@ _PAGE_PROGRAM = """
       selectionTexts(item).forEach(function (text) { entry.appendChild(el("div", text, "detail")); });
       item.checks.forEach(function (check) {
         if ((isArray(check.failures) && check.failures.length) || typeof check.log === "string" ||
-            typeof check.reusedFrom === "string") {
+            typeof check.reusedFrom === "string" || Object.prototype.hasOwnProperty.call(check, "node")) {
           entry.appendChild(el("div", checkText(check), "detail"));
         }
       });

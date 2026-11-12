@@ -333,41 +333,131 @@ def shelf_for(root: Path) -> Shelf:
     return Shelf(root, ref, base, bool(named))
 
 
+def meets(version: tuple[int, ...], minimum: tuple[int, ...]) -> bool:
+    """Whether a version meets a minimum, compared number by number, a missing number counting as 0: the one
+    comparison doctor and every Node and Python refusal use, so 100.0.0 meets 9.0.0."""
+    width = max(len(version), len(minimum))
+    return tuple(version) + (0,) * (width - len(version)) >= tuple(minimum) + (0,) * (width - len(minimum))
+
+
+def numbers(text: str) -> tuple[int, ...] | None:
+    """The dotted version a program printed or a descriptor names (`v22.6.0`, `Python 3.11.4`, `22.6.0`), or None."""
+    found = re.search(r"(\d+(?:\.\d+)*)", text or "")
+    return tuple(int(n) for n in found.group(1).split(".")) if found else None
+
+
+def dotted(version: tuple[int, ...] | None) -> str:
+    return ".".join(map(str, version)) if version else "of no readable version"
+
+
+def node_version(node: str) -> tuple[int, ...] | None:
+    """What `node --version` says, as numbers; None when it says nothing a version reads from."""
+    try:
+        done = subprocess.run([node, "--version"], text=True, capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return numbers(done.stdout.strip()) if re.match(r"v\d", done.stdout.strip()) else None
+
+
 def node_versions() -> list[tuple[str, tuple[int, ...]]]:
-    """Each Node the tool may run, with its version: the one on PATH, then nvm's, newest first."""
-    candidates = [shutil.which("node")] + sorted(str(p) for p in Path.home().glob(".nvm/versions/node/v*/bin/node"))[::-1]
+    """Each Node the tool may run itself, with its version: the one on PATH, then nvm's, newest first."""
+    candidates = [shutil.which("node")] + nvm_nodes()
     found = []
     for node in filter(None, candidates):
-        done = subprocess.run([node, "--version"], text=True, capture_output=True)
-        m = re.match(r"v(\d+)\.(\d+)\.(\d+)", done.stdout.strip())
-        if m:
-            found.append((node, tuple(int(n) for n in m.groups())))
+        version = node_version(node)
+        if version:
+            found.append((node, version))
     return found
 
 
+def nvm_nodes() -> list[str]:
+    """nvm's Nodes, newest first by number."""
+    nodes = [str(p) for p in Path.home().glob(".nvm/versions/node/v*/bin/node")]
+    return sorted(nodes, key=lambda node: numbers(Path(node).parents[1].name) or (), reverse=True)
+
+
 def find_node(minimum: tuple[int, ...]) -> str | None:
-    return next((node for node, version in node_versions() if version >= minimum), None)
+    return next((node for node, version in node_versions() if meets(version, minimum)), None)
 
 
 def find_node22() -> str | None:
     return find_node((22, 6))
 
 
+def node_on_path() -> tuple[str, tuple[int, ...] | None] | None:
+    """The Node a process here uses, and every child it starts: the first `node` on its PATH, with its version (None
+    when it prints none). None when PATH holds no `node`. An nvm Node further down doesn't count."""
+    node = shutil.which("node")
+    return (node, node_version(node)) if node else None
+
+
+def node_minimum(release: Path) -> str | None:
+    """The runtime's nodeMinimum; None for a generation without a runtime, which asks for no Node."""
+    return (load_json(release / "runtime/runtime.json") or {}).get("nodeMinimum") or None
+
+
 def node_problem(release: Path) -> tuple[str, str] | None:
-    """Why no Node here meets the runtime's nodeMinimum, as (status, detail), or None. A generation without a runtime
-    asks for none."""
-    wanted = (load_json(release / "runtime/runtime.json") or {}).get("nodeMinimum")
+    """Why the Node first on PATH doesn't meet the runtime's nodeMinimum, as (status, detail), or None: `missing` with
+    no `node` on PATH, `wrong` below the minimum, even with an nvm Node that meets it, which the fix then names."""
+    wanted = node_minimum(release)
     if not wanted:
         return None
-    minimum = tuple(int(n) for n in wanted.split("."))
-    versions = node_versions()
-    if any(version >= minimum for _, version in versions):
+    minimum = numbers(wanted) or ()
+    found = node_on_path()
+    if found and found[1] and meets(found[1], minimum):
         return None
-    fix = f"fix: install Node {wanted} or newer, on PATH or under nvm"
-    if not versions:
-        return "missing", f"no Node on PATH or under nvm, and the runtime needs Node {wanted}; {fix}"
-    seen = ", ".join(sorted({".".join(map(str, version)) for _, version in versions}))
-    return "wrong", f"Node {seen} is below the runtime's nodeMinimum {wanted}; {fix}"
+    nvm = next((node for node in nvm_nodes() if meets(node_version(node) or (0,), minimum)), None)
+    fix = (f"fix: put {Path(nvm).parent} first on PATH, the nvm Node that meets it" if nvm else
+           f"fix: install Node {wanted} or newer and put its bin folder first on PATH")
+    elsewhere = (f"; nvm's {nvm} meets it, but a process and its children run the node first on PATH" if nvm else "")
+    if not found:
+        return "missing", f"no node on PATH, and the runtime needs Node {wanted}{elsewhere}; {fix}"
+    node, version = found
+    where = f"{node}, the first node on PATH, from the PATH entry {Path(node).parent}"
+    if not version:
+        return "wrong", (f"{where}, prints no version to compare with the runtime's nodeMinimum {wanted}{elsewhere}; "
+                         f"{fix}")
+    return "wrong", f"Node {dotted(version)} is below the runtime's nodeMinimum {wanted}: it is {where}{elsewhere}; {fix}"
+
+
+def require_node(release: Path, command: str) -> None:
+    """Refuse a command whose processes would run a Node below the runtime's minimum, before it writes or starts
+    anything."""
+    problem = node_problem(release)
+    if problem:
+        raise Stop(f"{command} refuses: {problem[1]}")
+
+
+# The Python a lane's tools and the repository's sensors need, the minimum doctor holds.
+PYTHON_MINIMUM = (3, 11)
+
+
+def interpreter_version() -> tuple[int, ...]:
+    """The version of the Python running this tool. Read only through here, so a test can stand in another."""
+    return tuple(sys.version_info[:3])
+
+
+def python_problems() -> list[str]:
+    """Each Python a lane runs that is below PYTHON_MINIMUM, each with its fix: the interpreter running this tool, and
+    the first `python3` on PATH, which the lane's gates and sensors run."""
+    wanted = dotted(PYTHON_MINIMUM)
+    problems = []
+    running = interpreter_version()
+    if not meets(running, PYTHON_MINIMUM):
+        problems.append(f"the Python running this tool, {sys.executable}, is {dotted(running)}, below {wanted}; fix: "
+                        f"run it with Python {wanted} or newer")
+    python = shutil.which("python3")
+    if not python:
+        problems.append(f"no python3 on PATH; fix: put Python {wanted} or newer's bin folder first on PATH")
+    else:
+        # Python before 3.4 says its version on stderr.
+        done = run([python, "--version"], check=False)
+        version = numbers(done.stdout + done.stderr) if done.returncode == 0 else None
+        if not version or not meets(version, PYTHON_MINIMUM):
+            problems.append(f"python3 first on PATH, {python}, from the PATH entry {Path(python).parent}, is Python "
+                            f"{dotted(version)}, below {wanted}; fix: put Python {wanted} or newer's bin folder first "
+                            "on PATH")
+    return problems
 
 
 def load_harness(root: Path, release: Path) -> tuple[dict | None, str]:
@@ -3214,6 +3304,12 @@ def lane_start(args) -> None:
     served = c.binding if c.binding_base else {"base": {"ref": c.base_branch}}
     if not serves(served, base):
         raise unserved(served, base)
+    # Before the checkout or the start: the lane's gates and sensors run the node and python3 first on its PATH.
+    node = node_problem(c.release)
+    problems = [node[1]] if node else []
+    problems += python_problems()
+    if problems:
+        raise Stop(f"lane-start refuses {key} until each of these is fixed:" + "".join(f"\n  - {p}" for p in problems))
     path, branch = c.lane_checkout(key), c.branch(key)
     did = []
     if path.exists():
@@ -5196,6 +5292,8 @@ def lead_carry_review(args) -> None:
 
 def lead_init(args) -> None:
     c = cfg()
+    # Before anything is written, a plan review adopted included: the supervisor it starts runs the Node on this PATH.
+    require_node(c.release, "lead-init")
     c.check_lanes()
     if c.ship and not c.ship.get("toolingCommit"):
         raise Stop(f"{c.delivery_where}: ship.toolingCommit isn't set")
@@ -6269,7 +6367,9 @@ def supervisor_off() -> bool:
 
 
 def start_supervisor(c) -> str:
-    """Start `lead-run` detached, in a session of its own, and return the live view's address once it holds the lock."""
+    """Start `lead-run` detached, in a session of its own, and return the live view's address once it holds the lock.
+    Its Node is checked here first, so a refusal reaches the lead's shell rather than its log."""
+    require_node(c.release, "the supervisor")
     log = lead_file(c, "supervisor.log")
     log.parent.mkdir(parents=True, exist_ok=True)
     argv = [sys.executable, "-B", str(Path(__file__).resolve()), "--delivery", c.delivery, "lead-run"]
@@ -7405,6 +7505,9 @@ class Supervisor:
         self.address: str | None = None
         self.handle = None
         self.started = now()
+        # The Node its children run, as it started: recorded in its lock for doctor --delivery to judge.
+        found = node_on_path()
+        self.node = {"path": found[0], "version": dotted(found[1]) if found[1] else None} if found else None
         # Why it stopped serving, once what it serves is gone: then it exits instead of passing on over nothing.
         self.lost: str | None = None
 
@@ -7430,6 +7533,7 @@ class Supervisor:
         self.handle.seek(0)
         self.handle.truncate()
         self.handle.write(json.dumps({"pid": os.getpid(), "startedAt": self.started, "address": self.address,
+                                      "node": self.node,
                                       "children": [{"name": name, "pid": proc.pid} for name, proc in self.children.items()]}))
         self.handle.flush()
 
@@ -7633,6 +7737,8 @@ def lead_run(args) -> None:
     closed = kept_close(c, last_close(load_state()["journal"]))
     if closed and closed.get("by") == "lead-close":
         raise Stop("the delivery is closed: lead-close closed it. " + closed_words(closed))
+    # Before the lock, the orphan sweep or any child: the supervisor's children run the Node first on its PATH.
+    require_node(c.release, "lead-run --resume" if args.resume else "lead-run")
     if args.resume:
         for line in stop_orphans(c):
             print(line)
@@ -8086,10 +8192,10 @@ class Doctor:
     def platform(self):
         problems = []
         git_version = version_of(["git", "--version"]) if shutil.which("git") else None
-        if not git_version or git_version < (2, 31):
+        if not git_version or not meets(git_version, (2, 31)):
             problems.append("git 2.31 or newer")
-        if sys.version_info < (3, 11):
-            problems.append("Python 3.11 or newer")
+        if not meets(interpreter_version(), PYTHON_MINIMUM):
+            problems.append(f"Python {dotted(PYTHON_MINIMUM)} or newer")
         problems += [tool for tool in ("ps", "lsof") if not shutil.which(tool)]
         if problems:
             return "missing", f"this host lacks {', '.join(problems)}; fix: install {', '.join(problems)}"
@@ -8338,10 +8444,10 @@ class Doctor:
         problem = node_problem(self.release())
         if problem:
             return problem
-        wanted = (load_json(self.release() / "runtime/runtime.json") or {}).get("nodeMinimum")
+        wanted = node_minimum(self.release())
         if not wanted:
             return self.not_applicable("the generation carries no runtime")
-        return "ok", f"{find_node(tuple(int(n) for n in wanted.split('.')))} meets the runtime's nodeMinimum {wanted}"
+        return "ok", f"{node_on_path()[0]} meets the runtime's nodeMinimum {wanted}"
 
     def in_app(self):
         ia = self.c.in_app
@@ -8546,23 +8652,47 @@ class Doctor:
             if said is not None:
                 return ("wrong" if said.startswith("stopped partway") else "ok"), said
             return "wrong", f"the supervisor is down; fix: {flow_command()} lead-run --resume"
+        status, node = self.supervisor_node(recorded)
+        running = f"running (pid {recorded.get('pid')}); live view {recorded.get('address')}"
+        # A Node it can't keep is the row's last words, so its fix ends the line.
+        said = lambda more="": (f"{running}; {node}{more}{waits_on(d)}" if status == "ok" else
+                                f"{running}{more}{waits_on(d)}; {node}")
         if not Path("/proc/self/status").exists():
-            return "ok", (f"running (pid {recorded.get('pid')}); live view {recorded.get('address')}. Its children's "
-                          "signal dispositions can't be read on this host (no /proc); it starts them with the defaults"
-                          + waits_on(d))
+            return status, said(". Its children's signal dispositions can't be read on this host (no /proc); it starts "
+                                "them with the defaults")
         ignored = []
         for child in recorded.get("children") or []:
-            status = Path(f"/proc/{child.get('pid')}/status")
-            mask = next((int(line.split()[1], 16) for line in status.read_text().splitlines()
-                         if line.startswith("SigIgn:")), 0) if status.exists() else 0
+            status_file = Path(f"/proc/{child.get('pid')}/status")
+            mask = next((int(line.split()[1], 16) for line in status_file.read_text().splitlines()
+                         if line.startswith("SigIgn:")), 0) if status_file.exists() else 0
             names = [name for name, number in (("SIGINT", 2), ("SIGHUP", 1), ("SIGQUIT", 3)) if mask >> (number - 1) & 1]
             if names:
                 ignored.append(f"{child.get('name')} (pid {child.get('pid')}) ignores {', '.join(names)}")
         if ignored:
             return "wrong", (f"the supervisor's children don't have the default signal dispositions: "
-                             f"{'; '.join(ignored)}, so their checks fail as a broken base; fix: lead-close or stop "
-                             f"them, then {flow_command()} lead-run --resume")
-        return "ok", f"running (pid {recorded.get('pid')}); live view {recorded.get('address')}" + waits_on(d)
+                             f"{'; '.join(ignored)}, so their checks fail as a broken base"
+                             + (f"; and {node.split('; fix: ')[0]}" if status != "ok" else "")
+                             + f"; fix: lead-close or stop them, then {flow_command()} lead-run --resume")
+        return status, said()
+
+    def supervisor_node(self, recorded: dict) -> tuple[str, str]:
+        """The Node the running supervisor recorded in its lock as it started, which its queue's checks run unless
+        their profile says otherwise, judged against the runtime's nodeMinimum: (status, words)."""
+        wanted = node_minimum(self.delivery.release)
+        restart = (f"stop it (pid {recorded.get('pid')}), then run {flow_command()} lead-run --resume"
+                   + (f" with Node {wanted} or newer first on PATH" if wanted else ""))
+        if "node" not in recorded:
+            return "warn", f"it recorded no Node, as an older generation's supervisor doesn't; fix: {restart}, which records it"
+        node = recorded["node"]
+        if not isinstance(node, dict):
+            if wanted:
+                return "wrong", f"it runs with no node on its PATH, and the runtime needs Node {wanted}; fix: {restart}"
+            return "ok", "no node on its PATH"
+        version = node.get("version")
+        said = f"Node {version or 'of no readable version'} at {node.get('path')}"
+        if wanted and not meets(numbers(version or "") or (0,), numbers(wanted) or ()):
+            return "wrong", f"it runs {said}, below the runtime's nodeMinimum {wanted}; fix: {restart}"
+        return "ok", said
 
     def base_gates(self):
         if not self.args.run_gates:

@@ -71,6 +71,9 @@ HISTORY_LENGTH = 5
 STOP_FAILURES = 10
 # The skill's renderer wrapper, called after every state write.
 RENDER_WRAPPER = Path(__file__).resolve().parent / "render_state.py"
+# The installed generation's runtime descriptor, whose nodeMinimum a check's Node is marked against. A generation
+# without a runtime, and this source tree, declare none.
+RUNTIME_DESCRIPTOR = Path(__file__).resolve().parents[3] / "runtime" / "runtime.json"
 RENDER_TIMEOUT_SECONDS = 120
 # Settings the runner's own git commands depend on, pinned on every call so a
 # user's global or system config cannot change what the runner commits, sees
@@ -643,6 +646,49 @@ def run_process(
     return Completed(process.returncode, stdout, stderr, False, time.monotonic() - started)
 
 
+def version_numbers(text: str) -> tuple[int, ...] | None:
+    """A dotted version (`v22.6.0`, `22.6.0`) as numbers, or None."""
+    found = re.match(r"v?(\d+(?:\.\d+)*)", text.strip())
+    return tuple(int(n) for n in found.group(1).split(".")) if found else None
+
+
+def version_meets(version: tuple[int, ...], minimum: tuple[int, ...]) -> bool:
+    """Compared number by number, a missing number counting as 0, so 100.0.0 meets 9.0.0."""
+    width = max(len(version), len(minimum))
+    return tuple(version) + (0,) * (width - len(version)) >= tuple(minimum) + (0,) * (width - len(minimum))
+
+
+def node_minimum() -> tuple[int, ...] | None:
+    """The runtime's nodeMinimum, or None when the generation declares none."""
+    try:
+        wanted = json.loads(RUNTIME_DESCRIPTOR.read_text(encoding="utf-8")).get("nodeMinimum")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return version_numbers(wanted) if isinstance(wanted, str) else None
+
+
+def node_on(environment: dict[str, str]) -> str | None:
+    """The version of the first `node` on an environment's PATH, as `node --version` prints it less its `v`; None
+    when that PATH holds no `node`, or the one there prints nothing."""
+    node = shutil.which("node", path=environment.get("PATH", ""))
+    if node is None:
+        return None
+    try:
+        done = subprocess.run([node, "--version"], env=environment, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    said = done.stdout.strip()
+    return said[1:] if said.startswith("v") else said or None
+
+
+def node_fields(version: str | None, minimum: tuple[int, ...] | None) -> dict:
+    """A check result's Node members: `node` always, and `nodeBelowMinimum: true` only when the runtime declares a
+    minimum and the node is below it. The mark explains a failure; it never changes the check's own verdict."""
+    numbers = version_numbers(version) if version else None
+    below = minimum is not None and numbers is not None and not version_meets(numbers, minimum)
+    return {"node": version, **({"nodeBelowMinimum": True} if below else {})}
+
+
 def kill_group(process: subprocess.Popen) -> None:
     """Kill a timed-out process and everything it started.
 
@@ -1015,7 +1061,8 @@ class Runner:
             {"id": record["id"], "state": record["state"], **({"title": record["title"]} if "title" in record else {}),
              **({"failures": [failure["id"] for failure in record["failures"]]} if record.get("failures") else {}),
              **({"log": record["log"]} if "log" in record else {}),
-             **({"reusedFrom": record["reusedFrom"]} if "reusedFrom" in record else {})}
+             **({"reusedFrom": record["reusedFrom"]} if "reusedFrom" in record else {}),
+             **{key: record[key] for key in ("node", "nodeBelowMinimum") if key in record}}
             for record in states
         ]
 
@@ -2063,8 +2110,16 @@ class Runner:
         if cwd is None:
             return None
         timeout = check.get("timeoutSeconds", self.binding["checkTimeoutSeconds"])
-        profile = self.binding["profiles"].get(check.get("environmentProfile", ""), {"environment": {}})
-        return self.run_argv(check["argv"], cwd, context, timeout, extra_env=profile["environment"])
+        return self.run_argv(check["argv"], cwd, context, timeout, extra_env=self.profile_environment(check))
+
+    def profile_environment(self, check: dict) -> dict[str, str]:
+        return self.binding["profiles"].get(check.get("environmentProfile", ""), {"environment": {}})["environment"]
+
+    def check_node(self, check: dict, context: Context) -> str | None:
+        """The Node a check runs: the first `node` on the PATH it gets, after the binding's and its profile's
+        environment, which may put another first."""
+        extra = {key: context.element(value) for key, value in self.profile_environment(check).items()}
+        return node_on(self.environment(extra))
 
     def run_checks(
         self, subjects: list[str], checks: list[dict], checkout: Path, context: Context, result: Result,
@@ -2082,6 +2137,7 @@ class Runner:
         passed: dict[str, int] = {}
         flaked: dict[str, int] = {}
         began = time.monotonic()
+        minimum = node_minimum()
 
         def show() -> None:
             self.write_progress(subjects, [records[check["id"]] for check in checks])
@@ -2089,7 +2145,7 @@ class Runner:
         def begin(check: dict) -> None:
             record = records[check["id"]]
             record.update(state="running", startedAt=now())
-            for key in ("finishedAt", "failures", "log"):
+            for key in ("finishedAt", "failures", "log", "node", "nodeBelowMinimum"):
                 record.pop(key, None)
 
         def finish(check: dict, completed: Completed) -> dict:
@@ -2097,8 +2153,10 @@ class Runner:
             state = "timed_out" if completed.timed_out else "passed" if completed.returncode == 0 else "failed"
             record = records[check["id"]]
             record.update(state=state, finishedAt=now())
+            node = node_fields(self.check_node(check, context), minimum)
+            record.update(node)
             entry = {"id": check["id"], "state": state, "exitCode": completed.returncode,
-                     "seconds": round(completed.seconds, 3)}
+                     "seconds": round(completed.seconds, 3), **node}
             record.pop("failures", None)
             record.pop("log", None)
             if state == "passed":
