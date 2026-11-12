@@ -4,6 +4,10 @@
     "remote": "origin",
     "ref": "main"
   },
+  "bases": [
+    "main",
+    "integrate/*"
+  ],
   "workRoot": ".orchestration/work",
   "candidate": [
     "python3",
