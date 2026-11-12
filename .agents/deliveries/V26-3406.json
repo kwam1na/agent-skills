@@ -34,7 +34,8 @@
         "docs/own-deliveries.md",
         "tests/test_own_deliveries.py",
         "validation-inventory.json",
-        "tests/test_fault_injection.py"
+        "tests/test_fault_injection.py",
+        "scripts/validate-registry.py"
       ]
     },
     "lane-2": {
