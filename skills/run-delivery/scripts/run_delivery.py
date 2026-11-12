@@ -61,6 +61,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import pr_review_gates  # noqa: E402
 import tracker_publisher  # noqa: E402
 
 TOOL = Path(__file__).resolve().parent.parent
@@ -3542,14 +3543,17 @@ def classify_reviews(found: dict, conf: dict, now: float) -> dict:
     return out
 
 
-def silent_refusal(read: dict, head: str) -> Silent | None:
-    """The refusal for required reviewers silent after the settle, or None. Its line starts `silent reviewer`."""
+def silent_refusal(read: dict, head: str, reviewers: list[dict]) -> Silent | None:
+    """The refusal for required reviewers silent after the settle, or None. Its line starts `silent reviewer`. A gate
+    another current review leaves unmet is a refusal of its own, so it is named here too rather than hidden."""
     silent = [rid for rid, r in read["reviewers"].items() if r["state"] == "silent"]
     if not silent:
         return None
     states = ", ".join(f"{rid} {r['state']}" for rid, r in read["reviewers"].items())
+    unmet = pr_review_gates.live_refusals(reviewers, read["reviewers"], head)
     return Silent(f"silent reviewer: the pipeline is green at {head[:10]} but {', '.join(silent)} posted nothing "
-                  f"since; re-run its step or ask the lead (reviewers: {states})")
+                  f"since; re-run its step or ask the lead (reviewers: {states})"
+                  + "".join(f"; and {refusal}" for refusal in unmet))
 
 
 def retried(call: Callable[[], dict], deadline: float) -> dict:
@@ -3572,7 +3576,11 @@ def read_pr_reviews(url: str, head: str, conf: dict, deadline: float | None) -> 
     def ask() -> dict:
         return forge("reviews", "--url", url, "--head", head)
     found = retried(ask, deadline) if deadline is not None else ask()
-    return classify_reviews(found, conf, clock().time())
+    read = classify_reviews(found, conf, clock().time())
+    refused = pr_review_gates.attach(read, found, conf, head)  # each current review's gate, beside it
+    if refused:
+        raise Stop(refused)
+    return read
 
 
 def pr_review_state(url: str, head: str, conf: dict) -> tuple[str, dict | None, list[dict]]:
@@ -3660,7 +3668,8 @@ def pr_review_text() -> str:
             "sends you back to read an optional review recorded absent that has since arrived. If `pr-review` "
             "exits 3 with a `silent reviewer` line, a required reviewer posted nothing after the pipeline went green: "
             "don't run the wait again. Hand off blocked on it, `--blocked pr-review=\"<that line>\"`, and the lead "
-            "decides.\n")
+            "decides.\n"
+            + pr_review_gates.brief_text(conf["reviewers"]))
 
 
 def pr_review(args) -> None:
@@ -3702,7 +3711,7 @@ def pr_review(args) -> None:
         print("\nTriage every finding like a lens finding: fix what blocks in the lane (then gates, a lens round and this "
               "review again at the new head), and fix or defer the rest. Hand off with --pr-review-triage saying which.")
         return
-    silent = silent_refusal(read, head)
+    silent = silent_refusal(read, head, conf["reviewers"])
     if silent:
         raise silent
     if read["status"] == "pending":
@@ -3718,6 +3727,8 @@ def pr_review(args) -> None:
             review = state["review"]
             entry.update(author=review["author"], **({"account": review["account"]} if "account" in review else {}),
                          at=review["at"], body=review["body"])
+            if state.get("gate"):
+                entry["gate"] = state["gate"]
         entries[reviewer["id"]] = entry
     record = {"schema": RECORD_SCHEMA, "head": head, "url": url, "reviewers": entries}
     (review_dir(key) / "pr-review.json").write_text(json.dumps(record, indent=2))
@@ -3727,7 +3738,8 @@ def pr_review(args) -> None:
     for rid, entry in entries.items():
         kind = "required" if entry["required"] else "optional"
         if entry["state"] == "current":
-            print(f"\n## {rid} ({kind}): {entry['author']} at {entry['at']}\n\n{entry['body']}")
+            gate_line = f"\n{pr_review_gates.shown(entry['gate'])}" if entry.get("gate") else ""
+            print(f"\n## {rid} ({kind}): {entry['author']} at {entry['at']}{gate_line}\n\n{entry['body']}")
         else:
             print(f"\n## {rid} ({kind}): absent, no review within {conf['settleSeconds']}s after the pipeline went "
                   "green")
@@ -3790,7 +3802,7 @@ def review_gate(args) -> None:
         print(f"{author} review of {args.head[:10]} at {review['at']} is current: {states}")
         return
     # Only required reviewers block: an optional one absent, or not yet in, never does (triage is lead-accept's).
-    silent = silent_refusal(read, args.head)
+    silent = silent_refusal(read, args.head, conf["reviewers"])
     if silent:
         raise silent
     required = [r["id"] for r in conf["reviewers"] if r["required"]]
@@ -3798,6 +3810,9 @@ def review_gate(args) -> None:
     if missing or any(ch["state"] != "passed" for ch in read["checks"]) or not read["checks"]:
         raise Stop(f"no current review at {args.head[:10]} from {', '.join(missing) or 'the pipeline'}"
                    + (f" (waited {wait}s)" if args.wait else "") + f": {states}")
+    unmet = pr_review_gates.live_refusals(conf["reviewers"], read["reviewers"], args.head)
+    if unmet:
+        raise Stop("; ".join(unmet))
     said = [f"{rid} at {r['review']['at']}" if r["state"] == "current" else f"{rid} {r['state']}"
             for rid, r in read["reviewers"].items()]
     print(f"PR reviews of {args.head[:10]} are current ({', '.join(said)}): {states}")
@@ -3947,10 +3962,14 @@ def handoff(args) -> None:
     # A lane stopped by a silent reviewer hands off blocked on it, and the lead decides: no review is required here,
     # so long as a required reviewer is silent at the head. The legacy shape has no settle, and no such block.
     on_silent = bool(review_conf) and not review_conf["legacy"] and PR_REVIEW_BLOCK in parse_blocked(args.blocked)
-    if on_silent and silent_refusal(read_pr_reviews(args.pr, head, review_conf, None), head) is None:
-        gate_problems.append(f"--blocked {PR_REVIEW_BLOCK} is for a required reviewer silent after the settle, and none "
-                             f"is silent at {head[:10]}: run {flow_command()} pr-review {key} --wait, and triage what it "
-                             "shows")
+    if on_silent:
+        live = read_pr_reviews(args.pr, head, review_conf, None)
+        if silent_refusal(live, head, review_conf["reviewers"]) is None:
+            gate_problems.append(f"--blocked {PR_REVIEW_BLOCK} is for a required reviewer silent after the settle, and "
+                                 f"none is silent at {head[:10]}: run {flow_command()} pr-review {key} --wait, and "
+                                 "triage what it shows")
+        else:  # the silent reviewer is the lead's to decide; an unmet gate beside it is still refused
+            gate_problems += pr_review_gates.live_refusals(review_conf["reviewers"], live["reviewers"], head)
     if review_conf and not on_silent:
         saved = folder / "pr-review.json"
         recorded = json.loads(saved.read_text()) if saved.exists() else {}
@@ -3967,6 +3986,7 @@ def handoff(args) -> None:
                 pr_line = f"{recorded['author']} at {recorded['at'][:16]}; triage: {recorded['triage']}"
         else:
             pr_line, problems_ = pr_review_handoff(key, review_conf, recorded, args.pr_review_triage or [])
+            problems_ += pr_review_gates.recorded_refusals(review_conf["reviewers"], record_reviewers(recorded), head)
             if problems_:
                 gate_problems += problems_
             else:
@@ -5954,6 +5974,7 @@ def pr_review_acceptance(conf: dict, url: str, head: str, recorded: dict) -> tup
         else:
             decisions.append(f"PR review {rid} by {live['review']['author']} at {live['review']['at'][:16]} triaged: "
                              f"{entry['triage']}")
+    problems += pr_review_gates.live_refusals(conf["reviewers"], read["reviewers"], head)
     return problems, decisions
 
 
@@ -6024,10 +6045,12 @@ def lead_accept(args) -> None:
         # Blocked on a silent reviewer: while one is still silent, the block below is the lead's decision. Once none is,
         # its review has arrived (or the pipeline moved), and the lane must read and triage it.
         live = read_pr_reviews(item.get("changeRequest") or "", head, conf, None)
-        if silent_refusal(live, head) is None:
+        if silent_refusal(live, head, conf["reviewers"]) is None:
             states = ", ".join(f"{rid} {r['state']}" for rid, r in live["reviewers"].items()) or live["status"]
             problems.append(f"the lane blocked on a silent PR reviewer, but none is silent at {head[:10]} now ({states}): "
                             "send the lane back to read and triage its review")
+        else:  # an unmet gate beside the silent reviewer is no part of the block
+            problems += pr_review_gates.live_refusals(conf["reviewers"], live["reviewers"], head)
         conf = None
     if conf and not conf["legacy"]:
         lane_root_ = c.lane_checkout(key)

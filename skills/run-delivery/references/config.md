@@ -180,6 +180,8 @@ checks may need no file at all.
   `--accept-blocked pr-review` or by sending the story back. Re-running the reviewer's step is the usual answer; once
   it has posted, `lead-accept` refuses the block and sends the lane back to read and triage the review. An optional
   reviewer never stops a wait this way, and the legacy shape takes no such block.
+  A silent reviewer and another review's unmet gate are separate refusals: the silent line names the unmet gate too,
+  and a block on the silent reviewer never covers a gate, at hand-off or at acceptance.
   Every wait reads its time, sleeps and poll interval through one clock, which `RUN_DELIVERY_CLOCK` replaces with
   a file's for the tool's own tests; never set it in a delivery.
 - **What the adapter must return.** A reviewer with `account` needs `account` on each comment from `reviews`; a gate
@@ -331,6 +333,29 @@ refusal carries the last transient message. The `find` before each wait, every c
 command refuse at once. So a `reviewGate`'s `timeoutSeconds` must exceed `review.pr`'s `waitSeconds` by at least 120,
 so that the last backoff and one adapter call fit inside it. With `forge.mergeNeedsReady` set, `doctor` reports a delivery without the `readyPullRequests` grant, and
 `lead-init` refuses it.
+
+### A PR reviewer's gate
+
+A reviewer in `review.pr.reviewers` may take `gate`, checked only on its current review; an absent optional reviewer's
+gate is checked nowhere. Without `gate`, the review only has to be current, as before.
+
+- `"verdict"` is met when the review's verdict says approve. The verdict is the body's first line matching
+  `^\*\*Verdict:\*\*\s*(.+)$`; later lines are ignored. It says approve when its first word, lowercased and stripped of
+  punctuation, is `approve` or `approved`: `Approve`, `Approved.` and `APPROVE` do, `Not approved` and `Request changes`
+  don't. A review with no such line is unmet, saying the line is missing.
+- `"approval"` needs the reviewer's `account`, and is met when one of the PR's approvals has that `account`. Display
+  names are never compared. For it, `reviews` also prints `"approvals": [{account, name, at, commit?}]`: the GitHub
+  adapter's are each account's latest deciding review (approved, changes requested or dismissed) when it approved,
+  each with the `commit` it was given at, and the Bitbucket
+  adapter's are the PR's participants with `approved`, with no `commit`. An approval that names a `commit` counts only
+  when that commit is the head. **On Bitbucket an approval is only as fresh as the forge makes it:** Bitbucket ties no
+  approval to a commit, so an approval given at an earlier head still counts after a new push. An adapter that prints no
+  `approvals` member is refused for an approval gate, naming the member; an empty list is not refused, and the gate is
+  unmet.
+
+`pr-review` prints each gate beside its review, met or unmet, with why. With a gate unmet, `handoff`, `lead-accept` and
+the `pr-review-current` reviewGate refuse, naming the reviewer and what it needs: fix and push, so the reviewer runs
+again. The record keeps each gate as `{kind, met, why}`.
 
 ## The supervisor
 

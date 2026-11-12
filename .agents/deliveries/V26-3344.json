@@ -17,29 +17,30 @@
     "lane-1": {
       "owns": [
         "skills/run-delivery/SKILL.md",
-        "skills/run-delivery/adapters/*",
         "skills/run-delivery/assets/*",
-        "skills/run-delivery/references/*",
         "skills/run-delivery/templates/*",
-        "skills/run-delivery/scripts/run_delivery.py",
         "skills/run-delivery/scripts/tracker_publisher.py",
-        "tests/test_run_delivery.py",
         "tests/test_run_delivery_pr_review.py",
-        "tests/test_forge_adapters.py",
         "tests/test_merge_queue.py",
         "tests/test_run_delivery_tracker.py",
+        "catalog.json",
+        "docs/solutions/*",
+        "skills/run-delivery/adapters/*",
+        "skills/run-delivery/references/*",
+        "skills/run-delivery/scripts/run_delivery.py",
+        "tests/test_run_delivery.py",
+        "tests/test_forge_adapters.py",
         "tests/test_own_deliveries.py",
         ".agents/orchestration.json",
-        "catalog.json",
         "profiles/*",
-        "provenance.lock.json",
-        "docs/solutions/*"
+        "provenance.lock.json"
       ]
     },
     "lane-2": {
       "owns": [
         "skills/run-delivery/scripts/pr_review_gates.py",
-        "tests/test_run_delivery_pr_review_gates.py"
+        "tests/test_run_delivery_pr_review_gates.py",
+        "tests/test_release_integration.py"
       ]
     }
   },

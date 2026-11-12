@@ -1046,5 +1046,47 @@ class SilentReviewerTests(PrReviewCase):
         self.assertIn("don't run the wait again", brief)
 
 
+
+class SilentAndGateTests(PrReviewCase):
+    """A silent required reviewer and another reviewer's unmet gate are separate refusals: neither hides the other."""
+
+    GATED = {**CODEX, "gate": "verdict"}
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.configure({**LISTED, "reviewers": [PRIMARY, self.GATED]})
+        self.answer([check(T - 600, T)], [by_codex(body="<!-- codex -->\n**Verdict:** Request changes", at=stamp(T + 10))])
+        self.unmet = f"PR reviewer codex's verdict gate is unmet at {self.head[:10]}"
+
+    def test_pr_review_and_the_gate_name_both(self) -> None:
+        self.clock(T + SETTLE + 1)
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 3, out)
+        self.assertIn(f"{SILENT}{self.head[:10]} but primary posted nothing since", out)
+        self.assertIn(self.unmet, out)
+        code, _, err = self.gate()
+        self.assertEqual(code, 3, err)
+        self.assertEqual(len(err.strip().splitlines()), 1, err)
+        self.assertIn(self.unmet, err)
+        with self.subTest("with the gate met, the silent line alone"):
+            self.answer([check(T - 600, T)], [by_codex(body="<!-- codex -->\n**Verdict:** Approve", at=stamp(T + 10))])
+            code, out = self.flow("pr-review", "FX-2")
+            self.assertEqual(code, 3, out)
+            self.assertNotIn("gate is unmet", out)
+
+    def test_a_block_on_the_silent_reviewer_still_refuses_the_unmet_gate(self) -> None:
+        self.clock(T + SETTLE + 1)
+        code, out = self.flow("handoff", "FX-2", "--pr", PR, "--blocked", "pr-review=silent")
+        self.assertEqual(code, 2, out)
+        self.assertIn(self.unmet, out)
+        self.answer([check(T - 600, T)], [by_codex(body="<!-- codex -->\n**Verdict:** Approve", at=stamp(T + 10))])
+        self.assertEqual(self.flow("handoff", "FX-2", "--pr", PR, "--blocked", "pr-review=silent")[0], 0)
+        self.answer([check(T - 600, T)], [by_codex(body="<!-- codex -->\n**Verdict:** Request changes",
+                                                   at=stamp(T + 20))])
+        code, out = self.flow("lead-accept", "FX-2", "--accept-blocked", "pr-review", cwd=self.fx.main)
+        self.assertEqual(code, 1, out)
+        self.assertIn(self.unmet, out)
+
+
 if __name__ == "__main__":
     unittest.main()

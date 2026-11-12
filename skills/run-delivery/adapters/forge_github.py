@@ -8,7 +8,8 @@
                                                               "destination"}
   reviews --url URL --head SHA                            -> {"checks": [{"name", "state": passed|failed|pending, "at",
                                                                          "doneAt"?}],
-                                                              "reviews": [{"author", "account", "at", "body"}]}
+                                                              "reviews": [{"author", "account", "at", "body"}],
+                                                              "approvals": [{"account", "name", "at", "commit"}]}
   ready --url URL                                         -> {"url", "draft": false}
   merge --url URL --strategy merge|squash [--head SHA]    -> {"url", "state": "merged"}
   merge --source BRANCH --head SHA --strategy merge|squash [--destination D] -> {"url", "state": "merged"}
@@ -151,7 +152,16 @@ def main():
         reviews = [{"author": (entry.get("author") or {}).get("login", ""),
                     "account": (entry.get("author") or {}).get("login", ""), "at": entry.get("submittedAt", ""),
                     "body": entry.get("body", "")} for entry in pr.get("reviews") or []]
-        print(json.dumps({"checks": checks, "reviews": reviews}))
+        # An approval is an account's latest deciding review, when it is APPROVED, tied to the commit it was given at:
+        # a later CHANGES_REQUESTED withdraws it, as GitHub counts it, and a dismissed one is DISMISSED already.
+        deciding = {}
+        for entry in sorted(pr.get("reviews") or [], key=lambda entry: entry.get("submittedAt") or ""):
+            if entry.get("state") in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
+                deciding[(entry.get("author") or {}).get("login", "")] = entry
+        approvals = [{"account": login, "name": (entry.get("author") or {}).get("name") or login,
+                      "at": entry.get("submittedAt", ""), "commit": (entry.get("commit") or {}).get("oid", "")}
+                     for login, entry in deciding.items() if entry.get("state") == "APPROVED"]
+        print(json.dumps({"checks": checks, "reviews": reviews, "approvals": approvals}))
     elif args.command == "ready":
         gh("pr", "ready", pull_request(args.url))
         print(json.dumps({"url": args.url, "draft": False}))
