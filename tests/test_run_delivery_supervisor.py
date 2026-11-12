@@ -14,6 +14,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import socket
@@ -2393,6 +2394,248 @@ def tracked(fx: Fixture, backend_class, updates: str | None = None):
 
 def epic_comments(backend) -> list[str]:
     return [comment["text"] for comment in backend.read()["issues"]["FX-1"]["comments"]]
+
+
+def draw_line_map(fx: Fixture) -> None:
+    """The binding also renders the line map into the record, as an adopter's live view does."""
+    m = fx.main
+    (m / ".agents/delivery-views.json").write_text(json.dumps({"spec": "delivery-views-config/1"}))
+    binding_path = m / ".agents/orchestration.json"
+    binding = json.loads(binding_path.read_text())
+    binding["state"]["renderers"] = [{"id": "line-map", "output": "line-map.html", "timeoutSeconds": 60, "argv": [
+        sys.executable, "-B", str(fx.release / "skills/delivery-views/scripts/render.py"), "line-map", "--config",
+        ".agents/delivery-views.json", "--binding", ".agents/orchestration.json", "--state-dir", "{stateDirectory}"]}]
+    binding_path.write_text(json.dumps(binding, indent=2))
+    commit(m, "FX-1: the line map in the record")
+    sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+
+
+def embedded_needs(case: unittest.TestCase, page: str) -> dict:
+    found = re.search(r'<script type="application/json" id="delivery-needs">([^<]*)</script>', page)
+    case.assertIsNotNone(found, "the line map embeds no Needs you list")
+    return json.loads(found.group(1))
+
+
+def run_delivery_module(name: str):
+    path = Path(__file__).resolve().parents[1] / "skills" / "run-delivery" / "scripts" / "run_delivery.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+LISTENER = "The lead isn't listening"
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class LeadListenerTests(unittest.TestCase):
+    """The lead's listener: the lead commands print the lead-wait to start, and while none runs the supervisor's "Needs
+    you", the live view and the status line say so."""
+
+    run_serially = True
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        for name, value in vars(installed_release()).items():
+            setattr(cls, name, value)
+        cls.flow = run_delivery_module("run_delivery_for_the_listener")
+
+    def fixture(self) -> tuple[Fixture, str]:
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        self.addCleanup(stop_supervisors, fx.tmp)
+        supervised(fx)
+        draw_line_map(fx)
+        code, out = fx.flow("lead-init", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        return fx, out
+
+    def last_id(self, fx: Fixture) -> int:
+        return record(fx)["journal"][-1]["id"]
+
+    def printed(self, out: str) -> list[str]:
+        """The lead-wait command a lead command printed, as words."""
+        lines = [line.strip() for line in out.splitlines() if " lead-wait " in line and line.startswith("  ")]
+        self.assertEqual(len(lines), 1, out)
+        return shlex.split(lines[0])
+
+    def start_lead_wait(self, fx: Fixture, *argv: str) -> subprocess.Popen:
+        proc = subprocess.Popen([sys.executable, "-B", str(fx.tool), "lead-wait", *argv], cwd=fx.main, env=fx.env,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        def stop() -> None:
+            if proc.poll() is None:
+                proc.kill()
+            proc.communicate()
+        self.addCleanup(stop)
+        return proc
+
+    def shown(self, fx: Fixture, present: bool) -> list[dict]:
+        """Once a running supervisor's "Needs you" and the line map it drew both list the missing listener, or both
+        don't: the listener's items, from the list."""
+        page = fx.tmp / "record/line-map.html"
+        needs_file = fx.tmp / "record/needs-you.json"
+        mine = lambda items: [item for item in items if item["text"].startswith(LISTENER)]
+
+        def agree():
+            if not page.exists() or not needs_file.exists():
+                return None
+            embedded = re.search(r'<script type="application/json" id="delivery-needs">([^<]*)</script>', page.read_text())
+            try:  # either may be read mid-write
+                written, drawn = json.loads(needs_file.read_text()), json.loads(embedded.group(1)) if embedded else None
+            except ValueError:
+                return None
+            if not (drawn and written["running"] and drawn["running"]):
+                return None
+            found = mine(written["items"])
+            return (found or [True]) if bool(found) == present and bool(mine(drawn["items"])) == present else None
+        found = wait_for(agree, f"the listener {'listed' if present else 'not listed'} in Needs you and the line map", 60)
+        return found if present else []
+
+    def test_each_lead_command_prints_the_lead_wait_while_something_needs_it_and_nothing_otherwise(self) -> None:
+        fx, out = self.fixture()
+        self.assertNotIn("lead-wait", out)
+        self.assertNotIn("listening", out)
+        code, out = fx.flow("lead-run", "--resume", cwd=fx.main, env=running(fx))
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("lead-wait", out)
+        self.assertNotIn("listening", out)
+        stop_supervisors(fx.tmp)
+        # Assigned, a lane needs the lead to listen: the exact command, after the journal's last entry.
+        code, out = fx.flow("lead-assign", "FX-2", "--lane", "lane-1", "--title", "lane-1", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("The lead's wake: lane-1 (assigned), and no lead-wait is listening", out)
+        output = fx.tmp / "flow-log/FX-1.wait.json"
+        words = self.printed(out)
+        self.assertEqual(words[words.index("lead-wait") - 2:], ["--delivery", "FX-1", "lead-wait", "--after",
+                                                                 str(self.last_id(fx)), "--output", str(output)])
+        self.assertIn(f"the lead isn't listening: no lead-wait runs while lane-1 (assigned)", out)
+        # The printed command runs as it stands: here it times out, and its result names the next one.
+        done = subprocess.run([*words, "--timeout", "0.2", "--poll", "0.05"], cwd=fx.main, env=fx.env,
+                              capture_output=True, text=True, timeout=120)
+        self.assertEqual(done.returncode, 3, done.stdout + done.stderr)
+        result = json.loads(done.stdout)
+        self.assertEqual(json.loads(output.read_text()), result)
+        # A story handed off since then: the next command starts from what that wait read through, so it wakes on it.
+        wt = hand_off(fx, "FX-2", "lane-1", assign=False)
+        self.assertTrue(wt.exists())
+        handed = kinds(fx, "candidate.handed")[-1]["id"]
+        self.assertGreater(handed, result["through"])
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("FX-2 (queued)", out)
+        words = self.printed(out)
+        self.assertEqual(words[words.index("lead-wait") + 1:], result["restart"])
+        self.assertEqual(words[words.index("--after") + 1], str(result["through"]))
+        woke = subprocess.run([*words, "--timeout", "5"], cwd=fx.main, env=fx.env, capture_output=True, text=True,
+                              timeout=120)
+        self.assertEqual(woke.returncode, 0, woke.stdout + woke.stderr)
+        self.assertIn(handed, [event["id"] for event in json.loads(woke.stdout)["events"]])
+        # Resumed with a candidate queued, the supervisor's start names it too. A last wait whose restart starts past
+        # the journal (a record started again, say) isn't reprinted: the command starts after the journal's last entry.
+        before = self.last_id(fx)
+        output.write_text(json.dumps({**json.loads(woke.stdout), "restart": ["--after", str(before + 5),
+                                                                           f"--output={output}"]}))
+        code, out = fx.flow("lead-run", "--resume", cwd=fx.main, env=running(fx))
+        self.assertEqual(code, 0, out)
+        self.assertIn("FX-2 (queued)", out)
+        words = self.printed(out)
+        after = int(words[words.index("--after") + 1])
+        # The supervisor it starts may journal as it goes, so the last entry is read on either side of the print.
+        self.assertTrue(before <= after <= self.last_id(fx) < before + 5, (before, after, self.last_id(fx)))
+        self.assertEqual(words[words.index("lead-wait") + 1:], ["--after", str(after), "--output", str(output)])
+        self.assertIn("the lead isn't listening", out)
+        self.assertIn("lead-wait", self.printed(out))
+        # While one listens, the commands say so and print no second one to start. Its lease keeps the --after it was
+        # given, below the journal's last entry, not that entry.
+        given = self.last_id(fx) - 2
+        listening = self.start_lead_wait(fx, "--after", str(given), "--timeout", "60", "--poll", "0.1")
+        wait_for(lambda: (fx.tmp / "record/lead-wait.json").exists(), "the lease")
+        self.assertEqual(json.loads((fx.tmp / "record/lead-wait.json").read_text())["after"], given)
+        code, out = fx.flow("lead-assign", "FX-3", "--lane", "lane-2", "--title", "lane-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"lead-wait is listening (pid {listening.pid}, after journal entry {given})", out)
+        self.assertNotIn(" lead-wait --", out)
+        self.assertNotIn("isn't listening", out)
+
+    def test_needs_you_and_the_live_view_name_a_missing_listener_until_lead_wait_runs(self) -> None:
+        fx, _ = self.fixture()
+        code, out = fx.flow("lead-run", "--resume", cwd=fx.main, env=running(fx))
+        self.assertEqual(code, 0, out)
+        pid = wait_for(lambda: lock_of(fx).get("pid"), "a running supervisor")
+        self.addCleanup(lambda: alive(pid) and os.kill(pid, signal.SIGTERM))
+        self.shown(fx, False)
+        code, out = fx.flow("lead-assign", "FX-2", "--lane", "lane-1", "--title", "lane-1", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "x", "--state", "working")
+        found = self.shown(fx, True)
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("no lead-wait runs while lane-1 (working)", found[0]["text"])
+        self.assertIn("--delivery FX-1 lead-wait --after ", found[0]["text"])
+        self.assertEqual((found[0]["source"], found[0]["holding"]), ("lead-wait.json in the record", False))
+        code, out = fx.flow("lead-hints", cwd=fx.main)
+        self.assertIn("the lead isn't listening: no lead-wait runs while lane-1 (working)", out)
+        # A running lead-wait holds the lease the decision names, and clears both.
+        through = self.last_id(fx)
+        proc = self.start_lead_wait(fx, "--timeout", "120", "--poll", "0.1")
+        lease_path = fx.tmp / "record/lead-wait.json"
+        wait_for(lease_path.exists, "the lease")
+        lease = json.loads(lease_path.read_text())
+        self.assertEqual(set(lease), {"pid", "startedAt", "updatedAt", "after", "checkout"})
+        self.assertEqual((lease["pid"], lease["after"]), (proc.pid, through))
+        self.assertEqual(Path(lease["checkout"]).resolve(), fx.main.resolve())
+        self.assertEqual(self.flow.lead_listener(fx.tmp / "record"), lease)
+        self.shown(fx, False)
+        code, out = fx.flow("lead-hints", cwd=fx.main)
+        self.assertNotIn("isn't listening", out)
+        # Stopped, it stops its wait and takes its lease with it, and the listener is missing again.
+        proc.terminate()
+        proc.communicate(timeout=60)
+        self.assertFalse(lease_path.exists(), "the lease outlived its lead-wait")
+        self.shown(fx, True)
+        # Each planted lease below starts from views that show a listener, so it is what turns them back.
+        fresh = lambda: lease_path.write_text(json.dumps({**lease, "pid": os.getpid(),
+                                                          "updatedAt": self.flow.utc_stamp(time.time())}))
+        fresh()
+        self.shown(fx, False)
+        # A lease whose pid has died is no listener: the lease function, the supervisor and the live view agree.
+        dead = subprocess.Popen([sys.executable, "-c", "pass"])
+        dead.wait()
+        lease_path.write_text(json.dumps({**lease, "pid": dead.pid, "updatedAt": self.flow.utc_stamp(time.time())}))
+        self.assertIsNone(self.flow.lead_listener(fx.tmp / "record"))
+        self.shown(fx, True)
+        fresh()
+        self.shown(fx, False)
+        # As is one whose last refresh is 180 seconds old, though its pid lives.
+        lease_path.write_text(json.dumps({**lease, "pid": os.getpid(),
+                                          "updatedAt": self.flow.utc_stamp(time.time() - 180)}))
+        self.assertIsNone(self.flow.lead_listener(fx.tmp / "record"))
+        self.shown(fx, True)
+
+    def test_lead_wait_is_the_wait_and_ends_with_it(self) -> None:
+        fx, _ = self.fixture()
+        code, out = fx.flow("lead-wait", "--timeout", "0.2", "--poll", "0.05", cwd=fx.main)
+        self.assertEqual(code, 3, out)
+        result = json.loads(out)  # one document, the wait's, with nothing after it
+        self.assertEqual(result["through"], self.last_id(fx))
+        self.assertIn(f"--output={(fx.tmp / 'flow-log/FX-1.wait.json').resolve()}", result["restart"])
+        self.assertFalse((fx.tmp / "record/lead-wait.json").exists())
+        # The one-word --delivery form is run-delivery's, and the wait still gets what follows it.
+        code, out = fx.flow("lead-wait", "--delivery=FX-1", "--timeout", "0.2", "--poll", "0.05", cwd=fx.main)
+        self.assertEqual(code, 3, out)
+        self.assertEqual(json.loads(out)["restart"][2:6], ["--timeout", "0.2", "--poll", "0.05"])
+        # A usage error is the wait's, and starts nothing.
+        code, out = fx.flow("lead-wait", "--timeout", "never", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertFalse((fx.tmp / "record/lead-wait.json").exists())
+        # A wake ends it with the wait's own exit, naming the event, and the lease goes with it.
+        proc = self.start_lead_wait(fx, "--delivery", "FX-1", "--timeout", "60", "--poll", "0.1")
+        wait_for((fx.tmp / "record/lead-wait.json").exists, "the lease")
+        state_tool(fx, "journal", "--kind", "blocker.recorded", "--summary", "a blocker")
+        stdout, _ = proc.communicate(timeout=60)
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual([event["kind"] for event in json.loads(stdout)["events"]], ["blocker.recorded"])
+        self.assertFalse((fx.tmp / "record/lead-wait.json").exists())
 
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)

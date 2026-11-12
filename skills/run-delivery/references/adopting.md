@@ -744,6 +744,14 @@ No command calls a host's own interface. What the workflow can't do for you:
   supervisor: its forge snapshot and the pipeline's review reach the record and the lanes without the host.
 - **Session limits.** A host's session limit ends a lane's turn mid-story. Its checkout, branch and record remain;
   start it again from the lane brief and `lane-start`, which changes nothing the second time.
+- **Host hooks.** Where the generation installs host hooks, `lead.may-stop` holds a lead's stop while a lane works or a
+  candidate is queued and no `lead-wait` listens, and `delivery.orient` tells every session in a delivery its role and
+  next command when it starts, resumes, clears, compacts or forks; [the configuration reference](config.md#host-hooks)
+  says when each acts and how `hooks` switches it. A host runs a project's hooks only once its folder is trusted, so a
+  lead works in a trusted folder; `doctor` can't see trust. Lead each open delivery from its own checkout: two in one
+  checkout only warn.
+- **The lead's wake on Codex.** Codex documents hooks of its own, but this generation installs none there, so on Codex
+  the `lead-wait` command each lead command prints, its status line and "Needs you" are what keep the lead's wake.
 
 Where a host offers less otherwise, the workflow takes the path on the right:
 

@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from ..adoption import AdoptionError, body_sha256, restore_skill, skill_body
-from .base import HostProjection
+from .base import ExposureError, HostProjection
 from .claude import CLAUDE_CODE
 from .codex import CODEX
 
@@ -31,10 +31,6 @@ DESCRIPTOR_SWITCH_SUPPORTED = (
     )
     and os.stat in os.supports_follow_symlinks
 )
-
-
-class ExposureError(ValueError):
-    pass
 
 
 def exposure_records() -> list[dict[str, str]]:

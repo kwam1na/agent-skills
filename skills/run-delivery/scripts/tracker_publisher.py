@@ -68,6 +68,7 @@ UPDATES: dict[str, tuple[str, str] | None] = {
     "check.reused": None,
     "check.selected": None,
     "selection.refused": None,
+    "hook.held": None,
     "candidate.merged": ("ticket", "Merged"),
     "candidate.stopped": ("ticket", "Stopped"),
     "base.verified": None,

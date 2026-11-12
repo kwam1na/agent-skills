@@ -42,6 +42,7 @@ if os.name == "nt":
 
 import argparse
 import contextlib
+import copy
 import datetime
 import fcntl
 import collections
@@ -6474,14 +6475,14 @@ def supervisor_line(c) -> str | None:
     held, recorded = read_lock(supervisor_lock_path(c))
     if held:
         return (f"supervisor: running (pid {recorded.get('pid')}); live view {recorded.get('address') or 'starting'}"
-                + live_fallback(c.state) + on_fallback(c) + waits_on(c))
+                + live_fallback(c.state) + on_fallback(c) + listener_words(c) + waits_on(c))
     said = closed_status(c)
     if said is not None:
         return "supervisor: " + said
     serving = view_serving(c.state)
     address = f"; live view {live_address(serving['port'])}" if serving else ""
     return (f"supervisor: down ({supervisor_down_words(c.state)}){address}; restart it with {flow_command()} "
-            "lead-run --resume" + waits_on(c))
+            "lead-run --resume" + listener_words(c) + waits_on(c))
 
 
 def live_fallback(state: Path) -> str:
@@ -6855,6 +6856,480 @@ def copy_latest(c) -> Path:
     return target
 
 
+# The lead's listener. `lead-wait` wraps the state tool's `wait` and keeps a lease in the record while it runs; the
+# supervisor's "Needs you", the live view, the status line and the lead commands all read it through lead_listener.
+
+LEAD_WAIT_LEASE = "lead-wait.json"
+LEAD_WAIT_REFRESH_SECONDS = 60
+LEAD_WAIT_LIVE_SECONDS = 180
+
+
+def utc_stamp(at: float) -> str:
+    return datetime.datetime.fromtimestamp(at, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def stamp_seconds(value: object) -> float | None:
+    """A UTC stamp as epoch seconds, with or without its fraction; None for anything else."""
+    if not isinstance(value, str):
+        return None
+    for pattern in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ"):
+        try:
+            return datetime.datetime.strptime(value, pattern).replace(tzinfo=datetime.timezone.utc).timestamp()
+        except ValueError:
+            continue
+    return None
+
+
+def lead_listener(state: Path, at: float | None = None) -> dict | None:
+    """The live lease, or None: a lease is live while its pid is alive and its `updatedAt` is under
+    LEAD_WAIT_LIVE_SECONDS old. A missing, unreadable or malformed lease, or one stamped in the future past a refresh,
+    is absent."""
+    try:
+        lease = json.loads((state / LEAD_WAIT_LEASE).read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(lease, dict) or not valid_pid(lease.get("pid")):
+        return None
+    updated = stamp_seconds(lease.get("updatedAt"))
+    if updated is None:
+        return None
+    age = (time.time() if at is None else at) - updated
+    if not -LEAD_WAIT_REFRESH_SECONDS <= age < LEAD_WAIT_LIVE_SECONDS or process_gone(lease["pid"]):
+        return None
+    return lease
+
+
+def write_lease(state: Path, lease: dict) -> None:
+    """Rewrite the lease through a temporary file, under the state lock the record's copies take."""
+    path = state / LEAD_WAIT_LEASE
+    staging = path.with_name(f".{LEAD_WAIT_LEASE}.{os.getpid()}")
+    with open(state / "state.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            staging.write_text(json.dumps(lease, indent=2) + "\n")
+            os.replace(staging, path)
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def drop_lease(state: Path, pid: int) -> None:
+    """Remove the lease if it is still this pid's: a later lead-wait's lease is its own."""
+    path = state / LEAD_WAIT_LEASE
+    with open(state / "state.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            try:
+                held = json.loads(path.read_text())
+            except (OSError, ValueError):
+                return
+            if isinstance(held, dict) and held.get("pid") == pid:
+                path.unlink(missing_ok=True)
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def hold_lease(state: Path, proc, *, after: int, checkout: Path, every: float | None = None,
+               clock: Callable[[], float] = time.time) -> int:
+    """Keep this process's lease while `proc` runs, rewriting it every `every` seconds, and remove it when `proc` ends
+    or this process is stopped; returns `proc`'s exit code."""
+    every = LEAD_WAIT_REFRESH_SECONDS if every is None else every
+    pid = os.getpid()
+    started = utc_stamp(clock())
+    lease = {"pid": pid, "startedAt": started, "updatedAt": started, "after": after, "checkout": str(checkout)}
+    try:
+        write_lease(state, lease)
+        while True:
+            try:
+                return proc.wait(timeout=every)
+            except subprocess.TimeoutExpired:
+                lease["updatedAt"] = utc_stamp(clock())
+                write_lease(state, lease)
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+        drop_lease(state, pid)
+
+
+def listener_needed(state: dict) -> list[str]:
+    """What needs the lead to listen: each lane that isn't idle or done, and each candidate not yet merged."""
+    return ([f"{lane['id']} ({lane.get('state')})" for lane in state.get("lanes", []) if lane.get("state") not in LANE_DONE]
+            + [f"{item['subject']} ({item.get('stage')})" for item in state.get("queue", []) if item.get("stage") != "merged"])
+
+
+def wait_output(c) -> Path:
+    """Where lead-wait writes the wait's one result document by default: beside the flow logs, outside the record."""
+    return lead_file(c, "wait.json")
+
+
+def last_restart(c, journal: list[dict]) -> list[str] | None:
+    """The `restart` arguments the last wait into the default output printed, while they still fit this journal."""
+    try:
+        result = json.loads(wait_output(c).read_text())
+    except (OSError, ValueError):
+        return None
+    restart = result.get("restart") if isinstance(result, dict) else None
+    if not isinstance(restart, list) or not all(isinstance(word, str) for word in restart) or "--after" not in restart:
+        return None
+    try:
+        after = int(restart[restart.index("--after") + 1])
+    except (IndexError, ValueError):
+        return None
+    through = journal[-1]["id"] if journal else 0
+    return restart if 0 <= after <= through else None
+
+
+def lead_wait_command(c, doc: dict) -> str:
+    """The exact lead-wait to start: the last wait's own restart, so nothing journalled since it read is missed, or,
+    with none, one starting after the journal's last entry."""
+    start = f"{flow_command()} --delivery {c.delivery} lead-wait"
+    restart = last_restart(c, doc["journal"])
+    if restart is not None:
+        return f"{start} {shlex.join(restart)}"
+    through = doc["journal"][-1]["id"] if doc["journal"] else 0
+    return f"{start} --after {through} --output {shlex.quote(str(wait_output(c)))}"
+
+
+def listener_lines(c) -> list[str]:
+    """What a lead command ends with while a lane works or a candidate is queued: the lead-wait to start in the
+    background, or that one listens. Nothing otherwise."""
+    if not (c.state / "state.json").exists():
+        return []
+    tool = c.release / "skills/orchestrate-work/scripts/delivery_state.py"
+    doc = json.loads(run([sys.executable, "-B", str(tool), "--dir", str(c.state), "show"]).stdout)
+    needed = listener_needed(doc["state"])
+    if not needed:
+        return []
+    lease = lead_listener(c.state)
+    if lease is not None:
+        return [f"The lead's wake: {', '.join(needed)}; lead-wait is listening (pid {lease['pid']}, after journal entry "
+                f"{lease.get('after')}). When it ends, start it again with the arguments its result's `restart` names."]
+    return [f"The lead's wake: {', '.join(needed)}, and no lead-wait is listening. Start this in the background before "
+            "you end your turn, and after each wake start it again with the arguments its result's `restart` names:",
+            f"  {lead_wait_command(c, doc)}"]
+
+
+def listener_words(c) -> str:
+    """The status line's word on the listener: empty while one listens or nothing needs one."""
+    if lead_listener(c.state) is not None:
+        return ""
+    try:  # read as the record holds it, as on_fallback reads it: a status line never refuses over it
+        state = load_json(c.state / "state.json") or {}
+    except (OSError, ValueError):
+        return ""
+    needed = listener_needed(state) if isinstance(state, dict) else []
+    return f"; the lead isn't listening: no lead-wait runs while {', '.join(needed)}" if needed else ""
+
+
+def lead_wait(args) -> None:
+    """`delivery_state.py wait`, with a lease in the record while it runs. Takes the wait's own arguments; without
+    `--after` it starts after the journal's last entry, and without `--output` it writes the default output."""
+    c = cfg()
+    if not (c.state / "state.json").exists():
+        raise Stop(f"no record at {c.state}: lead-init starts it")
+    passed = list(args.wait_args)
+    parsed = _validator().wait_arguments(passed)
+    after = parsed.after
+    if after is None:
+        journal = load_state()["journal"]
+        after = journal[-1]["id"] if journal else 0
+        passed = ["--after", str(after), *passed]
+    if parsed.output is None:
+        wait_output(c).parent.mkdir(parents=True, exist_ok=True)
+        passed.append(f"--output={wait_output(c)}")
+    script = c.release / "skills/orchestrate-work/scripts/delivery_state.py"
+    proc = subprocess.Popen([sys.executable, "-B", str(script), "--dir", str(c.state), "wait", *passed])
+    sys.exit(hold_lease(c.state, proc, after=after, checkout=c.root))
+
+
+# Host hooks: the decisions behind the hooks this skill declares in hooks.json. Each reads the host's payload on stdin
+# and prints one neutral verdict, {"verdict": "allow" | "warn" | "block", "reason"?, "context"?}; the dispatcher alone
+# knows the host's own shapes. A session's role comes from the payload's cwd, never from this process's own folder.
+
+HOOK_MODES = ("off", "warn", "enforce")
+# Each hook's id in the configuration's `hooks`, and its mode when the key is missing.
+HOOK_DEFAULTS = {"lead.may-stop": "warn", "delivery.orient": "enforce"}
+HOOK_HELD = "hook.held"
+ORIENT_LIMIT = 4000
+# The command the lifecycle installs for each event the receipt records: doctor looks for it in the settings file.
+HOOK_SETTINGS_EVENTS = {"session-start": "SessionStart", "stop": "Stop"}
+HOOK_INSTALLED = 'python3 -B "${{CLAUDE_PROJECT_DIR}}/.agent-skills/current/__main__.py" hook claude-code {event} || exit 1'
+HOOK_PYTHON = (3, 11)
+
+
+def hook_settings_problems(raw: dict) -> list[str]:
+    """What is wrong with the configuration's `hooks`: an unknown hook id or mode, each named."""
+    if "hooks" not in raw:
+        return []
+    hooks = raw["hooks"]
+    if not isinstance(hooks, dict):
+        return [f"`hooks` is {json.dumps(hooks)}, not an object of hook id to mode"]
+    problems = []
+    for hook_id, mode in hooks.items():
+        if hook_id not in HOOK_DEFAULTS:
+            problems.append(f"`hooks` names an unknown hook {hook_id!r}: the hooks are {', '.join(HOOK_DEFAULTS)}")
+        elif mode not in HOOK_MODES:
+            problems.append(f"`hooks.{hook_id}` is {json.dumps(mode)}: a mode is one of {', '.join(HOOK_MODES)}")
+    return problems
+
+
+def hook_mode(raw: dict, hook_id: str) -> str:
+    """A hook's mode: the configuration's, or its default when the key is missing or not a mode doctor accepts."""
+    hooks = raw.get("hooks") if isinstance(raw.get("hooks"), dict) else {}
+    mode = hooks.get(hook_id, HOOK_DEFAULTS[hook_id])
+    return mode if mode in HOOK_MODES else HOOK_DEFAULTS[hook_id]
+
+
+def real(path: str | Path) -> Path:
+    return Path(os.path.realpath(path))
+
+
+def within(path: Path, folder: Path) -> bool:
+    """Whether `path` is `folder` or below it; both already resolved."""
+    return path == folder or folder in path.parents
+
+
+def checkouts_of(cwd: Path) -> list[Path]:
+    """Every checkout of the repository at `cwd`, resolved, from `git worktree list`; none outside a repository."""
+    done = run(["git", "worktree", "list", "--porcelain"], cwd=cwd, check=False, timeout=10)
+    if done.returncode != 0:
+        return []
+    found = [real(line[len("worktree "):]) for line in done.stdout.splitlines() if line.startswith("worktree ")]
+    return [path for path in found if path.is_dir()]
+
+
+def deepest(path: Path, checkouts: list[Path]) -> Path | None:
+    """The checkout `path` lies in: the deepest that holds it, so a checkout nested in another is its own."""
+    holders = [checkout for checkout in checkouts if within(path, checkout)]
+    return max(holders, key=lambda checkout: len(checkout.parts)) if holders else None
+
+
+class Seat:
+    """A session's place in a delivery: `lead` of each delivery open in its checkout, or `lane` on one story."""
+
+    def __init__(self, role: str, configs: list[Config], story: str | None = None):
+        self.role, self.configs, self.story = role, configs, story
+
+
+def seat_of(cwd_text: object) -> Seat | None:
+    """The session's seat, from the payload's cwd: a lane when the cwd lies in the checkout of a story of an open
+    delivery, matched first; else the lead of each delivery whose record is open in the cwd's checkout; else none.
+    A cwd's checkout is the deepest one holding it, after resolving symlinks, so a lane nested in the lead's
+    checkout is a lane, and any other checkout nested there is neither."""
+    global OFFLINE
+    OFFLINE = True  # a hook reads what this machine has; it never fetches
+    if not isinstance(cwd_text, str) or not os.path.isabs(cwd_text) or not os.path.isdir(cwd_text):
+        return None
+    cwd = real(cwd_text)
+    checkouts = checkouts_of(cwd)
+    owner = deepest(cwd, checkouts)
+    if owner is None:
+        return None
+    configs: dict[Path, Config | None] = {}
+
+    def config_at(root: Path) -> Config | None:
+        if root not in configs:
+            try:
+                configs[root] = Config(root, need_delivery=False, tolerant=True, pick=False)
+            except (Stop, ValueError, OSError, KeyError, TypeError, subprocess.SubprocessError):
+                configs[root] = None
+        return configs[root]
+
+    def loaded(root: Path, key: str) -> Config | None:
+        base = config_at(root)
+        if base is None:
+            return None
+        c = copy.copy(base)
+        c.sources, c.conflicts = dict(base.sources), []
+        try:
+            c.load_delivery(key)
+        except (Stop, ValueError, OSError, KeyError, TypeError):
+            return None
+        return c
+
+    here = config_at(owner)
+    if here is None:
+        return None
+    lanes: list[tuple[Path, str, str]] = []
+    leads: list[str] = []
+    for key, d in here.delivery_files().items():
+        lead_root = deepest(real(here.state_of(key, d)), checkouts)
+        lead = config_at(lead_root) if lead_root is not None else None
+        if lead is None:
+            continue
+        files = lead.delivery_files()
+        if key not in files or not lead.open_here(key, files[key]):
+            continue
+        for story in files[key].get("stories") or {}:
+            if real(lead.lane_checkout(story)) == owner:
+                lanes.append((lead_root, key, story))
+        if lead_root == owner:
+            leads.append(key)
+    for lead_root, key, story in lanes:
+        c = loaded(lead_root, key)
+        if c is not None:
+            return Seat("lane", [c], story)
+    found = [c for c in (loaded(owner, key) for key in leads) if c is not None]
+    return Seat("lead", found) if found else None
+
+
+def record_of(c) -> dict:
+    """The record as the state tool shows it: {"state", "journal"}."""
+    tool = c.release / "skills/orchestrate-work/scripts/delivery_state.py"
+    return json.loads(run([sys.executable, "-B", str(tool), "--dir", str(c.state), "show"], timeout=10).stdout)
+
+
+def as_lead(c) -> None:
+    """Make `c` the configuration the printed commands name (flow_command reads it)."""
+    global CFG
+    CFG = c
+
+
+def missing_listener(c) -> tuple[dict, list[str]] | None:
+    """The record and what needs the lead to listen, when something does and no lead-wait listens; else None."""
+    doc = record_of(c)
+    needed = listener_needed(doc["state"])
+    return (doc, needed) if needed and lead_listener(c.state) is None else None
+
+
+def lead_may_stop(payload: dict) -> dict:
+    """lead.may-stop: hold a lead's stop while a lane works or a candidate is queued and no lead-wait listens.
+    `block` under enforce with one open delivery in the checkout; `warn` under warn, and whenever two or more open
+    deliveries share the checkout, since which one this session leads can't be told. A hold the session hasn't
+    already been held for journals one hook.held in each delivery it names."""
+    seat = seat_of(payload.get("cwd"))
+    if seat is None or seat.role != "lead":
+        return {"verdict": "allow"}
+    mode = hook_mode(seat.configs[0].flow_raw, "lead.may-stop")
+    if mode == "off":
+        return {"verdict": "allow"}
+    missing = []
+    for c in seat.configs:
+        found = missing_listener(c)
+        if found is not None:
+            missing.append((c, *found))
+    if not missing:
+        return {"verdict": "allow"}
+    shared = len(seat.configs) > 1
+    verdict = "block" if mode == "enforce" and not shared else "warn"
+    reasons = []
+    for c, doc, needed in missing:
+        as_lead(c)
+        reasons.append(f"Delivery {c.delivery}: the lead isn't listening: no lead-wait runs while {', '.join(needed)}. "
+                       "Start this in the background before you stop, and after each wake start it again with the "
+                       f"arguments its result's `restart` names: {lead_wait_command(c, doc)}")
+    if shared:
+        reasons.insert(0, f"{len(seat.configs)} open deliveries share this checkout "
+                          f"({', '.join(c.delivery for c in seat.configs)}), so which one this session leads can't be "
+                          "told; lead each from its own checkout.")
+    if payload.get("stop_hook_active") is not True:
+        for c, _, needed in missing:
+            what = "the lead's stop was held" if verdict == "block" else "the lead stopped with a warning"
+            summary = f"lead.may-stop returned {verdict}: {what} while no lead-wait listened, with {', '.join(needed)}"
+            tool = c.release / "skills/orchestrate-work/scripts/delivery_state.py"
+            done = run([sys.executable, "-B", str(tool), "--dir", str(c.state), "journal", "--kind", HOOK_HELD,
+                        "--summary", summary], check=False, timeout=10)
+            if done.returncode != 0:
+                print(f"run-delivery: {HOOK_HELD} not journalled in {c.delivery}: "
+                      f"{(done.stderr or done.stdout).strip()[-300:]}", file=sys.stderr)
+    return {"verdict": verdict, "reason": "\n".join(reasons)}
+
+
+def delivery_stage(state: dict) -> str:
+    """The delivery's stage, from the record's structure alone."""
+    work = [*state.get("planned", []), *state.get("queue", [])]
+    if (any(lane.get("state") not in LANE_DONE for lane in state.get("lanes", []))
+            or any(item.get("stage") not in ("merged", "settled") for item in work)):
+        return "delivering"
+    return "finishing: every story merged or settled" if work else "starting: no story assigned yet"
+
+
+def needs_count(c) -> str:
+    """How many items "Needs you" holds, from the supervisor's list, or why that isn't known. Never their text."""
+    resume = f"{flow_command()} --delivery {c.delivery} lead-run --resume"
+    try:
+        needs = json.loads((c.state / NEEDS_FILE).read_text())
+    except (OSError, ValueError):
+        return f"not known: no supervisor has listed it; {resume} starts one"
+    items = needs.get("items") if isinstance(needs, dict) else None
+    if not isinstance(items, list) or not needs.get("running"):
+        return f"not known: the supervisor isn't running; {resume} starts it"
+    stale = stamp_seconds(needs.get("staleAfter"))
+    if stale is not None and stale < time.time():
+        return f"not known: the supervisor's list is out of date; {resume} starts it again"
+    return f"{len(items)} item{'' if len(items) == 1 else 's'}"
+
+
+def lane_next(c, state: dict, story: str) -> str:
+    """The next lane command for `story`, from the record's structure alone."""
+    start = f"{flow_command()} --delivery {c.delivery}"
+    item = next((item for item in state.get("queue", []) if item.get("subject") == story), None)
+    if item is not None and item.get("stage") == "merged":
+        return "none: the story has merged"
+    if item is not None and item.get("stage") != "stopped":
+        return f"none while the story is {item.get('stage')} in the merge queue; the lead answers"
+    planned = next((entry for entry in state.get("planned", []) if entry.get("subject") == story), None)
+    stage = planned.get("stage") if planned else None
+    if stage == "settled":
+        return "none: the story settled with no change needed"
+    if planned and planned.get("noChange"):
+        return "none while the story's no-change hand-off waits for the lead to accept it; the lead answers"
+    if item is None and stage in (None, "planned"):
+        return f"{start} lane-start {story} --base {c.base_branch}"
+    return f"{start} gate {story}"
+
+
+def orientation(seat: Seat) -> str:
+    """delivery.orient's context: only structured fields, never free text from the journal, a hand-off or a tracker."""
+    lines = []
+    for c in seat.configs:
+        as_lead(c)
+        doc = record_of(c)
+        if seat.role == "lane":
+            story = seat.story or ""
+            lane = c.stories.get(story, {}).get("lane", "")
+            lines += [f"run-delivery: this session is {lane} of delivery {c.delivery}, on story {story}.",
+                      f"- delivery: {c.delivery}", f"- story: {story}", f"- lane brief: {c.lane_brief.as_posix()}",
+                      f"- next lane command: {lane_next(c, doc['state'], story)}"]
+            continue
+        lines += [f"run-delivery: this session leads delivery {c.delivery}.", f"- delivery: {c.delivery}",
+                  f"- stage: {delivery_stage(doc['state'])}", f"- Needs you: {needs_count(c)}"]
+        needed = listener_needed(doc["state"])
+        lease = lead_listener(c.state)
+        if needed and lease is None:
+            lines.append(f"- lead-wait: none listens while {', '.join(needed)}; start this in the background before "
+                         f"you end your turn: {lead_wait_command(c, doc)}")
+        elif needed:
+            lines.append(f"- lead-wait: listening (pid {lease['pid']})")
+    return "\n".join(lines)[:ORIENT_LIMIT]
+
+
+def delivery_orient(payload: dict) -> dict:
+    """delivery.orient: tell a starting, resumed, cleared, compacted or forked session its role and next command.
+    It only ever allows; under mode off it says nothing."""
+    seat = seat_of(payload.get("cwd"))
+    if seat is None or hook_mode(seat.configs[0].flow_raw, "delivery.orient") == "off":
+        return {"verdict": "allow"}
+    return {"verdict": "allow", "context": orientation(seat)}
+
+
+HOOKS = {"lead-may-stop": lead_may_stop, "delivery-orient": delivery_orient}
+
+
+def hook(args) -> None:
+    """`hook <name>`: one hook's neutral verdict for the host payload on stdin, as one JSON object."""
+    try:
+        payload = json.loads(sys.stdin.buffer.read().decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        payload = None
+    verdict = HOOKS[args.name](payload if isinstance(payload, dict) else {})
+    print(json.dumps(verdict, ensure_ascii=False))
+
+
 # "Needs you": derived each pass from live conditions, never stored.
 
 def full_health_entries(c) -> list[dict]:
@@ -6971,6 +7446,12 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                           f"lead-resolve {entry['id']} --why TEXT",
                           "clears": ("the runner's hold clearing, journalling base.repaired, or " if runners else "")
                           + f"{flow_command()} lead-resolve {entry['id']} --why TEXT"})
+    needed = listener_needed(doc["state"])
+    if needed and lead_listener(c.state) is None:
+        items.append({"holding": False, "source": f"{LEAD_WAIT_LEASE} in the record",
+                      "text": f"The lead isn't listening: no lead-wait runs while {', '.join(needed)}. Start one in the "
+                      f"background: {lead_wait_command(c, doc)}",
+                      "clears": "a running lead-wait, or nothing left working or queued"})
     for name in flapping:
         items.append({"holding": True, "source": f"the supervisor's {name}", "clears": f"the {name} staying up",
                       "text": f"The supervisor's {name} won't stay up; its log is "
@@ -8067,7 +8548,7 @@ def lead_run(args) -> None:
         for line in stop_orphans(c):
             print(line)
         address = start_supervisor(c)
-        print(f"supervisor: running; live view {address}{live_fallback(c.state)}")
+        print(f"supervisor: running; live view {address}{live_fallback(c.state)}" + listener_words(c))
         return
     Supervisor(c, once=args.once).run()
 
@@ -8462,6 +8943,7 @@ class Doctor:
             ("candidate", "merge queue candidate step", ("binding",), self.candidate_step),
             ("config", "configuration", ("platform",), self.config),
             ("generation", "release generation", ("platform",), self.generation),
+            ("hooks", "host hooks", ("config",), self.hooks),
             ("committed", "release on the delivery base", ("config", "binding", "generation"), self.committed),
             ("gates", "gates", ("config", "binding"), self.gates),
             ("lanes", "lane checkouts ignored", ("config",), self.lanes),
@@ -8567,6 +9049,65 @@ class Doctor:
             return "wrong", (f"the running generation {running} is the receipt's previous one, not its current "
                              f"{receipt.get('generation')}; fix: run the tool as {TOOL_PATH}")
         return "ok", f"{running[:12]} is the current generation in {path.name} ({receipt['release']['releaseId']})"
+
+    def hooks(self):
+        """The configuration's hook modes, refused when one names an unknown hook or mode. Reported, never refused:
+        a settings file lacking an entry the receipt records, and a python3 on PATH below the hooks' minimum."""
+        raw = self.c.flow_raw if self.c else {}
+        problems = hook_settings_problems(raw)
+        if problems:
+            return "wrong", (f"{'; '.join(problems)}; fix: in {CONFIG}, set `hooks` to an object whose keys are among "
+                             f"{', '.join(HOOK_DEFAULTS)} and whose values are among {', '.join(HOOK_MODES)}, or "
+                             "remove the key")
+        modes = ", ".join(f"{hook_id} {hook_mode(raw, hook_id)}" for hook_id in HOOK_DEFAULTS)
+        notes = [note for note in (self.hook_entries_note(), self.hook_python_note()) if note]
+        return ("warn", f"{modes}; {'; '.join(notes)}") if notes else ("ok", modes)
+
+    def hook_entries_note(self) -> str | None:
+        """When the installed generation's receipt records hook entries that its settings file lacks."""
+        try:  # an unreadable receipt is the release generation row's to report
+            receipt = load_json(receipt_path(self.c) if self.c else self.root / RECEIPT)
+        except (OSError, ValueError):
+            return None
+        recorded = receipt.get("hooks") if isinstance(receipt, dict) else None
+        if (not isinstance(recorded, dict) or not isinstance(recorded.get("events"), list)
+                or not isinstance(recorded.get("file"), str)):
+            return None
+        rel = recorded["file"]
+        try:
+            settings = json.loads((self.root / rel).read_text())
+        except (OSError, ValueError):
+            settings = None
+        lists = settings.get("hooks") if isinstance(settings, dict) and isinstance(settings.get("hooks"), dict) else {}
+
+        def present(event: str) -> bool:
+            entries = lists.get(HOOK_SETTINGS_EVENTS.get(event, event))
+            return isinstance(entries, list) and any(
+                isinstance(entry, dict) and isinstance(entry.get("hooks"), list)
+                and any(isinstance(h, dict) and h.get("command") == HOOK_INSTALLED.format(event=event)
+                        for h in entry["hooks"]) for entry in entries)
+        lacking = [event for event in recorded["events"] if not present(event)]
+        if not lacking:
+            return None
+        # Named by the receipt's member, not its path: run-delivery's output names no host's own folders.
+        return (f"the settings file the receipt's hooks.file names lacks the hook entries the receipt records for "
+                f"{', '.join(lacking)}, so those hooks don't run; fix: apply the generation again, which writes them, "
+                "or restore that file from version control")
+
+    def hook_python_note(self) -> str | None:
+        """When the python3 on PATH, which the installed hook command runs, is below the hooks' minimum."""
+        found = shutil.which("python3")
+        if not found:
+            return "no python3 on PATH, so the installed hook command can't start; fix: put Python 3.11 or newer on PATH"
+        done = run([found, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"], check=False, timeout=10)
+        try:
+            version = tuple(int(part) for part in done.stdout.strip().split("."))
+        except ValueError:
+            return f"python3 on PATH ({found}) didn't report its version; fix: put Python 3.11 or newer first on PATH"
+        if version < HOOK_PYTHON:
+            return (f"python3 on PATH ({found}) is {'.'.join(map(str, version))}, below 3.11, and the installed hook "
+                    "command runs it; fix: put Python 3.11 or newer first on PATH")
+        return None
 
     def check_binding(self):
         path = self.root / ".agents/orchestration.json"
@@ -9149,6 +9690,12 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--resume", action="store_true", help="stop what an earlier supervisor left, then start it again")
     p.add_argument("--once", action="store_true", help="run one pass in the foreground, then stop")
     p.set_defaults(fn=lead_run)
+    p = command(sub, "lead-wait", help="the state tool's wait, with a lease in the record while it runs; takes the "
+                "wait's own arguments")
+    p.set_defaults(fn=lead_wait, wait_args=[])
+    p = command(sub, "hook", help="a host hook's neutral verdict for the payload on stdin: lead-may-stop holds a lead's "
+                "stop while nobody listens, delivery-orient tells a session its role and next command")
+    p.add_argument("name", choices=sorted(HOOKS)); p.set_defaults(fn=hook)
     p = command(sub, "full-health-run", help="one post-merge fullHealth run at a base head, as the supervisor starts it")
     p.add_argument("--head", required=True); p.add_argument("--record", required=True); p.set_defaults(fn=full_health_run)
     p = command(sub, "lead-brief"); p.set_defaults(fn=lead_brief)
@@ -9225,6 +9772,15 @@ def main(argv: list[str] | None = None) -> None:
     if argv[first:first + 1] in (["app-check"], ["app-video"]):
         args = parser.parse_args(argv[:separator])
         args.passthrough = [*args.passthrough, *argv[separator + 1:]]
+    elif argv[first:first + 1] == ["lead-wait"]:
+        # Everything after the command is the wait's, but --delivery, which the wait doesn't take.
+        rest, own = argv[first + 1:], []
+        while any(word == "--delivery" or word.startswith("--delivery=") for word in rest):
+            at = next(i for i, word in enumerate(rest) if word == "--delivery" or word.startswith("--delivery="))
+            width = 1 if rest[at].startswith("--delivery=") else 2
+            own, rest = [*own, *rest[at:at + width]], [*rest[:at], *rest[at + width:]]
+        args = parser.parse_args([*argv[:first + 1], *own, *(["--help"] if {"-h", "--help"} & set(rest) else [])])
+        args.wait_args = rest
     else:
         args = parser.parse_args(argv)
     later = getattr(args, "delivery_after", None)
@@ -9238,7 +9794,11 @@ def main(argv: list[str] | None = None) -> None:
     except Stop as error:
         print(f"run-delivery: {error}", file=sys.stderr)
         sys.exit(2)
-    if args.command.startswith("lead-") and args.command not in ("lead-setup", "lead-init", "lead-run"):
+    if args.command in ("lead-init", "lead-assign", "lead-accept") or (args.command == "lead-run" and args.resume):
+        with contextlib.suppress(Stop, ValueError, OSError):
+            for line in listener_lines(cfg()):
+                print(line)
+    if args.command.startswith("lead-") and args.command not in ("lead-setup", "lead-init", "lead-run", "lead-wait"):
         with contextlib.suppress(Stop, ValueError, OSError):
             line = supervisor_line(cfg())
             if line:

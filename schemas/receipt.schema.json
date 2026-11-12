@@ -114,6 +114,50 @@
       "minItems": 1,
       "type": "array"
     },
+    "hooks": {
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "properties": {
+            "events": {
+              "minItems": 1
+            }
+          }
+        },
+        {
+          "properties": {
+            "created": {
+              "const": true
+            }
+          }
+        }
+      ],
+      "properties": {
+        "created": {
+          "type": "boolean"
+        },
+        "events": {
+          "items": {
+            "enum": [
+              "session-start",
+              "stop"
+            ]
+          },
+          "maxItems": 2,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "file": {
+          "const": ".claude/settings.json"
+        }
+      },
+      "required": [
+        "created",
+        "events",
+        "file"
+      ],
+      "type": "object"
+    },
     "release": {
       "additionalProperties": false,
       "properties": {
@@ -178,6 +222,15 @@
     ],
     "createdDirectories": [
       "exposures"
+    ],
+    "hooks": [
+      "exposures"
+    ]
+  },
+  "not": {
+    "required": [
+      "adoption",
+      "hooks"
     ]
   },
   "properties": {
@@ -207,6 +260,9 @@
     "generation": {
       "pattern": "^[a-f0-9]{64}$",
       "type": "string"
+    },
+    "hooks": {
+      "$ref": "#/$defs/hooks"
     },
     "ownership": {
       "const": "agent-skills-managed"

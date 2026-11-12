@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 from .generations import inspect_release
+from .hooks import DISPATCHED_HOSTS, EVENTS, run_command
 from .lifecycle import Lifecycle, require_mutation_authority
 from .locking import RepositoryLock
 from .product import product_status, reconcile_policy, run_runtime
@@ -37,6 +38,11 @@ def parser() -> argparse.ArgumentParser:
     harness.add_argument("--pass-fd", type=int, action="append", default=[])
     harness.add_argument("arguments", nargs=argparse.REMAINDER)
     commands.add_parser("recovery-plan")
+    hook = commands.add_parser("hook", help="run the active generation's hooks for one host event")
+    # Plain strings, not choices: argparse exits 2 on a bad choice, which a
+    # host reads as a block. The dispatcher answers an unknown pair itself.
+    hook.add_argument("host", help=f"one of: {', '.join(DISPATCHED_HOSTS)}")
+    hook.add_argument("event", help=f"one of: {', '.join(EVENTS)}")
     validate = commands.add_parser("validate")
     _release_arguments(validate)
     plan = commands.add_parser("plan")
@@ -84,6 +90,11 @@ def _validated_release(archive: Path, metadata: Path) -> dict[str, object]:
 
 def main(arguments: list[str] | None = None) -> int:
     args = parser().parse_args(arguments)
+    if args.command == "hook":
+        # Before the lifecycle, which needs the Git top level as its root: a
+        # host runs hooks from the session's own folder, and the dispatcher
+        # always exits 0.
+        return run_command(args.host, args.event)
     try:
         if getattr(args, "bootstrap_policy", False) and not args.product:
             raise ValueError(
