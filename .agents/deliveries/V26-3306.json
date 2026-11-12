@@ -1,0 +1,296 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3306",
+  "headline": "V26-3306: keep the live view at one address, and every process on a Node the runtime accepts",
+  "baseBranch": "integrate/tracker-and-lead-awake",
+  "plan": "docs/plans/2026-11-11-tracker-and-lead-awake.md",
+  "laneBrief": "docs/plans/2026-11-11-tracker-and-lead-awake.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-11-tracker-and-lead-awake.lane-notes.md"
+  },
+  "context": {
+    "sections": [
+      "Decisions"
+    ]
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "skills/run-delivery/*",
+        "skills/orchestrate-work/*",
+        "tests/test_run_delivery.py",
+        "tests/test_run_delivery_supervisor.py",
+        "tests/test_merge_queue.py",
+        "tests/test_orchestration_render.py",
+        "tests/test_orchestration_state.py",
+        "catalog.json",
+        "profiles/*",
+        "provenance.lock.json",
+        "docs/solutions/*"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3260": {
+      "title": "Check every process's Node against the runtime's minimum: lanes, the supervisor and the queue",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "v26-3260-1",
+          "text": "With a Node below the runtime's nodeMinimum first on PATH, even with an nvm Node that meets the minimum, lead-run exits non-zero before taking the lock or starting a child. Its message names the PATH entry, the version found and the minimum."
+        },
+        {
+          "id": "v26-3260-2",
+          "text": "With no node on PATH, even with an nvm Node that meets the minimum, lead-run refuses the same way, saying none was found."
+        },
+        {
+          "id": "v26-3260-3",
+          "text": "With a Node below the minimum first on PATH, even with an nvm Node that meets it, lead-run --resume exits non-zero before it stops any recorded process or starts a supervisor. A view whose pid live.json records still answers afterwards."
+        },
+        {
+          "id": "v26-3260-4",
+          "text": "With a Node below the minimum first on PATH, even with an nvm Node that meets it, lead-init refuses before it writes the record."
+        },
+        {
+          "id": "v26-3260-5",
+          "text": "lane-start refuses, before creating the checkout or recording a start, naming the version, the minimum and the fix:"
+        },
+        {
+          "id": "v26-3260-6",
+          "text": "with a Node below the minimum first on PATH, even with an nvm Node that meets it;"
+        },
+        {
+          "id": "v26-3260-7",
+          "text": "with python3 below 3.11 first on PATH;"
+        },
+        {
+          "id": "v26-3260-8",
+          "text": "with the interpreter running the tool reporting a version below 3.11."
+        },
+        {
+          "id": "v26-3260-9",
+          "text": "With a Node exactly at the minimum first on PATH, lead-run, lead-init and lane-start make no Node refusal. Versions compare by number, so a Node v100.0.0 meets a minimum 9.0.0."
+        },
+        {
+          "id": "v26-3260-10",
+          "text": "doctor's Node row is wrong when the Node first on PATH is below the minimum, and missing when there is no node on PATH, even with an nvm Node that meets it. The row then names that nvm Node's bin folder as the entry to put first."
+        },
+        {
+          "id": "v26-3260-11",
+          "text": "A supervisor started with a qualifying Node records that Node's path and version in its lock. doctor --delivery's supervisor row reports them."
+        },
+        {
+          "id": "v26-3260-12",
+          "text": "The supervisor row is wrong when the recorded Node is below the minimum, and warn when the lock records none."
+        },
+        {
+          "id": "v26-3260-13",
+          "text": "A queue check whose profile environment puts a different node first on PATH records that node's version, not the queue's. With no node on that PATH, it records null."
+        },
+        {
+          "id": "v26-3260-14",
+          "text": "A queue check whose recorded node is below the minimum carries nodeBelowMinimum: true, and its pass or failure is what the check itself returned. A check whose recorded node meets the minimum, one whose node is null, and any check under a generation whose runtime declares no nodeMinimum carry no nodeBelowMinimum member."
+        },
+        {
+          "id": "v26-3260-15",
+          "text": "A record without node on its check results still validates. One whose node is neither a string nor null is refused."
+        },
+        {
+          "id": "v26-3260-16",
+          "text": "The live view shows a check's Node in its detail, and the below-minimum mark when it is set."
+        },
+        {
+          "id": "v26-3260-17",
+          "text": "A generation whose runtime declares no nodeMinimum makes no Node refusal in lead-run, lead-init or lane-start."
+        }
+      ]
+    },
+    "V26-3262": {
+      "title": "Give the live view one address that survives supervisor restarts",
+      "lane": "lane-1",
+      "after": [
+        "V26-3260"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3262-1",
+          "text": "Stopping the supervisor and resuming it with lead-run --resume keeps the same live view address, and the view is the same process."
+        },
+        {
+          "id": "v26-3262-2",
+          "text": "With the supervisor run through a symlinked generation path (as .agent-skills/current), retargeting that symlink to another generation and resuming replaces the view, keeping the address; resuming without retargeting adopts the same view process."
+        },
+        {
+          "id": "v26-3262-3",
+          "text": "The derived port for a fixed top-level path and key equals a literal computed from Decision 2's rule. The same key under a second fixed top-level path derives the literal Decision 2's rule gives for that path, which differs from the first. Deriving again with no live.json gives the same port."
+        },
+        {
+          "id": "v26-3262-4",
+          "text": "With the supervisor and its view both stopped, and live.json recording a port other than the derived one, as after a fallback, a restart binds the recorded port."
+        },
+        {
+          "id": "v26-3262-5",
+          "text": "With that port held by another process, the restart binds a free port, records it, and says on its output and in the next status line which port it wanted and which process holds it."
+        },
+        {
+          "id": "v26-3262-6",
+          "text": "With live.json naming a pid that is alive but not listening on the recorded port, a restart starts a new view, doesn't signal that pid, and records the new view's pid."
+        },
+        {
+          "id": "v26-3262-7",
+          "text": "Two deliveries in the same checkout each derive their port from their own key. When one's derived port is held by the other's view, it binds a free port and records it, as criterion 5 says."
+        },
+        {
+          "id": "v26-3262-8",
+          "text": "While supervisor.json says running and its pid runs, the page shows no down banner. After the supervisor stops on a named signal, the same view's page shows the banner, naming the signal and when."
+        },
+        {
+          "id": "v26-3262-9",
+          "text": "With the supervisor's process group killed by SIGKILL (os.killpg on its pid), the view's recorded pid still answers on the same address. Its page's banner says the supervisor stopped without recording why, and names lead-run --resume."
+        },
+        {
+          "id": "v26-3262-10",
+          "text": "supervisor.json records who stopped the supervisor:"
+        },
+        {
+          "id": "v26-3262-11",
+          "text": "after the supervisor's own close-out, close;"
+        },
+        {
+          "id": "v26-3262-12",
+          "text": "after lead-init --replace, replaced, in the archived state directory;"
+        },
+        {
+          "id": "v26-3262-13",
+          "text": "after lead-close's stop request, held;"
+        },
+        {
+          "id": "v26-3262-14",
+          "text": "after a SIGTERM, signal, naming it."
+        },
+        {
+          "id": "v26-3262-15",
+          "text": "The status line names the live view's address while the view serves, both with the supervisor running and down. With the supervisor and its view both stopped in a delivery that is not closed, it reads supervisor: down (), names lead-run --resume, and names no address. This holds for at least lead-assign, lead-accept and lead-reconcile. A closed or partway-closed delivery's line is unchanged."
+        },
+        {
+          "id": "v26-3262-16",
+          "text": "The supervisor's own close-out and lead-close each stop the view last, by its recorded pid. The view was listening before; afterwards its pid is gone and nothing listens on its port."
+        },
+        {
+          "id": "v26-3262-17",
+          "text": "lead-init --replace stops the replaced delivery's view."
+        },
+        {
+          "id": "v26-3262-18",
+          "text": "render_state.py live without --status-file renders as it did before."
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "Every story",
+      "text": "Each item merged to integrate/tracker-and-lead-awake through the merge queue, or closed with a recorded reason",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the integration base's last merged commit",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "main-pr",
+      "label": "Into main",
+      "text": "After V26-3406 closes, sync/v26-3306 (the integration base with origin/main merged in) passes the full local suite on macOS with Python 3.11 and the Ubuntu CI job, is reviewed with the delivery's lenses, and the operator merges its pull request into main",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "main-ci",
+      "label": "Main CI",
+      "text": "main's CI at that merge commit passes on the Ubuntu job and cut-release, with the run linked on the epic",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "no-deferrals",
+      "label": "No deferrals",
+      "text": "No finding any review in this delivery raised is deferred: each is fixed in the story that found it, and no follow-up item is filed",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "readyPullRequests": true,
+    "grantedBy": "the operator",
+    "grantedOn": "2026-11-11"
+  },
+  "approvals": [
+    {
+      "id": "approval-1",
+      "text": "The plan itself, before `lead-setup`.",
+      "state": "done",
+      "who": "the operator, 2026-11-11, approving delivery once the plan review aligned (round 4)"
+    },
+    {
+      "id": "approval-2",
+      "text": "Replacing V26-3260's and V26-3262's Acceptance Criteria in Linear with this plan's, word for word.",
+      "state": "done",
+      "who": "the operator, 2026-11-11, under the plan's approval; done 2026-11-11"
+    },
+    {
+      "id": "approval-3",
+      "text": "Pushing `integrate/tracker-and-lead-awake` to `origin`. The operator asked for the integration base on 2026-11-11, and lanes read the delivery from it on the remote.",
+      "state": "done",
+      "who": "the operator, 2026-11-11; pushed 2026-11-11"
+    },
+    {
+      "id": "approval-4",
+      "text": "The grant to the lane: `push` and `draftPullRequests`, and the lead's `readyPullRequests`.",
+      "state": "done",
+      "who": "the operator, 2026-11-11, under the plan's approval"
+    },
+    {
+      "id": "approval-5",
+      "text": "The pull request from `sync/v26-3306` into `main`, and its merge, which is the operator's.",
+      "state": "waiting"
+    }
+  ],
+  "outOfScope": [
+    "A release. These changes reach this repository's own deliveries at the next batch release, which is cut separately.",
+    "Sharing the live view beyond the lead's machine (V26-3070). The view still listens on the loopback address only.",
+    "A port declared in the binding. The port is derived and recorded (Decision 2), so `orchestration-binding/1` gains no member.",
+    "Checking the Node of processes the delivery didn't start: a lane's in-app servers, editors, or the operator's shells.",
+    "Choosing or installing a Node. The checks refuse and name the fix; they never rewrite `PATH` or pick an nvm Node for a child.",
+    "Windows, which is not validated (AGENTS.md)."
+  ],
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  },
+  "outcome": {
+    "summary": "The live view keeps one address across supervisor restarts, and every process the delivery starts runs on a Node the runtime accepts.",
+    "text": "lead-run, lead-init and lane-start refuse a Node below the runtime's minimum first on PATH; doctor reports the Node a process actually uses, including the running supervisor's; the queue records each check's Node; the live view takes a derived, recorded port, outlives the supervisor with a banner saying why it is down, and the delivery's close stops it last."
+  }
+}
