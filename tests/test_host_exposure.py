@@ -915,10 +915,14 @@ class ClaudeHookExposureTests(LifecycleFixture, unittest.TestCase):
 
     def test_writing_entries_keeps_the_files_mode(self) -> None:
         self.write_settings({"model": "opus"})
-        self.settings.chmod(0o600)
+        self.settings.chmod(0o640)
         Lifecycle(self.repository).install(*self.stop_a, maintainer=True)
-        self.assertEqual(self.settings.stat().st_mode & 0o7777, 0o600)
+        self.assertEqual(self.settings.stat().st_mode & 0o7777, 0o640)
         self.assertEqual(self.owned_events(), ["stop"])
+
+        self.fresh()
+        Lifecycle(self.repository).install(*self.stop_a, maintainer=True)
+        self.assertEqual(self.settings.stat().st_mode & 0o7777, 0o644, "a new file is not left private")
 
     # 5. The installed command ------------------------------------------------
 
