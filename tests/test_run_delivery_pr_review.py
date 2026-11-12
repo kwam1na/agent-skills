@@ -634,6 +634,9 @@ class TriageTests(PrReviewCase):
                 code, out = self.handoff(*given)
                 self.assertEqual(code, 2, out)
                 self.assertIn(said, out)
+                if what == "a bare text":  # and each current review is named, with the form it takes
+                    self.assertIn("say how primary's review was handled: --pr-review-triage primary=TEXT", out)
+                    self.assertIn("say how codex's review was handled: --pr-review-triage codex=TEXT", out)
         code, out = self.handoff("primary=fixed x", "codex=nothing to do")
         self.assertEqual(code, 0, out)
         self.assertIn("- PR review: primary: Primary Bot at 2026-01-01T00:00, triage: fixed x; codex: Review Bot at "

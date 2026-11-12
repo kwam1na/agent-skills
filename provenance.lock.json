@@ -1050,7 +1050,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "76e42f451585ac1ee1630ead44cbaf059a7d42f938a5fb53549d9685f8eab651"
+          "sha256": "121508243f74c40fac4a50b9fa185b77694d8943f9b8d888ed9dce43332d23cc"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
