@@ -129,6 +129,9 @@ grant, stays in Backlog, outside this plan.
 7. **The record.** In the new shape, `pr-review.json` is `{schema: "pr-review/2", head, url, reviewers: {...}}`. Each entry under a
    reviewer's id is `{state, required, author?, account?, at?, body?, report?, gate?, triage?}`, where `state` is `current` or `absent`,
    and `gate` is `{kind, met, why}`.
+   - **Amended during delivery (plan change c1).** `state` may also be `silent`. Before it exits 3, `pr-review` writes the record with
+     a `silent` entry for each silent required reviewer, so a hand-off blocked on it still triages every current review with
+     `--pr-review-triage`, and `lead-accept` re-checks those as for any hand-off.
    - **The legacy shape** writes the old record, `{head, url, author, at, body}`, and prints exactly as today.
    - **`handoff` and `lead-accept` read both shapes.** An old-shape record is reviewer `review`, checked on the same head, currency and
      unchanged rules as any other, with the same refusals.
