@@ -1136,7 +1136,8 @@
           "delivery.closed",
           "review.evidence",
           "check.selected",
-          "selection.refused"
+          "selection.refused",
+          "hook.held"
         ]
       },
       "lane": {

@@ -116,6 +116,10 @@ checks may need no file at all.
   },
   "forge": { "mergeNeedsReady": true },       // optional: the binding's merge step refuses a draft pull request
   "supervisor": { "passSeconds": 60 },        // optional: how long the supervisor waits between passes
+  "hooks": {                                  // optional: each host hook's mode, off, warn or enforce (below)
+    "lead.may-stop": "enforce",               // default warn
+    "delivery.orient": "enforce"              // default enforce
+  },
   "inApp": {                                  // optional; its "lease" must name one of the binding's leases
     "lease": "app-session",
     "lock": "~/.cache/my-app-session.lock",   // an OS lock, held for each check; the serve's output is kept
@@ -308,6 +312,37 @@ The lead's commands keep working while it is down, and the supervisor skips what
 back. `lead-run --resume` stops what an earlier supervisor left running and starts it again; `lead-run --once` runs one
 pass in the foreground. `lead-close` asks a running supervisor to stop after its pass, and refuses while the lead's
 settings have uncommitted changes. `lead-init --no-supervisor`, or `RUN_DELIVERY_SUPERVISOR=off`, starts none.
+
+## Host hooks
+
+run-delivery declares two hooks in its `hooks.json`. Where the installed generation installs host hooks, the host runs
+them through the generation's dispatcher, which hands each the host's payload and reads one verdict back. `hooks` in
+`.agents/run-delivery.json` switches each, by its id, to `off`, `warn` or `enforce`; `doctor` refuses any other id or
+mode, naming the fix.
+
+| Id | Event | Default | What it does |
+| --- | --- | --- | --- |
+| `lead.may-stop` | stop | `warn` | Holds a lead's stop while a lane works or a candidate is queued and no `lead-wait` listens, naming the delivery and its exact `lead-wait` command. `enforce` holds it; `warn` says the same without holding; `off` says nothing. |
+| `delivery.orient` | session start | `enforce` | Tells a session in a delivery its role and next command, on every start: a new, resumed, cleared, compacted or forked session. It only ever allows, so `warn` and `enforce` are alike; `off` says nothing. |
+
+A session's role comes from the payload's working folder, never the hook's own: the folder's checkout is the deepest
+one holding it, after resolving symlinks. A story's checkout of an open delivery is that story's lane, matched first,
+so a lane checkout nested in the lead's is a lane. The checkout holding an open delivery's record is that delivery's
+lead. Any other session, and a closed delivery, is neither, and both hooks allow it.
+
+- **When a stop is held.** With one open delivery in the lead's checkout, a lane not idle or done, or a candidate not
+  merged, and no live `lead-wait` lease, `lead.may-stop` returns `block` under `enforce` and `warn` under `warn`. When
+  two or more open deliveries share the checkout, which one the session leads can't be told, so it returns `warn`
+  even under `enforce`, naming each delivery without a listener: lead each from its own checkout. The host holds a
+  stop at most once in a row: the next stop, which the host marks as following a hold, is a warn.
+- **What a hold records.** A hold or warn that doesn't follow another appends one `hook.held` entry to each named
+  delivery's journal, naming the hook, its verdict and what needed the listener. `hook.held` never wakes a `wait`.
+- **What orientation says.** Structured fields only, cut at 4,000 characters. For a lead: the delivery key, its stage
+  (`starting`, `delivering` or `finishing`), how many items "Needs you" holds, and the exact `lead-wait` command when
+  a listener is needed and none listens. For a lane: the delivery key, the story key, the lane brief's path, and the
+  next lane command. It never repeats journal, hand-off or tracker text.
+- **What doctor reports.** Besides refusing a bad `hooks`, it reports as `warn`, without refusing, a host settings file
+  that lacks an entry the receipt records, and a `python3` on `PATH` below 3.11, which the installed command runs.
 
 ## The delivery posture
 
