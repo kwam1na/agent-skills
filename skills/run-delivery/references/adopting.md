@@ -617,7 +617,7 @@ one this repository changes from the walk-through above; everything else stays a
 | `trackerSnapshot`, `publishers` | none | Jira's snapshot, and run-delivery's tracker publisher |
 | `tracker` | an issue address | Jira's adapter, and its moves |
 | `review.pr` | none | the pipeline's review |
-| The binding's `reviewGate`, `checkTimeoutCeiling` | none, `1200` | run-delivery's `pr-review-current`, `1900` |
+| The binding's `reviewGate`, `checkTimeoutCeiling` | none, `1200` | run-delivery's `pr-review-current`, `1920` |
 | `reviewWhen` | none: lanes make the review move by hand | `pipeline-green` |
 | `authority` | `push`, `draftPullRequests` | adds `readyPullRequests` |
 
@@ -635,8 +635,8 @@ retargeted to another base in the forge is refused rather than merged there:
             "--head", "{expectedHead}", "--strategy", "merge", "--destination", "{base}"],
   "reviewGate": {"argv": ["python3", "-B", ".agent-skills/current/skills/run-delivery/scripts/run_delivery.py",
                           "pr-review-current", "--branch", "{branch}", "--head", "{expectedHead}", "--wait"],
-                 "timeoutSeconds": 1900},
-  "checkTimeoutCeiling": 1900,
+                 "timeoutSeconds": 1920},
+  "checkTimeoutCeiling": 1920,
   "environment": {"FLOW_FORGE_REPOSITORY": "<workspace>/<repository>", "FLOW_FORGE_TOKEN_ENV": "BITBUCKET_TOKEN"},
   "state": {"directory": ".orchestration/state", "renderers": [],
             "forgeSnapshot": {"argv": ["python3", "-B", ".agent-skills/current/skills/delivery-views/scripts/snapshot.py",
@@ -674,8 +674,10 @@ lane. The binding's `reviewGate` checks it once more just before each merge:
 is about to merge. It waits up to `waitSeconds` for a review still to come, and otherwise exits non-zero with one line
 on stderr saying why: no `review.pr`, an adapter with no `reviews` command, no open PR, the PR at another head, a failed
 pipeline, or no review after a passing one. The queue then stops the candidate with `review_not_current`. Give the gate
-a `timeoutSeconds` above `waitSeconds`, within the binding's `checkTimeoutCeiling`, so a slow review is reported as
-missing rather than killed. Jira gets every update in the orchestration guide's table, posted once each by the tracker
+a `timeoutSeconds` at least 120 above `waitSeconds`, within the binding's `checkTimeoutCeiling`, so that a slow review
+is reported as missing rather than killed and the wait's last retry of a transient forge failure fits. With several
+reviewers (`review.pr.reviewers`, in the configuration reference), the gate passes once every required reviewer is
+current. Jira gets every update in the orchestration guide's table, posted once each by the tracker
 publisher from its own ledger, and the start move at each `lane-start`. A delivery to an integration base names it at
 setup, which `bases` then requires:
 
@@ -687,6 +689,32 @@ run_delivery.py lead-setup <delivery-key> --base integration-2 --plan docs/plans
 
 The grant includes `readyPullRequests`, since the merge step refuses drafts. Every settings
 change and the delivery file reach `main`, and each integration base, through a reviewed pull request (section 8).
+
+### A reviewer that posts a Code Insights report
+
+On Bitbucket a reviewer may also post a Code Insights report on the commit it reviewed, and `review.pr.reviewers` can
+name it with `report`, the report's external id. The report is then what says the review is done, rather than the
+comment's timestamp. The reviewer's side of the contract:
+
+- **External id.** The report's `external_id` is the reviewer's `report`, the same on every commit.
+- **Result.** `PENDING` while it reviews. `PASSED` once its review comment is posted, whatever the verdict. `FAILED`
+  when the reviewer errored and has no review to give.
+- **Verdict.** A data item titled `Verdict` (matched in any case) whose value is the verdict, such as `Approve` or
+  `Request changes`. It wins over the comment's `**Verdict:**` line.
+- **Its comment.** Posted on the PR, matched to the reviewer as any review is, after the head's pipeline started and
+  before or as the report turns `PASSED`.
+
+The Bitbucket adapter's `reviews` reads the reports at exactly the head it is given, from `/commit/<head>/reports`, and
+prints them as `"reports": [{id, result, at, data: [{title, type, value}]}]`. With `report` set, the reviewer is current
+once its report is `PASSED` at the head and every check has passed, and its text is its latest comment since the head's
+earliest check. A `PENDING` report, or none yet, waits like any review until the settle. A `FAILED` one stops the wait at
+once: a required reviewer is reported as errored and an optional one is absent. A `PASSED` report with no comment from
+the head's pipeline waits until the settle and is then refused, since it names a review that wasn't posted. With a
+`verdict` gate the report's `Verdict` is read, and an `approval` gate reads the report's result and verdict instead of
+the forge's approvals. A reviewer without `report` is read from its comment's timestamp as before.
+
+GitHub has no Code Insights reports: its adapter prints `"reports": null`, and a reviewer with `report` there is
+refused, naming Bitbucket as the forge that has them.
 
 ## 8. Running deliveries
 

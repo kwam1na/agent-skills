@@ -412,5 +412,401 @@ class BitbucketCandidateTests(unittest.TestCase):
                 self.assertIn("not a full commit hash", self.refused("--key", "X-1"))
 
 
+
+# A gh that answers only `pr view <url> --json headRefOid,reviews,statusCheckRollup`, from FAKE_GH_VIEW, and fails any
+# other call, so a row proves which call `reviews` made.
+FAKE_GH_VIEW = r"""#!/usr/bin/env python3
+import json, os, sys
+expected = ["pr", "view", "https://github.com/o/n/pull/3", "--json", "headRefOid,reviews,statusCheckRollup", "--repo", "o/n"]
+if sys.argv[1:] != expected:
+    sys.exit("fake gh: unexpected " + " ".join(sys.argv[1:]))
+print(os.environ["FAKE_GH_VIEW"])
+"""
+
+
+class GitHubApprovalsTests(unittest.TestCase):
+    """`reviews` returns the pull request's approvals: reviews in state APPROVED, each tied to its commit."""
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        (root / "bin").mkdir()
+        gh = root / "bin" / "gh"
+        gh.write_text(FAKE_GH_VIEW.replace("#!/usr/bin/env python3", f"#!{sys.executable}", 1))
+        gh.chmod(0o755)
+        self.env = {**os.environ, "PATH": f"{root / 'bin'}{os.pathsep}{os.environ['PATH']}",
+                    "FLOW_FORGE_REPOSITORY": "o/n"}
+
+    def reviews(self, view: dict) -> dict:
+        done = subprocess.run([sys.executable, "-B", str(ADAPTERS / "forge_github.py"), "reviews", "--url",
+                               "https://github.com/o/n/pull/3", "--head", HEAD],
+                              env={**self.env, "FAKE_GH_VIEW": json.dumps(view)}, capture_output=True, text=True,
+                              timeout=60)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_approved_reviews_are_the_approvals_with_their_commit(self) -> None:
+        view = {"headRefOid": HEAD, "statusCheckRollup": [], "reviews": [
+            {"author": {"login": "codex-bot"}, "state": "APPROVED", "submittedAt": "2026-11-11T10:00:00Z",
+             "body": "", "commit": {"oid": HEAD}},
+            {"author": {"login": "claude-bot", "name": "Claude"}, "state": "APPROVED",
+             "submittedAt": "2026-11-11T09:00:00Z", "body": "LGTM", "commit": {"oid": OTHER}},
+            {"author": {"login": "human"}, "state": "CHANGES_REQUESTED", "submittedAt": "2026-11-11T11:00:00Z",
+             "body": "no", "commit": {"oid": HEAD}},
+            {"author": {"login": "old"}, "state": "DISMISSED", "submittedAt": "2026-11-11T08:00:00Z", "body": "",
+             "commit": {"oid": OTHER}},
+            {"author": {"login": "chatty"}, "state": "COMMENTED", "submittedAt": "2026-11-11T12:00:00Z", "body": "hm",
+             "commit": {"oid": HEAD}}]}
+        # In the order they were given.
+        self.assertEqual(self.reviews(view)["approvals"], [
+            {"account": "claude-bot", "name": "Claude", "at": "2026-11-11T09:00:00Z", "commit": OTHER},
+            {"account": "codex-bot", "name": "codex-bot", "at": "2026-11-11T10:00:00Z", "commit": HEAD}])
+
+    def test_a_later_request_for_changes_withdraws_an_approval_and_a_later_approval_restores_it(self) -> None:
+        def by(state: str, at: str, commit: str = HEAD) -> dict:
+            return {"author": {"login": "codex-bot"}, "state": state, "submittedAt": at, "body": "",
+                    "commit": {"oid": commit}}
+        # Listed out of time order: the latest by submittedAt decides, and a comment decides nothing.
+        withdrawn = [by("CHANGES_REQUESTED", "2026-11-11T11:00:00Z"), by("APPROVED", "2026-11-11T10:00:00Z"),
+                     by("COMMENTED", "2026-11-11T12:00:00Z")]
+        self.assertEqual(self.reviews({"headRefOid": HEAD, "statusCheckRollup": [], "reviews": withdrawn})["approvals"],
+                         [])
+        restored = [*withdrawn, by("APPROVED", "2026-11-11T13:00:00Z", OTHER)]
+        self.assertEqual(self.reviews({"headRefOid": HEAD, "statusCheckRollup": [], "reviews": restored})["approvals"],
+                         [{"account": "codex-bot", "name": "codex-bot", "at": "2026-11-11T13:00:00Z", "commit": OTHER}])
+
+    def test_a_dismissed_latest_review_withdraws_an_earlier_approval(self) -> None:
+        reviews = [{"author": {"login": "codex-bot"}, "state": "APPROVED", "submittedAt": "2026-11-11T10:00:00Z",
+                    "body": "", "commit": {"oid": OTHER}},
+                   {"author": {"login": "codex-bot"}, "state": "DISMISSED", "submittedAt": "2026-11-11T11:00:00Z",
+                    "body": "", "commit": {"oid": HEAD}}]
+        self.assertEqual(self.reviews({"headRefOid": HEAD, "statusCheckRollup": [], "reviews": reviews})["approvals"],
+                         [])
+
+    def test_no_approval_is_an_empty_list(self) -> None:
+        found = self.reviews({"headRefOid": HEAD, "statusCheckRollup": [], "reviews": []})
+        self.assertEqual(found["approvals"], [])
+        self.assertEqual(found["reviews"], [])
+
+    def test_github_says_it_has_no_reports(self) -> None:
+        # Null, not empty: a reviewer with `report` is refused under this adapter rather than waited on.
+        found = self.reviews({"headRefOid": HEAD, "statusCheckRollup": [], "reviews": []})
+        self.assertIn("reports", found)
+        self.assertIsNone(found["reports"])
+
+    def test_an_approval_without_its_commit_still_names_one(self) -> None:
+        # Named empty, so the gate never takes it for an approval the forge ties to no commit.
+        view = {"headRefOid": HEAD, "statusCheckRollup": [], "reviews": [
+            {"author": {"login": "codex-bot"}, "state": "APPROVED", "submittedAt": "t", "body": ""}]}
+        self.assertEqual(self.reviews(view)["approvals"], [{"account": "codex-bot", "name": "codex-bot", "at": "t",
+                                                            "commit": ""}])
+
+
+class BitbucketApprovalsTests(unittest.TestCase):
+    """`reviews` returns the pull request's approvals: its participants with `approved`, tied to no commit."""
+
+    URL = "https://bitbucket.org/ws/repo/pull-requests/7"
+    API = "https://api.bitbucket.org/2.0/repositories/ws/repo"
+
+    def setUp(self) -> None:
+        self.spec = importlib.util.spec_from_file_location("forge_bitbucket_for_approvals_tests",
+                                                           ADAPTERS / "forge_bitbucket.py")
+        self.calls: list[str] = []
+        self.participants: list[dict] = []
+
+    def answer(self, request, timeout=None):
+        # Only the paths `reviews` reads: the head's statuses, the comments, the pull request itself and the head's
+        # reports.
+        self.calls.append(request.full_url)
+        answers = {f"{self.API}/commit/{HEAD}/statuses?pagelen=100": {"values": []},
+                   f"{self.API}/pullrequests/7/comments?pagelen=100": {"values": []},
+                   f"{self.API}/pullrequests/7": {"participants": self.participants},
+                   f"{self.API}/commit/{HEAD}/reports": {"values": []}}
+        assert request.get_method() == "GET" and request.full_url in answers, request.full_url
+        return contextlib.closing(io.BytesIO(json.dumps(answers[request.full_url]).encode()))
+
+    def reviews(self) -> dict:
+        module = importlib.util.module_from_spec(self.spec)
+        with mock.patch.dict(os.environ, {"FLOW_FORGE_REPOSITORY": "ws/repo", "FLOW_FORGE_TOKEN_ENV": "FX_TOKEN",
+                                          "FX_TOKEN": "bb-secret"}), \
+                mock.patch.object(sys, "argv", ["forge_bitbucket.py", "reviews", "--url", self.URL, "--head", HEAD]), \
+                mock.patch("urllib.request.urlopen", self.answer), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            previous = sys.dont_write_bytecode
+            sys.dont_write_bytecode = True
+            try:
+                self.spec.loader.exec_module(module)
+                module.main()
+            finally:
+                sys.dont_write_bytecode = previous
+        return json.loads(out.getvalue())
+
+    def test_approving_participants_are_the_approvals_with_no_commit(self) -> None:
+        self.participants = [
+            {"user": {"uuid": "{codex}", "display_name": "Codex"}, "role": "REVIEWER", "approved": True,
+             "state": "approved", "participated_on": "2026-11-11T10:00:00+00:00"},
+            {"user": {"uuid": "{human}", "display_name": "Human"}, "role": "REVIEWER", "approved": False,
+             "state": "changes_requested", "participated_on": "2026-11-11T11:00:00+00:00"},
+            {"user": {"uuid": "{author}", "display_name": "Author"}, "role": "PARTICIPANT", "approved": False,
+             "state": None, "participated_on": "2026-11-11T09:00:00+00:00"}]
+        self.assertEqual(self.reviews()["approvals"],
+                         [{"account": "{codex}", "name": "Codex", "at": "2026-11-11T10:00:00+00:00"}])
+        self.assertIn(f"{self.API}/pullrequests/7", self.calls)
+
+    def test_no_participant_is_an_empty_list(self) -> None:
+        found = self.reviews()
+        self.assertEqual(found["approvals"], [])
+        self.assertEqual(found["checks"], [])
+        self.assertEqual(found["reviews"], [])
+
+
+class BitbucketReportsTests(unittest.TestCase):
+    """`reviews` returns the Code Insights reports at exactly --head: external id, result, updated time, data."""
+
+    URL = "https://bitbucket.org/ws/repo/pull-requests/7"
+    API = "https://api.bitbucket.org/2.0/repositories/ws/repo"
+    PR_HEAD = OTHER  # what the PR itself says its head is, when it has moved on
+
+    def setUp(self) -> None:
+        self.spec = importlib.util.spec_from_file_location("forge_bitbucket_for_reports_tests",
+                                                           ADAPTERS / "forge_bitbucket.py")
+        self.calls: list[str] = []
+        self.reports: dict[str, list] = {}
+
+    def answer(self, request, timeout=None):
+        self.calls.append(request.full_url)
+        answers = {f"{self.API}/commit/{HEAD}/statuses?pagelen=100": {"values": []},
+                   f"{self.API}/pullrequests/7/comments?pagelen=100": {"values": []},
+                   f"{self.API}/pullrequests/7": {"participants": [], "source": {"commit": {"hash": self.PR_HEAD[:12]}}}}
+        for sha, values in self.reports.items():
+            answers[f"{self.API}/commit/{sha}/reports"] = {"values": values}
+        assert request.get_method() == "GET" and request.full_url in answers, request.full_url
+        return contextlib.closing(io.BytesIO(json.dumps(answers[request.full_url]).encode()))
+
+    def reviews(self) -> dict:
+        module = importlib.util.module_from_spec(self.spec)
+        with mock.patch.dict(os.environ, {"FLOW_FORGE_REPOSITORY": "ws/repo", "FLOW_FORGE_TOKEN_ENV": "FX_TOKEN",
+                                          "FX_TOKEN": "bb-secret"}), \
+                mock.patch.object(sys, "argv", ["forge_bitbucket.py", "reviews", "--url", self.URL, "--head", HEAD]), \
+                mock.patch("urllib.request.urlopen", self.answer), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            previous = sys.dont_write_bytecode
+            sys.dont_write_bytecode = True
+            try:
+                self.spec.loader.exec_module(module)
+                module.main()
+            finally:
+                sys.dont_write_bytecode = previous
+        return json.loads(out.getvalue())
+
+    @staticmethod
+    def insight(external_id: str, result: str | None, updated: str = "2026-11-11T10:06:00+00:00", **extra) -> dict:
+        return {"uuid": "{r-1}", "external_id": external_id, "title": "Review", "report_type": "TEST",
+                "result": result, "created_on": "2026-11-11T10:01:00+00:00", "updated_on": updated, **extra}
+
+    def test_the_heads_reports_are_returned_and_only_its_path_is_read(self) -> None:
+        self.reports = {
+            OTHER: [self.insight("primary-review", "PASSED")],
+            HEAD: [self.insight("primary-review", "FAILED", data=[
+                {"title": "Verdict", "type": "TEXT", "value": "Request changes"},
+                {"title": "Findings", "type": "NUMBER", "value": 3}])],
+        }
+        found = self.reviews()
+        self.assertEqual(found["reports"], [
+            {"id": "primary-review", "result": "FAILED", "at": "2026-11-11T10:06:00+00:00",
+             "data": [{"title": "Verdict", "type": "TEXT", "value": "Request changes"},
+                      {"title": "Findings", "type": "NUMBER", "value": 3}]}])
+        reads = [url for url in self.calls if url.endswith("/reports")]
+        self.assertEqual(reads, [f"{self.API}/commit/{HEAD}/reports"])
+
+    def test_no_report_at_the_head_is_an_empty_list_though_another_sha_has_one(self) -> None:
+        self.reports = {OTHER: [self.insight("primary-review", "PASSED")], HEAD: []}
+        self.assertEqual(self.reviews()["reports"], [])
+
+    def test_each_report_at_the_head_is_listed_and_a_report_without_a_result_is_pending(self) -> None:
+        self.reports = {HEAD: [self.insight("primary-review", "PASSED"), self.insight("codex-review", None),
+                               self.insight("lint", "PENDING")]}
+        found = self.reviews()["reports"]
+        self.assertEqual([(r["id"], r["result"], r["data"]) for r in found],
+                         [("primary-review", "PASSED", []), ("codex-review", "PENDING", []), ("lint", "PENDING", [])])
+
+    def test_the_reports_pages_are_followed(self) -> None:
+        second = f"{self.API}/commit/{HEAD}/reports?page=2"
+        self.reports = {HEAD: [self.insight("a", "PASSED")]}
+        original = self.answer
+
+        def paged(request, timeout=None):
+            if request.full_url == f"{self.API}/commit/{HEAD}/reports":
+                self.calls.append(request.full_url)
+                page = {"values": [self.insight("a", "PASSED")], "next": second}
+                return contextlib.closing(io.BytesIO(json.dumps(page).encode()))
+            if request.full_url == second:
+                self.calls.append(request.full_url)
+                page = {"values": [self.insight("b", "FAILED")]}
+                return contextlib.closing(io.BytesIO(json.dumps(page).encode()))
+            return original(request, timeout)
+        self.answer = paged
+        self.assertEqual([r["id"] for r in self.reviews()["reports"]], ["a", "b"])
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+# -- the PR review: each comment's account, and a transient failure's exit 75 ----------------------------------
+
+# A gh that answers `pr view` with FAKE_GH_VIEW, or fails as gh does, with FAKE_GH_FAIL on stderr and exit 1.
+REVIEW_GH = r'''#!/usr/bin/env python3
+import os, sys
+if os.environ.get("FAKE_GH_FAIL"):
+    sys.exit(os.environ["FAKE_GH_FAIL"])
+if sys.argv[1:3] != ["pr", "view"]:
+    sys.exit("fake gh: unexpected " + " ".join(sys.argv[1:]))
+print(os.environ["FAKE_GH_VIEW"])
+'''
+
+
+class GitHubReviewsTests(unittest.TestCase):
+    URL = "https://github.com/o/n/pull/3"
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        (root / "bin").mkdir()
+        gh = root / "bin" / "gh"
+        gh.write_text(REVIEW_GH.replace("#!/usr/bin/env python3", f"#!{sys.executable}", 1))
+        gh.chmod(0o755)
+        view = {"headRefOid": HEAD, "statusCheckRollup": [],
+                "reviews": [{"author": {"login": "review-bot"}, "submittedAt": "2026-01-01T00:00:30Z", "body": "fine"}]}
+        self.env = {**os.environ, "PATH": f"{root / 'bin'}{os.pathsep}{os.environ['PATH']}",
+                    "FLOW_FORGE_REPOSITORY": "o/n", "FAKE_GH_VIEW": json.dumps(view)}
+
+    def reviews(self, **env: str) -> subprocess.CompletedProcess:
+        return subprocess.run([sys.executable, "-B", str(ADAPTERS / "forge_github.py"), "reviews", "--url", self.URL,
+                               "--head", HEAD], env={**self.env, **env}, capture_output=True, text=True, timeout=60)
+
+    def test_each_review_carries_its_authors_login_as_its_account(self) -> None:
+        done = self.reviews()
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout)["reviews"],
+                         [{"author": "review-bot", "account": "review-bot", "at": "2026-01-01T00:00:30Z", "body": "fine"}])
+
+    def test_a_finished_check_carries_its_completed_at_as_done_at(self) -> None:
+        view = {"headRefOid": HEAD, "reviews": [], "statusCheckRollup": [
+            {"name": "build", "conclusion": "SUCCESS", "startedAt": "2026-01-01T00:00:01Z",
+             "completedAt": "2026-01-01T00:05:00Z"},
+            {"name": "test", "status": "IN_PROGRESS", "startedAt": "2026-01-01T00:00:02Z",
+             "completedAt": "0001-01-01T00:00:00Z"},
+            {"context": "lint", "state": "PENDING"}]}
+        done = self.reviews(FAKE_GH_VIEW=json.dumps(view))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout)["checks"], [
+            {"name": "build", "state": "passed", "at": "2026-01-01T00:05:00Z", "doneAt": "2026-01-01T00:05:00Z"},
+            {"name": "test", "state": "pending", "at": "0001-01-01T00:00:00Z"},
+            {"name": "lint", "state": "pending", "at": ""}])
+
+    def test_a_transient_failure_exits_75_and_any_other_exits_1(self) -> None:
+        for said, code in (
+            ("HTTP 503: Service Unavailable (https://api.github.com/graphql)", 75),
+            ("HTTP 429: API rate limit exceeded", 75),
+            ("Post \"https://api.github.com/graphql\": net/http: request canceled (Client.Timeout exceeded)", 75),
+            ("Post \"https://api.github.com/graphql\": dial tcp 140.82.112.6:443: connect: connection refused", 75),
+            ("HTTP 401: Bad credentials (https://api.github.com/graphql)", 1),
+            ("HTTP 404: Not Found (https://api.github.com/repos/o/n/pulls/3)", 1),
+        ):
+            with self.subTest(said=said):
+                done = self.reviews(FAKE_GH_FAIL=said)
+                self.assertEqual(done.returncode, code, done.stderr)
+                self.assertIn(said.split(" (")[0][:30], done.stderr)
+
+
+class BitbucketReviewsTests(unittest.TestCase):
+    URL = "https://bitbucket.org/ws/repo/pull-requests/7"
+    API = "https://api.bitbucket.org/2.0/repositories/ws/repo"
+
+    def setUp(self) -> None:
+        self.spec = importlib.util.spec_from_file_location("forge_bitbucket_for_review_tests",
+                                                           ADAPTERS / "forge_bitbucket.py")
+        self.calls: list[str] = []
+        self.failure: Exception | None = None
+
+    def answer(self, request, timeout=None):
+        """Only the head's statuses, the PR's comments, the PR itself (its approvals) and the head's reports are
+        answered; any other path fails the row."""
+        self.calls.append(request.full_url)
+        if self.failure is not None:
+            raise self.failure
+        if request.full_url == f"{self.API}/commit/{HEAD}/statuses?pagelen=100":
+            body = {"values": [{"name": "pipe", "state": "SUCCESSFUL", "created_on": "2026-01-01T00:00:10+00:00",
+                                "updated_on": "2026-01-01T00:09:10+00:00"},
+                               {"name": "lint", "state": "INPROGRESS", "created_on": "2026-01-01T00:00:11+00:00",
+                                "updated_on": "2026-01-01T00:01:00+00:00"},
+                               {"name": "test", "state": "FAILED", "created_on": "2026-01-01T00:00:12+00:00",
+                                "updated_on": "2026-01-01T00:02:00+00:00"},
+                               {"name": "old", "state": "SUCCESSFUL", "created_on": "2026-01-01T00:00:13+00:00"}]}
+        elif request.full_url == f"{self.API}/pullrequests/7/comments?pagelen=100":
+            body = {"values": [{"user": {"display_name": "Review Bot", "uuid": "{u-1}"}, "updated_on": "2026-01-01T00:00:30+00:00",
+                                "content": {"raw": "fine"}}]}
+        elif request.full_url == f"{self.API}/pullrequests/7":
+            body = {"participants": []}
+        elif request.full_url == f"{self.API}/commit/{HEAD}/reports":
+            body = {"values": []}
+        else:
+            raise AssertionError(f"an unexpected path: {request.full_url}")
+        return contextlib.closing(io.BytesIO(json.dumps(body).encode()))
+
+    def reviews(self) -> dict:
+        module = importlib.util.module_from_spec(self.spec)
+        with mock.patch.dict(os.environ, {"FLOW_FORGE_REPOSITORY": "ws/repo", "FLOW_FORGE_TOKEN_ENV": "FX_TOKEN",
+                                          "FX_TOKEN": "bb-secret"}), \
+                mock.patch.object(sys, "argv", ["forge_bitbucket.py", "reviews", "--url", self.URL, "--head", HEAD]), \
+                mock.patch("urllib.request.urlopen", self.answer), \
+                contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(io.StringIO()) as err:
+            previous = sys.dont_write_bytecode
+            sys.dont_write_bytecode = True
+            try:
+                self.spec.loader.exec_module(module)
+                try:
+                    module.main()
+                except SystemExit as stopped:
+                    return {"exit": stopped.code, "stderr": err.getvalue()}
+            finally:
+                sys.dont_write_bytecode = previous
+        return json.loads(out.getvalue())
+
+    def test_a_finished_status_carries_its_last_update_as_done_at(self) -> None:
+        """A status no longer in progress finished when it was last updated; one still running has no doneAt."""
+        self.assertEqual(self.reviews()["checks"], [
+            {"name": "pipe", "state": "passed", "at": "2026-01-01T00:00:10+00:00", "doneAt": "2026-01-01T00:09:10+00:00"},
+            {"name": "lint", "state": "pending", "at": "2026-01-01T00:00:11+00:00"},
+            {"name": "test", "state": "failed", "at": "2026-01-01T00:00:12+00:00", "doneAt": "2026-01-01T00:02:00+00:00"},
+            {"name": "old", "state": "passed", "at": "2026-01-01T00:00:13+00:00"}])  # no update time: no doneAt
+
+    def test_each_comment_carries_its_authors_uuid_as_its_account(self) -> None:
+        self.assertEqual(self.reviews()["reviews"], [{"author": "Review Bot", "account": "{u-1}",
+                                                      "at": "2026-01-01T00:00:30+00:00", "body": "fine"}])
+
+    def test_a_transient_failure_exits_75_and_any_other_exits_1(self) -> None:
+        import urllib.error
+
+        def http(code: int) -> urllib.error.HTTPError:
+            return urllib.error.HTTPError(f"{self.API}/x", code, "said", {}, io.BytesIO(b"forge says no"))
+        for what, failure, code in (
+            ("a 503", http(503), 75),
+            ("a 429", http(429), 75),
+            ("a timeout", TimeoutError("timed out"), 75),
+            ("a connection error", urllib.error.URLError(ConnectionRefusedError(61, "Connection refused")), 75),
+            ("a 401", http(401), 1),
+            ("a 404", http(404), 1),
+        ):
+            with self.subTest(what):
+                self.failure = failure
+                answer = self.reviews()
+                # sys.exit(message) exits 1, the message its code; exit 75 prints the message first.
+                exited = 1 if isinstance(answer["exit"], str) else answer["exit"]
+                said = answer["stderr"] if exited == 75 else answer["exit"]
+                self.assertEqual(exited, code, answer)
+                self.assertIn("bitbucket GET /commit/", said)
+                self.assertNotIn("bb-secret", said)

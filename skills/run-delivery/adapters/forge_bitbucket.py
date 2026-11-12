@@ -6,14 +6,20 @@
   open --source B --destination D --title T --body-file F -> {"url": ...}  (opened as a draft)
   get  --url URL                                          -> {"url", "state": open|merged|closed, "draft", "head", "source",
                                                               "destination"}
-  reviews --url URL --head SHA                            -> {"checks": [{"name", "state": passed|failed|pending, "at"}],
-                                                              "reviews": [{"author", "at", "body"}]}
+  reviews --url URL --head SHA                            -> {"checks": [{"name", "state": passed|failed|pending, "at",
+                                                                         "doneAt"?}],
+                                                              "reviews": [{"author", "account", "at", "body"}],
+                                                              "approvals": [{"account", "name", "at"}],
+                                                              "reports": [{"id", "result", "at", "data"}]}
   ready --url URL                                         -> {"url", "draft": false}
   merge --url URL --strategy merge|squash [--head SHA]    -> {"url", "state": "merged"}
   merge --source BRANCH --head SHA --strategy merge|squash [--destination D] -> {"url", "state": "merged"}
 
 Environment: FLOW_FORGE_REPOSITORY (workspace/repo) and FLOW_FORGE_TOKEN_ENV (the name of the variable holding a
-token Bitbucket accepts as a bearer token). Prints JSON on stdout; exits 1 with a message on stderr otherwise.
+token Bitbucket accepts as a bearer token). Prints JSON on stdout; exits 1 with a message on stderr otherwise, or 75
+(EX_TEMPFAIL) when the failure is transient: a timeout, a connection error, or an HTTP 5xx or 429, which a PR-review
+wait retries. A review's `account` is its author's `user.uuid`, which a rename doesn't change. A check's `at` is when
+its status was created, and `doneAt`, once it is no longer in progress, when it was last updated: when it finished.
 `candidate` is a merge queue's candidate step for the conventional branch: it prints the branch `--prefix` + `--key`
 names and that branch's full tip, and refuses when no branch has that name or when several answer to it, differing
 only in case, as a case-insensitive checkout would mix them. It writes three ways: it opens a pull request as a draft (a lane's open-pr), marks one ready (the lead's acceptance,
@@ -49,8 +55,14 @@ def redact(text):
     return text.replace(f"Bearer {secret}", "Bearer [redacted]").replace(secret, "[redacted]") if secret else text
 
 
-def fail(message):
-    sys.exit(redact(message))
+TRANSIENT = 75  # EX_TEMPFAIL
+
+
+def fail(message, code=1):
+    if code == 1:
+        sys.exit(redact(message))
+    print(redact(message), file=sys.stderr)
+    sys.exit(code)
 
 
 def call(method, path, body=None):
@@ -64,9 +76,11 @@ def call(method, path, body=None):
         with urllib.request.urlopen(request, timeout=30) as response:
             return json.loads(response.read() or b"{}")
     except urllib.error.HTTPError as error:
-        fail(f"bitbucket {method} {path} -> {error.code}: {redact(error.read().decode(errors='replace'))[:300]}")
-    except (urllib.error.URLError, OSError) as error:
-        fail(f"bitbucket {method} {path}: {redact(str(error))[:300]}")
+        transient = error.code >= 500 or error.code == 429
+        fail(f"bitbucket {method} {path} -> {error.code}: {redact(error.read().decode(errors='replace'))[:300]}",
+             TRANSIENT if transient else 1)
+    except (urllib.error.URLError, OSError) as error:  # a timeout or a connection error
+        fail(f"bitbucket {method} {path}: {redact(str(error))[:300]}", TRANSIENT)
 
 
 def describe(pr):
@@ -140,12 +154,24 @@ def main():
         print(json.dumps({"url": pr["links"]["html"]["href"]}))
     elif args.command == "reviews":
         number = pr_number(args.url)
-        checks = [{"name": s["name"], "state": CHECK_STATES.get(s["state"], s["state"].lower()), "at": s["created_on"]}
+        checks = [{"name": s["name"], "state": CHECK_STATES.get(s["state"], s["state"].lower()), "at": s["created_on"],
+                   **({"doneAt": s["updated_on"]} if s["state"] != "INPROGRESS" and s.get("updated_on") else {})}
                   for s in pages(f"/commit/{args.head}/statuses?pagelen=100")]
-        reviews = [{"author": c["user"]["display_name"], "at": c["updated_on"], "body": c["content"]["raw"]}
+        reviews = [{"author": c["user"]["display_name"], "account": c["user"].get("uuid", ""), "at": c["updated_on"],
+                    "body": c["content"]["raw"]}
                    for c in pages(f"/pullrequests/{number}/comments?pagelen=100")
                    if not c.get("deleted") and not c.get("inline") and not c.get("parent")]
-        print(json.dumps({"checks": checks, "reviews": reviews}))
+        # Bitbucket ties no approval to a commit: an approval given at an earlier head is still listed.
+        participants = call("GET", f"/pullrequests/{number}").get("participants") or []
+        approvals = [{"account": (p.get("user") or {}).get("uuid", ""), "name": (p.get("user") or {}).get("display_name", ""),
+                      "at": p.get("participated_on") or ""} for p in participants if p.get("approved")]
+        # The Code Insights reports at exactly --head, whatever head the PR reports: id is the report's external_id,
+        # result PASSED, FAILED or PENDING, at its updated_on, and data its [{title, type, value}].
+        reports = [{"id": r.get("external_id", ""), "result": r.get("result") or "PENDING", "at": r.get("updated_on") or "",
+                    "data": [{"title": d.get("title", ""), "type": d.get("type", ""), "value": d.get("value")}
+                             for d in r.get("data") or []]}
+                   for r in pages(f"/commit/{args.head}/reports")]
+        print(json.dumps({"checks": checks, "reviews": reviews, "approvals": approvals, "reports": reports}))
     elif args.command == "ready":
         call("PUT", f"/pullrequests/{pr_number(args.url)}", {"draft": False})
         print(json.dumps({"url": args.url, "draft": False}))

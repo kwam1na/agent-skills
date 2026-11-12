@@ -30,9 +30,10 @@ CATALOGUE_MODULES = (
     "profile_inventory", "provenance", "provider_qualification", "qualification", "readme", "receipt", "registry",
     "release_archive", "release_channel", "release_entry_budget", "release_integration", "review_and_compounding",
     "review_base_reopening", "review_bound_corpus", "review_grace", "review_orchestration", "round_brief_template_corpus",
-    "router", "run_delivery", "run_delivery_hooks", "run_delivery_plan_review", "run_delivery_supervisor", "run_delivery_tracker",
-    "run_event_emission_corpus", "run_tests", "runless_reviews", "test_dependency_guard", "test_environment",
-    "tracker_contract", "update_provenance", "validate", "workflow_graph_contract", "workflow_observation", "workflows",
+    "router", "run_delivery", "run_delivery_hooks", "run_delivery_plan_review", "run_delivery_pr_review",
+    "run_delivery_pr_review_gates", "run_delivery_supervisor", "run_delivery_tracker", "run_event_emission_corpus",
+    "run_tests", "runless_reviews", "test_dependency_guard", "test_environment", "tracker_contract", "update_provenance",
+    "validate", "workflow_graph_contract", "workflow_observation", "workflows",
 )
 CATALOGUE_IDS = tuple("tests.test_" + name for name in CATALOGUE_MODULES)
 GUARDS = ["tests.test_linear_qualification", "tests.test_registry"]
@@ -43,7 +44,7 @@ PUBLISHER = ".agent-skills/current/skills/run-delivery/scripts/tracker_publisher
 
 
 def _git(cwd: Path, *args: str) -> str:
-    identity = ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false"]
+    identity = ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "-c", "maintenance.auto=false", "-c", "gc.auto=0"]
     return subprocess.run(["git", *identity, *args], cwd=cwd, check=True, capture_output=True, text=True).stdout
 
 
@@ -331,8 +332,9 @@ class StandingBinding(unittest.TestCase):
         units = [line.split()[0] for line in listed.stdout.splitlines() if line.strip()]
         self.assertTrue(units, listed.stdout)
         self.assertEqual([unit for unit in units if not unit.startswith("tests.test_linear_qualification.")], [], units)
-        # Corpus validation still runs on every candidate, as it did before the catalogue.
-        self.assertEqual([entry["id"] for entry in binding["alwaysRun"]], ["validate-registry"])
+        # Corpus validation still runs on every candidate, as it did before the catalogue, and so do the plan-record
+        # fixtures, so every change to a record's shape is checked against them.
+        self.assertEqual([entry["id"] for entry in binding["alwaysRun"]], ["validate-registry", "plan-record-fixtures"])
         self.assertNotIn("validate-registry", CATALOGUE_IDS)
 
         with tempfile.TemporaryDirectory() as folder:

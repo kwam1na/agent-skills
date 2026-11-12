@@ -1291,6 +1291,42 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_run_delivery_pr_review",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_run_delivery_pr_review.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_run_delivery_pr_review.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_run_delivery_pr_review_gates",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_run_delivery_pr_review_gates.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_run_delivery_pr_review_gates.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_run_delivery_supervisor",
         "argv": [
           ".venv/bin/python",
