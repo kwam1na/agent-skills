@@ -65,6 +65,24 @@
       ],
       "prerequisites": [],
       "timeoutSeconds": 300
+    },
+    {
+      "id": "plan-record-fixtures",
+      "argv": [
+        ".venv/bin/python",
+        "-B",
+        "scripts/run-tests.py",
+        "--workers",
+        "4",
+        "-p",
+        "test_delivery_views_plan_fixtures.py"
+      ],
+      "cwd": ".",
+      "reasons": [
+        "The captured plan records must match what the state tool and runner write today, so every change to a record's shape is checked against them (V26-3306: fullHealth caught a miss after V26-3260)."
+      ],
+      "prerequisites": [],
+      "timeoutSeconds": 600
     }
   ],
   "fallback": [
