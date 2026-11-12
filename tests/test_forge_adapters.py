@@ -476,6 +476,14 @@ class GitHubApprovalsTests(unittest.TestCase):
         self.assertEqual(self.reviews({"headRefOid": HEAD, "statusCheckRollup": [], "reviews": restored})["approvals"],
                          [{"account": "codex-bot", "name": "codex-bot", "at": "2026-11-11T13:00:00Z", "commit": OTHER}])
 
+    def test_a_dismissed_latest_review_withdraws_an_earlier_approval(self) -> None:
+        reviews = [{"author": {"login": "codex-bot"}, "state": "APPROVED", "submittedAt": "2026-11-11T10:00:00Z",
+                    "body": "", "commit": {"oid": OTHER}},
+                   {"author": {"login": "codex-bot"}, "state": "DISMISSED", "submittedAt": "2026-11-11T11:00:00Z",
+                    "body": "", "commit": {"oid": HEAD}}]
+        self.assertEqual(self.reviews({"headRefOid": HEAD, "statusCheckRollup": [], "reviews": reviews})["approvals"],
+                         [])
+
     def test_no_approval_is_an_empty_list(self) -> None:
         found = self.reviews({"headRefOid": HEAD, "statusCheckRollup": [], "reviews": []})
         self.assertEqual(found["approvals"], [])

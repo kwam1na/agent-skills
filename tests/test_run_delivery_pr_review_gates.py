@@ -254,6 +254,28 @@ class GatesEverywhereTests(PrReviewCase):
         self.assertEqual(code, 2, out)
         self.assertIn(f"PR reviewer primary's verdict gate isn't in the PR review recorded at {self.head[:10]}: run "
                       "pr-review again", out)
+        with self.subTest("recorded under another kind of gate"):
+            # Recorded with its verdict met, then the same reviewer takes an approval gate: the verdict doesn't count.
+            self.assertEqual(self.flow("pr-review", "FX-2")[0], 0)
+            self.assertEqual(self.record()["reviewers"]["primary"]["gate"]["kind"], "verdict")
+            self.configure({"settleSeconds": 300, "reviewers": [{**VERDICT_PRIMARY, "gate": "approval"}]})
+            code, out = self.handoff("fine")
+            self.assertEqual(code, 2, out)
+            self.assertIn(f"PR reviewer primary's approval gate isn't in the PR review recorded at {self.head[:10]}: "
+                          "run pr-review again", out)
+
+    def test_the_lane_brief_names_the_gated_reviewers(self) -> None:
+        self.configure({"settleSeconds": 300, "reviewers": [VERDICT_PRIMARY, APPROVAL_CODEX]})
+        code, out = self.fx.flow("lead-brief", cwd=self.fx.main)
+        self.assertEqual(code, 0, out)
+        brief = " ".join((self.fx.main / "docs/lane-brief.md").read_text().split())
+        self.assertIn("Some reviewers gate the hand-off: `primary` (its **Verdict:** line); `codex` (its approval). "
+                      "`pr-review` shows each gate beside its review; with one unmet, `handoff`, the lead's acceptance "
+                      "and the merge queue refuse", brief)
+        # Without a gate, the paragraph is as it was: no gate sentence.
+        self.configure({"settleSeconds": 300, "reviewers": [{"id": "primary", "account": "{u-primary}"}]})
+        self.assertEqual(self.fx.flow("lead-brief", cwd=self.fx.main)[0], 0)
+        self.assertNotIn("gate the hand-off", (self.fx.main / "docs/lane-brief.md").read_text())
 
 
 class ApprovalMembersTests(PrReviewCase):

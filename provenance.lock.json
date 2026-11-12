@@ -1046,7 +1046,7 @@
         },
         {
           "path": "skills/run-delivery/references/config.md",
-          "sha256": "5f2efaaaedeab7d222e7899d820976937e79c396093540aa180ed23308477475"
+          "sha256": "c0f9a5a922541dcd06a7cfd44206679fca693f6804250fae0622ee774719aa43"
         },
         {
           "path": "skills/run-delivery/scripts/pr_review_gates.py",
