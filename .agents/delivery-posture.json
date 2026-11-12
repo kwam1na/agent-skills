@@ -1,5 +1,5 @@
 {
   "schemaVersion": "delivery-posture/1",
-  "posture": "focused",
-  "reason": "V26-3406: one full suite at close-out instead of one per merge. The queue still runs each candidate's selected checks, CI runs on every push to main, and the lead runs the full suite on macOS with Python 3.11 before tagging the candidate. The lead flips this to gate before the close, so the close-out runs fullHealth once on the final head."
+  "posture": "gate",
+  "reason": "V26-3406's close-out: every story is merged, so main returns to gate and the supervisor runs fullHealth once on the final head."
 }
