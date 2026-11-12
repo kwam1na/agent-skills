@@ -34,7 +34,8 @@
         ".agents/run-delivery.json",
         "docs/own-deliveries.md",
         "tests/test_own_deliveries.py",
-        "validation-inventory.json"
+        "validation-inventory.json",
+        "tests/test_fault_injection.py"
       ]
     },
     "lane-2": {
