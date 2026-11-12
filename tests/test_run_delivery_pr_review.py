@@ -1076,16 +1076,88 @@ class SilentAndGateTests(PrReviewCase):
 
     def test_a_block_on_the_silent_reviewer_still_refuses_the_unmet_gate(self) -> None:
         self.clock(T + SETTLE + 1)
-        code, out = self.flow("handoff", "FX-2", "--pr", PR, "--blocked", "pr-review=silent")
+        self.assertEqual(self.flow("pr-review", "FX-2")[0], 3)  # records primary silent, codex current and unmet
+        code, out = self.flow("handoff", "FX-2", "--pr", PR, "--blocked", "pr-review=silent",
+                              "--pr-review-triage", "codex=read it")
         self.assertEqual(code, 2, out)
         self.assertIn(self.unmet, out)
         self.answer([check(T - 600, T)], [by_codex(body="<!-- codex -->\n**Verdict:** Approve", at=stamp(T + 10))])
-        self.assertEqual(self.flow("handoff", "FX-2", "--pr", PR, "--blocked", "pr-review=silent")[0], 0)
+        self.assertEqual(self.flow("pr-review", "FX-2")[0], 3)
+        code, out = self.flow("handoff", "FX-2", "--pr", PR, "--blocked", "pr-review=silent",
+                              "--pr-review-triage", "codex=read it")
+        self.assertEqual(code, 0, out)
         self.answer([check(T - 600, T)], [by_codex(body="<!-- codex -->\n**Verdict:** Request changes",
                                                    at=stamp(T + 20))])
         code, out = self.flow("lead-accept", "FX-2", "--accept-blocked", "pr-review", cwd=self.fx.main)
         self.assertEqual(code, 1, out)
         self.assertIn(self.unmet, out)
+
+
+
+class SilentRecordTests(PrReviewCase):
+    """Plan change c1: pr-review records a silent required reviewer before it exits 3, a hand-off blocked on it still
+    triages every current review, and lead-accept re-checks those as for any hand-off."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.configure(LISTED)
+        self.answer([check(T - 600, T)], [by_codex(at=stamp(T + 10))])
+        self.clock(T + SETTLE + 1)
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 3, out)
+        self.line = next(l for l in out.splitlines() if l.startswith(SILENT))[len("run-delivery: "):]
+
+    def blocked_handoff(self, *triage: str) -> tuple[int, str]:
+        return self.flow("handoff", "FX-2", "--pr", PR, "--blocked", f"pr-review={self.line}",
+                         *[x for t in triage for x in ("--pr-review-triage", t)])
+
+    def test_the_record_holds_the_silent_reviewer_beside_the_current_one(self) -> None:
+        self.assertEqual(self.record(), {
+            "schema": "pr-review/2", "head": self.head, "url": PR, "reviewers": {
+                "primary": {"state": "silent", "required": True},
+                "codex": {"state": "current", "required": False, "author": "Review Bot", "account": "{u-review}",
+                          "at": stamp(T + 10), "body": "<!-- codex -->\nCodex says: fine"}}})
+
+    def test_a_blocked_hand_off_triages_every_current_review(self) -> None:
+        code, out = self.blocked_handoff()
+        self.assertEqual(code, 2, out)
+        self.assertIn("say how codex's review was handled: --pr-review-triage codex=TEXT", out)
+        code, out = self.blocked_handoff("codex=fine", "primary=nothing to read")
+        self.assertEqual(code, 2, out)
+        self.assertIn("--pr-review-triage names primary, which was silent: a silent reviewer takes no triage", out)
+        code, out = self.blocked_handoff("codex=fine")
+        self.assertEqual(code, 0, out)
+        self.assertIn("- PR review: primary: silent; codex: Review Bot at", out)
+        self.assertIn(f"BLOCKED pr-review: {self.line}", out)
+        self.assertEqual(self.record()["reviewers"]["codex"]["triage"], "fine")
+
+    def test_a_recorded_silent_reviewer_needs_the_block(self) -> None:
+        code, out = self.flow("handoff", "FX-2", "--pr", PR, "--pr-review-triage", "codex=fine")
+        self.assertEqual(code, 2, out)
+        self.assertIn(f"primary was silent at {self.head[:10]}: hand off blocked on it, --blocked pr-review=", out)
+
+    def test_lead_accept_rechecks_the_triaged_review_on_a_blocked_hand_off(self) -> None:
+        self.assertEqual(self.blocked_handoff("codex=fine")[0], 0)
+        self.answer([check(T - 600, T)], [by_codex(body="<!-- codex -->\nCodex has more", at=stamp(T + 20))])
+        code, out = self.flow("lead-accept", "FX-2", "--accept-blocked", "pr-review", cwd=self.fx.main)
+        self.assertEqual(code, 1, out)
+        self.assertIn("codex's PR review changed after the lane read it", out)
+        self.answer([check(T - 600, T)], [by_codex(at=stamp(T + 10))])
+        code, out = self.flow("lead-accept", "FX-2", "--accept-blocked", "pr-review", cwd=self.fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("PR review codex by Review Bot", self.decisions())
+        self.assertIn("accepted blocked 'pr-review'", self.decisions())
+
+    def test_the_legacy_shape_writes_no_record_on_its_refusal_and_takes_no_block(self) -> None:
+        (self.review / "pr-review.json").unlink()
+        self.configure(LEGACY)
+        self.answer([check(T - 600, T)], [])
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 2, out)
+        self.assertFalse((self.review / "pr-review.json").exists())
+        code, out = self.flow("handoff", "FX-2", "--pr", PR, "--blocked", f"pr-review={self.line}")
+        self.assertEqual(code, 2, out)
+        self.assertIn(f"no PR review recorded at {self.head[:10]}", out)
 
 
 if __name__ == "__main__":
