@@ -30,10 +30,10 @@ CATALOGUE_MODULES = (
     "profile_inventory", "provenance", "provider_qualification", "qualification", "readme", "receipt", "registry",
     "release_archive", "release_channel", "release_entry_budget", "release_integration", "review_and_compounding",
     "review_base_reopening", "review_bound_corpus", "review_grace", "review_orchestration", "round_brief_template_corpus",
-    "router", "run_delivery", "run_delivery_plan_review", "run_delivery_pr_review", "run_delivery_supervisor",
-    "run_delivery_tracker", "run_event_emission_corpus", "run_tests", "runless_reviews", "test_dependency_guard",
-    "test_environment", "tracker_contract", "update_provenance", "validate", "workflow_graph_contract",
-    "workflow_observation", "workflows",
+    "router", "run_delivery", "run_delivery_plan_review", "run_delivery_pr_review", "run_delivery_pr_review_gates",
+    "run_delivery_supervisor", "run_delivery_tracker", "run_event_emission_corpus", "run_tests", "runless_reviews",
+    "test_dependency_guard", "test_environment", "tracker_contract", "update_provenance", "validate",
+    "workflow_graph_contract", "workflow_observation", "workflows",
 )
 CATALOGUE_IDS = tuple("tests.test_" + name for name in CATALOGUE_MODULES)
 GUARDS = ["tests.test_linear_qualification", "tests.test_registry"]

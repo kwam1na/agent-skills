@@ -7,7 +7,8 @@
   get  --url URL                                          -> {"url", "state": open|merged|closed, "draft", "head", "source",
                                                               "destination"}
   reviews --url URL --head SHA                            -> {"checks": [{"name", "state": passed|failed|pending, "at"}],
-                                                              "reviews": [{"author", "account", "at", "body"}]}
+                                                              "reviews": [{"author", "account", "at", "body"}],
+                                                              "approvals": [{"account", "name", "at"}]}
   ready --url URL                                         -> {"url", "draft": false}
   merge --url URL --strategy merge|squash [--head SHA]    -> {"url", "state": "merged"}
   merge --source BRANCH --head SHA --strategy merge|squash [--destination D] -> {"url", "state": "merged"}
@@ -156,7 +157,11 @@ def main():
                     "body": c["content"]["raw"]}
                    for c in pages(f"/pullrequests/{number}/comments?pagelen=100")
                    if not c.get("deleted") and not c.get("inline") and not c.get("parent")]
-        print(json.dumps({"checks": checks, "reviews": reviews}))
+        # Bitbucket ties no approval to a commit: an approval given at an earlier head is still listed.
+        participants = call("GET", f"/pullrequests/{number}").get("participants") or []
+        approvals = [{"account": (p.get("user") or {}).get("uuid", ""), "name": (p.get("user") or {}).get("display_name", ""),
+                      "at": p.get("participated_on") or ""} for p in participants if p.get("approved")]
+        print(json.dumps({"checks": checks, "reviews": reviews, "approvals": approvals}))
     elif args.command == "ready":
         call("PUT", f"/pullrequests/{pr_number(args.url)}", {"draft": False})
         print(json.dumps({"url": args.url, "draft": False}))
