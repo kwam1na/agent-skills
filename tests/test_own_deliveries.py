@@ -23,7 +23,7 @@ CATALOGUE_MODULES = (
     "delivery_provider_rails_contract", "delivery_views", "delivery_views_adopter", "delivery_views_history",
     "delivery_views_page", "delivery_views_plan", "delivery_views_plan_fixtures", "delivery_views_render",
     "delivery_views_review_projection", "delivery_views_snapshots", "diagnosis", "documented_install_surface",
-    "fault_injection", "forge_adapters", "historical_qualifications", "host_exposure", "jira_profile", "lane_rows",
+    "fault_injection", "forge_adapters", "historical_qualifications", "hooks", "host_exposure", "jira_profile", "lane_rows",
     "lane_ruling_corpus", "lead_wait", "lifecycle", "linear_profile", "linear_qualification", "measure_test_writes",
     "merge_occurrence", "merge_queue", "no_current_set_names", "orchestration_adopter", "orchestration_render",
     "orchestration_state", "own_deliveries", "product_descriptors", "product_launcher", "product_release",

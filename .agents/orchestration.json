@@ -534,6 +534,24 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_hooks",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_hooks.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_hooks.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_host_exposure",
         "argv": [
           ".venv/bin/python",
