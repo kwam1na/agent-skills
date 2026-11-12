@@ -414,3 +414,128 @@ class BitbucketCandidateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# -- the PR review: each comment's account, and a transient failure's exit 75 ----------------------------------
+
+# A gh that answers `pr view` with FAKE_GH_VIEW, or fails as gh does, with FAKE_GH_FAIL on stderr and exit 1.
+REVIEW_GH = r'''#!/usr/bin/env python3
+import os, sys
+if os.environ.get("FAKE_GH_FAIL"):
+    sys.exit(os.environ["FAKE_GH_FAIL"])
+if sys.argv[1:3] != ["pr", "view"]:
+    sys.exit("fake gh: unexpected " + " ".join(sys.argv[1:]))
+print(os.environ["FAKE_GH_VIEW"])
+'''
+
+
+class GitHubReviewsTests(unittest.TestCase):
+    URL = "https://github.com/o/n/pull/3"
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        (root / "bin").mkdir()
+        gh = root / "bin" / "gh"
+        gh.write_text(REVIEW_GH.replace("#!/usr/bin/env python3", f"#!{sys.executable}", 1))
+        gh.chmod(0o755)
+        view = {"headRefOid": HEAD, "statusCheckRollup": [],
+                "reviews": [{"author": {"login": "review-bot"}, "submittedAt": "2026-01-01T00:00:30Z", "body": "fine"}]}
+        self.env = {**os.environ, "PATH": f"{root / 'bin'}{os.pathsep}{os.environ['PATH']}",
+                    "FLOW_FORGE_REPOSITORY": "o/n", "FAKE_GH_VIEW": json.dumps(view)}
+
+    def reviews(self, **env: str) -> subprocess.CompletedProcess:
+        return subprocess.run([sys.executable, "-B", str(ADAPTERS / "forge_github.py"), "reviews", "--url", self.URL,
+                               "--head", HEAD], env={**self.env, **env}, capture_output=True, text=True, timeout=60)
+
+    def test_each_review_carries_its_authors_login_as_its_account(self) -> None:
+        done = self.reviews()
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout)["reviews"],
+                         [{"author": "review-bot", "account": "review-bot", "at": "2026-01-01T00:00:30Z", "body": "fine"}])
+
+    def test_a_transient_failure_exits_75_and_any_other_exits_1(self) -> None:
+        for said, code in (
+            ("HTTP 503: Service Unavailable (https://api.github.com/graphql)", 75),
+            ("HTTP 429: API rate limit exceeded", 75),
+            ("Post \"https://api.github.com/graphql\": net/http: request canceled (Client.Timeout exceeded)", 75),
+            ("Post \"https://api.github.com/graphql\": dial tcp 140.82.112.6:443: connect: connection refused", 75),
+            ("HTTP 401: Bad credentials (https://api.github.com/graphql)", 1),
+            ("HTTP 404: Not Found (https://api.github.com/repos/o/n/pulls/3)", 1),
+        ):
+            with self.subTest(said=said):
+                done = self.reviews(FAKE_GH_FAIL=said)
+                self.assertEqual(done.returncode, code, done.stderr)
+                self.assertIn(said.split(" (")[0][:30], done.stderr)
+
+
+class BitbucketReviewsTests(unittest.TestCase):
+    URL = "https://bitbucket.org/ws/repo/pull-requests/7"
+    API = "https://api.bitbucket.org/2.0/repositories/ws/repo"
+
+    def setUp(self) -> None:
+        self.spec = importlib.util.spec_from_file_location("forge_bitbucket_for_review_tests",
+                                                           ADAPTERS / "forge_bitbucket.py")
+        self.calls: list[str] = []
+        self.failure: Exception | None = None
+
+    def answer(self, request, timeout=None):
+        """Only the head's statuses and the PR's comments are answered; any other path fails the row."""
+        self.calls.append(request.full_url)
+        if self.failure is not None:
+            raise self.failure
+        if request.full_url == f"{self.API}/commit/{HEAD}/statuses?pagelen=100":
+            body = {"values": [{"name": "pipe", "state": "SUCCESSFUL", "created_on": "2026-01-01T00:00:10+00:00"}]}
+        elif request.full_url == f"{self.API}/pullrequests/7/comments?pagelen=100":
+            body = {"values": [{"user": {"display_name": "Review Bot", "uuid": "{u-1}"}, "updated_on": "2026-01-01T00:00:30+00:00",
+                                "content": {"raw": "fine"}}]}
+        else:
+            raise AssertionError(f"an unexpected path: {request.full_url}")
+        return contextlib.closing(io.BytesIO(json.dumps(body).encode()))
+
+    def reviews(self) -> dict:
+        module = importlib.util.module_from_spec(self.spec)
+        with mock.patch.dict(os.environ, {"FLOW_FORGE_REPOSITORY": "ws/repo", "FLOW_FORGE_TOKEN_ENV": "FX_TOKEN",
+                                          "FX_TOKEN": "bb-secret"}), \
+                mock.patch.object(sys, "argv", ["forge_bitbucket.py", "reviews", "--url", self.URL, "--head", HEAD]), \
+                mock.patch("urllib.request.urlopen", self.answer), \
+                contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(io.StringIO()) as err:
+            previous = sys.dont_write_bytecode
+            sys.dont_write_bytecode = True
+            try:
+                self.spec.loader.exec_module(module)
+                try:
+                    module.main()
+                except SystemExit as stopped:
+                    return {"exit": stopped.code, "stderr": err.getvalue()}
+            finally:
+                sys.dont_write_bytecode = previous
+        return json.loads(out.getvalue())
+
+    def test_each_comment_carries_its_authors_uuid_as_its_account(self) -> None:
+        self.assertEqual(self.reviews()["reviews"], [{"author": "Review Bot", "account": "{u-1}",
+                                                      "at": "2026-01-01T00:00:30+00:00", "body": "fine"}])
+
+    def test_a_transient_failure_exits_75_and_any_other_exits_1(self) -> None:
+        import urllib.error
+
+        def http(code: int) -> urllib.error.HTTPError:
+            return urllib.error.HTTPError(f"{self.API}/x", code, "said", {}, io.BytesIO(b"forge says no"))
+        for what, failure, code in (
+            ("a 503", http(503), 75),
+            ("a 429", http(429), 75),
+            ("a timeout", TimeoutError("timed out"), 75),
+            ("a connection error", urllib.error.URLError(ConnectionRefusedError(61, "Connection refused")), 75),
+            ("a 401", http(401), 1),
+            ("a 404", http(404), 1),
+        ):
+            with self.subTest(what):
+                self.failure = failure
+                answer = self.reviews()
+                # sys.exit(message) exits 1, the message its code; exit 75 prints the message first.
+                exited = 1 if isinstance(answer["exit"], str) else answer["exit"]
+                said = answer["stderr"] if exited == 75 else answer["exit"]
+                self.assertEqual(exited, code, answer)
+                self.assertIn("bitbucket GET /commit/", said)
+                self.assertNotIn("bb-secret", said)

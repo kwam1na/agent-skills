@@ -3992,8 +3992,8 @@ class RunDeliveryReleaseAndNamesTests(unittest.TestCase):
             self.assertEqual(said["reviews"], {"checks": [{"name": "build", "state": "passed", "at": "2026-01-01T00:00:01Z"},
                                                           {"name": "lint", "state": "pending", "at": ""},
                                                           {"name": "test", "state": "failed", "at": "2026-01-01T00:00:03Z"}],
-                                               "reviews": [{"author": "pipeline-bot", "at": "2026-01-01T00:00:02Z",
-                                                            "body": "Looks fine"}]})
+                                               "reviews": [{"author": "pipeline-bot", "account": "pipeline-bot",
+                                                            "at": "2026-01-01T00:00:02Z", "body": "Looks fine"}]})
             self.assertEqual((said["ready"], said["merge"]), ({"url": url, "draft": False}, {"url": url, "state": "merged"}))
             # A binding's merge step knows the branch, not the pull request: --source finds its one open pull request
             # and merges it at exactly the checked head.
@@ -8887,7 +8887,7 @@ class LaneStartAndReadinessTests(unittest.TestCase):
 # set in the test runner's own environment would point the fixtures' commands somewhere other than the fixture.
 TOOL_SETTINGS = ("DELIVERY_STATE", "RUN_DELIVERY_BASE", "RUN_DELIVERY_SUPERVISOR", "RUN_DELIVERY_CONFIG",
                  "DELIVERY_FLOW_CONFIG", "RUN_DELIVERY_DELIVERY", "DELIVERY_FLOW_DELIVERY", "RUN_DELIVERY_LOCAL",
-                 "DELIVERY_FLOW_LOCAL")
+                 "DELIVERY_FLOW_LOCAL", "RUN_DELIVERY_CLOCK")
 PLANTED_KEY = "PLANTED-9"
 PLANTED_MARKER = "planted-live-delivery-7f3c"
 
@@ -8987,7 +8987,9 @@ class LiveDeliveryOutOfReachTests(unittest.TestCase):
                     "RUN_DELIVERY_CONFIG": str(main / ".agents/run-delivery.json"),
                     "DELIVERY_FLOW_CONFIG": str(main / ".agents/run-delivery.json"),
                     "RUN_DELIVERY_DELIVERY": PLANTED_KEY, "DELIVERY_FLOW_DELIVERY": PLANTED_KEY,
-                    "RUN_DELIVERY_LOCAL": "1", "DELIVERY_FLOW_LOCAL": "1", "RUN_DELIVERY_SUPERVISOR": "on"}
+                    "RUN_DELIVERY_LOCAL": "1", "DELIVERY_FLOW_LOCAL": "1", "RUN_DELIVERY_SUPERVISOR": "on",
+                    "RUN_DELIVERY_CLOCK": str(live / "clock.json")}
+        (live / "clock.json").write_text(json.dumps({"now": 0, "poll": 0}))  # a clock no case's wait may read
         self.assertEqual(set(settings), set(TOOL_SETTINGS))
         return main, worktree, settings
 

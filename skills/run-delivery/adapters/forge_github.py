@@ -7,12 +7,14 @@
   get  --url URL                                          -> {"url", "state": open|merged|closed, "draft", "head", "source",
                                                               "destination"}
   reviews --url URL --head SHA                            -> {"checks": [{"name", "state": passed|failed|pending, "at"}],
-                                                              "reviews": [{"author", "at", "body"}]}
+                                                              "reviews": [{"author", "account", "at", "body"}]}
   ready --url URL                                         -> {"url", "draft": false}
   merge --url URL --strategy merge|squash [--head SHA]    -> {"url", "state": "merged"}
   merge --source BRANCH --head SHA --strategy merge|squash [--destination D] -> {"url", "state": "merged"}
 
-Environment: FLOW_FORGE_REPOSITORY (owner/name). Prints JSON on stdout; exits 1 with a message on stderr otherwise.
+Environment: FLOW_FORGE_REPOSITORY (owner/name). Prints JSON on stdout; exits 1 with a message on stderr otherwise, or
+75 (EX_TEMPFAIL) when gh's failure is transient: a timeout, a connection error, or an HTTP 5xx or 429, which a
+PR-review wait retries. A review's `account` is its author's login.
 `candidate` is a merge queue's candidate step for the conventional branch: it prints the branch `--prefix` + `--key`
 names and that branch's tip, and refuses when no branch has that name or when several answer to it, differing only in
 case, as a case-insensitive checkout would mix them. It writes three ways: it opens a pull request as a draft (a lane's open-pr), marks one ready (the lead's acceptance,
@@ -42,22 +44,36 @@ def redact(text):
     return text
 
 
-def fail(message):
-    sys.exit(redact(message))
+TRANSIENT = 75  # EX_TEMPFAIL
+# What gh says on a failure worth trying again: an HTTP 5xx or 429, a timeout, or a connection that failed.
+TRANSIENT_SAID = re.compile(r"\bHTTP (5\d\d|429)\b|timed? ?out|timeout|connection (refused|reset)|could not connect|"
+                            r"dial tcp|no such host|network is unreachable|unexpected EOF|TLS handshake", re.IGNORECASE)
+
+
+def fail(message, code=1):
+    if code == 1:
+        sys.exit(redact(message))
+    print(redact(message), file=sys.stderr)
+    sys.exit(code)
+
+
+def gh_failed(said):
+    """Exit for a gh failure: 75 when it is transient, else 1."""
+    fail(said, TRANSIENT if TRANSIENT_SAID.search(said) else 1)
 
 
 def gh_api(path):
     """A `gh api` call, which names its repository in the path rather than through --repo."""
     done = subprocess.run(["gh", "api", path], text=True, capture_output=True)
     if done.returncode != 0:
-        fail(f"gh api: {redact(done.stderr.strip())[-300:]}")
+        gh_failed(f"gh api: {redact(done.stderr.strip())[-300:]}")
     return done.stdout
 
 
 def gh(*args):
     done = subprocess.run(["gh", *args, "--repo", REPO], text=True, capture_output=True)
     if done.returncode != 0:
-        fail(f"gh {args[0]} {args[1]}: {redact(done.stderr.strip())[-300:]}")
+        gh_failed(f"gh {args[0]} {args[1]}: {redact(done.stderr.strip())[-300:]}")
     return done.stdout
 
 
@@ -124,7 +140,8 @@ def main():
         checks = [{"name": entry.get("name") or entry.get("context") or "",
                    "state": CHECK_STATES.get(entry.get("conclusion") or entry.get("state") or "", "pending"),
                    "at": entry.get("completedAt") or entry.get("startedAt") or ""} for entry in rollup]
-        reviews = [{"author": (entry.get("author") or {}).get("login", ""), "at": entry.get("submittedAt", ""),
+        reviews = [{"author": (entry.get("author") or {}).get("login", ""),
+                    "account": (entry.get("author") or {}).get("login", ""), "at": entry.get("submittedAt", ""),
                     "body": entry.get("body", "")} for entry in pr.get("reviews") or []]
         print(json.dumps({"checks": checks, "reviews": reviews}))
     elif args.command == "ready":

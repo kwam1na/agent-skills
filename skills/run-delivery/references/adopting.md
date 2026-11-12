@@ -611,7 +611,7 @@ one this repository changes from the walk-through above; everything else stays a
 | `trackerSnapshot`, `publishers` | none | Jira's snapshot, and run-delivery's tracker publisher |
 | `tracker` | an issue address | Jira's adapter, and its moves |
 | `review.pr` | none | the pipeline's review |
-| The binding's `reviewGate`, `checkTimeoutCeiling` | none, `1200` | run-delivery's `pr-review-current`, `1900` |
+| The binding's `reviewGate`, `checkTimeoutCeiling` | none, `1200` | run-delivery's `pr-review-current`, `1920` |
 | `reviewWhen` | none: lanes make the review move by hand | `pipeline-green` |
 | `authority` | `push`, `draftPullRequests` | adds `readyPullRequests` |
 
@@ -629,8 +629,8 @@ retargeted to another base in the forge is refused rather than merged there:
             "--head", "{expectedHead}", "--strategy", "merge", "--destination", "{base}"],
   "reviewGate": {"argv": ["python3", "-B", ".agent-skills/current/skills/run-delivery/scripts/run_delivery.py",
                           "pr-review-current", "--branch", "{branch}", "--head", "{expectedHead}", "--wait"],
-                 "timeoutSeconds": 1900},
-  "checkTimeoutCeiling": 1900,
+                 "timeoutSeconds": 1920},
+  "checkTimeoutCeiling": 1920,
   "environment": {"FLOW_FORGE_REPOSITORY": "<workspace>/<repository>", "FLOW_FORGE_TOKEN_ENV": "BITBUCKET_TOKEN"},
   "state": {"directory": ".orchestration/state", "renderers": [],
             "forgeSnapshot": {"argv": ["python3", "-B", ".agent-skills/current/skills/delivery-views/scripts/snapshot.py",
@@ -668,8 +668,10 @@ lane. The binding's `reviewGate` checks it once more just before each merge:
 is about to merge. It waits up to `waitSeconds` for a review still to come, and otherwise exits non-zero with one line
 on stderr saying why: no `review.pr`, an adapter with no `reviews` command, no open PR, the PR at another head, a failed
 pipeline, or no review after a passing one. The queue then stops the candidate with `review_not_current`. Give the gate
-a `timeoutSeconds` above `waitSeconds`, within the binding's `checkTimeoutCeiling`, so a slow review is reported as
-missing rather than killed. Jira gets every update in the orchestration guide's table, posted once each by the tracker
+a `timeoutSeconds` at least 120 above `waitSeconds`, within the binding's `checkTimeoutCeiling`, so that a slow review
+is reported as missing rather than killed and the wait's last retry of a transient forge failure fits. With several
+reviewers (`review.pr.reviewers`, in the configuration reference), the gate passes once every required reviewer is
+current. Jira gets every update in the orchestration guide's table, posted once each by the tracker
 publisher from its own ledger, and the start move at each `lane-start`. A delivery to an integration base names it at
 setup, which `bases` then requires:
 

@@ -71,7 +71,8 @@ checks may need no file at all.
     "bound": 4,                               // default: review-work's 4
     "pr": { "author": "Bitbucket Pipelines", "waitSeconds": 1800 },  // a review the forge's pipeline posts on each PR:
                                               // lanes read and triage it before hand-off (pr-review); lead-accept
-                                              // requires it current at the handed head
+                                              // requires it current at the handed head. Or several reviewers: see
+                                              // "Several PR reviewers" below
     "lenses": { "lens.x": { "short": "x", "charter": "docs/review/x.md" } }  // added; the charter is a repository file
   },
   "tracker": {                                // optional
@@ -134,6 +135,57 @@ checks may need no file at all.
   }
 }
 ```
+
+### Several PR reviewers
+
+`review.pr` takes either the single `{author, waitSeconds}` above, read exactly as it always was, or a list:
+
+```jsonc
+"pr": {
+  "waitSeconds": 1800,                        // how long pr-review --wait and pr-review-current --wait wait (default 1800)
+  "settleSeconds": 300,                       // how long after the pipeline goes green an optional reviewer has to post
+                                              // before it is absent (default 300)
+  "reviewers": [
+    { "id": "gatekeeper", "account": "{a1b2...}", "required": true },
+    { "id": "second-look", "author": "Review Bot", "signature": "<!-- second-look -->", "required": false }
+  ]
+}
+```
+
+- **A reviewer** is `{id, account?, author?, signature?, required?, gate?, report?}`. `id` is lowercase letters, digits
+  and hyphens, starting with a letter, and each is its own. It needs `account`, the forge's account id (Bitbucket's
+  `user.uuid`, GitHub's login), or `author`, the display name it posts as. `required` is `true` unless set `false`.
+  `gate` is `"approval"` or `"verdict"`, and `"approval"` needs `account`. `report` is a non-empty string.
+- **What is refused.** Any other member, a duplicate or malformed `id`, an empty list, a negative or non-integer number
+  (a string among them) and an `"approval"` gate without `account` are refused by every reader, naming the reviewer and
+  the member: `pr-review`, `pr-review-current`, `handoff`, `lead-accept`, `lead-brief`, and the doctor, which reports it
+  `wrong`. The doctor warns, without failing, when a reviewer has neither `account` nor `signature`, since a display
+  name alone also matches another bot posting under it, and when two reviewers share an `account` or an `author` and
+  neither has a `signature`.
+- **Matching.** A PR comment is a reviewer's when its `account` equals the reviewer's `account`, if set, else when its
+  author is the reviewer's `author`; with `signature`, its body must also contain that text, as plain text, not a
+  pattern. A comment with an empty body never matches. The reviewer's review is its latest matching comment.
+- **Current, pending, absent.** Each read classifies every reviewer. It is `current` once every check at the head
+  passed and its review is no earlier than the latest check. The settle starts when every check has passed, at the
+  latest `doneAt` among them (a check without one counts its `at`), and ends `settleSeconds` later, the end itself
+  inside it. After it, an optional reviewer with no current review is `absent`; a required one stays `pending`. Before
+  it, or while any check is pending, a reviewer with no current review is `pending`. `pr-review --wait` waits until none
+  is pending and no check is, or until `waitSeconds`; without `--wait`, it reads once. A failed check refuses at once.
+  Every wait reads its time, sleeps and poll interval through one clock, which `RUN_DELIVERY_CLOCK` replaces with
+  a file's for the tool's own tests; never set it in a delivery.
+- **What the adapter must return.** A reviewer with `account` needs `account` on each comment from `reviews`; a gate
+  `"approval"` needs `approvals`; `report` needs `reports`. A member the adapter doesn't return at all is refused,
+  naming it; one returned empty is not. The single `{author}` shape reads none of them.
+- **The record.** `pr-review` saves `{schema: "pr-review/2", head, url, reviewers: {<id>: {state, required, author?,
+  account?, at?, body?, triage?}}}`, `state` being `current` or `absent`, and prints each review under its id. It makes
+  the `pipeline-green` review move once every required reviewer is current. The single shape keeps its own record,
+  `{head, url, author, at, body}`.
+- **Triage.** `handoff` takes `--pr-review-triage ID=TEXT` once for each current review. A bare `TEXT` is accepted only
+  when exactly one review is current. An absent or unknown reviewer takes none.
+- **Acceptance and the gate.** `lead-accept` re-checks every reviewer at the handed head: each recorded current is still
+  current, triaged and unchanged; and an optional one recorded absent whose review has since arrived sends the lane
+  back to read it. It reads a record of the single shape as reviewer `review`. `pr-review-current` passes when every
+  required reviewer is current; an optional one never blocks it.
 
 ## `.agents/deliveries/<key>.json`
 
@@ -229,8 +281,10 @@ The command is called with one of:
 
 - `find --source BRANCH` prints `{"url"}` for the branch's open PR, or `{}`.
 - `open --source B --destination D --title T --body-file F` opens a draft and prints `{"url"}`.
-- `reviews --url URL --head SHA` prints `{"checks": [{name, state: passed|failed|pending, at}], "reviews": [{author, at, body}]}`:
-  the head commit's pipeline checks and the PR's top-level comments. Needed only with `review.pr`.
+- `reviews --url URL --head SHA` prints `{"checks": [{name, state: passed|failed|pending, at}], "reviews": [{author,
+  account, at, body}]}`: the head commit's pipeline checks and the PR's top-level comments, `account` being the
+  author's account id (Bitbucket's `user.uuid`, GitHub's login). Needed only with `review.pr`; a reviewer matched by
+  `account` needs `account` on each comment.
 - `get --url URL` prints `{"url", "state": "open"|"merged"|"closed", "draft", "head", "source", "destination"}`. It
   refuses a URL that isn't one of the repository's PRs. `head` may be abbreviated, to 7 characters at least.
 - `ready --url URL` marks a draft ready and prints `{"url", "draft": false}`. `lead-accept` calls it, before the queue
@@ -255,7 +309,15 @@ The command is called with one of:
   "{candidate}"]`.
 
 `FLOW_FORGE_REPOSITORY` and `FLOW_FORGE_TOKEN_ENV` carry the `forge` settings. Both shipped adapters answer every
-command. With `forge.mergeNeedsReady` set, `doctor` reports a delivery without the `readyPullRequests` grant, and
+command.
+
+An adapter exits 0 with its JSON, 1 with a message on stderr, or 75 (`EX_TEMPFAIL`) when the failure is transient: a
+timeout, a connection error, or an HTTP 5xx or 429. A 4xx, and anything else, is exit 1. A `forge.argv` adapter of
+your own should do the same. Only a PR-review wait retries exit 75: `reviews` in `pr-review --wait`, and `get` and
+`reviews` in `pr-review-current --wait`, from 5 seconds doubling to at most 60, until the wait's deadline, where the
+refusal carries the last transient message. The `find` before each wait, every call without `--wait`, and every other
+command refuse at once. So a `reviewGate`'s `timeoutSeconds` must exceed `review.pr`'s `waitSeconds` by at least 120,
+so that the last backoff and one adapter call fit inside it. With `forge.mergeNeedsReady` set, `doctor` reports a delivery without the `readyPullRequests` grant, and
 `lead-init` refuses it.
 
 ## The supervisor
