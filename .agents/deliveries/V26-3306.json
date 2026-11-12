@@ -213,7 +213,7 @@
     {
       "id": "main-pr",
       "label": "Into main",
-      "text": "After V26-3406 closes, sync/v26-3306 (the integration base with origin/main merged in) passes the full local suite on macOS with Python 3.11 and the Ubuntu CI job, is reviewed with the delivery's lenses, and the operator merges its pull request into main",
+      "text": "After V26-3406 closes, sync/v26-3306 (the integration base with origin/main merged in) passes the full local suite on macOS with Python 3.11 and the Ubuntu CI job, is reviewed with the delivery's lenses, and the lead merges its pull request into main under the operator's grant",
       "covers": {
         "criteria": [],
         "proofs": []
@@ -273,7 +273,8 @@
     {
       "id": "approval-5",
       "text": "The pull request from `sync/v26-3306` into `main`, and its merge, which is the operator's.",
-      "state": "waiting"
+      "state": "done",
+      "who": "the operator, 2026-11-11: granted the lead to merge the sync/v26-3306 pull request into main once its finish-line checks pass"
     }
   ],
   "outOfScope": [

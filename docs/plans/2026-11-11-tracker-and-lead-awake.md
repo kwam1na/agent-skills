@@ -28,7 +28,7 @@ replaced with them word for word, so `lead-setup` drafts them from the tracker s
 - After V26-3406 closes, one reviewed pull request merges the integration base into `main`, as Decision 1 describes:
   - its CI passes on the Ubuntu job;
   - the full local suite passes on macOS with Python 3.11 at its head;
-  - the operator merges it;
+  - the lead merges it, under the operator's grant of 2026-11-11;
   - `main`'s CI then passes on the Ubuntu job and `cut-release` at the merge commit, with the run linked on the epic.
 - No finding is deferred: every finding any review in this delivery raises, at any severity, is fixed in the story that found it, and no
   follow-up item is filed for it.
@@ -55,7 +55,7 @@ replaced with them word for word, so `lead-setup` drafts them from the tracker s
      conflicts there. Expected conflicts: `run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `provenance.lock.json`, the skill
      docs. The lock is resolved by the writer, as AGENTS.md says.
    - The lead then runs the full suite on macOS with Python 3.11 and opens the pull request from `sync/v26-3306` into `main`. It is
-     reviewed with the delivery's lenses, and the operator merges it.
+     reviewed with the delivery's lenses, and the lead merges it under the operator's grant.
    - If V26-3406 is still open when both stories merge here, the delivery waits on that finish line, and the record shows it.
 2. **The live view's port is derived, then recorded.**
    - The port is derived from the repository's top-level path and the delivery key: the first eight bytes of the sha256 of
@@ -258,7 +258,7 @@ Sensors:
 - Pushing `integrate/tracker-and-lead-awake` to `origin`. The operator asked for the integration base on 2026-11-11, and lanes read
   the delivery from it on the remote.
 - The grant to the lane: `push` and `draftPullRequests`, and the lead's `readyPullRequests`.
-- The pull request from `sync/v26-3306` into `main`, and its merge, which is the operator's.
+- The pull request from `sync/v26-3306` into `main`, and its merge. The operator granted the lead the merge on 2026-11-11, once the finish line's checks pass.
 
 ## Plan review
 
