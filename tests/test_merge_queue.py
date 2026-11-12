@@ -2784,8 +2784,11 @@ class CheckNodeTests(MergeQueueTestCase):
         (shim / "node").chmod(0o755)
         profiles = {"default": {"environment": {"MQ_PROFILE_HEAD": "{head}"}},
                     "shim": {"environment": {"PATH": f"{shim}{os.pathsep}{os.environ.get('PATH', '')}"}}}
-        adopter = self.adopter({"profiles": profiles, "alwaysRun": [check_entry("pinned", environmentProfile="shim")]})
-        self.candidate(adopter, {"src/app.txt": "app two\n", ".node-pin": "20.1.0\n"})
+        # The check runs in src/, the pin's folder; the checkout's root has none, so asking there would read 22.6.0.
+        pinned = check_entry("pinned", environmentProfile="shim", cwd="src")
+        pinned["argv"] = [PY, "-c", "pass"]
+        adopter = self.adopter({"profiles": profiles, "alwaysRun": [pinned]})
+        self.candidate(adopter, {"src/app.txt": "app two\n", "src/.node-pin": "20.1.0\n"})
         with mock.patch.object(queue, "RUNTIME_DESCRIPTOR", self.runtime("22.6.0")):
             self.run_queue(adopter, "feature")
         row = {row["id"]: row for row in adopter.item("feature")["checks"]}["pinned"]
