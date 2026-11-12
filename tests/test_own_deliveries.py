@@ -44,7 +44,7 @@ PUBLISHER = ".agent-skills/current/skills/run-delivery/scripts/tracker_publisher
 
 
 def _git(cwd: Path, *args: str) -> str:
-    identity = ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false"]
+    identity = ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "-c", "maintenance.auto=false", "-c", "gc.auto=0"]
     return subprocess.run(["git", *identity, *args], cwd=cwd, check=True, capture_output=True, text=True).stdout
 
 
