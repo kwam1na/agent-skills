@@ -26,8 +26,8 @@ from tests.test_run_delivery import (
 
 # A forge adapter that answers find, open and get from FAKE_FORGE_STATE as the fixture's own does, and reviews from
 # FAKE_FORGE_REVIEWS. FAKE_FORGE_SCRIPT, when set, scripts any command: {command: [step, ...]}, each step
-# {"exit": n, "stderr": text} or {"answer": object}, taken in order and the last one repeated. Every call is logged to
-# FAKE_FORGE_CALLS.
+# {"exit": n, "stderr": text}, {"answer": object} or {"pass": true} (answered as if unscripted), taken in order and the
+# last one repeated. Every call is logged to FAKE_FORGE_CALLS.
 PR_FORGE = r'''
 import argparse, json, os, subprocess, sys
 state = os.environ["FAKE_FORGE_STATE"]
@@ -52,8 +52,10 @@ if script.get(args.c):
     if "exit" in step:
         sys.stderr.write(step.get("stderr", "") + "\n")
         sys.exit(step["exit"])
-    print(json.dumps(step["answer"]))
-    sys.exit(0)
+    if "answer" in step:
+        print(json.dumps(step["answer"]))
+        sys.exit(0)
+    # {"pass": true}: answered as an unscripted call is
 if args.c == "reviews":
     path = os.environ.get("FAKE_FORGE_REVIEWS", "")
     print(open(path).read() if path and os.path.exists(path) else json.dumps({"checks": [], "reviews": []}))
@@ -328,6 +330,445 @@ class LegacyCharacterizationTests(PrReviewCase):
         code, out, err = self.gate()
         self.assertEqual((code, err), (0, ""), out)
         self.assertEqual(out, f"Pipeline Bot review of {self.head[:10]} at 2026-01-01T00:00:30 is current: pipe passed\n")
+
+
+
+# The list: a required reviewer matched by account, and an optional one matched by author and signature.
+PRIMARY = {"id": "primary", "account": "{u-primary}", "required": True}
+CODEX = {"id": "codex", "author": "Review Bot", "signature": "<!-- codex -->", "required": False}
+LISTED = {"waitSeconds": 600, "settleSeconds": 300, "reviewers": [PRIMARY, CODEX]}
+AFTER = "2026-01-01T00:00:30"  # a review after the pipeline's one check
+
+
+def by_primary(body: str = "Primary says: fix x", at: str = AFTER, **extra) -> dict:
+    return {"author": "Primary Bot", "account": "{u-primary}", "at": at, "body": body, **extra}
+
+
+def by_codex(body: str = "<!-- codex -->\nCodex says: fine", at: str = AFTER) -> dict:
+    return {"author": "Review Bot", "account": "{u-review}", "at": at, "body": body}
+
+
+class ConfigurationTests(PrReviewCase):
+    """Decision 1: one parser for every reader. Each malformed list is refused by pr-review, pr-review-current,
+    handoff, lead-accept and lead-brief, naming the reviewer and the member, and the doctor reports it wrong."""
+
+    def readers(self) -> dict[str, tuple[int, str]]:
+        code, out, err = self.gate()
+        lead = self.fx.flow("lead-brief", cwd=self.fx.main)
+        doctor = self.fx.flow("doctor", "--delivery", "FX-1", "--offline", cwd=self.fx.main)
+        return {"pr-review": self.flow("pr-review", "FX-2"), "pr-review-current": (code, err),
+                "handoff": self.handoff("fixed"), "lead-accept": self.accept(), "lead-brief": lead, "doctor": doctor}
+
+    def test_each_malformed_list_is_refused_by_every_reader_naming_the_reviewer_and_the_member(self) -> None:
+        cases = [
+            ("an unknown member", {"reviewers": [{**PRIMARY, "colour": "blue"}]}, "reviewer 'primary': `colour`"),
+            ("a duplicate id", {"reviewers": [PRIMARY, {**CODEX, "id": "primary"}]}, "reviewer 'primary': `id`"),
+            ("an empty list", {"reviewers": []}, "`reviewers`"),
+            ("a bad id", {"reviewers": [{**PRIMARY, "id": "Primary_1"}]}, "reviewer 'Primary_1': `id`"),
+            ("a negative settle", {"settleSeconds": -1, "reviewers": [PRIMARY]}, "`settleSeconds`"),
+            ("an approval gate without an account", {"reviewers": [{"id": "x", "author": "X", "gate": "approval"}]},
+             "reviewer 'x': `account`"),
+            ("a string settle", {"settleSeconds": "300", "reviewers": [PRIMARY]}, "`settleSeconds`"),
+            ("a string wait", {"waitSeconds": "600", "reviewers": [PRIMARY]}, "`waitSeconds`"),
+            ("an unknown top-level member", {"reviewers": [PRIMARY], "author": "X"}, "`author` is not a member"),
+            ("a reviewer with neither account nor author", {"reviewers": [{"id": "x", "signature": "s"}]},
+             "reviewer 'x': `account`"),
+        ]
+        for what, pr, named in cases:
+            with self.subTest(what):
+                self.configure(pr)
+                for reader, (code, out) in self.readers().items():
+                    with self.subTest(reader=reader):
+                        self.assertIn(named, out)
+                        self.assertIn("review.pr", out)
+                        if reader == "doctor":
+                            self.assertRegex(out, r"(?m)^wrong +pipeline PR review: .*review\.pr")
+                            self.assertNotEqual(code, 0, out)
+                        else:
+                            self.assertEqual(code, 2, out)
+
+    def test_a_valid_two_reviewer_list_passes_every_reader(self) -> None:
+        self.configure(LISTED)
+        self.answer([PASSED], [by_primary(), by_codex()])
+        self.assertEqual(self.flow("pr-review", "FX-2")[0], 0)
+        readers = self.readers()
+        for reader, (code, out) in readers.items():
+            with self.subTest(reader=reader):
+                if reader == "handoff":
+                    self.assertEqual(code, 2, out)  # a bare text with two current reviews (the triage rows)
+                    self.assertIn("--pr-review-triage ID=TEXT", out)
+                elif reader == "lead-accept":
+                    self.assertEqual(code, 2, out)  # nothing handed off yet: refused after the configuration is read
+                    self.assertIn("not in the queue", out)
+                elif reader == "doctor":
+                    self.assertRegex(out, r"(?m)^ok +pipeline PR review: ")
+                else:
+                    self.assertEqual(code, 0, out)
+        self.assertIn("`primary` (required); `codex` (optional)", (self.fx.main / "docs/lane-brief.md").read_text())
+
+    def test_the_doctor_warns_of_a_reviewer_matched_by_name_alone_and_of_a_shared_name(self) -> None:
+        def row() -> tuple[str, str]:
+            code, out = self.fx.flow("doctor", "--delivery", "FX-1", "--offline", cwd=self.fx.main)
+            line = next(l for l in out.splitlines() if " pipeline PR review: " in l)
+            return code, line
+        cases = [
+            ("neither account nor signature", [{"id": "a", "author": "Bot"}], "warn", "a is matched by display name"),
+            ("two sharing an author, neither signed", [{"id": "a", "author": "Bot", "account": "1"},
+                                                       {"id": "b", "author": "Bot", "account": "2"}],
+             "warn", "a and b share the author 'Bot'"),
+            ("an account", [{"id": "a", "author": "Bot", "account": "1"}], "ok", ""),
+            ("a signature", [{"id": "a", "author": "Bot", "signature": "<!-- a -->"}], "ok", ""),
+            ("two sharing an author, one signed", [{"id": "a", "author": "Bot", "account": "1"},
+                                                   {"id": "b", "author": "Bot", "signature": "s"}], "ok", ""),
+        ]
+        for what, reviewers, status, said in cases:
+            with self.subTest(what):
+                self.configure({"reviewers": reviewers})
+                code, line = row()
+                self.assertTrue(line.startswith(status), line)
+                self.assertIn(said, line)
+        with self.subTest("a warning doesn't fail the doctor"):
+            self.configure({"reviewers": [{"id": "a", "author": "Bot", "account": "1"}]})
+            ok_code, _ = row()
+            self.configure({"reviewers": [{"id": "a", "author": "Bot"}]})
+            warn_code, _ = row()
+            self.assertEqual(warn_code, ok_code)
+
+    def test_the_worked_review_gate_outlasts_the_wait_by_two_minutes(self) -> None:
+        """Decision 6: the reviewGate's timeoutSeconds fits the wait, the last backoff and one adapter call."""
+        guide = Path(__file__).resolve().parents[1] / "skills/run-delivery/references/adopting.md"
+        text = guide.read_text(encoding="utf-8")
+        section = text[text.index("## 7. A worked adopter"):]
+        gate = json.loads(section[section.index('{"argv": ["python3", "-B", ".agent-skills/current/skills/run-delivery/'
+                                                'scripts/run_delivery.py",\n                          "pr-review-current"'):
+                                  ].split("},", 1)[0] + "}")
+        wait = int(section.split('"waitSeconds": ', 1)[1].split("}", 1)[0])
+        self.assertGreaterEqual(gate["timeoutSeconds"], wait + 120)
+        config = (Path(__file__).resolve().parents[1] / "skills/run-delivery/references/config.md").read_text()
+        self.assertIn("exit 75", " ".join(config.split()))
+        self.assertIn("at least 120", " ".join(config.split()))
+
+
+class MatchingTests(PrReviewCase):
+    """Decision 2: by account, else by author, and by signature as plain text; the list never matches an empty body;
+    the latest matching comment by `at` is the review."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.configure({"reviewers": [PRIMARY]})
+
+    def read(self, *reviews: dict) -> tuple[int, str]:
+        self.answer([PASSED], list(reviews))
+        return self.flow("pr-review", "FX-2")
+
+    def test_an_account_matches_whatever_the_display_name(self) -> None:
+        code, out = self.read(by_primary(author="Primary (renamed)"))
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.record()["reviewers"]["primary"]["author"], "Primary (renamed)")
+
+    def test_another_account_under_the_same_name_doesnt_match(self) -> None:
+        code, out = self.read(by_primary(account="{u-impostor}"))
+        self.assertEqual(code, 2, out)
+        self.assertIn("no current review from primary", out)
+
+    def test_a_signature_is_plain_text_not_a_pattern(self) -> None:
+        self.configure({"reviewers": [{"id": "primary", "author": "Primary Bot", "signature": "[primary](v1)?*"}]})
+        code, out = self.read(by_primary(body="primary says x"))  # what the pattern would match, without the text
+        self.assertEqual(code, 2, out)
+        code, out = self.read(by_primary(body="[primary](v1)?* says x"))
+        self.assertEqual(code, 0, out)
+
+    def test_an_empty_body_never_matches_in_the_list(self) -> None:
+        code, out = self.read(by_primary(body=""))
+        self.assertEqual(code, 2, out)
+        self.assertIn("no current review from primary", out)
+
+    def test_the_latest_matching_comment_is_the_review_whatever_the_order(self) -> None:
+        code, out = self.read(by_primary(body="newer", at="2026-01-01T00:00:40"),
+                              by_primary(body="older", at="2026-01-01T00:00:05"))
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.record()["reviewers"]["primary"]["body"], "newer")
+
+    def test_members_the_adapter_doesnt_return(self) -> None:
+        with self.subTest("account configured, comments without it: refused, naming the member"):
+            plain = by_primary()
+            del plain["account"]
+            code, out = self.read(plain)
+            self.assertEqual(code, 2, out)
+            self.assertIn("returned no `account` on each review comment", out)
+        with self.subTest("comments with accounts that match nobody: pending"):
+            code, out = self.read(by_codex())
+            self.assertEqual(code, 2, out)
+            self.assertIn("no current review from primary", out)
+
+
+class WaitTests(PrReviewCase):
+    """Decision 4, on the injected clock: each poll classifies every reviewer; the wait ends when none is pending
+    and no check is; a failed check refuses at once."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.configure(LISTED)
+
+    def test_one_current_and_one_pending_before_the_settle_keeps_waiting_until_both_are_current(self) -> None:
+        self.scripted(reviews=[{"answer": {"checks": [PASSED], "reviews": [by_primary()]}},
+                               {"answer": {"checks": [PASSED], "reviews": [by_primary(), by_codex()]}}])
+        code, out = self.flow("pr-review", "FX-2", "--wait")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.sleeps(), [30])
+        self.assertEqual(self.forge_calls().count("reviews"), 2)
+        self.assertEqual({k: v["state"] for k, v in self.record()["reviewers"].items()},
+                         {"primary": "current", "codex": "current"})
+
+    def test_both_current_ends_the_wait_at_once(self) -> None:
+        self.answer([PASSED], [by_primary(), by_codex()])
+        code, out = self.flow("pr-review", "FX-2", "--wait")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.sleeps(), [])
+        self.assertIn("## primary (required): Primary Bot at 2026-01-01T00:00:30\n\nPrimary says: fix x", out)
+        self.assertIn("## codex (optional): Review Bot at 2026-01-01T00:00:30\n\n<!-- codex -->\nCodex says: fine", out)
+
+    def test_an_optional_reviewer_with_nothing_after_the_settle_is_absent(self) -> None:
+        self.clock(T0_EPOCH + 301)
+        self.answer([PASSED], [by_primary()])
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.record()["reviewers"]["codex"], {"state": "absent", "required": False})
+        self.assertIn("## codex (optional): absent, no review within 300s after the pipeline went green", out)
+        with self.subTest("at the settle's end it is still pending"):
+            self.clock(T0_EPOCH + 300)
+            code, out = self.flow("pr-review", "FX-2")
+            self.assertEqual(code, 2, out)
+            self.assertIn("no current review from codex", out)
+
+    def test_a_pending_check_keeps_the_wait_going_though_every_reviewer_is_current(self) -> None:
+        self.scripted(reviews=[{"answer": {"checks": [PENDING], "reviews": [by_primary(), by_codex()]}},
+                               {"answer": {"checks": [PASSED], "reviews": [by_primary(), by_codex()]}}])
+        code, out = self.flow("pr-review", "FX-2", "--wait")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.sleeps(), [30])
+
+    def test_a_failed_check_refuses_at_once(self) -> None:
+        self.answer([FAILED], [by_primary(), by_codex()])
+        code, out = self.flow("pr-review", "FX-2", "--wait")
+        self.assertEqual(code, 2, out)
+        self.assertIn(f"the pipeline failed at {self.head[:10]}: pipe failed", out)
+        self.assertEqual((self.sleeps(), self.forge_calls().count("reviews")), ([], 1))
+
+    def test_the_record_holds_each_reviewer_and_the_move_waits_for_every_required_one(self) -> None:
+        tracker = {"issueUrl": "https://tracker.test/{key}",
+                   "transitions": {"review": ["In Review"], "reviewWhen": "pipeline-green"}}
+        self.configure(LISTED, tracker=tracker)
+        self.clock(T0_EPOCH + 301)
+        self.answer([PASSED], [by_codex()])
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 2, out)
+        self.assertNotIn("Tracker move", out)
+        self.assertFalse((self.review / "pr-review.json").exists())
+        self.answer([PASSED], [by_primary()])
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 0, out)
+        self.assertIn("Tracker move (your story FX-2)", out)
+        self.assertEqual(self.record(), {
+            "schema": "pr-review/2", "head": self.head, "url": PR, "reviewers": {
+                "primary": {"state": "current", "required": True, "author": "Primary Bot", "account": "{u-primary}",
+                           "at": AFTER, "body": "Primary says: fix x"},
+                "codex": {"state": "absent", "required": False}}})
+
+
+class TriageTests(PrReviewCase):
+    """Decision 8: ID=TEXT for each current review; a bare TEXT only when exactly one is current."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.configure(LISTED)
+
+    def test_two_current_reviews_each_need_their_own_triage(self) -> None:
+        self.answer([PASSED], [by_primary(), by_codex()])
+        self.assertEqual(self.flow("pr-review", "FX-2")[0], 0)
+        cases = [
+            ("a bare text", ["fixed x"], "a bare --pr-review-triage TEXT is accepted only alone, with exactly one current"),
+            ("one of the two", ["primary=fixed x"], "say how codex's review was handled: --pr-review-triage codex=TEXT"),
+            ("an unknown id", ["primary=fixed x", "codex=nothing", "gemini=x"], "names gemini, which is no reviewer"),
+        ]
+        for what, given, said in cases:
+            with self.subTest(what):
+                code, out = self.handoff(*given)
+                self.assertEqual(code, 2, out)
+                self.assertIn(said, out)
+        code, out = self.handoff("primary=fixed x", "codex=nothing to do")
+        self.assertEqual(code, 0, out)
+        self.assertIn("- PR review: primary: Primary Bot at 2026-01-01T00:00, triage: fixed x; codex: Review Bot at "
+                      "2026-01-01T00:00, triage: nothing to do", out)
+        reviewers = self.record()["reviewers"]
+        self.assertEqual((reviewers["primary"]["triage"], reviewers["codex"]["triage"]), ("fixed x", "nothing to do"))
+
+    def test_with_one_current_review_a_bare_text_is_its_and_an_absent_reviewer_takes_none(self) -> None:
+        self.clock(T0_EPOCH + 301)
+        self.answer([PASSED], [by_primary()])
+        self.assertEqual(self.flow("pr-review", "FX-2")[0], 0)
+        code, out = self.handoff("primary=fixed x", "codex=read it")
+        self.assertEqual(code, 2, out)
+        self.assertIn("names codex, which was absent: an absent reviewer takes no triage", out)
+        code, out = self.handoff("fixed x")
+        self.assertEqual(code, 0, out)
+        self.assertIn("- PR review: primary: Primary Bot at 2026-01-01T00:00, triage: fixed x; codex: absent", out)
+
+
+class AcceptanceTests(PrReviewCase):
+    """Decision 7: lead-accept re-checks every reviewer at the handed head, reading both record shapes."""
+
+    def hand_off(self, *triage: str) -> None:
+        self.assertEqual(self.flow("pr-review", "FX-2")[0], 0)
+        code, out = self.handoff(*triage)
+        self.assertEqual(code, 0, out)
+
+    def test_current_triaged_and_unchanged_is_accepted_and_a_changed_optional_review_is_sent_back(self) -> None:
+        self.configure(LISTED)
+        self.answer([PASSED], [by_primary(), by_codex()])
+        self.hand_off("primary=fixed x", "codex=fine")
+        self.answer([PASSED], [by_primary(), by_codex(body="<!-- codex -->\nCodex has more", at="2026-01-01T00:00:50")])
+        code, out = self.accept()
+        self.assertEqual(code, 1, out)
+        self.assertIn("codex's PR review changed after the lane read it (2026-01-01T00:00:30 -> 2026-01-01T00:00:50); "
+                      "the lane must read and triage it again", out)
+        self.answer([PASSED], [by_primary(), by_codex()])
+        code, out = self.accept()
+        self.assertEqual(code, 0, out)
+        self.assertIn("PR review primary by Primary Bot at 2026-01-01T00:00 triaged: fixed x", self.decisions())
+        self.assertIn("PR review codex by Review Bot at 2026-01-01T00:00 triaged: fine", self.decisions())
+
+    def test_an_optional_reviewer_recorded_absent_that_is_now_current_sends_the_lane_back(self) -> None:
+        self.configure(LISTED)
+        self.clock(T0_EPOCH + 301)
+        self.answer([PASSED], [by_primary()])
+        self.hand_off("fixed x")
+        self.answer([PASSED], [by_primary(), by_codex(at="2026-01-01T00:06:00")])
+        code, out = self.accept()
+        self.assertEqual(code, 1, out)
+        self.assertIn("codex was recorded absent, but its review is now current", out)
+        self.assertIn("send the lane back to read and triage it", out)
+
+    def test_an_old_shape_record_is_reviewer_review(self) -> None:
+        """A record written by the legacy shape, read under a list whose one reviewer is `review`."""
+        self.configure(LEGACY)
+        self.answer([PASSED], [comment("Pipeline Bot", AFTER, "Should fix: x")])
+        self.hand_off("fixed x")
+        self.configure({"reviewers": [{"id": "review", "author": "Pipeline Bot"}]})
+        saved = self.review / "pr-review.json"
+        old = saved.read_text()
+        with self.subTest("at an older head"):
+            saved.write_text(json.dumps({**json.loads(old), "head": "0" * 40}))
+            code, out = self.accept()
+            self.assertEqual(code, 1, out)
+            self.assertIn(f"the lane recorded no PR review at the handed head {self.head[:10]}", out)
+            saved.write_text(old)
+        with self.subTest("its review changed"):
+            self.answer([PASSED], [comment("Pipeline Bot", "2026-01-01T00:00:40", "new point")])
+            code, out = self.accept()
+            self.assertEqual(code, 1, out)
+            self.assertIn("review's PR review changed after the lane read it (2026-01-01T00:00:30 -> "
+                          "2026-01-01T00:00:40)", out)
+        self.answer([PASSED], [comment("Pipeline Bot", AFTER, "Should fix: x")])
+        code, out = self.accept()
+        self.assertEqual(code, 0, out)
+        self.assertIn("PR review review by Pipeline Bot at 2026-01-01T00:00 triaged: fixed x", self.decisions())
+
+
+class ReviewGateTests(PrReviewCase):
+    """pr-review-current under the list: every required reviewer current passes; an optional one never blocks."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.configure(LISTED)
+
+    def test_required_reviewers_decide_the_gate(self) -> None:
+        self.answer([PASSED], [by_primary(), by_codex()])
+        code, out, err = self.gate()
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertEqual(out, f"PR reviews of {self.head[:10]} are current (primary at {AFTER}, codex at {AFTER}): "
+                              "pipe passed\n")
+        with self.subTest("a required reviewer pending"):
+            self.answer([PASSED], [by_codex()])
+            code, _, err = self.gate()
+            self.assertEqual(code, 2, err)
+            self.assertEqual(err.strip(), f"run-delivery: no current review at {self.head[:10]} from primary: pipe passed")
+        with self.subTest("an optional reviewer absent"):
+            self.clock(T0_EPOCH + 301)
+            self.answer([PASSED], [by_primary()])
+            code, out, err = self.gate("--wait")
+            self.assertEqual((code, err), (0, ""), out)
+            self.assertIn("codex absent", out)
+            self.assertEqual(self.sleeps(), [])
+
+
+class RetryTests(PrReviewCase):
+    """Decision 6: a transient failure (exit 75) is retried inside a wait's loop, from 5 seconds doubling to 60 and
+    never past the deadline; everywhere else it refuses at once."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.configure(LISTED)
+        self.answer([PASSED], [by_primary(), by_codex()])
+
+    def transient(self, said: str = "forge: 503 Service Unavailable") -> dict:
+        return {"exit": 75, "stderr": said}
+
+    def test_without_a_wait_and_at_hand_off_a_transient_failure_refuses_at_once(self) -> None:
+        self.scripted(reviews=[self.transient()])
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 2, out)
+        self.assertIn("forge reviews failed transiently (exit 75): forge: 503 Service Unavailable", out)
+        self.assertEqual((self.sleeps(), self.forge_calls().count("reviews")), ([], 1))
+        self.scripted(get=[self.transient()])
+        code, out = self.handoff("primary=x", "codex=y")
+        self.assertEqual(code, 2, out)
+        self.assertIn("forge get failed transiently (exit 75)", out)
+        self.assertEqual(self.sleeps(), [])
+
+    def test_a_wait_succeeds_after_two_transient_failures(self) -> None:
+        self.scripted(reviews=[self.transient(), self.transient(), {"pass": True}])
+        code, out = self.flow("pr-review", "FX-2", "--wait")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.sleeps(), [5, 10])
+
+    def test_the_review_gate_retries_get_and_reviews_but_not_find(self) -> None:
+        self.scripted(get=[self.transient(), {"pass": True}], reviews=[self.transient(), {"pass": True}])
+        code, out, err = self.gate("--wait")
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertEqual(self.sleeps(), [5, 5])
+        self.calls.unlink()
+        self.clock(T0_EPOCH + 60)
+        self.scripted(find=[self.transient()])
+        code, _, err = self.gate("--wait")
+        self.assertEqual(code, 2, err)
+        self.assertIn("forge find failed transiently", err)
+        self.assertEqual((self.sleeps(), self.forge_calls()), ([], ["find"]))
+
+    def test_transient_until_the_deadline_refuses_with_the_last_message(self) -> None:
+        self.configure({**LISTED, "waitSeconds": 20})
+        self.scripted(reviews=[self.transient(f"attempt {n}") for n in (1, 2, 3, 4)])
+        code, out = self.flow("pr-review", "FX-2", "--wait")
+        self.assertEqual(code, 2, out)
+        self.assertIn("attempt 4", out)
+        self.assertIn("retried until the wait's deadline", out)
+        self.assertEqual(self.sleeps(), [5, 10, 5])
+
+    def test_the_backoff_starts_at_5_doubles_to_60_and_never_passes_the_deadline(self) -> None:
+        self.configure({**LISTED, "waitSeconds": 200})
+        self.scripted(reviews=[self.transient()])
+        code, out = self.flow("pr-review", "FX-2", "--wait")
+        self.assertEqual(code, 2, out)
+        self.assertEqual(self.sleeps(), [5, 10, 20, 40, 60, 60, 5])
+        self.assertEqual(self.now(), T0_EPOCH + 60 + 200)
+
+    def test_the_legacy_wait_retries_too(self) -> None:
+        self.configure(LEGACY | {"waitSeconds": 100})
+        self.answer([PASSED], [comment("Pipeline Bot", AFTER, "fine")])
+        self.scripted(reviews=[self.transient(), {"pass": True}])
+        code, out = self.flow("pr-review", "FX-2", "--wait")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.sleeps(), [5])
 
 
 if __name__ == "__main__":

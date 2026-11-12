@@ -116,6 +116,11 @@ class Stop(Exception):
     pass
 
 
+class Transient(Stop):
+    """An adapter's transient failure: it exited 75 (EX_TEMPFAIL) for a timeout, a connection error, or an HTTP 5xx or
+    429. A PR-review wait's loop tries it again; everywhere else it refuses at once, as any Stop does."""
+
+
 def _terminate(signum, _frame):
     # A kill from the agent's tool timeout becomes an exception, so `finally` blocks stop processes and leases.
     raise SystemExit(128 + signum)
@@ -2957,12 +2962,19 @@ def in_app_evidence(key: str, root: Path, head: str, blocked: dict[str, str]) ->
 
 # -- forge -----------------------------------------------------------------------------------
 
+TRANSIENT_EXIT = 75  # EX_TEMPFAIL: an adapter's transient failure, which a PR-review wait retries
+
+
 def call_adapter(kind: str, prefix: list[str], args: tuple[str, ...], env: dict[str, str]) -> dict:
     """Run a forge or tracker adapter and read the one JSON object it prints. An adapter that prints nothing has
-    failed, whatever its exit code: the refusal names the adapter it ran."""
+    failed, whatever its exit code: the refusal names the adapter it ran. Exit 75 is a transient failure (Transient),
+    which only a PR-review wait's loop retries."""
     argv = [*map(os.path.expanduser, prefix), *args]
     done = subprocess.run(argv, text=True, capture_output=True, env=env, cwd=repo())
     ran = shlex.join(prefix)
+    if done.returncode == TRANSIENT_EXIT:
+        said = (done.stderr or done.stdout).strip()[-400:] or "it printed nothing"
+        raise Transient(f"{kind} {args[0]} failed transiently (exit {TRANSIENT_EXIT}): {said}; the adapter it ran: {ran}")
     if done.returncode != 0:
         said = (done.stderr or done.stdout).strip()[-400:] or "it printed nothing"
         raise Stop(f"{kind} {args[0]} failed: {said}; the adapter it ran: {ran}")
@@ -3335,39 +3347,297 @@ def parse_blocked(items: list[str]) -> dict[str, str]:
     return blocked
 
 
+LEGACY_REVIEWER = "review"  # the legacy {author, waitSeconds}'s one reviewer, and an old-shape record's
+REVIEWER_MEMBERS = ("id", "account", "author", "signature", "required", "gate", "report")
+REVIEW_GATES = ("approval", "verdict")
+WAIT_SECONDS, SETTLE_SECONDS = 1800, 300
+RECORD_SCHEMA = "pr-review/2"
+# A wait's retry of a transient adapter failure: the first sleep, and the most any one sleeps (Decision 6).
+BACKOFF_FIRST, BACKOFF_MOST = 5, 60
+
+
+class Clock:
+    """The time, the sleeps and the poll interval of every PR-review wait, read through one place. RUN_DELIVERY_CLOCK
+    names a JSON file, {"now": seconds since the epoch, "poll"?: seconds}, that stands in for them: each sleep moves
+    its `now` on and is added to its `sleeps`, so a wait runs through without waiting."""
+
+    def __init__(self, path: str | None):
+        self.path = Path(path) if path else None
+
+    def read(self) -> dict:
+        return json.loads(self.path.read_text())
+
+    def time(self) -> float:
+        return float(self.read()["now"]) if self.path else time.time()
+
+    def sleep(self, seconds: float) -> None:
+        if not self.path:
+            time.sleep(seconds)
+            return
+        doc = self.read()
+        doc["now"] = float(doc["now"]) + seconds
+        doc.setdefault("sleeps", []).append(seconds)
+        self.path.write_text(json.dumps(doc))
+
+    def poll(self, seconds: float) -> float:
+        return float(self.read().get("poll", seconds)) if self.path else seconds
+
+
+def clock() -> Clock:
+    return Clock(os.environ.get("RUN_DELIVERY_CLOCK"))
+
+
 def pr_review_config() -> dict | None:
-    """The own config's review.pr: {author, waitSeconds?}: a review the forge's pipeline posts on each PR."""
-    conf = (cfg().flow_raw.get("review") or {}).get("pr")
-    if conf and not conf.get("author"):
-        raise Stop(f"{cfg().name} review.pr needs `author`: the name the pipeline's review comment is posted as")
-    return conf
+    """review.pr, read one way by every reader: None when the repository declares no PR review.
+
+    The legacy {author, waitSeconds} is read as it always was (`author` required, other members ignored, waitSeconds
+    read with int()), as one required reviewer, `review`, with no settle. {waitSeconds?, settleSeconds?, reviewers}
+    is the list: each reviewer {id, account?, author?, signature?, required?, gate?, report?}. Anything else in the
+    list's shape is refused, naming the reviewer and the member."""
+    c = cfg()
+    conf = (c.flow_raw.get("review") or {}).get("pr")
+    if not conf:
+        return None
+    if "reviewers" not in conf:
+        if not conf.get("author"):
+            raise Stop(f"{c.name} review.pr needs `author`: the name the pipeline's review comment is posted as")
+        return {"legacy": True, "raw": conf, "settleSeconds": None,
+                "reviewers": [{"id": LEGACY_REVIEWER, "author": conf["author"], "required": True}]}
+    where = f"{c.name} review.pr"
+    unknown = sorted(set(conf) - {"waitSeconds", "settleSeconds", "reviewers"})
+    if unknown:
+        raise Stop(f"{where}: `{unknown[0]}` is not a member of review.pr (it takes waitSeconds, settleSeconds and "
+                   "reviewers)")
+    for member, default in (("waitSeconds", WAIT_SECONDS), ("settleSeconds", SETTLE_SECONDS)):
+        value = conf.get(member, default)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise Stop(f"{where}: `{member}` must be a whole number of seconds, 0 or more, not {value!r}")
+    listed = conf["reviewers"]
+    if not isinstance(listed, list) or not listed:
+        raise Stop(f"{where}: `reviewers` must be a list of one reviewer or more, not {listed!r}")
+    reviewers: list[dict] = []
+    for n, entry in enumerate(listed, 1):
+        rid = entry.get("id") if isinstance(entry, dict) else None
+        name = f"reviewer {rid!r}" if isinstance(rid, str) and rid else f"reviewer {n}"
+
+        def bad(member: str, why: str) -> Stop:
+            return Stop(f"{where}, {name}: `{member}` {why}")
+        if not isinstance(entry, dict):
+            raise Stop(f"{where}, {name}: a reviewer is an object, {{id, account?, author?, ...}}, not {entry!r}")
+        extra = sorted(set(entry) - set(REVIEWER_MEMBERS))
+        if extra:
+            raise bad(extra[0], f"is not a reviewer member (a reviewer takes {', '.join(REVIEWER_MEMBERS)})")
+        if not isinstance(rid, str) or not re.fullmatch(r"[a-z][a-z0-9-]*", rid):
+            raise bad("id", "must be lowercase letters, digits and hyphens, starting with a letter")
+        if any(r["id"] == rid for r in reviewers):
+            raise bad("id", "is another reviewer's too: each reviewer's id is its own")
+        for member in ("account", "author", "signature", "report"):
+            if member in entry and not (isinstance(entry[member], str) and entry[member]):
+                raise bad(member, "must be a non-empty string")
+        if not entry.get("account") and not entry.get("author"):
+            raise bad("account", "or `author` is needed: the forge account id, or the display name, it posts as")
+        if "required" in entry and not isinstance(entry["required"], bool):
+            raise bad("required", f"must be true or false, not {entry['required']!r}")
+        if "gate" in entry and entry["gate"] not in REVIEW_GATES:
+            raise bad("gate", f"must be \"approval\" or \"verdict\", not {entry['gate']!r}")
+        if entry.get("gate") == "approval" and not entry.get("account"):
+            raise bad("account", "is needed for gate \"approval\": an approval is matched by account, never by name")
+        reviewers.append({**entry, "required": entry.get("required", True)})
+    return {"legacy": False, "raw": conf, "waitSeconds": conf.get("waitSeconds", WAIT_SECONDS),
+            "settleSeconds": conf.get("settleSeconds", SETTLE_SECONDS), "reviewers": reviewers}
+
+
+def wait_seconds(conf: dict) -> int:
+    return int(conf["raw"].get("waitSeconds", WAIT_SECONDS)) if conf["legacy"] else conf["waitSeconds"]
+
+
+def instant(stamp: object) -> float:
+    """An ISO 8601 time from the forge as seconds since the epoch; one without a zone is UTC."""
+    try:
+        parsed = datetime.datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+    except ValueError:
+        raise Stop(f"the forge adapter's `reviews` gave a time that isn't ISO 8601: {stamp!r}") from None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+    return parsed.timestamp()
+
+
+def reviewer_matches(reviewer: dict, found: dict, legacy: bool) -> bool:
+    """Decision 2: by account when the reviewer names one, else by author; and by signature, as plain text, when set.
+    The list never matches an empty body, which a bodiless approval has; the legacy shape matches as it always did."""
+    body = found.get("body") or ""
+    if not legacy and not body:
+        return False
+    if reviewer.get("account"):
+        if found.get("account") != reviewer["account"]:
+            return False
+    elif found.get("author") != reviewer.get("author"):
+        return False
+    return reviewer.get("signature", "") in body
+
+
+def missing_members(found: dict, conf: dict) -> list[str]:
+    """Decision 5: what the list's reviewers need of `reviews` that the adapter didn't return. Present but empty is
+    not missing."""
+    needed = []
+    if any(r.get("account") for r in conf["reviewers"]) and any("account" not in r for r in found.get("reviews", [])):
+        needed.append("`account` on each review comment (a reviewer is matched by account)")
+    if any(r.get("gate") == "approval" for r in conf["reviewers"]) and "approvals" not in found:
+        needed.append("`approvals` (a reviewer has gate \"approval\")")
+    if any(r.get("report") for r in conf["reviewers"]) and "reports" not in found:
+        needed.append("`reports` (a reviewer has `report`)")
+    return needed
+
+
+def classify_reviews(found: dict, conf: dict, now: float) -> dict:
+    """One read of `reviews` at the head, classified: {status, checks, reviewers: {id: {state, review}}}.
+
+    status is `failed` when a check at the head failed, `pending` while a check or a reviewer is, and `done` otherwise.
+    A reviewer is `current` once every check passed and its latest matching review is no earlier than the latest
+    check. In the list, an optional reviewer with none once the settle has passed is `absent`: the settle starts when
+    the last check finished (its doneAt, else its at) and runs settleSeconds by `now`, its end belonging to it."""
+    checks = found.get("checks", [])
+    out = {"checks": checks, "reviewers": {}}
+    if any(ch["state"] == "failed" for ch in checks):
+        out["status"] = "failed"
+        return out
+    passed = bool(checks) and all(ch["state"] == "passed" for ch in checks)
+    if conf["legacy"]:
+        started = max((ch["at"] for ch in checks), default=None)
+        reviewer = conf["reviewers"][0]
+        mine = [r for r in found.get("reviews", []) if r["author"] == reviewer["author"]]
+        review = max(mine, key=lambda r: r["at"], default=None)
+        current = passed and review is not None and review["at"] >= started
+        out["reviewers"][reviewer["id"]] = {"state": "current" if current else "pending", "review": review}
+    else:
+        missing = missing_members(found, conf)
+        if missing:
+            raise Stop("the forge adapter's `reviews` returned no " + "; no ".join(missing) + ": use an adapter that "
+                       "returns it, or configure review.pr without it")
+        latest = max((instant(ch["at"]) for ch in checks), default=None)
+        settled = passed and now > max(instant(ch.get("doneAt") or ch["at"]) for ch in checks) + conf["settleSeconds"]
+        for reviewer in conf["reviewers"]:
+            mine = [r for r in found.get("reviews", []) if reviewer_matches(reviewer, r, False)]
+            review = max(mine, key=lambda r: instant(r["at"]), default=None)
+            if passed and review is not None and instant(review["at"]) >= latest:
+                state = "current"
+            elif settled and not reviewer["required"]:
+                state = "absent"
+            else:
+                state = "pending"  # a required reviewer past the settle too, until it posts
+            out["reviewers"][reviewer["id"]] = {"state": state, "review": review}
+    waiting = not passed or any(r["state"] == "pending" for r in out["reviewers"].values())
+    out["status"] = "pending" if waiting else "done"
+    return out
+
+
+def retried(call: Callable[[], dict], deadline: float) -> dict:
+    """A forge call inside a wait's loop: a transient failure (exit 75) is tried again after 5 seconds, doubling to at
+    most 60, never sleeping past the deadline. At the deadline the refusal carries the last transient message."""
+    clk, delay = clock(), BACKOFF_FIRST
+    while True:
+        try:
+            return call()
+        except Transient as error:
+            left = deadline - clk.time()
+            if left <= 0:
+                raise Stop(f"{error} (a transient failure, retried until the wait's deadline)") from None
+            clk.sleep(min(delay, left))
+            delay = min(delay * 2, BACKOFF_MOST)
+
+
+def read_pr_reviews(url: str, head: str, conf: dict, deadline: float | None) -> dict:
+    """`reviews` at the head, classified now. With a deadline, inside a wait, a transient failure is retried."""
+    def ask() -> dict:
+        return forge("reviews", "--url", url, "--head", head)
+    found = retried(ask, deadline) if deadline is not None else ask()
+    return classify_reviews(found, conf, clock().time())
 
 
 def pr_review_state(url: str, head: str, conf: dict) -> tuple[str, dict | None, list[dict]]:
-    """(status, the review, the head's checks). status: current, pending or failed."""
-    found = forge("reviews", "--url", url, "--head", head)
-    checks = found.get("checks", [])
-    if any(ch["state"] == "failed" for ch in checks):
-        return "failed", None, checks
-    started = max((ch["at"] for ch in checks), default=None)
-    mine = [r for r in found.get("reviews", []) if r["author"] == conf["author"]]
-    review = max(mine, key=lambda r: r["at"], default=None)
-    if not checks or any(ch["state"] != "passed" for ch in checks) or not review or review["at"] < started:
-        return "pending", review, checks
-    return "current", review, checks
+    """The legacy reviewer's (status, review, the head's checks), status current, pending or failed: one read."""
+    read = read_pr_reviews(url, head, conf, None)
+    if read["status"] == "failed":
+        return "failed", None, read["checks"]
+    one = read["reviewers"][LEGACY_REVIEWER]
+    return ("current" if read["status"] == "done" else "pending"), one["review"], read["checks"]
+
+
+def check_states(checks: list[dict]) -> str:
+    return ", ".join(f"{ch['name']} {ch['state']}" for ch in checks) or "no checks"
+
+
+def record_reviewers(recorded: dict) -> dict[str, dict]:
+    """A saved pr-review.json's reviewers by id: the list's own, or an old-shape record as reviewer `review`."""
+    if recorded.get("schema") == RECORD_SCHEMA:
+        return recorded.get("reviewers") or {}
+    if "author" in recorded:
+        return {LEGACY_REVIEWER: {"state": "current", "required": True,
+                                  **{k: recorded[k] for k in ("author", "at", "body", "triage") if k in recorded}}}
+    return {}
+
+
+def triage_by_reviewer(given: list[str], entries: dict[str, dict]) -> tuple[dict[str, str], list[str]]:
+    """Decision 8: each --pr-review-triage, ID=TEXT for a reviewer or a bare TEXT when exactly one review is current,
+    matched to the current reviews. Returns ({id: text}, problems): every current review needs one; an absent or
+    unknown reviewer takes none."""
+    current = [rid for rid, e in entries.items() if e.get("state") == "current"]
+    named: dict[str, str] = {}
+    bare: list[str] = []
+    problems: list[str] = []
+    for item in given:
+        rid, sep, text = item.partition("=")
+        if sep and re.fullmatch(r"[a-z][a-z0-9-]*", rid.strip()) and text.strip():
+            rid = rid.strip()
+            if rid not in entries:
+                problems.append(f"--pr-review-triage names {rid}, which is no reviewer of the PR review recorded "
+                                f"(they are {', '.join(entries) or 'none'})")
+            elif entries[rid].get("state") != "current":
+                problems.append(f"--pr-review-triage names {rid}, which was absent: an absent reviewer takes no triage")
+            elif rid in named:
+                problems.append(f"--pr-review-triage names {rid} twice")
+            else:
+                named[rid] = text.strip()
+        elif item.strip():
+            bare.append(item.strip())
+    if bare:
+        if len(bare) > 1 or len(current) != 1 or named:
+            problems.append(f"a bare --pr-review-triage TEXT is accepted only alone, with exactly one current review; "
+                            f"{len(current)} are current ({', '.join(current) or 'none'}): give each "
+                            "--pr-review-triage ID=TEXT")
+        else:
+            named[current[0]] = bare[0]
+    for rid in current:
+        if rid not in named and not problems:
+            problems.append(f"say how {rid}'s review was handled: --pr-review-triage {rid}=TEXT")
+    return named, problems
 
 
 def pr_review_text() -> str:
     conf = pr_review_config()
     if not conf:
         return ""
-    return (f"   **The PR review.** The forge's pipeline reviews every PR and posts as \"{conf['author']}\". Open the draft "
-            "PR as soon as the gates first pass, so that review runs alongside your lens rounds; each push re-runs it. "
-            f"Before you hand off, at your final head: `{flow_command()} pr-review <key> --wait` waits for the pipeline "
-            "and its review, saves it and prints it. Triage its findings as you would a lens's: fix anything that "
-            "should be fixed in the lane (then the gates, a lens round and this review again at the new head), and fix "
-            "or defer the rest, deferring only with a follow-up. Pass `--pr-review-triage \"<what you fixed, deferred "
-            "and why>\"` to `handoff`. The lead's acceptance re-checks that the review is current at your head.\n")
+    if conf["legacy"]:
+        return (f"   **The PR review.** The forge's pipeline reviews every PR and posts as \"{conf['raw']['author']}\". "
+                "Open the draft PR as soon as the gates first pass, so that review runs alongside your lens rounds; "
+                f"each push re-runs it. Before you hand off, at your final head: `{flow_command()} pr-review <key> "
+                "--wait` waits for the pipeline and its review, saves it and prints it. Triage its findings as you "
+                "would a lens's: fix anything that should be fixed in the lane (then the gates, a lens round and this "
+                "review again at the new head), and fix or defer the rest, deferring only with a follow-up. Pass "
+                "`--pr-review-triage \"<what you fixed, deferred and why>\"` to `handoff`. The lead's acceptance "
+                "re-checks that the review is current at your head.\n")
+    named = "; ".join(f"`{r['id']}` ({'required' if r['required'] else 'optional'})" for r in conf["reviewers"])
+    return ("   **The PR reviews.** The forge's pipeline reviews every PR with several reviewers, each under its id: "
+            f"{named}. Open the draft PR as soon as the gates first pass, so they run alongside your lens rounds; each "
+            f"push re-runs them. Before you hand off, at your final head: `{flow_command()} pr-review <key> --wait` "
+            "waits for the pipeline and every reviewer, saves them and prints each under its id. A required "
+            "reviewer is waited for; an optional one that posts nothing within the settle after the pipeline goes "
+            "green is recorded absent. Triage each current review's findings as you would a lens's: fix anything "
+            "that should be fixed in the lane (then the gates, a lens round and these reviews again at the new head), "
+            "and fix or defer the rest, deferring only with a follow-up. Pass one `--pr-review-triage <id>=\"<what "
+            "you fixed, deferred and why>\"` to `handoff` for each current review (a bare text only when exactly one "
+            "is current). The lead's acceptance re-checks that each is still current and unchanged at your head, and "
+            "sends you back to read an optional review recorded absent that has since arrived.\n")
 
 
 def pr_review(args) -> None:
@@ -3384,24 +3654,60 @@ def pr_review(args) -> None:
     url = forge("find", "--source", c.branch(key)).get("url")
     if not url:
         raise Stop(f"no open PR for {c.branch(key)}: open the draft PR first")
-    deadline = time.time() + (int(conf.get("waitSeconds", 1800)) if args.wait else 0)
+    clk = clock()
+    deadline = clk.time() + (wait_seconds(conf) if args.wait else 0)
     while True:
-        status, review, checks = pr_review_state(url, head, conf)
-        if status != "pending" or time.time() >= deadline:
+        read = read_pr_reviews(url, head, conf, deadline if args.wait else None)
+        left = deadline - clk.time()
+        if read["status"] != "pending" or left <= 0:
             break
-        time.sleep(30)
-    if status == "failed":
+        clk.sleep(min(clk.poll(30), left))
+    checks = read["checks"]
+    if read["status"] == "failed":
         raise Stop(f"the pipeline failed at {head[:10]}: " + ", ".join(f"{ch['name']} {ch['state']}" for ch in checks))
-    if status == "pending":
-        raise Stop(f"no {conf['author']} review after the pipeline for {head[:10]} yet"
-                   + ("" if args.wait else "; run with --wait") + ": " + (", ".join(f"{ch['name']} {ch['state']}" for ch in checks) or "no checks"))
-    record = {"head": head, "url": url, "author": review["author"], "at": review["at"], "body": review["body"]}
+    if conf["legacy"]:
+        review = read["reviewers"][LEGACY_REVIEWER]["review"]
+        author = conf["raw"]["author"]
+        if read["status"] == "pending":
+            raise Stop(f"no {author} review after the pipeline for {head[:10]} yet"
+                       + ("" if args.wait else "; run with --wait") + ": " + (", ".join(f"{ch['name']} {ch['state']}" for ch in checks) or "no checks"))
+        record = {"head": head, "url": url, "author": review["author"], "at": review["at"], "body": review["body"]}
+        (review_dir(key) / "pr-review.json").write_text(json.dumps(record, indent=2))
+        review_move(c, key, "pipeline-green")
+        print(f"{author} review of {head[:10]} ({review['at']}), saved for the hand-off:\n")
+        print(review["body"])
+        print("\nTriage every finding like a lens finding: fix what blocks in the lane (then gates, a lens round and this "
+              "review again at the new head), and fix or defer the rest. Hand off with --pr-review-triage saying which.")
+        return
+    if read["status"] == "pending":
+        waiting = [rid for rid, r in read["reviewers"].items() if r["state"] == "pending"]
+        said = (f"no current review from {', '.join(waiting)} after the pipeline for {head[:10]} yet" if waiting
+                else f"the pipeline for {head[:10]} hasn't finished yet")
+        raise Stop(said + ("" if args.wait else "; run with --wait") + ": " + check_states(checks))
+    entries: dict[str, dict] = {}
+    for reviewer in conf["reviewers"]:
+        state = read["reviewers"][reviewer["id"]]
+        entry: dict = {"state": state["state"], "required": reviewer["required"]}
+        if state["state"] == "current":
+            review = state["review"]
+            entry.update(author=review["author"], **({"account": review["account"]} if "account" in review else {}),
+                         at=review["at"], body=review["body"])
+        entries[reviewer["id"]] = entry
+    record = {"schema": RECORD_SCHEMA, "head": head, "url": url, "reviewers": entries}
     (review_dir(key) / "pr-review.json").write_text(json.dumps(record, indent=2))
+    # Every required reviewer is current here (none is pending), so the pipeline's review move is due.
     review_move(c, key, "pipeline-green")
-    print(f"{conf['author']} review of {head[:10]} ({review['at']}), saved for the hand-off:\n")
-    print(review["body"])
-    print("\nTriage every finding like a lens finding: fix what blocks in the lane (then gates, a lens round and this "
-          "review again at the new head), and fix or defer the rest. Hand off with --pr-review-triage saying which.")
+    print(f"PR reviews of {head[:10]}, saved for the hand-off:")
+    for rid, entry in entries.items():
+        kind = "required" if entry["required"] else "optional"
+        if entry["state"] == "current":
+            print(f"\n## {rid} ({kind}): {entry['author']} at {entry['at']}\n\n{entry['body']}")
+        else:
+            print(f"\n## {rid} ({kind}): absent, no review within {conf['settleSeconds']}s after the pipeline went "
+                  "green")
+    print("\nTriage every finding like a lens finding: fix what blocks in the lane (then gates, a lens round and these "
+          "reviews again at the new head), and fix or defer the rest. Hand off with one --pr-review-triage ID=TEXT for "
+          "each current review saying which.")
 
 
 def pr_review_current(args) -> None:
@@ -3427,27 +3733,45 @@ def review_gate(args) -> None:
     url = forge("find", "--source", args.branch).get("url")
     if not url:
         raise Stop(f"no open PR for {args.branch}")
-    wait = int(conf.get("waitSeconds", 1800)) if args.wait else 0
-    deadline = time.time() + wait
+    wait = wait_seconds(conf) if args.wait else 0
+    clk = clock()
+    deadline = clk.time() + wait
+    within = deadline if args.wait else None
     while True:
         # Read each time: a forge can show the PR at its old head for a while after the queue pushes the synced one.
-        reported = forge("get", "--url", url).get("head")
+        def get() -> dict:
+            return forge("get", "--url", url)
+        reported = (retried(get, within) if within is not None else get()).get("head")
         moved = not same_commit(reported, args.head)
-        status, review, checks = ("pending", None, []) if moved else pr_review_state(url, args.head, conf)
-        left = deadline - time.time()
-        if status != "pending" or left <= 0:
+        read = ({"status": "pending", "checks": [], "reviewers": {}} if moved
+                else read_pr_reviews(url, args.head, conf, within))
+        left = deadline - clk.time()
+        if read["status"] != "pending" or left <= 0:
             break
-        time.sleep(min(10, left))  # a merge waits on it, so it looks again sooner than a lane's pr-review
+        clk.sleep(min(clk.poll(10), left))  # a merge waits on it, so it looks again sooner than a lane's pr-review
     if moved:
         raise Stop(f"the PR is at {str(reported)[:10]}, not {args.head[:10]}: its review is of another head"
                    + (f" (waited {wait}s)" if args.wait else ""))
-    states = ", ".join(f"{ch['name']} {ch['state']}" for ch in checks) or "no checks"
-    if status == "failed":
+    states = check_states(read["checks"])
+    if read["status"] == "failed":
         raise Stop(f"the pipeline failed at {args.head[:10]}: {states}")
-    if status == "pending":
-        raise Stop(f"no current {conf['author']} review at {args.head[:10]}"
+    if conf["legacy"]:
+        author = conf["raw"]["author"]
+        if read["status"] == "pending":
+            raise Stop(f"no current {author} review at {args.head[:10]}"
+                       + (f" (waited {wait}s)" if args.wait else "") + f": {states}")
+        review = read["reviewers"][LEGACY_REVIEWER]["review"]
+        print(f"{author} review of {args.head[:10]} at {review['at']} is current: {states}")
+        return
+    # Only required reviewers block: an optional one absent, or not yet in, never does (triage is lead-accept's).
+    required = [r["id"] for r in conf["reviewers"] if r["required"]]
+    missing = [rid for rid in required if read["reviewers"][rid]["state"] != "current"]
+    if missing or any(ch["state"] != "passed" for ch in read["checks"]) or not read["checks"]:
+        raise Stop(f"no current review at {args.head[:10]} from {', '.join(missing) or 'the pipeline'}"
                    + (f" (waited {wait}s)" if args.wait else "") + f": {states}")
-    print(f"{conf['author']} review of {args.head[:10]} at {review['at']} is current: {states}")
+    said = [f"{rid} at {r['review']['at']}" if r["state"] == "current" else f"{rid} {r['state']}"
+            for rid, r in read["reviewers"].items()]
+    print(f"PR reviews of {args.head[:10]} are current ({', '.join(said)}): {states}")
 
 
 def no_change_handoff(c, key: str, lane: str, args) -> None:
@@ -3536,6 +3860,29 @@ def proposed_checks(c, changed: list[str], named: list[str]) -> list[str]:
     return [name for index, name in enumerate(ids) if name in known and name not in ids[:index]]
 
 
+def pr_review_handoff(key: str, conf: dict, recorded: dict, given: list[str]) -> tuple[str | None, list[str]]:
+    """The list's PR review at hand-off, from the record at the head: every configured reviewer recorded, and each
+    current review triaged. Writes each triage into `recorded`. Returns (the hand-off's PR review line, problems)."""
+    entries = record_reviewers(recorded)
+    unrecorded = [r["id"] for r in conf["reviewers"] if r["id"] not in entries]
+    if unrecorded:
+        return None, [f"the PR review recorded at {recorded['head'][:10]} has no entry for {', '.join(unrecorded)}: run "
+                      f"{flow_command()} pr-review {key} --wait again"]
+    triage, problems = triage_by_reviewer(given, entries)
+    if problems:
+        return None, problems
+    shown = []
+    for rid, entry in entries.items():
+        if entry.get("state") == "current":
+            entry["triage"] = triage[rid]
+            shown.append(f"{rid}: {entry.get('author')} at {str(entry.get('at'))[:16]}, triage: {triage[rid]}")
+        else:
+            shown.append(f"{rid}: {entry.get('state')}")
+    if recorded.get("schema") != RECORD_SCHEMA and LEGACY_REVIEWER in triage:
+        recorded["triage"] = triage[LEGACY_REVIEWER]  # an old-shape record keeps its own shape
+    return "; ".join(shown), []
+
+
 def handoff(args) -> None:
     c = cfg()
     key = c.require(args.key)
@@ -3546,6 +3893,7 @@ def handoff(args) -> None:
     if not args.pr:
         raise Stop("a hand-off needs --pr, the story's open PR; a story that needs no change hands off with "
                    "--no-change --evidence")
+    review_conf = pr_review_config()  # refused here, before anything else, when review.pr is malformed
     ran = check_ids(c, args.checks, "--checks") if args.checks is not None else []
     folder = review_dir(key)
     head = clean_head()
@@ -3567,17 +3915,26 @@ def handoff(args) -> None:
                    f"{head[:10]}; review the new head")
     validation, gate_problems = gates_summary(key, repo(), head)
     pr_line = None
-    if pr_review_config():
+    if review_conf:
         saved = folder / "pr-review.json"
         recorded = json.loads(saved.read_text()) if saved.exists() else {}
         if recorded.get("head") != head:
             gate_problems.append(f"no PR review recorded at {head[:10]}: run {flow_command()} pr-review {key} --wait")
-        elif not (args.pr_review_triage or "").strip():
-            gate_problems.append("say how the PR review's findings were handled: --pr-review-triage TEXT")
+        elif review_conf["legacy"]:
+            # As it always was: one text, the last given, whatever it says.
+            text = (args.pr_review_triage or [""])[-1].strip()
+            if not text:
+                gate_problems.append("say how the PR review's findings were handled: --pr-review-triage TEXT")
+            else:
+                recorded["triage"] = text
+                saved.write_text(json.dumps(recorded, indent=2))
+                pr_line = f"{recorded['author']} at {recorded['at'][:16]}; triage: {recorded['triage']}"
         else:
-            recorded["triage"] = args.pr_review_triage.strip()
-            saved.write_text(json.dumps(recorded, indent=2))
-            pr_line = f"{recorded['author']} at {recorded['at'][:16]}; triage: {recorded['triage']}"
+            pr_line, problems_ = pr_review_handoff(key, review_conf, recorded, args.pr_review_triage or [])
+            if problems_:
+                gate_problems += problems_
+            else:
+                saved.write_text(json.dumps(recorded, indent=2))
     blocked = parse_blocked(args.blocked)
     (folder / "blocked.json").write_text(json.dumps({"head": head, "blocked": blocked}, indent=2))
     lines, problems = in_app_evidence(key, repo(), head, blocked)
@@ -5528,6 +5885,42 @@ def accept_no_change(c, key: str, entry: dict) -> None:
     print(f"accepted {key}: settled with no change needed")
 
 
+def pr_review_acceptance(conf: dict, url: str, head: str, recorded: dict) -> tuple[list[str], list[str]]:
+    """The list's PR review re-checked at acceptance, one read of the forge at the handed head: every reviewer the lane
+    recorded current is still current, triaged and unchanged; a required one was never recorded absent; and an
+    optional one recorded absent hasn't posted since. An old-shape record is reviewer `review`. Returns (problems,
+    decisions)."""
+    read = read_pr_reviews(url, head, conf, None)
+    if read["status"] == "failed":
+        return [f"the PR's pipeline failed at {head[:10]}: {check_states(read['checks'])}"], []
+    if recorded.get("head") != head:
+        return [f"the lane recorded no PR review at the handed head {head[:10]}"], []
+    entries = record_reviewers(recorded)
+    problems, decisions = [], []
+    for reviewer in conf["reviewers"]:
+        rid = reviewer["id"]
+        entry, live = entries.get(rid), read["reviewers"][rid]
+        if entry is None:
+            problems.append(f"the lane's PR review record at {head[:10]} has no entry for {rid}")
+        elif entry.get("state") != "current":
+            if reviewer["required"]:
+                problems.append(f"{rid} is required, but the lane recorded it {entry.get('state')}")
+            elif live["state"] == "current":
+                problems.append(f"{rid} was recorded absent, but its review is now current at {head[:10]} "
+                                f"({live['review']['at']}): send the lane back to read and triage it")
+        elif live["state"] != "current":
+            problems.append(f"{rid}'s PR review isn't current at {head[:10]} ({live['state']})")
+        elif not entry.get("triage"):
+            problems.append(f"the lane recorded no triage of {rid}'s PR review at the handed head")
+        elif (live["review"]["at"], live["review"]["body"]) != (entry.get("at"), entry.get("body")):
+            problems.append(f"{rid}'s PR review changed after the lane read it ({entry.get('at')} -> "
+                            f"{live['review']['at']}); the lane must read and triage it again")
+        else:
+            decisions.append(f"PR review {rid} by {live['review']['author']} at {live['review']['at'][:16]} triaged: "
+                             f"{entry['triage']}")
+    return problems, decisions
+
+
 def lead_accept(args) -> None:
     c = cfg()
     if args.requeue:
@@ -5536,6 +5929,7 @@ def lead_accept(args) -> None:
     if not args.key:
         raise Stop("name the story to accept, or --requeue a stopped one")
     key = c.require(args.key)
+    review_conf = pr_review_config()  # refused here, before anything else, when review.pr is malformed
     if args.checks is not None and args.full_suite:
         raise Stop("choose one: --checks, the candidate's checks, or --full-suite, the binding's fallback")
     if (args.checks is not None or args.full_suite) and not lead_selects(c):
@@ -5587,8 +5981,15 @@ def lead_accept(args) -> None:
         problems.append(f"the PR is at {str(pr.get('head'))[:10]}, not the handed head")
     if pr.get("destination") != c.base_branch or pr.get("source") != branch:
         problems.append(f"the PR is {pr.get('source')} -> {pr.get('destination')}, not {branch} -> {c.base_branch}")
-    conf = pr_review_config()
-    if conf:
+    conf = review_conf
+    if conf and not conf["legacy"]:
+        lane_root_ = c.lane_checkout(key)
+        saved = lane_root_ / c.work / "review" / key / "pr-review.json"
+        recorded = json.loads(saved.read_text()) if saved.exists() else {}
+        found, made = pr_review_acceptance(conf, item.get("changeRequest") or "", head, recorded)
+        problems += found
+        decisions += made
+    elif conf:
         status, review, _ = pr_review_state(item.get("changeRequest") or "", head, conf)
         lane_root_ = c.lane_checkout(key)
         saved = lane_root_ / c.work / "review" / key / "pr-review.json"
@@ -8253,12 +8654,35 @@ class Doctor:
         return "ok", f"{url} ({self.c.sources.get('tracker.issueUrl')})"
 
     def review_pr(self):
-        if not pr_review_config():
+        try:
+            conf = pr_review_config()
+        except Stop as error:
+            return "wrong", f"{error}; fix: correct review.pr (see references/config.md)"
+        if not conf:
             return self.not_applicable("no review.pr configured")
         if not forge_answers("reviews"):
             return "wrong", (f"review.pr is configured, but the {self.c.forge.get('adapter')} adapter has no `reviews` "
                              "command, so hand-offs would wait on a review that never comes; fix: remove review.pr, "
                              "or use an adapter that answers `reviews`")
+        warnings_ = []
+        if not conf["legacy"]:
+            unsigned = [r for r in conf["reviewers"] if not r.get("signature")]
+            alone = [r["id"] for r in unsigned if not r.get("account")]
+            if alone:
+                warnings_.append(f"{', '.join(alone)} {'is' if len(alone) == 1 else 'are'} matched by display name "
+                                 "alone, which another bot posting under that name also matches; fix: give each an "
+                                 "`account` or a `signature`")
+            for member in ("account", "author"):
+                by: dict[str, list[str]] = {}
+                for r in unsigned:
+                    if r.get(member):
+                        by.setdefault(r[member], []).append(r["id"])
+                for value, ids in by.items():
+                    if len(ids) > 1:
+                        warnings_.append(f"{' and '.join(ids)} share the {member} {value!r} with no `signature`, so "
+                                         "each matches the other's comments; fix: give each a `signature`")
+        if warnings_:
+            return "warn", "; ".join(warnings_)
         return "ok", "the forge adapter answers `reviews`"
 
     def gh(self):
@@ -8667,7 +9091,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--no-change", action="store_true", help="the story's criteria already hold on the base: hand it "
                    "off with --evidence, no branch, PR or review")
     p.add_argument("--evidence", help="with --no-change: what shows the criteria already hold, as text or @FILE")
-    p.add_argument("--pr-review-triage")
+    p.add_argument("--pr-review-triage", action="append", help="how a PR review's findings were handled: ID=TEXT "
+                   "for each current reviewer (repeat it), or a bare TEXT when exactly one review is current")
     p.add_argument("--findings"); p.add_argument("--blocked", action="append", default=[]); p.set_defaults(fn=handoff)
     p = command(sub, "lead-hints", help="print the delivery's work-hints/1: each story's plan files and its after keys")
     p.set_defaults(fn=lead_hints)
