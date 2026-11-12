@@ -8987,7 +8987,9 @@ class LiveDeliveryOutOfReachTests(unittest.TestCase):
                     "RUN_DELIVERY_CONFIG": str(main / ".agents/run-delivery.json"),
                     "DELIVERY_FLOW_CONFIG": str(main / ".agents/run-delivery.json"),
                     "RUN_DELIVERY_DELIVERY": PLANTED_KEY, "DELIVERY_FLOW_DELIVERY": PLANTED_KEY,
-                    "RUN_DELIVERY_LOCAL": "1", "DELIVERY_FLOW_LOCAL": "1", "RUN_DELIVERY_SUPERVISOR": "on"}
+                    "RUN_DELIVERY_LOCAL": "1", "DELIVERY_FLOW_LOCAL": "1", "RUN_DELIVERY_SUPERVISOR": "on",
+                    "RUN_DELIVERY_CLOCK": str(live / "clock.json")}
+        (live / "clock.json").write_text(json.dumps({"now": 0, "poll": 0}))  # a clock no case's wait may read
         self.assertEqual(set(settings), set(TOOL_SETTINGS))
         return main, worktree, settings
 
