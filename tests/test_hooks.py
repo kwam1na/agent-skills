@@ -357,6 +357,31 @@ class FaultTests(DispatcherCase):
                 self.assertEqual((result.returncode, result.stdout), (0, ""))
                 self.assertEqual(len(stderr_lines(result)), 1, result.stderr)
 
+    def test_a_manifest_that_is_not_json_costs_only_its_skill_with_one_line(self) -> None:
+        skills = {
+            "alpha": ("alpha", ["claude-code"], manifest(hook("alpha", "gate")),
+                      {"scripts/gate.py": verdict_script({"verdict": "block", "reason": "alpha blocks"})}),
+            "bravo": ("bravo", ["claude-code"], manifest(hook("bravo", "gate")),
+                      {"scripts/gate.py": verdict_script({"verdict": "block", "reason": "bravo blocks"})}),
+        }
+        repository = self.repository(skills)
+        (repository.generation / "skills" / "alpha" / "hooks.json").write_text("{not json", encoding="utf-8")
+        result = repository.run("stop", stop_payload(repository.root))
+        self.assertEqual(json.loads(result.stdout), {"decision": "block", "reason": "bravo blocks"})
+        lines = stderr_lines(result)
+        self.assertEqual(len(lines), 1, result.stderr)
+        self.assertIn("alpha/hooks.json: cannot be read: JSONDecodeError", lines[0])
+
+    def test_a_hook_name_holding_a_newline_still_gives_one_line(self) -> None:
+        bad = hook("alpha", "gate") | {"id": "alpha.\nsecond line"}
+        skills = {"alpha": ("alpha", ["claude-code"], manifest(bad), {"scripts/gate.py": ALLOW})}
+        repository = self.repository(skills)
+        result = repository.run("stop", stop_payload(repository.root))
+        self.assertEqual((result.returncode, result.stdout), (0, ""))
+        lines = stderr_lines(result)
+        self.assertEqual(len(lines), 1, result.stderr)
+        self.assertIn("alpha. second line", lines[0])
+
     def test_a_missing_script_is_a_fault(self) -> None:
         skills = {"alpha": ("alpha", ["claude-code"], manifest(hook("alpha", "gone")), {})}
         repository = self.repository(skills)
@@ -496,6 +521,9 @@ class BudgetTests(InProcess):
 
     def test_the_real_budget_sits_under_the_entry_timeout(self) -> None:
         self.assertEqual((hooks.OVERALL_BUDGET, hooks.HOOK_BUDGET, hooks.MINIMUM_START), (25.0, 20.0, 2.0))
+        # Every hook that starts gets a positive budget: what each leaves for
+        # stopping it is less than the least a hook may start with.
+        self.assertLess(hooks.REAP_WAIT + hooks.EXIT_MARGIN, hooks.MINIMUM_START)
 
 
 class CatchAllTests(InProcess):

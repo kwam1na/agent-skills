@@ -76,6 +76,11 @@ LEAKAGE_PATTERNS = (
         ),
     ),
 )
+# The hook rules, which a corpus checks once its own runtime carries the hook
+# dispatcher. A retained release predates them and keeps its original closure:
+# its inventory names no hook rule and it carries no hook schema.
+HOOK_RULE_IDS = ("hooks.argv", "hooks.duplicate_id", "hooks.event", "hooks.host", "hooks.schema")
+HOOK_RUNTIME = "agent_skills/hooks.py"
 CORE_RUNTIME_PATHS = (
     "agent_skills/capabilities.py",
     "agent_skills/fake_tracker.py",
@@ -218,7 +223,14 @@ def _validate_tracker_properties(reader: CorpusReader) -> None:
         )
 
 
-def _validate_inventory(reader: CorpusReader) -> tuple[str, ...]:
+def checked_rules(root: Path) -> tuple[str, ...]:
+    """The rules a corpus is checked against: the hook rules only once it carries the hook dispatcher."""
+    if (root / HOOK_RUNTIME).is_file():
+        return RULE_IDS
+    return tuple(rule_id for rule_id in RULE_IDS if rule_id not in HOOK_RULE_IDS)
+
+
+def _validate_inventory(reader: CorpusReader, rule_ids: tuple[str, ...]) -> tuple[str, ...]:
     inventory = reader.load_json("validation-inventory.json")
     if not isinstance(inventory, dict):
         return ()
@@ -315,9 +327,9 @@ def _validate_inventory(reader: CorpusReader) -> tuple[str, ...]:
                             "rule names a missing fixture control",
                         )
                     )
-    for rule_id in sorted(set(RULE_IDS) - inventory_rules):
+    for rule_id in sorted(set(rule_ids) - inventory_rules):
         reader.findings.append(Finding("inventory.anti_vacuity", rule_id, "checked rule is absent from inventory"))
-    for rule_id in sorted(inventory_rules - set(RULE_IDS)):
+    for rule_id in sorted(inventory_rules - set(rule_ids)):
         reader.findings.append(Finding("inventory.anti_vacuity", rule_id, "inventory names an unknown rule"))
     if not inventory.get("scenarios"):
         reader.findings.append(
@@ -890,18 +902,22 @@ def _validate_provenance_source(
 def validate_corpus(root: Path) -> ValidationResult:
     findings: list[Finding] = []
     reader = CorpusReader(root, findings)
-    scan_roots = _validate_inventory(reader)
+    rule_ids = checked_rules(reader.root)
+    scan_roots = _validate_inventory(reader, rule_ids)
     _validate_tracker_properties(reader)
     catalog = reader.load_json("catalog.json")
     provenance_document = reader.load_json("provenance.lock.json")
     profiles = _load_profiles(reader)
-    for schema_name in ("catalog", "profile", "provenance", "receipt", "release-manifest", "skill-hooks"):
+    schema_names = ["catalog", "profile", "provenance", "receipt", "release-manifest"]
+    if "hooks.schema" in rule_ids:
+        schema_names.append("skill-hooks")
+    for schema_name in schema_names:
         relative = f"schemas/{schema_name}.schema.json"
         schema = reader.load_json(relative)
         if not isinstance(schema, dict) or not isinstance(schema.get("$id"), str):
             findings.append(Finding("schema.supported", relative, "invalid schema identity"))
     if not isinstance(catalog, dict) or not isinstance(provenance_document, dict):
-        return _result(findings, profiles, {}, scan_roots)
+        return _result(findings, profiles, {}, scan_roots, rule_ids)
     for filename, expected in SCHEMA_VERSIONS.items():
         document = catalog if filename == "catalog.json" else provenance_document
         if document.get("schemaVersion") != expected:
@@ -1145,7 +1161,7 @@ def validate_corpus(root: Path) -> ValidationResult:
     _validate_skills(reader, skills)
     _validate_core_leakage(reader, profiles, skills, provenance)
     _validate_personas(reader, provenance)
-    return _result(findings, profiles, skills, scan_roots)
+    return _result(findings, profiles, skills, scan_roots, rule_ids)
 
 
 def _validate_hooks(
@@ -1199,11 +1215,12 @@ def _result(
     profiles: dict[str, dict],
     skills: dict[str, dict],
     scan_roots: tuple[str, ...],
+    rule_ids: tuple[str, ...],
 ) -> ValidationResult:
     return ValidationResult(
         tuple(sorted(set(findings))),
         tuple(sorted(profiles)),
-        RULE_IDS,
+        rule_ids,
         tuple(sorted(scan_roots)),
         tuple(sorted(skills)),
     )

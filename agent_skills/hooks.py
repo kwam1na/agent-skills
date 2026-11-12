@@ -53,7 +53,8 @@ CONTEXT_LIMIT = 9000
 REAP_WAIT = 0.5
 # Seconds each hook's budget also leaves for stopping, reaping and combining,
 # so the dispatcher ends within OVERALL_BUDGET. REAP_WAIT and this together
-# stay below MINIMUM_START, so every hook that starts has a positive budget.
+# stay below MINIMUM_START, so every hook that starts has a positive budget;
+# tests/test_hooks.py pins that.
 EXIT_MARGIN = 0.25
 PROJECT_VARIABLE = "CLAUDE_PROJECT_DIR"
 
@@ -243,7 +244,7 @@ class HookFault(Exception):
 
 
 def _line(name: str, message: str) -> str:
-    return f"agent-skills hook: {name}: {' '.join(message.split())}"
+    return f"agent-skills hook: {' '.join(name.split())}: {' '.join(message.split())}"
 
 
 def parse_verdict(stdout: bytes, event: str) -> Verdict:
@@ -390,7 +391,7 @@ def dispatch(host: str, event: str, payload: bytes, environment: Mapping[str, st
         # stopping it takes a little more, so its own budget leaves that room
         # inside the overall one.
         budget = min(HOOK_BUDGET, remaining - REAP_WAIT - EXIT_MARGIN)
-        if remaining < MINIMUM_START or budget <= 0:
+        if remaining < MINIMUM_START:
             errors.append(_line(hook.id, f"skipped: {max(remaining, 0):.1f}s of the budget left"))
             continue
         try:

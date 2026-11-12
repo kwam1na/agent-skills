@@ -523,6 +523,33 @@ def test_each_hook_rule_must_stay_in_the_inventory() -> None:
     print("verified rejection: a hook rule missing from the inventory")
 
 
+def test_a_corpus_with_the_dispatcher_needs_the_hook_schema() -> None:
+    result = with_copy(lambda root: (root / "schemas" / "skill-hooks.schema.json").unlink())
+    require(result.returncode == 1, result.stdout)
+    findings = json.loads(result.stdout)["findings"]
+    require({"artifact": "schemas/skill-hooks.schema.json", "exitClass": "invalid-corpus",
+             "message": "missing document", "ruleId": "catalog.complete"} in findings, result.stdout)
+    print("verified rejection: a dispatcher-bearing corpus without the hook schema")
+
+
+def test_a_retained_corpus_without_the_dispatcher_keeps_its_closure() -> None:
+    # A release cut before hooks carries no dispatcher, no hook schema and no
+    # hook rules, and still validates, with no hook rule checked.
+    def mutate(root: Path) -> None:
+        (root / "agent_skills" / "hooks.py").unlink()
+        (root / "schemas" / "skill-hooks.schema.json").unlink()
+        path = root / "validation-inventory.json"
+        inventory = json.loads(path.read_text(encoding="utf-8"))
+        inventory["rules"] = [rule for rule in inventory["rules"] if not rule["id"].startswith("hooks.")]
+        write_json(path, inventory)
+
+    result = with_copy(mutate)
+    require(result.returncode == 0, result.stdout)
+    require(not [rule for rule in json.loads(result.stdout)["rulesChecked"] if rule.startswith("hooks.")],
+            result.stdout)
+    print("verified acceptance: a retained corpus without the hook dispatcher")
+
+
 def main() -> int:
     tests = [
         test_missing_provenance_rejects,
@@ -550,6 +577,8 @@ def main() -> int:
         test_a_hook_manifest_validates,
         test_hook_manifest_refusals_each_have_their_own_code,
         test_each_hook_rule_must_stay_in_the_inventory,
+        test_a_corpus_with_the_dispatcher_needs_the_hook_schema,
+        test_a_retained_corpus_without_the_dispatcher_keeps_its_closure,
     ]
     for test in tests:
         test()
