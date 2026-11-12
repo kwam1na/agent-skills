@@ -698,7 +698,9 @@ change and the delivery file reach `main`, and each integration base, through a 
   branch, and none waits for another delivery's.
 - **After an install update or a token change, `lead-run --resume`.** The supervisor runs the code and the environment
   it started with. Stop it by the pid every lead command shows (`kill <pid>`), then `lead-run --resume` stops what it
-  left running and starts it on the new release, or with the new token exported. Nothing it did is done twice.
+  left running and starts it on the new release, or with the new token exported. Nothing it did is done twice. The
+  live view outlives the stop: the resumed supervisor replaces a view of the old release on the same port, and keeps
+  one of the same release, so the address the operator has open stays the same.
 - **Merge strategy.** Merge with merge commits. After each merge, the queue checks that the base holds the checked
   head's tree on top of the base it checked against, and a squash passes that too. But a squashed story's branch never
   reaches the base, so the supervisor's cleanup reports it unmerged and leaves its checkout and branches for you, and
@@ -762,7 +764,7 @@ Where a host offers less otherwise, the workflow takes the path on the right:
   shows no rounds for the story.
 - **Restart long-running commands after an update.** The supervisor, `lead-run`, and the merge queue's `serve` and the
   live view it keeps, run the code they started with. After an update, stop the supervisor by its pid, then
-  `lead-run --resume`.
+  `lead-run --resume`, which also replaces the old release's live view on its port.
 - **Start the merge queue with default signals.** The supervisor starts `serve` with SIGINT, SIGHUP and SIGQUIT at
   their defaults, whatever its own parent ignored. A `serve` started by hand needs the same: in its own terminal or
   under a process manager, never with `nohup` or a background `&`, whose ignored signals its checks inherit, so
@@ -881,6 +883,13 @@ do. A line marked `skipped` names the check it waits on: fix that one first.
 - **`the supervisor is down`**: the supervisor stopped, was killed, or was never started. `lead-run --resume` stops
   whatever it left running and starts it again, and it skips what is already done. Meanwhile every lead command still
   works by hand.
+- **`supervisor: down (<why>)`**: every lead command's status line says why the supervisor stopped, as
+  `supervisor.json` records it, and the live view's address while the view still serves; the view's page shows the
+  same in a banner. `stopped without recording why` is what a killed supervisor leaves, and `not started` what `lead-init --no-supervisor` leaves. `lead-run --resume` starts it
+  again and adopts the view, so the address stays the same.
+- **`it wanted port`**: another process held the live view's port, so the view serves on a free one, which is
+  recorded and kept by later restarts. The line names the port it wanted and who held it. To have the view back on
+  its own port, stop that process, stop the view by the pid `live.json` records, then `lead-run --resume`.
 - **`don't have the default signal dispositions`**: a child of the supervisor ignores SIGINT, SIGHUP or SIGQUIT, and
   its checks would inherit that and fail as a broken base. Stop the supervisor, then `lead-run --resume`. On a host
   without `/proc`, the line says it can't read them.

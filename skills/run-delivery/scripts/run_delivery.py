@@ -4604,7 +4604,11 @@ def archive_root(c) -> Path:
 def replace_record(c) -> list[str]:
     """lead-init --replace: stop any supervisor, then move the record and the flow log into the archive. Nothing
     carries over: every flow-log file names entries of the archived journal, whose ids the fresh one reuses."""
-    said = [line for line in [stop_supervisor(c), stop_full_health_run(c)] if line]
+    held, recorded = read_lock(supervisor_lock_path(c))
+    if held:
+        # Before the signal, so the supervisor's own handler finds it and the archived record keeps it.
+        write_supervisor_status(c.state, recorded.get("pid"), False, "replaced")
+    said = [line for line in [stop_supervisor(c), stop_view(c.state), stop_full_health_run(c)] if line]
     present = [path for path in (c.state, c.flow_log) if path.exists()]
     if present:
         archive = archive_root(c) / (datetime.datetime.now().strftime("%Y%m%dT%H%M%S.%f") + "-replaced")
@@ -5341,7 +5345,7 @@ def lead_init(args) -> None:
     if args.no_supervisor or supervisor_off():
         print(f"supervisor: not started; start it with {flow_command()} lead-run --resume")
     else:
-        print(f"supervisor: running; live view {start_supervisor(c)}")
+        print(f"supervisor: running; live view {start_supervisor(c)}{live_fallback(c.state)}")
 
 
 def planned_entry(c, key: str) -> dict:
@@ -6127,7 +6131,7 @@ def lead_close(args) -> None:
     # The run is stopped while the supervisor finishes its pass, which under --once waits on it, and again once the
     # supervisor has stopped, in case that pass started one.
     runs: list[str | None] = []
-    stopped = ask_supervisor_to_stop(c, meanwhile=lambda: runs.append(stop_full_health_run(c)))
+    stopped = ask_supervisor_to_stop(c, meanwhile=lambda: runs.append(stop_full_health_run(c)), why="held")
     for line in (stopped, *runs, stop_full_health_run(c)):
         if line:
             print(line)
@@ -6171,7 +6175,10 @@ def lead_close(args) -> None:
                                                        "at": now(), "entry": closed["id"], **closed_full_health(c)},
                                                       indent=2) + "\n")
     render("rendered the views again, with the close marked finished")
+    view = recorded_live(c.state).get("pid")
     for pid, command in delivery_processes(lead, c.state, c.delivery, c.main):
+        if pid == view:
+            continue  # the live view is stopped last, below, by its recorded pid
         try:
             os.kill(pid, signal.SIGTERM)
             done.append(f"stopped {pid}: {command[:120]}")
@@ -6212,6 +6219,13 @@ def lead_close(args) -> None:
         else:
             if port_open(port):
                 left.append(port_busy(port))
+    # The live view last, by the pid live.json records: it served the close until now.
+    try:
+        said = stop_view(c.state)
+        if said:
+            done.append(said)
+    except Stop as error:
+        left.append(str(error))
     print(f"{c.delivery}: closed out")
     for line in done:
         print(f"  done: {line}")
@@ -6252,6 +6266,176 @@ def group_of(pid: int) -> int | None:
         return None
 
 
+# -- lead: the live view's address, and the supervisor's last word -------------------------------
+#
+# The view runs in a session of its own, so it outlives the supervisor that started it, and serves until the delivery
+# closes. `live.json` in the record's folder says where: its port, its pid, the render_state.py it runs and when it
+# started. `supervisor.json` beside it says whether the supervisor runs and, once it stopped, who stopped it.
+
+LIVE_FILE, SUPERVISOR_FILE = "live.json", "supervisor.json"
+LIVE_HOST = "127.0.0.1"
+# The range a delivery's port is derived in: below the ephemeral ports every host hands out for port 0.
+LIVE_PORT_BASE, LIVE_PORT_SPAN = 20000, 10000
+# What each recorded reason says, in the status line and on the view's banner.
+STOPPED_WORDS = {"close": "it closed the delivery", "replaced": "lead-init --replace replaced the record",
+                 "held": "lead-close asked it to stop"}
+UNRECORDED_STOP = "stopped without recording why"
+NOT_STARTED = "not started"
+
+
+def derived_live_port(top: str, key: str) -> int:
+    """The port a delivery's live view asks for when none is recorded: the first eight bytes of the sha256 of
+    `<top>\\0<key>`, big-endian, modulo the span, above the base. The same delivery in the same checkout always asks
+    for the same port; two deliveries can still derive one port, and the second then binds a free one."""
+    hashed = hashlib.sha256(f"{top}\0{key}".encode("utf-8")).digest()
+    return int.from_bytes(hashed[:8], "big") % LIVE_PORT_SPAN + LIVE_PORT_BASE
+
+
+def live_top(c) -> str:
+    """The repository's top-level path the port is derived from: the main checkout, symlinks followed, so the lead's
+    own checkout and the main one ask for the same port."""
+    return str(c.main.resolve())
+
+
+def valid_port(port: object) -> bool:
+    return isinstance(port, int) and not isinstance(port, bool) and 0 < port < 65536
+
+
+def json_object(path: Path) -> dict:
+    """A small JSON file as an object; empty when it is missing, unreadable or not an object."""
+    try:
+        found = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    return found if isinstance(found, dict) else {}
+
+
+def recorded_live(state: Path) -> dict:
+    """What `live.json` records, when it names a usable port and pid; empty otherwise."""
+    live = json_object(state / LIVE_FILE)
+    return live if valid_port(live.get("port")) and valid_pid(live.get("pid")) else {}
+
+
+def wanted_live_port(state: Path, top: str, key: str) -> int:
+    """The port a starting view asks for: the one `live.json` records, else the derived one."""
+    return recorded_live(state).get("port") or derived_live_port(top, key)
+
+
+def live_port_setting() -> int | None:
+    """RUN_DELIVERY_LIVE_PORT=0: a view with no recorded port binds a free one instead of the derived one, and records
+    it. Unset, it asks for the derived one."""
+    value = os.environ.get("RUN_DELIVERY_LIVE_PORT", "").strip()
+    if not value:
+        return None
+    if value != "0":
+        raise Stop(f"RUN_DELIVERY_LIVE_PORT is {value!r}: it takes 0 alone, for a free port; unset it for the recorded "
+                   "or derived one")
+    return 0
+
+
+def live_address(port: int) -> str:
+    return f"http://{LIVE_HOST}:{port}/"
+
+
+def port_of_address(address: str | None) -> int:
+    with contextlib.suppress(ValueError, AttributeError):
+        return int(str(address).rstrip("/").rsplit(":", 1)[1])
+    return 0
+
+
+def pid_runs(pid: int) -> bool:
+    return not process_gone(pid)
+
+
+def listens(pid: int, port: int) -> bool:
+    """Whether `pid` is among the processes listening on `port`, as the host names them."""
+    return any(holder == pid for holder, _ in port_holders(port))
+
+
+def port_takers(port: int) -> list[tuple[int | None, str]]:
+    """Who holds `port`: its listeners, or one this host can't name when the port answers and none is named."""
+    holders: list[tuple[int | None, str]] = list(port_holders(port))
+    if not holders and port_open(port):
+        holders = [(None, "a process this host can't name")]
+    return holders
+
+
+def held_words(wanted: int, holders: list) -> str:
+    named = ", ".join(f"pid {pid} ({short_command(command)})" if pid else command for pid, command in holders)
+    return f"it wanted port {wanted}, held by {named or 'a process this host cannot name'}"
+
+
+def view_serving(state: Path) -> dict | None:
+    """`live.json`'s view, while its pid runs and listens on its recorded port; None otherwise."""
+    live = recorded_live(state)
+    return live if live and pid_runs(live["pid"]) and listens(live["pid"], live["port"]) else None
+
+
+def is_view(pid: int) -> bool:
+    """Whether `pid` runs orchestrate-work's live view, by its command line: a recorded pid the host has since given
+    to another process is never signalled."""
+    command = run(["ps", "-o", "command=", "-p", str(pid)], check=False).stdout
+    return "render_state.py" in command and " live " in f"{command} "
+
+
+def stop_view(state: Path, proc: subprocess.Popen | None = None) -> str | None:
+    """Stop `live.json`'s view by its recorded pid, and its session with it, then confirm it is gone. `proc` is the
+    view's handle when this process started it, so it is reaped. Nothing is stopped by pattern."""
+    live = recorded_live(state)
+    if not live:
+        return None
+    return stop_view_process(live["pid"], live["port"], proc)
+
+
+def stop_view_process(pid: int, port: int, proc: subprocess.Popen | None = None) -> str | None:
+    """Stop the view running as `pid`, on `port`, and its session with it; None when it no longer runs."""
+    if not pid_runs(pid):
+        return None
+    if proc is None and not is_view(pid):
+        return f"left pid {pid} alone: live.json names it, but it no longer runs the live view"
+    for sig, wait in ((signal.SIGTERM, 10), (signal.SIGKILL, 5)):
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            if group_of(pid) == pid:
+                os.killpg(pid, sig)  # it leads its own session: what it started goes with it
+            else:
+                os.kill(pid, sig)
+        deadline = time.monotonic() + wait
+        while time.monotonic() < deadline:
+            if proc is not None:
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    proc.wait(timeout=0.1)
+            if process_gone(pid):
+                return f"stopped the live view (pid {pid}) on port {port}"
+            time.sleep(0.1)
+    raise Stop(f"the live view (pid {pid}) is still running after SIGKILL; stop it, then run this again")
+
+
+def write_supervisor_status(state: Path, pid: object, running: bool, why: str | None = None,
+                            signal_name: str | None = None) -> None:
+    """`supervisor.json`: the supervisor's pid, `running` or `stopped`, when, why, and the command that restarts it.
+    Written whole, so the view never reads half of it. Not written into a record that is gone."""
+    if not (state / "state.json").is_file():
+        return
+    said = f"it received {signal_name}" if why == "signal" else STOPPED_WORDS.get(why or "")
+    doc = {"pid": pid, "state": "running" if running else "stopped", "at": now(),
+           **({"why": why} if why else {}), **({"signal": signal_name} if signal_name else {}),
+           **({"said": said} if said else {}), "restart": f"{flow_command()} lead-run --resume"}
+    staging = state / f".{SUPERVISOR_FILE}.{os.getpid()}"
+    staging.write_text(json.dumps(doc, indent=2) + "\n")
+    os.replace(staging, state / SUPERVISOR_FILE)
+
+
+def supervisor_down_words(state: Path) -> str:
+    """Why the supervisor is down, as `supervisor.json` records it: not started when no supervisor ever wrote it, as
+    after lead-init --no-supervisor."""
+    if not (state / SUPERVISOR_FILE).exists():
+        return NOT_STARTED
+    status = json_object(state / SUPERVISOR_FILE)
+    if status.get("state") == "stopped":
+        return str(status.get("said") or status.get("why") or UNRECORDED_STOP)
+    return UNRECORDED_STOP
+
+
 def waits_on(c) -> str:
     """What the supervisor's last pass found holding the close: its "Needs you", and the close condition's open parts.
     Read from its pass log, where each pass writes it; empty before the first pass, or once nothing holds it."""
@@ -6290,11 +6474,24 @@ def supervisor_line(c) -> str | None:
     held, recorded = read_lock(supervisor_lock_path(c))
     if held:
         return (f"supervisor: running (pid {recorded.get('pid')}); live view {recorded.get('address') or 'starting'}"
-                + on_fallback(c) + waits_on(c))
+                + live_fallback(c.state) + on_fallback(c) + waits_on(c))
     said = closed_status(c)
     if said is not None:
         return "supervisor: " + said
-    return f"supervisor: down; restart it with {flow_command()} lead-run --resume" + waits_on(c)
+    serving = view_serving(c.state)
+    address = f"; live view {live_address(serving['port'])}" if serving else ""
+    return (f"supervisor: down ({supervisor_down_words(c.state)}){address}; restart it with {flow_command()} "
+            "lead-run --resume" + waits_on(c))
+
+
+def live_fallback(state: Path) -> str:
+    """When the view serves on a port other than the one it asked for: which it wanted, and who held it."""
+    fallback = recorded_live(state).get("fallback")
+    if not isinstance(fallback, dict) or not valid_port(fallback.get("wanted")):
+        return ""
+    holders = [(item.get("pid"), str(item.get("command") or "")) for item in fallback.get("heldBy") or []
+               if isinstance(item, dict)]
+    return f"; the live view {held_words(fallback['wanted'], holders)}"
 
 
 def close_progress(doc: dict) -> str | None:
@@ -6423,15 +6620,16 @@ def stop_orphans(c) -> list[str]:
             for child in left]
 
 
-def ask_supervisor_to_stop(c, meanwhile: Callable[[], None] | None = None) -> str | None:
-    """Ask a running supervisor to stop after its pass, and wait for it to release its lock. `meanwhile` runs once the
-    request is written, and again while the wait goes on, for what the pass may be waiting on or just starting."""
+def ask_supervisor_to_stop(c, meanwhile: Callable[[], None] | None = None, why: str = "held") -> str | None:
+    """Ask a running supervisor to stop after its pass, and wait for it to release its lock. The request carries
+    `why`, which the supervisor records in supervisor.json as it stops. `meanwhile` runs once the request is written,
+    and again while the wait goes on, for what the pass may be waiting on or just starting."""
     lock = supervisor_lock_path(c)
     held, recorded = read_lock(lock)
     if not held:
         return None
     request = lead_file(c, "supervisor.stop")
-    request.write_text(now() + "\n")
+    request.write_text(json.dumps({"at": now(), "why": why}) + "\n")
     if meanwhile:
         meanwhile()
     deadline = time.monotonic() + SUPERVISOR_WAIT_SECONDS + supervisor_pass_seconds(c)
@@ -7496,11 +7694,19 @@ def close_out(c, flapping: tuple[str, ...] = (), wait: bool = False) -> tuple[li
 class Supervisor:
     """lead-run: one process per record. It holds the flow log's supervisor lock, recording its pid, start time,
     children and the live view's address; keeps `serve` and the live view running; and runs one pass after another
-    until the delivery closes or lead-close asks it to stop."""
+    until the delivery closes or lead-close asks it to stop. The view runs in a session of its own and outlives it:
+    a starting supervisor adopts the view `live.json` names while it serves, and the delivery's close stops it."""
 
     def __init__(self, c, once: bool):
         self.c, self.once = c, once
         self.children: dict[str, subprocess.Popen] = {}
+        # The live view: its pid, and its handle when this supervisor started it rather than adopting it.
+        self.view_pid: int | None = None
+        self.view: subprocess.Popen | None = None
+        # What it says before its first line, the address, is printed: held until then.
+        self.held_lines: list[str] | None = []
+        # The handlers its own signal handler stands in front of.
+        self.before_signals: dict[int, object] = {}
         self.restarts: dict[str, list[float]] = {}
         self.address: str | None = None
         self.handle = None
@@ -7534,7 +7740,8 @@ class Supervisor:
         self.handle.truncate()
         self.handle.write(json.dumps({"pid": os.getpid(), "startedAt": self.started, "address": self.address,
                                       "node": self.node,
-                                      "children": [{"name": name, "pid": proc.pid} for name, proc in self.children.items()]}))
+                                      "children": [{"name": name, "pid": proc.pid} for name, proc in self.children.items()]
+                                      + ([{"name": "live", "pid": self.view_pid}] if self.view_pid else [])}))
         self.handle.flush()
 
     def child_argv(self, name: str) -> list[str] | None:
@@ -7562,22 +7769,90 @@ class Supervisor:
         self.write_lock()
 
     def start_live(self) -> None:
-        log = lead_file(self.c, "supervisor.live.log")
+        """Adopt the view `live.json` names while it serves from this generation's render_state.py; otherwise start
+        one, on the recorded port, else the derived one, else, when another process holds that, a free one. A view
+        of another generation is stopped by its pid and replaced on its port; a recorded pid that runs but doesn't
+        listen on its port is left alone."""
+        c = self.c
+        script = str((c.release / "skills/orchestrate-work/scripts/render_state.py").resolve())
+        live = recorded_live(c.state)
+        setting = live_port_setting()
+        if live and pid_runs(live["pid"]) and listens(live["pid"], live["port"]):
+            if live.get("renderState") == script:
+                self.view_pid, self.view = live["pid"], None
+                self.address = live_address(live["port"])
+                self.write_lock()
+                self.say(f"adopted the live view (pid {live['pid']}) on {self.address}")
+                return
+            self.say(f"the live view (pid {live['pid']}) runs {live.get('renderState')}, not this generation's "
+                     f"{script}: {stop_view(c.state)}")
+            free = time.monotonic() + 10
+            while port_open(live["port"]) and time.monotonic() < free:
+                time.sleep(0.1)
+        elif live and pid_runs(live["pid"]):
+            self.say(f"live.json's pid {live['pid']} runs but doesn't listen on port {live['port']}; it is left alone "
+                     "and a new view started")
+        # A recorded port first, so the address survives; RUN_DELIVERY_LIVE_PORT=0 stands in for the derived one.
+        wanted = (live["port"] if live else 0) if setting == 0 else wanted_live_port(c.state, live_top(c), c.delivery)
+        fallback = None
+        holders = port_takers(wanted) if wanted else []
+        if holders:
+            fallback, port = (wanted, holders), 0
+        else:
+            port = wanted
+        started = self.spawn_view(port)
+        if started is None:  # the port was taken between the look and the bind
+            fallback = (port, port_takers(port))
+            started = self.spawn_view(0)
+        proc, bound = started
+        self.view, self.view_pid, self.address = proc, proc.pid, live_address(bound)
+        record = {"port": bound, "pid": proc.pid, "renderState": script, "startedAt": now(), "address": self.address}
+        if fallback:
+            record["fallback"] = {"wanted": fallback[0],
+                                  "heldBy": [{"pid": pid, "command": command} for pid, command in fallback[1]]}
+            self.say(f"the live view serves on {self.address}: {held_words(*fallback)}")
+        staging = c.state / f".{LIVE_FILE}.{os.getpid()}"
+        staging.write_text(json.dumps(record, indent=2) + "\n")
+        os.replace(staging, c.state / LIVE_FILE)
+        self.write_lock()
+
+    def spawn_view(self, port: int) -> tuple[subprocess.Popen, int] | None:
+        """Start the view on `port` (0: a free one) in a session of its own, and wait until it says where it serves.
+        None when it couldn't listen on a port it was given, so the caller binds a free one instead."""
+        c = self.c
+        argv = [*self.child_argv("live"), "--port", str(port), "--status-file", str(c.state / SUPERVISOR_FILE)]
+        log = lead_file(c, "supervisor.live.log")
         offset = log.stat().st_size if log.exists() else 0
-        self.start("live")
+        with open(log, "a") as out:
+            proc = subprocess.Popen(argv, cwd=c.root, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
+                                    start_new_session=True)
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
             for line in log.read_text()[offset:].splitlines():
                 with contextlib.suppress(ValueError):
                     said = json.loads(line)
                     if said.get("live") and said.get("ok"):
-                        self.address = f"http://{said['live']}/"
-                        self.write_lock()
-                        return
-            if self.children["live"].poll() is not None:
+                        return proc, int(str(said["live"]).rsplit(":", 1)[1])
+                    if said.get("code") == "live_unavailable" and port:
+                        proc.wait()
+                        return None
+            if proc.poll() is not None:
                 raise Stop(f"the live view stopped as it started: {log.read_text()[offset:][-400:].strip()}")
             time.sleep(0.1)
+        stop_group(proc)
         raise Stop(f"the live view didn't start within 60s; its log is {log}")
+
+    def say(self, line: str) -> None:
+        """A line on the supervisor's output: held until the address is printed, so that stays its first line."""
+        if self.held_lines is None:
+            print(f"{now()} supervisor: {line}", flush=True)
+        else:
+            self.held_lines.append(line)
+
+    def view_down(self) -> bool:
+        if self.view is not None:
+            return self.view.poll() is not None
+        return self.view_pid is not None and process_gone(self.view_pid)
 
     def flapping(self) -> tuple[str, ...]:
         horizon = time.monotonic() - CHILD_FLAP_SECONDS
@@ -7587,9 +7862,8 @@ class Supervisor:
     def keep_alive(self) -> None:
         """Restart a child that exited, at most once a pass once it has exited CHILD_FLAPS times in the window: a
         child that won't stay up is shown in "Needs you", and a restart that fails never ends the supervisor."""
-        for name, proc in list(self.children.items()):
-            if proc.poll() is None:
-                continue
+        down = [name for name, proc in self.children.items() if proc.poll() is not None]
+        for name in down + (["live"] if self.view_pid and self.view_down() else []):
             times = self.restarts.setdefault(name, [])
             if name in self.flapping() and times and time.monotonic() - times[-1] < supervisor_pass_seconds(self.c):
                 continue
@@ -7602,6 +7876,25 @@ class Supervisor:
 
     def stop_asked(self) -> bool:
         return lead_file(self.c, "supervisor.stop").exists()
+
+    def stop_reason(self) -> str:
+        """The reason the stop request carries; lead-close's `held` when it names none."""
+        why = json_object(lead_file(self.c, "supervisor.stop")).get("why")
+        return why if isinstance(why, str) and why else "held"
+
+    def on_signal(self, number: int, frame) -> None:
+        """Record the signal in supervisor.json, unless whoever sent it recorded why first, then do what the signal
+        did before: the tool's own handler, which unwinds through `finally`, or the default."""
+        status = json_object(self.c.state / SUPERVISOR_FILE)
+        if not (status.get("pid") == os.getpid() and status.get("state") == "stopped"):
+            with contextlib.suppress(OSError):
+                write_supervisor_status(self.c.state, os.getpid(), False, "signal", signal.Signals(number).name)
+        before = self.before_signals.get(number, signal.SIG_DFL)
+        if callable(before):
+            before(number, frame)
+            return
+        signal.signal(number, signal.SIG_DFL)
+        os.kill(os.getpid(), number)
 
     def stop_children(self) -> None:
         for proc in self.children.values():
@@ -7696,25 +7989,36 @@ class Supervisor:
             self.handle.close()
             raise Stop("another supervisor took the lock first")
         lead_file(c, "supervisor.stop").unlink(missing_ok=True)
+        closed, stopped_by = False, None
         try:
             self.write_lock()
             if not self.once:
+                # Who stops it says why in supervisor.json; a signal nobody explained is recorded by the supervisor.
+                write_supervisor_status(c.state, os.getpid(), True)
+                for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+                    self.before_signals[number] = signal.signal(number, self.on_signal)
                 self.start_live()
                 self.start("serve")
                 print(self.address, flush=True)  # the first line: where the delivery is watched
+                lines, self.held_lines = self.held_lines or [], None
+                for line in lines:
+                    self.say(line)
             number = len(read_log("supervisor", c.delivery))
             while True:
                 number += 1
-                if self.one_pass(number) or self.once or self.stop_asked() or self.lose():
-                    return
+                closed = self.one_pass(number)
+                if closed or self.once or self.stop_asked() or self.lose():
+                    break
                 deadline = time.monotonic() + supervisor_pass_seconds(c)
                 while time.monotonic() < deadline and not self.stop_asked():
                     if self.lose():
-                        return
+                        break
                     self.keep_alive()
                     time.sleep(0.2)
-                if self.stop_asked():
-                    return
+                if self.stop_asked() or self.lost:
+                    break
+            if not closed and self.stop_asked():
+                stopped_by = self.stop_reason()
         finally:
             self.stop_children()
             # Drawn and copied once more, so neither the line map nor `latest` keeps the last running list; not when
@@ -7724,6 +8028,26 @@ class Supervisor:
                     write_needs(c, None, len(read_log("supervisor", c.delivery)), time.monotonic())
                     render_views(c, only="renderers")
                     copy_latest(c)
+                    if closed:
+                        print(f"{now()} supervisor: drew the views and copied the record one last time", flush=True)
+            if closed and not self.lost:
+                # The delivery's own close: recorded, then the view stopped last, by its recorded pid.
+                with contextlib.suppress(OSError):
+                    write_supervisor_status(c.state, os.getpid(), False, "close")
+                with contextlib.suppress(OSError, Stop, subprocess.SubprocessError):
+                    said = stop_view(c.state, self.view)
+                    if said:
+                        print(f"{now()} supervisor: {said}", flush=True)
+            elif stopped_by and not self.once and not self.lost:
+                with contextlib.suppress(OSError):
+                    write_supervisor_status(c.state, os.getpid(), False, stopped_by)
+            if self.lost and self.view_pid:
+                # What it served is gone: so is what its view serves. Stopped by the pid it holds, as live.json may
+                # have gone with the record.
+                with contextlib.suppress(OSError, Stop, subprocess.SubprocessError):
+                    said = stop_view_process(self.view_pid, port_of_address(self.address), self.view)
+                    if said:
+                        print(f"{now()} supervisor: {said}", flush=True)
             fcntl.flock(self.handle, fcntl.LOCK_UN)
             self.handle.close()
 
@@ -7743,7 +8067,7 @@ def lead_run(args) -> None:
         for line in stop_orphans(c):
             print(line)
         address = start_supervisor(c)
-        print(f"supervisor: running; live view {address}")
+        print(f"supervisor: running; live view {address}{live_fallback(c.state)}")
         return
     Supervisor(c, once=args.once).run()
 
