@@ -58,59 +58,76 @@ replaced with them word for word, so `lead-setup` drafts them from the tracker s
      reviewed with the delivery's lenses, and the operator merges it.
    - If V26-3406 is still open when both stories merge here, the delivery waits on that finish line, and the record shows it.
 2. **The live view's port is derived, then recorded.**
-   - The port is derived from the repository's top-level path and the delivery key: the sha256 of `<path>\0<key>`, reduced into 20000–29999.
-     The same delivery in the same checkout always asks for the same port.
-   - The supervisor records the port it bound in `live.json` in the delivery's state directory: `port`, the view's `pid`, and when it
-     started. A restart asks for the recorded port before the derived one.
+   - The port is derived from the repository's top-level path and the delivery key: the first eight bytes of the sha256 of
+     `<path>\0<key>`, read as a big-endian integer, modulo 10000, plus 20000. The same delivery in the same checkout always asks for the
+     same port. Two deliveries can still derive the same port; the fallback below handles that.
+   - The supervisor records the port it bound in `live.json` in the delivery's state directory: `port`, the view's `pid`, the path of the
+     `render_state.py` it runs, and when it started. A restart asks for the recorded port before the derived one.
    - When that port is held by a process that isn't this delivery's view, the supervisor binds a free port instead and records it. It
-     says so on its own output and in the next status line, naming the port it wanted and who holds it (`port_holders`).
+     says so on its own output and in the next status line, naming the port it wanted and who holds it (`port_holders`). Because the new
+     port is recorded, later restarts keep it.
    - `RUN_DELIVERY_LIVE_PORT=0` makes the view bind a free port, for tests and for a lead who wants that.
-3. **The live view outlives the supervisor.**
-   - The supervisor starts the view in a session of its own, not in its process group. A stopped or killed supervisor leaves the view
-     serving.
-   - A starting supervisor first looks for a view of this delivery already serving. That is `live.json`'s pid, alive and listening on
-     its port. It adopts that view rather than starting another.
+3. **The live view outlives the supervisor, until the delivery closes.**
+   - The supervisor starts the view in a session of its own (`start_new_session`), not in its process group. A stopped or killed
+     supervisor, including a signal to its whole group, leaves the view serving.
+   - A starting supervisor first looks for a view of this delivery already serving: `live.json`'s pid alive, listening on its recorded
+     port (`port_holders`), and started from the same `render_state.py` path as the current generation's. It adopts that view rather than
+     starting another.
+   - A live pid that is not listening on the recorded port is not adopted and not signalled; the supervisor starts a new view and records
+     it. A view started from another generation's `render_state.py` is stopped by its recorded pid and replaced by one from the current
+     generation, on the same port.
    - The view stays read-only: it serves the record and changes nothing.
-   - `lead-close` stops the view last, after the archive lands, by its recorded pid. `lead-init --replace` stops it with the supervisor
-     it replaces. Nothing stops it by pattern.
+   - The delivery's close stops the view last, after the final render and the archive, by its recorded pid. That is the supervisor's own
+     close-out and `lead-close` alike. `lead-init --replace` stops the replaced delivery's view with its supervisor. Nothing stops it by
+     pattern.
 4. **The view says why the supervisor is down.**
-   - The supervisor writes `supervisor.json` in the state directory: its pid, `running` or `stopped`, when, and why. The reasons are:
-     - `close`: the close-out stopped it;
-     - `replaced`: `lead-init --replace`;
-     - `signal`: a deliberate stop by signal, naming it;
-     - `held`: it stopped after a pass on the lead's request.
+   - The supervisor writes `supervisor.json` in the state directory: its pid, `running` or `stopped`, when, and why. Each reason is
+     written by what stops it:
+     - `close`: the supervisor's own close-out, before it stops the view;
+     - `replaced`: `lead-init --replace`, which writes it before it signals the supervisor, so it lands in the archived state directory;
+     - `held`: `lead-close`'s stop request, which carries the reason to the supervisor it asks to stop after its pass;
+     - `signal`: any other SIGTERM, SIGINT or SIGHUP the supervisor receives, naming it.
    - `render_state.py live` gains `--status-file PATH`, generic to orchestrate-work. It re-reads the file on each render.
-   - While the file says `stopped`, or names a pid that no longer runs, the view shows a banner: the supervisor is down, since when, and
-     why. A dead pid with a `running` mark shows as "stopped without recording why", which is what a killed supervisor leaves. The banner
-     names `lead-run --resume`.
+   - While the file says `running` and its pid runs, the page shows no banner. While it says `stopped`, or names a pid that no longer
+     runs, the page shows a banner: the supervisor is down, since when, and why. A dead pid with a `running` mark shows as "stopped without
+     recording why", which is what a killed supervisor leaves. The banner names `lead-run --resume`.
    - Without `--status-file` the view renders as today.
-5. **Every lead command's status line names the address, also when the supervisor is down.** The down line reads
-   `supervisor: down (<why>); live view <address>; restart it with ... lead-run --resume`. It reads the address from `live.json`
-   when the view still serves, and omits it when not.
+5. **Every lead command's status line names the address while the view serves, also when the supervisor is down.**
+   - Running: as today, `supervisor: running (pid N); live view <address>`.
+   - Down with the view serving: `supervisor: down (<why>); live view <address>; restart it with ... lead-run --resume`, reading the
+     address from `live.json`.
+   - Down with the view gone too: the same line without an address.
+   - The line is `supervisor_line`, which every lead command but `lead-setup` and `lead-init` already prints, so one change reaches all.
 6. **"The Node a process uses" is the first `node` on that process's `PATH`.** Children resolve `node` through `PATH`, so an nvm Node
    further down doesn't count.
-   - `doctor`'s Node row checks the Node first on `PATH`. When that Node is too old and an nvm Node meets the minimum, the row is `wrong`
-     and names that nvm Node's `bin` folder as the entry to put first. `load_harness` keeps its own nvm lookup, since it runs Node itself.
-   - `lead-run` refuses to start when the Node first on its `PATH` is below the runtime's `nodeMinimum`, or when there is none. It
-     refuses before it takes the lock or starts a child, naming the `PATH` entry, the version and the minimum.
+   - One function compares versions, numerically per component, for `doctor` and every refusal below.
+   - `doctor`'s Node row is `wrong` when the Node first on `PATH` is below the minimum and `missing` when there is no `node` on `PATH`,
+     even with an nvm Node that meets it. The row then names that nvm Node's `bin` folder as the entry to put first. `load_harness` keeps
+     its own nvm lookup, since it runs Node itself.
+   - `lead-run` refuses when the Node first on its `PATH` is below the runtime's `nodeMinimum`, or when there is none, naming the `PATH`
+     entry, the version and the minimum. It refuses before it takes the lock, stops any recorded process (`--resume`'s orphan sweep
+     included) or starts a child.
    - `lead-init`, and every command that starts a supervisor detached, runs the same check before it writes anything, so the refusal
      reaches the lead's shell rather than a log.
    - A generation without a runtime asks for no Node, as today.
 7. **`lane-start` checks the lane's Node and Python.**
    - Node: as Decision 6, against the runtime's `nodeMinimum`.
    - Python: the interpreter running the tool and the first `python3` on `PATH` must each be 3.11 or newer, the minimum `doctor`
-     already holds.
+     already holds. The interpreter's version is read through one function, so a test can stand in a version.
    - It refuses before it creates the checkout or records a start, naming what it found and the fix.
 8. **The supervisor records its Node, and `doctor` reports it.**
    - At start, the supervisor writes the Node first on its `PATH`, path and version, into its lock record.
    - `doctor --delivery`'s supervisor row reports it beside the pid and address.
    - The row is `wrong` when that Node is below the minimum. A supervisor started by an older generation may have no Node recorded; the
      row then says so, as `warn`.
-9. **The queue records each check's Node.**
-   - Each check result entry in the record gains an optional `node` member: the version of the first `node` on the `PATH` the check
-     ran with, after its profile's environment. It is `null` when there was none.
-   - orchestrate-work's state schema gains the member as optional, so existing records still validate.
-   - The live view shows it in the check's detail.
+9. **The queue records each check's Node, and marks one below the minimum.**
+   - Each check result entry in the record gains an optional `node` member: the version of the first `node` on the `PATH` the check ran
+     with, after the binding's and its profile's environment. It is `null` when there was none.
+   - When the runtime declares a `nodeMinimum` and `node` is below it, the entry also carries `nodeBelowMinimum: true`. The check's own
+     verdict is unchanged: the mark explains a failure, it doesn't cause one.
+   - orchestrate-work's state schema gains both members as optional, `node` a string or `null` and `nodeBelowMinimum` a boolean, so
+     existing records still validate.
+   - The live view shows the Node in the check's detail, and the mark beside it.
 
 ## Units and order
 
@@ -134,21 +151,30 @@ Lane 1, tier 1, not blocked. Test-first. Files: `skills/run-delivery/scripts/run
 
 Acceptance criteria:
 
-1. With a Node below the runtime's `nodeMinimum` first on `PATH`, `lead-run` exits non-zero before taking the lock or starting a child,
-   and its message names the `PATH` entry, the version found and the minimum.
-2. With no `node` on `PATH`, `lead-run` refuses the same way, saying none was found.
-3. With a Node below the minimum first on `PATH`, `lead-init` refuses before it writes the record.
-4. `lane-start` refuses, before creating the checkout or recording a start:
-   - with a Node below the minimum first on `PATH`, naming the version, the minimum and the fix;
-   - with `python3` below 3.11 first on `PATH`, naming the version, the minimum and the fix.
-5. `doctor`'s Node row is `wrong` when the Node first on `PATH` is below the minimum, even with an nvm Node that meets it. The row then
-   names that nvm Node's `bin` folder as the entry to put first.
-6. A supervisor started with a qualifying Node records that Node's path and version in its lock. `doctor --delivery`'s supervisor row
+1. With a Node below the runtime's `nodeMinimum` first on `PATH`, even with an nvm Node that meets the minimum, `lead-run` exits non-zero
+   before taking the lock or starting a child. Its message names the `PATH` entry, the version found and the minimum.
+2. With no `node` on `PATH`, even with an nvm Node that meets the minimum, `lead-run` refuses the same way, saying none was found.
+3. With a Node below the minimum first on `PATH`, even with an nvm Node that meets it, `lead-run --resume` exits non-zero before it stops
+   any recorded process or starts a supervisor. A view whose pid `live.json` records still answers afterwards.
+4. With a Node below the minimum first on `PATH`, even with an nvm Node that meets it, `lead-init` refuses before it writes the record.
+5. `lane-start` refuses, before creating the checkout or recording a start, naming the version, the minimum and the fix:
+   - with a Node below the minimum first on `PATH`, even with an nvm Node that meets it;
+   - with `python3` below 3.11 first on `PATH`;
+   - with the interpreter running the tool reporting a version below 3.11.
+6. With a Node exactly at the minimum first on `PATH`, `lead-run`, `lead-init` and `lane-start` make no Node refusal. Versions compare by
+   number, so a Node `v100.0.0` meets a minimum `9.0.0`.
+7. `doctor`'s Node row is `wrong` when the Node first on `PATH` is below the minimum, and `missing` when there is no `node` on `PATH`, even
+   with an nvm Node that meets it. The row then names that nvm Node's `bin` folder as the entry to put first.
+8. A supervisor started with a qualifying Node records that Node's path and version in its lock. `doctor --delivery`'s supervisor row
    reports them.
-7. The supervisor row is `wrong` when the recorded Node is below the minimum, and `warn` when the lock records none.
-8. A queue check result carries `node`: the version first on the `PATH` it ran with, or `null` when there was none.
-9. A record without `node` on its check results still validates.
-10. A generation whose runtime declares no `nodeMinimum` makes no Node refusal in `lead-run`, `lead-init` or `lane-start`.
+9. The supervisor row is `wrong` when the recorded Node is below the minimum, and `warn` when the lock records none.
+10. A queue check whose profile environment puts a different `node` first on `PATH` records that node's version, not the queue's. With no
+    `node` on that `PATH`, it records `null`.
+11. A queue check whose recorded `node` is below the minimum carries `nodeBelowMinimum: true`, and its pass or failure is what the check
+    itself returned.
+12. A record without `node` on its check results still validates. One whose `node` is neither a string nor `null` is refused.
+13. The live view shows a check's Node in its detail, and the below-minimum mark when it is set.
+14. A generation whose runtime declares no `nodeMinimum` makes no Node refusal in `lead-run`, `lead-init` or `lane-start`.
 
 ### V26-3262. Give the live view one address that survives supervisor restarts
 
@@ -161,20 +187,34 @@ Lane 1, tier 1, after V26-3260. Test-first. Files: `skills/run-delivery/scripts/
 Acceptance criteria:
 
 1. Stopping the supervisor and resuming it with `lead-run --resume` keeps the same live view address, and the view is the same process.
-2. With the supervisor and its view both stopped, a restart binds the port recorded in `live.json`.
-3. With that port held by another process, the restart binds a free port, records it, and says on its output and in the next status line
+2. A resume under a generation whose `render_state.py` path differs from the one `live.json` records replaces the view, keeping the
+   address.
+3. The derived port for a fixed top-level path and key equals a literal computed from Decision 2's rule. The same key under a different
+   top-level path derives a different port. Deriving again with no `live.json` gives the same port.
+4. With the supervisor and its view both stopped, and `live.json` recording a port other than the derived one, as after a fallback, a
+   restart binds the recorded port.
+5. With that port held by another process, the restart binds a free port, records it, and says on its output and in the next status line
    which port it wanted and which process holds it.
-4. With the supervisor stopped, the view still answers. Its page shows a banner saying the supervisor is down, since when, and why:
-   - the close-out;
-   - `lead-init --replace`;
-   - a named signal;
-   - a held stop.
-5. With the supervisor killed by `SIGKILL`, the page's banner says it stopped without recording why, and names `lead-run --resume`.
-6. Every lead command's status line names the live view's address while the view serves, whether the supervisor is running or down.
-7. `lead-close` stops the view last, by its recorded pid, and leaves no process listening on its port.
-8. `lead-init --replace` stops the replaced delivery's view.
-9. `render_state.py live` without `--status-file` renders as it did before.
-10. Two deliveries in the same checkout derive different ports.
+6. With `live.json` naming a pid that is alive but not listening on the recorded port, a restart starts a new view, doesn't signal that
+   pid, and records the new view's pid.
+7. Two deliveries in the same checkout each derive their port from their own key. When one's derived port is held by the other's view, it
+   binds a free port and records it, as criterion 5 says.
+8. While `supervisor.json` says `running` and its pid runs, the page shows no down banner. After the supervisor stops on a named signal,
+   the same view's page shows the banner, naming the signal and when.
+9. With the supervisor's process group killed by `SIGKILL` (`os.killpg` on its pid), the view's recorded pid still answers on the same
+   address. Its page's banner says the supervisor stopped without recording why, and names `lead-run --resume`.
+10. `supervisor.json` records who stopped the supervisor:
+    - after the supervisor's own close-out, `close`;
+    - after `lead-init --replace`, `replaced`, in the archived state directory;
+    - after `lead-close`'s stop request, `held`;
+    - after a SIGTERM, `signal`, naming it.
+11. The status line names the live view's address while the view serves, both with the supervisor running and down. With the supervisor
+    and its view both stopped, it reads `supervisor: down (<why>)`, names `lead-run --resume`, and names no address. This holds for at
+    least `lead-assign`, `lead-accept` and `lead-reconcile`.
+12. The supervisor's own close-out and `lead-close` each stop the view last, by its recorded pid. The view was listening before; afterwards
+    its pid is gone and nothing listens on its port.
+13. `lead-init --replace` stops the replaced delivery's view.
+14. `render_state.py live` without `--status-file` renders as it did before.
 
 ## Shared resources
 
@@ -182,9 +222,11 @@ Acceptance criteria:
   port. A test that binds a derived or recorded port, or holds a port to force the fallback, marks its class `run_serially = True`.
 - **Processes.** Tests stop only the pids they recorded (AGENTS.md). The view now runs in its own session, so every test that starts a
   supervisor stops its view by `live.json`'s pid in teardown.
-- **Node on `PATH`.** Tests that need a too-old or missing Node build a `PATH` in their own temporary folder with a stub `node` and
-  `python3` that print a version. They never depend on the machine's nvm. The launcher rows that need a real Node 22 keep needing it
-  first on `PATH` (the lead's machine has Node 20.19 as nvm's default).
+- **Node on `PATH`.** Tests that need a too-old or missing Node build a `PATH` in their own temporary folder, with a stub `node` and
+  `python3` that print a version. The rows that prove Decision 6 also set `HOME` to that folder, holding a stub
+  `.nvm/versions/node/v<minimum>/bin/node` that meets the minimum, so an nvm Node is present and must be ignored. No test depends on the
+  machine's nvm. The launcher rows that need a real Node 22 keep needing it first on `PATH` (the lead's machine has Node 20.19 as nvm's
+  default).
 - **Base-relative sensors.** `scripts/update-provenance.py --check` compares against the lock in the checkout, so it runs again after
   each sync with the base.
 
@@ -219,10 +261,11 @@ Every lens raises every finding it can state against this plan in the round it r
 as `plan-work` requires. The decisions above settle the questions a lens would otherwise raise:
 - why an integration base, and how it returns to `main` (Decision 1);
 - port collisions and the fallback (Decision 2);
-- the view's lifetime and who stops it (Decision 3);
-- a killed supervisor (Decision 4);
+- the view's lifetime, who stops it, and a view from another generation (Decision 3);
+- who records why the supervisor stopped, and a killed supervisor (Decision 4);
 - an nvm Node that isn't on `PATH` (Decision 6);
-- where each refusal happens relative to the first write (Decisions 6 and 7);
+- where each refusal happens relative to the first write or signal (Decisions 6 and 7);
+- a Node the queue's checks run under that is below the minimum (Decision 9);
 - older records and locks (Decisions 8 and 9).
 
 A finding against one of them should name the decision it disputes.
