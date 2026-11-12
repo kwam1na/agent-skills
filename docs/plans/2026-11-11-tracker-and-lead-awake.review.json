@@ -1,0 +1,129 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "writtenBy": "run-delivery plan-review",
+  "plan": "docs/plans/2026-11-11-tracker-and-lead-awake.md",
+  "planSha256": "48e46d2b51a6a4d519a014daad7316cc375afa076890a67f9f311f79675d9947",
+  "planCommit": "4567611ce6f5f1f56d78f65d865e551872cddd5e",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": [
+    "lens.outcome-correctness",
+    "lens.adversarial-testing"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "candidate": "89b8ba124f592eb3d35094205612808ca742a8c5",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-11T23:56:43.185067Z",
+      "finishedAt": "2026-11-12T00:00:21.804634Z",
+      "open": [
+        "outcome-correctness-r1-1",
+        "outcome-correctness-r1-2",
+        "outcome-correctness-r1-3",
+        "outcome-correctness-r1-4",
+        "outcome-correctness-r1-5",
+        "adversarial-testing-r1-1",
+        "adversarial-testing-r1-2",
+        "adversarial-testing-r1-3",
+        "adversarial-testing-r1-4",
+        "adversarial-testing-r1-5",
+        "adversarial-testing-r1-6",
+        "adversarial-testing-r1-7",
+        "adversarial-testing-r1-8",
+        "adversarial-testing-r1-9",
+        "adversarial-testing-r1-10"
+      ]
+    },
+    {
+      "round": 2,
+      "candidate": "3c13d358e625ced5dc4b049c404136bc2bd0d299",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-12T00:01:29.229518Z",
+      "finishedAt": "2026-11-12T00:03:24.151194Z",
+      "open": [
+        "outcome-correctness-r2-1",
+        "outcome-correctness-r2-2",
+        "adversarial-testing-r2-1"
+      ]
+    },
+    {
+      "round": 3,
+      "candidate": "0ace01027dfcb24883e7d23d13330327e95d8669",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-12T00:03:55.240317Z",
+      "finishedAt": "2026-11-12T00:05:39.027823Z",
+      "open": [
+        "adversarial-testing-r3-1"
+      ]
+    },
+    {
+      "round": 4,
+      "candidate": "4567611ce6f5f1f56d78f65d865e551872cddd5e",
+      "outcome": "aligned",
+      "startedAt": "2026-11-12T00:05:50.420918Z",
+      "finishedAt": "2026-11-12T00:06:24.806455Z",
+      "open": []
+    }
+  ],
+  "reviews": [
+    {
+      "lens": "lens.outcome-correctness",
+      "round": 4,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.outcome-correctness",
+        "subjectRef": "tracker-and-lead-awake.plan",
+        "candidateRef": "4567611ce6f5f1f56d78f65d865e551872cddd5e",
+        "round": 4,
+        "outcome": "aligned",
+        "findings": [],
+        "evidence": [
+          "Reviewed tree 5bb0aae3a45d3de8f4f7df8be7b86b0e857d26a6 at candidateRef 4567611ce6f5f1f56d78f65d865e551872cddd5e. Start identity check: HEAD^{tree} matched and git status --porcelain was empty. End identity check: both matched again and the checkout was clean. No probes or mutants were made; plan review runs no checks.",
+          "Delta derived: git diff 0ace01027dfcb24883e7d23d13330327e95d8669..4567611ce6f5f1f56d78f65d865e551872cddd5e changes only V26-3262 AC2 in docs/plans/2026-11-11-tracker-and-lead-awake.md (+2/-2).",
+          "Re-check of carried findings: none is open. outcome-correctness-r1-1 to r1-5 and r2-1 to r2-2 were closed as fixed in rounds 2 and 3, and the delta does not touch the text that fixed them.",
+          "Delta reviewed against the code: the new AC2 runs the supervisor through a symlinked generation path, then has a retargeted symlink replace the view while an unchanged one adopts the same process. Decision 2's resolved render_state.py path makes this sound. The lead invokes lead-run --resume through .agent-skills/current (TOOL_PATH, run_delivery.py:72). GENERATION = Path(__file__).resolve().parents[3] (line 68), and start_supervisor launches Path(__file__).resolve() (line 6276). So after a retarget, the new supervisor's c.release resolves to the new generations/<digest> folder, and its render_state.py path differs from the one live.json records. Without a retarget the paths are equal. Both branches of AC2 can be observed, and both test r1-3's fix directly. No finding.",
+          "Model class: Claude Opus 5.5 (claude-opus-5-5), run as a native subagent. No progress or permission signals were exposed to the lens.",
+          "Realization basis: host-convention.",
+          "Approval conditions: none outstanding; this round raises no findings."
+        ],
+        "resolvedFindings": []
+      },
+      "resultSha256": "3e10b031009326dae2a855696badc6da7d8c6d7d21ab83825a3bb399da1f67ff"
+    },
+    {
+      "lens": "lens.adversarial-testing",
+      "round": 4,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.adversarial-testing",
+        "subjectRef": "tracker-and-lead-awake.plan",
+        "candidateRef": "4567611ce6f5f1f56d78f65d865e551872cddd5e",
+        "round": 4,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [
+          {
+            "id": "adversarial-testing-r3-1",
+            "state": "fixed",
+            "resolution": "Adopted as written. V26-3262 AC2 now runs the supervisor through a symlinked generation path (as .agent-skills/current). Retargeting the symlink and resuming must replace the view while keeping the address, and resuming without retargeting must adopt the same view process. Recording and comparing the unresolved path now fails the retarget case, and over-resolving or always replacing fails the adoption case."
+          }
+        ],
+        "evidence": [
+          "Reviewed tree 5bb0aae3a45d3de8f4f7df8be7b86b0e857d26a6. The start identity check passed (HEAD 4567611ce6f5f1f56d78f65d865e551872cddd5e, HEAD^{tree} = 5bb0aae3a45d3de8f4f7df8be7b86b0e857d26a6, git status --porcelain empty), and the end identity check passed with the same tree and a clean status.",
+          "Delta derived with git diff 0ace01027dfcb24883e7d23d13330327e95d8669..4567611ce6f5f1f56d78f65d865e551872cddd5e. It touches only docs/plans/2026-11-11-tracker-and-lead-awake.md, rewording V26-3262 AC2 alone.",
+          "Re-check of carried findings: adversarial-testing-r3-1 is fixed as written; the new AC2 matches its proposed change word for word. Findings closed in earlier rounds (r1-1 to r1-10 and r2-1) are untouched by this delta.",
+          "Delta reviewed. The new AC2 pins both sides of the generation comparison: the retargeted symlink is replaced, and the unchanged symlink is adopted as the same process. No new conditional is left without a row, and nothing is filed.",
+          "Plan review runs no checks: the brief names no scoped sensors and no test files. No mutants were planted and no tests were run; each mutation is argued against the plan's criteria and confined to the delta's lines. The checkout was only read.",
+          "Model class: Claude Opus (claude-opus-5-5). Realization basis: host-convention. The host is a native subagent with no progress or permission signals exposed; that limitation is recorded here.",
+          "Approval conditions: this round raises no findings, so there are no approval conditions to state. The carried adversarial-testing-r3-1 is resolved by its proposed change, adopted as written."
+        ]
+      },
+      "resultSha256": "f756e9cd2b335d4e8257f7200d323dd6dc4c23a04f572b7c1e2249d689e73545"
+    }
+  ],
+  "residualRisks": [
+    "4 review rounds; findings open after each round: 15, 3, 1, 0."
+  ]
+}
