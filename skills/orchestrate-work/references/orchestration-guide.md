@@ -124,6 +124,7 @@ the lead and the lanes make them instead, as the commands print them.
 | `check.reused` | None: the candidate's work item already says it was handed off and is being checked; the reused check shows in the record and the views. |
 | `check.selected` | None: the lead's selection and its reason show in the record and the views, and the checks it ran post with `candidate.merged` or `candidate.stopped`. |
 | `selection.refused` | None: the stop posts with `candidate.stopped`, and the provider's words show in the record and the views. |
+| `hook.held` | None: a host hook held, or warned about, a lead's stop while no listener ran, and the entry shows in the record and the views. |
 | `candidate.merged` | On the ticket: the merge commit, the checks run, and any check reported but not awaited; the ticket moves to its review or completed state. |
 | `candidate.stopped` | On the ticket: the stop code and what happens next, whether returned to the lane, re-queued or pending a decision. |
 | `base.verified` | None: the post-merge `fullHealth` passed at the base head the named merge reached, and the result shows in the record and the views. |
@@ -857,8 +858,10 @@ never disagree:
   works or a candidate is queued and no lease is live, and every lead command's status line says the lead isn't
   listening. A running `lead-wait` clears both.
 
-On a host whose own hooks this generation doesn't install, the printed command, the status line and "Needs you"
-are what keep the rule.
+Where this generation installs host hooks, run-delivery's `lead.may-stop` hook also holds a lead's stop while a lane
+works or a candidate is queued and no `lead-wait` listens, and journals `hook.held`, which never wakes a `wait`; its
+settings and when it holds are in run-delivery's configuration reference, "Host hooks". On a host whose own hooks
+this generation doesn't install, the printed command, the status line and "Needs you" are what keep the rule.
 
 `wait` reads the record and the machine only, writes nothing but its own `--output`
 file, and reads no CI or forge. It returns on the first thing needing the lead:
