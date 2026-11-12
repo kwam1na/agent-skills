@@ -3525,11 +3525,20 @@ def classify_reviews(found: dict, conf: dict, now: float) -> dict:
         if missing:
             raise Stop("the forge adapter's `reviews` returned no " + "; no ".join(missing) + ": use an adapter that "
                        "returns it, or configure review.pr without it")
+        refused = pr_review_gates.reports_refusal(conf["reviewers"], found)
+        if refused:
+            raise Stop(refused)
         # Only once every check passed, when each carries its time: a pending one may have none yet.
         latest = max((instant(ch["at"]) for ch in checks), default=None) if passed else None
         settled = passed and now > max(instant(ch.get("doneAt") or ch["at"]) for ch in checks) + conf["settleSeconds"]
         for reviewer in conf["reviewers"]:
             mine = [r for r in found.get("reviews", []) if reviewer_matches(reviewer, r, False)]
+            if reviewer.get("report"):  # read from its Code Insights report at the head, not from timestamps
+                reading = pr_review_gates.report_reading(reviewer, mine, found, checks, settled, instant)
+                if "refusal" in reading:
+                    raise Stop(reading["refusal"])
+                out["reviewers"][reviewer["id"]] = reading
+                continue
             review = max(mine, key=lambda r: instant(r["at"]), default=None)
             if passed and review is not None and instant(review["at"]) >= latest:
                 state = "current"
@@ -3539,21 +3548,22 @@ def classify_reviews(found: dict, conf: dict, now: float) -> dict:
                 state = "pending"
             out["reviewers"][reviewer["id"]] = {"state": state, "review": review}
     waiting = not passed or any(r["state"] == "pending" for r in out["reviewers"].values())
-    out["status"] = "pending" if waiting else "done"
+    out["status"] = "pending" if waiting and not pr_review_gates.stops_at_once(out["reviewers"]) else "done"
     return out
 
 
 def silent_refusal(read: dict, head: str, reviewers: list[dict]) -> Silent | None:
     """The refusal for required reviewers silent after the settle, or None. Its line starts `silent reviewer`. A gate
     another current review leaves unmet is a refusal of its own, so it is named here too rather than hidden."""
-    silent = [rid for rid, r in read["reviewers"].items() if r["state"] == "silent"]
-    if not silent:
+    silent = [rid for rid, r in read["reviewers"].items() if r["state"] == "silent" and not r.get("why")]
+    errored = [r["why"] for r in read["reviewers"].values() if r["state"] == "silent" and r.get("why")]  # its report
+    if not silent and not errored:
         return None
     states = ", ".join(f"{rid} {r['state']}" for rid, r in read["reviewers"].items())
     unmet = pr_review_gates.live_refusals(reviewers, read["reviewers"], head)
-    return Silent(f"silent reviewer: the pipeline is green at {head[:10]} but {', '.join(silent)} posted nothing "
-                  f"since; re-run its step or ask the lead (reviewers: {states})"
-                  + "".join(f"; and {refusal}" for refusal in unmet))
+    said = ([f"the pipeline is green at {head[:10]} but {', '.join(silent)} posted nothing since"] if silent else [])
+    return Silent("silent reviewer: " + "; ".join(said + errored) + "; re-run its step or ask the lead "
+                  f"(reviewers: {states})" + "".join(f"; and {refusal}" for refusal in unmet))
 
 
 def retried(call: Callable[[], dict], deadline: float) -> dict:
@@ -3687,6 +3697,8 @@ def pr_review_record(key: str, head: str, url: str, conf: dict, read: dict) -> d
                          at=review["at"], body=review["body"])
             if state.get("gate"):
                 entry["gate"] = state["gate"]
+        if pr_review_gates.recorded_report(state):
+            entry["report"] = pr_review_gates.recorded_report(state)
         entries[reviewer["id"]] = entry
     record = {"schema": RECORD_SCHEMA, "head": head, "url": url, "reviewers": entries}
     (review_dir(key) / "pr-review.json").write_text(json.dumps(record, indent=2))
@@ -8758,6 +8770,9 @@ class Doctor:
                              "or use an adapter that answers `reviews`")
         warnings_ = []
         if not conf["legacy"]:
+            refused = pr_review_gates.forge_refusal(conf["reviewers"], self.c.forge.get("adapter"))
+            if refused:
+                return "wrong", refused
             unsigned = [r for r in conf["reviewers"] if not r.get("signature")]
             alone = [r["id"] for r in unsigned if not r.get("account")]
             if alone:

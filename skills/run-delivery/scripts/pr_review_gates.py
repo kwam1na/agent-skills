@@ -270,3 +270,15 @@ def brief_text(reviewers: list[dict]) -> str:
     return ("   Some reviewers gate the hand-off: " + "; ".join(gated) + ". `pr-review` shows each gate beside its "
             "review; with one unmet, `handoff`, the lead's acceptance and the merge queue refuse, so fix what the "
             "reviewer found and push, and it runs again.\n")
+
+
+def stops_at_once(reviewers: dict[str, dict]) -> bool:
+    """Whether a classified read ends the wait though a check is still pending: a required reviewer is silent, which
+    before the settle only an errored report makes it."""
+    return any(r.get("state") == "silent" for r in reviewers.values())
+
+
+def recorded_report(state: dict) -> dict | None:
+    """The record's `report` for a reviewer read from its report: its id, result and time at the head."""
+    report = state.get("report")
+    return {k: report.get(k) for k in ("id", "result", "at")} if report else None

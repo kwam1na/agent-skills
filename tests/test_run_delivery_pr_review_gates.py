@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -512,6 +513,143 @@ class AbsentReviewerTests(PrReviewCase):
         code, _, err = self.gate()
         self.assertEqual(code, 2, err)
         self.assertIn("PR reviewer codex's verdict gate is unmet", err)
+
+
+# A reviewer read from its Code Insights report, end to end: two checks, the pipeline's earliest at T0.
+LINT = {"name": "lint", "state": "passed", "at": "2026-01-01T00:01:00"}
+BEFORE_PIPELINE = "2026-01-01T00:00:05"
+REPORTING = {"id": "primary", "account": "{u-primary}", "required": True, "report": "primary-review"}
+REPORTING_CODEX = {"id": "codex", "account": "{u-review}", "required": False, "report": "codex-review"}
+
+
+def insight(result: str, external_id: str = "primary-review", verdict: str | None = None,
+            title: str = "Verdict") -> dict:
+    data = [{"title": title, "type": "TEXT", "value": verdict}] if verdict is not None else []
+    return {"id": external_id, "result": result, "at": "2026-01-01T00:02:00", "data": data}
+
+
+class ReportEndToEndTests(PrReviewCase):
+    """pr-review, handoff, lead-accept, the reviewGate and the doctor on a reviewer with `report`."""
+
+    def test_a_passed_report_with_a_comment_from_the_pipeline_is_current_everywhere(self) -> None:
+        self.configure({"settleSeconds": 300, "reviewers": [REPORTING]})
+        # The comment came between the earliest and the latest check, before the report turned PASSED.
+        self.answer([PASSED, LINT], [by_primary(body="Primary: fine")], reports=[insight("PASSED")])
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 0, out)
+        self.assertIn("## primary (required): Primary Bot at 2026-01-01T00:00:30\n\nPrimary: fine", out)
+        entry = self.record()["reviewers"]["primary"]
+        self.assertEqual(entry["report"], {"id": "primary-review", "result": "PASSED", "at": "2026-01-01T00:02:00"})
+        self.assertEqual(entry["body"], "Primary: fine")
+        self.assertEqual(self.handoff("fine")[0], 0)
+        code, out, err = self.gate()
+        self.assertEqual((code, err), (0, ""), out)
+        code, out = self.accept()
+        self.assertEqual(code, 0, out)
+
+    def test_a_passed_report_waits_for_a_pending_check_and_a_failed_check_refuses(self) -> None:
+        self.configure({"settleSeconds": 300, "reviewers": [REPORTING]})
+        self.answer([PASSED, {**LINT, "state": "pending"}], [by_primary()], reports=[insight("PASSED")])
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 2, out)
+        self.assertIn(f"no current review from primary after the pipeline for {self.head[:10]} yet", out)
+        self.answer([PASSED, {**LINT, "state": "failed"}], [by_primary()], reports=[insight("PASSED")])
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 2, out)
+        self.assertIn(f"the pipeline failed at {self.head[:10]}", out)
+
+    def test_a_pending_report_waits_until_the_settle_then_is_silent(self) -> None:
+        self.configure({"settleSeconds": 300, "reviewers": [REPORTING]})
+        self.answer([PASSED], [by_primary()], reports=[insight("PENDING")])
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 2, out)
+        self.assertNotIn("silent reviewer", out)
+        self.clock(T0_EPOCH + 301)
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 3, out)
+        self.assertIn("silent reviewer: PR reviewer primary's report primary-review is still PENDING after the settle",
+                      out)
+        self.assertEqual(self.record()["reviewers"]["primary"]["state"], "silent")
+
+    def test_a_failed_report_stops_the_wait_at_once_and_an_optional_one_is_absent(self) -> None:
+        self.configure({"settleSeconds": 300, "waitSeconds": 600, "reviewers": [REPORTING]})
+        self.answer([PASSED, {**LINT, "state": "pending"}], [], reports=[insight("FAILED")])
+        code, out = self.flow("pr-review", "FX-2", "--wait")
+        self.assertEqual(code, 3, out)
+        self.assertIn("silent reviewer: PR reviewer primary errored: its report primary-review is FAILED; re-run its "
+                      "step or ask the lead", out)
+        self.assertNotIn("the pipeline is green", out)
+        self.assertEqual(self.sleeps(), [])
+        code, _, err = self.gate("--wait")
+        self.assertEqual(code, 3, err)
+        self.assertIn("PR reviewer primary errored", err)
+        with self.subTest("optional"):
+            self.configure({"settleSeconds": 300, "reviewers": [REPORTING | {"report": "other"}, REPORTING_CODEX]})
+            self.answer([PASSED], [by_primary()], reports=[insight("PASSED", "other"), insight("FAILED", "codex-review")])
+            code, out = self.flow("pr-review", "FX-2")
+            self.assertEqual(code, 0, out)
+            self.assertEqual(self.record()["reviewers"]["codex"],
+                             {"state": "absent", "required": False,
+                              "report": {"id": "codex-review", "result": "FAILED", "at": "2026-01-01T00:02:00"}})
+
+    def test_a_passed_report_whose_comment_predates_the_pipeline_waits_then_refuses(self) -> None:
+        self.configure({"settleSeconds": 300, "reviewers": [REPORTING]})
+        self.answer([PASSED, LINT], [by_primary(at=BEFORE_PIPELINE)], reports=[insight("PASSED")])
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 2, out)
+        self.assertIn("no current review from primary", out)
+        self.clock(T0_EPOCH + 400)
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 2, out)
+        self.assertIn("PR reviewer primary's report primary-review is PASSED, but names a review that wasn't posted", out)
+
+    def test_the_verdict_gate_and_the_approval_gate_read_the_report(self) -> None:
+        for kind, verdict, body, met in (
+                ("verdict", "approved", "**Verdict:** Request changes\n", True),
+                ("verdict", "Request changes", "**Verdict:** Approve\n", False),
+                ("approval", "Approve", "no line", True)):
+            with self.subTest(kind=kind, verdict=verdict):
+                self.configure({"settleSeconds": 300, "reviewers": [REPORTING | {"gate": kind}]})
+                # A lowercase title; the approval gate needs no approvals from the forge here.
+                self.answer([PASSED], [by_primary(body=body)], approvals=[],
+                            reports=[insight("PASSED", verdict=verdict, title="verdict")])
+                code, out = self.flow("pr-review", "FX-2")
+                self.assertEqual(code, 0, out)
+                self.assertIn(f"{kind} gate {'met' if met else 'UNMET'}: ", out)
+                self.assertIn(f"report primary-review's Verdict is {verdict!r}", out)
+                code, _, err = self.gate()
+                self.assertEqual(code, 0 if met else 2, err)
+
+    def test_reports_absent_null_or_empty(self) -> None:
+        self.configure({"settleSeconds": 300, "reviewers": [REPORTING]})
+        self.answer([PASSED], [by_primary()])
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 2, out)
+        self.assertIn("returned no `reports` (a reviewer has `report`)", out)
+        self.answer([PASSED], [by_primary()], reports=None)
+        for reader in ("pr-review", "gate"):
+            with self.subTest(reader):
+                code, out = self.flow("pr-review", "FX-2") if reader == "pr-review" else self.gate()[::2]
+                self.assertEqual(code, 2, out)
+                self.assertIn("only the Bitbucket adapter returns reports", out)
+        self.answer([PASSED], [by_primary()], reports=[])
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 2, out)
+        self.assertIn("no current review from primary", out)
+
+    def test_the_doctor_refuses_report_under_the_github_adapter(self) -> None:
+        for adapter, status in (("github", "wrong"), ("bitbucket", "ok")):
+            with self.subTest(adapter):
+                self.configure({"settleSeconds": 300, "reviewers": [REPORTING]})
+                conf_path = Path(self.fx.env["RUN_DELIVERY_CONFIG"])
+                conf = json.loads(conf_path.read_text())
+                conf["forge"] = {"adapter": adapter, "repository": "o/n", "tokenEnv": "FX_TOKEN"}
+                conf_path.write_text(json.dumps(conf))
+                code, out = self.fx.flow("doctor", "--delivery", "FX-1", "--offline", cwd=self.fx.main)
+                line = next(l for l in out.splitlines() if " pipeline PR review: " in l)
+                self.assertTrue(line.startswith(status), line)
+                if status == "wrong":
+                    self.assertIn("only the Bitbucket adapter returns them", line)
 
 
 if __name__ == "__main__":
