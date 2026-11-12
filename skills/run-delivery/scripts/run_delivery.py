@@ -5761,8 +5761,10 @@ def lead_accept(args) -> None:
                 f"deferred: {finding['finding']} ({finding['severity']}): {close_out_says(c, finding)}")
         print(f"  {line}")
     if deferred and len(earlier) < len(deferred) and c.follow_ups != "none":
-        print("  drop one at acceptance with --drop-finding ID=REASON, or withdraw deferral for the delivery with "
-              "\"followUps\": \"none\" in its delivery file")
+        # Accepted now, so no finding of it can be dropped: only withdrawing deferral keeps these unfiled.
+        print(f"  {key} is accepted, so none of these can be dropped now: to keep them unfiled, withdraw deferral with "
+              "\"followUps\": \"none\" in the delivery file. A finding is dropped as its story is accepted, with "
+              "--drop-finding ID=REASON")
     if needs_video(key):
         print("  once it merges: lead-evidence page, republish the page (same address), lead-evidence published --url, "
               "and link its section from the story in the tracker")
@@ -6657,8 +6659,8 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
         items.append({"holding": False, "source": "follow-ups",
                       "text": f"{len(pending)} deferred finding{'' if len(pending) == 1 else 's'} pending, and {said}: "
                       + "; ".join(f"{f['story']} {f['finding']} ({f['title'][:80]})" for f in pending[:10]),
-                      "clears": ("nothing: they are recorded unfiled" if c.follow_ups == "none" else
-                                 "the close-out filing them; lead-accept --drop-finding ID=REASON keeps one unfiled")})
+                      "clears": "nothing: they are recorded unfiled" if c.follow_ups == "none" else
+                      followups_clear(pending)})
     head = base_head(c)
     running = full_health_running(c)
     if running is not None:
@@ -7243,6 +7245,16 @@ def pending_followups(c, doc: dict) -> list[dict]:
     """The deferred findings the close-out has yet to file: under followUps none, every one, as none is filed."""
     have = {item["id"] for item in doc["state"]["followups"]}
     return [f for f in deferred_findings(c) if f"{f['story']}-{f['finding']}" not in have]
+
+
+def followups_clear(pending: list[dict]) -> str:
+    """What clears the pending follow-ups: the close-out filing them. A story not yet accepted can still drop one; an
+    accepted story can't, so for it only withdrawing deferral keeps one unfiled."""
+    waiting = sorted({f["story"] for f in pending if not read_log("acceptance", f["story"])})
+    return ("the close-out filing them"
+            + (f"; lead-accept --drop-finding ID=REASON keeps one unfiled as {', '.join(waiting)} is accepted"
+               if waiting else "")
+            + "; \"followUps\": \"none\" in the delivery file keeps all of them unfiled")
 
 
 UNFILED = "No follow-up filed, as the delivery's followUps is none, for {count} deferred finding{s}: {findings}"

@@ -191,10 +191,10 @@ def running(fx: Fixture) -> dict[str, str]:
     return {key: value for key, value in fx.env.items() if key != "RUN_DELIVERY_SUPERVISOR"}
 
 
-def hand_off(fx: Fixture, key: str, lane: str, assign: bool = True, deferred: bool = False,
+def hand_off(fx: Fixture, key: str, lane: str, assign: bool = True, deferred: bool | int = False,
              files: dict | None = None, checks: str | None = None, before=None):
     """A lane's whole flow for one story: its change (and any `files` beside it), its gate, one approved review round
-    (with one finding deferred to a follow-up, when asked), its draft PR, its hand-off, naming `checks` when given.
+    (with one finding deferred to a follow-up when asked, or that many), its draft PR, its hand-off, naming `checks` when given.
     `before(wt, url)` runs just before the hand-off. Returns the checkout, or with `checks` the hand-off's output."""
     m = fx.main
     if assign:
@@ -219,8 +219,9 @@ def hand_off(fx: Fixture, key: str, lane: str, assign: bool = True, deferred: bo
         short = lenses[0][1][0]
         path = review / f"result-r1-{short}.json"
         result = json.loads(path.read_text())
-        result["findings"] = [{"id": f"{short}-r1-1", "severity": "P3", "summary": "later", "state": "deferred",
-                               "deferredIssue": "Tidy the one copy"}]
+        result["findings"] = [{"id": f"{short}-r1-{n}", "severity": "P3", "summary": "later", "state": "deferred",
+                               "deferredIssue": "Tidy the one copy" if n == 1 else f"Tidy copy {n}"}
+                              for n in range(1, int(deferred) + 1)]
         path.write_text(json.dumps(result))
     code, out = fx.flow("review-reduce", key, "--round", "1", cwd=wt)
     assert code == 0, out
@@ -237,11 +238,16 @@ def hand_off(fx: Fixture, key: str, lane: str, assign: bool = True, deferred: bo
     return out if checks is not None else wt
 
 
+def deferred_ids(wt: Path, key: str = "FX-2") -> list[str]:
+    """The ids of the findings hand_off(deferred=...) filed as deferred, in order."""
+    review = wt / ".orchestration/review" / key
+    return [f["id"] for path in sorted(review.glob("result-r1-*.json")) for f in json.loads(path.read_text())["findings"]
+            if f.get("state") == "deferred"]
+
+
 def deferred_id(wt: Path, key: str = "FX-2") -> str:
     """The id of the one finding hand_off(deferred=True) filed as deferred."""
-    review = wt / ".orchestration/review" / key
-    return next(f["id"] for path in review.glob("result-r1-*.json") for f in json.loads(path.read_text())["findings"]
-                if f.get("state") == "deferred")
+    return deferred_ids(wt, key)[0]
 
 
 def record(fx: Fixture) -> dict:
@@ -1901,7 +1907,7 @@ class SupervisorTrackerTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         return listed(self, passes(fx)[-1])
 
-    def closable(self, fx: Fixture, deferred: bool = False, drop: str | None = None) -> None:
+    def closable(self, fx: Fixture, deferred: bool | int = False, drop: str | None = None) -> None:
         """FX-2 merged, its lane done, and FX-3 removed: nothing but the tracker can hold the close. With `drop`, the
         lead drops the deferred finding at acceptance for that reason. The acceptance's output is kept as self.accepted."""
         wt = hand_off(fx, "FX-2", "lane-1", deferred=deferred)
@@ -2046,6 +2052,15 @@ class SupervisorTrackerTests(unittest.TestCase):
         wt = self.closable(fx, deferred=True)
         finding = deferred_id(wt)
         self.assertIn(f"deferred: {finding} (P3): the close-out files it as follow-up FX-2-{finding}", self.accepted)
+        # Accepted, it can't drop one any more, so it names the one way left to keep them unfiled.
+        self.assertIn('FX-2 is accepted, so none of these can be dropped now: to keep them unfiled, withdraw deferral '
+                      'with "followUps": "none" in the delivery file', self.accepted)
+        last = self.once(fx)
+        item = next((i for p in passes(fx) for i in p.get("needsYou", []) if i["source"] == "follow-ups"), None)
+        self.assertIsNotNone(item, "no pass showed the pending follow-up")
+        self.assertFalse(item["holding"], item)
+        self.assertNotIn("--drop-finding", item["clears"], "it offers a drop lead-accept would refuse")
+        self.assertIn('"followUps": "none" in the delivery file keeps all of them unfiled', item["clears"])
         self.closed(fx)
         self.assertEqual([f["id"] for f in record(fx)["state"]["followups"]], [f"FX-2-{finding}"])
 
@@ -2072,6 +2087,26 @@ class SupervisorTrackerTests(unittest.TestCase):
             self.assertEqual(code, 1, out)
             self.assertIn(said, out)
             self.assertEqual(record(fx), before, "a refused drop recorded something")
+        # Not yet accepted, the story can still drop one, and "Needs you" says how.
+        item = next(i for i in self.once(fx)["needsYou"] if i["source"] == "follow-ups")
+        self.assertIn("lead-accept --drop-finding ID=REASON keeps one unfiled as FX-2 is accepted", item["clears"])
+
+    def test_dropping_one_of_two_deferred_findings_still_files_the_other(self) -> None:
+        fx, backend = self.fixture()
+        wt = hand_off(fx, "FX-2", "lane-1", deferred=2)
+        dropped, kept = deferred_ids(wt)
+        code, out = fx.flow("lead-accept", "FX-2", "--drop-finding", f"{dropped}=covered elsewhere", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"dropped: {dropped} (P3): the close-out files no follow-up for it", out)
+        self.assertIn(f"deferred: {kept} (P3): the close-out files it as follow-up FX-2-{kept}", out)
+        queue_run(fx, "FX-2")
+        state_tool(fx, "focus", "--lane", "lane-1", "--text", "done", "--state", "done")
+        with open(fx.tmp / "flow-log/plan-changes.jsonl", "a") as changes:
+            changes.write(json.dumps({"type": "change", "id": "c1", "kind": "removed", "subjects": ["FX-3"], "by": "lead",
+                                      "why": "Out of scope.", "at": "2026-01-01T00:00:00Z"}) + "\n")
+        self.closed(fx)
+        self.assertEqual([f["id"] for f in record(fx)["state"]["followups"]], [f"FX-2-{kept}"])
+        self.assertEqual(len([call for call in backend.read()["calls"] if call[0] == "create"]), 1)
 
     def test_with_follow_ups_none_the_close_out_files_nothing_and_the_lead_is_told_first(self) -> None:
         fx, backend = self.fixture(follow_ups="none")
@@ -2086,6 +2121,14 @@ class SupervisorTrackerTests(unittest.TestCase):
         self.assertIn(f"deferred: {finding} (P3): the close-out files no follow-up for it: the delivery's "
                       "followUps is none", self.accepted)
         self.assertNotIn("files it as follow-up", self.accepted)
+        self.assertNotIn("can be dropped now", self.accepted)
+        # The tracker refuses the close's post once, so the close-out runs on a second pass, and names them once.
+        with backend.edit() as store:
+            store["failures"].append({"op": "comment", "ticket": "FX-1", "status": 409, "times": 1})
+        first = self.once(fx)
+        self.assertFalse((fx.tmp / "flow-log/FX-1.closed.json").exists(), first)
+        self.assertIn("follow-ups: none filed, as the delivery's followUps is none; 1 deferred finding left unfiled",
+                      first["closeOut"])
         last = self.closed(fx)
         self.assertIn("follow-ups: none filed, as the delivery's followUps is none; 1 deferred finding left unfiled",
                       last["closeOut"])

@@ -236,7 +236,8 @@ the close-out will do with it, and "Needs you" shows the deferrals still pending
 and the friction note list them. `lead-accept <key> --drop-finding ID=REASON`, once per finding, drops one: the
 id must be a finding that story's review deferred and the reason must be given, or the acceptance is refused and
 records nothing. A dropped finding is never filed, under either setting; its reason is journalled with the
-acceptance and kept in the story's acceptance log.
+acceptance and kept in the story's acceptance log. A story already accepted can't drop one, so for its deferrals
+only `"followUps": "none"` keeps them unfiled, as `lead-accept` and "Needs you" say.
 
 ## The forge contract
 
