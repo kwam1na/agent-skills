@@ -262,7 +262,7 @@ class LegacyCharacterizationTests(PrReviewCase):
         self.assertEqual(self.record()["body"], "")
 
     def test_a_legacy_configuration_with_an_adapter_that_returns_no_new_member_is_unchanged(self) -> None:
-        """Decision 5: the legacy shape reads none of account, approvals or reports."""
+        """The legacy shape reads none of account, approvals or reports."""
         self.answer([PASSED], [comment("Pipeline Bot", "2026-01-01T00:00:30", "fine")])
         self.assertEqual(self.flow("pr-review", "FX-2")[0], 0)
         self.assertEqual(self.gate()[0], 0)
@@ -349,7 +349,7 @@ def by_codex(body: str = "<!-- codex -->\nCodex says: fine", at: str = AFTER) ->
 
 
 class ConfigurationTests(PrReviewCase):
-    """Decision 1: one parser for every reader. Each malformed list is refused by pr-review, pr-review-current,
+    """One parser for every reader. Each malformed list is refused by pr-review, pr-review-current,
     handoff, lead-accept and lead-brief, naming the reviewer and the member, and the doctor reports it wrong."""
 
     def readers(self) -> dict[str, tuple[int, str]]:
@@ -440,7 +440,7 @@ class ConfigurationTests(PrReviewCase):
             self.assertEqual(warn_code, ok_code)
 
     def test_the_worked_review_gate_outlasts_the_wait_by_two_minutes(self) -> None:
-        """Decision 6: the reviewGate's timeoutSeconds fits the wait, the last backoff and one adapter call."""
+        """The reviewGate's timeoutSeconds fits the wait, the last backoff and one adapter call."""
         guide = Path(__file__).resolve().parents[1] / "skills/run-delivery/references/adopting.md"
         text = guide.read_text(encoding="utf-8")
         section = text[text.index("## 7. A worked adopter"):]
@@ -455,7 +455,7 @@ class ConfigurationTests(PrReviewCase):
 
 
 class MatchingTests(PrReviewCase):
-    """Decision 2: by account, else by author, and by signature as plain text; the list never matches an empty body;
+    """By account, else by author, and by signature as plain text; the list never matches an empty body;
     the latest matching comment by `at` is the review."""
 
     def setUp(self) -> None:
@@ -512,7 +512,7 @@ class MatchingTests(PrReviewCase):
 
 
 class WaitTests(PrReviewCase):
-    """Decision 4, on the injected clock: each poll classifies every reviewer; the wait ends when none is pending
+    """On the injected clock: each poll classifies every reviewer; the wait ends when none is pending
     and no check is; a failed check refuses at once."""
 
     def setUp(self) -> None:
@@ -558,7 +558,7 @@ class WaitTests(PrReviewCase):
         self.assertEqual(self.sleeps(), [30])
 
     def test_the_settle_starts_at_the_latest_done_check_and_currency_at_the_latest_created(self) -> None:
-        """Decision 4: the settle starts at the latest doneAt among the head's checks, whichever was created last, and
+        """The settle starts at the latest doneAt among the head's checks, whichever was created last, and
         a review is current only from the latest check's `at`."""
         first = {**PASSED, "doneAt": "2026-01-01T00:03:30"}  # created at T0, done at T0+200
         second = {"name": "lint", "state": "passed", "at": "2026-01-01T00:01:00", "doneAt": "2026-01-01T00:01:50"}
@@ -574,8 +574,8 @@ class WaitTests(PrReviewCase):
         with self.subTest("a review between the two checks' creation isn't current"):
             self.answer([first, second], [by_primary(at="2026-01-01T00:00:30")])
             code, out = self.flow("pr-review", "FX-2")
-            self.assertEqual(code, 2, out)
-            self.assertIn("no current review from primary", out)
+            self.assertEqual(code, 3, out)  # past the settle, a required reviewer with no current review is silent
+            self.assertIn("but primary posted nothing since", out)
 
     def test_a_pending_check_with_no_time_yet_keeps_the_wait_going(self) -> None:
         """A queued check may carry no time (GitHub's rollup, before it starts): the wait goes on, never refused."""
@@ -597,12 +597,16 @@ class WaitTests(PrReviewCase):
         tracker = {"issueUrl": "https://tracker.test/{key}",
                    "transitions": {"review": ["In Review"], "reviewWhen": "pipeline-green"}}
         self.configure(LISTED, tracker=tracker)
-        self.clock(T0_EPOCH + 301)
         self.answer([PASSED], [by_codex()])
         code, out = self.flow("pr-review", "FX-2")
         self.assertEqual(code, 2, out)
         self.assertNotIn("Tracker move", out)
-        self.assertFalse((self.review / "pr-review.json").exists())
+        self.assertFalse((self.review / "pr-review.json").exists())  # pending: nothing recorded
+        self.clock(T0_EPOCH + 301)
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 3, out)  # a required reviewer silent after the settle: recorded, and no move
+        self.assertNotIn("Tracker move", out)
+        self.assertEqual(self.record()["reviewers"]["primary"], {"state": "silent", "required": True})
         self.answer([PASSED], [by_primary()])
         code, out = self.flow("pr-review", "FX-2")
         self.assertEqual(code, 0, out)
@@ -615,7 +619,7 @@ class WaitTests(PrReviewCase):
 
 
 class TriageTests(PrReviewCase):
-    """Decision 8: ID=TEXT for each current review; a bare TEXT only when exactly one is current."""
+    """ID=TEXT for each current review; a bare TEXT only when exactly one is current."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -673,7 +677,7 @@ class TriageTests(PrReviewCase):
 
 
 class AcceptanceTests(PrReviewCase):
-    """Decision 7: lead-accept re-checks every reviewer at the handed head, reading both record shapes."""
+    """`lead-accept` re-checks every reviewer at the handed head, reading both record shapes."""
 
     def hand_off(self, *triage: str) -> None:
         self.assertEqual(self.flow("pr-review", "FX-2")[0], 0)
@@ -780,7 +784,7 @@ class ReviewGateTests(PrReviewCase):
 
 
 class RetryTests(PrReviewCase):
-    """Decision 6: a transient failure (exit 75) is retried inside a wait's loop, from 5 seconds doubling to 60 and
+    """A transient failure (exit 75) is retried inside a wait's loop, from 5 seconds doubling to 60 and
     never past the deadline; everywhere else it refuses at once."""
 
     def setUp(self) -> None:
@@ -846,6 +850,326 @@ class RetryTests(PrReviewCase):
         code, out = self.flow("pr-review", "FX-2", "--wait")
         self.assertEqual(code, 0, out)
         self.assertEqual(self.sleeps(), [5])
+
+
+
+def stamp(epoch: float) -> str:
+    import datetime
+    return datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+
+
+# The silent-reviewer rows' pipeline: done at T, created earlier.
+T = T0_EPOCH + 3600
+SETTLE = 300
+SILENT = "run-delivery: silent reviewer: the pipeline is green at "
+
+
+def check(created: float, done: float | None, name: str = "pipe", state: str = "passed") -> dict:
+    found = {"name": name, "state": state, "at": stamp(created)}
+    if done is not None:
+        found["doneAt"] = stamp(done)
+    return found
+
+
+class SilentReviewerTests(PrReviewCase):
+    """On the injected clock: once every check passed, a required reviewer with no current review after the
+    settle stops the wait, exit 3, with a line of its own; the legacy shape never does."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.configure(LISTED)
+
+    def read(self, now: float, *argv: str) -> tuple[int, str]:
+        self.clock(now)
+        return self.flow("pr-review", "FX-2", *argv)
+
+    def silent(self, code: int, out: str) -> None:
+        self.assertEqual(code, 3, out)
+        self.assertIn(f"{SILENT}{self.head[:10]} but primary posted nothing since; re-run its step or ask the lead", out)
+
+    def test_the_legacy_shape_never_stops_this_way(self) -> None:
+        self.configure(LEGACY | {"waitSeconds": 120})
+        self.answer([check(T - 600, T)], [])
+        for now, argv in ((T + 301, ()), (T + 301, ("--wait",)), (T + 5000, ())):
+            with self.subTest(now=now - T, argv=argv):
+                code, out = self.read(now, *argv)
+                self.assertEqual(code, 2, out)
+                self.assertIn(f"no Pipeline Bot review after the pipeline for {self.head[:10]} yet", out)
+                self.assertNotIn("silent reviewer", out)
+                if argv:  # with --wait, the whole wait, to its deadline
+                    self.assertEqual(self.sleeps(), [30, 30, 30, 30])
+        with self.subTest("the same reviewer in a list"):
+            self.configure({"reviewers": [{"id": "review", "author": "Pipeline Bot"}]})
+            code, out = self.read(T + 301)
+            self.assertEqual(code, 3, out)
+            self.assertIn(f"{SILENT}{self.head[:10]} but review posted nothing since", out)
+
+    def test_the_settle_starts_when_the_checks_finished_and_falls_back_to_their_creation(self) -> None:
+        self.answer([check(T - 600, T)], [])
+        code, out = self.read(T + SETTLE + 1)
+        self.silent(code, out)
+        self.assertIn("codex absent", out)
+        self.assertEqual(self.sleeps(), [])
+        with self.subTest("without doneAt, the check's at"):
+            self.answer([check(T - 600, None)], [])
+            self.silent(*self.read(T - 600 + SETTLE + 1))
+        with self.subTest("with doneAt, the same read is still inside the settle"):
+            self.answer([check(T - 600, T)], [])
+            code, out = self.read(T - 600 + SETTLE + 1)
+            self.assertEqual(code, 2, out)
+            self.assertNotIn("silent reviewer", out)
+        with self.subTest("two checks, one without doneAt: only it falls back"):
+            self.answer([check(T - 900, T), check(T - 600, None, "lint")], [])
+            code, out = self.read(T + SETTLE - 1)
+            self.assertEqual(code, 2, out)
+            self.silent(*self.read(T + SETTLE + 1))
+
+    def test_with_several_checks_the_latest_done_starts_the_settle(self) -> None:
+        self.answer([check(T - 900, T), check(T - 600, T - 400, "lint")], [])
+        code, out = self.read(T + SETTLE - 1)
+        self.assertEqual(code, 2, out)
+        self.assertIn("no current review from primary, codex", out)
+        self.silent(*self.read(T + SETTLE + 1))
+
+    def test_the_boundary_belongs_to_the_settle(self) -> None:
+        self.answer([check(T - 600, T)], [])
+        for now in (T + SETTLE - 1, T + SETTLE):
+            with self.subTest(now=now - T):
+                code, out = self.read(now)
+                self.assertEqual(code, 2, out)
+                self.assertIn("no current review from primary, codex", out)
+        self.silent(*self.read(T + SETTLE + 1))
+
+    def test_a_pending_check_keeps_every_reviewer_pending_past_the_settle(self) -> None:
+        self.answer([check(T - 600, T), check(T - 600, None, "lint", "pending")], [])
+        code, out = self.read(T + SETTLE + 1000)
+        self.assertEqual(code, 2, out)
+        self.assertNotIn("silent reviewer", out)
+
+    def test_a_wait_stops_when_the_settle_passes(self) -> None:
+        self.configure({**LISTED, "waitSeconds": 1800})
+        self.answer([check(T - 600, T)], [])
+        code, out = self.read(T + 200, "--wait")
+        self.silent(code, out)
+        self.assertEqual(self.sleeps(), [30, 30, 30, 30])  # T+200 -> T+320, the first read past the settle
+        self.assertLess(self.now(), T + 1800)
+
+    def test_an_optional_reviewer_is_not_absent_as_soon_as_the_pipeline_goes_green(self) -> None:
+        """A Bitbucket status created long before it finished: the settle runs from its doneAt, not its creation."""
+        self.answer([check(T - 3600, T)], [by_primary(at=stamp(T + 10))])
+        code, out = self.read(T + 60)
+        self.assertEqual(code, 2, out)
+        self.assertIn("no current review from codex", out)
+
+    def test_the_review_gate_exits_3_on_a_silent_required_reviewer(self) -> None:
+        self.answer([check(T - 600, T)], [by_codex(at=stamp(T + 10))])
+        self.clock(T + SETTLE + 1)
+        code, _, err = self.gate()
+        self.assertEqual(code, 3, err)
+        self.assertEqual(len(err.strip().splitlines()), 1, err)
+        self.assertTrue(err.startswith(f"{SILENT}{self.head[:10]} but primary posted nothing since"), err)
+        with self.subTest("an optional one silent never blocks"):
+            self.answer([check(T - 600, T)], [by_primary(at=stamp(T + 10))])
+            code, out, err = self.gate()
+            self.assertEqual((code, err), (0, ""), out)
+
+    def test_the_lane_hands_off_blocked_on_it_and_the_lead_decides(self) -> None:
+        self.answer([check(T - 600, T)], [])
+        code, out = self.read(T + SETTLE + 1)
+        self.silent(code, out)
+        line = next(l for l in out.splitlines() if l.startswith(SILENT))[len("run-delivery: "):]
+        code, out = self.flow("handoff", "FX-2", "--pr", PR, "--blocked", f"pr-review={line}")
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"BLOCKED pr-review: {line}", out)
+        code, out = self.accept()
+        self.assertEqual(code, 1, out)
+        self.assertIn("the lane blocked 'pr-review'", out)
+        self.assertNotIn("recorded no PR review", out)
+        code, out = self.flow("lead-accept", "FX-2", "--accept-blocked", "pr-review", cwd=self.fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("accepted blocked 'pr-review'", self.decisions())
+
+    def test_a_block_on_another_label_still_needs_the_pr_review(self) -> None:
+        """Only the `pr-review` label stands in for the PR review, at hand-off and at acceptance."""
+        self.answer([check(T - 600, T)], [])
+        self.clock(T + SETTLE + 1)  # a silent reviewer, so only the label decides
+        code, out = self.flow("handoff", "FX-2", "--pr", PR, "--blocked", "other=reason")
+        self.assertEqual(code, 2, out)
+        self.assertIn(f"no PR review recorded at {self.head[:10]}", out)
+        self.clock(T + 60)
+        self.answer([check(T - 600, T)], [by_primary(at=stamp(T + 10)), by_codex(at=stamp(T + 10))])
+        self.assertEqual(self.flow("pr-review", "FX-2")[0], 0)
+        code, out = self.flow("handoff", "FX-2", "--pr", PR, "--blocked", "other=reason",
+                              "--pr-review-triage", "primary=fixed", "--pr-review-triage", "codex=fine")
+        self.assertEqual(code, 0, out)
+        self.answer([check(T - 600, T)], [by_primary(at=stamp(T + 20)), by_codex(at=stamp(T + 10))])
+        code, out = self.flow("lead-accept", "FX-2", "--accept-blocked", "other", cwd=self.fx.main)
+        self.assertEqual(code, 1, out)
+        self.assertIn("primary's PR review changed after the lane read it", out)
+
+    def test_several_silent_reviewers_are_each_named(self) -> None:
+        second = {"id": "second", "author": "Second Bot", "signature": "<!-- second -->"}
+        self.configure({**LISTED, "reviewers": [PRIMARY, CODEX, second]})
+        self.answer([check(T - 600, T)], [])
+        code, out = self.read(T + SETTLE + 1)
+        self.assertEqual(code, 3, out)
+        self.assertIn(f"{SILENT}{self.head[:10]} but primary, second posted nothing since", out)
+
+    def test_a_block_on_the_pr_review_needs_a_silent_reviewer(self) -> None:
+        self.answer([check(T - 600, T)], [])
+        self.clock(T + 60)  # inside the settle: nobody is silent
+        code, out = self.flow("handoff", "FX-2", "--pr", PR, "--blocked", "pr-review=impatient")
+        self.assertEqual(code, 2, out)
+        self.assertIn(f"--blocked pr-review is for a required reviewer silent after the settle, and none is silent at "
+                      f"{self.head[:10]}", out)
+        with self.subTest("the legacy shape has no such block: its review is required as ever"):
+            self.configure(LEGACY)
+            code, out = self.flow("handoff", "FX-2", "--pr", PR, "--blocked", "pr-review=impatient")
+            self.assertEqual(code, 2, out)
+            self.assertIn(f"no PR review recorded at {self.head[:10]}", out)
+
+    def test_a_silent_reviewer_that_posts_before_acceptance_sends_the_lane_back(self) -> None:
+        self.answer([check(T - 600, T)], [])
+        code, out = self.read(T + SETTLE + 1)
+        line = next(l for l in out.splitlines() if l.startswith(SILENT))[len("run-delivery: "):]
+        self.assertEqual(self.flow("handoff", "FX-2", "--pr", PR, "--blocked", f"pr-review={line}")[0], 0)
+        self.answer([check(T - 600, T)], [by_primary(at=stamp(T + 400))])  # its step re-run: it has posted now
+        code, out = self.flow("lead-accept", "FX-2", "--accept-blocked", "pr-review", cwd=self.fx.main)
+        self.assertEqual(code, 1, out)
+        self.assertIn(f"the lane blocked on a silent PR reviewer, but none is silent at {self.head[:10]} now "
+                      "(primary current, codex absent): send the lane back to read and triage its review", out)
+
+    def test_the_brief_tells_the_lane_to_escalate_and_not_wait_again(self) -> None:
+        self.assertEqual(self.fx.flow("lead-brief", cwd=self.fx.main)[0], 0)
+        brief = " ".join((self.fx.main / "docs/lane-brief.md").read_text().split())
+        self.assertIn("exits 3 with a `silent reviewer` line", brief)
+        self.assertIn("--blocked pr-review=", brief)
+        self.assertIn("don't run the wait again", brief)
+
+
+
+class SilentAndGateTests(PrReviewCase):
+    """A silent required reviewer and another reviewer's unmet gate are separate refusals: neither hides the other."""
+
+    GATED = {**CODEX, "gate": "verdict"}
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.configure({**LISTED, "reviewers": [PRIMARY, self.GATED]})
+        self.answer([check(T - 600, T)], [by_codex(body="<!-- codex -->\n**Verdict:** Request changes", at=stamp(T + 10))])
+        self.unmet = f"PR reviewer codex's verdict gate is unmet at {self.head[:10]}"
+
+    def test_pr_review_and_the_gate_name_both(self) -> None:
+        self.clock(T + SETTLE + 1)
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 3, out)
+        self.assertIn(f"{SILENT}{self.head[:10]} but primary posted nothing since", out)
+        self.assertIn(self.unmet, out)
+        code, _, err = self.gate()
+        self.assertEqual(code, 3, err)
+        self.assertEqual(len(err.strip().splitlines()), 1, err)
+        self.assertIn(self.unmet, err)
+        with self.subTest("with the gate met, the silent line alone"):
+            self.answer([check(T - 600, T)], [by_codex(body="<!-- codex -->\n**Verdict:** Approve", at=stamp(T + 10))])
+            code, out = self.flow("pr-review", "FX-2")
+            self.assertEqual(code, 3, out)
+            self.assertNotIn("gate is unmet", out)
+
+    def test_a_block_on_the_silent_reviewer_still_refuses_the_unmet_gate(self) -> None:
+        self.clock(T + SETTLE + 1)
+        self.assertEqual(self.flow("pr-review", "FX-2")[0], 3)  # records primary silent, codex current and unmet
+        code, out = self.flow("handoff", "FX-2", "--pr", PR, "--blocked", "pr-review=silent",
+                              "--pr-review-triage", "codex=read it")
+        self.assertEqual(code, 2, out)
+        self.assertIn(self.unmet, out)
+        self.answer([check(T - 600, T)], [by_codex(body="<!-- codex -->\n**Verdict:** Approve", at=stamp(T + 10))])
+        self.assertEqual(self.flow("pr-review", "FX-2")[0], 3)
+        code, out = self.flow("handoff", "FX-2", "--pr", PR, "--blocked", "pr-review=silent",
+                              "--pr-review-triage", "codex=read it")
+        self.assertEqual(code, 0, out)
+        self.answer([check(T - 600, T)], [by_codex(body="<!-- codex -->\n**Verdict:** Request changes",
+                                                   at=stamp(T + 20))])
+        code, out = self.flow("lead-accept", "FX-2", "--accept-blocked", "pr-review", cwd=self.fx.main)
+        self.assertEqual(code, 1, out)
+        self.assertIn(self.unmet, out)
+
+
+
+class SilentRecordTests(PrReviewCase):
+    """pr-review records a silent required reviewer before it exits 3, a hand-off blocked on it still
+    triages every current review, and lead-accept re-checks those as for any hand-off."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.configure(LISTED)
+        self.answer([check(T - 600, T)], [by_codex(at=stamp(T + 10))])
+        self.clock(T + SETTLE + 1)
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 3, out)
+        self.line = next(l for l in out.splitlines() if l.startswith(SILENT))[len("run-delivery: "):]
+
+    def blocked_handoff(self, *triage: str) -> tuple[int, str]:
+        return self.flow("handoff", "FX-2", "--pr", PR, "--blocked", f"pr-review={self.line}",
+                         *[x for t in triage for x in ("--pr-review-triage", t)])
+
+    def test_the_record_holds_the_silent_reviewer_beside_the_current_one(self) -> None:
+        self.assertEqual(self.record(), {
+            "schema": "pr-review/2", "head": self.head, "url": PR, "reviewers": {
+                "primary": {"state": "silent", "required": True},
+                "codex": {"state": "current", "required": False, "author": "Review Bot", "account": "{u-review}",
+                          "at": stamp(T + 10), "body": "<!-- codex -->\nCodex says: fine"}}})
+
+    def test_a_blocked_hand_off_triages_every_current_review(self) -> None:
+        code, out = self.blocked_handoff()
+        self.assertEqual(code, 2, out)
+        self.assertIn("say how codex's review was handled: --pr-review-triage codex=TEXT", out)
+        code, out = self.blocked_handoff("codex=fine", "primary=nothing to read")
+        self.assertEqual(code, 2, out)
+        self.assertIn("--pr-review-triage names primary, which was silent: a silent reviewer takes no triage", out)
+        code, out = self.blocked_handoff("codex=fine")
+        self.assertEqual(code, 0, out)
+        self.assertIn("- PR review: primary: silent; codex: Review Bot at", out)
+        self.assertIn(f"BLOCKED pr-review: {self.line}", out)
+        self.assertEqual(self.record()["reviewers"]["codex"]["triage"], "fine")
+
+    def test_a_recorded_silent_reviewer_needs_the_block(self) -> None:
+        code, out = self.flow("handoff", "FX-2", "--pr", PR, "--pr-review-triage", "codex=fine")
+        self.assertEqual(code, 2, out)
+        self.assertIn(f"primary was silent at {self.head[:10]}: hand off blocked on it, --blocked pr-review=", out)
+
+    def test_lead_accept_rechecks_the_triaged_review_on_a_blocked_hand_off(self) -> None:
+        self.assertEqual(self.blocked_handoff("codex=fine")[0], 0)
+        self.answer([check(T - 600, T)], [by_codex(body="<!-- codex -->\nCodex has more", at=stamp(T + 20))])
+        code, out = self.flow("lead-accept", "FX-2", "--accept-blocked", "pr-review", cwd=self.fx.main)
+        self.assertEqual(code, 1, out)
+        self.assertIn("codex's PR review changed after the lane read it", out)
+        self.answer([check(T - 600, T)], [by_codex(at=stamp(T + 10))])
+        code, out = self.flow("lead-accept", "FX-2", "--accept-blocked", "pr-review", cwd=self.fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("PR review codex by Review Bot", self.decisions())
+        self.assertIn("accepted blocked 'pr-review'", self.decisions())
+
+    def test_lead_accept_refuses_a_silent_record_without_the_block(self) -> None:
+        """A record holding a silent reviewer is accepted only on a hand-off blocked on it, whatever the lane's blocked
+        list says by the time the lead reads it."""
+        self.assertEqual(self.blocked_handoff("codex=fine")[0], 0)
+        held = self.review / "blocked.json"
+        saved = json.loads(held.read_text())
+        held.write_text(json.dumps({**saved, "blocked": {}}))
+        code, out = self.accept()
+        self.assertEqual(code, 1, out)
+        self.assertIn(f"the lane recorded primary silent at {self.head[:10]} but didn't hand off blocked on it", out)
+
+    def test_the_legacy_shape_writes_no_record_on_its_refusal_and_takes_no_block(self) -> None:
+        (self.review / "pr-review.json").unlink()
+        self.configure(LEGACY)
+        self.answer([check(T - 600, T)], [])
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 2, out)
+        self.assertFalse((self.review / "pr-review.json").exists())
+        code, out = self.flow("handoff", "FX-2", "--pr", PR, "--blocked", f"pr-review={self.line}")
+        self.assertEqual(code, 2, out)
+        self.assertIn(f"no PR review recorded at {self.head[:10]}", out)
 
 
 if __name__ == "__main__":

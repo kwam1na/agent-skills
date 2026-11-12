@@ -596,6 +596,20 @@ class GitHubReviewsTests(unittest.TestCase):
         self.assertEqual(json.loads(done.stdout)["reviews"],
                          [{"author": "review-bot", "account": "review-bot", "at": "2026-01-01T00:00:30Z", "body": "fine"}])
 
+    def test_a_finished_check_carries_its_completed_at_as_done_at(self) -> None:
+        view = {"headRefOid": HEAD, "reviews": [], "statusCheckRollup": [
+            {"name": "build", "conclusion": "SUCCESS", "startedAt": "2026-01-01T00:00:01Z",
+             "completedAt": "2026-01-01T00:05:00Z"},
+            {"name": "test", "status": "IN_PROGRESS", "startedAt": "2026-01-01T00:00:02Z",
+             "completedAt": "0001-01-01T00:00:00Z"},
+            {"context": "lint", "state": "PENDING"}]}
+        done = self.reviews(FAKE_GH_VIEW=json.dumps(view))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout)["checks"], [
+            {"name": "build", "state": "passed", "at": "2026-01-01T00:05:00Z", "doneAt": "2026-01-01T00:05:00Z"},
+            {"name": "test", "state": "pending", "at": "0001-01-01T00:00:00Z"},
+            {"name": "lint", "state": "pending", "at": ""}])
+
     def test_a_transient_failure_exits_75_and_any_other_exits_1(self) -> None:
         for said, code in (
             ("HTTP 503: Service Unavailable (https://api.github.com/graphql)", 75),
@@ -628,7 +642,13 @@ class BitbucketReviewsTests(unittest.TestCase):
         if self.failure is not None:
             raise self.failure
         if request.full_url == f"{self.API}/commit/{HEAD}/statuses?pagelen=100":
-            body = {"values": [{"name": "pipe", "state": "SUCCESSFUL", "created_on": "2026-01-01T00:00:10+00:00"}]}
+            body = {"values": [{"name": "pipe", "state": "SUCCESSFUL", "created_on": "2026-01-01T00:00:10+00:00",
+                                "updated_on": "2026-01-01T00:09:10+00:00"},
+                               {"name": "lint", "state": "INPROGRESS", "created_on": "2026-01-01T00:00:11+00:00",
+                                "updated_on": "2026-01-01T00:01:00+00:00"},
+                               {"name": "test", "state": "FAILED", "created_on": "2026-01-01T00:00:12+00:00",
+                                "updated_on": "2026-01-01T00:02:00+00:00"},
+                               {"name": "old", "state": "SUCCESSFUL", "created_on": "2026-01-01T00:00:13+00:00"}]}
         elif request.full_url == f"{self.API}/pullrequests/7/comments?pagelen=100":
             body = {"values": [{"user": {"display_name": "Review Bot", "uuid": "{u-1}"}, "updated_on": "2026-01-01T00:00:30+00:00",
                                 "content": {"raw": "fine"}}]}
@@ -656,6 +676,14 @@ class BitbucketReviewsTests(unittest.TestCase):
             finally:
                 sys.dont_write_bytecode = previous
         return json.loads(out.getvalue())
+
+    def test_a_finished_status_carries_its_last_update_as_done_at(self) -> None:
+        """A status no longer in progress finished when it was last updated; one still running has no doneAt."""
+        self.assertEqual(self.reviews()["checks"], [
+            {"name": "pipe", "state": "passed", "at": "2026-01-01T00:00:10+00:00", "doneAt": "2026-01-01T00:09:10+00:00"},
+            {"name": "lint", "state": "pending", "at": "2026-01-01T00:00:11+00:00"},
+            {"name": "test", "state": "failed", "at": "2026-01-01T00:00:12+00:00", "doneAt": "2026-01-01T00:02:00+00:00"},
+            {"name": "old", "state": "passed", "at": "2026-01-01T00:00:13+00:00"}])  # no update time: no doneAt
 
     def test_each_comment_carries_its_authors_uuid_as_its_account(self) -> None:
         self.assertEqual(self.reviews()["reviews"], [{"author": "Review Bot", "account": "{u-1}",

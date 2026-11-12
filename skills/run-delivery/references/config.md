@@ -165,19 +165,32 @@ checks may need no file at all.
 - **Matching.** A PR comment is a reviewer's when its `account` equals the reviewer's `account`, if set, else when its
   author is the reviewer's `author`; with `signature`, its body must also contain that text, as plain text, not a
   pattern. A comment with an empty body never matches. The reviewer's review is its latest matching comment.
-- **Current, pending, absent.** Each read classifies every reviewer. It is `current` once every check at the head
+- **Current, pending, absent, silent.** Each read classifies every reviewer. It is `current` once every check at the head
   passed and its review is no earlier than the latest check. The settle starts when every check has passed, at the
   latest `doneAt` among them (a check without one counts its `at`), and ends `settleSeconds` later, the end itself
-  inside it. After it, an optional reviewer with no current review is `absent`; a required one stays `pending`. Before
+  inside it. After it, an optional reviewer with no current review is `absent`, and a required one is `silent`. Before
   it, or while any check is pending, a reviewer with no current review is `pending`. `pr-review --wait` waits until none
   is pending and no check is, or until `waitSeconds`; without `--wait`, it reads once. A failed check refuses at once.
+  The legacy shape has no settle, so its reviewer is `pending` until current.
+- **A silent reviewer.** A required reviewer `silent` stops `pr-review`, with or without `--wait`, and
+  `pr-review-current`, with exit 3 where every other refusal exits 2. The stderr line starts `run-delivery: silent
+  reviewer`: the pipeline is green at the head but that reviewer posted nothing since. Before it exits, `pr-review`
+  records every reviewer, the silent one as `silent`. The lane doesn't run the wait again: it hands off with
+  `--blocked pr-review="<that line>"` and a `--pr-review-triage` for every current review, as any hand-off. `handoff`
+  takes the block only while a required reviewer is silent at the head, and refuses a record holding a silent
+  reviewer without it. `lead-accept` re-checks the current reviews as for any hand-off. The lead decides the silent
+  reviewer, with `--accept-blocked pr-review` or by sending the story back. Re-running the reviewer's step is the
+  usual answer; once it has posted, `lead-accept` refuses the block and sends the lane back to read and triage the
+  review. An optional reviewer never stops a wait this way, and the legacy shape takes no such block.
+  A silent reviewer and another review's unmet gate are separate refusals: the silent line names the unmet gate too,
+  and a block on the silent reviewer never covers a gate, at hand-off or at acceptance.
   Every wait reads its time, sleeps and poll interval through one clock, which `RUN_DELIVERY_CLOCK` replaces with
   a file's for the tool's own tests; never set it in a delivery.
 - **What the adapter must return.** A reviewer with `account` needs `account` on each comment from `reviews`; a gate
   `"approval"` needs `approvals`; `report` needs `reports`. A member the adapter doesn't return at all is refused,
   naming it; one returned empty is not. The single `{author}` shape reads none of them.
 - **The record.** `pr-review` saves `{schema: "pr-review/2", head, url, reviewers: {<id>: {state, required, author?,
-  account?, at?, body?, triage?}}}`, `state` being `current` or `absent`, and prints each review under its id. It makes
+  account?, at?, body?, triage?}}}`, `state` being `current`, `absent` or `silent`, and prints each review under its id. It makes
   the `pipeline-green` review move once every required reviewer is current. The single shape keeps its own record,
   `{head, url, author, at, body}`.
 - **Triage.** `handoff` takes `--pr-review-triage ID=TEXT` once for each current review. A bare `TEXT` is accepted only
@@ -281,10 +294,13 @@ The command is called with one of:
 
 - `find --source BRANCH` prints `{"url"}` for the branch's open PR, or `{}`.
 - `open --source B --destination D --title T --body-file F` opens a draft and prints `{"url"}`.
-- `reviews --url URL --head SHA` prints `{"checks": [{name, state: passed|failed|pending, at}], "reviews": [{author,
+- `reviews --url URL --head SHA` prints `{"checks": [{name, state: passed|failed|pending, at, doneAt?}], "reviews": [{author,
   account, at, body}]}`: the head commit's pipeline checks and the PR's top-level comments, `account` being the
   author's account id (Bitbucket's `user.uuid`, GitHub's login). Needed only with `review.pr`; a reviewer matched by
-  `account` needs `account` on each comment.
+  `account` needs `account` on each comment. `doneAt` is when a check finished, once it has: Bitbucket's `updated_on`
+  for a status no longer in progress, GitHub's `completedAt`. A check without it counts its `at` for the settle, and
+  Bitbucket's `at` is when a status was created, so without `doneAt` an optional reviewer could turn absent the moment
+  a long pipeline went green.
 - `get --url URL` prints `{"url", "state": "open"|"merged"|"closed", "draft", "head", "source", "destination"}`. It
   refuses a URL that isn't one of the repository's PRs. `head` may be abbreviated, to 7 characters at least.
 - `ready --url URL` marks a draft ready and prints `{"url", "draft": false}`. `lead-accept` calls it, before the queue

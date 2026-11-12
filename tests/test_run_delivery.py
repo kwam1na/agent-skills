@@ -3989,9 +3989,11 @@ class RunDeliveryReleaseAndNamesTests(unittest.TestCase):
             self.assertIn("--draft", calls[2])
             self.assertEqual(calls[5][2:], [url, "--squash", "--match-head-commit", "abc", "--repo", "o/n"])
             self.assertTrue(said["get"]["draft"])
-            self.assertEqual(said["reviews"], {"checks": [{"name": "build", "state": "passed", "at": "2026-01-01T00:00:01Z"},
+            self.assertEqual(said["reviews"], {"checks": [{"name": "build", "state": "passed", "at": "2026-01-01T00:00:01Z",
+                                                           "doneAt": "2026-01-01T00:00:01Z"},
                                                           {"name": "lint", "state": "pending", "at": ""},
-                                                          {"name": "test", "state": "failed", "at": "2026-01-01T00:00:03Z"}],
+                                                          {"name": "test", "state": "failed", "at": "2026-01-01T00:00:03Z",
+                                                           "doneAt": "2026-01-01T00:00:03Z"}],
                                                "reviews": [{"author": "pipeline-bot", "account": "pipeline-bot",
                                                             "at": "2026-01-01T00:00:02Z", "body": "Looks fine"}],
                                                "approvals": []})
@@ -8395,18 +8397,27 @@ class DeliveryPostureReaderTests(unittest.TestCase):
         self.assertEqual((result["reason"], result["baseTipSha"]), ("The gate is still being optimized.", tip))
 
     def test_a_hanging_git_is_stopped_with_the_child_that_holds_its_output(self) -> None:
-        with tempfile.TemporaryDirectory() as folder:
-            child = Path(folder) / "child.pid"
-            stub = Path(folder) / "git"
-            stub.write_text(f'#!/bin/sh\n{POSTURE_HANG} &\necho $! > "{child}"\nwait\n')
-            stub.chmod(0o755)
-            started = time.monotonic()
-            with mock.patch.dict(os.environ, {"PATH": f"{folder}{os.pathsep}{os.environ['PATH']}"}):
-                done = self.tool.posture_git(Path(folder), ["status"], self.SECONDS)
-            took = time.monotonic() - started
-            pid = int(child.read_text())
-        self.assertIsNone(done)
-        self.assertLess(took, self.SECONDS + 5, "the child holding the pipe kept the bound from holding")
+        """The bound holds while a child keeps the output pipe open, and the child doesn't outlive it. The child writes
+        its own pid and then becomes the hanging process, so the pid is the one holding the pipe. Under load the bound
+        can stop the stub before it starts the child: that try proves nothing, so it is run again, a few times."""
+        for _ in range(3):
+            with tempfile.TemporaryDirectory() as folder:
+                child = Path(folder) / "child.pid"
+                stub = Path(folder) / "git"
+                stub.write_text(f'#!/bin/sh\nsh -c \'echo $$ > "{child}"; exec {POSTURE_HANG}\' &\nwait\n')
+                stub.chmod(0o755)
+                started = time.monotonic()
+                with mock.patch.dict(os.environ, {"PATH": f"{folder}{os.pathsep}{os.environ['PATH']}"}):
+                    done = self.tool.posture_git(Path(folder), ["status"], self.SECONDS)
+                took = time.monotonic() - started
+                said = child.read_text().strip() if child.exists() else ""
+            self.assertIsNone(done)
+            self.assertLess(took, self.SECONDS + 5, "the bound didn't hold")
+            if said.isdigit():
+                pid = int(said)
+                break
+        else:
+            self.fail("the stub never started its child within the bound, in three tries")
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
             try:
