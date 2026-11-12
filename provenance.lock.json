@@ -1046,7 +1046,7 @@
         },
         {
           "path": "skills/run-delivery/references/config.md",
-          "sha256": "798221df39d5b25069176ffced20f09aa32ff4a64620102ab69c1f7ea009db07"
+          "sha256": "68d39f3002fc0ee0afc6ead59a702c5baa26e43018f44e9893aa3c9d994546e6"
         },
         {
           "path": "skills/run-delivery/scripts/pr_review_gates.py",
@@ -1054,7 +1054,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "4b67c52d3acca4296f21e8ee3753ecdb462cee552d094671bcda857bcaaa11b7"
+          "sha256": "98446977a596d8e07ca8b0b0e2b36b65594fde3bc9509771bcc433dd47c331db"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",

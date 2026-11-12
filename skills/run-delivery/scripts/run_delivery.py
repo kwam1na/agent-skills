@@ -3622,7 +3622,9 @@ def triage_by_reviewer(given: list[str], entries: dict[str, dict]) -> tuple[dict
                 problems.append(f"--pr-review-triage names {rid}, which is no reviewer of the PR review recorded "
                                 f"(they are {', '.join(entries) or 'none'})")
             elif entries[rid].get("state") != "current":
-                problems.append(f"--pr-review-triage names {rid}, which was absent: an absent reviewer takes no triage")
+                state = entries[rid].get("state")
+                problems.append(f"--pr-review-triage names {rid}, which was {state}: {'an' if state == 'absent' else 'a'} "
+                                f"{state} reviewer takes no triage")
             elif rid in named:
                 problems.append(f"--pr-review-triage names {rid} twice")
             else:
@@ -3667,9 +3669,28 @@ def pr_review_text() -> str:
             "is current). The lead's acceptance re-checks that each is still current and unchanged at your head, and "
             "sends you back to read an optional review recorded absent that has since arrived. If `pr-review` "
             "exits 3 with a `silent reviewer` line, a required reviewer posted nothing after the pipeline went green: "
-            "don't run the wait again. Hand off blocked on it, `--blocked pr-review=\"<that line>\"`, and the lead "
-            "decides.\n"
+            "don't run the wait again. Hand off blocked on it, `--blocked pr-review=\"<that line>\"`, still "
+            "triaging each current review, and the lead decides.\n"
             + pr_review_gates.brief_text(conf["reviewers"]))
+
+
+def pr_review_record(key: str, head: str, url: str, conf: dict, read: dict) -> dict[str, dict]:
+    """Write the list's pr-review.json from a classified read: each reviewer current (its review, and its gate),
+    absent, or silent. Returns its entries by id."""
+    entries: dict[str, dict] = {}
+    for reviewer in conf["reviewers"]:
+        state = read["reviewers"][reviewer["id"]]
+        entry: dict = {"state": state["state"], "required": reviewer["required"]}
+        if state["state"] == "current":
+            review = state["review"]
+            entry.update(author=review["author"], **({"account": review["account"]} if "account" in review else {}),
+                         at=review["at"], body=review["body"])
+            if state.get("gate"):
+                entry["gate"] = state["gate"]
+        entries[reviewer["id"]] = entry
+    record = {"schema": RECORD_SCHEMA, "head": head, "url": url, "reviewers": entries}
+    (review_dir(key) / "pr-review.json").write_text(json.dumps(record, indent=2))
+    return entries
 
 
 def pr_review(args) -> None:
@@ -3713,25 +3734,15 @@ def pr_review(args) -> None:
         return
     silent = silent_refusal(read, head, conf["reviewers"])
     if silent:
+        # Recorded first (plan change c1): a hand-off blocked on the silent reviewer still triages every current review.
+        pr_review_record(key, head, url, conf, read)
         raise silent
     if read["status"] == "pending":
         waiting = [rid for rid, r in read["reviewers"].items() if r["state"] == "pending"]
         said = (f"no current review from {', '.join(waiting)} after the pipeline for {head[:10]} yet" if waiting
                 else f"the pipeline for {head[:10]} hasn't finished yet")
         raise Stop(said + ("" if args.wait else "; run with --wait") + ": " + check_states(checks))
-    entries: dict[str, dict] = {}
-    for reviewer in conf["reviewers"]:
-        state = read["reviewers"][reviewer["id"]]
-        entry: dict = {"state": state["state"], "required": reviewer["required"]}
-        if state["state"] == "current":
-            review = state["review"]
-            entry.update(author=review["author"], **({"account": review["account"]} if "account" in review else {}),
-                         at=review["at"], body=review["body"])
-            if state.get("gate"):
-                entry["gate"] = state["gate"]
-        entries[reviewer["id"]] = entry
-    record = {"schema": RECORD_SCHEMA, "head": head, "url": url, "reviewers": entries}
-    (review_dir(key) / "pr-review.json").write_text(json.dumps(record, indent=2))
+    entries = pr_review_record(key, head, url, conf, read)
     # Every required reviewer is current here (none is pending), so the pipeline's review move is due.
     review_move(c, key, "pipeline-green")
     print(f"PR reviews of {head[:10]}, saved for the hand-off:")
@@ -3904,15 +3915,21 @@ def proposed_checks(c, changed: list[str], named: list[str]) -> list[str]:
     return [name for index, name in enumerate(ids) if name in known and name not in ids[:index]]
 
 
-def pr_review_handoff(key: str, conf: dict, recorded: dict, given: list[str]) -> tuple[str | None, list[str]]:
+def pr_review_handoff(key: str, conf: dict, recorded: dict, given: list[str],
+                      on_silent: bool) -> tuple[str | None, list[str]]:
     """The list's PR review at hand-off, from the record at the head: every configured reviewer recorded, and each
-    current review triaged. Writes each triage into `recorded`. Returns (the hand-off's PR review line, problems)."""
+    current review triaged; a reviewer recorded silent only on a hand-off blocked on it. Writes each triage into
+    `recorded`. Returns (the hand-off's PR review line, problems)."""
     entries = record_reviewers(recorded)
     unrecorded = [r["id"] for r in conf["reviewers"] if r["id"] not in entries]
     if unrecorded:
         return None, [f"the PR review recorded at {recorded['head'][:10]} has no entry for {', '.join(unrecorded)}: run "
                       f"{flow_command()} pr-review {key} --wait again"]
+    silent = [rid for rid, e in entries.items() if e.get("state") == "silent"]
     triage, problems = triage_by_reviewer(given, entries)
+    if silent and not on_silent:
+        problems.append(f"{', '.join(silent)} was silent at {recorded['head'][:10]}: hand off blocked on it, "
+                        f"--blocked {PR_REVIEW_BLOCK}=\"<pr-review's silent reviewer line>\", and the lead decides")
     if problems:
         return None, problems
     shown = []
@@ -3959,8 +3976,9 @@ def handoff(args) -> None:
                    f"{head[:10]}; review the new head")
     validation, gate_problems = gates_summary(key, repo(), head)
     pr_line = None
-    # A lane stopped by a silent reviewer hands off blocked on it, and the lead decides: no review is required here,
-    # so long as a required reviewer is silent at the head. The legacy shape has no settle, and no such block.
+    # A lane stopped by a silent reviewer hands off blocked on it, and the lead decides that reviewer. The block holds
+    # only while a required reviewer is silent at the head, and the record pr-review wrote is still required, with
+    # every current review triaged (plan change c1). The legacy shape has no settle, and no such block.
     on_silent = bool(review_conf) and not review_conf["legacy"] and PR_REVIEW_BLOCK in parse_blocked(args.blocked)
     if on_silent:
         live = read_pr_reviews(args.pr, head, review_conf, None)
@@ -3968,9 +3986,7 @@ def handoff(args) -> None:
             gate_problems.append(f"--blocked {PR_REVIEW_BLOCK} is for a required reviewer silent after the settle, and "
                                  f"none is silent at {head[:10]}: run {flow_command()} pr-review {key} --wait, and "
                                  "triage what it shows")
-        else:  # the silent reviewer is the lead's to decide; an unmet gate beside it is still refused
-            gate_problems += pr_review_gates.live_refusals(review_conf["reviewers"], live["reviewers"], head)
-    if review_conf and not on_silent:
+    if review_conf:
         saved = folder / "pr-review.json"
         recorded = json.loads(saved.read_text()) if saved.exists() else {}
         if recorded.get("head") != head:
@@ -3985,7 +4001,7 @@ def handoff(args) -> None:
                 saved.write_text(json.dumps(recorded, indent=2))
                 pr_line = f"{recorded['author']} at {recorded['at'][:16]}; triage: {recorded['triage']}"
         else:
-            pr_line, problems_ = pr_review_handoff(key, review_conf, recorded, args.pr_review_triage or [])
+            pr_line, problems_ = pr_review_handoff(key, review_conf, recorded, args.pr_review_triage or [], on_silent)
             problems_ += pr_review_gates.recorded_refusals(review_conf["reviewers"], record_reviewers(recorded), head)
             if problems_:
                 gate_problems += problems_
@@ -5941,7 +5957,8 @@ def accept_no_change(c, key: str, entry: dict) -> None:
     print(f"accepted {key}: settled with no change needed")
 
 
-def pr_review_acceptance(conf: dict, url: str, head: str, recorded: dict) -> tuple[list[str], list[str]]:
+def pr_review_acceptance(conf: dict, url: str, head: str, recorded: dict,
+                         on_silent: bool = False) -> tuple[list[str], list[str]]:
     """The list's PR review re-checked at acceptance, one read of the forge at the handed head: every reviewer the lane
     recorded current is still current, triaged and unchanged; a required one was never recorded absent; and an
     optional one recorded absent hasn't posted since. An old-shape record is reviewer `review`. Returns (problems,
@@ -5958,6 +5975,11 @@ def pr_review_acceptance(conf: dict, url: str, head: str, recorded: dict) -> tup
         entry, live = entries.get(rid), read["reviewers"][rid]
         if entry is None:
             problems.append(f"the lane's PR review record at {head[:10]} has no entry for {rid}")
+        elif entry.get("state") == "silent":
+            # On a hand-off blocked on it, the block is the lead's decision, and lead_accept has checked it is still
+            # silent. Otherwise the lane recorded it silent and handed off as if it weren't.
+            if not on_silent:
+                problems.append(f"the lane recorded {rid} silent at {head[:10]} but didn't hand off blocked on it")
         elif entry.get("state") != "current":
             if reviewer["required"]:
                 problems.append(f"{rid} is required, but the lane recorded it {entry.get('state')}")
@@ -6049,14 +6071,14 @@ def lead_accept(args) -> None:
             states = ", ".join(f"{rid} {r['state']}" for rid, r in live["reviewers"].items()) or live["status"]
             problems.append(f"the lane blocked on a silent PR reviewer, but none is silent at {head[:10]} now ({states}): "
                             "send the lane back to read and triage its review")
-        else:  # an unmet gate beside the silent reviewer is no part of the block
-            problems += pr_review_gates.live_refusals(conf["reviewers"], live["reviewers"], head)
-        conf = None
+        on_silent = True
+    else:
+        on_silent = False
     if conf and not conf["legacy"]:
         lane_root_ = c.lane_checkout(key)
         saved = lane_root_ / c.work / "review" / key / "pr-review.json"
         recorded = json.loads(saved.read_text()) if saved.exists() else {}
-        found, made = pr_review_acceptance(conf, item.get("changeRequest") or "", head, recorded)
+        found, made = pr_review_acceptance(conf, item.get("changeRequest") or "", head, recorded, on_silent)
         problems += found
         decisions += made
     elif conf:

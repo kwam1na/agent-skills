@@ -601,11 +601,12 @@ class WaitTests(PrReviewCase):
         code, out = self.flow("pr-review", "FX-2")
         self.assertEqual(code, 2, out)
         self.assertNotIn("Tracker move", out)
+        self.assertFalse((self.review / "pr-review.json").exists())  # pending: nothing recorded
         self.clock(T0_EPOCH + 301)
         code, out = self.flow("pr-review", "FX-2")
-        self.assertEqual(code, 3, out)  # a required reviewer silent after the settle
+        self.assertEqual(code, 3, out)  # a required reviewer silent after the settle: recorded, and no move
         self.assertNotIn("Tracker move", out)
-        self.assertFalse((self.review / "pr-review.json").exists())
+        self.assertEqual(self.record()["reviewers"]["primary"], {"state": "silent", "required": True})
         self.answer([PASSED], [by_primary()])
         code, out = self.flow("pr-review", "FX-2")
         self.assertEqual(code, 0, out)
@@ -1147,6 +1148,17 @@ class SilentRecordTests(PrReviewCase):
         self.assertEqual(code, 0, out)
         self.assertIn("PR review codex by Review Bot", self.decisions())
         self.assertIn("accepted blocked 'pr-review'", self.decisions())
+
+    def test_lead_accept_refuses_a_silent_record_without_the_block(self) -> None:
+        """A record holding a silent reviewer is accepted only on a hand-off blocked on it, whatever the lane's blocked
+        list says by the time the lead reads it."""
+        self.assertEqual(self.blocked_handoff("codex=fine")[0], 0)
+        held = self.review / "blocked.json"
+        saved = json.loads(held.read_text())
+        held.write_text(json.dumps({**saved, "blocked": {}}))
+        code, out = self.accept()
+        self.assertEqual(code, 1, out)
+        self.assertIn(f"the lane recorded primary silent at {self.head[:10]} but didn't hand off blocked on it", out)
 
     def test_the_legacy_shape_writes_no_record_on_its_refusal_and_takes_no_block(self) -> None:
         (self.review / "pr-review.json").unlink()

@@ -174,12 +174,14 @@ checks may need no file at all.
   The legacy shape has no settle, so its reviewer is `pending` until current.
 - **A silent reviewer.** A required reviewer `silent` stops `pr-review`, with or without `--wait`, and
   `pr-review-current`, with exit 3 where every other refusal exits 2. The stderr line starts `run-delivery: silent
-  reviewer`: the pipeline is green at the head but that reviewer posted nothing since. The lane doesn't run the wait
-  again: it hands off with `--blocked pr-review="<that line>"`, which `handoff` takes in place of a recorded review
-  while a required reviewer is silent at the head, and refuses otherwise. The lead decides it at `lead-accept`, with
-  `--accept-blocked pr-review` or by sending the story back. Re-running the reviewer's step is the usual answer; once
-  it has posted, `lead-accept` refuses the block and sends the lane back to read and triage the review. An optional
-  reviewer never stops a wait this way, and the legacy shape takes no such block.
+  reviewer`: the pipeline is green at the head but that reviewer posted nothing since. Before it exits, `pr-review`
+  records every reviewer, the silent one as `silent`. The lane doesn't run the wait again: it hands off with
+  `--blocked pr-review="<that line>"` and a `--pr-review-triage` for every current review, as any hand-off. `handoff`
+  takes the block only while a required reviewer is silent at the head, and refuses a record holding a silent
+  reviewer without it. `lead-accept` re-checks the current reviews as for any hand-off. The lead decides the silent
+  reviewer, with `--accept-blocked pr-review` or by sending the story back. Re-running the reviewer's step is the
+  usual answer; once it has posted, `lead-accept` refuses the block and sends the lane back to read and triage the
+  review. An optional reviewer never stops a wait this way, and the legacy shape takes no such block.
   A silent reviewer and another review's unmet gate are separate refusals: the silent line names the unmet gate too,
   and a block on the silent reviewer never covers a gate, at hand-off or at acceptance.
   Every wait reads its time, sleeps and poll interval through one clock, which `RUN_DELIVERY_CLOCK` replaces with
@@ -188,7 +190,7 @@ checks may need no file at all.
   `"approval"` needs `approvals`; `report` needs `reports`. A member the adapter doesn't return at all is refused,
   naming it; one returned empty is not. The single `{author}` shape reads none of them.
 - **The record.** `pr-review` saves `{schema: "pr-review/2", head, url, reviewers: {<id>: {state, required, author?,
-  account?, at?, body?, triage?}}}`, `state` being `current` or `absent`, and prints each review under its id. It makes
+  account?, at?, body?, triage?}}}`, `state` being `current`, `absent` or `silent`, and prints each review under its id. It makes
   the `pipeline-green` review move once every required reviewer is current. The single shape keeps its own record,
   `{head, url, author, at, body}`.
 - **Triage.** `handoff` takes `--pr-review-triage ID=TEXT` once for each current review. A bare `TEXT` is accepted only
