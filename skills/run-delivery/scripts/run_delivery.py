@@ -3362,7 +3362,7 @@ REVIEWER_MEMBERS = ("id", "account", "author", "signature", "required", "gate", 
 REVIEW_GATES = ("approval", "verdict")
 WAIT_SECONDS, SETTLE_SECONDS = 1800, 300
 RECORD_SCHEMA = "pr-review/2"
-# A wait's retry of a transient adapter failure: the first sleep, and the most any one sleeps (Decision 6).
+# A wait's retry of a transient adapter failure: the first sleep, and the most any one sleeps.
 BACKOFF_FIRST, BACKOFF_MOST = 5, 60
 
 
@@ -3473,7 +3473,7 @@ def instant(stamp: object) -> float:
 
 
 def reviewer_matches(reviewer: dict, found: dict, legacy: bool) -> bool:
-    """Decision 2: by account when the reviewer names one, else by author; and by signature, as plain text, when set.
+    """By account when the reviewer names one, else by author; and by signature, as plain text, when set.
     The list never matches an empty body, which a bodiless approval has; the legacy shape matches as it always did."""
     body = found.get("body") or ""
     if not legacy and not body:
@@ -3487,7 +3487,7 @@ def reviewer_matches(reviewer: dict, found: dict, legacy: bool) -> bool:
 
 
 def missing_members(found: dict, conf: dict) -> list[str]:
-    """Decision 5: what the list's reviewers need of `reviews` that the adapter didn't return. Present but empty is
+    """What the list's reviewers need of `reviews` that the adapter didn't return. Present but empty is
     not missing."""
     needed = []
     if any(r.get("account") for r in conf["reviewers"]) and any("account" not in r for r in found.get("reviews", [])):
@@ -3607,7 +3607,7 @@ def record_reviewers(recorded: dict) -> dict[str, dict]:
 
 
 def triage_by_reviewer(given: list[str], entries: dict[str, dict]) -> tuple[dict[str, str], list[str]]:
-    """Decision 8: each --pr-review-triage, ID=TEXT for a reviewer or a bare TEXT when exactly one review is current,
+    """Each --pr-review-triage, ID=TEXT for a reviewer or a bare TEXT when exactly one review is current,
     matched to the current reviews. Returns ({id: text}, problems): every current review needs one; an absent or
     unknown reviewer takes none."""
     current = [rid for rid, e in entries.items() if e.get("state") == "current"]
@@ -3734,7 +3734,7 @@ def pr_review(args) -> None:
         return
     silent = silent_refusal(read, head, conf["reviewers"])
     if silent:
-        # Recorded first (plan change c1): a hand-off blocked on the silent reviewer still triages every current review.
+        # Recorded first: a hand-off blocked on the silent reviewer still triages every current review.
         pr_review_record(key, head, url, conf, read)
         raise silent
     if read["status"] == "pending":
@@ -3978,7 +3978,7 @@ def handoff(args) -> None:
     pr_line = None
     # A lane stopped by a silent reviewer hands off blocked on it, and the lead decides that reviewer. The block holds
     # only while a required reviewer is silent at the head, and the record pr-review wrote is still required, with
-    # every current review triaged (plan change c1). The legacy shape has no settle, and no such block.
+    # every current review triaged. The legacy shape has no settle, and no such block.
     on_silent = bool(review_conf) and not review_conf["legacy"] and PR_REVIEW_BLOCK in parse_blocked(args.blocked)
     if on_silent:
         live = read_pr_reviews(args.pr, head, review_conf, None)

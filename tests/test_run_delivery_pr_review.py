@@ -262,7 +262,7 @@ class LegacyCharacterizationTests(PrReviewCase):
         self.assertEqual(self.record()["body"], "")
 
     def test_a_legacy_configuration_with_an_adapter_that_returns_no_new_member_is_unchanged(self) -> None:
-        """Decision 5: the legacy shape reads none of account, approvals or reports."""
+        """The legacy shape reads none of account, approvals or reports."""
         self.answer([PASSED], [comment("Pipeline Bot", "2026-01-01T00:00:30", "fine")])
         self.assertEqual(self.flow("pr-review", "FX-2")[0], 0)
         self.assertEqual(self.gate()[0], 0)
@@ -349,7 +349,7 @@ def by_codex(body: str = "<!-- codex -->\nCodex says: fine", at: str = AFTER) ->
 
 
 class ConfigurationTests(PrReviewCase):
-    """Decision 1: one parser for every reader. Each malformed list is refused by pr-review, pr-review-current,
+    """One parser for every reader. Each malformed list is refused by pr-review, pr-review-current,
     handoff, lead-accept and lead-brief, naming the reviewer and the member, and the doctor reports it wrong."""
 
     def readers(self) -> dict[str, tuple[int, str]]:
@@ -440,7 +440,7 @@ class ConfigurationTests(PrReviewCase):
             self.assertEqual(warn_code, ok_code)
 
     def test_the_worked_review_gate_outlasts_the_wait_by_two_minutes(self) -> None:
-        """Decision 6: the reviewGate's timeoutSeconds fits the wait, the last backoff and one adapter call."""
+        """The reviewGate's timeoutSeconds fits the wait, the last backoff and one adapter call."""
         guide = Path(__file__).resolve().parents[1] / "skills/run-delivery/references/adopting.md"
         text = guide.read_text(encoding="utf-8")
         section = text[text.index("## 7. A worked adopter"):]
@@ -455,7 +455,7 @@ class ConfigurationTests(PrReviewCase):
 
 
 class MatchingTests(PrReviewCase):
-    """Decision 2: by account, else by author, and by signature as plain text; the list never matches an empty body;
+    """By account, else by author, and by signature as plain text; the list never matches an empty body;
     the latest matching comment by `at` is the review."""
 
     def setUp(self) -> None:
@@ -512,7 +512,7 @@ class MatchingTests(PrReviewCase):
 
 
 class WaitTests(PrReviewCase):
-    """Decision 4, on the injected clock: each poll classifies every reviewer; the wait ends when none is pending
+    """On the injected clock: each poll classifies every reviewer; the wait ends when none is pending
     and no check is; a failed check refuses at once."""
 
     def setUp(self) -> None:
@@ -558,7 +558,7 @@ class WaitTests(PrReviewCase):
         self.assertEqual(self.sleeps(), [30])
 
     def test_the_settle_starts_at_the_latest_done_check_and_currency_at_the_latest_created(self) -> None:
-        """Decision 4: the settle starts at the latest doneAt among the head's checks, whichever was created last, and
+        """The settle starts at the latest doneAt among the head's checks, whichever was created last, and
         a review is current only from the latest check's `at`."""
         first = {**PASSED, "doneAt": "2026-01-01T00:03:30"}  # created at T0, done at T0+200
         second = {"name": "lint", "state": "passed", "at": "2026-01-01T00:01:00", "doneAt": "2026-01-01T00:01:50"}
@@ -619,7 +619,7 @@ class WaitTests(PrReviewCase):
 
 
 class TriageTests(PrReviewCase):
-    """Decision 8: ID=TEXT for each current review; a bare TEXT only when exactly one is current."""
+    """ID=TEXT for each current review; a bare TEXT only when exactly one is current."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -677,7 +677,7 @@ class TriageTests(PrReviewCase):
 
 
 class AcceptanceTests(PrReviewCase):
-    """Decision 7: lead-accept re-checks every reviewer at the handed head, reading both record shapes."""
+    """`lead-accept` re-checks every reviewer at the handed head, reading both record shapes."""
 
     def hand_off(self, *triage: str) -> None:
         self.assertEqual(self.flow("pr-review", "FX-2")[0], 0)
@@ -784,7 +784,7 @@ class ReviewGateTests(PrReviewCase):
 
 
 class RetryTests(PrReviewCase):
-    """Decision 6: a transient failure (exit 75) is retried inside a wait's loop, from 5 seconds doubling to 60 and
+    """A transient failure (exit 75) is retried inside a wait's loop, from 5 seconds doubling to 60 and
     never past the deadline; everywhere else it refuses at once."""
 
     def setUp(self) -> None:
@@ -872,7 +872,7 @@ def check(created: float, done: float | None, name: str = "pipe", state: str = "
 
 
 class SilentReviewerTests(PrReviewCase):
-    """V26-3347, on the injected clock: once every check passed, a required reviewer with no current review after the
+    """On the injected clock: once every check passed, a required reviewer with no current review after the
     settle stops the wait, exit 3, with a line of its own; the legacy shape never does."""
 
     def setUp(self) -> None:
@@ -1096,7 +1096,7 @@ class SilentAndGateTests(PrReviewCase):
 
 
 class SilentRecordTests(PrReviewCase):
-    """Plan change c1: pr-review records a silent required reviewer before it exits 3, a hand-off blocked on it still
+    """pr-review records a silent required reviewer before it exits 3, a hand-off blocked on it still
     triages every current review, and lead-accept re-checks those as for any hand-off."""
 
     def setUp(self) -> None:
