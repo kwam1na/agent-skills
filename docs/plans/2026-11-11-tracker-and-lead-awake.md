@@ -191,8 +191,8 @@ Lane 1, tier 1, after V26-3260. Test-first. Files: `skills/run-delivery/scripts/
 Acceptance criteria:
 
 1. Stopping the supervisor and resuming it with `lead-run --resume` keeps the same live view address, and the view is the same process.
-2. A resume under a generation whose `render_state.py` path differs from the one `live.json` records replaces the view, keeping the
-   address.
+2. With the supervisor run through a symlinked generation path (as `.agent-skills/current`), retargeting that symlink to another
+   generation and resuming replaces the view, keeping the address; resuming without retargeting adopts the same view process.
 3. The derived port for a fixed top-level path and key equals a literal computed from Decision 2's rule. The same key under a second fixed
    top-level path derives the literal Decision 2's rule gives for that path, which differs from the first. Deriving again with no `live.json` gives the same port.
 4. With the supervisor and its view both stopped, and `live.json` recording a port other than the derived one, as after a fallback, a
