@@ -1155,7 +1155,8 @@ def validate_corpus(root: Path) -> ValidationResult:
             findings.append(Finding("profile.closure", skill_id, "releasable skill lacks profile"))
         if distribution == "source-only" and selected_by:
             findings.append(Finding("profile.closure", skill_id, "source-only skill is selected"))
-    _validate_hooks(reader, profiles, skills, provenance)
+    if "hooks.schema" in rule_ids:
+        _validate_hooks(reader, profiles, skills, provenance)
     _validate_scenarios(reader, profiles, skills)
     findings.extend(dependency_findings(skills, profiles))
     _validate_skills(reader, skills)

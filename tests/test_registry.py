@@ -550,6 +550,37 @@ def test_a_retained_corpus_without_the_dispatcher_keeps_its_closure() -> None:
     print("verified acceptance: a retained corpus without the hook dispatcher")
 
 
+def test_a_corpus_without_the_dispatcher_may_not_claim_the_hook_rules() -> None:
+    # Its inventory would claim rules nobody checks, which anti-vacuity refuses.
+    def mutate(root: Path) -> None:
+        (root / "agent_skills" / "hooks.py").unlink()
+        (root / "schemas" / "skill-hooks.schema.json").unlink()
+
+    result = with_copy(mutate)
+    require(result.returncode == 1, result.stdout)
+    findings = json.loads(result.stdout)["findings"]
+    for rule_id in ("hooks.argv", "hooks.duplicate_id", "hooks.event", "hooks.host", "hooks.schema"):
+        require({"artifact": rule_id, "exitClass": "invalid-corpus", "message": "inventory names an unknown rule",
+                 "ruleId": "inventory.anti_vacuity"} in findings, result.stdout)
+    print("verified rejection: hook rules claimed by a corpus without the dispatcher")
+
+
+def test_a_corpus_without_the_dispatcher_checks_no_manifest() -> None:
+    # The hook rules are not checked there, so a manifest raises none of them.
+    def mutate(root: Path) -> None:
+        add_hooks(root, manifest_of(hook_entry("may-stop", event="pre-tool-use")))
+        (root / "agent_skills" / "hooks.py").unlink()
+        (root / "schemas" / "skill-hooks.schema.json").unlink()
+        path = root / "validation-inventory.json"
+        inventory = json.loads(path.read_text(encoding="utf-8"))
+        inventory["rules"] = [rule for rule in inventory["rules"] if not rule["id"].startswith("hooks.")]
+        write_json(path, inventory)
+
+    result = with_copy(mutate)
+    require(result.returncode == 0, result.stdout)
+    print("verified acceptance: no hook rule checked without the dispatcher")
+
+
 def main() -> int:
     tests = [
         test_missing_provenance_rejects,
@@ -579,6 +610,8 @@ def main() -> int:
         test_each_hook_rule_must_stay_in_the_inventory,
         test_a_corpus_with_the_dispatcher_needs_the_hook_schema,
         test_a_retained_corpus_without_the_dispatcher_keeps_its_closure,
+        test_a_corpus_without_the_dispatcher_may_not_claim_the_hook_rules,
+        test_a_corpus_without_the_dispatcher_checks_no_manifest,
     ]
     for test in tests:
         test()
