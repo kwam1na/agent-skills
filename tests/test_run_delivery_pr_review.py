@@ -597,10 +597,13 @@ class WaitTests(PrReviewCase):
         tracker = {"issueUrl": "https://tracker.test/{key}",
                    "transitions": {"review": ["In Review"], "reviewWhen": "pipeline-green"}}
         self.configure(LISTED, tracker=tracker)
-        self.clock(T0_EPOCH + 301)
         self.answer([PASSED], [by_codex()])
         code, out = self.flow("pr-review", "FX-2")
         self.assertEqual(code, 2, out)
+        self.assertNotIn("Tracker move", out)
+        self.clock(T0_EPOCH + 301)
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 3, out)  # a required reviewer silent after the settle
         self.assertNotIn("Tracker move", out)
         self.assertFalse((self.review / "pr-review.json").exists())
         self.answer([PASSED], [by_primary()])
@@ -846,6 +849,150 @@ class RetryTests(PrReviewCase):
         code, out = self.flow("pr-review", "FX-2", "--wait")
         self.assertEqual(code, 0, out)
         self.assertEqual(self.sleeps(), [5])
+
+
+
+def stamp(epoch: float) -> str:
+    import datetime
+    return datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+
+
+# The silent-reviewer rows' pipeline: done at T, created earlier.
+T = T0_EPOCH + 3600
+SETTLE = 300
+SILENT = "run-delivery: silent reviewer: the pipeline is green at "
+
+
+def check(created: float, done: float | None, name: str = "pipe", state: str = "passed") -> dict:
+    found = {"name": name, "state": state, "at": stamp(created)}
+    if done is not None:
+        found["doneAt"] = stamp(done)
+    return found
+
+
+class SilentReviewerTests(PrReviewCase):
+    """V26-3347, on the injected clock: once every check passed, a required reviewer with no current review after the
+    settle stops the wait, exit 3, with a line of its own; the legacy shape never does."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.configure(LISTED)
+
+    def read(self, now: float, *argv: str) -> tuple[int, str]:
+        self.clock(now)
+        return self.flow("pr-review", "FX-2", *argv)
+
+    def silent(self, code: int, out: str) -> None:
+        self.assertEqual(code, 3, out)
+        self.assertIn(f"{SILENT}{self.head[:10]} but primary posted nothing since; re-run its step or ask the lead", out)
+
+    def test_the_legacy_shape_never_stops_this_way(self) -> None:
+        self.configure(LEGACY | {"waitSeconds": 120})
+        self.answer([check(T - 600, T)], [])
+        for now, argv in ((T + 301, ()), (T + 301, ("--wait",)), (T + 5000, ())):
+            with self.subTest(now=now - T, argv=argv):
+                code, out = self.read(now, *argv)
+                self.assertEqual(code, 2, out)
+                self.assertIn(f"no Pipeline Bot review after the pipeline for {self.head[:10]} yet", out)
+                self.assertNotIn("silent reviewer", out)
+        self.assertEqual(self.sleeps(), [30, 30, 30, 30])  # with --wait, the whole wait, to its deadline
+        with self.subTest("the same reviewer in a list"):
+            self.configure({"reviewers": [{"id": "review", "author": "Pipeline Bot"}]})
+            code, out = self.read(T + 301)
+            self.assertEqual(code, 3, out)
+            self.assertIn(f"{SILENT}{self.head[:10]} but review posted nothing since", out)
+
+    def test_the_settle_starts_when_the_checks_finished_and_falls_back_to_their_creation(self) -> None:
+        self.answer([check(T - 600, T)], [])
+        code, out = self.read(T + SETTLE + 1)
+        self.silent(code, out)
+        self.assertIn("codex absent", out)
+        self.assertEqual(self.sleeps(), [])
+        with self.subTest("without doneAt, the check's at"):
+            self.answer([check(T - 600, None)], [])
+            self.silent(*self.read(T - 600 + SETTLE + 1))
+        with self.subTest("with doneAt, the same read is still inside the settle"):
+            self.answer([check(T - 600, T)], [])
+            code, out = self.read(T - 600 + SETTLE + 1)
+            self.assertEqual(code, 2, out)
+            self.assertNotIn("silent reviewer", out)
+        with self.subTest("two checks, one without doneAt: only it falls back"):
+            self.answer([check(T - 900, T), check(T - 600, None, "lint")], [])
+            code, out = self.read(T + SETTLE - 1)
+            self.assertEqual(code, 2, out)
+            self.silent(*self.read(T + SETTLE + 1))
+
+    def test_with_several_checks_the_latest_done_starts_the_settle(self) -> None:
+        self.answer([check(T - 900, T), check(T - 600, T - 400, "lint")], [])
+        code, out = self.read(T + SETTLE - 1)
+        self.assertEqual(code, 2, out)
+        self.assertIn("no current review from primary, codex", out)
+        self.silent(*self.read(T + SETTLE + 1))
+
+    def test_the_boundary_belongs_to_the_settle(self) -> None:
+        self.answer([check(T - 600, T)], [])
+        for now in (T + SETTLE - 1, T + SETTLE):
+            with self.subTest(now=now - T):
+                code, out = self.read(now)
+                self.assertEqual(code, 2, out)
+                self.assertIn("no current review from primary, codex", out)
+        self.silent(*self.read(T + SETTLE + 1))
+
+    def test_a_pending_check_keeps_every_reviewer_pending_past_the_settle(self) -> None:
+        self.answer([check(T - 600, T), check(T - 600, None, "lint", "pending")], [])
+        code, out = self.read(T + SETTLE + 1000)
+        self.assertEqual(code, 2, out)
+        self.assertNotIn("silent reviewer", out)
+
+    def test_a_wait_stops_when_the_settle_passes(self) -> None:
+        self.configure({**LISTED, "waitSeconds": 1800})
+        self.answer([check(T - 600, T)], [])
+        code, out = self.read(T + 200, "--wait")
+        self.silent(code, out)
+        self.assertEqual(self.sleeps(), [30, 30, 30, 30])  # T+200 -> T+320, the first read past the settle
+        self.assertLess(self.now(), T + 1800)
+
+    def test_an_optional_reviewer_is_not_absent_as_soon_as_the_pipeline_goes_green(self) -> None:
+        """A Bitbucket status created long before it finished: the settle runs from its doneAt, not its creation."""
+        self.answer([check(T - 3600, T)], [by_primary(at=stamp(T + 10))])
+        code, out = self.read(T + 60)
+        self.assertEqual(code, 2, out)
+        self.assertIn("no current review from codex", out)
+
+    def test_the_review_gate_exits_3_on_a_silent_required_reviewer(self) -> None:
+        self.answer([check(T - 600, T)], [by_codex(at=stamp(T + 10))])
+        self.clock(T + SETTLE + 1)
+        code, _, err = self.gate()
+        self.assertEqual(code, 3, err)
+        self.assertEqual(len(err.strip().splitlines()), 1, err)
+        self.assertTrue(err.startswith(f"{SILENT}{self.head[:10]} but primary posted nothing since"), err)
+        with self.subTest("an optional one silent never blocks"):
+            self.answer([check(T - 600, T)], [by_primary(at=stamp(T + 10))])
+            code, out, err = self.gate()
+            self.assertEqual((code, err), (0, ""), out)
+
+    def test_the_lane_hands_off_blocked_on_it_and_the_lead_decides(self) -> None:
+        self.answer([check(T - 600, T)], [])
+        code, out = self.read(T + SETTLE + 1)
+        self.silent(code, out)
+        line = next(l for l in out.splitlines() if l.startswith(SILENT))[len("run-delivery: "):]
+        code, out = self.flow("handoff", "FX-2", "--pr", PR, "--blocked", f"pr-review={line}")
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"BLOCKED pr-review: {line}", out)
+        code, out = self.accept()
+        self.assertEqual(code, 1, out)
+        self.assertIn("the lane blocked 'pr-review'", out)
+        self.assertNotIn("recorded no PR review", out)
+        code, out = self.flow("lead-accept", "FX-2", "--accept-blocked", "pr-review", cwd=self.fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("accepted blocked 'pr-review'", self.decisions())
+
+    def test_the_brief_tells_the_lane_to_escalate_and_not_wait_again(self) -> None:
+        self.assertEqual(self.fx.flow("lead-brief", cwd=self.fx.main)[0], 0)
+        brief = " ".join((self.fx.main / "docs/lane-brief.md").read_text().split())
+        self.assertIn("exits 3 with a `silent reviewer` line", brief)
+        self.assertIn("--blocked pr-review=", brief)
+        self.assertIn("don't run the wait again", brief)
 
 
 if __name__ == "__main__":
