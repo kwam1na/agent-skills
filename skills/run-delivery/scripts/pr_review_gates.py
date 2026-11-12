@@ -121,8 +121,10 @@ def gate(reviewer: dict, review: dict, found: dict, head: str) -> dict | None:
 
 
 def head_report(reports: object, external_id: str) -> dict | None:
-    """The report with this external id among those at the head, the latest by `at` when the forge lists it twice."""
-    mine = [r for r in reports or [] if isinstance(r, dict) and r.get("id") == external_id]
+    """The report with this external id among those at the head, the latest by `at` when the forge lists it twice.
+    Anything but a list is no report here: `reports_refusal` names it."""
+    mine = [r for r in (reports if isinstance(reports, list) else [])
+            if isinstance(r, dict) and r.get("id") == external_id]
     return max(mine, key=lambda r: str(r.get("at") or ""), default=None)
 
 

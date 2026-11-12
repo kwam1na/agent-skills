@@ -272,6 +272,11 @@ class ReportReadingTests(unittest.TestCase):
         read = self.read([report("PASSED", at=T_EARLIER)], [comment(T_COMMENT)], checks("passed", "passed"))
         self.assertEqual(read["state"], "current")
 
+    def test_reports_that_are_not_a_list_are_no_report(self) -> None:
+        for reports in (3, True, "x", {"id": "primary-review"}):
+            with self.subTest(reports=reports):
+                self.assertIsNone(gates.head_report(reports, "primary-review"))
+
     def test_the_report_listed_twice_is_read_at_its_latest(self) -> None:
         reports = [report("PASSED", at=T_CHECK1), report("FAILED", at=T_REPORT)]
         self.assertEqual(self.read(reports, [comment(T_COMMENT)], checks("passed"))["state"], "silent")
@@ -717,6 +722,15 @@ class ReportEndToEndTests(PrReviewCase):
         code, out = self.flow("pr-review", "FX-2")
         self.assertEqual(code, 2, out)
         self.assertIn("no current review from primary", out)
+        # Not a list at all, as a scalar: one line refusing it, never a traceback.
+        for reports in (3, True):
+            for reader in ("pr-review", "gate"):
+                with self.subTest(reports=reports, reader=reader):
+                    self.answer([PASSED], [by_primary()], reports=reports)
+                    code, out = self.flow("pr-review", "FX-2") if reader == "pr-review" else self.gate()[::2]
+                    self.assertEqual(code, 2, out)
+                    self.assertIn("returns `reports` that are not a list of objects", out)
+                    self.assertNotIn("Traceback", out)
 
     def test_an_approval_gate_with_a_report_reads_no_approvals_from_the_forge(self) -> None:
         self.configure({"settleSeconds": 300, "reviewers": [REPORTING | {"gate": "approval"}]})
