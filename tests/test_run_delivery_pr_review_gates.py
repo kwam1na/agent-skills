@@ -254,6 +254,10 @@ class ReportReadingTests(unittest.TestCase):
         self.assertIn("PR reviewer primary's report primary-review is PASSED, but names a review that wasn't posted",
                       refused["refusal"])
 
+    def test_a_comment_at_exactly_the_earliest_check_counts(self) -> None:
+        read = self.read([report("PASSED")], [comment(T_CHECK1)], checks("passed", "passed"))
+        self.assertEqual(read["state"], "current")
+
     def test_a_comment_posted_before_the_report_turned_passed_counts(self) -> None:
         read = self.read([report("PASSED", at=T_REPORT)], [comment(T_COMMENT)], checks("passed"))
         self.assertEqual(read["state"], "current")
@@ -265,6 +269,26 @@ class ReportReadingTests(unittest.TestCase):
     def test_the_report_listed_twice_is_read_at_its_latest(self) -> None:
         reports = [report("PASSED", at=T_CHECK1), report("FAILED", at=T_REPORT)]
         self.assertEqual(self.read(reports, [comment(T_COMMENT)], checks("passed"))["state"], "silent")
+
+
+class SilentReasonTests(unittest.TestCase):
+    """The silent refusal's reason: a report's own, or none, so the refusal keeps its words for every other reviewer."""
+
+    def test_allow_a_reviewer_without_a_report_keeps_the_silent_text(self) -> None:
+        read = {"reviewers": {"primary": {"state": "silent", "review": None}, "codex": {"state": "absent"}}}
+        self.assertIsNone(gates.silent_reasons(read))
+
+    def test_deny_an_errored_report_gives_its_reason_and_names_a_quiet_one_beside_it(self) -> None:
+        errored = {"state": "silent", "why": "PR reviewer primary errored: its report primary-review is FAILED"}
+        self.assertEqual(gates.silent_reasons({"reviewers": {"primary": errored}}), errored["why"])
+        both = {"reviewers": {"primary": errored, "codex": {"state": "silent", "review": None}}}
+        self.assertEqual(gates.silent_reasons(both),
+                         errored["why"] + "; codex posted nothing since the pipeline went green")
+
+    def test_only_a_pending_entry_is_unread_when_stopped(self) -> None:
+        self.assertTrue(gates.unread_when_stopped({"state": "pending", "required": True}))
+        for state in ("current", "absent", "silent"):
+            self.assertFalse(gates.unread_when_stopped({"state": state}))
 
 
 class ReportVerdictTests(unittest.TestCase):
@@ -558,7 +582,7 @@ class ReportEndToEndTests(PrReviewCase):
         self.assertEqual(code, 2, out)
         self.assertIn(f"the pipeline failed at {self.head[:10]}", out)
 
-    def test_a_pending_report_waits_until_the_settle_then_is_silent(self) -> None:
+    def test_deny_a_report_still_pending_after_the_settle_is_silent_with_its_own_reason(self) -> None:
         self.configure({"settleSeconds": 300, "reviewers": [REPORTING]})
         self.answer([PASSED], [by_primary()], reports=[insight("PENDING")])
         code, out = self.flow("pr-review", "FX-2")
@@ -571,7 +595,7 @@ class ReportEndToEndTests(PrReviewCase):
                       out)
         self.assertEqual(self.record()["reviewers"]["primary"]["state"], "silent")
 
-    def test_a_failed_report_stops_the_wait_at_once_and_an_optional_one_is_absent(self) -> None:
+    def test_deny_a_failed_report_stops_a_required_reviewers_wait_at_once_while_a_check_is_pending(self) -> None:
         self.configure({"settleSeconds": 300, "waitSeconds": 600, "reviewers": [REPORTING]})
         self.answer([PASSED, {**LINT, "state": "pending"}], [], reports=[insight("FAILED")])
         code, out = self.flow("pr-review", "FX-2", "--wait")
@@ -583,14 +607,49 @@ class ReportEndToEndTests(PrReviewCase):
         code, _, err = self.gate("--wait")
         self.assertEqual(code, 3, err)
         self.assertIn("PR reviewer primary errored", err)
-        with self.subTest("optional"):
-            self.configure({"settleSeconds": 300, "reviewers": [REPORTING | {"report": "other"}, REPORTING_CODEX]})
-            self.answer([PASSED], [by_primary()], reports=[insight("PASSED", "other"), insight("FAILED", "codex-review")])
-            code, out = self.flow("pr-review", "FX-2")
-            self.assertEqual(code, 0, out)
-            self.assertEqual(self.record()["reviewers"]["codex"],
-                             {"state": "absent", "required": False,
-                              "report": {"id": "codex-review", "result": "FAILED", "at": "2026-01-01T00:02:00"}})
+
+    def test_allow_an_optional_reviewer_with_a_failed_report_is_absent(self) -> None:
+        self.configure({"settleSeconds": 300, "reviewers": [REPORTING | {"report": "other"}, REPORTING_CODEX]})
+        self.answer([PASSED], [by_primary()], reports=[insight("PASSED", "other"), insight("FAILED", "codex-review")])
+        code, out = self.flow("pr-review", "FX-2")
+        self.assertEqual(code, 0, out)
+        self.assertIn("## codex (optional): absent", out)
+        self.assertEqual(self.record()["reviewers"]["codex"],
+                         {"state": "absent", "required": False,
+                          "report": {"id": "codex-review", "result": "FAILED", "at": "2026-01-01T00:02:00"}})
+
+    def test_allow_an_optional_failed_report_does_not_end_the_wait_while_a_check_is_pending(self) -> None:
+        """Only a silent required reviewer ends the wait early; an absent optional one never does."""
+        self.configure({"settleSeconds": 300, "waitSeconds": 120, "reviewers": [REPORTING, REPORTING_CODEX]})
+        self.answer([PASSED, {**LINT, "state": "pending"}], [by_primary()],
+                    reports=[insight("PASSED"), insight("FAILED", "codex-review")])
+        code, out = self.flow("pr-review", "FX-2", "--wait")
+        self.assertEqual(code, 2, out)
+        self.assertNotEqual(self.sleeps(), [])
+        self.assertIn("lint pending", out)
+        self.clock(T0_EPOCH + 60)
+        code, _, err = self.gate("--wait")
+        self.assertEqual(code, 2, err)
+        self.assertNotEqual(self.sleeps(), [])
+        self.assertIn("lint pending", err)
+
+    def test_a_blocked_hand_off_on_an_errored_report_is_the_leads_to_accept_with_another_reviewer_unread(self) -> None:
+        """A FAILED report stops the read before another required reviewer is in: that one is recorded pending, and
+        the lead accepts the block."""
+        self.configure({"settleSeconds": 300, "reviewers": [REPORTING, {"id": "codex", "account": "{u-review}"}]})
+        self.answer([PASSED, {**LINT, "state": "pending"}], [], reports=[insight("FAILED")])
+        code, out = self.flow("pr-review", "FX-2", "--wait")
+        self.assertEqual(code, 3, out)
+        self.assertEqual(self.record()["reviewers"]["codex"], {"state": "pending", "required": True})
+        line = next(l for l in out.splitlines() if l.startswith("run-delivery: silent reviewer"))[len("run-delivery: "):]
+        self.assertIn("PR reviewer primary errored", line)
+        code, out = self.flow("handoff", "FX-2", "--pr", PR, "--blocked", f"pr-review={line}")
+        self.assertEqual(code, 0, out)
+        code, out = self.accept()
+        self.assertEqual(code, 1, out)
+        self.assertIn("the lane blocked 'pr-review'", out)
+        code, out = self.flow("lead-accept", "FX-2", "--accept-blocked", "pr-review", cwd=self.fx.main)
+        self.assertEqual(code, 0, out)
 
     def test_a_passed_report_whose_comment_predates_the_pipeline_waits_then_refuses(self) -> None:
         self.configure({"settleSeconds": 300, "reviewers": [REPORTING]})

@@ -278,6 +278,25 @@ def stops_at_once(reviewers: dict[str, dict]) -> bool:
     return any(r.get("state") == "silent" for r in reviewers.values())
 
 
+def silent_reasons(read: dict) -> str | None:
+    """The silent refusal's reason when a silent reviewer has one of its own (its report FAILED, or still PENDING
+    after the settle), else None and the refusal says the reviewer posted nothing after the pipeline went green. A
+    reviewer silent without a reason of its own beside one with a reason is named too: that only happens after the
+    settle, when the pipeline is green."""
+    silent = {rid: r for rid, r in read.get("reviewers", {}).items() if r.get("state") == "silent"}
+    reasons = [r["why"] for r in silent.values() if r.get("why")]
+    if not reasons:
+        return None
+    quiet = [rid for rid, r in silent.items() if not r.get("why")]
+    return "; ".join(reasons + ([f"{', '.join(quiet)} posted nothing since the pipeline went green"] if quiet else []))
+
+
+def unread_when_stopped(entry: dict) -> bool:
+    """Whether a recorded reviewer is `pending`: not yet in when another's errored report stopped the read at once.
+    On a hand-off blocked on that, acceptance leaves it to the lead's decision rather than refusing it."""
+    return entry.get("state") == "pending"
+
+
 def recorded_report(state: dict) -> dict | None:
     """The record's `report` for a reviewer read from its report: its id, result and time at the head."""
     report = state.get("report")
