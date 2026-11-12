@@ -118,7 +118,7 @@
         },
         {
           "id": "v26-3347-2",
-          "text": "The stop is a distinct refusal the lane brief tells the lane to escalate (blocked, to the lead), not to retry the wait."
+          "text": "The stop is a distinct refusal the lane brief tells the lane to escalate (blocked, to the lead), not to retry the wait. Before it exits 3, pr-review writes pr-review.json with a silent entry for each silent required reviewer (amending Decision 7), so a hand-off blocked on it still triages every current review with --pr-review-triage, and lead-accept re-checks those as for any hand-off."
         },
         {
           "id": "v26-3347-3",
