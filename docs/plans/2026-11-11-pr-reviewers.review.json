@@ -1,0 +1,137 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "writtenBy": "run-delivery plan-review",
+  "plan": "docs/plans/2026-11-11-pr-reviewers.md",
+  "planSha256": "f1cdf564b6ad27587eb2903deb7715c3f84b8d734d4a1477fa5940d9de879b46",
+  "planCommit": "55794ce0201e898e8361087a5cb4d6d250a4c34b",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": [
+    "lens.outcome-correctness",
+    "lens.adversarial-testing"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "candidate": "f8328fb5b7816e106d0abe9bc25e4eb68f91012e",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-12T00:35:37.382945Z",
+      "finishedAt": "2026-11-12T00:40:25.876967Z",
+      "open": [
+        "outcome-correctness-r1-1",
+        "outcome-correctness-r1-2",
+        "outcome-correctness-r1-3",
+        "outcome-correctness-r1-4",
+        "outcome-correctness-r1-5",
+        "outcome-correctness-r1-6",
+        "outcome-correctness-r1-7",
+        "adversarial-testing-r1-1",
+        "adversarial-testing-r1-2",
+        "adversarial-testing-r1-3",
+        "adversarial-testing-r1-4",
+        "adversarial-testing-r1-5",
+        "adversarial-testing-r1-6",
+        "adversarial-testing-r1-7",
+        "adversarial-testing-r1-8",
+        "adversarial-testing-r1-9",
+        "adversarial-testing-r1-10",
+        "adversarial-testing-r1-11"
+      ]
+    },
+    {
+      "round": 2,
+      "candidate": "910ab63d7235a2499aae44d0c0444f64acae88ea",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-12T00:42:48.958680Z",
+      "finishedAt": "2026-11-12T00:44:37.057179Z",
+      "open": [
+        "outcome-correctness-r1-4",
+        "outcome-correctness-r2-1",
+        "adversarial-testing-r2-1",
+        "adversarial-testing-r2-2"
+      ]
+    },
+    {
+      "round": 3,
+      "candidate": "9d0170ce1a979604932c8707bc5df97c2266b9e0",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-12T00:45:25.660718Z",
+      "finishedAt": "2026-11-12T00:48:20.873739Z",
+      "open": [
+        "outcome-correctness-r3-1"
+      ]
+    },
+    {
+      "round": 4,
+      "candidate": "55794ce0201e898e8361087a5cb4d6d250a4c34b",
+      "outcome": "aligned",
+      "startedAt": "2026-11-12T00:48:35.890191Z",
+      "finishedAt": "2026-11-12T00:49:08.786686Z",
+      "open": []
+    }
+  ],
+  "reviews": [
+    {
+      "lens": "lens.outcome-correctness",
+      "round": 4,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.outcome-correctness",
+        "subjectRef": "pr-reviewers.plan",
+        "candidateRef": "55794ce0201e898e8361087a5cb4d6d250a4c34b",
+        "round": 4,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [
+          {
+            "id": "outcome-correctness-r3-1",
+            "state": "fixed",
+            "resolution": "Adopted as written. Decision 12 now says that until a module's entry merges, `handoff --checks` and `lead-accept --checks` can't name it. The lane names the module and its run in its hand-off evidence, and the lead accepts the story that creates the module (V26-3345 and V26-3346) with `--full-suite`, the binding's fallback, so the queue runs the module before the merge. Checked against the code: lead-accept allows `--full-suite` when `selection.lead` is true and no provider is named (run_delivery.py:5539-5547). The candidate's binding has `selection.lead: true` and `provider: null`, and its fallback is `full-suite`, which runs the whole suite through run-tests.py."
+          }
+        ],
+        "evidence": [
+          "Reviewed tree 6bd5f11c31aead20061b64dac09b0e516284633f (HEAD 55794ce0201e898e8361087a5cb4d6d250a4c34b) in /Users/kwamina/code/agent-skills/.orchestration/plan-review/pr-reviewers/checkouts/lens.outcome-correctness. The identity checks passed at the start and again at the end: `git rev-parse HEAD^{tree}` matched and `git status --porcelain` was empty both times. No probes or mutants were made, and no file was changed.",
+          "Delta reviewed: `git diff 9d0170ce1a979604932c8707bc5df97c2266b9e0..55794ce0201e898e8361087a5cb4d6d250a4c34b` changes only docs/plans/2026-11-11-pr-reviewers.md: Decision 12's catalogue paragraph, a mixed-`doneAt` sentence in V26-3347's 'The start' row, and V26-3348's first 'Report results' row.",
+          "Carried finding re-checked: outcome-correctness-r3-1 is fixed, as recorded in resolvedFindings.",
+          "The rest of the delta raised no finding. The new V26-3347 sentence, where only the check without `doneAt` falls back to `at`, matches Decision 4's per-check fallback. The rewritten V26-3348 row, a comment posted between the earliest and the latest check's `at` counting as current, matches Decision 9's bound at the earliest check's `at`, and it replaces the row that contradicted that bound.",
+          "Model class: Claude Opus 5.5 (claude-opus-5-5), running as a native subagent. The host exposes no progress or permission signals to it, and that limitation is recorded here.",
+          "Realization basis: host-convention.",
+          "Checks: none run. The brief scopes no checks for a plan review, and no test file is in scope.",
+          "Not filed: nothing this round.",
+          "Approval conditions: none outstanding. This round raises no finding, and the one carried finding is fixed as its approval condition asked."
+        ]
+      },
+      "resultSha256": "6915195d3e6e83ec96e20ebc2c2ed10d8e2ce3b9d7047896db14c37f980f910b"
+    },
+    {
+      "lens": "lens.adversarial-testing",
+      "round": 4,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.adversarial-testing",
+        "subjectRef": "pr-reviewers.plan",
+        "candidateRef": "55794ce0201e898e8361087a5cb4d6d250a4c34b",
+        "round": 4,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [],
+        "evidence": [
+          "Reviewed tree SHA 6bd5f11c31aead20061b64dac09b0e516284633f in /Users/kwamina/code/agent-skills/.orchestration/plan-review/pr-reviewers/checkouts/lens.adversarial-testing, with HEAD at 55794ce0201e898e8361087a5cb4d6d250a4c34b. Identity checks passed before reading and again after the review: `git rev-parse HEAD^{tree}` equalled that SHA both times, and `git status --porcelain` was empty both times.",
+          "Carried findings: none. Plan-review reduce closed adversarial-testing-r2-1 and adversarial-testing-r2-2 after round 3, so no finding is open going into round 4 and resolvedFindings is empty. As a re-check, the rows that fixed them are unchanged in this delta: V26-3347's Several checks row and V26-3345's two-comment Matching row.",
+          "I derived the delta with `git diff 9d0170ce1a979604932c8707bc5df97c2266b9e0..55794ce0201e898e8361087a5cb4d6d250a4c34b`. It touches docs/plans/2026-11-11-pr-reviewers.md only, with 6 insertions and 4 deletions in three places.",
+          "Delta change 1, the Decision 12 catalogue. Until a new module's catalogue entry merges, `handoff --checks` and `lead-accept --checks` can't name it. The lane names the module and its run in its hand-off evidence. The lead accepts V26-3345 and V26-3346 with `--full-suite`, so the queue runs the new module before the merge. This closes the round-2 P2 note: a red row in a new module can no longer reach `integrate/pr-reviewers` unrun by the queue.",
+          "Delta change 2, the V26-3347 start row. A two-check case now has one check without `doneAt`, and only that check falls back to its `at`. This kills the round-3 P3 mutation, which fell back to `at` for every check whenever one lacked `doneAt`.",
+          "Delta change 3, the V26-3348 report-results row. It now reads 'two checks, all passed, and a PASSED report with a comment posted between the earliest check's `at` and the latest's: current'. This adopts the round-3 P2 note, so the row no longer contradicts Decision 9's earliest-check anchor. It kills a mutation that anchors the report text at the latest check's `at`.",
+          "No new finding: each changed line closes a gap this lens noted earlier, and no surviving mutation is introduced. Scope: the plan is the whole subject. The brief names no sensor commands or test files, so no tests ran and no mutant was planted. The mutations were reasoned only against the delta's changed plan lines and the rows that pin them.",
+          "Model class: Claude Opus 5.5 (claude-opus-5-5), run as a native subagent. Realization basis: host-convention. The host exposes no progress or permission signals to this lens. activityId review-pr-reviewers.plan, attemptId 1, roundId pr-reviewers.plan-r4, round 4, no run ID.",
+          "Approval conditions: this round raises no finding, so no approval condition is outstanding."
+        ]
+      },
+      "resultSha256": "078c9c7b2b508c704274a1e34986ea2fc2e2de1c49c5cea2353d4d7b7d17f7de"
+    }
+  ],
+  "residualRisks": [
+    "4 review rounds; findings open after each round: 18, 4, 1, 0."
+  ]
+}
