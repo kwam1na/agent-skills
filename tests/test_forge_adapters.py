@@ -505,7 +505,8 @@ class BitbucketReviewsTests(unittest.TestCase):
                                {"name": "lint", "state": "INPROGRESS", "created_on": "2026-01-01T00:00:11+00:00",
                                 "updated_on": "2026-01-01T00:01:00+00:00"},
                                {"name": "test", "state": "FAILED", "created_on": "2026-01-01T00:00:12+00:00",
-                                "updated_on": "2026-01-01T00:02:00+00:00"}]}
+                                "updated_on": "2026-01-01T00:02:00+00:00"},
+                               {"name": "old", "state": "SUCCESSFUL", "created_on": "2026-01-01T00:00:13+00:00"}]}
         elif request.full_url == f"{self.API}/pullrequests/7/comments?pagelen=100":
             body = {"values": [{"user": {"display_name": "Review Bot", "uuid": "{u-1}"}, "updated_on": "2026-01-01T00:00:30+00:00",
                                 "content": {"raw": "fine"}}]}
@@ -537,7 +538,8 @@ class BitbucketReviewsTests(unittest.TestCase):
         self.assertEqual(self.reviews()["checks"], [
             {"name": "pipe", "state": "passed", "at": "2026-01-01T00:00:10+00:00", "doneAt": "2026-01-01T00:09:10+00:00"},
             {"name": "lint", "state": "pending", "at": "2026-01-01T00:00:11+00:00"},
-            {"name": "test", "state": "failed", "at": "2026-01-01T00:00:12+00:00", "doneAt": "2026-01-01T00:02:00+00:00"}])
+            {"name": "test", "state": "failed", "at": "2026-01-01T00:00:12+00:00", "doneAt": "2026-01-01T00:02:00+00:00"},
+            {"name": "old", "state": "passed", "at": "2026-01-01T00:00:13+00:00"}])  # no update time: no doneAt
 
     def test_each_comment_carries_its_authors_uuid_as_its_account(self) -> None:
         self.assertEqual(self.reviews()["reviews"], [{"author": "Review Bot", "account": "{u-1}",

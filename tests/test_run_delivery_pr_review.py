@@ -988,6 +988,32 @@ class SilentReviewerTests(PrReviewCase):
         self.assertEqual(code, 0, out)
         self.assertIn("accepted blocked 'pr-review'", self.decisions())
 
+    def test_a_block_on_another_label_still_needs_the_pr_review(self) -> None:
+        """Only the `pr-review` label stands in for the PR review, at hand-off and at acceptance."""
+        self.answer([check(T - 600, T)], [])
+        self.clock(T + SETTLE + 1)  # a silent reviewer, so only the label decides
+        code, out = self.flow("handoff", "FX-2", "--pr", PR, "--blocked", "other=reason")
+        self.assertEqual(code, 2, out)
+        self.assertIn(f"no PR review recorded at {self.head[:10]}", out)
+        self.clock(T + 60)
+        self.answer([check(T - 600, T)], [by_primary(at=stamp(T + 10)), by_codex(at=stamp(T + 10))])
+        self.assertEqual(self.flow("pr-review", "FX-2")[0], 0)
+        code, out = self.flow("handoff", "FX-2", "--pr", PR, "--blocked", "other=reason",
+                              "--pr-review-triage", "primary=fixed", "--pr-review-triage", "codex=fine")
+        self.assertEqual(code, 0, out)
+        self.answer([check(T - 600, T)], [by_primary(at=stamp(T + 20)), by_codex(at=stamp(T + 10))])
+        code, out = self.flow("lead-accept", "FX-2", "--accept-blocked", "other", cwd=self.fx.main)
+        self.assertEqual(code, 1, out)
+        self.assertIn("primary's PR review changed after the lane read it", out)
+
+    def test_several_silent_reviewers_are_each_named(self) -> None:
+        second = {"id": "second", "author": "Second Bot", "signature": "<!-- second -->"}
+        self.configure({**LISTED, "reviewers": [PRIMARY, CODEX, second]})
+        self.answer([check(T - 600, T)], [])
+        code, out = self.read(T + SETTLE + 1)
+        self.assertEqual(code, 3, out)
+        self.assertIn(f"{SILENT}{self.head[:10]} but primary, second posted nothing since", out)
+
     def test_a_block_on_the_pr_review_needs_a_silent_reviewer(self) -> None:
         self.answer([check(T - 600, T)], [])
         self.clock(T + 60)  # inside the settle: nobody is silent
