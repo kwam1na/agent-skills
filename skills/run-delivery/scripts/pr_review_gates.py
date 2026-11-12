@@ -161,7 +161,7 @@ def forge_refusal(reviewers: list[dict], adapter: object) -> str | None:
 
 def report_reading(reviewer: dict, mine: list[dict], found: dict, checks: list[dict], settled: bool,
                    when: Callable[[object], float]) -> dict:
-    """Decision 9: one reviewer with `report`, classified from its report at the head. `mine` is the reviewer's
+    """One reviewer with `report`, classified from its report at the head. `mine` is the reviewer's
     matching comments, `checks` the head's (none failed: the caller refuses that first), `settled` whether the settle
     has passed, and `when` the caller's parser of the forge's times. Returns {state, review, report, why}, state one
     of current, pending, silent or absent, or {refusal} for a PASSED report whose review was never posted."""

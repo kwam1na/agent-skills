@@ -169,7 +169,7 @@ class BriefTextTests(unittest.TestCase):
 
 
 
-# Decision 9: a reviewer with `report` read from its Code Insights report at the head.
+# A reviewer with `report`, read from its Code Insights report at the head.
 T_CHECK1, T_COMMENT, T_CHECK2, T_REPORT = ("2026-11-11T10:00:00+00:00", "2026-11-11T10:02:00+00:00",
                                            "2026-11-11T10:05:00+00:00", "2026-11-11T10:06:00+00:00")
 T_EARLIER = "2026-11-11T09:00:00+00:00"
