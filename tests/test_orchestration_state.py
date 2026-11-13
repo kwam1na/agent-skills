@@ -5967,6 +5967,29 @@ class CarryReviewTests(unittest.TestCase):
         self.assertIn("no captured review", self.refused(lambda: state_tool.carry_review(
             self.directory, subject="work-c", from_head=HEAD_B, to_head=HEAD_C, reason="r")))
 
+    def test_base_merge_handoff_requires_authorization_for_its_review_and_each_parent(self) -> None:
+        # The earlier queued capture is not eligible until its rounds are
+        # journaled and the exact reviewed head is captured after them.
+        review = {"round": 2, "startedAt": state_tool.now(), "finishedAt": state_tool.now(),
+                  "verdicts": {e["lens"]: "approve" for e in review_round(2, HEAD_B, resolved=True)["entries"]},
+                  "findings": {level: 0 for level in ("P0", "P1", "P2", "P3")}}
+        before = (self.directory / state_tool.STATE_FILE).read_bytes()
+        carry = {"reviewed": HEAD_B, "baseCommits": [HEAD_A, HEAD_C]}
+        def handoff():
+            return state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head=HEAD_C,
+                                      change_request="cr", rounds=2, base_merge=carry)
+        self.assertIn("exact reviewed head", self.refused(handoff))
+        self.assertEqual((self.directory / state_tool.STATE_FILE).read_bytes(), before)
+        # A lane cannot write the authorization through the journal CLI.
+        code, result = run_tool(self.directory, "journal", "--writer", "lane", "--kind", "decision.recorded",
+                                "--subject", "work-a", "--lane", "lane-1", "--summary", "fixture",
+                                "--base-merge-authorization", json.dumps(carry))
+        self.assertEqual((code, result["code"]), (1, "writer_not_owned"))
+        self.assertEqual((self.directory / state_tool.STATE_FILE).read_bytes(), before)
+        state_tool.append_journal(self.directory, kind="review.round", subject="work-a", lane="lane-1",
+                                  summary="Latest round", review=review)
+        self.assertIn("exact reviewed head", self.refused(handoff))
+
     def test_only_the_lead_carries_and_only_a_decision_holds_a_carry(self) -> None:
         arguments = ("carry-review", "--subject", "work-a", "--from", HEAD_B, "--to", HEAD_C, "--reason", "fixtures only")
         code, refused = run_tool(self.directory, *arguments, "--writer", "lane")

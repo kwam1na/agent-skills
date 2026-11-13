@@ -35,9 +35,7 @@ in this order of precedence:
 **Where a lane reads them.** In the lead's checkout (on a base the binding serves), these files are read from the working
 tree. In a lane's checkout they are read from the delivery base on the remote (`<remote>/<base>:<path>`): `run-delivery.json`,
 the binding, `delivery-views.json`, the delivery file, the plan and the brief notes. So the lead's pushed changes
-reach every lane at once, and a lane never merges the base, which would move its reviewed head, just to pick up a
-tooling change. The lane's base is `RUN_DELIVERY_BASE`, or the base its checkout recorded when it was started, or else
-the binding's `base.ref`; a base the binding doesn't serve is refused. `RUN_DELIVERY_LOCAL=1` reads the lane's working
+reach every lane at once without a merge into its story branch. The lane's base is `RUN_DELIVERY_BASE`, the base its checkout recorded when it started, or the binding's `base.ref`; a base the binding doesn't serve is refused. `RUN_DELIVERY_LOCAL=1` reads the lane's working
 tree instead (for working on the tooling itself); `RUN_DELIVERY_CONFIG` names an explicit configuration file.
 
 **Earlier names.** A repository set up under the tool's earlier name keeps working: `.agents/flow.json` is read when

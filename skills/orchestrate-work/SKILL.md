@@ -18,7 +18,7 @@ base of its merged tree and refuses changes outside those spans before publishin
 Deliver a decomposed epic: one lead session plans and assigns tickets to lane
 sessions, owns every merge, shared resource and release, and keeps the
 delivery's state current. Each lane delivers one ticket at a time through the
-existing delivery workflow and never merges.
+existing delivery workflow. The lead owns merges into the delivery base.
 
 Use this workflow when the requested outcome is an epic: several tickets that
 share a plan, a base branch and a finish line, delivered in parallel. For one
@@ -59,7 +59,7 @@ file that is malformed or can't be read runs `fullHealth` and holds the close on
   tracker items to their final state.
 - **Lane.** A session of its own, always: never a subagent, and never the lead
   working in its own session. A lane delivers one assigned ticket at a time,
-  and never merges, releases, or holds a lease it was not granted.
+  and leaves merges into the delivery base and releases to the lead. It holds only granted leases.
 - **State writers.** The lead writes every state field except the
   runner-owned and lane-owned ones. The runner writes only its result
   documents, journal entries, and its own fields: `queue[i].stage`,
@@ -731,3 +731,8 @@ P1 open, is refused. Each later head needs its own carry, from the head the last
 carry reached, and a later review round or capture ends a carry. Like a capture,
 a carry is display and acceptance evidence only: it creates no run, is no review
 round in the stats, and is no product admission evidence.
+
+A lead-directed base merge before hand-off uses a story-bound authorization. The
+`candidate.handed` entry can then carry the original review digest, its reviewed
+and handed heads, and the authorized base commits. The original review retains
+its candidate identity.

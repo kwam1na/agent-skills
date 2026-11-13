@@ -28,6 +28,15 @@ Assignment output names mapped spans in plan files. Review preparation and accep
 committed diff against its merge base. Queue sync checks the merged tree against the current base before
 publishing it.
 
+A lane can keep an aligned review when the lead directs it to merge the delivery base before hand-off.
+From the lead checkout, run `lead-authorize-base-merge KEY --reviewed HEAD --base COMMIT` before the merge.
+Repeat `--base` to authorize multiple exact base commits. Give the lane the printed merge commands, which bind
+the authorization to the resulting commits through their commit-message trailer. The lane runs them and reruns
+its gates and any required in-app and PR checks at its new head. Hand-off carries the original review when
+each first-parent commit since review is an authorized two-parent base merge and both the story delta and
+lane-owned content stayed unchanged. The hand-off records the reviewed and handed heads and the base commits.
+Use `lead-carry-review` for its existing queued-work flow.
+
 A legacy record reads assignments and ownership from the delivery file until the lead runs `lead-own --seed`.
 Lanes may share declared regenerable files with listing guards for digest refreshes. Listing changes still require
 an explicit ownership decision, and the queue applies its conflict and listing guards. The close-out archive
@@ -92,6 +101,7 @@ the command reference.
 | Lead | `lead-own --lane L (--grant PATTERN \| --move PATTERN --from L)` or `lead-own --seed` | Grants or transfers a whole-file claim in the record. Use the region and revoke forms under Lane ownership to share a text file or remove a claim. `--seed` upgrades a legacy record using the delivery file. |
 | Lead | `lead-assign <key...> --lane L --title T [--note N]` | Reassigns planned work in the record and retains the handing lane for any existing candidate; prints the assignment message. First it warns, without refusing, of the files outside the lane that `lead-accept` would refuse: those the story's plan section names, and those that have often changed with them (in at least 3 and a quarter of a named file's recent changes), with each one's owner, so the lead can move them before the lane starts. |
 | Lead | `lead-accept <key> [--checks IDS \| --full-suite] [--reason T] [--accept-blocked LABEL]... [--accept-restarts]` or `lead-accept --requeue <key>` | On a no-change hand-off, checks that the base still holds the head its evidence ran at and that the evidence names every one of the story's criteria (a story with none is refused, naming the fix), then settles it: never queued, counted by the close and the finish lines, no base commit. Otherwise verifies a hand-off's claims (head, PR, rounds, evidence, owned files, gates, in-app), makes the lead decide every blocked item and restart, marks the draft ready under the `readyPullRequests` grant, then accepts and journals the decisions. Under a binding with `selection.lead`, the lead chooses the candidate's checks as it accepts: `--checks` records them through the state tool's `select` at the handed head, refused as `select` refuses, and put back as it was when the acceptance then fails; `--full-suite` accepts it on the binding's `fallback`, journalled as the lead's decision, clearing a selection still standing at the head. Under a binding that names a provider, a candidate with no selection runs the provider's answer, so `--full-suite` is refused there and the lead chooses with `--checks`. With neither, it is refused, records nothing, and prints a proposed `--checks`: the catalogue ids of the test modules the diff changes and the checks the hand-off named. A binding without `selection.lead` refuses both, and accepts as before. `--requeue` puts a stopped candidate the lead has resolved back in the queue at its handed head, with no new hand-off. On work already merged outside the queue it checks the merged PR instead of the open one, can't check owned files, marks nothing ready, and records the decisions once; work merged with no hand-off is refused, for the lead to journal a decision instead. |
+| Lead | `lead-authorize-base-merge <key> --reviewed HEAD --base COMMIT [--base COMMIT]...` | Records the exact base commits a lane can merge from its latest aligned review. |
 | Lead | `lead-carry-review <key> --from HEAD --to HEAD --reason T` | Prints the files changed from the head the captured review covers to the queued head, then carries the review there through the state tool's `carry-review`; its refusal is passed through and nothing is written. |
 | Lead | `lead-cleanup [key...]` | After a story merges: keeps its lane evidence beside the record, then removes its checkout and local branch, and its remote branch only if `run-delivery.json` allows it and its PR is closed. Removes nothing unless the checkout is clean and every tip is on the base, or, for a story merged by squash, its recorded PR is merged and every tip is at or below the PR's head; the forge is asked only then. With no keys, sweeps every story and skips the unmerged ones. |
 | Lead | `lead-reconcile` | One sweep: takes the binding's forge and tracker snapshots and reconciles the record with them, so a story's stop leaves "Not started" once its ticket starts or its draft PR opens, and reaches "In review" if the PR is opened for review. The supervisor runs one every pass. |
@@ -175,15 +185,15 @@ offers less otherwise, the workflow takes the path on the right:
 ## Where lanes read the delivery
 
 A lane reads the delivery's settings, plan and brief notes from the delivery base on the remote, not from its
-checkout. The lead pushes a change once, and every lane sees it without merging the base, which would move the lane's
-reviewed head and cost a review round. The brief tells lanes never to merge the base; the merge queue syncs at merge time.
+checkout. Every lane sees lead changes as soon as they reach the remote base. The merge queue syncs candidates at
+merge time. A lane can merge the base into its story branch with a recorded authorization, as the brief explains.
 
 ## Authority
 
 Who may push and open pull requests is the operator's grant, written in the delivery file as `authority`
 (`push`, `draftPullRequests`, `grantedBy`, `grantedOn`). `lead-brief` states it in the lane brief, and `push` and
-`open-pr` refuse anything it doesn't grant. Without it, lanes don't push: the lead does. No grant covers force-pushing,
-merging, or marking a pull request ready.
+`open-pr` refuse anything it doesn't grant. Without it, the lead pushes. The lead's merge queue merges pull requests.
+A local base merge into a story branch needs the separate authorization recorded by `lead-authorize-base-merge`.
 
 ## Evidence (video, when relevant)
 
