@@ -6595,6 +6595,73 @@ tool.main(sys.argv[2:])
                 self.assertEqual(code, 0, out)
                 self.assertEqual(json.loads(files[0].read_text())["meta"]["baseHead"], sh("git", "rev-parse", "HEAD", cwd=fx.main).stdout.strip())
 
+    def test_remote_identity_change_during_conflict_resolution_refuses_publication(self) -> None:
+        fx, old = self.fixture(conflict=True)
+        sh("git", "remote", "add", "alternate", fx.origin, cwd=fx.main)
+        files = [fx.record / name for name in ("state.json", "journal.jsonl", "changes.jsonl")]
+        before = [path.read_bytes() for path in files]
+        code, out = self.move(fx)
+        self.assertEqual(code, 2, out)
+        self.assertIn("src/app.txt", out)
+        (fx.main / "src/app.txt").write_text("integration and default work\n")
+        sh("git", "add", "src/app.txt", cwd=fx.main)
+        binding_path = fx.main / ".agents/orchestration.json"
+        flow_path = fx.main / ".agents/run-delivery.json"
+        binding = json.loads(binding_path.read_text())
+        flow = json.loads(flow_path.read_text())
+        for remote in ("alternate", "origin"):
+            binding["base"]["remote"] = remote
+            flow["remote"] = remote
+            binding_path.write_text(json.dumps(binding, indent=2) + "\n")
+            flow_path.write_text(json.dumps(flow, indent=2) + "\n")
+            sh("git", "add", binding_path, flow_path, cwd=fx.main)
+            code, out = self.move(fx, "--resume")
+            if remote == "alternate":
+                self.assertEqual(code, 2, out)
+                self.assertIn("merged configuration changes remote", out)
+                self.assertIn("--resume", out)
+                self.assertEqual([path.read_bytes() for path in files], before)
+                self.assertEqual(sh("git", "rev-parse", "HEAD", cwd=fx.main).stdout.strip(), old)
+                self.assertEqual(sh("git", "ls-remote", "origin", "refs/heads/integrate/fixture", cwd=fx.main).stdout.split()[0], old)
+            else:
+                self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads(files[0].read_text())["meta"]["baseHead"],
+                         sh("git", "rev-parse", "HEAD", cwd=fx.main).stdout.strip())
+
+    def test_resume_refuses_an_applied_generation_changed_after_interruption(self) -> None:
+        fx, old = self.fixture()
+        files = [fx.record / name for name in ("state.json", "journal.jsonl", "changes.jsonl")]
+        before = [path.read_bytes() for path in files]
+        probe = """import importlib.util, sys
+spec = importlib.util.spec_from_file_location("applied_probe", sys.argv[1])
+tool = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(tool)
+def stop(config, intent):
+    raise tool.Stop("fixture after apply interruption")
+tool.check_moved_configuration = stop
+tool.main(sys.argv[2:])
+"""
+        interrupted = sh(sys.executable, "-B", "-c", probe, fx.tool, "lead-sync", "--merge", "--archive", self.new_archive,
+                         "--metadata", self.new_metadata, "--no-supervisor", cwd=fx.main, env=fx.env, check=False)
+        self.assertEqual(interrupted.returncode, 2, interrupted.stdout + interrupted.stderr)
+        self.assertIn("fixture after apply interruption", interrupted.stderr)
+        self.assertEqual(json.loads(self.pending_path(fx).read_text())["phase"], "applied")
+        sh(sys.executable, "-B", self.release.archive, "--root", fx.main, "--product", "apply", "--archive",
+           self.release.archive, "--metadata", self.release.metadata, "--maintenance", cwd=fx.main, env=fx.env)
+        code, out = self.move(fx, "--resume")
+        self.assertEqual(code, 2, out)
+        self.assertIn("applied generation differs", out)
+        self.assertIn("--resume", out)
+        self.assertEqual([path.read_bytes() for path in files], before)
+        self.assertEqual(sh("git", "rev-parse", "HEAD", cwd=fx.main).stdout.strip(), old)
+        self.assertEqual(sh("git", "ls-remote", "origin", "refs/heads/integrate/fixture", cwd=fx.main).stdout.split()[0], old)
+        sh(sys.executable, "-B", self.new_archive, "--root", fx.main, "--product", "apply", "--archive",
+           self.new_archive, "--metadata", self.new_metadata, "--maintenance", cwd=fx.main, env=fx.env)
+        code, out = self.move(fx, "--resume")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads(files[0].read_text())["meta"]["writerGeneration"]["archiveSha256"],
+                         json.loads(self.new_metadata.read_text())["archiveSha256"])
+
     def test_supervisor_rechecks_pending_move_after_taking_its_lock(self) -> None:
         fx, old = self.fixture()
         ready, release, entered = [fx.tmp / name for name in ("startup-ready", "startup-release", "pass-entered")]

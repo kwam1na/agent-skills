@@ -6503,6 +6503,10 @@ def read_base_move(path: Path) -> dict | None:
 
 def check_moved_configuration(c, intent: dict) -> None:
     """Resolve the prepared checkout with its applied generation, before it can become authoritative."""
+    actual = (load_json(c.root / RECEIPT) or {}).get("release")
+    if actual != intent["release"]:
+        raise Stop("the applied generation differs from the pending move's verified release; "
+                   "restore that archive through the supported lifecycle, then run lead-sync --merge --resume")
     binding = load_json(c.root / ".agents/orchestration.json") or {}
     if not serves(binding, intent["branch"]):
         raise Stop("the merged .agents/orchestration.json must serve the integration base; resolve and stage it, then --resume")
