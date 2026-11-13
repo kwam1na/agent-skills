@@ -2624,7 +2624,7 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         brief = " ".join((m / "docs/lane-brief.md").read_text().split())
         authority = brief[brief.index("**Authority.**"):][:900]
         self.assertNotIn("readyPullRequests", brief)
-        self.assertIn("never mark a pull request ready or approve one", authority)
+        self.assertIn("never merge, mark ready or approve a pull request", authority)
         self.assertIn("open its draft pull request into `feature/FX-1`", authority)
         wt = fx.lane("FX-2")
         (wt / "src/one.txt").write_text("one\n")
@@ -2760,7 +2760,11 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         code, out = flow_run("lead-brief", cwd=m); expect(code == 0, out)
         expect("the operator gave lanes authority" in (m / "docs/lane-brief.md").read_text(),
                "the lead's checkout didn't read its own working tree")
-        expect("Never merge or rebase" in (m / "docs/lane-brief.md").read_text(), "the brief doesn't forbid merging the base")
+        brief = " ".join((m / "docs/lane-brief.md").read_text().split())
+        self.assertIn("Before merging the base into your story branch, wait for the lead to record the authorization "
+                      "for your story, reviewed head and exact base commits with `lead-authorize-base-merge`.", brief)
+        self.assertIn("Use the lead's printed merge commands with their authorization trailer.", brief)
+        self.assertIn("an unauthorized merge or a merge that changes the story diff or owned content needs a new review.", brief)
 
     def test_video_evidence_is_recorded_required_and_published(self) -> None:
         missing = [tool for tool in ("ffmpeg", "ffprobe") if not shutil.which(tool)]
