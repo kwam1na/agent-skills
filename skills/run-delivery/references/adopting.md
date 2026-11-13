@@ -815,6 +815,40 @@ Where a host offers less otherwise, the workflow takes the path on the right:
 - **Sign-in values stay out of commands.** They come from the environment or the adopter's own adapter, never from a
   command argument, a record, a log, an archive or a published page.
 
+### Changing the record writer generation
+
+A delivery record initialized by an installed generation pins that applied archive's SHA-256 in
+`meta.writerGeneration`. Every record and journal write checks that identity under the state transaction lock.
+A lane that applies another release must wait for the lead transition before running commands that write the
+shared record. The refusal names the pinned and running releases and their archive digests.
+
+Apply the verified release in the lead checkout through the repository's supported release lifecycle, then run
+its installed command with the previous archive digest and a reason.
+
+```bash example outline
+python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py --delivery KEY \
+  lead-upgrade-writer --expected PREVIOUS_ARCHIVE_SHA256 --reason "Lead applied the verified release"
+```
+
+The command parks the supervisor after its pass, keeps another supervisor from starting, takes the queue lock,
+and loads both record and journal with the new reader before changing the writer pin under the state lock.
+It resumes the supervisor from the applied generation. `--no-supervisor` leaves it parked and prints
+`lead-run --resume`. An integration-base move that applies another generation uses this same transition before
+reconciling the record or resuming processing. Retrying a completed transition leaves the pin and version unchanged.
+
+Unpinned legacy records remain readable. Their first installed writer transition uses `--expected unpinned`.
+The standalone source-corpus fixtures have no applied archive identity and can write their unpinned fixture
+records. They refuse every pinned record. Ordinary patches cannot add, change or remove the writer pin.
+
+A pre-guard generation cannot enforce this admission rule. Park it and its queue before applying the release,
+and move every writer to the pinned generation. A reader error such as `state_invalid: ... no value is allowed here`
+after a lane applies a release means an older reader encountered newer fields. Preserve the record and journal,
+apply the compatible verified generation in the lead checkout, run the lead transition there, then resume its
+supervisor and lanes. The solution note in the repository records the original symptom and recovery.
+
+Admitted write operations hold a shared `writer.lock` through their state, journal, review-artifact and recovery-intent changes. A lead writer transition takes it exclusively after taking the queue lock. The short state transaction lock still checks admission before each record mutation. This lets an admitted hand-off finish its matching journal evidence before the generation changes.
+
+
 ## Troubleshooting
 
 ### The setup check

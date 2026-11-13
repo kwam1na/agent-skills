@@ -28,6 +28,7 @@ import contextlib
 import copy
 import datetime
 import fnmatch
+import functools
 import json
 import math
 import posixpath
@@ -56,6 +57,8 @@ JOURNAL_FILE = "journal.jsonl"
 STATE_LOCK = "state.lock"
 # Shared by candidate processing and lead publication.
 QUEUE_LOCK = "queue.lock"
+WRITER_LOCK = "writer.lock"
+_WRITER_OPERATIONS = threading.local()
 # What an earlier generation's `ack` recorded as posted by hand. Nothing writes it now: the tracker publisher reads it
 # once, so a record opened under that generation never posts those entries again.
 PUBLISHED_FILE = "published.json"
@@ -326,8 +329,8 @@ def emit(value: object) -> None:
 
 
 @contextlib.contextmanager
-def file_lock(path: Path, timeout: float | None = None) -> Iterator[None]:
-    """Hold an OS-released exclusive lock on ``path`` for the block."""
+def file_lock(path: Path, timeout: float | None = None, *, shared: bool = False) -> Iterator[None]:
+    """Hold an OS-released lock on ``path``, shared when requested on POSIX."""
     timeout = LOCK_TIMEOUT_SECONDS if timeout is None else timeout
     try:
         descriptor = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
@@ -348,7 +351,7 @@ def file_lock(path: Path, timeout: float | None = None) -> Iterator[None]:
                     os.lseek(descriptor, 0, os.SEEK_SET)
                     msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
                 else:
-                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    fcntl.flock(descriptor, (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB)
                 break
             except OSError:
                 if time.monotonic() >= deadline:
@@ -518,7 +521,91 @@ def _review_problems(entry: dict) -> list[str]:
     return problems
 
 
-def read_state(directory: Path) -> dict:
+def writer_generation() -> dict | None:
+    """The applied archive that owns this script, including a still-running previous generation."""
+    generation = Path(__file__).resolve().parents[3]
+    receipt = generation.parent.parent / "active.json"
+    if generation.parent.name != "generations" or generation.parent.parent.name != ".agent-skills":
+        # Source-corpus tests have no applied archive. They cannot write a pinned record.
+        return None
+    try:
+        active = json.loads(receipt.read_text())
+        entries = [active, active.get("previous") or {}]
+        entry = next(item for item in entries if item.get("generation") == generation.name)
+        identity = {key: entry["release"][key] for key in ("releaseId", "archiveSha256")}
+        schema = load_schema("delivery-state/1")["properties"]["meta"]["properties"]["writerGeneration"]
+        if validate(identity, schema):
+            raise ValueError("invalid release identity")
+        return identity
+    except (OSError, ValueError, KeyError, StopIteration, TypeError, AttributeError) as error:
+        raise StateError("writer_generation_invalid", f"cannot identify running generation {generation.name} from {receipt}") from error
+
+
+def require_writer(state: dict) -> None:
+    running = writer_generation()
+    if not isinstance(state, dict) or not isinstance(state.get("meta"), dict):
+        return  # The schema validator reports malformed records.
+    pinned = state["meta"].get("writerGeneration")
+    if pinned is not None and (not isinstance(pinned, dict) or "archiveSha256" not in pinned):
+        return
+    if pinned is None and running is None:
+        return
+    if pinned is None:
+        raise StateError("writer_generation_unpinned", f"record writer is unpinned; running {running}; "
+                         "upgrade the lead first with lead-upgrade-writer --expected unpinned")
+    if running is None or pinned["archiveSha256"] != running["archiveSha256"]:
+        raise StateError("writer_generation_mismatch", f"record writer {pinned}; running writer {running}; "
+                         "upgrade the lead first with lead-upgrade-writer before a lane writes")
+
+
+def writer_operation(operation):
+    """Keep an admitted multi-write operation on one generation until all its evidence is stored."""
+    @functools.wraps(operation)
+    def admitted(directory: Path, *args, **kwargs):
+        active = getattr(_WRITER_OPERATIONS, "active", set())
+        key = str(directory.resolve())
+        if key in active:
+            return operation(directory, *args, **kwargs)
+        with file_lock(directory / WRITER_LOCK, shared=True):
+            with file_lock(directory / STATE_LOCK):
+                read_state(directory, for_write=True)
+            _WRITER_OPERATIONS.active = active | {key}
+            try:
+                return operation(directory, *args, **kwargs)
+            finally:
+                _WRITER_OPERATIONS.active = active
+    return admitted
+
+
+def upgrade_writer(directory: Path, *, expected: str, reason: str) -> dict:
+    """Lead transition under the queue and state locks, after the new reader validates both files."""
+    if not reason.strip():
+        raise StateError("writer_generation_invalid", "give the reason for the lead transition")
+    running = writer_generation()
+    if running is None:
+        raise StateError("writer_generation_invalid", "apply the release and run its installed writer")
+    if str(directory.resolve()) in getattr(_WRITER_OPERATIONS, "active", set()):
+        raise StateError("writer_transition_busy", "finish the admitted operation before upgrading its writer")
+    with file_lock(directory / QUEUE_LOCK), file_lock(directory / WRITER_LOCK):
+        with file_lock(directory / STATE_LOCK):
+            current = read_state(directory)
+            read_journal(directory)
+            pinned = current["meta"].get("writerGeneration")
+            digest = pinned["archiveSha256"] if pinned else "unpinned"
+            if digest == running["archiveSha256"]:
+                return current
+            if expected != digest:
+                raise StateError("writer_generation_stale", f"expected {expected}; record writer is {digest}")
+            updated = copy.deepcopy(current)
+            updated["meta"]["writerGeneration"] = running
+            updated["version"] += 1
+            updated["meta"]["updatedAt"] = now()
+            _write_atomically(directory / STATE_FILE, dumps(updated))
+            _note_change(directory, f"writer-upgrade: {reason}", version=updated["version"])
+            return updated
+
+
+def read_state(directory: Path, *, for_write: bool = False) -> dict:
     path = directory / STATE_FILE
     try:
         state = json.loads(path.read_bytes().decode("utf-8"))
@@ -528,6 +615,8 @@ def read_state(directory: Path) -> dict:
         raise StateError("state_invalid", "state is not UTF-8") from None
     except json.JSONDecodeError as error:
         raise StateError("state_invalid", f"state is not JSON: {error}") from None
+    if for_write:
+        require_writer(state)
     errors = state_errors(state)
     if errors:
         raise StateError("state_invalid", "; ".join(errors))
@@ -593,6 +682,9 @@ def init(directory: Path, headline: str, seed: dict | None = None) -> dict:
         if (directory / STATE_FILE).exists():
             raise StateError("state_exists", f"state already exists at {directory / STATE_FILE}")
         state = initial_state(headline)
+        generation = writer_generation()
+        if generation is not None:
+            state["meta"]["writerGeneration"] = generation
         if seed is not None:
             allowed = {"meta", "planned", "finish", "laneOwnership"}
             if not isinstance(seed, dict) or set(seed) - allowed:
@@ -700,6 +792,8 @@ def ownership_violations(before: dict, after: dict, writer: str) -> list[str]:
             if item.get(field) != previous.get(field):
                 violations.append(f"/queue[subject={item.get('subject')}]/{field} is written only by the select command")
     meta_before, meta_after = before.get("meta", {}), after.get("meta", {})
+    if meta_before.get("writerGeneration") != meta_after.get("writerGeneration"):
+        violations.append("/meta/writerGeneration is changed only by the lead writer transition")
     if meta_before.get("updatedAt") != meta_after.get("updatedAt"):
         violations.append("/meta/updatedAt is maintained by the tool")
     if writer == "runner":
@@ -928,10 +1022,11 @@ def lane_rows_put_back(state: dict, subject: str) -> list[dict]:
     return rows
 
 
+@writer_operation
 def _tool_write(directory: Path, change: Callable[[dict], object]) -> tuple[dict, object]:
     """A write the tool makes for a lane or the lead, under the state lock, with the record's own checks."""
     with file_lock(directory / STATE_LOCK):
-        state = read_state(directory)
+        state = read_state(directory, for_write=True)
         updated = copy.deepcopy(state)
         outcome = change(updated)
         updated["version"] = state["version"] + 1
@@ -979,6 +1074,7 @@ def evidence_errors(evidence: object) -> list[str]:
     return problems
 
 
+@writer_operation
 def handoff(
     directory: Path,
     *,
@@ -1103,6 +1199,7 @@ def handoff(
 NO_CHANGE_EVIDENCE = 4000
 
 
+@writer_operation
 def no_change_handoff(directory: Path, *, lane: str, subject: str, base_head: str, evidence: str) -> dict:
     """A lane hands off work whose criteria already hold on the base, with no change: it never enters the queue.
 
@@ -1181,6 +1278,7 @@ def handoff_authorization(state: dict, item: dict) -> dict:
     return result
 
 
+@writer_operation
 def accept_handoff(directory: Path, subject: str, authorization: dict | None = None,
                    region_paths: list[str] | None = None) -> dict:
     """The lead accepts a waiting hand-off; the runner may now take it."""
@@ -1211,6 +1309,7 @@ def accept_handoff(directory: Path, subject: str, authorization: dict | None = N
     return item  # type: ignore[return-value]
 
 
+@writer_operation
 def reject_handoff(directory: Path, subject: str, reason: str) -> dict:
     """The lead rejects a waiting hand-off; the work goes back to its lane as planned."""
 
@@ -1481,6 +1580,7 @@ def base_rerun_notices(state: dict, check_ids: list[str], base_head: str | None)
     return warnings, []
 
 
+@writer_operation
 def select_checks(directory: Path, subject: str, *, binding: dict, head: str | None = None,
                   checks: object = None, reason: str | None = None, repo: Path | None = None,
                   base_head: str | None = None) -> dict:
@@ -1563,6 +1663,7 @@ def set_focus(directory: Path, lane: str, text: str, *, state: str | None = None
     raise AssertionError("unreachable")
 
 
+@writer_operation
 def bind_run(directory: Path, *, lane: str, subject: str, run: str) -> dict:
     """A lane binds the run building its planned work, so the views show the run's rounds before the hand-off.
 
@@ -1604,6 +1705,7 @@ def bind_run(directory: Path, *, lane: str, subject: str, run: str) -> dict:
     return bound  # type: ignore[return-value]
 
 
+@writer_operation
 def patch(
     directory: Path,
     *,
@@ -1625,14 +1727,15 @@ def patch(
         raise StateError("writer_invalid", f"writer must be one of {', '.join(WRITERS)}")
     if writer == "lane" and not lane:
         raise StateError("writer_invalid", "a lane's write names its lane")
-    state = read_state(directory)
+    with file_lock(directory / STATE_LOCK):
+        state = read_state(directory, for_write=True)
     if state["version"] != version:
         raise StateError("version_stale", f"patch is pinned to version {version}; state is at {state['version']}")
     updated = apply_patch(state, changes, selector, assignments)
     if between_read_and_write is not None:
         between_read_and_write()
     with file_lock(directory / STATE_LOCK):
-        current = read_state(directory)
+        current = read_state(directory, for_write=True)
         if current["version"] != version:
             raise StateError("version_stale", f"patch is pinned to version {version}; state is at {current['version']}")
         if writer == "lane":
@@ -1668,6 +1771,7 @@ def patch(
     return updated
 
 
+@writer_operation
 def append_journal(
     directory: Path,
     *,
@@ -1688,7 +1792,7 @@ def append_journal(
     if writer == "runner" and kind == REVIEW_KIND:
         raise StateError("kind_not_owned", f"the runner never writes {REVIEW_KIND}: the lead or the lane records its review")
     with file_lock(directory / STATE_LOCK):
-        current = read_state(directory)
+        current = read_state(directory, for_write=True)
         if writer == "lane":
             if kind != REVIEW_KIND:
                 raise StateError("writer_not_owned", f"a lane journals only {REVIEW_KIND}; the tool journals its hand-off")
@@ -1764,13 +1868,14 @@ def _with_closing(directory: Path, current: dict, closing: dict) -> dict:
     return updated
 
 
+@writer_operation
 def close_finished(directory: Path, *, entry: int) -> dict:
     """The close's finished mark: the archive for delivery.closed entry ``entry`` has landed.
 
     Only the latest delivery.closed counts, and only once its started mark is there; marking it again changes nothing.
     """
     with file_lock(directory / STATE_LOCK):
-        current = read_state(directory)
+        current = read_state(directory, for_write=True)
         closed = [item for item in read_journal(directory) if item["kind"] == CLOSED_KIND]
         if not closed or closed[-1]["id"] != entry:
             raise StateError("close_unknown", f"journal entry {entry} is not the latest {CLOSED_KIND}")
@@ -1970,6 +2075,7 @@ def _read_review_file(path: Path, limit: int, budget: list[int] | None = None) -
     return data
 
 
+@writer_operation
 def capture_review(directory: Path, *, subject: str, candidate: str, outcomes: list[Path]) -> dict:
     """Keep exact native outcome bytes and append their observational reference once."""
     try:
@@ -2062,6 +2168,7 @@ def _standing_carry(journal: list[dict], subject: str, capture: dict) -> dict | 
     return carry if not rounds or max(rounds) < carry["id"] else None
 
 
+@writer_operation
 def carry_review(directory: Path, *, subject: str, from_head: str, to_head: str, reason: str) -> dict:
     """The lead carries a subject's captured review across a commit it judged needs no new round.
 
@@ -2868,6 +2975,7 @@ def _ticket_changes(tickets: dict, listed: dict[str, dict], lead: dict) -> dict:
     return patch
 
 
+@writer_operation
 def reconcile(
     directory: Path,
     snapshot_paths: list[Path],
@@ -2951,6 +3059,7 @@ def _bypass_report(subject: str) -> dict:
                                         "or journal your decision if lead-accept can't take it"}
 
 
+@writer_operation
 def _recover(directory: Path, recoveries: list[dict], changes: list[dict], reports: list[dict]) -> None:
     """Record merges the runner missed, as the runner, only while no runner is running.
 
@@ -3072,6 +3181,7 @@ def _read_recovery(directory: Path) -> dict | None:
     return intent
 
 
+@writer_operation
 def _finish_recovery(directory: Path, finished: list[dict], held: list[dict]) -> None:
     """Finish a recovery a crash interrupted, so its journal entry is never lost or written twice.
 
@@ -3932,7 +4042,7 @@ def _cleanup_note(cleanup: list[dict]) -> dict:
 
 
 # The state directory's own files: a snapshot is never written over one of them.
-RECORD_NAMES = (STATE_FILE, JOURNAL_FILE, CHANGES_FILE, STATE_LOCK, QUEUE_LOCK, PUBLISHED_FILE,
+RECORD_NAMES = (STATE_FILE, JOURNAL_FILE, CHANGES_FILE, STATE_LOCK, QUEUE_LOCK, WRITER_LOCK, PUBLISHED_FILE,
                 OUTBOX_DIRECTORY, RECOVERY_FILE)
 
 
@@ -4647,10 +4757,18 @@ def main(argv: list[str] | None = None) -> int:
     forge.add_argument("--binding", type=Path, required=True, help="the repository binding, with state.forgeSnapshot")
     forge.add_argument("--output", type=Path, required=True, help="where the snapshot is written; kept on a failure")
     forge.add_argument("--max-age", type=float, help="refuse a snapshot older than this; overrides the binding")
+    upgrade = commands.add_parser("writer-upgrade", help="pin the applied lead writer while the supervisor is parked")
+    upgrade.add_argument("--writer", choices=WRITERS, required=True)
+    upgrade.add_argument("--expected", required=True, help="previous archive digest, or unpinned")
+    upgrade.add_argument("--reason", required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "init":
             result: object = {"ok": True, "state": init(args.dir, args.headline, _json_argument(args.seed, "--seed"))}
+        elif args.command == "writer-upgrade":
+            if args.writer != "lead":
+                raise StateError("writer_not_owned", "only the lead upgrades the record writer")
+            result = {"ok": True, "state": upgrade_writer(args.dir, expected=args.expected, reason=args.reason)}
         elif args.command == "validate":
             show(args.dir)
             result = {"ok": True}

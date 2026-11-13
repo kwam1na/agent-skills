@@ -440,6 +440,24 @@
                 }
               }
             }
+          },
+          "writerGeneration": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "releaseId",
+              "archiveSha256"
+            ],
+            "properties": {
+              "releaseId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "archiveSha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
           }
         }
       },

@@ -6372,6 +6372,39 @@ def require_lead_checkout(c) -> None:
         raise Stop(f"run this in the lead checkout on {c.base_branch} or in {c.lane_checkout(c.delivery)}")
 
 
+def lead_upgrade_writer(args) -> None:
+    """Park the lead's supervisor, transition under the queue lock, then resume the applied generation."""
+    c = cfg()
+    require_lead_checkout(c)
+    release_tuple()  # Refuse an unidentified installation before parking anything.
+    require_node(c.release, "lead-upgrade-writer")
+    said = ask_supervisor_to_stop(c, why="writer generation transition")
+    if said:
+        print(said)
+    for line in stop_orphans(c):
+        print(line)
+    scripts = str(c.release / "skills/orchestrate-work/scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    sys.dont_write_bytecode = True
+    import delivery_state
+
+    c.flow_log.mkdir(parents=True, exist_ok=True)
+    try:
+        # Prevent another supervisor from starting between the parked check and transition.
+        with delivery_state.file_lock(supervisor_lock_path(c)):
+            result = state_tool("writer-upgrade", "--writer", "lead", "--expected", args.expected,
+                                "--reason", args.reason)
+            pinned = json.loads(result.stdout)["state"]["meta"]["writerGeneration"]
+    except delivery_state.StateError as error:
+        raise Stop(f"{error.code}: {error}") from None
+    print(f"record writer is {pinned['releaseId']} ({pinned['archiveSha256']})")
+    if args.no_supervisor or supervisor_off():
+        print(f"supervisor: parked; resume this generation with {flow_command()} lead-run --resume")
+    else:
+        print(f"supervisor: running from this generation; live view {start_supervisor(c)}")
+
+
 def lead_push(args) -> None:
     c = cfg()
     branch = git("rev-parse", "--abbrev-ref", "HEAD")
@@ -10908,6 +10941,11 @@ def main(argv: list[str] | None = None) -> None:
     p = command(sub, "full-health-run", help="one post-merge fullHealth run at a base head, as the supervisor starts it")
     p.add_argument("--head", required=True); p.add_argument("--record", required=True); p.set_defaults(fn=full_health_run)
     p = command(sub, "lead-brief"); p.set_defaults(fn=lead_brief)
+    p = command(sub, "lead-upgrade-writer", help="park the supervisor and pin the applied writer under the queue lock")
+    p.add_argument("--expected", required=True, help="previous archive digest, or unpinned")
+    p.add_argument("--reason", required=True)
+    p.add_argument("--no-supervisor", action="store_true", help="leave the supervisor parked after transition")
+    p.set_defaults(fn=lead_upgrade_writer)
     p = command(sub, "lead-push", help="publish the lead's committed work under the merge queue lock")
     p.add_argument("--wait-seconds", type=int, default=3600, metavar="SECONDS")
     p.set_defaults(fn=lead_push)

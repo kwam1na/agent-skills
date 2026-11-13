@@ -147,3 +147,10 @@ recorded, never by pattern.
 ## Delivery notes
 
 {{notes}}
+
+
+## Record writer generation
+
+The shared record admits one applied archive digest. If this checkout applies another generation, wait for the
+lead to run `lead-upgrade-writer` before writing the record with it. A refusal names both writer generations.
+Resume lane commands from the generation pinned by the lead.
