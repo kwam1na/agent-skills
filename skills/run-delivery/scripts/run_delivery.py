@@ -5939,12 +5939,14 @@ def add_tracker_publisher(c, *, base: str | None = None) -> str | None:
         publishers.append(entry)
     if base:
         binding["base"]["ref"] = base
-        staging = c.binding_path.with_name(f".{c.binding_path.name}.{os.getpid()}")
-        try:
+        # Stage in this worktree's Git metadata, so a stopped setup cannot
+        # leave an untracked file beside the binding.
+        directory = lane_base_file(c.root).parent
+        directory.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="integration-setup-", dir=directory) as folder:
+            staging = Path(folder) / c.binding_path.name
             staging.write_text(json.dumps(binding, indent=2) + "\n")
             os.replace(staging, c.binding_path)
-        finally:
-            staging.unlink(missing_ok=True)
     else:
         c.binding_path.write_text(json.dumps(binding, indent=2) + "\n")
     return entry["id"] if entry else None
