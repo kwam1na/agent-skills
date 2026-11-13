@@ -4096,10 +4096,13 @@ def lead_authorize_base_merge(args) -> None:
         if not is_ancestor(base, c.base_ref) or is_ancestor(base, reviewed):
             raise Stop(f"{base} must be on {c.base_ref} and outside the reviewed head's history")
     authorization = {"reviewed": reviewed, "baseCommits": bases}
-    state_tool("journal", "--writer", "lead", "--kind", "decision.recorded", "--subject", key, "--lane", lane,
-               "--base-merge-authorization", json.dumps(authorization),
-               "--summary", f"Authorized {lane} to merge base commits {', '.join(bases)} into {key} from {reviewed}")
-    print(f"{key}: authorized base merges from {reviewed}: {', '.join(bases)}")
+    recorded = state_tool("journal", "--writer", "lead", "--kind", "decision.recorded", "--subject", key, "--lane", lane,
+                          "--base-merge-authorization", json.dumps(authorization),
+                          "--summary", f"Authorized {lane} to merge base commits {', '.join(bases)} into {key} from {reviewed}")
+    token = json.loads(recorded.stdout)["entry"]["baseMergeAuthorization"]["token"]
+    print(f"{key}: authorized base merges from {reviewed}. Run in the lane checkout, in this order:")
+    for base in bases:
+        print(f"git merge --no-ff -m 'Merge delivery base' -m 'Delivery-Base-Merge: {token}' {base}")
 
 
 def delta_entries(helper, root: Path, before: str, after: str) -> dict[bytes, bytes]:
@@ -4175,9 +4178,11 @@ def verify_base_merge(c, key: str, lane: str, reviewed: str, head: str, doc: dic
         base = parents[1]
         if not is_ancestor(base, c.base_ref):
             raise Stop(f"{base} is outside the history of {c.base_ref}")
-        committed = int(git("show", "-s", "--format=%ct", merge))
+        # The authorization's unpredictable token must already be in the
+        # immutable merge commit. A caller-controlled commit date proves no ordering.
+        trailers = git("show", "-s", "--format=%(trailers:key=Delivery-Base-Merge,valueonly)", merge).splitlines()
         if not any(base in entry["baseMergeAuthorization"]["baseCommits"]
-                   and int(datetime.datetime.fromisoformat(entry["at"]).timestamp()) <= committed for entry in grants):
+                   and trailers == [entry["baseMergeAuthorization"]["token"]] for entry in grants):
             raise Stop(f"the lead did not authorize {key} to merge {base} from {reviewed} before the merge")
         old_base = git("merge-base", c.base_ref, prior)
         new_base = git("merge-base", c.base_ref, merge)

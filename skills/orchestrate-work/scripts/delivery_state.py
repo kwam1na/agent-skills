@@ -1729,7 +1729,7 @@ def append_journal(
         if review_carry is not None:
             entry["reviewCarry"] = review_carry
         if base_merge_authorization is not None:
-            entry["baseMergeAuthorization"] = base_merge_authorization
+            entry["baseMergeAuthorization"] = {**base_merge_authorization, "token": uuid.uuid4().hex}
         errors = journal_errors([*entries, entry])
         if errors:
             raise StateError("entry_invalid", "; ".join(errors))

@@ -1374,12 +1374,17 @@
         "additionalProperties": false,
         "required": [
           "reviewed",
-          "baseCommits"
+          "baseCommits",
+          "token"
         ],
         "properties": {
           "reviewed": {
             "type": "string",
             "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+          },
+          "token": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$"
           },
           "baseCommits": {
             "type": "array",

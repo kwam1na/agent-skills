@@ -18,7 +18,7 @@ base of its merged tree and refuses changes outside those spans before publishin
 Deliver a decomposed epic: one lead session plans and assigns tickets to lane
 sessions, owns every merge, shared resource and release, and keeps the
 delivery's state current. Each lane delivers one ticket at a time through the
-existing delivery workflow and never merges.
+existing delivery workflow. The lead owns merges into the delivery base.
 
 Use this workflow when the requested outcome is an epic: several tickets that
 share a plan, a base branch and a finish line, delivered in parallel. For one
@@ -59,7 +59,7 @@ file that is malformed or can't be read runs `fullHealth` and holds the close on
   tracker items to their final state.
 - **Lane.** A session of its own, always: never a subagent, and never the lead
   working in its own session. A lane delivers one assigned ticket at a time,
-  and never merges, releases, or holds a lease it was not granted.
+  and leaves merges into the delivery base and releases to the lead. It holds only granted leases.
 - **State writers.** The lead writes every state field except the
   runner-owned and lane-owned ones. The runner writes only its result
   documents, journal entries, and its own fields: `queue[i].stage`,

@@ -797,8 +797,8 @@ Where a host offers less otherwise, the workflow takes the path on the right:
   as a subagent and never as the lead working in its own session. A host that can't start or message sessions stops, as
   the host notes say. Lens reviewers stay subagents of the lane.
 - **The merge queue normally syncs the base into the lane branch.** To direct a base merge before hand-off,
-  the lead first runs `lead-authorize-base-merge KEY --reviewed HEAD --base COMMIT`. A lane that merges those
-  exact commits can retain its aligned review if its owned content and story delta are unchanged. It runs its
+  the lead first runs `lead-authorize-base-merge KEY --reviewed HEAD --base COMMIT` and sends the printed
+  merge commands to the lane. A lane that follows them can retain its aligned review if its owned content and story delta are unchanged. It runs its
   gates and any required in-app and PR checks at the merged head.
 - **Review evidence is captured at hand-off.** `handoff` captures each round's review evidence; without it the line map
   shows no rounds for the story.

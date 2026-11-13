@@ -30,7 +30,8 @@ publishing it.
 
 A lane can keep an aligned review when the lead directs it to merge the delivery base before hand-off.
 From the lead checkout, run `lead-authorize-base-merge KEY --reviewed HEAD --base COMMIT` before the merge.
-Repeat `--base` to authorize multiple exact base commits. The lane merges the authorized commits and reruns
+Repeat `--base` to authorize multiple exact base commits. Give the lane the printed merge commands, which bind
+the authorization to the resulting commits through their commit-message trailer. The lane runs them and reruns
 its gates and any required in-app and PR checks at its new head. Hand-off carries the original review when
 each first-parent commit since review is an authorized two-parent base merge and both the story delta and
 lane-owned content stayed unchanged. The hand-off records the reviewed and handed heads and the base commits.
@@ -185,7 +186,7 @@ offers less otherwise, the workflow takes the path on the right:
 
 A lane reads the delivery's settings, plan and brief notes from the delivery base on the remote, not from its
 checkout. The lead pushes a change once, and every lane sees it without merging the base, which would move the lane's
-reviewed head and cost a review round. The brief tells lanes never to merge the base; the merge queue syncs at merge time.
+reviewed head and cost a review round. The brief tells lanes to merge the base only with a recorded authorization; the merge queue syncs at merge time.
 
 ## Authority
 
