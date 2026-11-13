@@ -5609,17 +5609,17 @@ def verify_integration_checkout(c, root: Path, key: str, base: str, target: str)
             return
         # Setup writes the delivery first. Complete an interrupted first draft
         # only on the original standing tree with a matching declaration.
-        standing = git("rev-parse", "--verify", f"refs/heads/{target}")
+        start = git("rev-parse", "HEAD", cwd=root)
+        on_standing_history = is_ancestor(start, f"refs/heads/{target}")
         if (binding.get("base", {}).get("ref") == target
                 and integration_matches(delivery, {**binding, "base": {**binding["base"], "ref": base}}, key, base, target)
-                and git("rev-parse", "HEAD", cwd=root) == standing
-                and not git("diff", "HEAD", "--", ".agents/orchestration.json", cwd=root)):
-            binding["base"]["ref"] = base
-            (root / ".agents/orchestration.json").write_text(json.dumps(binding, indent=2) + "\n")
+                and on_standing_history and not git("diff", "HEAD", "--", ".agents/orchestration.json", cwd=root)):
+            add_tracker_publisher(Config(root, need_delivery=False, pick=False), base=base)
             return
         # A draft can fail before either file is written. Only resume that
         # checkout if it still holds the unmodified starting tree.
-        if not delivery and binding.get("base", {}).get("ref") == target and clean_head(root) == standing:
+        if not delivery and binding.get("base", {}).get("ref") == target and on_standing_history:
+            clean_head(root)
             return
     raise Stop(f"{root} already exists and does not hold the integration setup for {key} on {base}")
 
@@ -5701,9 +5701,6 @@ def lead_setup(args) -> None:
     # Draft against the standing config first. Its served-base patterns are
     # the authority for this branch, including while the remote has no ref.
     draft_delivery(integration, args, integration_target=target)
-    binding = load_json(integration.binding_path)
-    binding["base"]["ref"] = args.base
-    integration.binding_path.write_text(json.dumps(binding, indent=2) + "\n")
     print(f"lead checkout: {root}; review the draft, commit the binding and delivery file there, then push {args.base} "
           f"to {c.remote}. Run these commands there:")
     for command in ("lead-init", "lead-brief"):
@@ -5848,7 +5845,7 @@ def draft_delivery(c, args, integration_target: str | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(delivery, indent=2) + "\n")
     print(f"drafted {path}: {len(stories)} stories")
-    added = add_tracker_publisher(c)
+    added = add_tracker_publisher(c, base=base if integration_target else None)
     if added:
         print(f"added the tracker publisher ({added}) to {c.binding_path.name}'s state.publishers: commit it with the "
               "delivery file")
@@ -5925,21 +5922,32 @@ def review_when_note(c, answer: str | None, notes: list[str]) -> None:
                      f"{'|'.join(tracker_publisher.REVIEW_WHEN)}")
 
 
-def add_tracker_publisher(c) -> str | None:
-    """With a tracker adapter configured and no tracker publisher bound, add one to the binding's state.publishers, so
-    every render posts the delivery's tracker updates. Returns the publisher's id, or None when nothing was added."""
+def add_tracker_publisher(c, *, base: str | None = None) -> str | None:
+    """Update the binding for setup, adding the tracker publisher when it is configured and missing."""
     conf = tracker_conf(c)
-    if conf["mode"] != "publisher" or conf["publisher"] or conf["problems"] or not c.binding_path.exists():
+    add = conf["mode"] == "publisher" and not conf["publisher"] and not conf["problems"]
+    if not c.binding_path.exists() or not (add or base):
         return None
     binding = json.loads(c.binding_path.read_text())
-    publishers = binding.setdefault("state", {}).setdefault("publishers", [])
-    entry = tracker_publisher.publisher_entry(TOOL_PATH.replace("run_delivery.py", "tracker_publisher.py"))
-    taken = {item.get("id") for item in publishers if isinstance(item, dict)}
-    entry["id"] = next(name for name in ("tracker", *(f"tracker-{n}" for n in range(2, len(taken) + 3)))
-                       if name not in taken)
-    publishers.append(entry)
-    c.binding_path.write_text(json.dumps(binding, indent=2) + "\n")
-    return entry["id"]
+    entry = None
+    if add:
+        publishers = binding.setdefault("state", {}).setdefault("publishers", [])
+        entry = tracker_publisher.publisher_entry(TOOL_PATH.replace("run_delivery.py", "tracker_publisher.py"))
+        taken = {item.get("id") for item in publishers if isinstance(item, dict)}
+        entry["id"] = next(name for name in ("tracker", *(f"tracker-{n}" for n in range(2, len(taken) + 3)))
+                           if name not in taken)
+        publishers.append(entry)
+    if base:
+        binding["base"]["ref"] = base
+        staging = c.binding_path.with_name(f".{c.binding_path.name}.{os.getpid()}")
+        try:
+            staging.write_text(json.dumps(binding, indent=2) + "\n")
+            os.replace(staging, c.binding_path)
+        finally:
+            staging.unlink(missing_ok=True)
+    else:
+        c.binding_path.write_text(json.dumps(binding, indent=2) + "\n")
+    return entry["id"] if entry else None
 
 
 # The plan format lead-setup reads (plan-work's SKILL.md documents it, with an example): a story is a `### KEY. Title`

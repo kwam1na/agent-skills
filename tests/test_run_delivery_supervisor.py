@@ -4092,6 +4092,8 @@ class SupervisorPostMergeTests(unittest.TestCase):
         self.assertEqual(lead_binding.read_bytes(), drafted_binding)
         initial.write_bytes(kept)
         sh("git", "restore", "--", ".agents/orchestration.json", cwd=lead)
+        (m / "main-advanced.txt").write_text("independent main work\n")
+        commit(m, "Advance the standing branch after setup starts")
         self.assertIn("resume", flow(*setup).lower())
         self.assertEqual(lead_binding.read_bytes(), drafted_binding)
         self.assertEqual(initial.read_bytes(), kept)
