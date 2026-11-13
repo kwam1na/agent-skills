@@ -5911,7 +5911,7 @@ if Path.cwd().name.endswith("-check") and not started.exists():
         synced = sh(*argv, "sync", "FX-2", cwd=m, env=fx.env)
         self.assertEqual(json.loads(synced.stdout)["outcome"], "synced")
         runner = subprocess.Popen([*argv, "check", "FX-2"], cwd=m, env=fx.env, text=True, stdout=subprocess.PIPE,
-                                  stderr=subprocess.STDOUT)
+                                  stderr=subprocess.STDOUT, start_new_session=True)
         self.addCleanup(stop_and_reap, runner)
         self.addCleanup(released.touch)
         deadline = time.monotonic() + 20
@@ -5954,14 +5954,20 @@ if Path.cwd().name.endswith("-check") and not started.exists():
     def test_a_live_flake_declared_during_a_check_retries_only_matching_failures(self) -> None:
         from tests.test_run_delivery_supervisor import kinds, record
 
-        for failures in (["test_flaky"], ["test_flaky", "test_other"]):
-            with self.subTest(failures=failures):
+        for check_id, failures in (("check", ["test_flaky"]), ("check", ["test_flaky", "test_other"]),
+                                   ("other-check", ["test_flaky"])):
+            with self.subTest(check=check_id, failures=failures):
                 fx, runner, release = self.held_check(failures)
                 before = record(fx)["state"]["queue"][0]
+                remote = sh("git", "ls-remote", "origin", "refs/heads/feature/FX-1", cwd=fx.main).stdout.split()[0]
+                (fx.main / "docs/plan.md").write_text((fx.main / "docs/plan.md").read_text() + "\nLocal edit.\n")
+                commit(fx.main, "unpublished lead edit")
                 try:
-                    code, out = fx.flow("lead-flake", "--check", "check", "--test", "test_flaky", "--ref", "FX-17",
+                    code, out = fx.flow("lead-flake", "--check", check_id, "--test", "test_flaky", "--ref", "FX-17",
                                         cwd=fx.main)
                     self.assertEqual(code, 0, out)
+                    [flake] = record(fx)["state"]["liveFlakes"]
+                    self.assertEqual((flake["baseHead"], flake["check"]), (remote, check_id))
                 finally:
                     release.touch()
                     result, _ = runner.communicate(timeout=30)
@@ -5970,7 +5976,7 @@ if Path.cwd().name.endswith("-check") and not started.exists():
                 self.assertEqual(checked["syncedHead"], before["syncedHead"])
                 self.assertEqual(after["checks"][0]["id"], "check")
                 self.assertEqual(len(kinds(fx, "check.started")), 1)
-                if len(failures) == 1:
+                if check_id == "check" and len(failures) == 1:
                     self.assertEqual(checked["outcome"], "checked", checked)
                     self.assertEqual(checked["checks"][0]["retried"]["flake"], "FX-17")
                     self.assertEqual(len(kinds(fx, "check.retried")), 1)
@@ -6044,6 +6050,31 @@ class RunDeliveryLeadWorktreeTests(unittest.TestCase):
         with lock.open("a") as probe:
             fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
+    def test_a_competing_update_after_the_locked_fetch_is_not_overwritten(self) -> None:
+        fx, lead, _ = self.fixture()
+        (lead / "docs/plan.md").write_text("pending plan\n")
+        commit(lead, "pending plan")
+        (fx.main / "external.txt").write_text("external update\n")
+        commit(fx.main, "external update")
+        external = sh("git", "rev-parse", "HEAD", cwd=fx.main).stdout.strip()
+        git = shlex.quote(shutil.which("git"))
+        wrappers = fx.tmp / "wrappers"
+        wrappers.mkdir()
+        wrapper = wrappers / "git"
+        wrapper.write_text(f"""#!/bin/sh
+if [ "$1" = push ]; then
+    {git} -C {shlex.quote(str(fx.main))} push -q origin HEAD:feature/FX-1 || exit
+fi
+exec {git} "$@"
+""")
+        wrapper.chmod(0o755)
+        env = {**fx.env, "PATH": f"{wrappers}{os.pathsep}{fx.env['PATH']}"}
+        code, out = fx.flow("lead-push", "--delivery", "FX-1", cwd=lead, env=env)
+        self.assertEqual(code, 2, out)
+        self.assertIn("rejected", out)
+        self.assertEqual(sh("git", "ls-remote", "origin", "refs/heads/feature/FX-1",
+                            cwd=lead).stdout.split()[0], external)
+
     def test_a_rejected_push_can_be_retried(self) -> None:
         fx, lead, _ = self.fixture()
         (lead / "docs/plan.md").write_text("pending plan\n")
@@ -6071,8 +6102,25 @@ class RunDeliveryLeadWorktreeTests(unittest.TestCase):
         self.assertEqual(code, 0, published)
         return json.loads(sh("git", "show", "origin/feature/FX-1:.agents/deliveries/FX-1.json", cwd=lead).stdout)
 
+    def test_a_pre_init_approval_prints_the_bootstrap_push(self) -> None:
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        path = plan_delivery(fx)
+        delivery = json.loads(path.read_text())
+        delivery["approvals"] = [{"id": "approval-1", "text": "Copy sign-off", "state": "waiting", "blocking": True}]
+        path.write_text(json.dumps(delivery, indent=2))
+        commit(fx.main, "declare approval")
+        code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "done", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("git push origin HEAD:feature/FX-1", out)
+        self.assertFalse((fx.tmp / "record/state.json").exists())
+        sh("git", "push", "origin", "HEAD:feature/FX-1", cwd=fx.main)
+        published = json.loads(sh("git", "show", "origin/feature/FX-1:.agents/deliveries/FX-1.json", cwd=fx.main).stdout)
+        self.assertEqual(published["approvals"][0]["state"], "done")
+
     def test_an_approval_from_a_lead_worktree_at_the_base_tip_commits_there_and_reaches_the_base(self) -> None:
         fx, lead, path = self.fixture()
+        sh("git", "branch", "-m", "my-lead-work", cwd=lead)
         code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "done", "--who", "the operator", cwd=lead)
         self.assertEqual(code, 0, out)
         self.assertEqual(json.loads(path.read_text())["approvals"][0]["state"], "done")

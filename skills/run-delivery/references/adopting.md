@@ -396,7 +396,7 @@ python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lea
 git add -A
 git commit -q -m "<delivery-key>: the lane brief"
 # On an unprotected base: push it. On a protected one, open a pull request (section 8).
-git push -q origin main
+python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py --delivery <delivery-key> lead-push
 ```
 
 ### Assign
@@ -427,7 +427,7 @@ the plan keeps each before and after. Push the commit so lanes see it:
 ```sh example repo
 python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lead-plan change --kind relaxed --subjects <story-key> --criterion greeting-shown --text "The front page shows a greeting" --why "The operator accepted any greeting"
 # On an unprotected base: push it. On a protected one, open a pull request (section 8).
-git push -q origin main
+python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py --delivery <delivery-key> lead-push
 ```
 
 To add a story mid-delivery, one command does it all: `lead-plan change --kind added --subjects <new-key> --title T
