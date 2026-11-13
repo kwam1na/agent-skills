@@ -6689,14 +6689,21 @@ def accept_story(c, args) -> None:
     evidence = [e for e in doc["journal"] if e.get("kind") == "review.evidence" and e.get("subject") == key]
     carried_review = None
     if not evidence or evidence[-1]["reviewArtifact"]["candidateRef"] != head:
-        observed = doc.get("reviewEvidence", {}).get(key, {})
-        carried = observed.get("carried", {})
         hand = next((entry for entry in reversed(doc["journal"])
                      if entry["subject"] == key and entry["kind"] == "candidate.handed"), {})
         carry = hand.get("reviewCarry", {})
-        if (carry.get("baseCommits") and carried.get("to") == head and carry.get("digest") == observed.get("digest")
-                and carry["from"] == observed.get("candidateRef")):
-            carried_review = carry
+        if evidence and carry.get("baseCommits") and carry.get("to") == head and hand.get("lane") == item["lane"]:
+            validator = _validator()
+            try:
+                expected = validator.base_merge_evidence(
+                    c.state, doc["journal"], key, item["lane"], head, item.get("reportedRounds"),
+                    {"reviewed": carry["from"], "baseCommits": carry["baseCommits"]},
+                )
+                if expected != carry or hand["id"] <= evidence[-1]["id"]:
+                    raise validator.StateError("carry_invalid", "the handed carry does not match the captured review")
+                carried_review = carry
+            except validator.StateError as error:
+                problems.append(f"review carry refused: {error}")
         else:
             problems.append("the latest captured review evidence is not for the handed head")
     pr = forge("get", "--url", item.get("changeRequest") or "")

@@ -185,8 +185,8 @@ offers less otherwise, the workflow takes the path on the right:
 ## Where lanes read the delivery
 
 A lane reads the delivery's settings, plan and brief notes from the delivery base on the remote, not from its
-checkout. The lead pushes a change once, and every lane sees it without merging the base, which would move the lane's
-reviewed head and cost a review round. The brief tells lanes to merge the base only with a recorded authorization; the merge queue syncs at merge time.
+checkout. Every lane sees lead changes as soon as they reach the remote base. The merge queue syncs candidates at
+merge time. A lane can merge the base into its story branch with a recorded authorization, as the brief explains.
 
 ## Authority
 
