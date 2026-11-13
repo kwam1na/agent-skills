@@ -637,9 +637,9 @@ class LeadWriteTests(MergeQueueTestCase):
         real = state_tool.read_state
         raced: list[bool] = []
 
-        def runner_writes_after_the_read(directory: Path) -> dict:
-            state = real(directory)
-            if not raced:
+        def runner_writes_after_the_read(directory: Path, **kwargs) -> dict:
+            state = real(directory, **kwargs)
+            if not raced and not kwargs.get("for_write"):
                 raced.append(True)
                 # serve records something between the lead's read and its write.
                 state_tool.patch(directory, writer="runner", version=state["version"],

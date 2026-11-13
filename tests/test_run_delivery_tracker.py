@@ -2092,10 +2092,10 @@ class LaneCommandTests(RunDeliveryTrackerCommandTests):
     def test_running_lane_start_again_leaves_the_lanes_focus_alone(self) -> None:
         fx, _ = self.lane({"start": ["Start work"]})
         self.started(fx)
-        self.harness.sh(sys.executable, "-B", STATE_TOOL, "--dir", fx.tmp / "record", "focus", "--lane", "lane-2",
+        self.harness.sh(sys.executable, "-B", fx.main / ".agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py", "--dir", fx.tmp / "record", "focus", "--lane", "lane-2",
                         "--text", "FX-3: review round 1", "--state", "reviewing")
         self.started(fx)
-        record = json.loads(self.harness.sh(sys.executable, "-B", STATE_TOOL, "--dir", fx.tmp / "record", "show").stdout)
+        record = json.loads(self.harness.sh(sys.executable, "-B", fx.main / ".agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py", "--dir", fx.tmp / "record", "show").stdout)
         lane = {l["id"]: l for l in record["state"]["lanes"]}["lane-2"]
         self.assertEqual((lane["focus"], lane["state"]), ("FX-3: review round 1", "reviewing"))
 
