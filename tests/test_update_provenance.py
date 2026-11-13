@@ -98,6 +98,12 @@ class UpdateProvenanceTests(unittest.TestCase):
         self.assertEqual((self.root / LOCK).read_bytes(), (self.pristine / "corpus" / LOCK).read_bytes())
 
     def test_a_real_lock_only_rebase_conflict_is_resolved_from_either_side(self) -> None:
+        self.real_lock_only_conflict("rebase")
+
+    def test_a_real_lock_only_merge_conflict_preserves_both_histories(self) -> None:
+        self.real_lock_only_conflict("merge")
+
+    def real_lock_only_conflict(self, operation: str) -> None:
         # Two branches edit the same output in places that merge cleanly; only
         # its digest line in the lock conflicts, as in a merge-queue sync.
         guide = "skills/orchestrate-work/references/orchestration-guide.md"
@@ -124,8 +130,9 @@ class UpdateProvenanceTests(unittest.TestCase):
             "\n".join(lines[:2] + ["An upstream note.", ""] + lines[2:]), encoding="utf-8"))
         commit_side("lane", "base", lambda path: path.write_text(
             "\n".join(lines) + "\nA lane note.\n", encoding="utf-8"))
-        rebased = git("rebase", "upstream")
-        self.assertNotEqual(rebased.returncode, 0)
+        original = git("rev-parse", "HEAD").stdout.strip()
+        updated = git(operation, *(["--no-ff", "--no-commit"] if operation == "merge" else []), "upstream")
+        self.assertNotEqual(updated.returncode, 0)
         conflicted = git("diff", "--name-only", "--diff-filter=U").stdout.split()
         self.assertEqual(conflicted, [LOCK])
         locks = []
@@ -139,10 +146,13 @@ class UpdateProvenanceTests(unittest.TestCase):
         git("add", LOCK)
         finished = subprocess.run(
             ["git", "-c", "core.editor=true", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
-             "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false", "rebase", "--continue"],
+             "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false", operation, "--continue"],
             cwd=self.root, capture_output=True, text=True, encoding="utf-8", check=False,
         )
         self.assertEqual(finished.returncode, 0, finished.stderr)
+        if operation == "merge":
+            self.assertEqual(git("merge-base", "--is-ancestor", original, "HEAD").returncode, 0)
+            self.assertEqual(git("merge-base", "--is-ancestor", "upstream", "HEAD").returncode, 0)
         text = (self.root / guide).read_text(encoding="utf-8")
         self.assertIn("An upstream note.", text)
         self.assertIn("A lane note.", text)

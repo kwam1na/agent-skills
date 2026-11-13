@@ -759,3 +759,10 @@ coordinates parking and resuming. The source corpus has no applied receipt and c
 fixtures. Apply a verified release to write a pinned record.
 
 Admitted write operations hold a shared `writer.lock` through their state, journal, review-artifact and recovery-intent changes. A lead writer transition takes it exclusively after taking the queue lock. The short state transaction lock still checks admission before each record mutation. This lets an admitted hand-off finish its matching journal evidence before the generation changes.
+
+
+A published integration-base move uses the applied generation's `base-move` transition. Under the queue,
+writer and state locks it reconciles `meta.baseHead`, `meta.baseMove` and `meta.writerGeneration` together.
+The `base.moved` journal event is idempotent, including retry after the state write succeeds and the journal
+append is interrupted. Ordinary patches cannot replace `meta.baseMove`. Use `run-delivery lead-sync --merge`
+to coordinate merge, publication, the writer transition and supervisor recovery.

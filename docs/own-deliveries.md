@@ -156,6 +156,22 @@ binding to the integration branch and add `"integrationTarget": "main"` to the
 draft before committing and pushing them together. Run the named lead commands
 from that checkout and give lanes its path and record location when assigning.
 
+For an ongoing base update, use a released installation whose help lists `lead-sync`. Configure
+`baseMove.provenanceWriter` as `["python3", "-B", "scripts/update-provenance.py"]`, download and verify the
+archive and metadata matching the current `main` receipt, and run from the lead checkout.
+
+```bash
+python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py --delivery <delivery> \
+  lead-sync --merge --archive <verified archive> --metadata <verified metadata>
+```
+
+The command parks the supervisor, merges `main`, applies its generation through the supported lifecycle,
+refreshes provenance and publishes under the queue lock. Resolve named conflicts and stage the resolutions, then run
+`lead-sync --merge --resume` while keeping the merge open. Its pending intent also recovers a publication whose record
+update was interrupted. Keep the intent until reconciliation succeeds. Newly assigned lanes start from the
+moved remote base, and recorded merged SHAs remain reachable. Record shared flake fixes as pending upstream
+in a delivery decision and land the fix on `main` too.
+
 For final integration, follow the orchestration guide's **Reviewing an
 integration base for the default branch** recipe. In a clean integration review
 checkout, replace the branch placeholder with the delivery's recorded base:

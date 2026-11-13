@@ -22,6 +22,8 @@ assemble briefs, round files or records by hand, and don't edit what they write.
   there, sets your focus, records the story's start, which its tracker start waits for, and moves the story from
   planned to building in the record, so the line map shows it started. Run again, it changes nothing. Work only in that checkout: the lead reads your gate and in-app evidence from it. Never edit the lead's
   checkout or another lane's.
+- When the lead completes `lead-sync --merge`, start newly assigned stories from the moved `{{base_ref}}`.
+  Existing story branches follow the lead's base-merge authorization and review rules.
 - The merge queue normally syncs your branch with `{{base_ref}}`. The tool reads the plan, brief and settings from
   that remote base while you work. Before merging the base into your story branch, wait for the lead to record the
   authorization for your story, reviewed head and exact base commits with `lead-authorize-base-merge`.

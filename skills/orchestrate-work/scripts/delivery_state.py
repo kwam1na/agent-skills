@@ -577,6 +577,59 @@ def writer_operation(operation):
     return admitted
 
 
+def _with_writer_generation(current: dict, running: dict, expected: str) -> dict:
+    pinned = current["meta"].get("writerGeneration")
+    digest = pinned["archiveSha256"] if pinned else "unpinned"
+    if digest == running["archiveSha256"]:
+        return current
+    if expected != digest:
+        raise StateError("writer_generation_stale", f"expected {expected}; record writer is {digest}")
+    updated = copy.deepcopy(current)
+    updated["meta"]["writerGeneration"] = running
+    return updated
+
+
+def complete_base_move_locked(directory: Path, *, from_head: str, to_head: str, default_head: str,
+                              expected_base: str | None, expected_writer: str, reason: str) -> dict:
+    """Reconcile a published base and its writer once. The caller holds the queue lock."""
+    running = writer_generation()
+    if running is None or not reason.strip():
+        raise StateError("base_move_invalid", "use the applied generation and give the base move's reason")
+    move = {"from": from_head, "to": to_head, "defaultHead": default_head,
+            "archiveSha256": running["archiveSha256"]}
+    with file_lock(directory / WRITER_LOCK), file_lock(directory / STATE_LOCK):
+        current = read_state(directory)
+        entries = read_journal(directory)
+        summary = f"Base moved from {from_head} to {to_head} by merging {default_head}: {reason}"
+        entry = {"id": len(entries) + 1, "at": now(), "kind": "base.moved", "subject": None,
+                 "lane": None, "summary": summary}
+        errors = journal_errors([*entries, entry])
+        if errors:
+            raise StateError("entry_invalid", "; ".join(errors))
+        _require_unicode(entry, "entry_invalid")
+        if current["meta"].get("baseMove") == move:
+            require_writer(current)
+            if current["meta"]["baseHead"] != to_head:
+                raise StateError("base_move_stale", "the reconciled base head changed")
+            updated = current
+        else:
+            if current["meta"]["baseHead"] != expected_base:
+                raise StateError("base_move_stale", "the record's base head changed before reconciliation")
+            updated = copy.deepcopy(_with_writer_generation(current, running, expected_writer))
+            updated["meta"].update(baseHead=to_head, baseMove=move, updatedAt=now())
+            updated["version"] += 1
+            errors = state_errors(updated)
+            if errors:
+                raise StateError("base_move_invalid", "; ".join(errors))
+            _write_atomically(directory / STATE_FILE, dumps(updated))
+            if current["meta"].get("writerGeneration") != running:
+                _note_change(directory, "writer-upgrade", version=updated["version"])
+            _note_change(directory, "base-move", version=updated["version"])
+        if not any(item["kind"] == "base.moved" and item["summary"] == summary for item in entries):
+            _append_journal_locked(directory, updated, entries, entry)
+        return updated
+
+
 def upgrade_writer(directory: Path, *, expected: str, reason: str) -> dict:
     """Lead transition under the queue and state locks, after the new reader validates both files."""
     if not reason.strip():
@@ -590,14 +643,9 @@ def upgrade_writer(directory: Path, *, expected: str, reason: str) -> dict:
         with file_lock(directory / STATE_LOCK):
             current = read_state(directory)
             read_journal(directory)
-            pinned = current["meta"].get("writerGeneration")
-            digest = pinned["archiveSha256"] if pinned else "unpinned"
-            if digest == running["archiveSha256"]:
+            updated = _with_writer_generation(current, running, expected)
+            if updated is current:
                 return current
-            if expected != digest:
-                raise StateError("writer_generation_stale", f"expected {expected}; record writer is {digest}")
-            updated = copy.deepcopy(current)
-            updated["meta"]["writerGeneration"] = running
             updated["version"] += 1
             updated["meta"]["updatedAt"] = now()
             _write_atomically(directory / STATE_FILE, dumps(updated))
@@ -792,6 +840,8 @@ def ownership_violations(before: dict, after: dict, writer: str) -> list[str]:
             if item.get(field) != previous.get(field):
                 violations.append(f"/queue[subject={item.get('subject')}]/{field} is written only by the select command")
     meta_before, meta_after = before.get("meta", {}), after.get("meta", {})
+    if meta_before.get("baseMove") != meta_after.get("baseMove"):
+        violations.append("/meta/baseMove is changed only by published base reconciliation")
     if meta_before.get("writerGeneration") != meta_after.get("writerGeneration"):
         violations.append("/meta/writerGeneration is changed only by the lead writer transition")
     if meta_before.get("updatedAt") != meta_after.get("updatedAt"):
@@ -1834,23 +1884,28 @@ def append_journal(
             entry["reviewCarry"] = review_carry
         if base_merge_authorization is not None:
             entry["baseMergeAuthorization"] = {**base_merge_authorization, "token": uuid.uuid4().hex}
-        errors = journal_errors([*entries, entry])
-        if errors:
-            raise StateError("entry_invalid", "; ".join(errors))
-        _require_unicode(entry, "entry_invalid")
-        if kind == CLOSED_KIND:
-            # The close's started mark goes in with the entry, so a close journaled by hand carries it too. It is
-            # written first: a delivery.closed line never stands without its mark.
-            current = _with_closing(directory, current, {"started": {"entry": entry["id"], "at": entry["at"]}})
-        line = json.dumps(entry, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n"
-        complete = _journal_text(directory)[1]
-        with open(directory / JOURNAL_FILE, "ab") as stream:
-            # Drop the remains of an append that never finished.
-            stream.truncate(complete)
-            stream.write(line.encode("utf-8"))
-            stream.flush()
-            os.fsync(stream.fileno())
-        _note_change(directory, "journal", version=current["version"], journal=entry["id"])
+        return _append_journal_locked(directory, current, entries, entry)
+
+
+def _append_journal_locked(directory: Path, current: dict, entries: list[dict], entry: dict) -> dict:
+    """Append validated evidence while the caller holds the state lock."""
+    errors = journal_errors([*entries, entry])
+    if errors:
+        raise StateError("entry_invalid", "; ".join(errors))
+    _require_unicode(entry, "entry_invalid")
+    if entry["kind"] == CLOSED_KIND:
+        # The close's started mark goes in with the entry, so a close journaled by hand carries it too. It is
+        # written first: a delivery.closed line never stands without its mark.
+        current = _with_closing(directory, current, {"started": {"entry": entry["id"], "at": entry["at"]}})
+    line = json.dumps(entry, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n"
+    complete = _journal_text(directory)[1]
+    with open(directory / JOURNAL_FILE, "ab") as stream:
+        # Drop the remains of an append that never finished.
+        stream.truncate(complete)
+        stream.write(line.encode("utf-8"))
+        stream.flush()
+        os.fsync(stream.fileno())
+    _note_change(directory, "journal", version=current["version"], journal=entry["id"])
     return entry
 
 
@@ -4761,10 +4816,22 @@ def main(argv: list[str] | None = None) -> int:
     upgrade.add_argument("--writer", choices=WRITERS, required=True)
     upgrade.add_argument("--expected", required=True, help="previous archive digest, or unpinned")
     upgrade.add_argument("--reason", required=True)
+    moved = commands.add_parser("base-move", help="reconcile a published merge and its applied writer")
+    moved.add_argument("--writer", choices=WRITERS, required=True)
+    for flag in ("from-head", "to-head", "default-head", "expected-base", "expected-writer", "reason"):
+        moved.add_argument("--" + flag, required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "init":
             result: object = {"ok": True, "state": init(args.dir, args.headline, _json_argument(args.seed, "--seed"))}
+        elif args.command == "base-move":
+            if args.writer != "lead":
+                raise StateError("writer_not_owned", "only the lead reconciles a published base move")
+            with file_lock(args.dir / QUEUE_LOCK):
+                state = complete_base_move_locked(args.dir, from_head=args.from_head, to_head=args.to_head,
+                    default_head=args.default_head, expected_base=None if args.expected_base == "unrecorded" else args.expected_base,
+                    expected_writer=args.expected_writer, reason=args.reason)
+            result = {"ok": True, "state": state}
         elif args.command == "writer-upgrade":
             if args.writer != "lead":
                 raise StateError("writer_not_owned", "only the lead upgrades the record writer")
