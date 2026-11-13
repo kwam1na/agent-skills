@@ -241,5 +241,6 @@
       "lens.outcome-correctness",
       "lens.adversarial-testing"
     ]
-  }
+  },
+  "integrationTarget": "main"
 }
