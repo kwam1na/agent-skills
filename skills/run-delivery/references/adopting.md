@@ -455,7 +455,7 @@ chapter flags every change without one. An edit made to the criteria or `covers`
 
 ### The lane delivers a story
 
-The lane begins its story with `lane-start`, from the main checkout. It makes the story's own checkout from the base,
+The lane begins its story with `lane-start`, from the lead checkout named in the brief. It makes the story's own checkout from the base,
 runs the prepare step, sets the lane's focus, and records the story's start, which the tracker's start move waits for.
 First it checks the lane's Node and Python, and refuses, before it makes or records anything, when the first `node` on
 `PATH` is below the runtime's `nodeMinimum`, or Python is below 3.11:

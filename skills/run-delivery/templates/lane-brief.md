@@ -16,7 +16,8 @@ assemble briefs, round files or records by hand, and don't edit what they write.
 ## Repository
 
 - Read the repository's root instruction file first. Its rules apply.
-- Begin each story with `{{flow}} lane-start <key> --base {{base_branch}}`, run from the main checkout. It makes the
+- Begin each story with `{{flow}} lane-start <key> --base {{base_branch}}`, run from the lead checkout `{{lead_checkout}}`.
+  The delivery record is at `{{state}}`. The command makes the
   story's own checkout, `{{lane_checkout}}`, on `{{branch}}` from `{{base_ref}}`, runs the repository's prepare step
   there, sets your focus, records the story's start, which its tracker start waits for, and moves the story from
   planned to building in the record, so the line map shows it started. Run again, it changes nothing. Work only in that checkout: the lead reads your gate and in-app evidence from it. Never edit the lead's

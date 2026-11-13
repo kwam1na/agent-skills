@@ -473,7 +473,7 @@
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "a8c66e03656aea9c36e1b701faebe1923ba0b48b4e4c9fa54e53205201886069"
+          "sha256": "fd95fb206e345ce42198c95c9b3487475f7c93753fc6a93e401fa6a6cf219629"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
@@ -1022,7 +1022,7 @@
       "outputs": [
         {
           "path": "skills/run-delivery/SKILL.md",
-          "sha256": "6ce11c0ac4675e88d3369149308c414a9a4684fe8c25ad6b9d0c2649166cabf6"
+          "sha256": "7f0e95e9fe10332d03d6af57b6ed2ad6751706c82e6c90f6819e8bacc97d2140"
         },
         {
           "path": "skills/run-delivery/adapters/forge_bitbucket.py",
@@ -1050,11 +1050,11 @@
         },
         {
           "path": "skills/run-delivery/references/adopting.md",
-          "sha256": "87d73e5f56e855b04b5a527de3a298bbc2cb235953425c49ff7f82ce35cfc403"
+          "sha256": "1d352da7974ddda1227b9c4c68ffc3b952b3d550c295e52f1e1297cc99f90db1"
         },
         {
           "path": "skills/run-delivery/references/config.md",
-          "sha256": "db85b838fd891134a3a66b39346d295e5bbdf854b8e0872da646acd07854e62f"
+          "sha256": "fb125ab016d1a2f656438fa2e99a64ee91708c47653b87bb0c1e2d9eea1c4bac"
         },
         {
           "path": "skills/run-delivery/scripts/pr_review_gates.py",
@@ -1062,7 +1062,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "e12a66ffd212a7a7f178a09e908e5753ffe27261d5157de128d3e3180d778fbf"
+          "sha256": "2fd0beed589d3e881938c443e595f47e759891ed0978086e3de5d37518727a52"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
@@ -1078,7 +1078,7 @@
         },
         {
           "path": "skills/run-delivery/templates/lane-brief.md",
-          "sha256": "b401b804a69af9724a4bef37150d0783308ddeb0ffbc5d74ab6e5c0b8fd38db7"
+          "sha256": "3f9675da350a6d9d1ed2ef2f4aa4611b043c0f45baa0029132713455382cde52"
         },
         {
           "path": "skills/run-delivery/templates/round-brief.md",

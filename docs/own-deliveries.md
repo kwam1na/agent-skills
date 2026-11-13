@@ -128,10 +128,57 @@ brief still bars a full suite in a lane.
 
 ## Later deliveries
 
-The standing binding's base is `main`. A delivery that lands through its own
-integration base changes `base.ref` on that base, in that delivery's first commit,
-and removes the change when it integrates. Its record lives in the lead's checkout,
-`.orchestration/lanes/<delivery>/.orchestration/state`, which git ignores.
+The standing binding serves `main` and `integrate/*`. From a clean checkout on
+`main`, set up a delivery on its own integration base:
+
+```bash
+python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py \
+  lead-setup <delivery> --plan <approved-plan> --integration integrate/<name> \
+  --authority push,draftPullRequests,readyPullRequests --granted-by "<operator>"
+```
+
+Use the lead checkout printed by setup. Its draft names the integration base and
+`main` as the integration target, and its binding already points at the
+integration base. Review the draft, commit the initial binding and delivery
+configuration together, and push the branch. Run `lead-init` and `lead-brief`
+there. The brief names the actual lead checkout and record location. Rerun the
+same setup to resume a matching checkout. The standing-binding test recognizes
+the integration binding through the matching delivery declaration even in a
+detached check checkout. Under the gate posture, the supervisor runs the
+binding's full suite on the integration base.
+
+For final integration, follow the orchestration guide's **Reviewing an
+integration base for the default branch** recipe. In a clean integration review
+checkout, replace the branch placeholder with the delivery's recorded base:
+
+```bash
+git fetch origin main integrate/<name>
+git switch -c codex/integration-review origin/integrate/<name>
+git merge --no-ff origin/main
+```
+
+Resolve substantive conflicts, then restore the standing settings and the
+target's installed generation together. Include any additional host projection
+paths named by the target receipt.
+
+```bash
+git restore --source=origin/main --staged --worktree -- \
+  .agents/orchestration.json .agents/run-delivery.json .agents/delivery-posture.json \
+  .agent-skills/ .claude/settings.json .claude/skills/
+git diff --exit-code origin/main -- \
+  .agents/orchestration.json .agents/run-delivery.json .agents/delivery-posture.json \
+  .agent-skills/ .claude/settings.json .claude/skills/
+git show origin/main:.agent-skills/active.json | python3 -c \
+  'import json,sys; print(json.load(sys.stdin)["release"]["archiveSha256"])'
+python3 -c 'import json; print(json.load(open(".agent-skills/active.json"))["release"]["archiveSha256"])'
+```
+
+Require the digests to match. If a merge is in progress, finish it after resolving
+the conflicts and restoring these paths. Otherwise commit the restore. Retain
+the reviewed product source, tests, catalog, profiles, provenance and delivery
+documents. Keep the record and operational logs in the close-out archive.
+Run the integration gates and review on that exact candidate before publishing
+the change request to `main`.
 
 ## Hooks
 

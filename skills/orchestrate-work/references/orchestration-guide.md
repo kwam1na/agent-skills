@@ -505,6 +505,31 @@ supervisor, which archives the record once nothing holds the close, the rounds
 land in the live record after the archive, and the lead's post of each round on
 the epic is their durable trace.
 
+### Reviewing an integration base for the default branch
+
+Use the delivery's recorded `integrationTarget`. Fetch the remote target and
+integration base, and create a separate integration-review branch from the
+integration tip. Merge the fetched target into it with normal Git ancestry.
+Review each substantive conflict and its resolution. Resolve a provenance
+conflict with the repository's digest writer.
+
+Restore the target's standing binding and delivery posture from the fetched
+target. Also restore its installed generation, receipt, host projections and
+hook settings as a set. Include any other branch-specific settings in this
+restore. Retain product source, tests, catalog, profiles, provenance, the final
+plan and its review record, the delivery configuration, lane brief and lane
+notes. The configuration's integration branch and target document where the
+delivery ran. Keep local records, logs and temporary fixtures in the delivery
+archive.
+
+Before integration review, compare the target-owned paths against the fetched
+target. Confirm the standing binding and the target's exact archive digest in
+the receipt. Run the repository's integration gates in that restored tree.
+Then run the integration review above against the exact candidate, including
+the merge and any resolutions. Open the reviewed change request into the target
+and let the repository's merge process land it. If the target moves before
+landing, incorporate it and repeat the affected review and gates.
+
 ## Lane brief template
 
 The lead writes one brief per epic and sends it to every lane with its first

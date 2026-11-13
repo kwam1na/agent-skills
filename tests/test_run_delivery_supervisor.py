@@ -30,7 +30,7 @@ import urllib.request
 from pathlib import Path
 from unittest import mock
 
-from tests.test_run_delivery import (POSIX_ONLY, Fixture, add_story, commit, doctor_binding, installed_release,
+from tests.test_run_delivery import (PATTERN, POSIX_ONLY, Fixture, add_story, commit, doctor_binding, installed_release,
                                      node_environment, plan_delivery, setup_delivery, sh, stop_supervisors,
                                      write_results)
 from tests.test_run_delivery import stop_and_reap  # a process the case started: stopped, then waited for
@@ -4016,6 +4016,110 @@ class SupervisorPostMergeTests(unittest.TestCase):
 
     def base_tip(self, fx: Fixture) -> str:
         return sh("git", "ls-remote", "origin", "refs/heads/feature/FX-1", cwd=fx.main).stdout.split()[0]
+
+    def test_integration_setup_runs_the_full_suite_and_closes_from_its_own_record(self) -> None:
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        m = fx.main
+        old = supervised(fx)
+        old.unlink()
+        binding = m / ".agents/orchestration.json"
+        standing = json.loads(binding.read_text())
+        standing["base"]["ref"] = "main"
+        standing["bases"] = ["integrate/*"]
+        standing["fullHealth"] = [sys.executable, "-B", "scripts/run-tests.py", "--workers", "4"]
+        binding.write_text(json.dumps(standing, indent=2))
+        script = m / "scripts/run-tests.py"
+        script.parent.mkdir()
+        script.write_text(
+            'import json, pathlib, subprocess, sys\n'
+            'assert sys.argv[1:] == ["--workers", "4"]\n'
+            'binding = json.loads(pathlib.Path(".agents/orchestration.json").read_text())\n'
+            'assert binding["base"]["ref"] == "integrate/fixture"\n'
+            'delivery = json.loads(pathlib.Path(".agents/deliveries/FX-1.json").read_text())\n'
+            'assert delivery["baseBranch"] == binding["base"]["ref"]\n'
+            'assert delivery["integrationTarget"] == "main"\n'
+            'assert pathlib.Path("src/one.txt").read_text() == "one\\n"\n'
+        )
+        commit(m, "Prepare the standing binding and the full suite")
+        sh("git", "push", "-q", "origin", "HEAD:main", cwd=m)
+        sh("git", "checkout", "-q", "main", cwd=m)
+        sh("git", "merge", "-q", "--ff-only", "origin/main", cwd=m)
+
+        def flow(*args, cwd=m):
+            code, out = fx.flow(*args, cwd=cwd)
+            self.assertEqual(code, 0, out)
+            return out
+
+        setup = ("lead-setup", "FX-1", "--plan", "docs/plan.md", "--integration", "integrate/fixture",
+                 "--pattern", PATTERN, "--authority", "push,draftPullRequests,readyPullRequests",
+                 "--granted-by", "operator")
+        rejected = list(setup)
+        rejected[5] = "unserved/fixture"
+        code, out = fx.flow(*rejected, cwd=m)
+        self.assertEqual(code, 2, out)
+        self.assertIn("match a served base", out)
+        self.assertFalse((m / "lanes/FX-1").exists())
+        flow(*setup)
+        lead = (m / "lanes/FX-1").resolve()
+        self.assertEqual(json.loads(binding.read_text()), standing)
+        self.assertEqual(sh("git", "branch", "--show-current", cwd=m).stdout.strip(), "main")
+        initial = lead / ".agents/deliveries/FX-1.json"
+        d = json.loads(initial.read_text())
+        self.assertEqual((d["baseBranch"], d["integrationTarget"]), ("integrate/fixture", "main"))
+        self.assertEqual(json.loads((lead / ".agents/orchestration.json").read_text()),
+                         {**standing, "base": {**standing["base"], "ref": "integrate/fixture"}})
+        self.assertIn("resume", flow(*setup).lower())
+
+        d["stories"] = {"FX-2": {**d["stories"]["FX-2"], "lane": "lane-1", "inApp": "none"}}
+        d["lanes"] = {"lane-1": {"owns": ["src/one.txt"]}}
+        initial.write_text(json.dumps(d, indent=2))
+        commit(lead, "Configure the approved fixture story")
+        sh("git", "push", "-q", "-u", "origin", "integrate/fixture", cwd=lead)
+        tip = sh("git", "rev-parse", "HEAD", cwd=lead).stdout.strip()
+        sh("git", "worktree", "remove", lead, cwd=m)
+        self.assertIn("resume", flow(*setup).lower())
+        self.assertEqual(sh("git", "rev-parse", "HEAD", cwd=lead).stdout.strip(), tip)
+        flow("lead-init", cwd=lead)
+        flow("lead-brief", cwd=lead)
+        brief = " ".join((lead / d["laneBrief"]).read_text().split())
+        directory = lead / ".orchestration/state"
+        self.assertIn(f"`{directory}`", brief)
+        self.assertIn(f"from the lead checkout `{lead}`", brief)
+        flow("lead-assign", "FX-2", "--lane", "lane-1", "--title", "Lane 1", cwd=lead)
+        flow("lane-start", "FX-2", "--base", "integrate/fixture", cwd=lead)
+        lane = m / "lanes/FX-2"
+        (lane / "src/one.txt").write_text("one\n")
+        commit(lane, "FX-2: one")
+        review = lane / ".orchestration/review/FX-2"
+        review.mkdir(parents=True)
+        (review / "context.md").write_text("- fixture evidence\n")
+        flow("gate", "FX-2", cwd=lane)
+        flow("review-prepare", "FX-2", "--round", 1, cwd=lane)
+        write_results(review, 1, "FX-2", fx.lenses(lane))
+        flow("review-reduce", "FX-2", "--round", 1, cwd=lane)
+        flow("push", "FX-2", cwd=lane)
+        body = fx.tmp / "body.md"
+        body.write_text("Fixture change\n")
+        url = flow("open-pr", "FX-2", "--title", "FX-2: one", "--body-file", body, cwd=lane).strip()
+        flow("handoff", "FX-2", "--pr", url, cwd=lane)
+        flow("lead-accept", "FX-2", cwd=lead)
+        sh(sys.executable, "-B", fx.release / "skills/orchestrate-work/scripts/merge_queue.py", "--repo", lead,
+           "--state", directory, "--remote", "origin", "--base", "integrate/fixture", "run", "FX-2", cwd=lead,
+           env=fx.env)
+        flow("lead-run", "--once", cwd=lead)
+        closed = json.loads((directory.parent / "flow-log/FX-1.closed.json").read_text())
+        archive = Path(closed["archive"])
+        self.assertTrue((archive / "state/state.json").is_file())
+        journal = [json.loads(line) for line in (archive / "state/journal.jsonl").read_text().splitlines()]
+        self.assertTrue(any(e["kind"] == "delivery.closed" for e in journal))
+        archived = json.loads((archive / "FX-1.json").read_text())
+        self.assertEqual((archived["baseBranch"], archived["integrationTarget"]), ("integrate/fixture", "main"))
+        self.assertTrue(any(e["kind"] == "base.verified" for e in journal))
+        merged = sh("git", "ls-remote", "origin", "refs/heads/integrate/fixture", cwd=m).stdout.split()[0]
+        results = [json.loads(line) for line in (archive / "flow-log/FX-1.full-health.jsonl").read_text().splitlines()]
+        self.assertTrue(any(e.get("head") == merged and e.get("result") == "passed" for e in results), results)
+        self.assertEqual(json.loads(binding.read_text()), standing)
 
     def test_a_merge_runs_full_health_with_the_close_still_held_and_once_at_its_head(self) -> None:
         fx = self.fixture()

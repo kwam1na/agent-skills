@@ -5595,12 +5595,114 @@ def lanes_grant(args, existing: dict | None) -> dict | None:
             "grantedOn": args.granted_on or datetime.date.today().isoformat()}
 
 
+def integration_matches(delivery: dict, binding: dict, key: str, base: str, target: str) -> bool:
+    return (delivery.get("delivery") == key and delivery.get("baseBranch") == base
+            and delivery.get("integrationTarget") == target and binding.get("base", {}).get("ref") == base)
+
+
+def verify_integration_checkout(c, root: Path, key: str, base: str, target: str) -> None:
+    listed = git("worktree", "list", "--porcelain").splitlines()
+    if f"worktree {root}" in listed and git("branch", "--show-current", cwd=root) == base:
+        delivery = load_json(root / c.deliveries_rel / f"{key}.json") or {}
+        binding = load_json(root / ".agents/orchestration.json") or {}
+        if integration_matches(delivery, binding, key, base, target):
+            return
+        # A draft can fail before either file is written. Only resume that
+        # checkout if it still holds the unmodified starting tree.
+        standing = git("rev-parse", "--verify", f"refs/heads/{target}")
+        if not delivery and binding.get("base", {}).get("ref") == target and clean_head(root) == standing:
+            return
+    raise Stop(f"{root} already exists and does not hold the integration setup for {key} on {base}")
+
+
+def integration_checkout(c, key: str, base: str, plan: str) -> tuple[Path, str]:
+    """Find or create the lead checkout, keeping the standing binding on its own branch."""
+    if not c.binding_base or git("check-ref-format", "--branch", base, check=False) != base:
+        raise Stop("--integration needs a standing base and a valid integration branch name")
+    if not re.fullmatch(PLAN_KEY, key):
+        raise Stop("--integration needs a delivery key such as WORK-123")
+    root = c.lane_checkout(key).resolve()
+    if c.root.resolve() == root:
+        existing = c.shelf.json(f"{c.deliveries_rel}/{key}.json") or {}
+        target = existing.get("integrationTarget")
+        if target and integration_matches(existing, c.binding, key, base, target) and git("branch", "--show-current") == base:
+            return root, target
+        if not existing and c.binding_base != base and serves(c.binding, base):
+            verify_integration_checkout(c, root, key, base, c.binding_base)
+            return root, c.binding_base
+        raise Stop(f"{root} is not the lead checkout of {key} on {base}")
+    target = c.binding_base
+    if base == target or not serves(c.binding, base):
+        raise Stop(f"integration branch {base} must differ from {target} and match a served base in the binding")
+    if root.exists():
+        verify_integration_checkout(c, root, key, base, target)
+        return root, target
+    existing_branch = git("rev-parse", "--verify", "--quiet", f"refs/heads/{base}", check=False)
+    published = git("ls-remote", "--heads", c.remote, f"refs/heads/{base}").split()
+    remote_tip = published[0] if published else ""
+    if remote_tip:
+        git("fetch", "-q", c.remote, f"refs/heads/{base}:refs/remotes/{c.remote}/{base}")
+        if git("rev-parse", f"{c.remote}/{base}") != remote_tip:
+            raise Stop(f"{c.remote}/{base} moved while resuming; retry")
+    if git("branch", "--show-current") != target:
+        raise Stop(f"start integration setup on {target}, the standing binding's base")
+    if Path(plan).is_absolute() or ".." in Path(plan).parts:
+        raise Stop("name a committed repository-relative plan")
+    if existing_branch or remote_tip:
+        if existing_branch and remote_tip and not is_ancestor(remote_tip, existing_branch):
+            raise Stop(f"local {base} does not contain its remote tip; reconcile the branch before resuming")
+        tip = existing_branch or remote_tip
+        delivery = Shelf(c.root, tip).json(f"{c.deliveries_rel}/{key}.json") or {}
+        binding = Shelf(c.root, tip).json(".agents/orchestration.json") or {}
+        if not integration_matches(delivery, binding, key, base, target):
+            raise Stop(f"{base} already exists without a matching integration setup for {key}")
+        if existing_branch:
+            git("worktree", "add", "-q", str(root), base)
+        else:
+            git("worktree", "add", "-q", "--track", "-b", base, str(root), f"{c.remote}/{base}")
+    else:
+        head = clean_head()
+        if Shelf(c.root, head).text(plan) is None:
+            raise Stop("name a committed repository-relative plan")
+        if Shelf(c.root, head).json(f"{c.deliveries_rel}/{key}.json") is not None:
+            raise Stop(f"{key} already has a delivery file on {target}; use a new delivery key")
+        git("worktree", "add", "-q", "--no-track", "-b", base, str(root), head)
+    return root, target
+
+
 def lead_setup(args) -> None:
-    """Draft .agents/deliveries/<key>.json from the approved plan (and, optionally, the tracker snapshot)."""
-    c = Config(repo(), need_delivery=False)
+    """Draft a delivery from its plan and optional tracker snapshot."""
+    c = Config(repo(), need_delivery=False, pick=False)
+    if not args.integration:
+        draft_delivery(c, args)
+        return
+    # Validate the grant and heading pattern before creating a checkout.
+    if not args.force:
+        lanes_grant(args, None)
+    pattern = re.compile(args.pattern or STORY_HEADING, re.M)
+    if not {"key", "title"} <= pattern.groupindex.keys():
+        raise Stop("the pattern must name groups `key` and `title`")
+    root, target = integration_checkout(c, args.key, args.integration, args.plan)
+    args.base = args.integration
+    existing = root / c.deliveries_rel / f"{args.key}.json"
+    if existing.is_file() and not args.force:
+        print(f"resume {args.key} in the lead checkout {root} on {args.base}; integration target {target}")
+        return
+    integration = Config(root, need_delivery=False, pick=False)
+    # Draft against the standing config first. Its served-base patterns are
+    # the authority for this branch, including while the remote has no ref.
+    draft_delivery(integration, args, integration_target=target)
+    binding = load_json(integration.binding_path)
+    binding["base"]["ref"] = args.base
+    integration.binding_path.write_text(json.dumps(binding, indent=2) + "\n")
+    print(f"lead checkout: {root}; review the draft, commit the binding and delivery file there, then push {args.base} "
+          f"to {c.remote} before lead-init. Integrate into {target} at close-out.")
+
+
+def draft_delivery(c, args, integration_target: str | None = None) -> None:
     if c.bases and not args.base:
         raise Stop(f"the binding serves several bases ({', '.join([c.binding_base, *c.bases])}): pass --base to name "
-                   "the one this delivery lands on")
+                   "the one this delivery lands on, or --integration to set up a separate base")
     if args.base and c.binding_base and not serves(c.binding, args.base):
         raise unserved(c.binding, args.base)
     if tracker_conf(c)["unrunnable"]:
@@ -5692,6 +5794,8 @@ def lead_setup(args) -> None:
             print(f"drafted {len(items)} {noun} from '{name}'")
     if existing:
         drafted.update({name: existing[name] for name in ("approvals", "outOfScope", "planReview") if name in existing})
+        if existing.get("integrationTarget") and not integration_target:
+            raise Stop("redraft a delivery with an integration target using --integration on its lead checkout")
     adoptable = adoptable_plan_review(c, Path(args.plan))
     if adoptable:
         drafted.setdefault("planReview", {"lenses": json.loads(round_files(adoptable)[0].read_text())["lenses"]})
@@ -5699,7 +5803,7 @@ def lead_setup(args) -> None:
         if target.exists() and any(target.iterdir()):
             raise Stop(f"delivery {key} already has a plan review in {target}, so it can't adopt the one in {adoptable}; "
                        "keep one of them and remove the other")
-    git("fetch", "-q", c.remote)
+    git("fetch", "-q", c.remote, cwd=c.root)
     base = args.base or c.binding_base
     if not base:
         raise Stop("no delivery base: the binding names none here; pass --base")
@@ -5714,7 +5818,8 @@ def lead_setup(args) -> None:
         "schemaVersion": "delivery-flow-delivery/1",
         "delivery": key,
         "headline": args.headline or key,
-        **({"baseBranch": args.base} if args.base and args.base != c.binding_base else {}),
+        **({"baseBranch": args.base} if args.base and (integration_target or args.base != c.binding_base) else {}),
+        **({"integrationTarget": integration_target} if integration_target else {}),
         "plan": args.plan,
         "laneBrief": str(Path(args.plan).with_suffix("")) + ".lane-brief.md",
         "brief": {"notes": None},
@@ -6171,7 +6276,7 @@ def lead_brief(args) -> None:
         "flow": flow_command(), "config": c.config_named, "base_branch": c.base_branch, "base_ref": c.base_ref, "remote": c.remote,
         "branch": c.branch_pattern.replace("{key}", "<key>"),
         "lane_checkout": c.lane_pattern.replace("{key}", "<key>"),
-        "state": str(c.state), "bound": str(c.bound), "work": c.work,
+        "state": str(c.state.resolve()), "lead_checkout": str(c.root.resolve()), "bound": str(c.bound), "work": c.work,
         "lenses": ", ".join(f"`{lens}`" for lens in c.lenses),
         "gates": "\n".join(f"   - `{' '.join(expand_argv(g['argv'], base=c.base_ref, key='<key>', delivery=c.delivery))}`"
                            for g in c.gates) or "   - (none declared)",
@@ -6539,7 +6644,7 @@ def lead_assign(args) -> None:
     print("Your stories, in order (one branch, one review and one hand-off each):")
     for key in keys:
         print(f"- {key} {c.issue_url.format(key=key)} ({c.label(key)}: {c.stories[key]['title']})")
-    print("\nBegin each story, when you start it, with:")
+    print(f"\nBegin each story from the lead checkout {c.root.resolve()}, with:")
     for key in keys:
         print(f"  {flow_command()} lane-start {key} --base {c.base_branch}")
     if args.note:
@@ -10746,7 +10851,10 @@ def main(argv: list[str] | None = None) -> None:
     p = command(sub, "lead-hints", help="print the delivery's work-hints/1: each story's plan files and its after keys")
     p.set_defaults(fn=lead_hints)
     p = command(sub, "lead-setup"); p.add_argument("key"); p.add_argument("--plan", required=True)
-    p.add_argument("--base", help="default: the binding's base.ref"); p.add_argument("--headline")
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument("--base", help="default: the binding's base.ref")
+    mode.add_argument("--integration", metavar="BRANCH", help="create or resume a named integration base for this delivery")
+    p.add_argument("--headline")
     p.add_argument("--pattern", help="a regex naming groups key and title for each story heading; default: the plan "
                    "format's `### KEY. Title` under `## Stories`")
     p.add_argument("--tracker-snapshot"); p.add_argument("--ship-from"); p.add_argument("--ship-path", action="append")
