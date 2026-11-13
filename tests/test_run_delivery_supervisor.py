@@ -2279,14 +2279,7 @@ class SupervisorPassTests(unittest.TestCase):
         """lane-1 takes both stories, so the lead can give it the second around the first's merge."""
         fx = self.fixture()
         m = fx.main
-        path = m / ".agents/deliveries/FX-1.json"
-        d = json.loads(path.read_text())
-        d["stories"]["FX-3"]["lane"] = "lane-1"
-        d["lanes"]["lane-1"]["owns"] = [*d["lanes"]["lane-1"]["owns"], *d["lanes"]["lane-2"]["owns"]]
-        path.write_text(json.dumps(d, indent=2))
-        commit(m, "FX-1: lane-1 takes FX-3 too")
-        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
-        code, out = fx.flow("lead-init", "--replace", cwd=m)
+        code, out = fx.flow("lead-own", "--lane", "lane-1", "--move", "src/two*", "--from", "lane-2", cwd=m)
         self.assertEqual(code, 0, out)
         return fx
 

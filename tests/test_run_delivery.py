@@ -1106,14 +1106,18 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         self.assertTrue((self.generation / "runtime/loader.mjs").is_file())
         self.assertTrue(self.tool.is_file())
 
-    def test_the_installed_generation_has_the_skill_byte_for_byte(self) -> None:
-        shipped = sorted(str(p.relative_to(SKILL)) for p in SKILL.rglob("*") if p.is_file())
-        installed = sorted(str(p.relative_to(self.generation / "skills/run-delivery"))
-                           for p in (self.generation / "skills/run-delivery").rglob("*") if p.is_file())
-        self.assertEqual(installed, shipped)
-        for relative in shipped:
-            self.assertEqual((self.generation / "skills/run-delivery" / relative).read_bytes(),
-                             (SKILL / relative).read_bytes(), relative)
+    def test_the_installed_generation_matches_the_verified_archive_byte_for_byte(self) -> None:
+        prefix = "skills/run-delivery/"
+        with zipfile.ZipFile(self.archive) as archive:
+            packaged = {name: archive.read(name) for name in archive.namelist() if name.startswith(prefix)}
+        self.assertIn(TOOL_RELATIVE, packaged)
+        installed = {
+            path.relative_to(self.generation).as_posix(): path.read_bytes()
+            for path in (self.generation / prefix).rglob("*") if path.is_file()
+        }
+        self.assertEqual(installed.keys(), packaged.keys())
+        for name, contents in packaged.items():
+            self.assertEqual(installed[name], contents, name)
 
     # -- what moving the tool changed ------------------------------------------------------------------
 
@@ -8850,6 +8854,7 @@ class LaneStartAndReadinessTests(unittest.TestCase):
         state = fx.tmp / "record/state.json"
         legacy = json.loads(state.read_text())
         legacy.pop("laneOwnership")
+        self.assertIn("lane-2", {lane["id"] for lane in legacy["lanes"]})
         state.write_text(json.dumps(legacy, indent=2) + "\n")
         move = ("lead-own", "--lane", "lane-1", "--move", "src/two*", "--from", "lane-2")
         code, out = fx.flow(*move, cwd=fx.main)
