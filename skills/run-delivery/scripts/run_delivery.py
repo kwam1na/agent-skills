@@ -20,6 +20,7 @@ Lane:
 Lead:
   lead-setup <key> --plan P --base B --pattern RE ... | lead-init | lead-brief | lead-assign <key...> --lane L --title T
   lead-accept <key> [--accept-blocked LABEL ...] [--accept-restarts] | ship | adapter-test
+  lead-authorize-base-merge <key> --reviewed HEAD --base COMMIT...
   lead-carry-review <key> --from HEAD --to HEAD --reason TEXT
   lead-push [--wait-seconds N] | lead-flake --check ID [--test REGEX ...] --ref REF
 Merge queue:
@@ -3168,7 +3169,7 @@ def authority_text() -> str:
     if granted.get("draftPullRequests"):
         what += f", and open its draft pull request into `{c.base_branch}`, with `{flow_command()} open-pr`"
     return (f"{granted['grantedBy']} gave lanes authority on {granted['grantedOn']} to {what}. That is all: never push "
-            f"any other branch, never force-push, never merge, and never mark a pull request ready or approve one. "
+            f"any other branch, never force-push, and never merge, mark ready or approve a pull request. "
             "The lead's merge queue merges.")
 
 
@@ -3300,14 +3301,15 @@ def review_move(c, key: str, when: str, last: bool = False) -> None:
 
 
 def handoff_and_post(c, key: str, lane: str, head: str, pr: str, rounds: int, post: str,
-                     checks: list[str] | None = None) -> str | None:
+                     checks: list[str] | None = None, base_merge: dict | None = None) -> str | None:
     """Hand off to the record and, with the tracker publisher, post the hand-off update under the entry it journals,
     holding the ledger's lock across the journal write, the post and its line. Returns what was posted, or None when the
     lane posts it (no publisher) or the publisher will (the call failed, so no line was written)."""
     conf = tracker_conf(c)
     lead_moves = ((conf["transitions"].get("lead") or {}).get("candidate.handed")) if not conf["problems"] else None
     handed = ["handoff", "--lane", lane, "--subject", key, "--head", head, "--change-request", pr, "--rounds",
-              str(rounds), *(["--checks", ",".join(checks)] if checks else [])]
+              str(rounds), *(["--checks", ",".join(checks)] if checks else []),
+              *(["--base-merge", json.dumps(base_merge)] if base_merge else [])]
     if conf["mode"] != "publisher" or conf["problems"] or lead_moves:
         # With lead moves for a hand-off, the publisher makes them and posts the update with what they did.
         state_tool(*handed)
@@ -4078,6 +4080,115 @@ def pr_review_handoff(key: str, conf: dict, recorded: dict, given: list[str],
     return "; ".join(shown), []
 
 
+def lead_authorize_base_merge(args) -> None:
+    c = cfg()
+    require_lead_checkout(c)
+    key = c.require(args.key)
+    lane = c.lane_of(key)
+    git("fetch", "-q", c.remote, c.base_branch)
+    reviewed = git("rev-parse", "--verify", "--end-of-options", f"{args.reviewed}^{{commit}}")
+    checkout = c.lane_checkout(key)
+    if checkout.is_dir() and git("rev-parse", "HEAD", cwd=checkout) != reviewed:
+        raise Stop(f"{key}'s checkout must still be at the reviewed head to authorize its base merge")
+    bases = list(dict.fromkeys(git("rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}")
+                               for ref in args.base))
+    for base in bases:
+        if not is_ancestor(base, c.base_ref) or is_ancestor(base, reviewed):
+            raise Stop(f"{base} must be on {c.base_ref} and outside the reviewed head's history")
+    authorization = {"reviewed": reviewed, "baseCommits": bases}
+    state_tool("journal", "--writer", "lead", "--kind", "decision.recorded", "--subject", key, "--lane", lane,
+               "--base-merge-authorization", json.dumps(authorization),
+               "--summary", f"Authorized {lane} to merge base commits {', '.join(bases)} into {key} from {reviewed}")
+    print(f"{key}: authorized base merges from {reviewed}: {', '.join(bases)}")
+
+
+def delta_entries(helper, root: Path, before: str, after: str) -> dict[bytes, bytes]:
+    data = helper.git(root, "diff", "--raw", "-z", "--no-renames", "--no-abbrev",
+                      "--ignore-submodules=none", before, after).stdout
+    tokens = data.split(b"\0")[:-1]
+    return dict(zip(tokens[1::2], tokens[::2], strict=True))
+
+
+def region_delta(helper, root: Path, path: str, base: str, head: str, claims: list[dict]) -> list[list[bytes]]:
+    # Ownership validation confines each hunk to a single mapped span. Adjust
+    # each span's candidate bounds by edits before and within it.
+    helper.check_change(root, path, base, head, claims)
+    _, old = helper.entry(root, base, path)
+    _, new = helper.entry(root, head, path)
+    edits = helper.hunks(root, old, new)
+    lines = helper.lines(root, new)
+    result = []
+    for claim in claims:
+        start, end = helper.mapped(root, claim, base)
+        before = sum(added - removed for first, removed, added in edits if first < start)
+        within = sum(added - removed for first, removed, added in edits if start <= first < end)
+        result.append(lines[start - 1 + before:end - 1 + before + within])
+    return result
+
+
+def check_base_merge_delta(c, state: dict, lane: str, prior: str, head: str, old_base: str, new_base: str) -> None:
+    helper = _region_ownership()
+    ownership = c.effective_ownership(state)
+    regions = [claim for claim in state.get("laneRegions", []) if claim["lane"] == lane]
+    by_path = collections.defaultdict(list)
+    for claim in regions:
+        by_path[claim["path"]].append(claim)
+    try:
+        for path in helper.changed_paths(c.root, old_base, new_base):
+            if lane in owners_of(ownership, path):
+                raise Stop(f"the base merge changes lane-owned file {path}")
+        for claim in regions:
+            start, end = helper.mapped(c.root, claim, old_base)
+            # Verify the transition itself even when the claim was originally
+            # anchored before both bases.
+            helper.mapped(c.root, {**claim, "baseHead": old_base, "start": start, "end": end}, new_base)
+        before, after = (delta_entries(helper, c.root, base, tip)
+                         for base, tip in ((old_base, prior), (new_base, head)))
+        for raw_path in sorted(before.keys() | after.keys()):
+            path = os.fsdecode(raw_path)
+            if raw_path not in before or raw_path not in after:
+                raise Stop(f"the base merge changes the story delta for {path}")
+            if path in by_path:
+                old = region_delta(helper, c.root, path, old_base, prior, by_path[path])
+                new = region_delta(helper, c.root, path, new_base, head, by_path[path])
+                if old == new:
+                    continue
+            elif before[raw_path] == after[raw_path]:
+                continue
+            raise Stop(f"the base merge changes the story delta for {path}")
+    except helper.RegionError as error:
+        raise Stop(str(error)) from error
+
+
+def verify_base_merge(c, key: str, lane: str, reviewed: str, head: str, doc: dict) -> dict:
+    history = git("rev-list", "--first-parent", "--reverse", f"{reviewed}..{head}").splitlines()
+    if not history:
+        raise Stop("the handed head has no base merge after review")
+    grants = [entry for entry in doc["journal"] if entry["subject"] == key and entry["lane"] == lane
+              and entry.get("baseMergeAuthorization", {}).get("reviewed") == reviewed]
+    prior = reviewed
+    base_commits = []
+    for merge in history:
+        _, *parents = git("rev-list", "--parents", "-n", "1", merge).split()
+        if len(parents) != 2 or parents[0] != prior:
+            raise Stop("the first-parent history after review must contain only two-parent base merges")
+        base = parents[1]
+        if not is_ancestor(base, c.base_ref):
+            raise Stop(f"{base} is outside the history of {c.base_ref}")
+        committed = int(git("show", "-s", "--format=%ct", merge))
+        if not any(base in entry["baseMergeAuthorization"]["baseCommits"]
+                   and int(datetime.datetime.fromisoformat(entry["at"]).timestamp()) <= committed for entry in grants):
+            raise Stop(f"the lead did not authorize {key} to merge {base} from {reviewed} before the merge")
+        old_base = git("merge-base", c.base_ref, prior)
+        new_base = git("merge-base", c.base_ref, merge)
+        if new_base != base or old_base == new_base or not is_ancestor(old_base, new_base):
+            raise Stop(f"{base} does not advance the candidate's delivery-base ancestor")
+        check_base_merge_delta(c, doc["state"], lane, prior, merge, old_base, new_base)
+        base_commits.append(base)
+        prior = merge
+    return {"reviewed": reviewed, "baseCommits": base_commits}
+
+
 def handoff(args) -> None:
     c = cfg()
     key = c.require(args.key)
@@ -4092,10 +4203,12 @@ def handoff(args) -> None:
     ran = check_ids(c, args.checks, "--checks") if args.checks is not None else []
     folder = review_dir(key)
     head = clean_head()
-    lane = check_candidate_ownership(c, key, git("merge-base", c.base_ref, head), head)
+    git("fetch", "-q", c.remote, c.base_branch)
+    lane = c.lane_of(key)
     pushed(key, head)
     pr = forge("get", "--url", args.pr)
-    if pr.get("state") != "open" or pr.get("source") != c.branch(key) or pr.get("destination") != c.base_branch:
+    if (pr.get("state") != "open" or pr.get("source") != c.branch(key) or pr.get("destination") != c.base_branch
+            or not same_commit(pr.get("head"), head)):
         raise Stop(f"{args.pr} isn't an open PR from {c.branch(key)} into {c.base_branch}: {pr}")
     rounds = round_files(folder)
     if not rounds:
@@ -4106,9 +4219,15 @@ def handoff(args) -> None:
         raise Stop(f"round {last['round']} is {last['outcome']}; the lenses have not all approved")
     if {e["lens"] for e in last["entries"]} != set(c.lenses):
         raise Stop(f"round {last['round']} doesn't carry every lens")
-    if last["entries"][0]["binding"]["candidateRef"] != head:
-        raise Stop(f"the approved round reviewed {last['entries'][0]['binding']['candidateRef'][:10]}, but HEAD is "
-                   f"{head[:10]}; review the new head")
+    reviewed = last["entries"][0]["binding"]["candidateRef"]
+    base_merge = None
+    if reviewed != head:
+        try:
+            base_merge = verify_base_merge(c, key, lane, reviewed, head, load_state())
+        except Stop as error:
+            raise Stop(f"the approved round reviewed {reviewed[:10]}, but HEAD is {head[:10]}; "
+                       f"review the new head: {error}") from error
+    lane = check_candidate_ownership(c, key, git("merge-base", c.base_ref, head), head)
     validation, gate_problems = gates_summary(key, repo(), head)
     pr_line = None
     # A lane stopped by a silent reviewer hands off blocked on it, and the lead decides that reviewer. The block holds
@@ -4150,19 +4269,24 @@ def handoff(args) -> None:
     problems = gate_problems + problems + video_problems
     if problems:
         raise Stop("the hand-off isn't complete:\n  " + "\n  ".join(problems))
-    state_tool("capture-review", "--subject", key, "--candidate", head, *[x for p in rounds for x in ("--outcome", str(p))])
+    state_tool("capture-review", "--subject", key, "--candidate", reviewed,
+               *[x for p in rounds for x in ("--outcome", str(p))])
     conf = tracker_conf(c)
     when = conf["transitions"].get("reviewWhen")
     if when and when != "pipeline-green" or when == "pipeline-green" and pr_line:
         # A review move a refused call left owed is retried here, at the latest.
         review_move(c, key, when, last=True)
     post = f"hand-off: {args.pr}, head {head[:10]}, {len(rounds)} review round(s); {validation}."
-    posted = handoff_and_post(c, key, lane, head, args.pr, len(rounds), post, ran)
+    if base_merge:
+        post += f" Review carried from {reviewed} across base commits {', '.join(base_merge['baseCommits'])}."
+    posted = handoff_and_post(c, key, lane, head, args.pr, len(rounds), post, ran, base_merge)
     histories = [f"r{o['round']}: {round_history_text(o)}" for o in outcomes if round_history_text(o)]
     print("\n".join([
         f"**Hand-off: {key}** ({c.label(key)}, {lane})",
         f"- candidate: {args.pr}",
-        f"- reviewed head: `{head}`",
+        f"- reviewed head: `{reviewed}`",
+        *([f"- handed head: `{head}`", f"- authorized base commits: {', '.join(base_merge['baseCommits'])}"]
+          if base_merge else []),
         "- review rounds: " + "; ".join(f"r{o['round']} {o['outcome']}" for o in outcomes) + " (review evidence captured)"
         + (f"; history: {'; '.join(histories)}" if histories else ""),
         f"- validation: {validation}",
@@ -6558,8 +6682,18 @@ def accept_story(c, args) -> None:
     if not last or set(last["review"]["verdicts"]) != set(c.lenses) or set(last["review"]["verdicts"].values()) != {"approve"}:
         problems.append("the last journaled round is not approved by every lens")
     evidence = [e for e in doc["journal"] if e.get("kind") == "review.evidence" and e.get("subject") == key]
+    carried_review = None
     if not evidence or evidence[-1]["reviewArtifact"]["candidateRef"] != head:
-        problems.append("the latest captured review evidence is not for the handed head")
+        observed = doc.get("reviewEvidence", {}).get(key, {})
+        carried = observed.get("carried", {})
+        hand = next((entry for entry in reversed(doc["journal"])
+                     if entry["subject"] == key and entry["kind"] == "candidate.handed"), {})
+        carry = hand.get("reviewCarry", {})
+        if (carry.get("baseCommits") and carried.get("to") == head and carry.get("digest") == observed.get("digest")
+                and carry["from"] == observed.get("candidateRef")):
+            carried_review = carry
+        else:
+            problems.append("the latest captured review evidence is not for the handed head")
     pr = forge("get", "--url", item.get("changeRequest") or "")
     if pr.get("state") != ("merged" if merged else "open"):
         problems.append(f"the PR is {pr.get('state')}")
@@ -6604,6 +6738,13 @@ def accept_story(c, args) -> None:
             decisions.append(f"PR review by {review['author']} at {review['at'][:16]} triaged: {recorded['triage']}")
     git("fetch", "-q", c.remote, c.base_branch)
     base = git("merge-base", c.base_ref, head)
+    if carried_review and not merged:
+        try:
+            verified = verify_base_merge(c, key, item["lane"], carried_review["from"], head, doc)
+            if verified["baseCommits"] != carried_review["baseCommits"]:
+                problems.append("the handed base merge history differs from the captured carry")
+        except Stop as error:
+            problems.append(f"review carry refused: {error}")
     # Once merged, the base holds the head or a squash of it, so a diff against it no longer says what the work changed.
     lane = item["lane"] if "laneOwnership" in doc["state"] else c.lane_of(key, doc["state"])
     changed, outside = ([], []) if merged else candidate_ownership(c, lane, base, head, doc["state"])
@@ -10657,6 +10798,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--full-suite", action="store_true", help="under selection.lead: check on the binding's fallback, "
                    "journalled as the lead's decision")
     p.add_argument("--reason", help="with --checks or --full-suite: why"); p.set_defaults(fn=lead_accept)
+    p = command(sub, "lead-authorize-base-merge", help="authorize exact delivery-base commits before the lane merges")
+    p.add_argument("key"); p.add_argument("--reviewed", required=True); p.add_argument("--base", action="append", required=True)
+    p.set_defaults(fn=lead_authorize_base_merge)
     p = command(sub, "lead-carry-review", help="carry a story's captured review to its queued head across commits that "
                 "need no new round, showing their diff first")
     p.add_argument("key"); p.add_argument("--from", dest="from_head", required=True, help="the head the evidence covers")

@@ -731,3 +731,8 @@ P1 open, is refused. Each later head needs its own carry, from the head the last
 carry reached, and a later review round or capture ends a carry. Like a capture,
 a carry is display and acceptance evidence only: it creates no run, is no review
 round in the stats, and is no product admission evidence.
+
+A lead-directed base merge before hand-off uses a story-bound authorization. The
+`candidate.handed` entry can then carry the original review digest, its reviewed
+and handed heads, and the authorized base commits. The original review retains
+its candidate identity.

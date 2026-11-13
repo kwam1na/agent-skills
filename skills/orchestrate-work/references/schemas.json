@@ -1368,8 +1368,30 @@
           }
         }
       },
+      "baseMergeAuthorization": {
+        "description": "A lead decision authorizing the subject and lane to merge exact base commits from a reviewed head.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "reviewed",
+          "baseCommits"
+        ],
+        "properties": {
+          "reviewed": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+          },
+          "baseCommits": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+            }
+          }
+        }
+      },
       "reviewCarry": {
-        "description": "Written only by the lead's carry-review, on a decision.recorded entry: the captured review evidence (digest) the lead judged still holds for the work after a commit that needs no new round, from the head it covered to the queued head. Display and acceptance evidence only: it creates no run, is no review round, and is no admission evidence. A later review round or capture for the subject ends it.",
+        "description": "Written by the lead's carry-review decision or a hand-off carrying across authorized base merges: the captured review evidence (digest) the lead judged still holds for the work after a commit that needs no new round, from the head it covered to the queued head. Display and acceptance evidence only: it creates no run, is no review round, and is no admission evidence. A later review round or capture for the subject ends it.",
         "type": "object",
         "additionalProperties": false,
         "required": [
@@ -1391,6 +1413,13 @@
           "digest": {
             "type": "string",
             "pattern": "^[0-9a-f]{64}$"
+          },
+          "baseCommits": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+            }
           }
         }
       },

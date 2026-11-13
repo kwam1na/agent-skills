@@ -1866,6 +1866,122 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
 
     # -- end to end ---------------------------------------------------------------------------------------
 
+    def test_authorized_base_merge_carries_the_review_at_hand_off(self) -> None:
+        fx = self.assigned_fixture()
+        m = fx.main
+        lines = [f"line {n}\n" for n in range(20)]
+        file = "src/shared.txt"
+        delivery = m / ".agents/deliveries/FX-1.json"
+        data = json.loads(delivery.read_text())
+        data["stories"]["FX-2"]["inApp"] = "none"
+        delivery.write_text(json.dumps(data, indent=2))
+        (m / file).write_text("".join(lines))
+        commit(m, "Add shared text")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        base = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
+
+        def flow(*args, cwd=m):
+            code, out = fx.flow(*args, cwd=cwd)
+            self.assertEqual(code, 0, out)
+            return out
+
+        flow("lead-own", "--lane", "lane-1", "--region", file, "--base", base, "--start", 8, "--end", 16)
+        wt = fx.lane("FX-2")
+        (wt / "src/one.txt").write_text("one\n")
+        (wt / file).write_text("".join(lines[:10] + ["lane edit\n"] + lines[11:]))
+        commit(wt, "FX-2: reviewed change")
+        reviewed = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+        review = wt / ".orchestration/review/FX-2"
+        review.mkdir(parents=True)
+        (review / "context.md").write_text("- fixture evidence\n")
+        flow("gate", "FX-2", cwd=wt)
+        flow("review-prepare", "FX-2", "--round", 1, cwd=wt)
+        write_results(review, 1, "FX-2", fx.lenses(wt))
+        flow("review-reduce", "FX-2", "--round", 1, cwd=wt)
+        (m / file).write_text("upstream\n" + "".join(lines))
+        commit(m, "Add an upstream line above the region")
+        flow("lead-push")
+        upstream = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
+        flow("push", "FX-2", cwd=wt)
+        body = fx.tmp / "body.md"
+        body.write_text("Summary\n")
+        url = "https://forge.test/pr/1"
+        flow("open-pr", "FX-2", "--title", "FX-2: one", "--body-file", body, cwd=wt)
+        def refuse(reason):
+            sh("git", "push", "-q", "--force", "origin", "HEAD:feature/FX-2", cwd=wt)
+            code, out = fx.flow("handoff", "FX-2", "--pr", url, cwd=wt)
+            self.assertEqual(code, 2, out)
+            self.assertIn("review the new head", out)
+            self.assertIn(reason, out)
+            self.assertFalse(self.shown(fx.tmp / "record")["state"]["queue"])
+            sh("git", "reset", "-q", "--hard", reviewed, cwd=wt)
+            sh("git", "push", "-q", "--force", "origin", "HEAD:feature/FX-2", cwd=wt)
+
+        sh("git", "commit", "-q", "--allow-empty", "-m", "Lane commit", cwd=wt)
+        refuse("only two-parent base merges")
+        sh("git", "merge", "-q", "--no-ff", "--no-edit", upstream, cwd=wt)
+        refuse("did not authorize")
+        sh("git", "branch", "unrelated", base, cwd=m)
+        sh("git", "checkout", "-q", "unrelated", cwd=m)
+        (m / "other.txt").write_text("unrelated\n")
+        commit(m, "Unrelated branch")
+        unrelated = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
+        sh("git", "checkout", "-q", "feature/FX-1", cwd=m)
+        sh("git", "merge", "-q", "--no-ff", "--no-edit", unrelated, cwd=wt)
+        refuse("outside the history")
+        flow("lead-authorize-base-merge", "FX-2", "--reviewed", reviewed, "--base", upstream)
+        sh("git", "merge", "-q", "--no-ff", "--no-commit", upstream, cwd=wt)
+        (wt / "src/one.txt").write_text("manual resolution\n")
+        commit(wt, "Merge with a manual edit")
+        refuse("changes the story delta for src/one.txt")
+
+        (m / "src/one-unrelated.txt").write_text("upstream lane-owned content\n")
+        commit(m, "Change a lane-owned file in the base")
+        flow("lead-push")
+        owned_base = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
+        flow("lead-authorize-base-merge", "FX-2", "--reviewed", reviewed, "--base", owned_base)
+        sh("git", "merge", "-q", "--no-ff", "--no-edit", owned_base, cwd=wt)
+        refuse("changes lane-owned file src/one-unrelated.txt")
+
+        sh("git", "revert", "--no-edit", owned_base, cwd=m)
+        (m / file).write_text("upstream\n" + "".join(lines[:14] + ["owned upstream edit\n"] + lines[15:]))
+        commit(m, "Change a region-owned line in the base")
+        flow("lead-push")
+        region_base = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
+        flow("lead-authorize-base-merge", "FX-2", "--reviewed", reviewed, "--base", region_base)
+        sh("git", "merge", "-q", "--no-ff", "--no-edit", region_base, cwd=wt)
+        refuse(f"{file} [8, 16)")
+        sh("git", "revert", "--no-edit", region_base, cwd=m)
+        (m / "src/app.txt").write_text("another base fix\n")
+        commit(m, "Add another base fix")
+        flow("lead-push")
+        second = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
+        sh("git", "merge", "-q", "--no-ff", "--no-edit", upstream, cwd=wt)
+        sh("git", "merge", "-q", "--no-ff", "--no-edit", second, cwd=wt)
+        refuse("did not authorize")
+        flow("lead-authorize-base-merge", "FX-2", "--reviewed", reviewed, "--base", second)
+        sh("git", "merge", "-q", "--no-ff", "--no-edit", upstream, cwd=wt)
+        sh("git", "merge", "-q", "--no-ff", "--no-edit", second, cwd=wt)
+        head = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+        flow("push", "FX-2", cwd=wt)
+        code, out = fx.flow("handoff", "FX-2", "--pr", url, cwd=wt)
+        self.assertEqual(code, 2, out)
+        self.assertIn("gates ran at", out)
+        flow("gate", "FX-2", cwd=wt)
+        flow("handoff", "FX-2", "--pr", url, cwd=wt)
+        flow("lead-accept", "FX-2")
+        doc = self.shown(fx.tmp / "record")
+        self.assertEqual(doc["state"]["queue"][0]["head"], head)
+        observed = doc["reviewEvidence"]["FX-2"]
+        self.assertEqual(observed["candidateRef"], reviewed)
+        self.assertEqual(observed["carried"]["to"], head)
+        self.assertEqual(len(observed["outcomes"]), 1)
+        hand = next(e for e in doc["journal"] if e["kind"] == "candidate.handed")
+        self.assertEqual(hand["reviewCarry"]["baseCommits"], [upstream, second])
+        self.assertEqual(hand["reviewCarry"]["from"], reviewed)
+        self.assertEqual(hand["reviewCarry"]["to"], head)
+        self.assertEqual(hand["reviewCarry"]["digest"], observed["digest"])
+
     def test_lane_and_lead_flow_end_to_end(self) -> None:
         fx = self.fixture()
         flow_run = fx.flow
@@ -7841,7 +7957,7 @@ GUIDE_SUBSTITUTIONS = (
 FIXTURE_KEYS = {"<delivery-key>": "FX-1", "<story-key>": "FX-2"}
 # Section 8 of the guide: the operating rules, by their opening words.
 OPERATING_RULES = [
-    "Lanes are sessions of their own.", "Lanes never merge the base.", "Review evidence is captured at hand-off.",
+    "Lanes are sessions of their own.", "The merge queue normally syncs the base into the lane branch.", "Review evidence is captured at hand-off.",
     "Restart long-running commands after an update.", "Start the merge queue with default signals.",
     "The evidence page follows each marked story's merge.", "Sign-in values stay out of commands.",
 ]

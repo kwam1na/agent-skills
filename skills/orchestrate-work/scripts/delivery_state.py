@@ -473,8 +473,17 @@ def journal_errors(entries: list[object]) -> list[str]:
             errors.extend(f"entry {index + 1}: {problem}" for problem in _review_problems(entry))
             if (entry["kind"] == "review.evidence") != ("reviewArtifact" in entry) or (entry["kind"] == "review.evidence" and entry["subject"] is None):
                 errors.append(f"entry {index + 1}: review.evidence names its subject and artifact")
-            if "reviewCarry" in entry and (entry["kind"] != "decision.recorded" or entry["subject"] is None):
-                errors.append(f"entry {index + 1}: only a decision about a subject carries its review")
+            if "baseMergeAuthorization" in entry:
+                if (entry["kind"] != "decision.recorded" or not entry["subject"] or not entry["lane"]
+                        or not entry["baseMergeAuthorization"]["baseCommits"]):
+                    errors.append(f"entry {index + 1}: a base merge authorization names a story, lane and base commits")
+            if "reviewCarry" in entry:
+                expected = "candidate.handed" if "baseCommits" in entry["reviewCarry"] else "decision.recorded"
+                if (entry["kind"] != expected or not entry["subject"]
+                        or expected == "candidate.handed" and not entry["reviewCarry"]["baseCommits"]):
+                    message = ("only a decision about a subject carries its review" if expected == "decision.recorded"
+                               else "a base merge carry belongs to a hand-off naming its story and base commits")
+                    errors.append(f"entry {index + 1}: {message}")
             if "occurredAt" in entry:
                 if entry["kind"] != "candidate.merged":
                     errors.append(f"entry {index + 1}: only a merge carries occurredAt")
@@ -981,6 +990,7 @@ def handoff(
     evidence: list[dict] | None = None,
     run: str | None = None,
     checks: list[str] | None = None,
+    base_merge: dict | None = None,
 ) -> dict:
     """A lane hands its reviewed work to the queue, and the hand-off is journaled.
 
@@ -1001,7 +1011,10 @@ def handoff(
     if problems:
         raise StateError("handoff_invalid", "; ".join(problems))
 
+    carried = None
+
     def change(state: dict) -> dict:
+        nonlocal carried
         if lane not in [entry["id"] for entry in state["lanes"]]:
             raise StateError("writer_not_owned", f"there is no lane {lane}")
         if run is not None:
@@ -1040,6 +1053,10 @@ def handoff(
             if planned.get("trackerStarted"):
                 item["trackerStarted"] = True
             state["queue"].append(item)
+        if base_merge is not None:
+            if item.get("runId") or run:
+                raise StateError("carry_invalid", "work built by a product run keeps its own review evidence")
+            carried = base_merge_evidence(directory, read_journal(directory), subject, lane, head, rounds, base_merge)
         if rounds is not None:
             item["reportedRounds"] = rounds
         if run is not None:
@@ -1076,8 +1093,10 @@ def handoff(
     proof = "".join(f"; suite evidence for {entry['check']} ({entry['result']}) at {entry['head']}"
                     for entry in evidence or [])
     ran = f"; the lane ran {', '.join(checks)}" if checks else ""
-    append_journal(directory, kind="candidate.handed", lane=lane, subject=subject,
-                   summary=f"{lane} handed {subject} at {head} ({change_request}){rounds_text}{proof}{ran}{waiting}")
+    carry_text = (f"; review carried from {carried['from']} to {head} across base commits "
+                  f"{', '.join(carried['baseCommits'])}" if carried else "")
+    append_journal(directory, kind="candidate.handed", lane=lane, subject=subject, review_carry=carried,
+                   summary=f"{lane} handed {subject} at {head} ({change_request}){rounds_text}{proof}{ran}{waiting}{carry_text}")
     return item  # type: ignore[return-value]
 
 
@@ -1663,6 +1682,7 @@ def append_journal(
     recovery: dict | None = None,
     review_artifact: dict | None = None,
     review_carry: dict | None = None,
+    base_merge_authorization: dict | None = None,
 ) -> dict:
     """Append one entry. ``writer`` is "runner" when the runner writes; the lead and lanes leave it unset."""
     if writer == "runner" and kind == REVIEW_KIND:
@@ -1677,6 +1697,16 @@ def append_journal(
             if lane is None or owner != lane:
                 raise StateError("writer_not_owned", f"{subject} is not {lane}'s work")
         entries = read_journal(directory)
+        if base_merge_authorization is not None:
+            if not isinstance(base_merge_authorization, dict):
+                raise StateError("entry_invalid", "base merge authorization must be a JSON object")
+            if writer is not None or kind != "decision.recorded":
+                raise StateError("writer_not_owned", "only the lead authorizes a base merge")
+            item = next((row for row in [*current["queue"], *current.get("planned", [])]
+                         if row["subject"] == subject), None)
+            if item is None or item.get("assignedLane", item["lane"]) != lane or item["stage"] == "merged":
+                raise StateError("carry_invalid", "base merge authorization must name the current lane of active work")
+            aligned_capture(directory, entries, subject, lane, base_merge_authorization.get("reviewed"))
         entry = {
             "id": len(entries) + 1,
             "at": now(),
@@ -1698,6 +1728,8 @@ def append_journal(
             entry["reviewArtifact"] = review_artifact
         if review_carry is not None:
             entry["reviewCarry"] = review_carry
+        if base_merge_authorization is not None:
+            entry["baseMergeAuthorization"] = base_merge_authorization
         errors = journal_errors([*entries, entry])
         if errors:
             raise StateError("entry_invalid", "; ".join(errors))
@@ -1982,6 +2014,43 @@ def capture_review(directory: Path, *, subject: str, candidate: str, outcomes: l
                                   review_artifact=reference)
     except (OSError, ValueError, UnicodeError, RecursionError) as error:
         raise StateError("review_artifact_invalid", "native review artifact could not be read or stored") from error
+
+
+def aligned_capture(directory: Path, journal: list[dict], subject: str, lane: str, reviewed: str) -> tuple[dict, int]:
+    entries = [entry for entry in journal if entry["subject"] == subject]
+    capture = next((entry for entry in reversed(entries) if entry["kind"] == "review.evidence"), None)
+    latest = next((entry for entry in reversed(entries) if entry["kind"] == "review.round"), None)
+    if (capture is None or latest is None or capture["lane"] != lane or latest["lane"] != lane
+            or latest["id"] >= capture["id"] or capture["reviewArtifact"]["candidateRef"] != reviewed):
+        raise StateError("carry_invalid", "the handing lane needs its latest captured review at the exact reviewed head")
+    reference = capture["reviewArtifact"]
+    data = _read_review_file(_review_artifact_path(directory, reference["digest"]), REVIEW_ARTIFACT_LIMIT)
+    if hashlib.sha256(data).hexdigest() != reference["digest"]:
+        raise StateError("carry_invalid", "the captured review artifact is damaged")
+    outcomes = _review_outcomes(_review_json(data), subject, reviewed)
+    verdicts = latest["review"]["verdicts"]
+    if (outcomes[-1]["outcome"] != "aligned" or latest["review"]["round"] != len(outcomes)
+            or set(verdicts.values()) != {"approve"} or set(verdicts) != {e["lens"] for e in outcomes[-1]["entries"]}):
+        raise StateError("carry_invalid", "the captured review must match the last aligned round")
+    return capture, len(outcomes)
+
+
+def base_merge_evidence(
+    directory: Path, journal: list[dict], subject: str, lane: str, head: str, rounds: int | None, merge: dict,
+) -> dict:
+    if not isinstance(merge, dict) or set(merge) != {"reviewed", "baseCommits"}:
+        raise StateError("carry_invalid", "base merge evidence names a reviewed head and base commits")
+    reviewed, commits = merge["reviewed"], merge["baseCommits"]
+    sha = lambda value: isinstance(value, str) and re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", value)
+    if not sha(reviewed) or reviewed == head or not isinstance(commits, list) or not commits or not all(map(sha, commits)):
+        raise StateError("carry_invalid", "base merge evidence needs exact commit ids and a new head")
+    capture, count = aligned_capture(directory, journal, subject, lane, reviewed)
+    allowed = {commit for entry in journal if entry["id"] > capture["id"] and entry["subject"] == subject
+               and entry["lane"] == lane and entry.get("baseMergeAuthorization", {}).get("reviewed") == reviewed
+               for commit in entry["baseMergeAuthorization"]["baseCommits"]}
+    if rounds != count or not set(commits) <= allowed:
+        raise StateError("carry_invalid", "the handed base commits and review rounds must match the lead authorization")
+    return {"from": reviewed, "to": head, "digest": capture["reviewArtifact"]["digest"], "baseCommits": commits}
 
 
 def _standing_carry(journal: list[dict], subject: str, capture: dict) -> dict | None:
@@ -4124,6 +4193,8 @@ def _json_argument(value: str | None, name: str) -> object:
 
 
 def _handoff_command(args: argparse.Namespace) -> dict:
+    if args.base_merge and (args.accept or args.reject or args.no_change):
+        raise StateError("handoff_invalid", "--base-merge requires a candidate hand-off")
     if args.accept:
         return accept_handoff(args.dir, args.accept, _json_argument(args.authorization, "--authorization"),
                               args.region_path)
@@ -4154,7 +4225,7 @@ def _handoff_command(args: argparse.Namespace) -> dict:
     checks = None if args.checks is None else [name.strip() for name in args.checks.split(",")]
     return handoff(args.dir, lane=args.lane, subject=args.subject, head=args.head,
                    change_request=args.change_request, rounds=args.rounds, evidence=evidence, run=args.run,
-                   checks=checks)
+                   checks=checks, base_merge=_json_argument(args.base_merge, "--base-merge"))
 
 
 def _select_command(args: argparse.Namespace) -> dict:
@@ -4480,6 +4551,7 @@ def main(argv: list[str] | None = None) -> int:
     entry = commands.add_parser("journal", help="append one journal entry")
     entry.add_argument("--kind", required=True)
     entry.add_argument("--summary", help="required, except on a review.round, whose summary is written for it")
+    entry.add_argument("--base-merge-authorization", help="lead's reviewed head and exact allowed base commits as JSON")
     entry.add_argument("--review", help="a review.round's review as JSON, or - to read it from stdin")
     entry.add_argument("--lane")
     entry.add_argument("--subject")
@@ -4497,6 +4569,7 @@ def main(argv: list[str] | None = None) -> int:
     capture.add_argument("--outcome", type=Path, action="append", required=True, help="actual outcome file, once per round in order")
     hand = commands.add_parser("handoff", help="a lane hands its work to the queue, or the lead accepts or rejects it")
     decide = hand.add_mutually_exclusive_group()
+    hand.add_argument("--base-merge", help="verified base-merge carry at hand-off as JSON")
     hand.add_argument("--authorization", help="head, handing lane and ownership the lead verified before acceptance")
     hand.add_argument("--region-path", action="append", help="a region-owned path verified at acceptance")
     decide.add_argument("--accept", metavar="SUBJECT", help="accept a hand-off waiting for the lead")
@@ -4606,6 +4679,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.dir, kind=args.kind, summary=_journal_summary(args, review),
                     lane=args.lane, subject=args.subject, review=review,
                     writer="lane" if args.writer == "lane" else None,
+                    base_merge_authorization=_json_argument(args.base_merge_authorization, "--base-merge-authorization"),
                 ),
             }
         elif args.command == "close-finished":
