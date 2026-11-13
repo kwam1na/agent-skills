@@ -100,6 +100,119 @@ def run_tool(
     return result.returncode, json.loads(result.stdout.decode("ascii"))
 
 
+
+class WriterGenerationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.directory = self.root / "record"
+        self.identities = [{"releaseId": "test-old", "archiveSha256": "a" * 64},
+                           {"releaseId": "test-new", "archiveSha256": "b" * 64}]
+        self.tools = []
+        for name in ("old", "new"):
+            generation = self.root / ".agent-skills/generations" / name
+            scripts = generation / "skills/orchestrate-work/scripts"
+            scripts.mkdir(parents=True)
+            shutil.copy2(TOOL, scripts / "delivery_state.py")
+            schemas = scripts.parent / "references"
+            schemas.mkdir()
+            shutil.copy2(SCHEMA_FILE, schemas / "schemas.json")
+            self.tools.append(scripts / "delivery_state.py")
+        receipt = {"generation": "new", "release": self.identities[1],
+                   "previous": {"generation": "old", "release": self.identities[0]}}
+        (self.root / ".agent-skills/active.json").write_text(json.dumps(receipt))
+
+    def command(self, generation: int, *args: str) -> tuple[int, dict]:
+        result = subprocess.run([sys.executable, "-B", str(self.tools[generation]), "--dir", str(self.directory),
+                                 *args], capture_output=True)
+        return result.returncode, json.loads(result.stdout)
+
+    def snapshot(self) -> dict:
+        return {p.name: p.read_bytes() for p in self.directory.iterdir() if p.name != "state.lock"}
+
+    def test_mixed_writers_refuse_without_changing_record_then_lead_upgrades(self) -> None:
+        code, created = self.command(0, "init", "--headline", "Mixed writers")
+        self.assertEqual(code, 0, created)
+        self.assertEqual(created["state"]["meta"]["writerGeneration"], self.identities[0])
+        before = self.snapshot()
+        write = ("journal", "--kind", "decision.recorded", "--summary", "Lane writes")
+        code, refused = self.command(1, *write)
+        self.assertEqual((code, refused["code"]), (1, "writer_generation_mismatch"), refused)
+        for identity in self.identities:
+            self.assertIn(identity["releaseId"], refused["error"])
+            self.assertIn(identity["archiveSha256"], refused["error"])
+        self.assertEqual(self.snapshot(), before)
+        code, upgraded = self.command(1, "writer-upgrade", "--writer", "lead", "--expected", "a" * 64,
+                                      "--reason", "Lead applied the new release")
+        self.assertEqual(code, 0, upgraded)
+        self.assertEqual(upgraded["state"]["meta"]["writerGeneration"], self.identities[1])
+        self.assertEqual(self.command(1, *write)[0], 0)
+        before = self.snapshot()
+        self.assertEqual(self.command(0, *write)[1]["code"], "writer_generation_mismatch")
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(self.command(0, "show")[0], 0)
+
+    def test_legacy_record_is_readable_but_installed_writes_require_lead_transition(self) -> None:
+        state_tool.init(self.directory, "Legacy")
+        before = self.snapshot()
+        self.assertEqual(self.command(1, "show")[0], 0)
+        self.assertEqual(self.command(1, "patch", "--writer", "lead", "--version", "1", "--patch",
+                                      '{"meta":{"headline":"new"}}')[1]["code"], "writer_generation_unpinned")
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(self.command(1, "writer-upgrade", "--writer", "lane", "--expected", "unpinned",
+                                      "--reason", "Pin legacy")[1]["code"], "writer_not_owned")
+        self.assertEqual(self.command(1, "writer-upgrade", "--writer", "lead", "--expected", "unpinned",
+                                      "--reason", "Pin legacy")[0], 0)
+        self.assertEqual(self.command(1, "journal", "--kind", "decision.recorded", "--summary", "Works")[0], 0)
+
+    def test_identity_is_checked_again_under_the_transaction_lock(self) -> None:
+        state_tool.init(self.directory, "Legacy")
+        first, second = self.identities
+        with mock.patch.object(state_tool, "writer_generation", return_value=first):
+            state_tool.upgrade_writer(self.directory, expected="unpinned", reason="First writer")
+        before = self.snapshot()
+        def transition() -> None:
+            with mock.patch.object(state_tool, "writer_generation", return_value=second):
+                state_tool.upgrade_writer(self.directory, expected=first["archiveSha256"], reason="Transition")
+        with mock.patch.object(state_tool, "writer_generation", return_value=first):
+            with self.assertRaises(state_tool.StateError) as refused:
+                state_tool.patch(self.directory, writer="lead", version=2, changes={"meta": {"headline": "stale"}},
+                                 between_read_and_write=transition)
+        self.assertEqual(refused.exception.code, "writer_generation_mismatch")
+        self.assertEqual(state_tool.read_state(self.directory)["meta"]["headline"], "Legacy")
+        self.assertEqual((self.directory / "journal.jsonl").read_bytes(), before["journal.jsonl"])
+
+    def test_transition_waits_for_the_queue_and_ordinary_patches_cannot_replace_the_pin(self) -> None:
+        state_tool.init(self.directory, "Legacy")
+        entered, finished = threading.Event(), threading.Event()
+        errors = []
+        def upgrade() -> None:
+            try:
+                entered.set()
+                state_tool.upgrade_writer(self.directory, expected="unpinned", reason="Queue parked")
+            except Exception as error:
+                errors.append(error)
+            finally:
+                finished.set()
+        with mock.patch.object(state_tool, "writer_generation", return_value=self.identities[0]):
+            with state_tool.file_lock(self.directory / state_tool.QUEUE_LOCK):
+                worker = threading.Thread(target=upgrade)
+                worker.start()
+                self.assertTrue(entered.wait(1))
+                self.assertFalse(finished.wait(0.2))
+                self.assertNotIn("writerGeneration", state_tool.read_state(self.directory)["meta"])
+            worker.join(5)
+            self.assertTrue(finished.is_set())
+            self.assertEqual(errors, [])
+            before = self.snapshot()
+            with self.assertRaises(state_tool.StateError) as refused:
+                state_tool.patch(self.directory, writer="lead", version=2,
+                                 changes={"meta": {"writerGeneration": self.identities[1]}})
+            self.assertEqual(refused.exception.code, "field_not_owned")
+            self.assertEqual(self.snapshot(), before)
+
+
 class StateToolTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
@@ -3734,7 +3847,7 @@ class LaneWriterTests(unittest.TestCase):
                 before = (self.directory / state_tool.STATE_FILE).read_bytes()
                 real = state_tool.read_state
                 looks = iter([stale])
-                with mock.patch.object(state_tool, "read_state", side_effect=lambda directory: next(looks, None) or real(directory)):
+                with mock.patch.object(state_tool, "read_state", side_effect=lambda directory, **options: next(looks, None) or real(directory, **options)):
                     self.assertEqual(self.refused(lambda: state_tool.bind_run(
                         self.directory, lane=lane_id, subject=subject, run=run)), "run_bound")
                 self.assertEqual((self.directory / state_tool.STATE_FILE).read_bytes(), before)

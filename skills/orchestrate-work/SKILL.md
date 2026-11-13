@@ -736,3 +736,24 @@ A lead-directed base merge before hand-off uses a story-bound authorization. The
 `candidate.handed` entry can then carry the original review digest, its reviewed
 and handed heads, and the authorized base commits. The original review retains
 its candidate identity.
+
+
+## Applied writer identity
+
+An installed state tool initializes `meta.writerGeneration` from its own applied archive receipt. The archive
+SHA-256 admits a writer, including a still-running previous installation. Every mutation checks the pin under
+the state transaction lock before changing the record or journal. A mismatched installed writer reports both
+release identities and asks for the lead transition. Reads remain available across understood schemas.
+
+`run-delivery lead-upgrade-writer` parks the supervisor and takes the queue lock while the new reader validates
+both files and pins its applied identity. The state command it uses is lead-only.
+
+```bash
+python3 -B scripts/delivery_state.py --dir STATE writer-upgrade --writer lead \
+  --expected PREVIOUS_ARCHIVE_SHA256 --reason "Lead applied the verified release"
+```
+
+An unpinned legacy record is readable and requires `--expected unpinned` before an installed tool writes.
+Run this low-level transition only while the supervisor is parked. Prefer the run-delivery command, which
+coordinates parking and resuming. The source corpus has no applied receipt and can write only unpinned source
+fixtures. Apply a verified release to write a pinned record.

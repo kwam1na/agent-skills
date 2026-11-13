@@ -6048,6 +6048,75 @@ class LiveLeadChangesTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.release = installed_release()
 
+    def test_applied_writer_changes_only_after_the_lead_transition(self) -> None:
+        fx = Fixture(self.release.generation, self.release.receipt)
+        self.addCleanup(fx.close)
+        setup_delivery(fx)
+        self.assertEqual(fx.flow("lead-init", cwd=fx.main)[0], 0)
+        self.assertEqual(fx.flow("lead-assign", "FX-2", "--lane", "lane-1", "--title", "Lane 1", cwd=fx.main)[0], 0)
+        old_identity = json.loads(self.release.receipt.read_text())["release"]
+        newer = fx.tmp / "newer.zip"
+        metadata = fx.tmp / "newer.release.json"
+        build_release(ROOT, newer, metadata, release_id="writer-transition-new", profile_id=PROFILE,
+                      runtime_directory=self.release.build / "runtime")
+        install = fx.tmp / "new-install"
+        install.mkdir()
+        sh("git", "init", "-q", cwd=install)
+        (install / "README.md").write_text("install\n")
+        commit(install, "Initial")
+        with mock.patch.dict(os.environ, {"AGENT_SKILLS_EXECUTION_CONTEXT": "", "GITHUB_EVENT_NAME": ""}):
+            lifecycle = Lifecycle(install)
+            lifecycle.install(self.release.archive, self.release.metadata, maintainer=True)
+            lifecycle.update(newer, metadata, maintainer=True)
+        generation = (install / ".agent-skills/current").resolve()
+        (fx.main / ".agent-skills/current").unlink()
+        (fx.main / ".agent-skills/current").symlink_to(generation)
+        shutil.copy2(install / ".agent-skills/active.json", fx.main / ".agent-skills/active.json")
+        tool = generation / TOOL_RELATIVE
+        state_script = generation / "skills/orchestrate-work/scripts/delivery_state.py"
+        directory = fx.tmp / "record"
+        files = [directory / name for name in ("state.json", "journal.jsonl", "changes.jsonl")]
+        before = [path.read_bytes() for path in files]
+        write = [sys.executable, "-B", str(state_script), "--dir", str(directory), "focus", "--lane", "lane-1",
+                 "--text", "A lane on the applied generation"]
+        refused = sh(*write, cwd=fx.main, env=fx.env, check=False)
+        self.assertEqual(json.loads(refused.stdout)["code"], "writer_generation_mismatch")
+        self.assertEqual([path.read_bytes() for path in files], before)
+        code, out = fx.flow("lead-upgrade-writer", "--expected", old_identity["archiveSha256"],
+                            "--reason", "Lead applied the next release", "--no-supervisor", cwd=fx.main, tool=tool)
+        self.assertEqual(code, 0, out)
+        self.assertIn("writer-transition-new", out)
+        self.assertIn("lead-run --resume", out)
+        self.assertEqual(sh(*write, cwd=fx.main, env=fx.env).returncode, 0)
+        state = json.loads(files[0].read_text())
+        self.assertEqual(state["meta"]["writerGeneration"]["archiveSha256"],
+                         json.loads(metadata.read_text())["archiveSha256"])
+        self.assertEqual(state["lanes"][0]["focus"], "A lane on the applied generation")
+
+    def test_writer_transition_parks_a_live_supervisor_and_resumes_the_applied_tool(self) -> None:
+        from tests.test_run_delivery_supervisor import supervised
+
+        fx = Fixture(self.release.generation, self.release.receipt)
+        self.addCleanup(fx.close)
+        supervised(fx)
+        self.assertEqual(fx.flow("lead-init", cwd=fx.main)[0], 0)
+        self.assertEqual(fx.flow("lead-run", "--resume", cwd=fx.main)[0], 0)
+        lock = fx.tmp / "flow-log/FX-1.supervisor.lock"
+        running, before = lock_record(lock)
+        self.assertTrue(running)
+        fx.env["RUN_DELIVERY_SUPERVISOR"] = "on"
+        identity = json.loads(self.release.receipt.read_text())["release"]
+        code, out = fx.flow("lead-upgrade-writer", "--expected", identity["archiveSha256"],
+                            "--reason", "Verify parked transition", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("stopped the supervisor", out)
+        self.assertIn("running from this generation", out)
+        running, after = lock_record(lock)
+        self.assertTrue(running)
+        self.assertNotEqual(before["pid"], after["pid"])
+        command = sh("ps", "-p", str(after["pid"]), "-o", "command=").stdout
+        self.assertIn(str(self.release.generation), command)
+
     def held_check(self, failures: list[str]):
         from tests.test_run_delivery_supervisor import hand_off, record, supervised
 
