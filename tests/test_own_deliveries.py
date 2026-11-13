@@ -83,6 +83,10 @@ class FreshClone(unittest.TestCase):
         _git(seed, "init", "-q", "-b", "main")
         _git(seed, "add", "-A")
         _git(seed, "commit", "-q", "-m", "seed")
+        binding = json.loads((seed / ".agents/orchestration.json").read_text(encoding="utf-8"))
+        base = binding["base"]["ref"]
+        if base != "main":
+            _git(seed, "branch", base)
         cls.remote = top / "remote.git"
         _git(top, "clone", "-q", "--bare", str(seed), str(cls.remote))
         cls.clone = top / "clone"
