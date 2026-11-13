@@ -21,13 +21,11 @@ Epic V26-3307. The seven native Linear children are the delivery scope. The epic
 
 ## Units and order
 
-The currently installed delivery generation still enforces whole-file ownership. Lane 1 holds the shared workflow files for this delivery. Lane 2 can draft and verify the integration recipe after the setup story lands. This delivery also provides evidence of the serial work imposed by whole-file ownership.
+The currently installed delivery generation still enforces whole-file ownership. One lane holds the shared workflow files for this delivery. Each story below edits the workflow entry point and its shared fixtures. This delivery also provides evidence of the serial work imposed by whole-file ownership.
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | V26-3251 | `skills/run-delivery/`, `skills/orchestrate-work/`, `skills/delivery-views/`, `tests/test_run_delivery.py`, `tests/test_orchestration_state.py`, `tests/test_lane_rows.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_merge_queue.py`, `tests/test_own_deliveries.py`, `tests/test_linear_qualification.py`, `provenance.lock.json`, `catalog.json`, `profiles/`, `docs/solutions/` |
-| 1 | 2 | V26-3255 | `docs/own-deliveries.md`, `tests/test_update_provenance.py` |
-| 5 | 1 | V26-3255 implementation and final acceptance | Shared workflow and test files already held by lane 1. Move the lane 2 paths before assigning the implementation if the existing tool requires one writer. |
+| 1 | 1 | V26-3251, V26-3253, V26-3252, V26-3403, V26-3254, V26-3255, V26-3301 | `skills/run-delivery/`, `skills/orchestrate-work/`, `skills/delivery-views/`, `tests/test_run_delivery.py`, `tests/test_orchestration_state.py`, `tests/test_lane_rows.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_merge_queue.py`, `tests/test_own_deliveries.py`, `tests/test_linear_qualification.py`, `provenance.lock.json`, `catalog.json`, `profiles/`, `docs/solutions/`, `docs/own-deliveries.md`, `tests/test_update_provenance.py` |
 
 Review the outcome and adversarial cases independently. Run the lane's focused tests and installed run-delivery gates before hand-off. Select the affected catalogue tests in the merge queue along with its configured guards. Use the full suite for integration. Keep fixtures in separate temporary repositories and use the worktree-private Python environment. The normal delivery review bound is four rounds. Search corpus pins and schema fixtures when adding a command or record field. Update catalog, selecting profiles and provenance together for changed releasable skills.
 
@@ -71,7 +69,7 @@ Use the binding's existing served-base patterns and delivery base identity. Let 
 
 ### V26-3255. Move a long-lived delivery base onto a newer default branch
 
-Lane 2, tier 6, after V26-3254. Test-first. Files: `skills/run-delivery/`, `skills/orchestrate-work/`, `tests/test_run_delivery.py`, `tests/test_update_provenance.py`, `tests/test_orchestration_state.py`, `docs/own-deliveries.md` and `docs/solutions/`.
+Lane 1, tier 6, after V26-3254. Test-first. Files: `skills/run-delivery/`, `skills/orchestrate-work/`, `tests/test_run_delivery.py`, `tests/test_update_provenance.py`, `tests/test_orchestration_state.py`, `docs/own-deliveries.md` and `docs/solutions/`.
 
 Merge the newer default-branch history into the integration base. Preserving ancestry keeps every existing merged SHA reachable and avoids rewriting review evidence. Park the supervisor and use the queue lock while moving the base. Apply the default branch's verified generation using its supported lifecycle, regenerate provenance with the writer, and stop on substantive conflicts with paths and a resume instruction. Keep the old base authoritative until the new head is published and the record update is reconciled. On retry, detect a previously published head and complete record reconciliation once. Prove the one-command lock-only fixture, conflict and resume, and reachability of merged entries. Tell lanes to start from the moved base and document how to record a shared flake fix pending upstream.
 
