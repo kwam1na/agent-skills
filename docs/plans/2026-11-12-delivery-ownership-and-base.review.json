@@ -2,8 +2,8 @@
   "schemaVersion": "plan-review-evidence/1",
   "writtenBy": "run-delivery plan-review",
   "plan": "docs/plans/2026-11-12-delivery-ownership-and-base.md",
-  "planSha256": "6a9e941f8af923ca3867340829fa8b686a69be017ffac8d54a9b2e3f3dea1b91",
-  "planCommit": "7113932853c551504789bf645f20df71c5060964",
+  "planSha256": "820b80f5b059ce95f65697d3545ecfe4aa98603ff06fb96c0ed44816e333cd89",
+  "planCommit": "1e3dee1c12972465f801d35f006dc7fc234d0950",
   "outcome": "unanimous-alignment",
   "requiredLenses": [
     "lens.outcome-correctness",
@@ -35,102 +35,64 @@
       "startedAt": "2026-11-13T03:30:08.087158Z",
       "finishedAt": "2026-11-13T03:31:12.154708Z",
       "open": []
+    },
+    {
+      "round": 3,
+      "candidate": "1e3dee1c12972465f801d35f006dc7fc234d0950",
+      "outcome": "aligned",
+      "startedAt": "2026-11-13T03:36:23.000515Z",
+      "finishedAt": "2026-11-13T03:37:08.218532Z",
+      "open": []
     }
   ],
   "reviews": [
     {
       "lens": "lens.outcome-correctness",
-      "round": 2,
+      "round": 3,
       "findings": [],
       "result": {
         "schemaVersion": "review-lens-result/1",
         "lensId": "lens.outcome-correctness",
         "subjectRef": "delivery-ownership-and-base.plan",
-        "candidateRef": "7113932853c551504789bf645f20df71c5060964",
-        "round": 2,
+        "candidateRef": "1e3dee1c12972465f801d35f006dc7fc234d0950",
+        "round": 3,
         "outcome": "aligned",
         "findings": [],
-        "resolvedFindings": [
-          {
-            "id": "outcome-correctness-r1-1",
-            "state": "fixed",
-            "resolution": "The revised order lands V26-3301 before V26-3255, and V26-3255 now tests a digest-changing move interrupted after remote publication, checking both generations' write admission and exactly-once reconciliation."
-          },
-          {
-            "id": "outcome-correctness-r1-2",
-            "state": "fixed",
-            "resolution": "The lead records the story, reviewed head and allowed base commits before the merge. Hand-off requires the authorization for every merged base commit. The plan now includes a negative row for an unauthorized base merge."
-          },
-          {
-            "id": "outcome-correctness-r1-3",
-            "state": "fixed",
-            "resolution": "Both disjoint candidates now go through ordinary lead acceptance into the queue, with the second synced after the first merges. A separate case proves the second candidate cannot write a review brief after editing the first lane's function."
-          },
-          {
-            "id": "outcome-correctness-r1-4",
-            "state": "fixed",
-            "resolution": "The recipe names the product and delivery artifacts that land, restores the standing binding and posture, and compares the installed generation and host projections against current main before final review. Local operational evidence stays in the delivery archive."
-          }
-        ],
+        "resolvedFindings": [],
         "evidence": [
-          "Start and end identity checks in the private checkout both returned tree 50cd1cc92bf23ae105ee33f6f613a5d42d593f3e and empty git status --porcelain output.",
-          "Derived the candidate delta from the exact round references and rechecked all four carried findings. The added ownership-transfer and live-flake fixtures observe an already-running check and verify that the original check identity survives the operation.",
-          "The brief specifies no scoped sensor commands for plan review. No tests ran. Model class: inherited GPT-6-class native subagent. Realization basis: host-convention. No host progress or permission signals were exposed.",
-          "Approval conditions: the revised plan satisfies the four carried conditions. No new findings."
+          "Start and end identity checks in the private checkout both returned tree c6ac49cbd90ec7f4f0fec70fe31f6e9014ad61de and empty git status --porcelain output.",
+          "Derived the delta from the exact round references. No findings remained open after round 2. The revised shared-file fixture retains ordinary lead acceptance and queue sync for disjoint candidates and early review refusal for an overlapping edit. The review-carry fixture retains lead authorization and covers a line shift outside the owned span.",
+          "No scoped sensor commands were assigned, so no tests ran. Model class GPT-6. Realization basis host-convention via native subagent. The host exposed no progress or permission signals.",
+          "Approval conditions: no new findings or conditions."
         ]
       },
-      "resultSha256": "44d7adc84cf874ff43d989546debfe6a7b9d18c3777a93be2003ae81ba968ae1"
+      "resultSha256": "e2cdada0e8e3d27b48e15508adff4d940c8889db069bbd148863133b3582c999"
     },
     {
       "lens": "lens.adversarial-testing",
-      "round": 2,
+      "round": 3,
       "findings": [],
       "result": {
         "schemaVersion": "review-lens-result/1",
         "lensId": "lens.adversarial-testing",
         "subjectRef": "delivery-ownership-and-base.plan",
-        "candidateRef": "7113932853c551504789bf645f20df71c5060964",
-        "round": 2,
+        "candidateRef": "1e3dee1c12972465f801d35f006dc7fc234d0950",
+        "round": 3,
         "outcome": "aligned",
         "findings": [],
-        "resolvedFindings": [
-          {
-            "id": "adversarial-testing-r1-1",
-            "state": "fixed",
-            "resolution": "The positive scenario now requires both branches to pass real lead acceptance while both claims exist and exercises queue sync for the second candidate. A separate wrong-region candidate with valid disjoint claims must be refused before a brief is written. Duplicate-claim refusal has its own assertion."
-          },
-          {
-            "id": "adversarial-testing-r1-2",
-            "state": "fixed",
-            "resolution": "The fixture waits for the sensor start signal, transfers ownership through the lead command, and observes the old and new lane authorization through the normal command. It verifies the unchanged remote head and check identity and requires the original check to pass."
-          },
-          {
-            "id": "adversarial-testing-r1-3",
-            "state": "fixed",
-            "resolution": "The plan requires a declaration written after sensor start, followed by the matching failure, one recorded retry at the same check identity, and a passing retry. The separate push scenario observes the pending push land after the original check passes."
-          },
-          {
-            "id": "adversarial-testing-r1-4",
-            "state": "fixed",
-            "resolution": "The plan requires successful hand-off of a real authorized merge at a passing gate head, with both heads and the authorized commits recorded. The positive fixture covers upstream changes to an unowned function in a shared file."
-          },
-          {
-            "id": "adversarial-testing-r1-5",
-            "state": "fixed",
-            "resolution": "The plan interrupts after remote publication and before record update, verifies that the supervisor cannot process against the stale record, and requires a retry to reconcile exactly once without another commit or duplicate entry. It checks writer admission for both generations and reachability of the original merged SHAs."
-          }
-        ],
+        "resolvedFindings": [],
         "evidence": [
-          "Both start and end checks returned tree 50cd1cc92bf23ae105ee33f6f613a5d42d593f3e with empty git status --porcelain in the private lens checkout.",
-          "I derived the delta from the supplied commits, rechecked all five carried findings against their approval conditions, and reviewed the revised verification scenarios. No scoped sensors were assigned, so I ran no tests and planted no mutants.",
-          "Model class GPT-6. Realization basis host-convention via native subagent. The host exposed no progress or permission signals.",
-          "Approval conditions: all five previous conditions are met by the revised plan. No new condition is required."
+          "Start and end identity checks both returned tree c6ac49cbd90ec7f4f0fec70fe31f6e9014ad61de with empty git status --porcelain in the private lens checkout.",
+          "I derived the delta from the exact supplied commits. No findings remained open from round 2. The revised scenarios preserve each round 1 closure, including actual lead acceptance, refusal before review for a candidate editing another lane's region, and successful review carry through an authorized base merge.",
+          "The changed ownership tests exercise three claims, multiple accepted candidates, plain text and non-Python source, line shifts and ambiguous mappings, interior and edge insertions, and whole-file changes. The carry scenario also requires a successful base merge that shifts the claimed span.",
+          "No scoped sensors were assigned, so I ran no tests and planted no mutants. Model class GPT-6. Realization basis host-convention via native subagent. The host exposed no progress or permission signals.",
+          "Approval conditions: the five previous conditions remain satisfied. No new condition is required."
         ]
       },
-      "resultSha256": "2e53e651ca332f572ddb767217d04f690b2edb491bd7461c6d18b6de732c3216"
+      "resultSha256": "a0e2a164a32ee860cf673251d0aa063f619abaf3f2707e536d0ce54a44dc3d37"
     }
   ],
   "residualRisks": [
-    "2 review rounds; findings open after each round: 9, 0."
+    "3 review rounds; findings open after each round: 9, 0, 0."
   ]
 }
