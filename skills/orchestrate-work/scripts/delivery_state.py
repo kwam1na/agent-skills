@@ -107,7 +107,7 @@ CLOSED_KIND = "delivery.closed"
 RUNNER_META = ("checking", "baseHead", "releasedHead", "checkHistory", "baseReruns", "sources", "sourceReports")
 RUNNER_QUEUE = ("stage", "checks", "syncedHead", "checkSelection")
 # Written only by a lane's hand-off, through the tool: no patch, the lead's or the runner's, changes it.
-HANDOFF_QUEUE = ("evidence",)
+HANDOFF_QUEUE = ("evidence", "acceptedRegionPaths")
 # Written only by the lead's select command, through the tool, so every selection is validated and journaled.
 SELECT_QUEUE = ("leadSelection",)
 EVIDENCE_FIELDS = ("check", "definition", "head", "tree", "result")
@@ -424,6 +424,24 @@ def state_errors(state: object) -> list[str]:
         errors.append("/meta/hold: use {reason, since} with a nonempty reason and a UTC timestamp, or null to clear")
     if not errors and isinstance(state, dict):
         errors = _unique(state)
+        regions = state.get("laneRegions", [])
+        ownership = state.get("laneOwnership", {})
+        for index, claim in enumerate(regions):
+            path = claim["path"]
+            label = f"/laneRegions/{index}"
+            if any(part in ("", ".", "..") for part in path.split("/")) or "\0" in path:
+                errors.append(f"{label}/path: use a repository-relative path")
+            if claim["lane"] not in ownership:
+                errors.append(f"{label}/lane: name a lane in laneOwnership")
+            if claim["start"] >= claim["end"]:
+                errors.append(f"{label}: end must be greater than start")
+            if any(fnmatch.fnmatchcase(path, pattern) for patterns in ownership.values() for pattern in patterns):
+                errors.append(f"{label}: {path} already has a whole-file claim")
+            for previous in regions[:index]:
+                if (previous["path"] == path and previous["baseHead"] == claim["baseHead"]
+                        and previous["start"] < claim["end"] and claim["start"] < previous["end"]):
+                    errors.append(f"{label}: overlaps an earlier region claim on the same base")
+                    break
         flakes = state.get("liveFlakes", [])
         if len({(entry["baseHead"], entry["check"]) for entry in flakes}) != len(flakes):
             errors.append("/liveFlakes: declare each base head and check only once")
@@ -1027,6 +1045,7 @@ def handoff(
         if run is not None:
             item["runId"] = run
         item.pop("evidence", None)
+        item.pop("acceptedRegionPaths", None)
         if evidence:
             item["evidence"] = [{**entry, "recordedAt": now()} for entry in evidence]
         item.pop("namedChecks", None)
@@ -1136,7 +1155,15 @@ def _pending(state: dict, subject: str) -> dict:
     return item
 
 
-def accept_handoff(directory: Path, subject: str, authorization: dict | None = None) -> dict:
+def handoff_authorization(state: dict, item: dict) -> dict:
+    result = {"ownership": state.get("laneOwnership"), "lane": item["lane"], "head": item["head"]}
+    if "laneRegions" in state:
+        result["regions"] = state["laneRegions"]
+    return result
+
+
+def accept_handoff(directory: Path, subject: str, authorization: dict | None = None,
+                   region_paths: list[str] | None = None) -> dict:
     """The lead accepts a waiting hand-off; the runner may now take it."""
 
     def change(state: dict) -> dict:
@@ -1148,10 +1175,13 @@ def accept_handoff(directory: Path, subject: str, authorization: dict | None = N
             _rest_if_free(state, waiting["lane"])
             return copy.deepcopy(waiting)
         item = _pending(state, subject)
-        if authorization is not None and authorization != {
-            "ownership": state.get("laneOwnership"), "lane": item["lane"], "head": item["head"]
-        }:
+        if authorization is not None and authorization != handoff_authorization(state, item):
             raise StateError("handoff_invalid", "the handed head or lane ownership changed; check the hand-off again")
+        if region_paths:
+            authorized_paths = {claim["path"] for claim in state.get("laneRegions", []) if claim["lane"] == item["lane"]}
+            if authorization is None or not set(region_paths) <= authorized_paths:
+                raise StateError("handoff_invalid", "accepted region paths must have current claims for the handing lane")
+            item["acceptedRegionPaths"] = sorted(set(region_paths))
         item.pop("pending")
         return copy.deepcopy(item)
 
@@ -4095,7 +4125,10 @@ def _json_argument(value: str | None, name: str) -> object:
 
 def _handoff_command(args: argparse.Namespace) -> dict:
     if args.accept:
-        return accept_handoff(args.dir, args.accept, _json_argument(args.authorization, "--authorization"))
+        return accept_handoff(args.dir, args.accept, _json_argument(args.authorization, "--authorization"),
+                              args.region_path)
+    if args.region_path:
+        raise StateError("handoff_invalid", "--region-path requires --accept")
     if args.reject:
         if not args.reason:
             raise StateError("handoff_invalid", "say why with --reason")
@@ -4465,6 +4498,7 @@ def main(argv: list[str] | None = None) -> int:
     hand = commands.add_parser("handoff", help="a lane hands its work to the queue, or the lead accepts or rejects it")
     decide = hand.add_mutually_exclusive_group()
     hand.add_argument("--authorization", help="head, handing lane and ownership the lead verified before acceptance")
+    hand.add_argument("--region-path", action="append", help="a region-owned path verified at acceptance")
     decide.add_argument("--accept", metavar="SUBJECT", help="accept a hand-off waiting for the lead")
     decide.add_argument("--reject", metavar="SUBJECT", help="reject a hand-off waiting for the lead")
     hand.add_argument("--reason", help="why a hand-off is rejected")

@@ -1368,6 +1368,12 @@ def _validator():
     return delivery_state
 
 
+def _region_ownership():
+    _validator()  # Use the installed orchestration scripts, as with the state tool.
+    import region_ownership
+    return region_ownership
+
+
 def check_result(result: object, *, key: str, lens: str, short: str, n: int, meta: dict,
                  carried: set[str]) -> list[str]:
     """What's wrong with one lens result, as messages; empty when it matches its brief."""
@@ -5133,7 +5139,19 @@ def owner_of(c, path: str) -> str | None:
 
 
 def owned_by(c, lane: str, path: str) -> bool:
-    return path in shared_outputs(c) or owners_of(c.effective_ownership(c.record_state()), path) == [lane]
+    state = c.record_state()
+    claims = [claim for claim in state.get("laneRegions", []) if claim["path"] == path]
+    if claims:
+        helper = _region_ownership()
+        base = git("rev-parse", files_ref(c))
+        mine = [claim for claim in claims if claim["lane"] == lane]
+        try:
+            for claim in mine:
+                helper.mapped(c.root, claim, base)
+        except helper.RegionError:
+            return False
+        return bool(mine)
+    return path in shared_outputs(c) or owners_of(c.effective_ownership(state), path) == [lane]
 
 
 def ownership_overlaps(ownership: dict, files: list[str], shared: set[str]) -> list[str]:
@@ -5144,15 +5162,40 @@ def ownership_overlaps(ownership: dict, files: list[str], shared: set[str]) -> l
 
 
 def candidate_ownership(c, lane: str, base: str, head: str, state: dict) -> tuple[list[str], list[str]]:
-    changed = list(filter(None, run(["git", "diff", "--no-renames", "--name-only", "-z", base, head]).stdout.split("\0")))
+    regions = state.get("laneRegions", [])
+    if regions:
+        helper = _region_ownership()
+        try:
+            changed = helper.changed_paths(c.root, base, head)
+            outside = helper.problems(c.root, lane, base, head, changed, regions)
+        except helper.RegionError as error:
+            raise Stop(f"writer_not_owned: {error}") from error
+        regional_paths = {claim["path"] for claim in regions}
+    else:
+        changed = list(filter(None, run(["git", "diff", "--no-renames", "--name-only", "-z", base, head]).stdout.split("\0")))
+        outside, regional_paths = {}, set()
     ownership = c.effective_ownership(state)
     if "laneOwnership" not in state:
         return changed, [path for path in changed if lane not in owners_of(ownership, path)]
     shared = shared_outputs(c)
-    return changed, [path for path in changed if path not in shared and owners_of(ownership, path) != [lane]]
+    return changed, [f"{path}: {outside[path]}" if path in outside else path for path in changed
+                     if path in outside or (path not in regional_paths and path not in shared
+                                            and owners_of(ownership, path) != [lane])]
 
 
 def owner_words(c, path: str) -> str:
+    regions = [claim for claim in c.record_state().get("laneRegions", []) if claim["path"] == path]
+    if regions:
+        helper = _region_ownership()
+        base = git("rev-parse", files_ref(c))
+        descriptions = []
+        for claim in regions:
+            try:
+                start, end = helper.mapped(c.root, claim, base)
+                descriptions.append(f"{claim['lane']} [{start}, {end}) at {base[:12]}")
+            except helper.RegionError as error:
+                descriptions.append(f"{claim['lane']} needs a regrant: {error}")
+        return ", ".join(descriptions)
     owner = owner_of(c, path)
     return f"{owner}'s" if owner else "no lane's"
 
@@ -6169,7 +6212,58 @@ def lead_own(args) -> None:
         change_ownership(c, args)
 
 
+def change_regions(c, args) -> None:
+    helper = _region_ownership()
+    path = args.region or args.revoke_region
+    if not helper.valid_path(path):
+        raise Stop("name a repository-relative file")
+    if not args.base or args.start is None or args.end is None:
+        raise Stop("a region claim needs --base COMMIT --start LINE --end LINE")
+    base_head = git("rev-parse", "--verify", "--end-of-options", f"{args.base}^{{commit}}")
+    claim = {"lane": args.lane, "path": path, "baseHead": base_head, "start": args.start, "end": args.end}
+    if args.region:
+        git("fetch", "-q", c.remote, c.base_branch)
+        base = git("rev-parse", c.base_ref)
+
+    def compute(doc: dict) -> list[str]:
+        state = doc["state"]
+        ownership = state.get("laneOwnership")
+        if ownership is None:
+            raise Stop("seed this record with lead-own --seed first")
+        if args.lane not in ownership:
+            raise Stop("name a lane recorded for this delivery")
+        regions = list(state.get("laneRegions", []))
+        if args.revoke_region:
+            if claim not in regions:
+                raise Stop(f"{args.lane} has no matching region claim for {path}")
+            regions.remove(claim)
+        elif claim not in regions:
+            if owners_of(ownership, path):
+                raise Stop(f"{path} already has a whole-file claim")
+            if path in shared_outputs(c):
+                raise Stop(f"{path} is a declared shared output")
+            try:
+                start, end = helper.mapped(c.root, claim, base)
+                for other in regions:
+                    if other["path"] == path:
+                        first, last = helper.mapped(c.root, other, base)
+                        if start < last and first < end:
+                            raise Stop(f"{path} [{start}, {end}) overlaps {other['lane']}'s [{first}, {last}) at {base[:12]}")
+            except helper.RegionError as error:
+                raise Stop(str(error)) from error
+            regions.append(claim)
+        return ["--set", json.dumps({"/laneRegions": regions})]
+
+    patch_from(compute, f"region ownership of {path}")
+    action = "revoked" if args.revoke_region else "granted"
+    change = f"{action} {args.lane}'s {path} [{args.start}, {args.end}) at {base_head}"
+    state_tool("journal", "--kind", "decision.recorded", "--summary", change)
+    print(change)
+
+
 def change_ownership(c, args) -> None:
+    if not (args.region or args.revoke_region) and any(value is not None for value in (args.base, args.start, args.end)):
+        raise Stop("--base, --start and --end require --region or --revoke-region")
     if args.seed:
         if args.lane or args.source:
             raise Stop("--seed takes neither --lane nor --from")
@@ -6180,7 +6274,10 @@ def change_ownership(c, args) -> None:
         raise Stop("name the receiving lane with --lane")
     if bool(args.move) != bool(args.source) or args.source == args.lane:
         raise Stop("--move requires --from naming a different lane")
-    pattern = args.move or args.grant
+    if args.region or args.revoke_region:
+        change_regions(c, args)
+        return
+    pattern = args.move or args.grant or args.revoke
     if not pattern or Path(pattern).is_absolute() or any(part in ("", ".", "..") for part in pattern.split("/")):
         raise Stop("name a repository-relative file or pattern")
     files = tracked_at_base(c)
@@ -6197,7 +6294,15 @@ def change_ownership(c, args) -> None:
             if pattern not in ownership[args.source]:
                 raise Stop(f"{args.source} has no claim for {pattern}")
             ownership[args.source].remove(pattern)
-        if pattern not in ownership[args.lane]:
+        if args.revoke:
+            if pattern not in ownership[args.lane]:
+                raise Stop(f"{args.lane} has no claim for {pattern}")
+            ownership[args.lane].remove(pattern)
+        elif pattern not in ownership[args.lane]:
+            conflicts = sorted({claim["path"] for claim in state.get("laneRegions", [])
+                                if fnmatch.fnmatchcase(claim["path"], pattern)})
+            if conflicts:
+                raise Stop(f"whole-file claim conflicts with region claims for {', '.join(conflicts)}")
             ownership[args.lane].append(pattern)
         overlaps = ownership_overlaps(ownership, files, shared)
         if overlaps:
@@ -6206,6 +6311,8 @@ def change_ownership(c, args) -> None:
 
     patch_from(compute, f"ownership of {pattern}")
     change = f"{args.lane} owns {pattern}" + (f", moved from {args.source}" if args.source else "")
+    if args.revoke:
+        change = f"revoked {args.lane}'s claim for {pattern}"
     state_tool("journal", "--kind", "decision.recorded", "--summary", change)
     print(change)
 
@@ -6265,9 +6372,19 @@ def lead_assign(args) -> None:
         ]
         return changes
 
+    if c.record_state().get("laneRegions"):
+        git("fetch", "-q", c.remote, c.base_branch)
     patch_from(assign, f"{args.lane}'s assignment")
     rebuild_plan(c)
     tracked = tracked_at_base(c)
+    regions = c.record_state().get("laneRegions", [])
+    if regions:
+        regional_paths = {claim["path"] for claim in regions}
+        for key in keys:
+            for path in story_named_files(c, key, tracked):
+                if path in regional_paths:
+                    print(f"{key} names a region-owned file {path} ({owner_words(c, path)}). "
+                          f"{args.lane} may change only its mapped spans.")
     warnings = [*(named_outside(c, key, outside) for key in keys if (outside := outside_lane(c, key, tracked))),
                 *(line for key in keys if (line := co_change_warning(c, key, tracked)))]
     if warnings:
@@ -6591,8 +6708,10 @@ def accept_story(c, args) -> None:
         state_tool("select", "--subject", key, "--clear")
         decisions.append(f"cleared the lead selection recorded at {str(before.get('head'))[:10]}, so the fallback runs")
     if not merged:
-        authorization = {"ownership": doc["state"].get("laneOwnership"), "head": head, "lane": item["lane"]}
-        state_tool("handoff", "--accept", key, "--authorization", json.dumps(authorization))
+        authorization = _validator().handoff_authorization(doc["state"], item)
+        region_paths = {claim["path"] for claim in doc["state"].get("laneRegions", [])}
+        state_tool("handoff", "--accept", key, "--authorization", json.dumps(authorization),
+                   *(arg for path in changed if path in region_paths for arg in ("--region-path", path)))
     # What the plan's producer proofs are judged by: the accepted head and the in-app items accepted as blocked.
     append_log("acceptance", key, {"head": head, "ready": ready, "blocked": {label: reason for label, reason in
                                                                            blocked.items() if label in accepted_blocked}})
@@ -10516,7 +10635,13 @@ def main(argv: list[str] | None = None) -> None:
     action.add_argument("--seed", action="store_true", help="seed a legacy record from the delivery configuration")
     action.add_argument("--grant", metavar="PATTERN")
     action.add_argument("--move", metavar="PATTERN")
+    action.add_argument("--revoke", metavar="PATTERN", help="remove a whole-file claim by exact pattern")
+    action.add_argument("--region", metavar="PATH", help="grant a span in a committed text file")
+    action.add_argument("--revoke-region", metavar="PATH", help="remove a region claim by its exact coordinates")
     p.add_argument("--lane"); p.add_argument("--from", dest="source")
+    p.add_argument("--base", metavar="COMMIT")
+    p.add_argument("--start", type=int, metavar="LINE", help="first owned line, starting at 1")
+    p.add_argument("--end", type=int, metavar="LINE", help="first line after the owned span")
     p.set_defaults(fn=lead_own)
     p = command(sub, "lead-assign"); p.add_argument("keys", nargs="+"); p.add_argument("--lane", required=True)
     p.add_argument("--title", required=True); p.add_argument("--note")

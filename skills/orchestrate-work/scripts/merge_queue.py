@@ -44,6 +44,7 @@ from typing import Callable, Iterable, Iterator
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import delivery_state  # noqa: E402
+import region_ownership  # noqa: E402
 import render_state  # noqa: E402
 from delivery_state import load_schema, validate  # noqa: E402
 
@@ -1603,6 +1604,7 @@ class Runner:
         self.seam("after_sync", subject)
         self.compare_with_review(checkout, item["head"], base_head, declared)
         synced = self.rev("HEAD", cwd=checkout)
+        self.check_regions(item, checkout, base_head, synced)
         self.push(branch, head, synced, subject)
         result.syncedHead = synced
         self.set_item(subject, stage="synced", syncedHead=synced)
@@ -1632,6 +1634,26 @@ class Runner:
         undeclared = [path for path in sorted(touched) if not matches_any(path, declared)]
         if undeclared:
             raise Stop("undeclared_change", "a sync step changed files outside the declared paths", undeclared)
+
+    def check_regions(self, item: dict, checkout: Path, base: str, head: str) -> None:
+        state = self.state()
+        regions = state.get("laneRegions", [])
+        accepted_paths = set(item.get("acceptedRegionPaths", []))
+        if not regions and not accepted_paths:
+            return
+        regional_paths = {claim["path"] for claim in regions}
+        lane = item["lane"]
+        try:
+            changed = region_ownership.changed_paths(checkout, base, head)
+            outside = region_ownership.problems(checkout, lane, base, head, changed, regions)
+            for path in accepted_paths.intersection(changed) - regional_paths:
+                if region_ownership.owners(state["laneOwnership"], path) != [lane]:
+                    outside[path] = "the lane has no current whole-file or region claim"
+        except region_ownership.RegionError as error:
+            raise Stop("unreviewed_change", f"could not check region ownership: {error}") from error
+        if outside:
+            detail = "; ".join(f"{path}: {reason}" for path, reason in outside.items())
+            raise Stop("unreviewed_change", f"region ownership refused {lane}'s changes: {detail}", outside)
 
     def check_shared_outputs(self, item: dict, checkout: Path, base: str, candidate: str, context: Context) -> None:
         """A lane may refresh a shared output without a claim when its listing stays the same."""
@@ -2459,6 +2481,7 @@ class Runner:
         # base commit the synced head lacks went unchecked with this candidate.
         if self.git("merge-base", "--is-ancestor", base_head, synced, check=False).returncode != 0:
             raise Stop("base_moved", f"{self.base} moved to {base_head}, which {subject}'s checked head does not contain")
+        self.check_regions(item, anchor, base_head, synced)
         self.merging.add(subject)
         self.set_item(subject, stage="merging")
         context = context.with_values(
@@ -2541,6 +2564,7 @@ class Runner:
                 declared = self.declared_paths(item)
                 self.settle(subject, item, checkout, context, inputs, declared, f"Regenerate after adding {branch} to the batch")
                 self.compare_with_review(checkout, item["head"], accumulated, declared)
+                self.check_regions(item, checkout, accumulated, self.rev("HEAD", cwd=checkout))
             except Stop as stop:
                 # The tree goes back to what the batch had built before this member.
                 self.git("merge", "--abort", cwd=checkout, check=False)
@@ -2625,6 +2649,7 @@ class Runner:
             "commit-tree", member.tree, "-p", member.head, "-p", base_now,
             "-m", f"Merge {self.base} into {member.branch}",
         ).stdout.strip()
+        self.check_regions(self.item(member.subject), self.repository, base_now, synced)
         self.push(member.branch, member.head, synced, member.subject)
         result.syncedHead = synced
         # Never "checked": only the whole batch was checked, so a run killed here

@@ -824,6 +824,13 @@
                 }
               }
             },
+            "acceptedRegionPaths": {
+              "description": "Written at acceptance. The candidate's region-owned paths, kept so revoking the last claim cannot remove queue enforcement.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/name"
+              }
+            },
             "namedChecks": {
               "description": "Written only by a hand-off: the checks the lane ran, by catalogue id, which the lead's acceptance proposes beside the checks matching the diff. A hand-off without them drops them. Absent otherwise.",
               "type": "array",
@@ -872,6 +879,40 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/name"
+          }
+        }
+      },
+      "laneRegions": {
+        "description": "Lead-owned claims on committed text blobs. Line coordinates are one-based and half-open.",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "lane",
+            "path",
+            "baseHead",
+            "start",
+            "end"
+          ],
+          "properties": {
+            "lane": {
+              "$ref": "#/$defs/name"
+            },
+            "path": {
+              "$ref": "#/$defs/name"
+            },
+            "baseHead": {
+              "$ref": "#/$defs/commit"
+            },
+            "start": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "end": {
+              "type": "integer",
+              "minimum": 2
+            }
           }
         }
       },
