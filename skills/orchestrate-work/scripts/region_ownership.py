@@ -26,7 +26,8 @@ def owners(ownership: dict, path: str) -> list[str]:
     return [lane for lane, patterns in ownership.items() if any(fnmatch.fnmatchcase(path, g) for g in patterns)]
 
 
-def git(repo: Path, *args: str, check: bool = True, index: Path | None = None) -> subprocess.CompletedProcess:
+def git(repo: Path, *args: str, check: bool = True,
+        objects: str | None = None) -> subprocess.CompletedProcess:
     # Commit and blob reads must use the checkout's object store and literal paths.
     env = os.environ.copy()
     for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
@@ -35,8 +36,8 @@ def git(repo: Path, *args: str, check: bool = True, index: Path | None = None) -
                  "GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_LITERAL_PATHSPECS", "GIT_ICASE_PATHSPECS"):
         env.pop(name, None)
     env["GIT_ATTR_NOSYSTEM"] = "1"
-    if index is not None:
-        env["GIT_INDEX_FILE"] = str(index)
+    if objects is not None:
+        env["GIT_OBJECT_DIRECTORY"] = objects
     result = subprocess.run(["git", "--no-replace-objects", "--literal-pathspecs", "-c",
                              f"core.attributesFile={os.devnull}", *args], cwd=repo,
                             env=env, capture_output=True)
@@ -69,12 +70,15 @@ def lines(repo: Path, oid: str) -> list[bytes]:
 
 
 def require_text(repo: Path, commit: str, path: str) -> None:
-    # Git 2.31 supports --cached. Read attributes from the named commit
-    # through a private index so a lane's checkout cannot reclassify a blob.
-    with tempfile.TemporaryDirectory(prefix="region-index-") as directory:
-        index = Path(directory) / "index"
-        git(repo, "read-tree", commit, index=index)
-        attrs = git(repo, "check-attr", "--cached", "-z", "diff", "--", path, index=index).stdout
+    # A private repository shares the source objects without inheriting
+    # worktree, index or info/attributes overrides.
+    objects = os.fsdecode(git(repo, "rev-parse", "--path-format=absolute", "--git-path", "objects").stdout.rstrip(b"\n"))
+    object_format = git(repo, "rev-parse", "--show-object-format").stdout.decode("ascii").strip()
+    with tempfile.TemporaryDirectory(prefix="region-attributes-") as directory:
+        private = Path(directory)
+        git(private, "init", "--bare", "--quiet", "--template=", f"--object-format={object_format}")
+        git(private, "read-tree", commit, objects=objects)
+        attrs = git(private, "check-attr", "--cached", "-z", "diff", "--", path, objects=objects).stdout
     _, _, driver, _ = attrs.split(b"\0")
     binary = driver == b"unset"
     if driver not in (b"unset", b"set", b"unspecified"):

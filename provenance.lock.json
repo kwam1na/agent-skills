@@ -489,7 +489,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/region_ownership.py",
-          "sha256": "baa375475859f0d198580d94b549b7593377c60b7ab4699b45b06e3abb880c7d"
+          "sha256": "3e5cd04f3fed4eee56c8b23073ba74f9095a68475d5292c3ae926395131a2e76"
         },
         {
           "path": "skills/orchestrate-work/scripts/render_state.py",

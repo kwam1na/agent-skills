@@ -848,6 +848,9 @@ class RegionDiffTests(MergeQueueTestCase):
         binary = adopter.lane_commit("binary", {path: content.replace("second", "changed"),
                                                 ".gitattributes": f"{path} -diff\n"})
         adopter.write(adopter.lane, ".gitattributes", f"{path} diff\n")
+        info = Path(run("rev-parse", "--path-format=absolute", "--git-path", "info/attributes", cwd=adopter.lane))
+        info.parent.mkdir(exist_ok=True)
+        info.write_text(f"{path} diff\n")
         claim = {"path": path, "baseHead": anchor, "start": 1, "end": 4}
         with self.assertRaisesRegex(queue.region_ownership.RegionError, "binary"):
             queue.region_ownership.validate_claim(adopter.lane, {**claim, "baseHead": binary})
