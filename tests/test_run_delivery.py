@@ -1888,6 +1888,7 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         flow("lead-own", "--lane", "lane-1", "--region", file, "--base", base, "--start", 8, "--end", 16)
         wt = fx.lane("FX-2")
         sh("git", "config", "merge.log", "true", cwd=wt)
+        sh("git", "config", "trailer.separators", "=", cwd=wt)
         (wt / "src/one.txt").write_text("one\n")
         (wt / file).write_text("".join(lines[:10] + ["lane edit\n"] + lines[11:]))
         commit(wt, "FX-2: reviewed change")

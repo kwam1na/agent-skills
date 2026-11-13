@@ -4181,7 +4181,8 @@ def verify_base_merge(c, key: str, lane: str, reviewed: str, head: str, doc: dic
             raise Stop(f"{base} is outside the history of {c.base_ref}")
         # The authorization's unpredictable token must already be in the
         # immutable merge commit. A caller-controlled commit date proves no ordering.
-        trailers = git("show", "-s", "--format=%(trailers:key=Delivery-Base-Merge,valueonly)", merge).splitlines()
+        trailers = git("-c", "trailer.separators=:", "show", "-s",
+                       "--format=%(trailers:key=Delivery-Base-Merge,valueonly)", merge).splitlines()
         if not any(base in entry["baseMergeAuthorization"]["baseCommits"]
                    and trailers == [entry["baseMergeAuthorization"]["token"]] for entry in grants):
             raise Stop(f"the lead did not authorize {key} to merge {base} from {reviewed} before the merge")
