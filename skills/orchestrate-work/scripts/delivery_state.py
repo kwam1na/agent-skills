@@ -54,7 +54,7 @@ else:
 STATE_FILE = "state.json"
 JOURNAL_FILE = "journal.jsonl"
 STATE_LOCK = "state.lock"
-# Reserved for the merge-queue runner, which holds it for a whole run.
+# Shared by candidate processing and lead publication.
 QUEUE_LOCK = "queue.lock"
 # What an earlier generation's `ack` recorded as posted by hand. Nothing writes it now: the tracker publisher reads it
 # once, so a record opened under that generation never posts those entries again.
@@ -420,8 +420,21 @@ def _unique(state: dict) -> list[str]:
 
 def state_errors(state: object) -> list[str]:
     errors = validate(state, load_schema("delivery-state/1"))
+    if any(error.startswith("/meta/hold:") for error in errors):
+        errors.append("/meta/hold: use {reason, since} with a nonempty reason and a UTC timestamp, or null to clear")
     if not errors and isinstance(state, dict):
         errors = _unique(state)
+        flakes = state.get("liveFlakes", [])
+        if len({(entry["baseHead"], entry["check"]) for entry in flakes}) != len(flakes):
+            errors.append("/liveFlakes: declare each base head and check only once")
+        for index, entry in enumerate(flakes):
+            if entry.get("tests") == []:
+                errors.append(f"/liveFlakes/{index}/tests: supply a pattern or omit tests for the whole check")
+            for pattern in entry.get("tests", []):
+                try:
+                    re.compile(pattern)
+                except re.error as error:
+                    errors.append(f"/liveFlakes/{index}/tests: {pattern!r} is not a regular expression: {error}")
     return errors
 
 

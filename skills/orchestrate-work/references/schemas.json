@@ -835,6 +835,36 @@
           }
         }
       },
+      "liveFlakes": {
+        "description": "Lead-owned temporary flake declarations scoped to a base commit and check.",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "baseHead",
+            "check",
+            "ref"
+          ],
+          "properties": {
+            "baseHead": {
+              "$ref": "#/$defs/commit"
+            },
+            "check": {
+              "$ref": "#/$defs/name"
+            },
+            "ref": {
+              "$ref": "#/$defs/name"
+            },
+            "tests": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/name"
+              }
+            }
+          }
+        }
+      },
       "laneOwnership": {
         "description": "Lead-owned whole-file claims by lane. Absent on records that still use the delivery configuration.",
         "type": "object",

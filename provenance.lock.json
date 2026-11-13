@@ -469,7 +469,7 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "5c59ca485898948883f869bc770d404b9c61dd93b23573a93018880fe0ebc0a2"
+          "sha256": "75afae7e73adfd38e7cfe5d22fa057475012d86b930f4881d2afea1039b1dbf5"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
@@ -477,15 +477,15 @@
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
-          "sha256": "55d5b82ae767ef9a0ffbb2d9831802a4e90ff95ad0932551f3627a63e3f272ec"
+          "sha256": "c9c002f09298ea37ccebc3d5d4a2bb145fa7eb7dfc32cb63a3de862c4638134d"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "8003998662c52136779c0148e6fef4c769ad297b7fa73e7ba57b719355d2d1f3"
+          "sha256": "d7ade0df88cc15be0e403eea203fe2705c15faec678926a3db43ace3adec4b12"
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",
-          "sha256": "4353efb42539652336fbe1315d0a3d5556d4b05e456853da461165f4e7d2ca08"
+          "sha256": "6de1403d6c54a2837966200acddd10e213982e99c76b5475b299e172ed1614fa"
         },
         {
           "path": "skills/orchestrate-work/scripts/render_state.py",
@@ -1018,7 +1018,7 @@
       "outputs": [
         {
           "path": "skills/run-delivery/SKILL.md",
-          "sha256": "b59369f27a32fc8905258f62a2276146130477c05aa979409a118052f935fe32"
+          "sha256": "b8c7b1e27372fa68b0f96b720ff1147ae92515cf344dc35de15fd32c9f486767"
         },
         {
           "path": "skills/run-delivery/adapters/forge_bitbucket.py",
@@ -1046,7 +1046,7 @@
         },
         {
           "path": "skills/run-delivery/references/adopting.md",
-          "sha256": "42b3f9a559d512bc14531cdc32762732482511a45e606679dba9ef9091a908c0"
+          "sha256": "22a962c11b3c243c8669a02369c0734e61724644404872db97d6f5c5a7a211e1"
         },
         {
           "path": "skills/run-delivery/references/config.md",
@@ -1058,7 +1058,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "254c06aa0ed0ae74e76c563ebc695d42acd3d17b45928a8186fc1598216ba085"
+          "sha256": "3eac38c14d22c331b37ed8fcb8421e67f43239dac5cedc9ff5864c1c124ab94b"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",

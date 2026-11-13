@@ -21,6 +21,7 @@ Lead:
   lead-setup <key> --plan P --base B --pattern RE ... | lead-init | lead-brief | lead-assign <key...> --lane L --title T
   lead-accept <key> [--accept-blocked LABEL ...] [--accept-restarts] | ship | adapter-test
   lead-carry-review <key> --from HEAD --to HEAD --reason TEXT
+  lead-push [--wait-seconds N] | lead-flake --check ID [--test REGEX ...] --ref REF
 Merge queue:
   pr-review-current --branch B --head H [--wait]   (a reviewGate: exit 0 only for a current, passing review.pr review)
 Anyone:
@@ -4708,11 +4709,7 @@ def lead_plan_checkout(c) -> Path:
     clean and holds the base; a story branch is a lane's. A lead worktree then reads its own working tree."""
     root = c.root
     branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=root)
-    # Any delivery's story branch here is a lane's, not only this delivery's: every delivery file, this one's included.
-    stories = {key for d in c.delivery_files().values() for key in (d.get("stories") or {})}
-    if any(branch == c.branch(key) for key in stories):
-        raise Stop(f"run lead-plan in the lead's checkout of {c.base_branch}, or in a lead worktree of its own; "
-                   f"{branch} is a story branch")
+    refuse_story_branch(c, branch, "lead-plan")
     if git("status", "--porcelain", cwd=root):
         raise Stop(f"{root} has uncommitted changes; commit or remove them first, so the plan change commits alone")
     git("fetch", "-q", c.remote, c.base_branch, cwd=root)
@@ -4722,8 +4719,25 @@ def lead_plan_checkout(c) -> Path:
         raise Stop(f"{root} has diverged from {c.base_ref}; bring it up to date first")
     if branch == c.base_branch:
         return root
+    check_lead_plan_commits(c, c.base_ref, "HEAD")
+    # What the base holds, plus this delivery's own unpushed plan commits: the working tree is the plan to change.
+    # Read it again through that shelf, so the stories a change names (a removal's units, say) are the worktree's.
+    c.shelf = Shelf(root)
+    c.load_delivery(c.delivery)
+    return root
+
+
+def refuse_story_branch(c, branch: str, command: str) -> None:
+    stories = {key for delivery in c.delivery_files().values() for key in delivery.get("stories", {})}
+    if any(branch == c.branch(key) for key in stories):
+        raise Stop(f"run {command} in the lead's checkout of {c.base_branch}, or in a lead worktree of its own; "
+                   f"{branch} is a story branch")
+
+
+def check_lead_plan_commits(c, base: str, head: str) -> None:
+    root = c.root
     own = {f"{c.deliveries_rel}/{c.delivery}.json", Path(c.plan).as_posix()}
-    for sha in git("rev-list", "--reverse", f"{c.base_ref}..HEAD", cwd=root).split():
+    for sha in git("rev-list", "--reverse", f"{base}..{head}", cwd=root).split():
         # --cc lists what a merge itself adds beyond its parents, nothing for a clean one; -z keeps any path whole.
         changed = run(["git", "diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "--cc", sha], cwd=root).stdout
         foreign = [name for name in changed.split("\0") if name and name not in own]
@@ -4732,11 +4746,12 @@ def lead_plan_checkout(c) -> Path:
             raise Stop(f"{root} is ahead of {c.base_ref} with {sha[:12]} ({subject}), which changes "
                        f"{', '.join(foreign)}: a lead worktree off {c.base_branch} may be ahead with only "
                        f"{c.delivery}'s own delivery file and plan; push that commit or drop it first")
-    # What the base holds, plus this delivery's own unpushed plan commits: the working tree is the plan to change.
-    # Read it again through that shelf, so the stories a change names (a removal's units, say) are the worktree's.
-    c.shelf = Shelf(root)
-    c.load_delivery(c.delivery)
-    return root
+
+
+def plan_publish_command(c) -> str:
+    if (c.state / "state.json").is_file():
+        return f"{flow_command()} --delivery {shlex.quote(c.delivery)} lead-push"
+    return shlex.join(["git", "push", c.remote, f"HEAD:{c.base_branch}"])
 
 
 def lead_plan(args) -> None:
@@ -4916,7 +4931,7 @@ def lead_plan(args) -> None:
         rebuild_plan(c, mark=True)
     print(f"recorded {ids}: {args.kind} {', '.join(change['subjects']) or change.get('finish', '')}".rstrip())
     print(f"committed the delivery file{' and the plan' if plan_text is not None else ''}; push it so lanes see it: "
-          f"git push {c.remote} HEAD:{c.base_branch}")
+          f"{plan_publish_command(c)}")
 
 
 def plan_approval(c, raw: dict, args) -> None:
@@ -4941,7 +4956,8 @@ def plan_approval(c, raw: dict, args) -> None:
         git("commit", "-q", "-m", f"{c.delivery}: approval {args.id} {args.state}", cwd=c.root)
         rebuild_plan(c)
     print(f"approval {args.id}: {args.state}")
-    print(f"committed the delivery file; push it so lanes see it: git push {c.remote} HEAD:{c.base_branch}")
+    print(f"committed the delivery file; push it so lanes see it: "
+          f"{plan_publish_command(c)}")
 
 
 def archive_plan_review(archive: Path) -> Path | None:
@@ -6045,10 +6061,85 @@ def story_readiness(c, key: str) -> tuple[str, str | None]:
                          f"\"{moves[0]}\" isn't offered; refine it first")
 
 
+def is_lead_checkout(c, branch: str) -> bool:
+    return branch in (c.base_branch, f"lead/{c.delivery}") or c.root.resolve() == c.lane_checkout(c.delivery).resolve()
+
+
 def require_lead_checkout(c) -> None:
     branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=c.root, check=False)
-    if branch not in (c.base_branch, f"lead/{c.delivery}") and c.root.resolve() != c.lane_checkout(c.delivery).resolve():
+    if not is_lead_checkout(c, branch):
         raise Stop(f"run this in the lead checkout on {c.base_branch} or in {c.lane_checkout(c.delivery)}")
+
+
+def lead_push(args) -> None:
+    c = cfg()
+    branch = git("rev-parse", "--abbrev-ref", "HEAD")
+    refuse_story_branch(c, branch, "lead-push")
+    if branch == "HEAD":
+        raise Stop("publish from the lead's branch")
+    if not (c.state / "state.json").is_file():
+        raise Stop("initialize the delivery record before publishing the base")
+    if args.wait_seconds < 0:
+        raise Stop("--wait-seconds must be zero or greater")
+    head = clean_head()
+    before = remote_head(c.base_branch)
+    if not before:
+        raise Stop(f"{c.remote} has no base branch {c.base_branch}")
+
+    scripts = str(c.release / "skills/orchestrate-work/scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    sys.dont_write_bytecode = True
+    import delivery_state  # the same lock implementation and path as the queue
+
+    print(f"Waiting for the merge queue's lock to publish {c.base_branch}.", flush=True)
+    try:
+        with delivery_state.file_lock(c.state / delivery_state.QUEUE_LOCK, timeout=args.wait_seconds):
+            git("fetch", "-q", c.remote, c.base_branch)
+            current = remote_head(c.base_branch)
+            if current != before:
+                raise Stop(f"{c.base_branch}: base moved while waiting ({before[:12]} to {current[:12] or 'missing'}); "
+                           f"bring the lead checkout up to date and retry {flow_command()} lead-push")
+            if clean_head() != head or git("rev-parse", "--abbrev-ref", "HEAD") != branch:
+                raise Stop("the lead checkout changed while waiting; inspect it and retry")
+            if not is_ancestor(current, head):
+                raise Stop(f"{head[:12]} cannot fast-forward {c.remote}/{c.base_branch} at {current[:12]}; "
+                           "bring the lead checkout up to date and retry")
+            if current == head:
+                print(f"{c.remote}/{c.base_branch} already holds {head[:12]}")
+                return
+            if not is_lead_checkout(c, branch):
+                # Older plan worktrees may have any branch name. Keep their plan-only scope.
+                check_lead_plan_commits(c, current, head)
+            git("push", c.remote, f"{head}:refs/heads/{c.base_branch}")
+            state_tool("journal", "--kind", "decision.recorded", "--summary",
+                       f"Published {c.base_branch} from {current} to {head} under the merge queue lock.")
+    except delivery_state.StateError as error:
+        raise Stop(f"{error.code}: {error}") from None
+    print(f"published {c.remote}/{c.base_branch} at {head[:12]}")
+
+
+def lead_flake(args) -> None:
+    c = cfg()
+    require_lead_checkout(c)
+    base = remote_head(c.base_branch)
+    if not base:
+        raise Stop(f"{c.remote} has no base branch {c.base_branch}")
+    flake = {"baseHead": base, "check": args.check, "ref": args.ref}
+    if args.test:
+        flake["tests"] = args.test
+
+    def declare(doc: dict) -> dict:
+        if remote_head(c.base_branch) != base:
+            raise Stop(f"{c.base_branch} moved while declaring the flake; retry on its current head")
+        current = [entry for entry in doc["state"].get("liveFlakes", [])
+                   if entry["baseHead"] == base and entry["check"] != args.check]
+        return {"liveFlakes": [*current, flake]}
+
+    patch_from(declare, f"the live flake for {args.check}")
+    summary = f"Declared live flake {args.ref} for {args.check} at {base}"
+    state_tool("journal", "--kind", "decision.recorded", "--summary", summary)
+    print(summary)
 
 
 def seed_ownership(c, state: dict) -> dict:
@@ -10412,6 +10503,14 @@ def main(argv: list[str] | None = None) -> None:
     p = command(sub, "full-health-run", help="one post-merge fullHealth run at a base head, as the supervisor starts it")
     p.add_argument("--head", required=True); p.add_argument("--record", required=True); p.set_defaults(fn=full_health_run)
     p = command(sub, "lead-brief"); p.set_defaults(fn=lead_brief)
+    p = command(sub, "lead-push", help="publish the lead's committed work under the merge queue lock")
+    p.add_argument("--wait-seconds", type=int, default=3600, metavar="SECONDS")
+    p.set_defaults(fn=lead_push)
+    p = command(sub, "lead-flake", help="declare a temporary flake for a check at the current remote base")
+    p.add_argument("--check", required=True)
+    p.add_argument("--test", action="append", help="full regex for a failing test id, repeatable")
+    p.add_argument("--ref", required=True, help="reference tracking the flake")
+    p.set_defaults(fn=lead_flake)
     p = command(sub, "lead-own", help="grant or move a lane's claim in the record")
     action = p.add_mutually_exclusive_group(required=True)
     action.add_argument("--seed", action="store_true", help="seed a legacy record from the delivery configuration")

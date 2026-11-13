@@ -4607,7 +4607,7 @@ class RunDeliveryPlanTests(unittest.TestCase):
                             "--text", "Thing one says it failed", "--why", "The operator eased it.", "--ref", "#7", cwd=m)
         self.assertEqual(code, 0, out)
         self.assertIn("recorded c1: relaxed FX-2", out)
-        self.assertIn("git push origin HEAD:feature/FX-1", out)
+        self.assertIn("--delivery FX-1 lead-push", out)
         self.assertEqual(sh("git", "status", "--porcelain", cwd=m).stdout, "", "the change wasn't committed")
         self.assertIn("plan change c1", sh("git", "log", "-1", "--format=%s", cwd=m).stdout)
         committed = json.loads(sh("git", "show", "HEAD:.agents/deliveries/FX-1.json", cwd=m).stdout)
@@ -5871,6 +5871,121 @@ class RunDeliveryDefaultDeliveryTests(unittest.TestCase):
 
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class LiveLeadChangesTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.release = installed_release()
+
+    def held_check(self, failures: list[str]):
+        from tests.test_run_delivery_supervisor import hand_off, record, supervised
+
+        fx = Fixture(self.release.generation, self.release.receipt)
+        self.addCleanup(fx.close)
+        supervised(fx)
+        m = fx.main
+        started, released = fx.tmp / "started", fx.tmp / "released"
+        (m / "tools/check.py").write_text(f"""import time
+from pathlib import Path
+started = Path({str(started)!r})
+if Path.cwd().name.endswith("-check") and not started.exists():
+    started.touch()
+    while not Path({str(released)!r}).exists():
+        time.sleep(0.05)
+    failures = {failures!r}
+    for failure in failures:
+        print(f"FAIL: {{failure}}")
+    raise SystemExit(bool(failures))
+""")
+        binding_path = m / ".agents/orchestration.json"
+        binding = json.loads(binding_path.read_text())
+        binding["checkOutput"] = {"failurePattern": r"^FAIL: (?P<id>\S+)$"}
+        binding_path.write_text(json.dumps(binding, indent=2) + "\n")
+        commit(m, "hold the candidate sensor")
+        sh("git", "push", "origin", "HEAD:feature/FX-1", cwd=m)
+        self.assertEqual(fx.flow("lead-init", cwd=m)[0], 0)
+        hand_off(fx, "FX-2", "lane-1")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 0, out)
+        argv = [sys.executable, "-B", str(fx.release / "skills/orchestrate-work/scripts/merge_queue.py"),
+                "--repo", str(m), "--state", str(fx.tmp / "record"), "--remote", "origin", "--base", "feature/FX-1"]
+        synced = sh(*argv, "sync", "FX-2", cwd=m, env=fx.env)
+        self.assertEqual(json.loads(synced.stdout)["outcome"], "synced")
+        runner = subprocess.Popen([*argv, "check", "FX-2"], cwd=m, env=fx.env, text=True, stdout=subprocess.PIPE,
+                                  stderr=subprocess.STDOUT, start_new_session=True)
+        self.addCleanup(stop_and_reap, runner)
+        self.addCleanup(released.touch)
+        deadline = time.monotonic() + 20
+        while not started.exists() and runner.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertTrue(started.exists(), "the check did not signal that it started")
+        self.assertEqual(record(fx)["state"]["queue"][0]["stage"], "checking")
+        return fx, runner, released
+
+    def test_lead_push_waits_for_a_started_sensor_and_publishes_after_it_passes(self) -> None:
+        from tests.test_run_delivery_supervisor import kinds, record
+
+        fx, runner, release = self.held_check([])
+        m = fx.main
+        before = sh("git", "ls-remote", "origin", "refs/heads/feature/FX-1", cwd=m).stdout.split()[0]
+        (m / "docs/plan.md").write_text((m / "docs/plan.md").read_text() + "\nA lead correction.\n")
+        commit(m, "lead plan correction")
+        head = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
+        with subprocess.Popen([sys.executable, "-B", str(fx.tool), "lead-push", "--delivery", "FX-1"],
+                              cwd=m, env=fx.env, text=True, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT) as pushing:
+            try:
+                self.assertEqual(pushing.stdout.readline().strip(),
+                                 "Waiting for the merge queue's lock to publish feature/FX-1.")
+                self.assertEqual(sh("git", "ls-remote", "origin", "refs/heads/feature/FX-1",
+                                    cwd=m).stdout.split()[0], before)
+                self.assertIsNone(pushing.poll())
+            finally:
+                release.touch()
+                out, _ = runner.communicate(timeout=30)
+                pushed, _ = pushing.communicate(timeout=30)
+        self.assertEqual(json.loads(out)["outcome"], "checked", out)
+        self.assertEqual(pushing.returncode, 0, pushed)
+        self.assertEqual(sh("git", "ls-remote", "origin", "refs/heads/feature/FX-1", cwd=m).stdout.split()[0], head)
+        self.assertEqual(record(fx)["state"]["queue"][0]["stage"], "checked")
+        [finished] = kinds(fx, "check.finished")
+        [published] = [e for e in kinds(fx, "decision.recorded") if "Published" in e["summary"]]
+        self.assertLess(finished["id"], published["id"])
+
+    def test_a_live_flake_declared_during_a_check_retries_only_matching_failures(self) -> None:
+        from tests.test_run_delivery_supervisor import kinds, record
+
+        for check_id, failures in (("check", ["test_flaky"]), ("check", ["test_flaky", "test_other"]),
+                                   ("other-check", ["test_flaky"])):
+            with self.subTest(check=check_id, failures=failures):
+                fx, runner, release = self.held_check(failures)
+                before = record(fx)["state"]["queue"][0]
+                remote = sh("git", "ls-remote", "origin", "refs/heads/feature/FX-1", cwd=fx.main).stdout.split()[0]
+                (fx.main / "docs/plan.md").write_text((fx.main / "docs/plan.md").read_text() + "\nLocal edit.\n")
+                commit(fx.main, "unpublished lead edit")
+                try:
+                    code, out = fx.flow("lead-flake", "--check", check_id, "--test", "test_flaky", "--ref", "FX-17",
+                                        cwd=fx.main)
+                    self.assertEqual(code, 0, out)
+                    [flake] = record(fx)["state"]["liveFlakes"]
+                    self.assertEqual((flake["baseHead"], flake["check"]), (remote, check_id))
+                finally:
+                    release.touch()
+                    result, _ = runner.communicate(timeout=30)
+                checked = json.loads(result)
+                after = record(fx)["state"]["queue"][0]
+                self.assertEqual(checked["syncedHead"], before["syncedHead"])
+                self.assertEqual(after["checks"][0]["id"], "check")
+                self.assertEqual(len(kinds(fx, "check.started")), 1)
+                if check_id == "check" and len(failures) == 1:
+                    self.assertEqual(checked["outcome"], "checked", checked)
+                    self.assertEqual(checked["checks"][0]["retried"]["flake"], "FX-17")
+                    self.assertEqual(len(kinds(fx, "check.retried")), 1)
+                else:
+                    self.assertEqual(checked["stop"]["reason"], "check_failed", checked)
+                    self.assertEqual(kinds(fx, "check.retried"), [])
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
 class RunDeliveryLeadWorktreeTests(unittest.TestCase):
     """lead-plan from a lead's own worktree on its own branch, as when several deliveries share one machine and the
     operator's checkout already holds the base: its HEAD at the base's tip, or ahead with this delivery's own plan
@@ -5904,16 +6019,108 @@ class RunDeliveryLeadWorktreeTests(unittest.TestCase):
         sh("git", "worktree", "add", "-q", "--no-track", "-b", "lead/FX-1", lead, "origin/feature/FX-1", cwd=m)
         return fx, lead, lead / ".agents/deliveries/FX-1.json"
 
+    def test_lead_push_rechecks_the_remote_under_the_queue_lock(self) -> None:
+        fx, lead, _ = self.fixture()
+        (lead / "docs/plan.md").write_text("pending plan\n")
+        commit(lead, "pending plan")
+        original = sh("git", "rev-parse", "origin/feature/FX-1", cwd=lead).stdout.strip()
+        lock = fx.tmp / "record/queue.lock"
+        with lock.open("a") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            with subprocess.Popen([sys.executable, "-B", str(fx.tool), "lead-push", "--delivery", "FX-1"],
+                                  cwd=lead, env=fx.env, text=True, stdout=subprocess.PIPE,
+                                  stderr=subprocess.STDOUT) as pushing:
+                try:
+                    self.assertEqual(pushing.stdout.readline().strip(),
+                                     "Waiting for the merge queue's lock to publish feature/FX-1.")
+                    self.assertEqual(sh("git", "ls-remote", "origin", "refs/heads/feature/FX-1",
+                                        cwd=lead).stdout.split()[0], original)
+                    (fx.main / "external.txt").write_text("external update\n")
+                    commit(fx.main, "external update")
+                    sh("git", "push", "origin", "HEAD:feature/FX-1", cwd=fx.main)
+                    external = sh("git", "rev-parse", "HEAD", cwd=fx.main).stdout.strip()
+                finally:
+                    fcntl.flock(held, fcntl.LOCK_UN)
+                    out, _ = pushing.communicate(timeout=30)
+        self.assertEqual(pushing.returncode, 2, out)
+        self.assertIn("base moved while waiting", out)
+        self.assertEqual(sh("git", "ls-remote", "origin", "refs/heads/feature/FX-1",
+                            cwd=lead).stdout.split()[0], external)
+        # A refused publication releases the lock and a subsequent push can take it.
+        with lock.open("a") as probe:
+            fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def test_a_competing_update_after_the_locked_fetch_is_not_overwritten(self) -> None:
+        fx, lead, _ = self.fixture()
+        (lead / "docs/plan.md").write_text("pending plan\n")
+        commit(lead, "pending plan")
+        (fx.main / "external.txt").write_text("external update\n")
+        commit(fx.main, "external update")
+        external = sh("git", "rev-parse", "HEAD", cwd=fx.main).stdout.strip()
+        git = shlex.quote(shutil.which("git"))
+        wrappers = fx.tmp / "wrappers"
+        wrappers.mkdir()
+        wrapper = wrappers / "git"
+        wrapper.write_text(f"""#!/bin/sh
+if [ "$1" = push ]; then
+    {git} -C {shlex.quote(str(fx.main))} push -q origin HEAD:feature/FX-1 || exit
+fi
+exec {git} "$@"
+""")
+        wrapper.chmod(0o755)
+        env = {**fx.env, "PATH": f"{wrappers}{os.pathsep}{fx.env['PATH']}"}
+        code, out = fx.flow("lead-push", "--delivery", "FX-1", cwd=lead, env=env)
+        self.assertEqual(code, 2, out)
+        self.assertIn("rejected", out)
+        self.assertEqual(sh("git", "ls-remote", "origin", "refs/heads/feature/FX-1",
+                            cwd=lead).stdout.split()[0], external)
+
+    def test_a_rejected_push_can_be_retried(self) -> None:
+        fx, lead, _ = self.fixture()
+        (lead / "docs/plan.md").write_text("pending plan\n")
+        commit(lead, "pending plan")
+        head = sh("git", "rev-parse", "HEAD", cwd=lead).stdout.strip()
+        remote = Path(sh("git", "remote", "get-url", "origin", cwd=lead).stdout.strip())
+        hook = remote / "hooks/pre-receive"
+        hook.parent.mkdir(exist_ok=True)
+        sh("git", "--git-dir", remote, "config", "core.hooksPath", str(hook.parent), cwd=lead)
+        hook.write_text("#!/bin/sh\necho 'fixture push rejection' >&2\nexit 1\n")
+        hook.chmod(0o755)
+        code, out = fx.flow("lead-push", "--delivery", "FX-1", cwd=lead)
+        self.assertEqual(code, 2, out)
+        self.assertIn("fixture push rejection", out)
+        hook.unlink()
+        code, out = fx.flow("lead-push", "--delivery", "FX-1", cwd=lead)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(sh("git", "ls-remote", "origin", "refs/heads/feature/FX-1",
+                            cwd=lead).stdout.split()[0], head)
+
     def pushed(self, fx: Fixture, out: str, lead: Path) -> dict:
         """Run the push the command printed, from the worktree, and read the delivery file the base then holds."""
-        line = next(line for line in out.splitlines() if "git push" in line)
-        command = line[line.index("git push"):].split()
-        self.assertEqual(command, ["git", "push", "origin", "HEAD:feature/FX-1"], out)
-        sh(*command, "-q", cwd=lead)
+        self.assertIn("--delivery FX-1 lead-push", out)
+        code, published = fx.flow("--delivery", "FX-1", "lead-push", cwd=lead)
+        self.assertEqual(code, 0, published)
         return json.loads(sh("git", "show", "origin/feature/FX-1:.agents/deliveries/FX-1.json", cwd=lead).stdout)
+
+    def test_a_pre_init_approval_prints_the_bootstrap_push(self) -> None:
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        path = plan_delivery(fx)
+        delivery = json.loads(path.read_text())
+        delivery["approvals"] = [{"id": "approval-1", "text": "Copy sign-off", "state": "waiting", "blocking": True}]
+        path.write_text(json.dumps(delivery, indent=2))
+        commit(fx.main, "declare approval")
+        code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "done", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("git push origin HEAD:feature/FX-1", out)
+        self.assertFalse((fx.tmp / "record/state.json").exists())
+        sh("git", "push", "origin", "HEAD:feature/FX-1", cwd=fx.main)
+        published = json.loads(sh("git", "show", "origin/feature/FX-1:.agents/deliveries/FX-1.json", cwd=fx.main).stdout)
+        self.assertEqual(published["approvals"][0]["state"], "done")
 
     def test_an_approval_from_a_lead_worktree_at_the_base_tip_commits_there_and_reaches_the_base(self) -> None:
         fx, lead, path = self.fixture()
+        sh("git", "branch", "-m", "my-lead-work", cwd=lead)
         code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "done", "--who", "the operator", cwd=lead)
         self.assertEqual(code, 0, out)
         self.assertEqual(json.loads(path.read_text())["approvals"][0]["state"], "done")
@@ -6127,7 +6334,7 @@ class RunDeliveryLeadWorktreeTests(unittest.TestCase):
         commit(m, "a commit on the base branch")
         code, out = fx.flow("lead-plan", "approval", "approval-1", "--state", "done", cwd=m)
         self.assertEqual(code, 0, out)
-        self.assertIn("push it so lanes see it: git push origin HEAD:feature/FX-1", out)
+        self.assertIn("--delivery FX-1 lead-push", out)
         self.assertEqual(sh("git", "log", "-1", "--format=%s", cwd=m).stdout.strip(), "FX-1: approval approval-1 done")
         # And a story branch is no lead checkout: a lane can't change the plan from its own.
         lane = fx.tmp / "lane-FX-2"
