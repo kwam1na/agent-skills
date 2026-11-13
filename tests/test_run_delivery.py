@@ -1895,6 +1895,35 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         review.mkdir(parents=True)
         (review / "context.md").write_text("- fixture evidence\n")
         flow("gate", "FX-2", cwd=wt)
+        # Put eight valid captures ahead of this one in the shared display
+        # budget. Admission must still read the carried story's own artifact.
+        state_tool = fx.release / "skills/orchestrate-work/scripts/delivery_state.py"
+        record = fx.tmp / "record"
+
+        def state(*args):
+            return json.loads(sh(sys.executable, "-B", state_tool, "--dir", record, *args).stdout)
+
+        document = state("show")
+        other = [{"subject": f"fixture-{n}", "title": f"Fixture {n}", "lane": "lane-1", "stage": "review"}
+                 for n in range(8)]
+        state("patch", "--writer", "lead", "--version", str(document["state"]["version"]),
+              "--patch", json.dumps({"planned": [*document["state"]["planned"], *other]}))
+        for row in other:
+            subject = row["subject"]
+            binding = {"subjectRef": subject, "candidateRef": reviewed, "round": 1}
+            lens = "lens.outcome-correctness"
+            result = {"schemaVersion": "review-lens-result/1", "lensId": lens, **binding, "outcome": "aligned",
+                      "findings": [], "evidence": ["x" * (800 * 1024)]}
+            outcome = {"round": 1, "outcome": "aligned", "entries": [
+                {"lens": lens, "state": "obtained", "binding": binding, "result": result}]}
+            now = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+            state("journal", "--kind", "review.round", "--subject", subject, "--lane", "lane-1", "--review",
+                  json.dumps({"round": 1, "startedAt": now, "finishedAt": now, "verdicts": {lens: "approve"},
+                              "findings": {level: 0 for level in ("P0", "P1", "P2", "P3")}}))
+            path = fx.tmp / f"{subject}.json"
+            path.write_text(json.dumps(outcome))
+            state("capture-review", "--subject", subject, "--candidate", reviewed, "--outcome", path)
+
         flow("review-prepare", "FX-2", "--round", 1, cwd=wt)
         write_results(review, 1, "FX-2", fx.lenses(wt))
         flow("review-reduce", "FX-2", "--round", 1, cwd=wt)
@@ -1985,18 +2014,20 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         self.assertIn("review carry refused: the base merge changes lane-owned file src/app.txt", out)
         self.assertTrue(self.shown(fx.tmp / "record")["state"]["queue"][0]["pending"])
         flow("lead-own", "--revoke", "src/app.txt", "--lane", "lane-1")
+
+        self.assertTrue(state("show")["reviewEvidence"]["FX-2"]["unavailable"])
         flow("lead-accept", "FX-2")
-        doc = self.shown(fx.tmp / "record")
+        doc = self.shown(record)
         self.assertEqual(doc["state"]["queue"][0]["head"], head)
-        observed = doc["reviewEvidence"]["FX-2"]
-        self.assertEqual(observed["candidateRef"], reviewed)
-        self.assertEqual(observed["carried"]["to"], head)
-        self.assertEqual(len(observed["outcomes"]), 1)
+        captured = next(e["reviewArtifact"] for e in doc["journal"]
+                        if e["kind"] == "review.evidence" and e["subject"] == "FX-2")
+        self.assertEqual(captured["candidateRef"], reviewed)
+        self.assertEqual(doc["state"]["queue"][0]["reportedRounds"], 1)
         hand = next(e for e in doc["journal"] if e["kind"] == "candidate.handed")
         self.assertEqual(hand["reviewCarry"]["baseCommits"], [upstream, second])
         self.assertEqual(hand["reviewCarry"]["from"], reviewed)
         self.assertEqual(hand["reviewCarry"]["to"], head)
-        self.assertEqual(hand["reviewCarry"]["digest"], observed["digest"])
+        self.assertEqual(hand["reviewCarry"]["digest"], captured["digest"])
         self.assertTrue(any(f"review captured at {reviewed} and carried to {head}" in e["summary"] for e in doc["journal"]))
 
     def test_lane_and_lead_flow_end_to_end(self) -> None:
