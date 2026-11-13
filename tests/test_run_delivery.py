@@ -1997,7 +1997,7 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         flow("lead-push")
         second = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
         sh(*authorized, cwd=wt)
-        sh("git", "merge", "-q", "--no-ff", "--no-edit", second, cwd=wt)
+        sh(*authorized[:-1], second, cwd=wt)
         refuse("did not authorize")
         authorized_second = authorize(second)
         sh(*authorized, cwd=wt)
