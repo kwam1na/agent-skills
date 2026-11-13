@@ -74,6 +74,7 @@ UPDATES: dict[str, tuple[str, str] | None] = {
     "base.verified": None,
     "base.broken": ("epic", "The delivery base is broken; the queue is stopped"),
     "base.repaired": ("epic", "The delivery base is repaired"),
+    "base.moved": ("epic", "Delivery base updated"),
     "base.rerun.started": None,
     "base.rerun.finished": None,
     "lease.granted": ("ticket-or-epic", "Lease granted"),

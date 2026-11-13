@@ -130,6 +130,7 @@ the lead and the lanes make them instead, as the commands print them.
 | `base.verified` | None: the post-merge `fullHealth` passed at the base head the named merge reached, and the result shows in the record and the views. |
 | `base.broken` | On the epic: the stop code and its detail (the failing check, an unverified merge, a base that moved under a batch, or a batch that landed in part), and that the queue is stopped; `base.repaired` reopens it. |
 | `base.repaired` | On the epic: the fix that landed and the gap it closed. |
+| `base.moved` | On the epic, record the previous and published base heads and the default branch commit. |
 | `base.rerun.started` | None: the candidate's failure already reached the lead as `check.failed`, and the record and the views show the re-run in progress. |
 | `base.rerun.finished` | None: its verdict posts with `candidate.stopped`, or with `base.broken` when the base fails the check too. |
 | `lease.granted` | On the ticket whose work needs the lease: the lease, its holder and when it will be released. |
@@ -1529,3 +1530,31 @@ A live page built by the `static-page` renderer reads the store through a
 small adapter object the host provides, and shows the store's document only
 when its `schemaVersion` matches the page's own. Publish only documents the
 state tool produced, so the versions always agree.
+
+
+## Updating an integration base
+
+Use `run-delivery lead-sync --merge` from the lead checkout when an ongoing integration base needs the
+newer default branch. The delivery declares `integrationTarget`, and `baseMove.provenanceWriter` names
+its repository's writer argv. Supply verified archive and metadata files matching the default branch's
+applied receipt. The target archive must support the base-move writer transition and read the current record.
+
+The command parks the supervisor and takes the queue lock. It merges the default branch, applies its
+verified generation through the supported product lifecycle, and regenerates provenance. Digest-only
+lock conflicts select a side with the correct output listing. If both sides changed that listing differently,
+merge the listing deliberately. Substantive conflicts name their paths. Resolve and stage them, keep the
+merge open, then run `lead-sync --merge --resume`.
+
+The pending move records the original base, default commit, prepared tree and published head. Publication
+uses a normal fast-forward push. The applied writer and record base head reconcile together, and `base.moved`
+records the result once. A retry recognizes an already published head and finishes reconciliation without
+another commit. The supervisor refuses processing while the pending move remains. Existing merged SHAs
+stay reachable through the merge parents, and their recorded identities are retained.
+
+Lanes start newly assigned stories from the moved remote base. Existing branches follow the lead's
+base-merge authorization and review rules. Review and gate the integration candidate on its current head.
+
+When a flake affects both the integration base and the default branch, land the shared fix on the default
+branch too. Record a `decision.recorded` entry on the delivery naming the fix, the upstream change request
+and its pending-upstream status. A temporary `lead-flake` declaration still names the exact current base,
+check and failing test. Record the upstream landing when it occurs, and bring it in through the base move.

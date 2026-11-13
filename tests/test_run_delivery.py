@@ -6228,6 +6228,236 @@ if Path.cwd().name.endswith("-check") and not started.exists():
                     self.assertEqual(kinds(fx, "check.retried"), [])
 
 
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class BaseMoveTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.release = installed_release()
+        cls.new_archive = cls.release.build / "base-move-new.zip"
+        cls.new_metadata = cls.release.build / "base-move-new.release.json"
+        build_release(ROOT, cls.new_archive, cls.new_metadata, release_id="base-move-new", profile_id=PROFILE,
+                      runtime_directory=cls.release.build / "runtime")
+
+    def fixture(self, *, conflict: bool = False):
+        fx = Fixture(self.release.generation, self.release.receipt)
+        self.addCleanup(fx.close)
+        fx.env.update(AGENT_SKILLS_EXECUTION_CONTEXT="", GITHUB_EVENT_NAME="")
+        setup_delivery(fx)
+        m = fx.main
+        for relative in (".agent-skills", ".agents/skills", ".claude/skills"):
+            path = m / relative
+            if path.exists():
+                shutil.rmtree(path)
+        (m / ".claude/settings.json").unlink(missing_ok=True)
+        policy = m / ".agents/policy"
+        policy.mkdir()
+        (policy / "bootstrap-inputs.json").write_text(json.dumps({"productTrustRevocationEpoch": 0,
+                                                               "repositoryAuthorityRevocationEpoch": 0}) + "\n")
+        (policy / "adapters.json").write_text("[]\n")
+        (policy / "repository-policy.json").write_text(json.dumps({
+            "spec": "repository-policy-document/1", "repositoryId": "fixture", "policyGeneration": 1,
+            "grantedFinishLines": ["merge-ready"], "grantedAuthority": [], "forbiddenAuthority": [],
+            "reviewLenses": [{"lensId": "lens." + name, "category": name, "personaId": "persona." + name}
+                             for name in ("outcome-correctness", "testing-policy")],
+            "obligations": [], "requiredCapabilities": [], "approvals": [],
+            "trackerAbsenceFallback": "proceed-without-tracker"}, indent=2) + "\n")
+        sh(sys.executable, "-B", self.release.archive, "--root", m, "--product", "apply", "--archive",
+           self.release.archive, "--metadata", self.release.metadata, "--maintenance", "--bootstrap-policy", cwd=m, env=fx.env)
+        fx.tool = m / ".agent-skills/current" / TOOL_RELATIVE
+        fx.release = (m / ".agent-skills/current").resolve()
+        sh("git", "config", "user.name", "Fixture", cwd=m)
+        sh("git", "config", "user.email", "fixture@example.test", cwd=m)
+        config_path = m / ".agents/run-delivery.json"
+        config = json.loads(config_path.read_text())
+        config.pop("gates", None)
+        config.pop("inApp", None)
+        config["baseMove"] = {"provenanceWriter": [sys.executable, "-B", str(ROOT / "scripts/update-provenance.py"),
+                                                     "--root", "."]}
+        config_path.write_text(json.dumps(config, indent=2) + "\n")
+        binding_path = m / ".agents/orchestration.json"
+        from tests.test_run_delivery_supervisor import SNAPSHOT
+        (m / "tools/snapshot.py").write_text(SNAPSHOT)
+        binding = doctor_binding()
+        binding["state"] = {"directory": ".orchestration/state", "publishers": [], "renderers": [],
+                            "forgeSnapshot": {"argv": [sys.executable, "-B", "tools/snapshot.py"]}}
+        binding["base"]["ref"] = "main"
+        binding["bases"] = ["integrate/*"]
+        binding_path.write_text(json.dumps(binding, indent=2) + "\n")
+        delivery_path = m / ".agents/deliveries/FX-1.json"
+        delivery = json.loads(delivery_path.read_text())
+        delivery["baseBranch"] = "main"
+        for story in delivery["stories"].values():
+            story["inApp"] = "none"
+        delivery_path.write_text(json.dumps(delivery, indent=2) + "\n")
+        (m / "src/other.txt").write_text("other\n")
+        (m / "src/app.txt").write_text("app\n" + "".join(f"line {n}\n" for n in range(18)) + "last\n")
+        lock = {"entries": [{"id": "fixture", "outputs": [
+            {"path": name, "sha256": hashlib.sha256((m / name).read_bytes()).hexdigest()}
+            for name in ("src/app.txt", "src/other.txt")]}]}
+        (m / "provenance.lock.json").write_text(json.dumps(lock, indent=2) + "\n")
+        commit(m, "Common source and verified installation")
+        sh("git", "branch", "-f", "main", "HEAD", cwd=m)
+        sh("git", "push", "-q", "origin", "main", cwd=m)
+        default = fx.tmp / "default"
+        sh("git", "worktree", "add", "-q", default, "main", cwd=m)
+        sh("git", "branch", "-m", "integrate/fixture", cwd=m)
+        fx.env["RUN_DELIVERY_BASE"] = "integrate/fixture"
+        binding["base"]["ref"] = "integrate/fixture"
+        binding_path.write_text(json.dumps(binding, indent=2) + "\n")
+        delivery.update(baseBranch="integrate/fixture", integrationTarget="main")
+        delivery_path.write_text(json.dumps(delivery, indent=2) + "\n")
+        app = (m / "src/app.txt").read_text().splitlines()
+        app[0] = "integration work"
+        (m / "src/app.txt").write_text("\n".join(app) + "\n")
+        sh(*config["baseMove"]["provenanceWriter"], cwd=m)
+        commit(m, "Integration work stays reachable")
+        old = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
+        sh("git", "push", "-q", "-u", "origin", "integrate/fixture", cwd=m)
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        state_script = fx.release / "skills/orchestrate-work/scripts/delivery_state.py"
+        state = json.loads((fx.tmp / "record/state.json").read_text())
+        merged = {"order": 1, "subject": "FX-0", "title": "Merged work", "lane": "lane-1", "stage": "merged",
+                  "head": old, "syncedHead": old, "leadInputs": [], "reportedRounds": 1, "runId": None, "checks": []}
+        # Seed historical merged work, whose commit is already on the published integration base.
+        prior = sh("git", "rev-parse", f"{old}^", cwd=m).stdout.strip()
+        state["queue"] = [merged, {**merged, "order": 2, "subject": "FX-8", "head": prior, "syncedHead": prior}]
+        state["meta"]["baseHead"] = old
+        (fx.tmp / "record/state.json").write_text(json.dumps(state, indent=2) + "\n")
+        sh(sys.executable, "-B", state_script, "--dir", fx.tmp / "record", "journal", "--kind", "candidate.merged",
+           "--subject", "FX-0", "--lane", "lane-1", "--summary", f"Historical fixture merge at {old}", cwd=m)
+        app = (default / "src/app.txt").read_text().splitlines()
+        app[0 if conflict else -1] = "default branch work"
+        (default / "src/app.txt").write_text("\n".join(app) + "\n")
+        (default / "src/other.txt").write_text("default branch work\n")
+        sh(*config["baseMove"]["provenanceWriter"], cwd=default)
+        sh(sys.executable, "-B", self.new_archive, "--root", default, "--product", "apply", "--archive",
+           self.new_archive, "--metadata", self.new_metadata, "--maintenance", cwd=default, env=fx.env)
+        commit(default, "Default branch source and new applied archive")
+        sh("git", "push", "-q", "origin", "main", cwd=default)
+        return fx, old
+
+    def move(self, fx, *extra):
+        return fx.flow("lead-sync", "--merge", "--archive", self.new_archive, "--metadata", self.new_metadata,
+                       "--no-supervisor", *extra, cwd=fx.main)
+
+    def test_receipt_paths_cannot_restore_unmanaged_source(self) -> None:
+        with self.assertRaises(Stopped) as refused:
+            call(self.release.tool, "installation_paths", {"exposures": [{"root": "src"}]},
+                 cwd=Path(tempfile.gettempdir()))
+        self.assertIn("outside the supported managed projections", str(refused.exception))
+
+    def test_lock_only_move_applies_the_default_archive_and_keeps_merged_shas(self) -> None:
+        fx, old = self.fixture()
+        sh("git", "fetch", "-q", "origin", "main", cwd=fx.main)
+        preview = sh("git", "merge-tree", "--write-tree", "HEAD", "origin/main", cwd=fx.main, check=False)
+        self.assertEqual(preview.returncode, 1, preview.stdout)
+        self.assertIn("CONFLICT (content): Merge conflict in provenance.lock.json", preview.stdout)
+        self.assertEqual(fx.flow("lead-run", "--resume", cwd=fx.main)[0], 0)
+        supervisor_lock = fx.tmp / "flow-log/FX-1.supervisor.lock"
+        self.assertTrue(lock_record(supervisor_lock)[0])
+        code, out = self.move(fx)
+        self.assertEqual(code, 0, out)
+        self.assertIn("stopped the supervisor", out)
+        self.assertFalse(lock_record(supervisor_lock)[0])
+        head = sh("git", "rev-parse", "HEAD", cwd=fx.main).stdout.strip()
+        self.assertEqual(sh("git", "ls-remote", "origin", "refs/heads/integrate/fixture", cwd=fx.main).stdout.split()[0], head)
+        self.assertEqual(sh("git", "merge-base", "--is-ancestor", old, head, cwd=fx.main).returncode, 0)
+        state = json.loads((fx.tmp / "record/state.json").read_text())
+        self.assertEqual(state["meta"]["baseHead"], head)
+        self.assertEqual(state["queue"][0]["syncedHead"], old)
+        self.assertEqual(state["meta"]["writerGeneration"]["archiveSha256"], json.loads(self.new_metadata.read_text())["archiveSha256"])
+        self.assertTrue((fx.main / "src/app.txt").read_text().startswith("integration work\n"))
+        self.assertTrue((fx.main / "src/app.txt").read_text().endswith("default branch work\n"))
+        self.assertEqual((fx.main / "src/other.txt").read_text(), "default branch work\n")
+        writer = json.loads((fx.main / ".agents/run-delivery.json").read_text())["baseMove"]["provenanceWriter"]
+        sh(*writer, "--check", cwd=fx.main)
+        self.assertIn("start from", out)
+
+    def test_a_substantive_conflict_names_the_path_and_resumes_the_existing_merge(self) -> None:
+        fx, old = self.fixture(conflict=True)
+        code, out = self.move(fx)
+        self.assertEqual(code, 2, out)
+        self.assertIn("src/app.txt", out)
+        self.assertIn("--resume", out)
+        self.assertEqual(sh("git", "ls-remote", "origin", "refs/heads/integrate/fixture", cwd=fx.main).stdout.split()[0], old)
+        (fx.main / "src/app.txt").write_text("integration and default work\n")
+        sh("git", "add", "src/app.txt", cwd=fx.main)
+        code, out = self.move(fx, "--resume")
+        self.assertEqual(code, 0, out)
+        head = sh("git", "rev-parse", "HEAD", cwd=fx.main).stdout.strip()
+        self.assertEqual(sh("git", "rev-list", "--count", f"{old}..{head}", "--first-parent", cwd=fx.main).stdout.strip(), "1")
+        self.assertEqual((fx.main / "src/app.txt").read_text(), "integration and default work\n")
+
+    def test_retry_after_publication_transitions_the_writer_and_reconciles_once(self) -> None:
+        fx, old = self.fixture()
+        old_state = fx.release / "skills/orchestrate-work/scripts/delivery_state.py"
+        new_state = fx.tmp / "default/.agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py"
+        directory = fx.tmp / "record"
+        files = [directory / name for name in ("state.json", "journal.jsonl", "changes.jsonl")]
+        before = [path.read_bytes() for path in files]
+        write = ["--dir", str(directory), "journal", "--kind", "decision.recorded", "--summary", "Writer admission"]
+        refused = sh(sys.executable, "-B", new_state, *write, cwd=fx.main, check=False)
+        self.assertEqual(json.loads(refused.stdout)["code"], "writer_generation_mismatch")
+        self.assertEqual([path.read_bytes() for path in files], before)
+        probe = """import importlib.util, sys
+spec = importlib.util.spec_from_file_location("move_probe", sys.argv[1])
+tool = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(tool)
+def stop_after_publication(config, intent):
+    raise tool.Stop("fixture publication interruption")
+tool.finish_base_move = stop_after_publication
+tool.main(sys.argv[2:])
+"""
+        interrupted = sh(sys.executable, "-B", "-c", probe, fx.tool, "lead-sync", "--merge", "--archive", self.new_archive,
+                         "--metadata", self.new_metadata, "--no-supervisor", cwd=fx.main, env=fx.env, check=False)
+        self.assertEqual(interrupted.returncode, 2, interrupted.stdout + interrupted.stderr)
+        self.assertIn("fixture publication interruption", interrupted.stderr)
+        published = sh("git", "ls-remote", "origin", "refs/heads/integrate/fixture", cwd=fx.main).stdout.split()[0]
+        self.assertNotEqual(published, old)
+        self.assertEqual(sh("git", "rev-parse", "HEAD", cwd=fx.main).stdout.strip(), published)
+        self.assertEqual([path.read_bytes() for path in files], before)
+        pending = fx.tmp / "flow-log/FX-1.base-move.json"
+        self.assertEqual(json.loads(pending.read_text())["preparedHead"], published)
+        saved_intent = pending.read_bytes()
+        pending.write_text('{"phase":"invalid"}\n')
+        code, out = self.move(fx, "--resume")
+        self.assertEqual(code, 2, out)
+        self.assertIn("malformed", out)
+        self.assertEqual([path.read_bytes() for path in files], before)
+        pending.write_bytes(saved_intent)
+        code, out = fx.flow("lead-run", "--once", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("base move pending", out)
+        self.assertEqual([path.read_bytes() for path in files], before)
+        code, out = self.move(fx, "--resume")
+        self.assertEqual(code, 0, out)
+        self.assertFalse(pending.exists())
+        state = json.loads(files[0].read_text())
+        self.assertEqual(state["meta"]["baseHead"], published)
+        old_digest = json.loads(self.release.receipt.read_text())["release"]["archiveSha256"]
+        new_digest = json.loads(self.new_metadata.read_text())["archiveSha256"]
+        self.assertNotEqual(old_digest, new_digest)
+        self.assertEqual(state["meta"]["writerGeneration"]["archiveSha256"], new_digest)
+        for item in state["queue"]:
+            sh("git", "merge-base", "--is-ancestor", item["syncedHead"], published, cwd=fx.main)
+        self.assertEqual(sh("git", "rev-list", "--count", f"{old}..{published}", "--first-parent", cwd=fx.main).stdout.strip(), "1")
+        complete = [path.read_bytes() for path in files]
+        self.assertEqual(self.move(fx, "--resume")[0], 0)
+        self.assertEqual([path.read_bytes() for path in files], complete)
+        refused = sh(sys.executable, "-B", old_state, *write, cwd=fx.main, check=False)
+        self.assertEqual(json.loads(refused.stdout)["code"], "writer_generation_mismatch")
+        self.assertEqual([path.read_bytes() for path in files], complete)
+        sh(sys.executable, "-B", fx.main / ".agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py",
+           *write, cwd=fx.main)
+        changes = [json.loads(line)["change"] for line in files[2].read_text().splitlines()]
+        self.assertEqual(changes.count("writer-upgrade"), 1)
+        self.assertEqual(changes.count("base-move"), 1)
+        entries = [json.loads(line) for line in files[1].read_text().splitlines()]
+        self.assertEqual(len([entry for entry in entries if entry["kind"] == "base.moved"]), 1)
+
+
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
 class RunDeliveryLeadWorktreeTests(unittest.TestCase):
     """lead-plan from a lead's own worktree on its own branch, as when several deliveries share one machine and the

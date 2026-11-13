@@ -689,3 +689,20 @@ delivery's own key. The serve command must serve that file at `/.flow-build.json
 
 `run_delivery.py adapter-test` runs a repository's serve and check adapters against a fixture page (the skill's `assets/adapter-fixture/` folder), under
 the lease, and fails if they break this contract.
+
+
+## Integration-base updates
+
+`baseMove.provenanceWriter` is a non-empty argv array for the adopting repository's provenance writer.
+`lead-sync --merge` runs it in the lead checkout after merging source and applying the default branch's
+verified generation. The writer must recompute the listed output digests without adding or removing outputs.
+
+```json
+{"baseMove": {"provenanceWriter": ["python3", "-B", "path/to/provenance-writer.py"]}}
+```
+
+The delivery's `integrationTarget` names the default branch. The command takes `--archive` and `--metadata`
+files whose digests equal that branch's applied receipt. It uses the supported product apply and recovery
+lifecycle. Its pending intent is `<flow-log>/<delivery>.base-move.json`. Keep that file through an interrupted
+publication and run `lead-sync --merge --resume` from the same checkout. The supervisor stays parked until
+record reconciliation finishes. `--no-supervisor` also leaves it parked after success.

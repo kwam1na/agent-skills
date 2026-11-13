@@ -849,6 +849,33 @@ supervisor and lanes. The solution note in the repository records the original s
 Admitted write operations hold a shared `writer.lock` through their state, journal, review-artifact and recovery-intent changes. A lead writer transition takes it exclusively after taking the queue lock. The short state transaction lock still checks admission before each record mutation. This lets an admitted hand-off finish its matching journal evidence before the generation changes.
 
 
+### Updating an integration base
+
+An ongoing integration base declares its default branch as `integrationTarget`. Configure the repository's
+provenance writer as `baseMove.provenanceWriter`, then use the installed command with verified archives
+matching the default branch's applied receipt. Both applied generations must support the writer transition.
+
+```bash example outline
+python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py --delivery KEY \
+  lead-sync --merge --archive /path/to/profile-version.zip --metadata /path/to/profile-version.release.json
+```
+
+The command parks the supervisor, takes the queue lock, merges history and applies the verified generation
+through its product lifecycle. It regenerates provenance and publishes a normal fast-forward update. The
+writer pin and recorded base reconcile together. A pending move blocks supervisor processing, including
+an interruption after the remote accepts the new head. `lead-sync --merge --resume` recognizes that head
+and finishes the record once. Existing merged SHAs keep their identities and remain reachable.
+
+Resolve named substantive conflicts and stage the resolutions while leaving the merge open, then resume.
+If both sides changed the provenance output listing differently, merge that listing deliberately. After success,
+newly assigned stories start from the moved remote base. Existing stories follow the lead's base-merge
+review rules. `--no-supervisor` leaves the supervisor parked for the caller's next step.
+
+For a flake shared with the default branch, record the upstream fix and its pending-upstream status in a
+delivery decision. A temporary `lead-flake` remains scoped to the current base head and check. Record the
+upstream landing and include it in the next base move.
+
+
 ## Troubleshooting
 
 ### The setup check

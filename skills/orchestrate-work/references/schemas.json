@@ -458,6 +458,31 @@
                 "pattern": "^[0-9a-f]{64}$"
               }
             }
+          },
+          "baseMove": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "from",
+              "to",
+              "defaultHead",
+              "archiveSha256"
+            ],
+            "properties": {
+              "from": {
+                "$ref": "#/$defs/commit"
+              },
+              "to": {
+                "$ref": "#/$defs/commit"
+              },
+              "defaultHead": {
+                "$ref": "#/$defs/commit"
+              },
+              "archiveSha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
           }
         }
       },
@@ -1256,7 +1281,8 @@
           "review.evidence",
           "check.selected",
           "selection.refused",
-          "hook.held"
+          "hook.held",
+          "base.moved"
         ]
       },
       "lane": {

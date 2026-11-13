@@ -60,6 +60,7 @@ import subprocess
 import tempfile
 import time
 import warnings
+import zipfile
 from collections.abc import Callable
 from pathlib import Path
 
@@ -6372,6 +6373,266 @@ def require_lead_checkout(c) -> None:
         raise Stop(f"run this in the lead checkout on {c.base_branch} or in {c.lane_checkout(c.delivery)}")
 
 
+def base_move_path(c) -> Path:
+    return c.flow_log / f"{c.delivery}.base-move.json"
+
+
+def save_base_move(path: Path, intent: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(f".{os.getpid()}.tmp")
+    with temporary.open("w", encoding="utf-8") as stream:
+        stream.write(json.dumps(intent, indent=2) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
+
+
+def require_no_base_move(c) -> None:
+    if base_move_path(c).exists():
+        raise Stop(f"base move pending at {base_move_path(c)}; keep the supervisor parked and resume with "
+                   f"{flow_command()} lead-sync --merge --resume")
+
+
+def restore_move_installation(c, intent: dict) -> None:
+    """Let the supported lifecycle update the prior installation, including its host projections."""
+    for path in intent["installationPaths"]:
+        if git("ls-tree", intent["oldHead"], "--", path):
+            git("restore", f"--source={intent['oldHead']}", "--staged", "--worktree", "--", path)
+        else:
+            git("rm", "-r", "-q", "--ignore-unmatch", "--", path)
+
+
+def installation_paths(*receipts: dict) -> list[str]:
+    paths = {".agent-skills"}
+    for receipt in receipts:
+        paths.update(entry["root"] for entry in receipt.get("exposures", []))
+        if receipt.get("hooks", {}).get("file"):
+            paths.add(receipt["hooks"]["file"])
+    managed = {".agent-skills", ".agents/skills", ".claude/skills", ".claude/settings.json"}
+    if not paths <= managed:
+        raise Stop("an installation receipt names a path outside the supported managed projections")
+    return sorted(paths)
+
+
+def resolve_move_provenance(c, intent: dict) -> None:
+    """Regenerate digest-only conflicts. Changed output listings on both sides need an operator merge."""
+    path = "provenance.lock.json"
+    if path not in git("diff", "--name-only", "--diff-filter=U").splitlines():
+        return
+    ancestor = git("merge-base", intent["oldHead"], intent["defaultHead"])
+    versions = []
+    try:
+        for ref in (ancestor, intent["oldHead"], intent["defaultHead"]):
+            raw = git("show", f"{ref}:{path}")
+            document = json.loads(raw)
+            listing = sorted((entry["id"], output["path"]) for entry in document["entries"] for output in entry["outputs"])
+            versions.append(listing)
+    except (Stop, ValueError, KeyError, TypeError):
+        return  # A malformed or newly introduced lock needs the operator's listing decision.
+    base, ours, theirs = versions
+    if ours != base and theirs != base and ours != theirs:
+        return
+    take = intent["defaultHead"] if theirs != base else intent["oldHead"]
+    git("restore", f"--source={take}", "--staged", "--worktree", "--", path)
+
+
+def check_base_move_reader(archive: Path, directory: Path) -> None:
+    """Read the existing record with the verified target archive before changing the installation."""
+    with tempfile.TemporaryDirectory(prefix="run-delivery-base-reader-") as folder:
+        root = Path(folder)
+        with zipfile.ZipFile(archive) as release:
+            release.extractall(root)
+        scripts = ((root / "skills/run-delivery/scripts/run_delivery.py", "lead-sync"),
+                   (root / "skills/orchestrate-work/scripts/delivery_state.py", "base-move"))
+        for script, command in scripts:
+            help_text = run([sys.executable, "-B", str(script), "--help"]).stdout
+            commands = re.search(r"\{([a-z,-]+)\}", help_text)
+            if commands is None or command not in commands.group(1).split(","):
+                raise Stop("the default branch's archive must support lead-sync and the base-move writer transition")
+        run([sys.executable, "-B", str(scripts[1][0]), "--dir", str(directory), "show"])
+
+
+def finish_base_move(c, intent: dict) -> dict:
+    """Use the newly applied generation's reader and writer while our caller owns the queue lock."""
+    import importlib.util
+
+    generation = (c.root / ".agent-skills/current").resolve()
+    script = generation / "skills/orchestrate-work/scripts/delivery_state.py"
+    spec = importlib.util.spec_from_file_location("delivery_state_base_move", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    try:
+        return module.complete_base_move_locked(c.state, from_head=intent["oldHead"], to_head=intent["preparedHead"],
+            default_head=intent["defaultHead"], expected_base=intent["recordHead"],
+            expected_writer=intent["expectedWriter"], reason=intent["reason"])
+    except module.StateError as error:
+        raise Stop(f"{error.code}: {error}") from None
+    except OSError as error:
+        raise Stop(f"base record reconciliation stopped: {error}; resume with lead-sync --merge --resume") from None
+
+
+def lead_sync(args) -> None:
+    """Merge the default branch into an integration base, publishing before reconciling its record."""
+    c = cfg()
+    require_lead_checkout(c)
+    target = c.raw.get("integrationTarget")
+    if not target or target == c.base_branch:
+        raise Stop("lead-sync --merge requires a declared integrationTarget different from the delivery base")
+    path = base_move_path(c)
+    try:
+        intent = load_json(path)
+    except (OSError, ValueError):
+        raise Stop(f"the pending base move at {path} is unreadable; inspect it before resuming") from None
+    required = {"branch", "target", "oldHead", "defaultHead", "recordHead", "expectedWriter", "archive", "metadata",
+                "release", "installationPaths", "provenanceWriter", "phase", "reason"}
+    if intent is not None and (not isinstance(intent, dict) or not required <= set(intent)
+                              or intent["phase"] not in ("merging", "applying", "applied", "committing", "prepared", "published")):
+        raise Stop(f"the pending base move at {path} is malformed; inspect it before resuming")
+    if not intent and args.resume:
+        completed = load_state()["state"]["meta"].get("baseMove") or {}
+        head = clean_head()
+        if completed.get("to") == head == remote_head(c.base_branch):
+            print(f"base move to {head} is already reconciled; lanes start from {c.remote}/{c.base_branch}")
+            return
+    if bool(intent) != bool(args.resume):
+        raise Stop(f"{'an interrupted base move exists; use' if intent else 'no interrupted base move exists; omit'} --resume")
+    if intent:
+        if intent.get("branch") != c.base_branch or intent.get("target") != target:
+            raise Stop("the pending base move belongs to another base or target")
+        archive, metadata = Path(intent["archive"]), Path(intent["metadata"])
+    else:
+        if not args.archive or not args.metadata:
+            raise Stop("give the default branch's verified --archive and --metadata")
+        archive, metadata = args.archive.resolve(), args.metadata.resolve()
+    if not archive.is_file() or not metadata.is_file():
+        raise Stop("the base move needs its verified archive and metadata files to be present")
+    if args.wait_seconds < 0:
+        raise Stop("--wait-seconds must be zero or greater")
+    git("fetch", "-q", c.remote, c.base_branch, target)
+    if not intent:
+        old = clean_head()
+        if remote_head(c.base_branch) != old:
+            raise Stop("the lead checkout must equal the published integration base before moving it")
+        default = git("rev-parse", f"{c.remote}/{target}")
+        target_receipt = json.loads(git("show", f"{default}:.agent-skills/active.json"))
+        release = target_receipt["release"]
+        current_receipt = json.loads((c.root / RECEIPT).read_text())
+        if digest(archive) != release["archiveSha256"] or digest(metadata) != release["metadataSha256"]:
+            raise Stop("the supplied archive and metadata must match the default branch's applied release digests")
+        run([sys.executable, "-B", str(archive), "validate", "--archive", str(archive), "--metadata", str(metadata)])
+        check_base_move_reader(archive, c.state)
+        if is_ancestor(default, old) and current_receipt["release"] == release:
+            print(f"{c.base_branch} already contains {target} and its applied archive; lanes start from {c.base_branch}")
+            return
+        writer = (c.flow_raw.get("baseMove") or {}).get("provenanceWriter")
+        if not isinstance(writer, list) or not writer or not all(isinstance(word, str) and word for word in writer):
+            raise Stop("configure baseMove.provenanceWriter as the repository's provenance writer argv")
+        state = load_state()["state"]
+        intent = {"branch": c.base_branch, "target": target, "oldHead": old, "defaultHead": default,
+                  "recordHead": state["meta"]["baseHead"],
+                  "expectedWriter": (state["meta"].get("writerGeneration") or {}).get("archiveSha256", "unpinned"),
+                  "archive": str(archive), "metadata": str(metadata), "release": release,
+                  "installationPaths": installation_paths(current_receipt, target_receipt),
+                  "provenanceWriter": writer, "phase": "merging", "reason": f"Merge {target} into {c.base_branch}"}
+    if digest(archive) != intent["release"]["archiveSha256"] or digest(metadata) != intent["release"]["metadataSha256"]:
+        raise Stop("the pending move's archive or metadata bytes changed; restore its verified files before resuming")
+    said = ask_supervisor_to_stop(c, why="integration base move")
+    if said:
+        print(said)
+    for line in stop_orphans(c):
+        print(line)
+    scripts = str(c.release / "skills/orchestrate-work/scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import delivery_state
+
+    c.flow_log.mkdir(parents=True, exist_ok=True)
+    try:
+        with delivery_state.file_lock(supervisor_lock_path(c)), \
+                delivery_state.file_lock(c.state / delivery_state.QUEUE_LOCK, timeout=args.wait_seconds):
+            published = remote_head(c.base_branch)
+            if published not in (intent["oldHead"], intent.get("preparedHead")):
+                raise Stop("the integration base moved outside this operation; inspect the pending move before resuming")
+            if not path.exists():
+                if clean_head() != intent["oldHead"]:
+                    raise Stop("the lead checkout changed while waiting for the queue lock")
+                save_base_move(path, intent)
+            if intent["phase"] in ("merging", "applying", "applied", "committing"):
+                if intent["phase"] != "committing" and git("rev-parse", "HEAD") != intent["oldHead"]:
+                    raise Stop("the pending merge's checkout head changed; leave conflict resolutions staged for --resume")
+                if intent["phase"] == "merging":
+                    merge_head = git("rev-parse", "-q", "--verify", "MERGE_HEAD", check=False)
+                    if merge_head and merge_head != intent["defaultHead"]:
+                        raise Stop("the checkout holds another merge; inspect it before resuming")
+                    if not merge_head:
+                        result = run(["git", "merge", "--no-ff", "--no-commit", intent["defaultHead"]], check=False)
+                        if result.returncode and not git("rev-parse", "-q", "--verify", "MERGE_HEAD", check=False):
+                            raise Stop(result.stderr or result.stdout)
+                    restore_move_installation(c, intent)
+                    resolve_move_provenance(c, intent)
+                    conflicts = git("diff", "--name-only", "--diff-filter=U").splitlines()
+                    if conflicts:
+                        raise Stop(f"resolve and stage these conflicts: {', '.join(conflicts)}. Keep the merge open and "
+                                   f"resume with {flow_command()} lead-sync --merge --resume")
+                    intent["phase"] = "applying"
+                    save_base_move(path, intent)
+                if intent["phase"] == "applying":
+                    run([sys.executable, "-B", str(archive), "--root", str(c.root), "recover", "--maintenance"])
+                    run([sys.executable, "-B", str(archive), "--root", str(c.root), "--product", "apply", "--archive",
+                         str(archive), "--metadata", str(metadata), "--maintenance"])
+                    actual = json.loads((c.root / RECEIPT).read_text())["release"]
+                    if actual != intent["release"]:
+                        raise Stop("the applied generation differs from the default branch's verified release")
+                    intent["phase"] = "applied"
+                    save_base_move(path, intent)
+                if intent["phase"] == "applied":
+                    run(intent["provenanceWriter"], cwd=c.root)
+                    new_state = c.root / ".agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py"
+                    run([sys.executable, "-B", str(new_state), "--dir", str(c.state), "show"])
+                    git("add", "-A")
+                    intent["preparedTree"] = git("write-tree")
+                    intent["parents"] = [intent["oldHead"]]
+                    merge_head = git("rev-parse", "-q", "--verify", "MERGE_HEAD", check=False)
+                    if merge_head:
+                        intent["parents"].append(merge_head)
+                    intent["phase"] = "committing"
+                    save_base_move(path, intent)
+                if git("rev-parse", "HEAD") == intent["oldHead"]:
+                    if git("write-tree") != intent["preparedTree"]:
+                        raise Stop("the prepared merge tree changed before commit; inspect it before resuming")
+                    git("commit", "-m", intent["reason"])
+                if (git("rev-parse", "HEAD^{tree}") != intent["preparedTree"]
+                      or git("show", "-s", "--format=%P", "HEAD").split() != intent["parents"]
+                      or git("show", "-s", "--format=%B", "HEAD") != intent["reason"]):
+                    raise Stop("the checkout's new commit does not match the prepared base move")
+                intent["preparedHead"] = clean_head()
+                intent["phase"] = "prepared"
+                save_base_move(path, intent)
+            if clean_head() != intent["preparedHead"]:
+                raise Stop("the prepared base move changed; inspect it before resuming")
+            for head in [intent["oldHead"], intent["defaultHead"],
+                         *[q.get("syncedHead") or q["head"] for q in load_state()["state"]["queue"] if q["stage"] == "merged"]]:
+                if not is_ancestor(head, intent["preparedHead"]):
+                    raise Stop(f"merged commit {head} is not reachable from the prepared base")
+            if published != intent["preparedHead"]:
+                pushed = run(["git", "push", c.remote, f"{intent['preparedHead']}:refs/heads/{c.base_branch}"], check=False)
+                if remote_head(c.base_branch) != intent["preparedHead"]:
+                    raise Stop(f"base publication did not finish: {pushed.stderr or pushed.stdout}; retry with --resume")
+            intent["phase"] = "published"
+            save_base_move(path, intent)
+            finish_base_move(c, intent)
+            path.unlink()
+    except delivery_state.StateError as error:
+        raise Stop(f"{error.code}: {error}") from None
+    print(f"moved {c.base_branch} to {intent['preparedHead']}; lanes start from {c.remote}/{c.base_branch}")
+    if not args.no_supervisor and not supervisor_off():
+        tool = c.root / TOOL_PATH
+        print(run([sys.executable, "-B", str(tool), "--delivery", c.delivery, "lead-run", "--resume"]).stdout.strip())
+    else:
+        print(f"supervisor: parked; resume with {flow_command()} lead-run --resume")
+
+
+
 def lead_upgrade_writer(args) -> None:
     """Park the lead's supervisor, transition under the queue lock, then resume the applied generation."""
     c = cfg()
@@ -9759,6 +10020,7 @@ def lead_run(args) -> None:
     """The delivery's supervisor: lead-init starts it; --resume stops what an earlier one left and starts it again;
     --once runs one pass in the foreground."""
     c = cfg()
+    require_no_base_move(c)
     if not (c.state / "state.json").exists():
         raise Stop(f"no record at {c.state}: lead-init starts it, and its supervisor")
     closed = kept_close(c, last_close(load_state()["journal"]))
@@ -10941,6 +11203,13 @@ def main(argv: list[str] | None = None) -> None:
     p = command(sub, "full-health-run", help="one post-merge fullHealth run at a base head, as the supervisor starts it")
     p.add_argument("--head", required=True); p.add_argument("--record", required=True); p.set_defaults(fn=full_health_run)
     p = command(sub, "lead-brief"); p.set_defaults(fn=lead_brief)
+    p = command(sub, "lead-sync", help="merge the default branch into the integration base and reconcile its applied writer")
+    p.add_argument("--merge", action="store_true", required=True)
+    p.add_argument("--archive", type=Path); p.add_argument("--metadata", type=Path)
+    p.add_argument("--resume", action="store_true")
+    p.add_argument("--no-supervisor", action="store_true")
+    p.add_argument("--wait-seconds", type=int, default=3600)
+    p.set_defaults(fn=lead_sync)
     p = command(sub, "lead-upgrade-writer", help="park the supervisor and pin the applied writer under the queue lock")
     p.add_argument("--expected", required=True, help="previous archive digest, or unpinned")
     p.add_argument("--reason", required=True)

@@ -361,6 +361,46 @@ class WriterGenerationTests(unittest.TestCase):
         [handed] = [entry for entry in state_tool.read_journal(self.directory) if entry["kind"] == "candidate.handed"]
         self.assertIn(HEAD_A, handed["summary"])
 
+    def test_base_move_pins_the_new_writer_and_reconciles_the_published_head_once(self) -> None:
+        self.assertEqual(self.command(0, "init", "--headline", "Move base")[0], 0)
+        self.assertEqual(self.command(0, "patch", "--writer", "runner", "--version", "1", "--patch",
+                                      json.dumps({"meta": {"baseHead": HEAD_A}}))[0], 0)
+        args = ("base-move", "--writer", "lead", "--from-head", HEAD_A, "--to-head", HEAD_B,
+                "--default-head", "c" * 40, "--expected-base", HEAD_A, "--expected-writer", "a" * 64,
+                "--reason", "Published merge of the default branch")
+        code, moved = self.command(1, *args)
+        self.assertEqual(code, 0, moved)
+        self.assertEqual(moved["state"]["meta"]["writerGeneration"], self.identities[1])
+        self.assertEqual(moved["state"]["meta"]["baseHead"], HEAD_B)
+        before = self.snapshot()
+        self.assertEqual(self.command(1, *args)[0], 0)
+        self.assertEqual(self.snapshot(), before)
+        journal = state_tool.read_journal(self.directory)
+        self.assertEqual(len([e for e in journal if e["kind"] == "base.moved"]), 1)
+        self.assertEqual(self.command(0, "journal", "--kind", "decision.recorded", "--summary", "Old writer")[1]["code"],
+                         "writer_generation_mismatch")
+        self.assertEqual(self.command(1, "journal", "--kind", "decision.recorded", "--summary", "New writer")[0], 0)
+
+    def test_base_move_recovers_its_journal_after_the_atomic_state_write(self) -> None:
+        state_tool.init(self.directory, "Interrupted reconciliation")
+        state_tool.patch(self.directory, writer="runner", version=1, changes={"meta": {"baseHead": HEAD_A}})
+        arguments = {"from_head": HEAD_A, "to_head": HEAD_B, "default_head": "c" * 40,
+                     "expected_base": HEAD_A, "expected_writer": "unpinned", "reason": "Published move"}
+        with mock.patch.object(state_tool, "writer_generation", return_value=self.identities[1]):
+            with state_tool.file_lock(self.directory / state_tool.QUEUE_LOCK):
+                with mock.patch.object(state_tool, "_append_journal_locked", side_effect=OSError("disk interrupted")):
+                    with self.assertRaises(OSError):
+                        state_tool.complete_base_move_locked(self.directory, **arguments)
+                first = state_tool.read_state(self.directory)
+                self.assertEqual(first["meta"]["baseHead"], HEAD_B)
+                self.assertEqual(state_tool.read_journal(self.directory), [])
+                retried = state_tool.complete_base_move_locked(self.directory, **arguments)
+        self.assertEqual(retried, first)
+        self.assertEqual(len(state_tool.read_journal(self.directory)), 1)
+        changes = [json.loads(line)["change"] for line in (self.directory / "changes.jsonl").read_text().splitlines()]
+        self.assertEqual(changes.count("writer-upgrade"), 1)
+        self.assertEqual(changes.count("base-move"), 1)
+
 
 class StateToolTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -5677,7 +5717,7 @@ VALID_ENTRY = {"id": 1, "at": "2026-10-20T10:00:00Z", "kind": "candidate.merged"
 SNAPSHOT = {"takenAt": "2026-10-20T10:00:00Z", "source": "tracker",
             "items": [{"subject": "pr-1", "title": "Candidate", "state": "started"}]}
 VALID_FIXTURES = {
-    "valid", "fresh", "version as whole float", "long head", "null rounds", "checking now null", "with lane",
+    "valid", "fresh", "published base move", "version as whole float", "long head", "null rounds", "checking now null", "with lane",
     "with tickets", "snapshot with a summary", "planned with a run", "planned with its ticket started",
     "queued with its ticket started", "lane wait set by the queue", "a decision carrying a review",
     "queue check with a title", "queue check with its node", "step with a title", "a close started", "a close finished", "queue check with its base re-run",
@@ -5689,7 +5729,7 @@ JOURNAL_KINDS = [
     "base.repaired", "base.rerun.started", "base.rerun.finished",
     "lease.granted", "lease.released", "release.started", "release.finished",
     "finish.met", "decision.recorded", "blocker.recorded", "delivery.closed", "review.evidence", "check.selected",
-    "selection.refused", "hook.held",
+    "selection.refused", "hook.held", "base.moved",
 ]
 
 
@@ -5700,6 +5740,12 @@ class SchemaAgreementTests(unittest.TestCase):
             "delivery-state/1": [
                 ("valid", state),
                 ("fresh", state_tool.initial_state("Fresh")),
+                ("published base move", with_change(state, ("meta", "baseMove"), {
+                    "from": HEAD_A, "to": HEAD_B, "defaultHead": "c" * 40, "archiveSha256": "d" * 64})),
+                ("base move missing archive identity", with_change(state, ("meta", "baseMove"), {
+                    "from": HEAD_A, "to": HEAD_B, "defaultHead": "c" * 40})),
+                ("base move with an abbreviated head", with_change(state, ("meta", "baseMove"), {
+                    "from": "abcdef", "to": HEAD_B, "defaultHead": "c" * 40, "archiveSha256": "d" * 64})),
                 ("version as whole float", with_change(state, ("version",), 2.0)),
                 ("version zero", with_change(state, ("version",), 0)),
                 ("version as boolean", with_change(state, ("version",), True)),
