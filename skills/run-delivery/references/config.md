@@ -6,8 +6,8 @@ in this order of precedence:
 1. **The orchestrate-work binding** (`.agents/orchestration.json`), because it is what the merge queue actually runs:
    - remote and delivery base: `base.remote`, `base.ref`, and the other bases the binding serves, `bases`: exact
      branch names or patterns whose `*` matches within one segment of the name, such as `["main", "integration-*"]`.
-     A delivery file's `baseBranch` must be `base.ref` or match `bases`, and `lead-setup` requires `--base` once
-     `bases` is declared
+     A delivery file's `baseBranch` must be `base.ref` or match `bases`, and `lead-setup` requires `--base` or
+     `--integration` once `bases` is declared
    - lane gates: the `fallback` checks, with `{baseHead}` meaning the base, each run in its `cwd` with its timeout
      (default: the binding's `checkTimeoutSeconds`). If the binding also selects checks with a `provider`,
      `alwaysRun` or `profiles`, the lane gates must be listed in `run-delivery.json` `gates`.
@@ -35,9 +35,7 @@ in this order of precedence:
 **Where a lane reads them.** In the lead's checkout (on a base the binding serves), these files are read from the working
 tree. In a lane's checkout they are read from the delivery base on the remote (`<remote>/<base>:<path>`): `run-delivery.json`,
 the binding, `delivery-views.json`, the delivery file, the plan and the brief notes. So the lead's pushed changes
-reach every lane at once, and a lane never merges the base, which would move its reviewed head, just to pick up a
-tooling change. The lane's base is `RUN_DELIVERY_BASE`, or the base its checkout recorded when it was started, or else
-the binding's `base.ref`; a base the binding doesn't serve is refused. `RUN_DELIVERY_LOCAL=1` reads the lane's working
+reach every lane at once without a merge into its story branch. The lane's base is `RUN_DELIVERY_BASE`, the base its checkout recorded when it started, or the binding's `base.ref`; a base the binding doesn't serve is refused. `RUN_DELIVERY_LOCAL=1` reads the lane's working
 tree instead (for working on the tooling itself); `RUN_DELIVERY_CONFIG` names an explicit configuration file.
 
 **Earlier names.** A repository set up under the tool's earlier name keeps working: `.agents/flow.json` is read when
@@ -213,7 +211,8 @@ checks may need no file at all.
   "headline": "EPIC-1: what the delivery does",
   // "baseBranch" and "stateDirectory" are optional overrides: the binding names the base (baseBranch must be its
   // base.ref or match its bases), and the record lives in the lead's checkout (laneCheckout with the delivery key)
-  // under the binding's state.directory.
+  // under the binding's state.directory. Integration setup writes baseBranch and integrationTarget, the standing
+  // branch that receives the reviewed integration at close-out.
   "plan": "docs/plans/epic-1.md",
   "laneBrief": "docs/plans/epic-1.lane-brief.md",          // written by lead-brief
   "brief": { "notes": "docs/plans/epic-1.lane-notes.md" }, // this delivery's own rules, appended to the brief
@@ -690,3 +689,20 @@ delivery's own key. The serve command must serve that file at `/.flow-build.json
 
 `run_delivery.py adapter-test` runs a repository's serve and check adapters against a fixture page (the skill's `assets/adapter-fixture/` folder), under
 the lease, and fails if they break this contract.
+
+
+## Integration-base updates
+
+`baseMove.provenanceWriter` is a non-empty argv array for the adopting repository's provenance writer.
+`lead-sync --merge` runs it in the lead checkout after merging source and applying the default branch's
+verified generation. The writer must recompute the listed output digests without adding or removing outputs.
+
+```json
+{"baseMove": {"provenanceWriter": ["python3", "-B", "path/to/provenance-writer.py"]}}
+```
+
+The delivery's `integrationTarget` names the default branch. The command takes `--archive` and `--metadata`
+files whose digests equal that branch's applied receipt. It uses the supported product apply and recovery
+lifecycle. Its pending intent is in the repository's common Git metadata at `run-delivery/base-move-<delivery>.json`.
+It remains discoverable when a merged binding changes configuration. Keep it through an interrupted publication and run `lead-sync --merge --resume` from the same checkout. The supervisor stays parked until
+record reconciliation finishes. `--no-supervisor` also leaves it parked after success.

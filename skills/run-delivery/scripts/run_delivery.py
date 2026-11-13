@@ -20,7 +20,9 @@ Lane:
 Lead:
   lead-setup <key> --plan P --base B --pattern RE ... | lead-init | lead-brief | lead-assign <key...> --lane L --title T
   lead-accept <key> [--accept-blocked LABEL ...] [--accept-restarts] | ship | adapter-test
+  lead-authorize-base-merge <key> --reviewed HEAD --base COMMIT...
   lead-carry-review <key> --from HEAD --to HEAD --reason TEXT
+  lead-push [--wait-seconds N] | lead-flake --check ID [--test REGEX ...] --ref REF
 Merge queue:
   pr-review-current --branch B --head H [--wait]   (a reviewGate: exit 0 only for a current, passing review.pr review)
 Anyone:
@@ -58,6 +60,7 @@ import subprocess
 import tempfile
 import time
 import warnings
+import zipfile
 from collections.abc import Callable
 from pathlib import Path
 
@@ -821,15 +824,30 @@ class Config:
         for k in self.stories:
             self.requirements(k)  # validated on load
 
-    def check_lanes(self) -> None:
-        for key, story in self.stories.items():
-            if story.get("lane") not in self.lanes:
-                raise Stop(f"{self.delivery_where}: story {key} has lane {story.get('lane')!r}, which isn't in `lanes`")
+    def effective_ownership(self, state: dict) -> dict[str, list[str]]:
+        return state.get("laneOwnership", {lane: entry["owns"] for lane, entry in self.lanes.items()})
+
+    def record_state(self) -> dict:
+        # State is replaced atomically. Read only state.json here, without taking the journal lock.
+        return load_json(self.state / "state.json") or {}
+
+    def check_lanes(self, state: dict | None = None) -> None:
+        state = self.record_state() if state is None else state
+        ownership = self.effective_ownership(state)
+        for key in self.stories:
+            lane = self.lane_of(key, state)
+            if lane not in ownership:
+                raise Stop(f"{self.delivery_where}: story {key} has lane {lane!r}, which isn't in `lanes`")
 
     def branch(self, key: str) -> str:
         return self.branch_pattern.format(key=key)
 
-    def lane_of(self, key: str) -> str:
+    def lane_of(self, key: str, state: dict | None = None) -> str:
+        state = self.record_state() if state is None else state
+        if "laneOwnership" in state:
+            for entry in (*state.get("planned", []), *state.get("queue", [])):
+                if entry["subject"] == key:
+                    return entry.get("assignedLane", entry["lane"])
         return self.stories[key]["lane"]
 
     def label(self, key: str) -> str:
@@ -1287,6 +1305,7 @@ def review_prepare(args) -> None:
     candidate = clean_head()
     tree = git("rev-parse", "HEAD^{tree}")
     merge_base = git("merge-base", c.base_ref, "HEAD")
+    lane = check_candidate_ownership(c, key, merge_base, candidate)
     prior_rounds = [json.loads(p.read_text()) for p in round_files(folder)]
     prior_candidate = prior_rounds[-1]["entries"][0]["binding"]["candidateRef"] if prior_rounds else None
     if prior_candidate == candidate:
@@ -1317,7 +1336,7 @@ def review_prepare(args) -> None:
     meta_path.write_text(json.dumps({"round": n, "candidate": candidate, "tree": tree, "startedAt": now(),
                                      "lenses": list(c.lenses), "attempts": attempts, "restarts": restarts}, indent=2))
     append_log("prepares", key, {"round": n, "candidate": candidate, "restart": bool(previous)})
-    state_tool("focus", "--lane", c.lane_of(key), "--text", f"{key} review round {n}", "--state", "reviewing", check=False)
+    state_tool("focus", "--lane", lane, "--text", f"{key} review round {n}", "--state", "reviewing", check=False)
     print(f"{key} round {n}: candidate {candidate[:10]}, tree {tree[:10]}" + (f" (restart {len(restarts)})" if restarts else ""))
     print()
     if n == 1 and not restarts:
@@ -1349,6 +1368,12 @@ def _validator():
     sys.dont_write_bytecode = True  # the release's modules leave no bytecode in the installed generation
     import delivery_state  # noqa: E402  (the installed release's own validator)
     return delivery_state
+
+
+def _region_ownership():
+    _validator()  # Use the installed orchestration scripts, as with the state tool.
+    import region_ownership
+    return region_ownership
 
 
 def check_result(result: object, *, key: str, lens: str, short: str, n: int, meta: dict,
@@ -1485,11 +1510,12 @@ def review_reduce(args) -> None:
     c = cfg()
     key = c.require(args.key)
     n = args.round
-    lane = c.lane_of(key)
     folder = review_dir(key)
     done_path = folder / f"round-{n}.json"
     if done_path.exists():  # reduced already: never rewrite it, only finish the journaling if that failed
         outcome = json.loads(done_path.read_text())
+        candidate = outcome["entries"][0]["binding"]["candidateRef"]
+        lane = check_candidate_ownership(c, key, git("merge-base", c.base_ref, candidate), candidate)
         ensure_recorded(key, outcome, lane, folder)
         summarize(key, outcome)
         return
@@ -1497,6 +1523,8 @@ def review_reduce(args) -> None:
     if not meta_path.exists():
         raise Stop(f"round {n} was never prepared: run review-prepare {key} --round {n} first")
     meta = json.loads(meta_path.read_text())
+    candidate = meta["candidate"]
+    lane = check_candidate_ownership(c, key, git("merge-base", c.base_ref, candidate), candidate)
     if meta["lenses"] != list(c.lenses):
         raise Stop(f"round {n} was prepared for {meta['lenses']}, not this repository's lenses {list(c.lenses)}")
     prior = [json.loads(p.read_text()) for p in round_files(folder)]
@@ -3142,7 +3170,7 @@ def authority_text() -> str:
     if granted.get("draftPullRequests"):
         what += f", and open its draft pull request into `{c.base_branch}`, with `{flow_command()} open-pr`"
     return (f"{granted['grantedBy']} gave lanes authority on {granted['grantedOn']} to {what}. That is all: never push "
-            f"any other branch, never force-push, never merge, and never mark a pull request ready or approve one. "
+            f"any other branch, never force-push, and never merge, mark ready or approve a pull request. "
             "The lead's merge queue merges.")
 
 
@@ -3274,14 +3302,15 @@ def review_move(c, key: str, when: str, last: bool = False) -> None:
 
 
 def handoff_and_post(c, key: str, lane: str, head: str, pr: str, rounds: int, post: str,
-                     checks: list[str] | None = None) -> str | None:
+                     checks: list[str] | None = None, base_merge: dict | None = None) -> str | None:
     """Hand off to the record and, with the tracker publisher, post the hand-off update under the entry it journals,
     holding the ledger's lock across the journal write, the post and its line. Returns what was posted, or None when the
     lane posts it (no publisher) or the publisher will (the call failed, so no line was written)."""
     conf = tracker_conf(c)
     lead_moves = ((conf["transitions"].get("lead") or {}).get("candidate.handed")) if not conf["problems"] else None
     handed = ["handoff", "--lane", lane, "--subject", key, "--head", head, "--change-request", pr, "--rounds",
-              str(rounds), *(["--checks", ",".join(checks)] if checks else [])]
+              str(rounds), *(["--checks", ",".join(checks)] if checks else []),
+              *(["--base-merge", json.dumps(base_merge)] if base_merge else [])]
     if conf["mode"] != "publisher" or conf["problems"] or lead_moves:
         # With lead moves for a hand-off, the publisher makes them and posts the update with what they did.
         state_tool(*handed)
@@ -4052,6 +4081,122 @@ def pr_review_handoff(key: str, conf: dict, recorded: dict, given: list[str],
     return "; ".join(shown), []
 
 
+def lead_authorize_base_merge(args) -> None:
+    c = cfg()
+    require_lead_checkout(c)
+    key = c.require(args.key)
+    lane = c.lane_of(key)
+    git("fetch", "-q", c.remote, c.base_branch)
+    reviewed = git("rev-parse", "--verify", "--end-of-options", f"{args.reviewed}^{{commit}}")
+    checkout = c.lane_checkout(key)
+    if checkout.is_dir() and git("rev-parse", "HEAD", cwd=checkout) != reviewed:
+        raise Stop(f"{key}'s checkout must still be at the reviewed head to authorize its base merge")
+    bases = list(dict.fromkeys(git("rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}")
+                               for ref in args.base))
+    for base in bases:
+        if not is_ancestor(base, c.base_ref) or is_ancestor(base, reviewed):
+            raise Stop(f"{base} must be on {c.base_ref} and outside the reviewed head's history")
+    authorization = {"reviewed": reviewed, "baseCommits": bases}
+    recorded = state_tool("journal", "--writer", "lead", "--kind", "decision.recorded", "--subject", key, "--lane", lane,
+                          "--base-merge-authorization", json.dumps(authorization),
+                          "--summary", f"Authorized {lane} to merge base commits {', '.join(bases)} into {key} from {reviewed}")
+    token = json.loads(recorded.stdout)["entry"]["baseMergeAuthorization"]["token"]
+    print(f"{key}: authorized base merges from {reviewed}. Run in the lane checkout, in this order:")
+    for base in bases:
+        print(shlex.join(["git", "merge", "--no-ff", "--no-log", "-m", f"{key}: Merge delivery base",
+                          "-m", f"Delivery-Base-Merge: {token}", base]))
+
+
+def delta_entries(helper, root: Path, before: str, after: str) -> dict[bytes, bytes]:
+    data = helper.git(root, "diff", "--raw", "-z", "--no-renames", "--no-abbrev",
+                      "--ignore-submodules=none", before, after).stdout
+    tokens = data.split(b"\0")[:-1]
+    return dict(zip(tokens[1::2], tokens[::2], strict=True))
+
+
+def region_delta(helper, root: Path, path: str, base: str, head: str, claims: list[dict]) -> list[list[bytes]]:
+    # Ownership validation confines each hunk to a single mapped span. Adjust
+    # each span's candidate bounds by edits before and within it.
+    helper.check_change(root, path, base, head, claims)
+    _, old = helper.entry(root, base, path)
+    _, new = helper.entry(root, head, path)
+    edits = helper.hunks(root, old, new)
+    lines = helper.lines(root, new)
+    result = []
+    for claim in claims:
+        start, end = helper.mapped(root, claim, base)
+        before = sum(added - removed for first, removed, added in edits if first < start)
+        within = sum(added - removed for first, removed, added in edits if start <= first < end)
+        result.append(lines[start - 1 + before:end - 1 + before + within])
+    return result
+
+
+def check_base_merge_delta(c, state: dict, lane: str, prior: str, head: str, old_base: str, new_base: str) -> None:
+    helper = _region_ownership()
+    ownership = c.effective_ownership(state)
+    regions = [claim for claim in state.get("laneRegions", []) if claim["lane"] == lane]
+    by_path = collections.defaultdict(list)
+    for claim in regions:
+        by_path[claim["path"]].append(claim)
+    try:
+        for path in helper.changed_paths(c.root, old_base, new_base):
+            if lane in owners_of(ownership, path):
+                raise Stop(f"the base merge changes lane-owned file {path}")
+        for claim in regions:
+            start, end = helper.mapped(c.root, claim, old_base)
+            # Verify the transition itself even when the claim was originally
+            # anchored before both bases.
+            helper.mapped(c.root, {**claim, "baseHead": old_base, "start": start, "end": end}, new_base)
+        before, after = (delta_entries(helper, c.root, base, tip)
+                         for base, tip in ((old_base, prior), (new_base, head)))
+        for raw_path in sorted(before.keys() | after.keys()):
+            path = os.fsdecode(raw_path)
+            if raw_path not in before or raw_path not in after:
+                raise Stop(f"the base merge changes the story delta for {path}")
+            if path in by_path:
+                old = region_delta(helper, c.root, path, old_base, prior, by_path[path])
+                new = region_delta(helper, c.root, path, new_base, head, by_path[path])
+                if old == new:
+                    continue
+            elif before[raw_path] == after[raw_path]:
+                continue
+            raise Stop(f"the base merge changes the story delta for {path}")
+    except helper.RegionError as error:
+        raise Stop(str(error)) from error
+
+
+def verify_base_merge(c, key: str, lane: str, reviewed: str, head: str, doc: dict) -> dict:
+    history = git("rev-list", "--first-parent", "--reverse", f"{reviewed}..{head}").splitlines()
+    if not history:
+        raise Stop("the handed head has no base merge after review")
+    grants = [entry for entry in doc["journal"] if entry["subject"] == key and entry["lane"] == lane
+              and entry.get("baseMergeAuthorization", {}).get("reviewed") == reviewed]
+    prior = reviewed
+    base_commits = []
+    for merge in history:
+        _, *parents = git("rev-list", "--parents", "-n", "1", merge).split()
+        if len(parents) != 2 or parents[0] != prior:
+            raise Stop("the first-parent history after review must contain only two-parent base merges")
+        base = parents[1]
+        if not is_ancestor(base, c.base_ref):
+            raise Stop(f"{base} is outside the history of {c.base_ref}")
+        # The authorization's unpredictable token must already be in the
+        # immutable merge commit. A caller-controlled commit date proves no ordering.
+        trailers = git("-c", "trailer.separators=:", "show", "-s",
+                       "--format=%(trailers:key=Delivery-Base-Merge,valueonly)", merge).splitlines()
+        if not any(base in entry["baseMergeAuthorization"]["baseCommits"]
+                   and trailers == [entry["baseMergeAuthorization"]["token"]] for entry in grants):
+            raise Stop(f"the lead did not authorize {key} to merge {base} from {reviewed} before the merge")
+        old_base = git("merge-base", c.base_ref, prior)
+        new_base = git("merge-base", c.base_ref, merge)
+        if new_base != base or old_base == new_base or not is_ancestor(old_base, new_base):
+            raise Stop(f"{base} does not advance the candidate's delivery-base ancestor")
+        check_base_merge_delta(c, doc["state"], lane, prior, merge, old_base, new_base)
+        base_commits.append(base)
+        prior = merge
+    return {"reviewed": reviewed, "baseCommits": base_commits}
+
+
 def handoff(args) -> None:
     c = cfg()
     key = c.require(args.key)
@@ -4066,9 +4211,12 @@ def handoff(args) -> None:
     ran = check_ids(c, args.checks, "--checks") if args.checks is not None else []
     folder = review_dir(key)
     head = clean_head()
+    git("fetch", "-q", c.remote, c.base_branch)
+    lane = c.lane_of(key)
     pushed(key, head)
     pr = forge("get", "--url", args.pr)
-    if pr.get("state") != "open" or pr.get("source") != c.branch(key) or pr.get("destination") != c.base_branch:
+    if (pr.get("state") != "open" or pr.get("source") != c.branch(key) or pr.get("destination") != c.base_branch
+            or not same_commit(pr.get("head"), head)):
         raise Stop(f"{args.pr} isn't an open PR from {c.branch(key)} into {c.base_branch}: {pr}")
     rounds = round_files(folder)
     if not rounds:
@@ -4079,9 +4227,15 @@ def handoff(args) -> None:
         raise Stop(f"round {last['round']} is {last['outcome']}; the lenses have not all approved")
     if {e["lens"] for e in last["entries"]} != set(c.lenses):
         raise Stop(f"round {last['round']} doesn't carry every lens")
-    if last["entries"][0]["binding"]["candidateRef"] != head:
-        raise Stop(f"the approved round reviewed {last['entries'][0]['binding']['candidateRef'][:10]}, but HEAD is "
-                   f"{head[:10]}; review the new head")
+    reviewed = last["entries"][0]["binding"]["candidateRef"]
+    base_merge = None
+    if reviewed != head:
+        try:
+            base_merge = verify_base_merge(c, key, lane, reviewed, head, load_state())
+        except Stop as error:
+            raise Stop(f"the approved round reviewed {reviewed[:10]}, but HEAD is {head[:10]}; "
+                       f"review the new head: {error}") from error
+    lane = check_candidate_ownership(c, key, git("merge-base", c.base_ref, head), head)
     validation, gate_problems = gates_summary(key, repo(), head)
     pr_line = None
     # A lane stopped by a silent reviewer hands off blocked on it, and the lead decides that reviewer. The block holds
@@ -4123,19 +4277,24 @@ def handoff(args) -> None:
     problems = gate_problems + problems + video_problems
     if problems:
         raise Stop("the hand-off isn't complete:\n  " + "\n  ".join(problems))
-    state_tool("capture-review", "--subject", key, "--candidate", head, *[x for p in rounds for x in ("--outcome", str(p))])
+    state_tool("capture-review", "--subject", key, "--candidate", reviewed,
+               *[x for p in rounds for x in ("--outcome", str(p))])
     conf = tracker_conf(c)
     when = conf["transitions"].get("reviewWhen")
     if when and when != "pipeline-green" or when == "pipeline-green" and pr_line:
         # A review move a refused call left owed is retried here, at the latest.
         review_move(c, key, when, last=True)
     post = f"hand-off: {args.pr}, head {head[:10]}, {len(rounds)} review round(s); {validation}."
-    posted = handoff_and_post(c, key, lane, head, args.pr, len(rounds), post, ran)
+    if base_merge:
+        post += f" Review carried from {reviewed} across base commits {', '.join(base_merge['baseCommits'])}."
+    posted = handoff_and_post(c, key, lane, head, args.pr, len(rounds), post, ran, base_merge)
     histories = [f"r{o['round']}: {round_history_text(o)}" for o in outcomes if round_history_text(o)]
     print("\n".join([
         f"**Hand-off: {key}** ({c.label(key)}, {lane})",
         f"- candidate: {args.pr}",
-        f"- reviewed head: `{head}`",
+        f"- reviewed head: `{reviewed}`",
+        *([f"- handed head: `{head}`", f"- authorized base commits: {', '.join(base_merge['baseCommits'])}"]
+          if base_merge else []),
         "- review rounds: " + "; ".join(f"r{o['round']} {o['outcome']}" for o in outcomes) + " (review evidence captured)"
         + (f"; history: {'; '.join(histories)}" if histories else ""),
         f"- validation: {validation}",
@@ -4688,11 +4847,7 @@ def lead_plan_checkout(c) -> Path:
     clean and holds the base; a story branch is a lane's. A lead worktree then reads its own working tree."""
     root = c.root
     branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=root)
-    # Any delivery's story branch here is a lane's, not only this delivery's: every delivery file, this one's included.
-    stories = {key for d in c.delivery_files().values() for key in (d.get("stories") or {})}
-    if any(branch == c.branch(key) for key in stories):
-        raise Stop(f"run lead-plan in the lead's checkout of {c.base_branch}, or in a lead worktree of its own; "
-                   f"{branch} is a story branch")
+    refuse_story_branch(c, branch, "lead-plan")
     if git("status", "--porcelain", cwd=root):
         raise Stop(f"{root} has uncommitted changes; commit or remove them first, so the plan change commits alone")
     git("fetch", "-q", c.remote, c.base_branch, cwd=root)
@@ -4702,8 +4857,25 @@ def lead_plan_checkout(c) -> Path:
         raise Stop(f"{root} has diverged from {c.base_ref}; bring it up to date first")
     if branch == c.base_branch:
         return root
+    check_lead_plan_commits(c, c.base_ref, "HEAD")
+    # What the base holds, plus this delivery's own unpushed plan commits: the working tree is the plan to change.
+    # Read it again through that shelf, so the stories a change names (a removal's units, say) are the worktree's.
+    c.shelf = Shelf(root)
+    c.load_delivery(c.delivery)
+    return root
+
+
+def refuse_story_branch(c, branch: str, command: str) -> None:
+    stories = {key for delivery in c.delivery_files().values() for key in delivery.get("stories", {})}
+    if any(branch == c.branch(key) for key in stories):
+        raise Stop(f"run {command} in the lead's checkout of {c.base_branch}, or in a lead worktree of its own; "
+                   f"{branch} is a story branch")
+
+
+def check_lead_plan_commits(c, base: str, head: str) -> None:
+    root = c.root
     own = {f"{c.deliveries_rel}/{c.delivery}.json", Path(c.plan).as_posix()}
-    for sha in git("rev-list", "--reverse", f"{c.base_ref}..HEAD", cwd=root).split():
+    for sha in git("rev-list", "--reverse", f"{base}..{head}", cwd=root).split():
         # --cc lists what a merge itself adds beyond its parents, nothing for a clean one; -z keeps any path whole.
         changed = run(["git", "diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "--cc", sha], cwd=root).stdout
         foreign = [name for name in changed.split("\0") if name and name not in own]
@@ -4712,11 +4884,12 @@ def lead_plan_checkout(c) -> Path:
             raise Stop(f"{root} is ahead of {c.base_ref} with {sha[:12]} ({subject}), which changes "
                        f"{', '.join(foreign)}: a lead worktree off {c.base_branch} may be ahead with only "
                        f"{c.delivery}'s own delivery file and plan; push that commit or drop it first")
-    # What the base holds, plus this delivery's own unpushed plan commits: the working tree is the plan to change.
-    # Read it again through that shelf, so the stories a change names (a removal's units, say) are the worktree's.
-    c.shelf = Shelf(root)
-    c.load_delivery(c.delivery)
-    return root
+
+
+def plan_publish_command(c) -> str:
+    if (c.state / "state.json").is_file():
+        return f"{flow_command()} --delivery {shlex.quote(c.delivery)} lead-push"
+    return shlex.join(["git", "push", c.remote, f"HEAD:{c.base_branch}"])
 
 
 def lead_plan(args) -> None:
@@ -4896,7 +5069,7 @@ def lead_plan(args) -> None:
         rebuild_plan(c, mark=True)
     print(f"recorded {ids}: {args.kind} {', '.join(change['subjects']) or change.get('finish', '')}".rstrip())
     print(f"committed the delivery file{' and the plan' if plan_text is not None else ''}; push it so lanes see it: "
-          f"git push {c.remote} HEAD:{c.base_branch}")
+          f"{plan_publish_command(c)}")
 
 
 def plan_approval(c, raw: dict, args) -> None:
@@ -4921,7 +5094,8 @@ def plan_approval(c, raw: dict, args) -> None:
         git("commit", "-q", "-m", f"{c.delivery}: approval {args.id} {args.state}", cwd=c.root)
         rebuild_plan(c)
     print(f"approval {args.id}: {args.state}")
-    print(f"committed the delivery file; push it so lanes see it: git push {c.remote} HEAD:{c.base_branch}")
+    print(f"committed the delivery file; push it so lanes see it: "
+          f"{plan_publish_command(c)}")
 
 
 def archive_plan_review(archive: Path) -> Path | None:
@@ -5073,7 +5247,7 @@ def plan_problems(c, keys: list[str]) -> list[str]:
             f"correct its key in {c.delivery_where}"]
 
 
-# Ownership is the plan's: lead-accept refuses a hand-off that changes a file outside its lane's `owns`. These warn
+# Ownership comes from the record, or from the delivery file for a legacy record. These helpers warn
 # before a lane starts of the files its story will need: the ones its plan names, and (for lead-assign) the ones that
 # have tended to change with them.
 
@@ -5081,15 +5255,79 @@ PATH_TOKEN = re.compile(r"[A-Za-z0-9._*?\[\]-][A-Za-z0-9._/*?\[\]-]*")
 CO_CHANGE = {"commits": 200, "sweep": 40, "support": 3, "share": 0.25, "shown": 5}
 
 
+def shared_outputs(c) -> set[str]:
+    regenerable = c.binding.get("regenerable") or {}
+    if not regenerable.get("regenerators"):
+        return set()
+    return {entry["path"] for entry in regenerable.get("listings", [])}
+
+
+def owners_of(ownership: dict, path: str) -> list[str]:
+    return [lane for lane, patterns in ownership.items() if any(fnmatch.fnmatchcase(path, g) for g in patterns)]
+
+
 def owner_of(c, path: str) -> str | None:
-    return next((lane for lane, entry in c.lanes.items() if any(fnmatch.fnmatch(path, g) for g in entry["owns"])), None)
+    return next(iter(owners_of(c.effective_ownership(c.record_state()), path)), None)
 
 
 def owned_by(c, lane: str, path: str) -> bool:
-    return any(fnmatch.fnmatch(path, g) for g in c.lanes[lane]["owns"])
+    state = c.record_state()
+    claims = [claim for claim in state.get("laneRegions", []) if claim["path"] == path]
+    if claims:
+        helper = _region_ownership()
+        base = git("rev-parse", files_ref(c))
+        mine = [claim for claim in claims if claim["lane"] == lane]
+        try:
+            for claim in mine:
+                helper.mapped(c.root, claim, base)
+        except helper.RegionError:
+            return False
+        return bool(mine)
+    return path in shared_outputs(c) or owners_of(c.effective_ownership(state), path) == [lane]
+
+
+def ownership_overlaps(ownership: dict, files: list[str], shared: set[str]) -> list[str]:
+    # Check real paths and claim patterns. A new path not on the base is checked for a unique owner at admission.
+    paths = set(files) | {pattern for patterns in ownership.values() for pattern in patterns}
+    return [f"{' and '.join(lanes)} both own {path}" for path in sorted(paths - shared)
+            if len(lanes := owners_of(ownership, path)) > 1]
+
+
+def candidate_ownership(c, lane: str, base: str, head: str, state: dict) -> tuple[list[str], list[str]]:
+    regions = state.get("laneRegions", [])
+    if regions:
+        helper = _region_ownership()
+        try:
+            changed = helper.changed_paths(c.root, base, head)
+            outside = helper.problems(c.root, lane, base, head, changed, regions)
+        except helper.RegionError as error:
+            raise Stop(f"writer_not_owned: {error}") from error
+        regional_paths = {claim["path"] for claim in regions}
+    else:
+        changed = list(filter(None, run(["git", "diff", "--no-renames", "--name-only", "-z", base, head]).stdout.split("\0")))
+        outside, regional_paths = {}, set()
+    ownership = c.effective_ownership(state)
+    if "laneOwnership" not in state:
+        return changed, [path for path in changed if lane not in owners_of(ownership, path)]
+    shared = shared_outputs(c)
+    return changed, [f"{path}: {outside[path]}" if path in outside else path for path in changed
+                     if path in outside or (path not in regional_paths and path not in shared
+                                            and owners_of(ownership, path) != [lane])]
 
 
 def owner_words(c, path: str) -> str:
+    regions = [claim for claim in c.record_state().get("laneRegions", []) if claim["path"] == path]
+    if regions:
+        helper = _region_ownership()
+        base = git("rev-parse", files_ref(c))
+        descriptions = []
+        for claim in regions:
+            try:
+                start, end = helper.mapped(c.root, claim, base)
+                descriptions.append(f"{claim['lane']} [{start}, {end}) at {base[:12]}")
+            except helper.RegionError as error:
+                descriptions.append(f"{claim['lane']} needs a regrant: {error}")
+        return ", ".join(descriptions)
     owner = owner_of(c, path)
     return f"{owner}'s" if owner else "no lane's"
 
@@ -5103,6 +5341,19 @@ def tracked_at_base(c) -> list[str]:
     installed = Path(RECEIPT).parent.as_posix() + "/"
     return [f for f in git("ls-tree", "-r", "--name-only", files_ref(c), check=False).splitlines()
             if not f.startswith(installed)]
+
+
+def check_candidate_ownership(c, key: str, base: str, head: str) -> str:
+    state = c.record_state()
+    lane = c.lane_of(key, state)
+    if "laneOwnership" in state:
+        queued = next((item for item in state["queue"] if item["subject"] == key), None)
+        if queued and queued.get("assignedLane", queued["lane"]) != queued["lane"] and queued["stage"] != "stopped":
+            raise Stop(f"{key} has a hand-off from {queued['lane']}; the lead must settle or return it first")
+        _, outside = candidate_ownership(c, lane, base, head, state)
+        if outside:
+            raise Stop(f"writer_not_owned: {key} changes files outside {lane}'s: {outside}")
+    return lane
 
 
 def story_named_files(c, key: str, tracked: list[str]) -> list[str]:
@@ -5345,12 +5596,123 @@ def lanes_grant(args, existing: dict | None) -> dict | None:
             "grantedOn": args.granted_on or datetime.date.today().isoformat()}
 
 
+def integration_matches(delivery: dict, binding: dict, key: str, base: str, target: str) -> bool:
+    return (delivery.get("delivery") == key and delivery.get("baseBranch") == base
+            and delivery.get("integrationTarget") == target and binding.get("base", {}).get("ref") == base)
+
+
+def verify_integration_checkout(c, root: Path, key: str, base: str, target: str) -> None:
+    listed = git("worktree", "list", "--porcelain").splitlines()
+    if f"worktree {root}" in listed and git("branch", "--show-current", cwd=root) == base:
+        delivery = load_json(root / c.deliveries_rel / f"{key}.json") or {}
+        binding = load_json(root / ".agents/orchestration.json") or {}
+        if integration_matches(delivery, binding, key, base, target):
+            return
+        # Setup writes the delivery first. Complete an interrupted first draft
+        # only on the original standing tree with a matching declaration.
+        start = git("rev-parse", "HEAD", cwd=root)
+        on_standing_history = is_ancestor(start, f"refs/heads/{target}")
+        if (binding.get("base", {}).get("ref") == target
+                and integration_matches(delivery, {**binding, "base": {**binding["base"], "ref": base}}, key, base, target)
+                and on_standing_history and not git("diff", "HEAD", "--", ".agents/orchestration.json", cwd=root)):
+            add_tracker_publisher(Config(root, need_delivery=False, pick=False), base=base)
+            return
+        # A draft can fail before either file is written. Only resume that
+        # checkout if it still holds the unmodified starting tree.
+        if not delivery and binding.get("base", {}).get("ref") == target and on_standing_history:
+            clean_head(root)
+            return
+    raise Stop(f"{root} already exists and does not hold the integration setup for {key} on {base}")
+
+
+def integration_checkout(c, key: str, base: str, plan: str) -> tuple[Path, str]:
+    """Find or create the lead checkout, keeping the standing binding on its own branch."""
+    if not c.binding_base or git("check-ref-format", "--branch", base, check=False) != base:
+        raise Stop("--integration needs a standing base and a valid integration branch name")
+    if not re.fullmatch(PLAN_KEY, key):
+        raise Stop("--integration needs a delivery key such as WORK-123")
+    root = c.lane_checkout(key).resolve()
+    if c.root.resolve() == root:
+        existing = c.shelf.json(f"{c.deliveries_rel}/{key}.json") or {}
+        target = existing.get("integrationTarget")
+        if target and integration_matches(existing, c.binding, key, base, target) and git("branch", "--show-current") == base:
+            return root, target
+        if c.binding_base != base and serves(c.binding, base):
+            verify_integration_checkout(c, root, key, base, c.binding_base)
+            return root, c.binding_base
+        raise Stop(f"{root} is not the lead checkout of {key} on {base}")
+    target = c.binding_base
+    if base == target or not serves(c.binding, base):
+        raise Stop(f"integration branch {base} must differ from {target} and match a served base in the binding")
+    if root.exists():
+        verify_integration_checkout(c, root, key, base, target)
+        return root, target
+    existing_branch = git("rev-parse", "--verify", "--quiet", f"refs/heads/{base}", check=False)
+    published = git("ls-remote", "--heads", c.remote, f"refs/heads/{base}").split()
+    remote_tip = published[0] if published else ""
+    if remote_tip:
+        git("fetch", "-q", c.remote, f"refs/heads/{base}:refs/remotes/{c.remote}/{base}")
+        if git("rev-parse", f"{c.remote}/{base}") != remote_tip:
+            raise Stop(f"{c.remote}/{base} moved while resuming; retry")
+    if git("branch", "--show-current") != target:
+        raise Stop(f"start integration setup on {target}, the standing binding's base")
+    if Path(plan).is_absolute() or ".." in Path(plan).parts:
+        raise Stop("name a committed repository-relative plan")
+    if existing_branch or remote_tip:
+        if existing_branch and remote_tip and not is_ancestor(remote_tip, existing_branch):
+            raise Stop(f"local {base} does not contain its remote tip; reconcile the branch before resuming")
+        tip = existing_branch or remote_tip
+        delivery = Shelf(c.root, tip).json(f"{c.deliveries_rel}/{key}.json") or {}
+        binding = Shelf(c.root, tip).json(".agents/orchestration.json") or {}
+        if not integration_matches(delivery, binding, key, base, target):
+            raise Stop(f"{base} already exists without a matching integration setup for {key}")
+        if existing_branch:
+            git("worktree", "add", "-q", str(root), base)
+        else:
+            git("worktree", "add", "-q", "--track", "-b", base, str(root), f"{c.remote}/{base}")
+    else:
+        head = clean_head()
+        if Shelf(c.root, head).text(plan) is None:
+            raise Stop("name a committed repository-relative plan")
+        if Shelf(c.root, head).json(f"{c.deliveries_rel}/{key}.json") is not None:
+            raise Stop(f"{key} already has a delivery file on {target}; use a new delivery key")
+        git("worktree", "add", "-q", "--no-track", "-b", base, str(root), head)
+    return root, target
+
+
 def lead_setup(args) -> None:
-    """Draft .agents/deliveries/<key>.json from the approved plan (and, optionally, the tracker snapshot)."""
-    c = Config(repo(), need_delivery=False)
+    """Draft a delivery from its plan and optional tracker snapshot."""
+    c = Config(repo(), need_delivery=False, pick=False)
+    if not args.integration:
+        draft_delivery(c, args)
+        return
+    # Validate the grant and heading pattern before creating a checkout.
+    if not args.force:
+        lanes_grant(args, None)
+    pattern = re.compile(args.pattern or STORY_HEADING, re.M)
+    if not {"key", "title"} <= pattern.groupindex.keys():
+        raise Stop("the pattern must name groups `key` and `title`")
+    root, target = integration_checkout(c, args.key, args.integration, args.plan)
+    args.base = args.integration
+    existing = root / c.deliveries_rel / f"{args.key}.json"
+    if existing.is_file() and not args.force:
+        print(f"resume {args.key} in the lead checkout {root} on {args.base}; integration target {target}")
+        return
+    integration = Config(root, need_delivery=False, pick=False)
+    # Draft against the standing config first. Its served-base patterns are
+    # the authority for this branch, including while the remote has no ref.
+    draft_delivery(integration, args, integration_target=target)
+    print(f"lead checkout: {root}; review the draft, commit the binding and delivery file there, then push {args.base} "
+          f"to {c.remote}. Run these commands there:")
+    for command in ("lead-init", "lead-brief"):
+        print(f"  {flow_command()} --delivery {args.key} {command}")
+    print(f"Integrate into {target} at close-out.")
+
+
+def draft_delivery(c, args, integration_target: str | None = None) -> None:
     if c.bases and not args.base:
         raise Stop(f"the binding serves several bases ({', '.join([c.binding_base, *c.bases])}): pass --base to name "
-                   "the one this delivery lands on")
+                   "the one this delivery lands on, or --integration to set up a separate base")
     if args.base and c.binding_base and not serves(c.binding, args.base):
         raise unserved(c.binding, args.base)
     if tracker_conf(c)["unrunnable"]:
@@ -5442,6 +5804,8 @@ def lead_setup(args) -> None:
             print(f"drafted {len(items)} {noun} from '{name}'")
     if existing:
         drafted.update({name: existing[name] for name in ("approvals", "outOfScope", "planReview") if name in existing})
+        if existing.get("integrationTarget") and not integration_target:
+            raise Stop("redraft a delivery with an integration target using --integration on its lead checkout")
     adoptable = adoptable_plan_review(c, Path(args.plan))
     if adoptable:
         drafted.setdefault("planReview", {"lenses": json.loads(round_files(adoptable)[0].read_text())["lenses"]})
@@ -5449,7 +5813,7 @@ def lead_setup(args) -> None:
         if target.exists() and any(target.iterdir()):
             raise Stop(f"delivery {key} already has a plan review in {target}, so it can't adopt the one in {adoptable}; "
                        "keep one of them and remove the other")
-    git("fetch", "-q", c.remote)
+    git("fetch", "-q", c.remote, cwd=c.root)
     base = args.base or c.binding_base
     if not base:
         raise Stop("no delivery base: the binding names none here; pass --base")
@@ -5464,7 +5828,8 @@ def lead_setup(args) -> None:
         "schemaVersion": "delivery-flow-delivery/1",
         "delivery": key,
         "headline": args.headline or key,
-        **({"baseBranch": args.base} if args.base and args.base != c.binding_base else {}),
+        **({"baseBranch": args.base} if args.base and (integration_target or args.base != c.binding_base) else {}),
+        **({"integrationTarget": integration_target} if integration_target else {}),
         "plan": args.plan,
         "laneBrief": str(Path(args.plan).with_suffix("")) + ".lane-brief.md",
         "brief": {"notes": None},
@@ -5481,7 +5846,7 @@ def lead_setup(args) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(delivery, indent=2) + "\n")
     print(f"drafted {path}: {len(stories)} stories")
-    added = add_tracker_publisher(c)
+    added = add_tracker_publisher(c, base=base if integration_target else None)
     if added:
         print(f"added the tracker publisher ({added}) to {c.binding_path.name}'s state.publishers: commit it with the "
               "delivery file")
@@ -5558,21 +5923,34 @@ def review_when_note(c, answer: str | None, notes: list[str]) -> None:
                      f"{'|'.join(tracker_publisher.REVIEW_WHEN)}")
 
 
-def add_tracker_publisher(c) -> str | None:
-    """With a tracker adapter configured and no tracker publisher bound, add one to the binding's state.publishers, so
-    every render posts the delivery's tracker updates. Returns the publisher's id, or None when nothing was added."""
+def add_tracker_publisher(c, *, base: str | None = None) -> str | None:
+    """Update the binding for setup, adding the tracker publisher when it is configured and missing."""
     conf = tracker_conf(c)
-    if conf["mode"] != "publisher" or conf["publisher"] or conf["problems"] or not c.binding_path.exists():
+    add = conf["mode"] == "publisher" and not conf["publisher"] and not conf["problems"]
+    if not c.binding_path.exists() or not (add or base):
         return None
     binding = json.loads(c.binding_path.read_text())
-    publishers = binding.setdefault("state", {}).setdefault("publishers", [])
-    entry = tracker_publisher.publisher_entry(TOOL_PATH.replace("run_delivery.py", "tracker_publisher.py"))
-    taken = {item.get("id") for item in publishers if isinstance(item, dict)}
-    entry["id"] = next(name for name in ("tracker", *(f"tracker-{n}" for n in range(2, len(taken) + 3)))
-                       if name not in taken)
-    publishers.append(entry)
-    c.binding_path.write_text(json.dumps(binding, indent=2) + "\n")
-    return entry["id"]
+    entry = None
+    if add:
+        publishers = binding.setdefault("state", {}).setdefault("publishers", [])
+        entry = tracker_publisher.publisher_entry(TOOL_PATH.replace("run_delivery.py", "tracker_publisher.py"))
+        taken = {item.get("id") for item in publishers if isinstance(item, dict)}
+        entry["id"] = next(name for name in ("tracker", *(f"tracker-{n}" for n in range(2, len(taken) + 3)))
+                           if name not in taken)
+        publishers.append(entry)
+    if base:
+        binding["base"]["ref"] = base
+        # Stage in this worktree's Git metadata, so a stopped setup cannot
+        # leave an untracked file beside the binding.
+        directory = lane_base_file(c.root).parent
+        directory.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="integration-setup-", dir=directory) as folder:
+            staging = Path(folder) / c.binding_path.name
+            staging.write_text(json.dumps(binding, indent=2) + "\n")
+            os.replace(staging, c.binding_path)
+    else:
+        c.binding_path.write_text(json.dumps(binding, indent=2) + "\n")
+    return entry["id"] if entry else None
 
 
 # The plan format lead-setup reads (plan-work's SKILL.md documents it, with an example): a story is a `### KEY. Title`
@@ -5739,7 +6117,7 @@ def lead_init(args) -> None:
     c = cfg()
     # Before anything is written, a plan review adopted included: the supervisor it starts runs the Node on this PATH.
     require_node(c.release, "lead-init")
-    c.check_lanes()
+    c.check_lanes({})
     if c.ship and not c.ship.get("toolingCommit"):
         raise Stop(f"{c.delivery_where}: ship.toolingCommit isn't set")
     adoptable = adoptable_plan_review(c, c.plan)
@@ -5761,14 +6139,18 @@ def lead_init(args) -> None:
     if problems:
         raise Stop(f"lead-init refuses until each of these is fixed (doctor --delivery {c.delivery} reports them too):"
                    + "".join(f"\n  - {problem}" for problem in problems))
-    for line in replace_record(c) if args.replace else []:
-        print(line)
-    state_tool("init", "--headline", c.raw.get("headline", c.delivery))
     planned = [planned_entry(c, key) for key in c.stories]
     # The record's finish items take no other keys: covers, label and at are the plan's.
     finish = [{"id": f["id"], "text": f["text"], "met": False} for f in c.finish]
-    patch_from(lambda doc: {"meta": {"trackerParent": c.delivery, "handoffsNeedAcceptance": True}, "planned": planned,
-                            "finish": finish}, "the delivery's planned work and finish lines")
+    ownership = c.effective_ownership({})
+    overlaps = ownership_overlaps(ownership, tracked_at_base(c), shared_outputs(c))
+    if overlaps:
+        raise Stop(f"lanes own the same files: {'; '.join(overlaps)}")
+    seed = {"meta": {"trackerParent": c.delivery, "handoffsNeedAcceptance": True}, "planned": planned,
+            "finish": finish, "laneOwnership": ownership}
+    for line in replace_record(c) if args.replace else []:
+        print(line)
+    state_tool("init", "--headline", c.raw.get("headline", c.delivery), "--seed", json.dumps(seed))
     lease = (f" The {c.in_app.get('lease', 'in-app')} lease is granted on demand through run-delivery app-check's OS lock,"
              " held only for a lane's own in-app checks.") if c.in_app else ""
     shipping = (f" The tooling never ships: the product branch is built from {', '.join(c.ship['paths'])} of the "
@@ -5905,8 +6287,9 @@ def lead_brief(args) -> None:
     template = (TOOL / "templates/lane-brief.md").read_text()
     in_app = (TOOL / "templates/lane-brief.in-app.md").read_text() if c.in_app else ""
     notes = (c.shelf.text(c.brief_notes) or "").strip() if c.brief_notes else ""
-    lane_rows = "\n".join(f"| {lane} | {', '.join(k for k, s in c.stories.items() if s['lane'] == lane)} | "
-                          f"{', '.join(f'`{g}`' for g in entry['owns'])} |" for lane, entry in c.lanes.items())
+    state = c.record_state()
+    lane_rows = "\n".join(f"| {lane} | {', '.join(k for k in c.stories if c.lane_of(k, state) == lane)} | "
+                          f"{', '.join(f'`{g}`' for g in owns)} |" for lane, owns in c.effective_ownership(state).items())
     story_rows = "\n".join(
         f"| {k} | {c.label(k)} | {', '.join(f'`{p}`' for p in s.get('pinned', [])) or '-'} | "
         f"{'; '.join([requirement_label(r) for r in c.requirements(k)] + (['video'] if s.get('evidence') == 'video' else [])) or 'none'} |"
@@ -5916,7 +6299,7 @@ def lead_brief(args) -> None:
         "flow": flow_command(), "config": c.config_named, "base_branch": c.base_branch, "base_ref": c.base_ref, "remote": c.remote,
         "branch": c.branch_pattern.replace("{key}", "<key>"),
         "lane_checkout": c.lane_pattern.replace("{key}", "<key>"),
-        "state": str(c.state), "bound": str(c.bound), "work": c.work,
+        "state": str(c.state.resolve()), "lead_checkout": str(c.root.resolve()), "bound": str(c.bound), "work": c.work,
         "lenses": ", ".join(f"`{lens}`" for lens in c.lenses),
         "gates": "\n".join(f"   - `{' '.join(expand_argv(g['argv'], base=c.base_ref, key='<key>', delivery=c.delivery))}`"
                            for g in c.gates) or "   - (none declared)",
@@ -5980,12 +6363,605 @@ def story_readiness(c, key: str) -> tuple[str, str | None]:
                          f"\"{moves[0]}\" isn't offered; refine it first")
 
 
+def is_lead_checkout(c, branch: str) -> bool:
+    return branch in (c.base_branch, f"lead/{c.delivery}") or c.root.resolve() == c.lane_checkout(c.delivery).resolve()
+
+
+def require_lead_checkout(c) -> None:
+    branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=c.root, check=False)
+    if not is_lead_checkout(c, branch):
+        raise Stop(f"run this in the lead checkout on {c.base_branch} or in {c.lane_checkout(c.delivery)}")
+
+
+def base_move_path(c) -> Path:
+    common = (c.root / git("rev-parse", "--git-common-dir", cwd=c.root)).resolve()
+    return common / "run-delivery" / f"base-move-{c.delivery}.json"
+
+
+def save_base_move(path: Path, intent: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(f".{os.getpid()}.tmp")
+    with temporary.open("w", encoding="utf-8") as stream:
+        stream.write(json.dumps(intent, indent=2) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
+
+
+def require_no_base_move(c) -> None:
+    if base_move_path(c).exists():
+        raise Stop(f"base move pending at {base_move_path(c)}; keep the supervisor parked and resume with "
+                   f"{flow_command()} lead-sync --merge --resume")
+
+
+def restore_move_installation(c, intent: dict) -> None:
+    """Let the supported lifecycle update the prior installation, including its host projections."""
+    for path in intent["installationPaths"]:
+        if git("ls-tree", intent["oldHead"], "--", path):
+            git("restore", f"--source={intent['oldHead']}", "--staged", "--worktree", "--", path)
+        else:
+            git("rm", "-r", "-q", "--ignore-unmatch", "--", path)
+
+
+def managed_installation_paths() -> set[str]:
+    """Use the lifecycle's fixed projection definitions rather than duplicating host paths."""
+    generation = str(GENERATION)
+    if generation not in sys.path:
+        sys.path.insert(0, generation)
+    from agent_skills.hosts import exposure_records
+    from agent_skills.receipt import SETTINGS_FILE
+    return {".agent-skills", SETTINGS_FILE, *[entry["root"] for entry in exposure_records()]}
+
+
+def installation_paths(*receipts: dict) -> list[str]:
+    paths = {".agent-skills"}
+    for receipt in receipts:
+        paths.update(entry["root"] for entry in receipt.get("exposures", []))
+        if receipt.get("hooks", {}).get("file"):
+            paths.add(receipt["hooks"]["file"])
+    managed = managed_installation_paths()
+    if not paths <= managed:
+        raise Stop("an installation receipt names a path outside the supported managed projections")
+    return sorted(paths)
+
+
+def resolve_move_provenance(c, intent: dict) -> None:
+    """Regenerate digest-only conflicts. Changed output listings on both sides need an operator merge."""
+    path = "provenance.lock.json"
+    if path not in git("diff", "--name-only", "--diff-filter=U").splitlines():
+        return
+    ancestor = git("merge-base", intent["oldHead"], intent["defaultHead"])
+    versions = []
+    try:
+        for ref in (ancestor, intent["oldHead"], intent["defaultHead"]):
+            raw = git("show", f"{ref}:{path}")
+            document = json.loads(raw)
+            listing = sorted((entry["id"], output["path"]) for entry in document["entries"] for output in entry["outputs"])
+            versions.append(listing)
+    except (Stop, ValueError, KeyError, TypeError):
+        return  # A malformed or newly introduced lock needs the operator's listing decision.
+    base, ours, theirs = versions
+    if ours != base and theirs != base and ours != theirs:
+        return
+    take = intent["defaultHead"] if theirs != base else intent["oldHead"]
+    git("restore", f"--source={take}", "--staged", "--worktree", "--", path)
+
+
+def check_base_move_reader(archive: Path, directory: Path) -> None:
+    """Read the existing record with the verified target archive before changing the installation."""
+    with tempfile.TemporaryDirectory(prefix="run-delivery-base-reader-") as folder:
+        root = Path(folder)
+        with zipfile.ZipFile(archive) as release:
+            release.extractall(root)
+        scripts = ((root / "skills/run-delivery/scripts/run_delivery.py", "lead-sync"),
+                   (root / "skills/orchestrate-work/scripts/delivery_state.py", "base-move"))
+        for script, command in scripts:
+            help_text = run([sys.executable, "-B", str(script), "--help"]).stdout
+            commands = re.search(r"\{([a-z,-]+)\}", help_text)
+            if commands is None or command not in commands.group(1).split(","):
+                raise Stop("the default branch's archive must support lead-sync and the base-move writer transition")
+        run([sys.executable, "-B", str(scripts[1][0]), "--dir", str(directory), "show"])
+
+
+def read_base_move(path: Path) -> dict | None:
+    if not path.exists():
+        return None
+    try:
+        intent = json.loads(path.read_text())
+        strings = ("checkout", "recordDirectory", "remote", "branch", "target", "oldHead", "defaultHead",
+                   "expectedWriter", "archive", "metadata", "phase", "reason")
+        if not isinstance(intent, dict) or intent.get("schemaVersion") != "delivery-base-move/1":
+            raise ValueError()
+        if any(not isinstance(intent.get(key), str) or not intent[key] or "\0" in intent[key] for key in strings):
+            raise ValueError()
+        commit = lambda value: isinstance(value, str) and re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", value)
+        if not commit(intent["oldHead"]) or not commit(intent["defaultHead"]):
+            raise ValueError()
+        if intent.get("recordHead") is not None and not commit(intent["recordHead"]):
+            raise ValueError()
+        if "recordHead" not in intent or (intent["expectedWriter"] != "unpinned"
+                                            and not re.fullmatch(r"[0-9a-f]{64}", intent["expectedWriter"])):
+            raise ValueError()
+        if any(not Path(intent[key]).is_absolute() for key in ("checkout", "recordDirectory", "archive", "metadata")):
+            raise ValueError()
+        release = intent.get("release")
+        if not isinstance(release, dict) or any(not isinstance(release.get(key), str) or not release[key]
+                                               for key in ("releaseId", "profile", "archiveSha256", "metadataSha256")):
+            raise ValueError()
+        if any(not re.fullmatch(r"[0-9a-f]{64}", release[key]) for key in ("archiveSha256", "metadataSha256")):
+            raise ValueError()
+        for key in ("installationPaths", "provenanceWriter"):
+            if not isinstance(intent.get(key), list) or not intent[key] or any(not isinstance(item, str) or not item
+                                                                            for item in intent[key]):
+                raise ValueError()
+        if not set(intent["installationPaths"]) <= managed_installation_paths():
+            raise ValueError()
+        phase = intent["phase"]
+        if phase not in ("merging", "applying", "applied", "committing", "prepared", "published"):
+            raise ValueError()
+        if phase in ("committing", "prepared", "published"):
+            if not commit(intent.get("preparedTree")) or not isinstance(intent.get("parents"), list) or not intent["parents"]:
+                raise ValueError()
+            if any(not commit(parent) for parent in intent["parents"]):
+                raise ValueError()
+        if phase in ("prepared", "published") and not commit(intent.get("preparedHead")):
+            raise ValueError()
+    except (OSError, ValueError, KeyError, TypeError):
+        raise Stop(f"the pending base move at {path} is malformed or unreadable; inspect it before resuming") from None
+    return intent
+
+
+def check_moved_configuration(c, intent: dict) -> None:
+    """Resolve the prepared checkout with its applied generation, before it can become authoritative."""
+    actual = (load_json(c.root / RECEIPT) or {}).get("release")
+    if actual != intent["release"]:
+        raise Stop("the applied generation differs from the pending move's verified release; "
+                   "restore that archive through the supported lifecycle, then run lead-sync --merge --resume")
+    binding = load_json(c.root / ".agents/orchestration.json") or {}
+    if not serves(binding, intent["branch"]):
+        raise Stop("the merged .agents/orchestration.json must serve the integration base; resolve and stage it, then --resume")
+    script = c.root / TOOL_PATH
+    probe = """import importlib.util, json, os, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("prepared_move_config", sys.argv[1])
+tool = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(tool)
+os.environ["RUN_DELIVERY_LOCAL"] = "1"
+config = tool.Config(Path.cwd(), sys.argv[2])
+print(json.dumps({"state": str(config.state.resolve()), "release": str(config.release.resolve()),
+                  "remote": config.remote, "base": config.base_branch, "target": config.raw.get("integrationTarget")}))
+"""
+    configured = json.loads(run([sys.executable, "-B", "-c", probe, str(script), c.delivery], cwd=c.root).stdout)
+    expected = {"state": intent["recordDirectory"], "release": str((c.root / ".agent-skills/current").resolve()),
+                "remote": intent["remote"], "base": intent["branch"], "target": intent["target"]}
+    changed = [key for key in expected if configured.get(key) != expected[key]]
+    if changed:
+        raise Stop(f"merged configuration changes {', '.join(changed)}. Resolve .agents/orchestration.json, "
+                   f".agents/run-delivery.json or {c.delivery_path} to retain record {intent['recordDirectory']} "
+                   "and the applied .agent-skills/current writer. Stage the resolution and run lead-sync --merge --resume")
+
+
+
+def finish_base_move(c, intent: dict) -> dict:
+    """Use the newly applied generation's reader and writer while our caller owns the queue lock."""
+    import importlib.util
+
+    generation = (c.root / ".agent-skills/current").resolve()
+    script = generation / "skills/orchestrate-work/scripts/delivery_state.py"
+    spec = importlib.util.spec_from_file_location("delivery_state_base_move", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    try:
+        return module.complete_base_move_locked(c.state, from_head=intent["oldHead"], to_head=intent["preparedHead"],
+            default_head=intent["defaultHead"], expected_base=intent["recordHead"],
+            expected_writer=intent["expectedWriter"], reason=intent["reason"])
+    except module.StateError as error:
+        raise Stop(f"{error.code}: {error}") from None
+    except OSError as error:
+        raise Stop(f"base record reconciliation stopped: {error}; resume with lead-sync --merge --resume") from None
+
+
+def lead_sync(args) -> None:
+    """Merge the default branch into an integration base, publishing before reconciling its record."""
+    c = cfg()
+    require_lead_checkout(c)
+    target = c.raw.get("integrationTarget")
+    if not target or target == c.base_branch:
+        raise Stop("lead-sync --merge requires a declared integrationTarget different from the delivery base")
+    path = base_move_path(c)
+    intent = read_base_move(path)
+    if not intent and args.resume:
+        completed = load_state()["state"]["meta"].get("baseMove") or {}
+        head = clean_head()
+        if completed.get("to") == head == remote_head(c.base_branch):
+            print(f"base move to {head} is already reconciled; lanes start from {c.remote}/{c.base_branch}")
+            return
+    if bool(intent) != bool(args.resume):
+        raise Stop(f"{'an interrupted base move exists; use' if intent else 'no interrupted base move exists; omit'} --resume")
+    if intent:
+        if intent["checkout"] != str(c.root.resolve()):
+            raise Stop(f"resume the pending base move from its lead checkout {intent['checkout']}")
+        c.state = Path(intent["recordDirectory"])
+        c.flow_log = c.state.parent / "flow-log"
+        c.remote, c.base_branch, target = intent["remote"], intent["branch"], intent["target"]
+        archive, metadata = Path(intent["archive"]), Path(intent["metadata"])
+    else:
+        if not args.archive or not args.metadata:
+            raise Stop("give the default branch's verified --archive and --metadata")
+        archive, metadata = args.archive.resolve(), args.metadata.resolve()
+    if not archive.is_file() or not metadata.is_file():
+        raise Stop("the base move needs its verified archive and metadata files to be present")
+    if args.wait_seconds < 0:
+        raise Stop("--wait-seconds must be zero or greater")
+    git("fetch", "-q", c.remote, c.base_branch, target)
+    if not intent:
+        old = clean_head()
+        if remote_head(c.base_branch) != old:
+            raise Stop("the lead checkout must equal the published integration base before moving it")
+        default = git("rev-parse", f"{c.remote}/{target}")
+        target_receipt = json.loads(git("show", f"{default}:.agent-skills/active.json"))
+        release = target_receipt["release"]
+        current_receipt = json.loads((c.root / RECEIPT).read_text())
+        if digest(archive) != release["archiveSha256"] or digest(metadata) != release["metadataSha256"]:
+            raise Stop("the supplied archive and metadata must match the default branch's applied release digests")
+        run([sys.executable, "-B", str(archive), "validate", "--archive", str(archive), "--metadata", str(metadata)])
+        check_base_move_reader(archive, c.state)
+        if is_ancestor(default, old) and current_receipt["release"] == release:
+            print(f"{c.base_branch} already contains {target} and its applied archive; lanes start from {c.base_branch}")
+            return
+        writer = (c.flow_raw.get("baseMove") or {}).get("provenanceWriter")
+        if not isinstance(writer, list) or not writer or not all(isinstance(word, str) and word for word in writer):
+            raise Stop("configure baseMove.provenanceWriter as the repository's provenance writer argv")
+        state = load_state()["state"]
+        intent = {"schemaVersion": "delivery-base-move/1", "checkout": str(c.root.resolve()),
+                  "recordDirectory": str(c.state.resolve()), "remote": c.remote,
+                  "branch": c.base_branch, "target": target, "oldHead": old, "defaultHead": default,
+                  "recordHead": state["meta"]["baseHead"],
+                  "expectedWriter": (state["meta"].get("writerGeneration") or {}).get("archiveSha256", "unpinned"),
+                  "archive": str(archive), "metadata": str(metadata), "release": release,
+                  "installationPaths": installation_paths(current_receipt, target_receipt),
+                  "provenanceWriter": writer, "phase": "merging", "reason": f"Merge {target} into {c.base_branch}"}
+    if digest(archive) != intent["release"]["archiveSha256"] or digest(metadata) != intent["release"]["metadataSha256"]:
+        raise Stop("the pending move's archive or metadata bytes changed; restore its verified files before resuming")
+    said = ask_supervisor_to_stop(c, why="integration base move")
+    if said:
+        print(said)
+    for line in stop_orphans(c):
+        print(line)
+    scripts = str(c.release / "skills/orchestrate-work/scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import delivery_state
+
+    c.flow_log.mkdir(parents=True, exist_ok=True)
+    try:
+        with delivery_state.file_lock(supervisor_lock_path(c)), \
+                delivery_state.file_lock(c.state / delivery_state.QUEUE_LOCK, timeout=args.wait_seconds):
+            published = remote_head(c.base_branch)
+            if published not in (intent["oldHead"], intent.get("preparedHead")):
+                raise Stop("the integration base moved outside this operation; inspect the pending move before resuming")
+            if not path.exists():
+                if clean_head() != intent["oldHead"]:
+                    raise Stop("the lead checkout changed while waiting for the queue lock")
+                save_base_move(path, intent)
+            if intent["phase"] in ("merging", "applying", "applied", "committing"):
+                if intent["phase"] != "committing" and git("rev-parse", "HEAD") != intent["oldHead"]:
+                    raise Stop("the pending merge's checkout head changed; leave conflict resolutions staged for --resume")
+                if intent["phase"] == "merging":
+                    merge_head = git("rev-parse", "-q", "--verify", "MERGE_HEAD", check=False)
+                    if merge_head and merge_head != intent["defaultHead"]:
+                        raise Stop("the checkout holds another merge; inspect it before resuming")
+                    if not merge_head:
+                        result = run(["git", "merge", "--no-ff", "--no-commit", intent["defaultHead"]], check=False)
+                        if result.returncode and not git("rev-parse", "-q", "--verify", "MERGE_HEAD", check=False):
+                            raise Stop(result.stderr or result.stdout)
+                    restore_move_installation(c, intent)
+                    resolve_move_provenance(c, intent)
+                    conflicts = git("diff", "--name-only", "--diff-filter=U").splitlines()
+                    if conflicts:
+                        raise Stop(f"resolve and stage these conflicts: {', '.join(conflicts)}. Keep the merge open and "
+                                   f"resume with {flow_command()} lead-sync --merge --resume")
+                    intent["phase"] = "applying"
+                    save_base_move(path, intent)
+                if intent["phase"] == "applying":
+                    run([sys.executable, "-B", str(archive), "--root", str(c.root), "recover", "--maintenance"])
+                    run([sys.executable, "-B", str(archive), "--root", str(c.root), "--product", "apply", "--archive",
+                         str(archive), "--metadata", str(metadata), "--maintenance"])
+                    actual = json.loads((c.root / RECEIPT).read_text())["release"]
+                    if actual != intent["release"]:
+                        raise Stop("the applied generation differs from the default branch's verified release")
+                    intent["phase"] = "applied"
+                    save_base_move(path, intent)
+                if intent["phase"] == "applied":
+                    require_node((c.root / ".agent-skills/current").resolve(), "lead-sync --merge")
+                    check_moved_configuration(c, intent)
+                    run(intent["provenanceWriter"], cwd=c.root)
+                    new_state = c.root / ".agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py"
+                    run([sys.executable, "-B", str(new_state), "--dir", str(c.state), "show"])
+                    git("add", "-A")
+                    intent["preparedTree"] = git("write-tree")
+                    intent["parents"] = [intent["oldHead"]]
+                    merge_head = git("rev-parse", "-q", "--verify", "MERGE_HEAD", check=False)
+                    if merge_head:
+                        intent["parents"].append(merge_head)
+                    intent["phase"] = "committing"
+                    save_base_move(path, intent)
+                if git("rev-parse", "HEAD") == intent["oldHead"]:
+                    if git("write-tree") != intent["preparedTree"]:
+                        raise Stop("the prepared merge tree changed before commit; inspect it before resuming")
+                    git("commit", "-m", intent["reason"])
+                if (git("rev-parse", "HEAD^{tree}") != intent["preparedTree"]
+                      or git("show", "-s", "--format=%P", "HEAD").split() != intent["parents"]
+                      or git("show", "-s", "--format=%B", "HEAD") != intent["reason"]):
+                    raise Stop("the checkout's new commit does not match the prepared base move")
+                intent["preparedHead"] = clean_head()
+                intent["phase"] = "prepared"
+                save_base_move(path, intent)
+            if clean_head() != intent["preparedHead"]:
+                raise Stop("the prepared base move changed; inspect it before resuming")
+            check_moved_configuration(c, intent)
+            for head in [intent["oldHead"], intent["defaultHead"],
+                         *[q.get("syncedHead") or q["head"] for q in load_state()["state"]["queue"] if q["stage"] == "merged"]]:
+                if not is_ancestor(head, intent["preparedHead"]):
+                    raise Stop(f"merged commit {head} is not reachable from the prepared base")
+            if published != intent["preparedHead"]:
+                pushed = run(["git", "push", c.remote, f"{intent['preparedHead']}:refs/heads/{c.base_branch}"], check=False)
+                if remote_head(c.base_branch) != intent["preparedHead"]:
+                    raise Stop(f"base publication did not finish: {pushed.stderr or pushed.stdout}; retry with --resume")
+            intent["phase"] = "published"
+            save_base_move(path, intent)
+            finish_base_move(c, intent)
+            path.unlink()
+    except delivery_state.StateError as error:
+        raise Stop(f"{error.code}: {error}") from None
+    print(f"moved {c.base_branch} to {intent['preparedHead']}; lanes start from {c.remote}/{c.base_branch}")
+    resume = [sys.executable, "-B", str(c.root / TOOL_PATH), "--delivery", c.delivery, "lead-run", "--resume"]
+    if not args.no_supervisor and not supervisor_off():
+        print(run(resume).stdout.strip())
+    else:
+        print(f"supervisor: parked; resume with {shlex.join(resume)}")
+
+
+def lead_upgrade_writer(args) -> None:
+    """Park the lead's supervisor, transition under the queue lock, then resume the applied generation."""
+    c = cfg()
+    require_lead_checkout(c)
+    release_tuple()  # Refuse an unidentified installation before parking anything.
+    require_node(c.release, "lead-upgrade-writer")
+    said = ask_supervisor_to_stop(c, why="writer generation transition")
+    if said:
+        print(said)
+    for line in stop_orphans(c):
+        print(line)
+    scripts = str(c.release / "skills/orchestrate-work/scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    sys.dont_write_bytecode = True
+    import delivery_state
+
+    c.flow_log.mkdir(parents=True, exist_ok=True)
+    try:
+        # Prevent another supervisor from starting between the parked check and transition.
+        with delivery_state.file_lock(supervisor_lock_path(c)):
+            result = state_tool("writer-upgrade", "--writer", "lead", "--expected", args.expected,
+                                "--reason", args.reason)
+            pinned = json.loads(result.stdout)["state"]["meta"]["writerGeneration"]
+    except delivery_state.StateError as error:
+        raise Stop(f"{error.code}: {error}") from None
+    print(f"record writer is {pinned['releaseId']} ({pinned['archiveSha256']})")
+    if args.no_supervisor or supervisor_off():
+        print(f"supervisor: parked; resume this generation with {flow_command()} lead-run --resume")
+    else:
+        print(f"supervisor: running from this generation; live view {start_supervisor(c)}")
+
+
+def lead_push(args) -> None:
+    c = cfg()
+    branch = git("rev-parse", "--abbrev-ref", "HEAD")
+    refuse_story_branch(c, branch, "lead-push")
+    if branch == "HEAD":
+        raise Stop("publish from the lead's branch")
+    if not (c.state / "state.json").is_file():
+        raise Stop("initialize the delivery record before publishing the base")
+    if args.wait_seconds < 0:
+        raise Stop("--wait-seconds must be zero or greater")
+    head = clean_head()
+    before = remote_head(c.base_branch)
+    if not before:
+        raise Stop(f"{c.remote} has no base branch {c.base_branch}")
+
+    scripts = str(c.release / "skills/orchestrate-work/scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    sys.dont_write_bytecode = True
+    import delivery_state  # the same lock implementation and path as the queue
+
+    print(f"Waiting for the merge queue's lock to publish {c.base_branch}.", flush=True)
+    try:
+        with delivery_state.file_lock(c.state / delivery_state.QUEUE_LOCK, timeout=args.wait_seconds):
+            git("fetch", "-q", c.remote, c.base_branch)
+            current = remote_head(c.base_branch)
+            if current != before:
+                raise Stop(f"{c.base_branch}: base moved while waiting ({before[:12]} to {current[:12] or 'missing'}); "
+                           f"bring the lead checkout up to date and retry {flow_command()} lead-push")
+            if clean_head() != head or git("rev-parse", "--abbrev-ref", "HEAD") != branch:
+                raise Stop("the lead checkout changed while waiting; inspect it and retry")
+            if not is_ancestor(current, head):
+                raise Stop(f"{head[:12]} cannot fast-forward {c.remote}/{c.base_branch} at {current[:12]}; "
+                           "bring the lead checkout up to date and retry")
+            if current == head:
+                print(f"{c.remote}/{c.base_branch} already holds {head[:12]}")
+                return
+            if not is_lead_checkout(c, branch):
+                # Older plan worktrees may have any branch name. Keep their plan-only scope.
+                check_lead_plan_commits(c, current, head)
+            git("push", c.remote, f"{head}:refs/heads/{c.base_branch}")
+            state_tool("journal", "--kind", "decision.recorded", "--summary",
+                       f"Published {c.base_branch} from {current} to {head} under the merge queue lock.")
+    except delivery_state.StateError as error:
+        raise Stop(f"{error.code}: {error}") from None
+    print(f"published {c.remote}/{c.base_branch} at {head[:12]}")
+
+
+def lead_flake(args) -> None:
+    c = cfg()
+    require_lead_checkout(c)
+    base = remote_head(c.base_branch)
+    if not base:
+        raise Stop(f"{c.remote} has no base branch {c.base_branch}")
+    flake = {"baseHead": base, "check": args.check, "ref": args.ref}
+    if args.test:
+        flake["tests"] = args.test
+
+    def declare(doc: dict) -> dict:
+        if remote_head(c.base_branch) != base:
+            raise Stop(f"{c.base_branch} moved while declaring the flake; retry on its current head")
+        current = [entry for entry in doc["state"].get("liveFlakes", [])
+                   if entry["baseHead"] == base and entry["check"] != args.check]
+        return {"liveFlakes": [*current, flake]}
+
+    patch_from(declare, f"the live flake for {args.check}")
+    summary = f"Declared live flake {args.ref} for {args.check} at {base}"
+    state_tool("journal", "--kind", "decision.recorded", "--summary", summary)
+    print(summary)
+
+
+def seed_ownership(c, state: dict) -> dict:
+    ownership = c.effective_ownership(state)
+    if "laneOwnership" in state:
+        raise Stop("lane ownership is already in the record")
+    overlaps = ownership_overlaps(ownership, tracked_at_base(c), shared_outputs(c))
+    if overlaps:
+        raise Stop(f"lanes own the same files: {'; '.join(overlaps)}")
+    return {"laneOwnership": ownership}
+
+
+@contextlib.contextmanager
+def ownership_lock(c):
+    """Keep lead ownership writes out of the interval between checking a hand-off and accepting it."""
+    with (c.state / "lane-ownership.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+
+
+def lead_own(args) -> None:
+    c = cfg()
+    require_lead_checkout(c)
+    if not (c.state / "state.json").is_file():
+        raise Stop("initialize the delivery record before changing lane ownership")
+    with ownership_lock(c):
+        change_ownership(c, args)
+
+
+def change_regions(c, args) -> None:
+    helper = _region_ownership()
+    path = args.region or args.revoke_region
+    if not helper.valid_path(path):
+        raise Stop("name a repository-relative file")
+    if not args.base or args.start is None or args.end is None:
+        raise Stop("a region claim needs --base COMMIT --start LINE --end LINE")
+    base_head = git("rev-parse", "--verify", "--end-of-options", f"{args.base}^{{commit}}")
+    claim = {"lane": args.lane, "path": path, "baseHead": base_head, "start": args.start, "end": args.end}
+    if args.region:
+        git("fetch", "-q", c.remote, c.base_branch)
+        base = git("rev-parse", c.base_ref)
+
+    def compute(doc: dict) -> list[str]:
+        state = doc["state"]
+        ownership = state.get("laneOwnership")
+        if ownership is None:
+            raise Stop("seed this record with lead-own --seed first")
+        if args.lane not in ownership:
+            raise Stop("name a lane recorded for this delivery")
+        regions = list(state.get("laneRegions", []))
+        if args.revoke_region:
+            if claim not in regions:
+                raise Stop(f"{args.lane} has no matching region claim for {path}")
+            regions.remove(claim)
+        elif claim not in regions:
+            if owners_of(ownership, path):
+                raise Stop(f"{path} already has a whole-file claim")
+            if path in shared_outputs(c):
+                raise Stop(f"{path} is a declared shared output")
+            try:
+                start, end = helper.mapped(c.root, claim, base)
+                for other in regions:
+                    if other["path"] == path:
+                        first, last = helper.mapped(c.root, other, base)
+                        if start < last and first < end:
+                            raise Stop(f"{path} [{start}, {end}) overlaps {other['lane']}'s [{first}, {last}) at {base[:12]}")
+            except helper.RegionError as error:
+                raise Stop(str(error)) from error
+            regions.append(claim)
+        return ["--set", json.dumps({"/laneRegions": regions})]
+
+    patch_from(compute, f"region ownership of {path}")
+    action = "revoked" if args.revoke_region else "granted"
+    change = f"{action} {args.lane}'s {path} [{args.start}, {args.end}) at {base_head}"
+    state_tool("journal", "--kind", "decision.recorded", "--summary", change)
+    print(change)
+
+
+def change_ownership(c, args) -> None:
+    if not (args.region or args.revoke_region) and any(value is not None for value in (args.base, args.start, args.end)):
+        raise Stop("--base, --start and --end require --region or --revoke-region")
+    if args.seed:
+        if args.lane or args.source:
+            raise Stop("--seed takes neither --lane nor --from")
+        patch_from(lambda doc: seed_ownership(c, doc["state"]), "the initial lane ownership")
+        print("seeded lane ownership from the delivery configuration")
+        return
+    if not args.lane:
+        raise Stop("name the receiving lane with --lane")
+    if bool(args.move) != bool(args.source) or args.source == args.lane:
+        raise Stop("--move requires --from naming a different lane")
+    if args.region or args.revoke_region:
+        change_regions(c, args)
+        return
+    pattern = args.move or args.grant or args.revoke
+    if not pattern or Path(pattern).is_absolute() or any(part in ("", ".", "..") for part in pattern.split("/")):
+        raise Stop("name a repository-relative file or pattern")
+    files = tracked_at_base(c)
+    shared = shared_outputs(c)
+
+    def compute(doc: dict) -> list[str]:
+        state = doc["state"]
+        ownership = copy.deepcopy(state.get("laneOwnership"))
+        if ownership is None:
+            raise Stop("seed this record with lead-own --seed first")
+        if args.lane not in ownership or args.source and args.source not in ownership:
+            raise Stop("name lanes recorded for this delivery")
+        if args.source:
+            if pattern not in ownership[args.source]:
+                raise Stop(f"{args.source} has no claim for {pattern}")
+            ownership[args.source].remove(pattern)
+        if args.revoke:
+            if pattern not in ownership[args.lane]:
+                raise Stop(f"{args.lane} has no claim for {pattern}")
+            ownership[args.lane].remove(pattern)
+        elif pattern not in ownership[args.lane]:
+            conflicts = sorted({claim["path"] for claim in state.get("laneRegions", [])
+                                if fnmatch.fnmatchcase(claim["path"], pattern)})
+            if conflicts:
+                raise Stop(f"whole-file claim conflicts with region claims for {', '.join(conflicts)}")
+            ownership[args.lane].append(pattern)
+        overlaps = ownership_overlaps(ownership, files, shared)
+        if overlaps:
+            raise Stop(f"lanes own the same files: {'; '.join(overlaps)}")
+        return ["--set", json.dumps({"/laneOwnership": ownership})]
+
+    patch_from(compute, f"ownership of {pattern}")
+    change = f"{args.lane} owns {pattern}" + (f", moved from {args.source}" if args.source else "")
+    if args.revoke:
+        change = f"revoked {args.lane}'s claim for {pattern}"
+    state_tool("journal", "--kind", "decision.recorded", "--summary", change)
+    print(change)
+
+
 def lead_assign(args) -> None:
     c = cfg()
     keys = [c.require(k) for k in args.keys]
-    for key in keys:
-        if c.lane_of(key) != args.lane:
-            raise Stop(f"{key} is planned for {c.lane_of(key)}, not {args.lane}")
+    require_lead_checkout(c)
     problems = plan_problems(c, keys)
     if problems:
         raise Stop("; ".join(problems))
@@ -5995,8 +6971,61 @@ def lead_assign(args) -> None:
     if unready and not args.force:
         raise Stop("; ".join(unready) + "; nothing was assigned. Have the item made ready, or assign it anyway with --force")
     register_stories(c)
+    row = {"id": args.lane, "title": args.title, "focus": f"assigned {', '.join(keys)}", "state": "assigned",
+           "waitingOn": None, "since": now()}
+
+    def assign(doc: dict) -> dict:
+        state = doc["state"]
+        if args.lane not in c.effective_ownership(state):
+            raise Stop(f"{args.lane} is not a lane of {c.delivery}")
+        changes = {"lanes": [*(entry for entry in state["lanes"] if entry["id"] != args.lane), row]}
+        if "laneOwnership" not in state:
+            for key in keys:
+                if c.lane_of(key, state) != args.lane:
+                    raise Stop(f"{key} is planned for {c.lane_of(key, state)}, not {args.lane}; seed ownership first")
+            return changes
+        planned, queue = state.get("planned", []), state["queue"]
+        moving = [entry for entry in planned if entry["subject"] in keys and entry["lane"] != args.lane]
+        for entry in moving:
+            if entry.get("noChange"):
+                raise Stop(f"{entry['subject']} has a no-change hand-off; settle it before changing its lane")
+        changes["planned"] = [
+            {**entry, "lane": args.lane} if entry in moving else entry for entry in planned
+        ]
+        changes["queue"] = [
+            {**item, "assignedLane": args.lane}
+            if item["subject"] in keys and c.lane_of(item["subject"], state) != args.lane else item
+            for item in queue
+        ]
+        # A reassignment alone doesn't give the receiving lane work on a candidate already in the queue.
+        if not any(entry["subject"] in keys and entry["stage"] != "settled" for entry in planned):
+            rows = state["lanes"]
+            changes["lanes"] = rows if any(entry["id"] == args.lane for entry in rows) else [
+                *rows, {**row, "state": "idle", "focus": ""}
+            ]
+        previous = {entry["lane"] for entry in moving}
+        busy = {entry["lane"] for entry in changes["planned"] if entry["stage"] != "settled"}
+        busy.update(item["lane"] for item in queue if item["stage"] != "merged")
+        changes["lanes"] = [
+            {**entry, "state": "idle", "focus": "", "waitingOn": None, "since": now()}
+            if entry["id"] in previous - busy and entry["state"] != "idle" else entry
+            for entry in changes["lanes"]
+        ]
+        return changes
+
+    if c.record_state().get("laneRegions"):
+        git("fetch", "-q", c.remote, c.base_branch)
+    patch_from(assign, f"{args.lane}'s assignment")
     rebuild_plan(c)
     tracked = tracked_at_base(c)
+    regions = c.record_state().get("laneRegions", [])
+    if regions:
+        regional_paths = {claim["path"] for claim in regions}
+        for key in keys:
+            for path in story_named_files(c, key, tracked):
+                if path in regional_paths:
+                    print(f"{key} names a region-owned file {path} ({owner_words(c, path)}). "
+                          f"{args.lane} may change only its mapped spans.")
     warnings = [*(named_outside(c, key, outside) for key in keys if (outside := outside_lane(c, key, tracked))),
                 *(line for key in keys if (line := co_change_warning(c, key, tracked)))]
     if warnings:
@@ -6004,10 +7033,6 @@ def lead_assign(args) -> None:
         for line in warnings:
             print(f"  {line}")
         print(f"Move each to {args.lane}'s owns now, or plan the story on the lane that owns it.\n")
-    row = {"id": args.lane, "title": args.title, "focus": f"assigned {', '.join(keys)}", "state": "assigned",
-           "waitingOn": None, "since": now()}
-    patch_from(lambda doc: {"lanes": [*(entry for entry in doc["state"]["lanes"] if entry["id"] != args.lane), row]},
-               f"{args.lane}'s assignment")
     # One entry per story, so each ticket's start is its own, made when its lane begins it.
     for key in keys:
         state_tool("journal", "--kind", "lane.assigned", "--lane", args.lane, "--subject", key, "--summary",
@@ -6024,7 +7049,7 @@ def lead_assign(args) -> None:
     print("Your stories, in order (one branch, one review and one hand-off each):")
     for key in keys:
         print(f"- {key} {c.issue_url.format(key=key)} ({c.label(key)}: {c.stories[key]['title']})")
-    print("\nBegin each story, when you start it, with:")
+    print(f"\nBegin each story from the lead checkout {c.root.resolve()}, with:")
     for key in keys:
         print(f"  {flow_command()} lane-start {key} --base {c.base_branch}")
     if args.note:
@@ -6118,6 +7143,13 @@ def pr_review_acceptance(conf: dict, url: str, head: str, recorded: dict,
 
 def lead_accept(args) -> None:
     c = cfg()
+    if not (c.state / "state.json").is_file():
+        raise Stop("initialize the delivery record before accepting work")
+    with ownership_lock(c):
+        accept_story(c, args)
+
+
+def accept_story(c, args) -> None:
     if args.requeue:
         requeue(c, c.require(args.requeue))
         return
@@ -6167,8 +7199,25 @@ def lead_accept(args) -> None:
     if not last or set(last["review"]["verdicts"]) != set(c.lenses) or set(last["review"]["verdicts"].values()) != {"approve"}:
         problems.append("the last journaled round is not approved by every lens")
     evidence = [e for e in doc["journal"] if e.get("kind") == "review.evidence" and e.get("subject") == key]
+    carried_review = None
     if not evidence or evidence[-1]["reviewArtifact"]["candidateRef"] != head:
-        problems.append("the latest captured review evidence is not for the handed head")
+        hand = next((entry for entry in reversed(doc["journal"])
+                     if entry["subject"] == key and entry["kind"] == "candidate.handed"), {})
+        carry = hand.get("reviewCarry", {})
+        if evidence and carry.get("baseCommits") and carry.get("to") == head and hand.get("lane") == item["lane"]:
+            validator = _validator()
+            try:
+                expected = validator.base_merge_evidence(
+                    c.state, doc["journal"], key, item["lane"], head, item.get("reportedRounds"),
+                    {"reviewed": carry["from"], "baseCommits": carry["baseCommits"]},
+                )
+                if expected != carry or hand["id"] <= evidence[-1]["id"]:
+                    raise validator.StateError("carry_invalid", "the handed carry does not match the captured review")
+                carried_review = carry
+            except validator.StateError as error:
+                problems.append(f"review carry refused: {error}")
+        else:
+            problems.append("the latest captured review evidence is not for the handed head")
     pr = forge("get", "--url", item.get("changeRequest") or "")
     if pr.get("state") != ("merged" if merged else "open"):
         problems.append(f"the PR is {pr.get('state')}")
@@ -6213,12 +7262,18 @@ def lead_accept(args) -> None:
             decisions.append(f"PR review by {review['author']} at {review['at'][:16]} triaged: {recorded['triage']}")
     git("fetch", "-q", c.remote, c.base_branch)
     base = git("merge-base", c.base_ref, head)
+    if carried_review and not merged:
+        try:
+            verified = verify_base_merge(c, key, item["lane"], carried_review["from"], head, doc)
+            if verified["baseCommits"] != carried_review["baseCommits"]:
+                problems.append("the handed base merge history differs from the captured carry")
+        except Stop as error:
+            problems.append(f"review carry refused: {error}")
     # Once merged, the base holds the head or a squash of it, so a diff against it no longer says what the work changed.
-    changed = [] if merged else git("diff", "--name-only", f"{base}..{head}").splitlines()
-    owns = c.lanes[c.lane_of(key)]["owns"]
-    outside = [f for f in changed if not any(fnmatch.fnmatch(f, g) for g in owns)]
+    lane = item["lane"] if "laneOwnership" in doc["state"] else c.lane_of(key, doc["state"])
+    changed, outside = ([], []) if merged else candidate_ownership(c, lane, base, head, doc["state"])
     if outside:
-        problems.append(f"the branch changes files outside {c.lane_of(key)}'s: {outside}")
+        problems.append(f"the branch changes files outside {lane}'s: {outside}")
     proposal = None
     if lead_selects(c) and not merged and chosen is None and not args.full_suite:
         # Under lead selection, a candidate accepted with no choice would check on the fallback: the lead says which.
@@ -6318,18 +7373,22 @@ def lead_accept(args) -> None:
         state_tool("select", "--subject", key, "--clear")
         decisions.append(f"cleared the lead selection recorded at {str(before.get('head'))[:10]}, so the fallback runs")
     if not merged:
-        state_tool("handoff", "--accept", key)
+        authorization = _validator().handoff_authorization(doc["state"], item)
+        region_paths = {claim["path"] for claim in doc["state"].get("laneRegions", [])}
+        state_tool("handoff", "--accept", key, "--authorization", json.dumps(authorization),
+                   *(arg for path in changed if path in region_paths for arg in ("--region-path", path)))
     # What the plan's producer proofs are judged by: the accepted head and the in-app items accepted as blocked.
     append_log("acceptance", key, {"head": head, "ready": ready, "blocked": {label: reason for label, reason in
                                                                            blocked.items() if label in accepted_blocked}})
+    review_note = (f"review captured at {carried_review['from']} and carried to {head}"
+                   if carried_review else "review evidence captured at that head")
     state_tool("journal", "--kind", "decision.recorded", "--subject", key, "--summary",
                (f"Hand-off checked as a claim after its merge: its PR merged at {head[:10]} into {c.base_branch}, "
-                f"{len(set(numbers))} round(s) journaled, last approved by every lens, review evidence captured at "
-                f"that head, gates and in-app evidence current; its files could not be checked against "
-                f"{c.lane_of(key)}'s." if merged else
+                f"{len(set(numbers))} round(s) journaled, last approved by every lens, {review_note}, gates and in-app evidence current; its files could not be checked against "
+                f"{lane}'s." if merged else
                 f"Hand-off checked as a claim: {c.remote}/{branch} at {head[:10]}, its PR open at that head into "
-                f"{c.base_branch}, {len(set(numbers))} round(s) journaled, last approved by every lens, review evidence "
-                f"captured at that head, files within {c.lane_of(key)}'s, gates and in-app evidence current.")
+                f"{c.base_branch}, {len(set(numbers))} round(s) journaled, last approved by every lens, {review_note}, "
+                f"files within {lane}'s, gates and in-app evidence current.")
                + (" " + "; ".join(decisions) + "." if decisions else ""))
     # Accepted already: a plan its registration can't rebuild now (a story added without its reason) says why, and
     # the next rebuild catches up.
@@ -7797,7 +8856,7 @@ def orientation(seat: Seat) -> str:
         doc = record_of(c)
         if seat.role == "lane":
             story = seat.story or ""
-            lane = c.stories.get(story, {}).get("lane", "")
+            lane = c.lane_of(story, doc["state"])
             lines += [f"run-delivery: this session is {lane} of delivery {c.delivery}, on story {story}.",
                       f"- delivery: {c.delivery}", f"- story: {story}", f"- lane brief: {c.lane_brief.as_posix()}",
                       f"- next lane command: {lane_next(c, doc['state'], story)}"]
@@ -8569,6 +9628,13 @@ def archive_delivery(c) -> tuple[Path, list[str]]:
     for source in (c.state, c.flow_log, c.flow_log.parent / "evidence"):
         if source.exists():
             shutil.copytree(source, archive / source.name)
+    state = load_json(archive / c.state.name / "state.json") or {}
+    archived = copy.deepcopy(c.raw)
+    for lane, owns in c.effective_ownership(state).items():
+        archived["lanes"].setdefault(lane, {})["owns"] = owns
+    for key in c.stories:
+        archived["stories"][key]["lane"] = c.lane_of(key, state)
+    (archive / c.delivery_path.name).write_text(json.dumps(archived, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     reviewed = archive_plan_review(archive)
     return archive, [f"archived the record, the lead-side logs{', the plan review' if reviewed else ''} and the lanes' "
                      f"evidence in {archive}"]
@@ -8975,6 +10041,11 @@ class Supervisor:
         except BlockingIOError:
             self.handle.close()
             raise Stop("another supervisor took the lock first")
+        try:
+            require_no_base_move(c)
+        except Stop:
+            self.handle.close()
+            raise
         lead_file(c, "supervisor.stop").unlink(missing_ok=True)
         closed, stopped_by = False, None
         try:
@@ -9043,6 +10114,7 @@ def lead_run(args) -> None:
     """The delivery's supervisor: lead-init starts it; --resume stops what an earlier one left and starts it again;
     --once runs one pass in the foreground."""
     c = cfg()
+    require_no_base_move(c)
     if not (c.state / "state.json").exists():
         raise Stop(f"no record at {c.state}: lead-init starts it, and its supervisor")
     closed = kept_close(c, last_close(load_state()["journal"]))
@@ -9924,17 +10996,7 @@ class Doctor:
             return "wrong", f"stories without a lane: {', '.join(unassigned)}; fix: give each a lane in `lanes`"
         files = git("ls-tree", "-r", "--name-only", d.base_ref if self.base_ref() else "HEAD", cwd=self.root,
                     check=False).splitlines()
-        overlaps = []
-        lanes = list(d.lanes.items())
-        for i, (a, first) in enumerate(lanes):
-            for b, second in lanes[i + 1:]:
-                # A pattern one lane owns that the other's patterns also match, or a file at the base both match.
-                shared = {g for g in first["owns"] if any(fnmatch.fnmatch(g, h) for h in second["owns"])}
-                shared |= {h for h in second["owns"] if any(fnmatch.fnmatch(h, g) for g in first["owns"])}
-                shared |= {f for f in files if any(fnmatch.fnmatch(f, g) for g in first["owns"])
-                           and any(fnmatch.fnmatch(f, g) for g in second["owns"])}
-                if shared:
-                    overlaps.append(f"{a} and {b} both own {', '.join(sorted(shared)[:3])}")
+        overlaps = ownership_overlaps(d.effective_ownership(d.record_state()), files, shared_outputs(d))
         if overlaps:
             return "wrong", f"lanes own the same files: {'; '.join(overlaps)}; fix: make each lane's `owns` disjoint"
         self.delivery = d
@@ -10200,7 +11262,10 @@ def main(argv: list[str] | None = None) -> None:
     p = command(sub, "lead-hints", help="print the delivery's work-hints/1: each story's plan files and its after keys")
     p.set_defaults(fn=lead_hints)
     p = command(sub, "lead-setup"); p.add_argument("key"); p.add_argument("--plan", required=True)
-    p.add_argument("--base", help="default: the binding's base.ref"); p.add_argument("--headline")
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument("--base", help="default: the binding's base.ref")
+    mode.add_argument("--integration", metavar="BRANCH", help="create or resume a named integration base for this delivery")
+    p.add_argument("--headline")
     p.add_argument("--pattern", help="a regex naming groups key and title for each story heading; default: the plan "
                    "format's `### KEY. Title` under `## Stories`")
     p.add_argument("--tracker-snapshot"); p.add_argument("--ship-from"); p.add_argument("--ship-path", action="append")
@@ -10232,6 +11297,39 @@ def main(argv: list[str] | None = None) -> None:
     p = command(sub, "full-health-run", help="one post-merge fullHealth run at a base head, as the supervisor starts it")
     p.add_argument("--head", required=True); p.add_argument("--record", required=True); p.set_defaults(fn=full_health_run)
     p = command(sub, "lead-brief"); p.set_defaults(fn=lead_brief)
+    p = command(sub, "lead-sync", help="merge the default branch into the integration base and reconcile its applied writer")
+    p.add_argument("--merge", action="store_true", required=True)
+    p.add_argument("--archive", type=Path); p.add_argument("--metadata", type=Path)
+    p.add_argument("--resume", action="store_true")
+    p.add_argument("--no-supervisor", action="store_true")
+    p.add_argument("--wait-seconds", type=int, default=3600)
+    p.set_defaults(fn=lead_sync)
+    p = command(sub, "lead-upgrade-writer", help="park the supervisor and pin the applied writer under the queue lock")
+    p.add_argument("--expected", required=True, help="previous archive digest, or unpinned")
+    p.add_argument("--reason", required=True)
+    p.add_argument("--no-supervisor", action="store_true", help="leave the supervisor parked after transition")
+    p.set_defaults(fn=lead_upgrade_writer)
+    p = command(sub, "lead-push", help="publish the lead's committed work under the merge queue lock")
+    p.add_argument("--wait-seconds", type=int, default=3600, metavar="SECONDS")
+    p.set_defaults(fn=lead_push)
+    p = command(sub, "lead-flake", help="declare a temporary flake for a check at the current remote base")
+    p.add_argument("--check", required=True)
+    p.add_argument("--test", action="append", help="full regex for a failing test id, repeatable")
+    p.add_argument("--ref", required=True, help="reference tracking the flake")
+    p.set_defaults(fn=lead_flake)
+    p = command(sub, "lead-own", help="grant or move a lane's claim in the record")
+    action = p.add_mutually_exclusive_group(required=True)
+    action.add_argument("--seed", action="store_true", help="seed a legacy record from the delivery configuration")
+    action.add_argument("--grant", metavar="PATTERN")
+    action.add_argument("--move", metavar="PATTERN")
+    action.add_argument("--revoke", metavar="PATTERN", help="remove a whole-file claim by exact pattern")
+    action.add_argument("--region", metavar="PATH", help="grant a span in a committed text file")
+    action.add_argument("--revoke-region", metavar="PATH", help="remove a region claim by its exact coordinates")
+    p.add_argument("--lane"); p.add_argument("--from", dest="source")
+    p.add_argument("--base", metavar="COMMIT")
+    p.add_argument("--start", type=int, metavar="LINE", help="first owned line, starting at 1")
+    p.add_argument("--end", type=int, metavar="LINE", help="first line after the owned span")
+    p.set_defaults(fn=lead_own)
     p = command(sub, "lead-assign"); p.add_argument("keys", nargs="+"); p.add_argument("--lane", required=True)
     p.add_argument("--title", required=True); p.add_argument("--note")
     p.add_argument("--force", action="store_true",
@@ -10246,6 +11344,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--full-suite", action="store_true", help="under selection.lead: check on the binding's fallback, "
                    "journalled as the lead's decision")
     p.add_argument("--reason", help="with --checks or --full-suite: why"); p.set_defaults(fn=lead_accept)
+    p = command(sub, "lead-authorize-base-merge", help="authorize exact delivery-base commits before the lane merges")
+    p.add_argument("key"); p.add_argument("--reviewed", required=True); p.add_argument("--base", action="append", required=True)
+    p.set_defaults(fn=lead_authorize_base_merge)
     p = command(sub, "lead-carry-review", help="carry a story's captured review to its queued head across commits that "
                 "need no new round, showing their diff first")
     p.add_argument("key"); p.add_argument("--from", dest="from_head", required=True, help="the head the evidence covers")

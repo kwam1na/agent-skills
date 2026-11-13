@@ -1,0 +1,246 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3307",
+  "headline": "Change ownership and the delivery base without voiding checks",
+  "baseBranch": "integrate/delivery-ownership-and-base",
+  "plan": "docs/plans/2026-11-12-delivery-ownership-and-base.md",
+  "laneBrief": "docs/plans/2026-11-12-delivery-ownership-and-base.lane-brief.md",
+  "brief": {
+    "notes": null
+  },
+  "context": {
+    "sections": []
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "skills/run-delivery/*",
+        "skills/orchestrate-work/*",
+        "skills/delivery-views/*",
+        "tests/test_run_delivery.py",
+        "tests/test_orchestration_state.py",
+        "tests/test_lane_rows.py",
+        "tests/test_run_delivery_supervisor.py",
+        "tests/test_merge_queue.py",
+        "tests/test_own_deliveries.py",
+        "tests/test_linear_qualification.py",
+        "provenance.lock.json",
+        "catalog.json",
+        "profiles/*",
+        "docs/solutions/*",
+        "docs/own-deliveries.md",
+        "tests/test_update_provenance.py",
+        "tests/test_registry.py"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3251": {
+      "title": "Keep lane ownership and story lanes in the record",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "v26-3251-1",
+          "text": "Moving a story or a file to another lane is one command, takes effect for the lane at once, and makes no base commit."
+        },
+        {
+          "id": "v26-3251-2",
+          "text": "Two lanes each committing a refreshed provenance.lock.json are both accepted."
+        },
+        {
+          "id": "v26-3251-3",
+          "text": "A row test shows that a lead ownership change made while a candidate checks leaves the check running."
+        }
+      ]
+    },
+    "V26-3253": {
+      "title": "Make lead changes that must touch the base wait for the merge slot",
+      "lane": "lane-1",
+      "after": [
+        "V26-3251"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3253-1",
+          "text": "A lead push issued while a candidate checks lands after that check ends, and the check isn't voided."
+        },
+        {
+          "id": "v26-3253-2",
+          "text": "A flake declared in the record during a check is retried by that check."
+        }
+      ]
+    },
+    "V26-3252": {
+      "title": "Let two lanes work in one large file at once",
+      "lane": "lane-1",
+      "after": [
+        "V26-3251",
+        "V26-3253"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3252-1",
+          "text": "Two lanes can each be assigned a story editing different functions of one file, hand off, and be accepted."
+        },
+        {
+          "id": "v26-3252-2",
+          "text": "Overlapping edits are caught before the second candidate's review round, not at the queue's sync."
+        }
+      ]
+    },
+    "V26-3403": {
+      "title": "Let a lane keep its review across a lead-directed base merge",
+      "lane": "lane-1",
+      "after": [
+        "V26-3252"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3403-1",
+          "text": "A base merge carries the review. Reviewed head R, then only a merge of the base (no lane-owned file changed, same diff against the base): handoff at HEAD succeeds without a new round. The hand-off record names R, HEAD and the merged base commits."
+        },
+        {
+          "id": "v26-3403-2",
+          "text": "A lane commit after R still needs a new round, with the existing message."
+        },
+        {
+          "id": "v26-3403-3",
+          "text": "A merge that changes a lane-owned file still needs a new round, and the refusal names the file."
+        },
+        {
+          "id": "v26-3403-4",
+          "text": "The queue's later carry is unchanged. lead-carry-review on a queued story behaves as it does today."
+        },
+        {
+          "id": "v26-3403-5",
+          "text": "The brief explains it. It tells a lane that a lead-directed base merge keeps its review, and that it needs no carry request."
+        }
+      ]
+    },
+    "V26-3254": {
+      "title": "Make an integration base a supported delivery mode",
+      "lane": "lane-1",
+      "after": [
+        "V26-3403"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3254-1",
+          "text": "A delivery set up with an integration base runs end to end, and the supervisor closes it with no hand edits to the binding."
+        },
+        {
+          "id": "v26-3254-2",
+          "text": "The full suite passes on the integration base."
+        }
+      ]
+    },
+    "V26-3301": {
+      "title": "Switch the lead generation before a lane writes the record",
+      "lane": "lane-1",
+      "after": [
+        "V26-3254"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3301-1",
+          "text": "A row writes the record with a newer generation's tool, before the lead upgrades, and is refused with both generations named and nothing written."
+        },
+        {
+          "id": "v26-3301-2",
+          "text": "After the lead's upgrade, the same write succeeds."
+        },
+        {
+          "id": "v26-3301-3",
+          "text": "The solution note names the symptom (state_invalid: … no value is allowed here right after a lane applies a release), the cause and the recovery."
+        }
+      ]
+    },
+    "V26-3255": {
+      "title": "Move a long-lived delivery base onto a newer default branch",
+      "lane": "lane-1",
+      "after": [
+        "V26-3254",
+        "V26-3301"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3255-1",
+          "text": "A rebase or merge of a fixture delivery base onto a moved default branch, with lock-only conflicts, completes with one command."
+        },
+        {
+          "id": "v26-3255-2",
+          "text": "Afterwards, every queue entry's merged SHA resolves in the new history."
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "Every story",
+      "text": "All seven stories merged through the queue or closed with a recorded reason.",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "main-merge",
+      "label": "Merged to main",
+      "text": "The reviewed integration lands on main.",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Final full health",
+      "text": "The full suite passes once at delivery close-out on the final integrated head on macOS with Python 3.11.",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "main-ci",
+      "label": "Main CI",
+      "text": "Ubuntu and cut-release pass on the exact main integration push.",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "release-verification",
+      "label": "Next release run",
+      "text": "Verify ownership transfer without a base push and that only the integration step needs a manual queue hold in a delivery run on the next approved release.",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "readyPullRequests": true,
+    "grantedBy": "Repository operator",
+    "grantedOn": "2026-11-12"
+  },
+  "outOfScope": [
+    "A distributed lock spanning machines and work from the related queue and tracker epics.",
+    "Force-moving remote refs, automatic conflict resolution for substantive source changes, and new forge or host integrations.",
+    "A release tag outside the repository's batch release process."
+  ],
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  },
+  "integrationTarget": "main"
+}

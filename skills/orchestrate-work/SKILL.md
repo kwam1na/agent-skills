@@ -5,10 +5,20 @@ description: Deliver a decomposed epic with one lead session coordinating lane s
 
 # Orchestrate Work
 
+The merge queue holds the same lock as lead publication. A temporary flake declared in the record applies to its
+base commit and check id. The runner reads it at the retry decision, with precedence given to the binding.
+
+A record initialized by run-delivery can hold lead-owned lane claims. The planned row holds the current story
+lane. A handed candidate keeps the lane that supplied its evidence, and its optional assigned lane tells the
+lead where to return the work. The queue continues to check the handed candidate.
+Lanes can hold disjoint line claims in committed text files. The queue maps each handing lane's spans to the
+base of its merged tree and refuses changes outside those spans before publishing.
+
+
 Deliver a decomposed epic: one lead session plans and assigns tickets to lane
 sessions, owns every merge, shared resource and release, and keeps the
 delivery's state current. Each lane delivers one ticket at a time through the
-existing delivery workflow and never merges.
+existing delivery workflow. The lead owns merges into the delivery base.
 
 Use this workflow when the requested outcome is an epic: several tickets that
 share a plan, a base branch and a finish line, delivered in parallel. For one
@@ -49,7 +59,7 @@ file that is malformed or can't be read runs `fullHealth` and holds the close on
   tracker items to their final state.
 - **Lane.** A session of its own, always: never a subagent, and never the lead
   working in its own session. A lane delivers one assigned ticket at a time,
-  and never merges, releases, or holds a lease it was not granted.
+  and leaves merges into the delivery base and releases to the lead. It holds only granted leases.
 - **State writers.** The lead writes every state field except the
   runner-owned and lane-owned ones. The runner writes only its result
   documents, journal entries, and its own fields: `queue[i].stage`,
@@ -721,3 +731,38 @@ P1 open, is refused. Each later head needs its own carry, from the head the last
 carry reached, and a later review round or capture ends a carry. Like a capture,
 a carry is display and acceptance evidence only: it creates no run, is no review
 round in the stats, and is no product admission evidence.
+
+A lead-directed base merge before hand-off uses a story-bound authorization. The
+`candidate.handed` entry can then carry the original review digest, its reviewed
+and handed heads, and the authorized base commits. The original review retains
+its candidate identity.
+
+
+## Applied writer identity
+
+An installed state tool initializes `meta.writerGeneration` from its own applied archive receipt. The archive
+SHA-256 admits a writer, including a still-running previous installation. Every mutation checks the pin under
+the state transaction lock before changing the record or journal. A mismatched installed writer reports both
+release identities and asks for the lead transition. Reads remain available across understood schemas.
+
+`run-delivery lead-upgrade-writer` parks the supervisor and takes the queue lock while the new reader validates
+both files and pins its applied identity. The state command it uses is lead-only.
+
+```bash
+python3 -B scripts/delivery_state.py --dir STATE writer-upgrade --writer lead \
+  --expected PREVIOUS_ARCHIVE_SHA256 --reason "Lead applied the verified release"
+```
+
+An unpinned legacy record is readable and requires `--expected unpinned` before an installed tool writes.
+Run this low-level transition only while the supervisor is parked. Prefer the run-delivery command, which
+coordinates parking and resuming. The source corpus has no applied receipt and can write only unpinned source
+fixtures. Apply a verified release to write a pinned record.
+
+Admitted write operations hold a shared `writer.lock` through their state, journal, review-artifact and recovery-intent changes. A lead writer transition takes it exclusively after taking the queue lock. The short state transaction lock still checks admission before each record mutation. This lets an admitted hand-off finish its matching journal evidence before the generation changes.
+
+
+A published integration-base move uses the applied generation's `base-move` transition. Under the queue,
+writer and state locks it reconciles `meta.baseHead`, `meta.baseMove` and `meta.writerGeneration` together.
+The `base.moved` journal event is idempotent, including retry after the state write succeeds and the journal
+append is interrupted. Ordinary patches cannot replace `meta.baseMove`. Use `run-delivery lead-sync --merge`
+to coordinate merge, publication, the writer transition and supervisor recovery.

@@ -637,9 +637,9 @@ class LeadWriteTests(MergeQueueTestCase):
         real = state_tool.read_state
         raced: list[bool] = []
 
-        def runner_writes_after_the_read(directory: Path) -> dict:
-            state = real(directory)
-            if not raced:
+        def runner_writes_after_the_read(directory: Path, **kwargs) -> dict:
+            state = real(directory, **kwargs)
+            if not raced and not kwargs.get("for_write"):
                 raced.append(True)
                 # serve records something between the lead's read and its write.
                 state_tool.patch(directory, writer="runner", version=state["version"],
@@ -797,6 +797,90 @@ class CandidatePinningTests(MergeQueueTestCase):
         self.assertStopped(results, "candidate_moved")
         self.assertEqual(adopter.tip("main"), before_main)
         self.assertNotIn("forge merge", " ".join(adopter.log_lines()))
+
+
+class RegionDiffTests(MergeQueueTestCase):
+    def test_insertions_at_edges_and_changes_spanning_claims_are_refused(self) -> None:
+        adopter = self.adopter()
+        path = "src/shared[1].txt"
+        lines = [f"line {number}\n" for number in range(1, 13)]
+        anchor = adopter.advance_base({path: "".join(lines)})
+        claims = [{"path": path, "baseHead": anchor, "start": 3, "end": 6},
+                  {"path": path, "baseHead": anchor, "start": 6, "end": 9}]
+        for name, changed in {
+            "start": lines[:2] + ["inserted\n"] + lines[2:],
+            "edge-between-claims": lines[:5] + ["inserted\n"] + lines[5:],
+            "end": lines[:8] + ["inserted\n"] + lines[8:],
+            "spanning": lines[:4] + ["replaced\n"] + lines[7:],
+        }.items():
+            with self.subTest(name=name):
+                head = adopter.lane_commit(name, {path: "".join(changed)})
+                with self.assertRaisesRegex(queue.region_ownership.RegionError, "outside a single owned span"):
+                    queue.region_ownership.check_change(adopter.lane, path, anchor, head, claims)
+
+    def test_base_edits_to_the_region_or_its_boundary_require_a_regrant(self) -> None:
+        adopter = self.adopter()
+        path = "src/shared.txt"
+        lines = [f"line {number}\n" for number in range(1, 13)]
+        anchor = adopter.advance_base({path: "".join(lines)})
+        claim = {"path": path, "baseHead": anchor, "start": 4, "end": 9}
+        shifted = adopter.advance_base({path: "above\n" + "".join(lines)})
+        self.assertEqual(queue.region_ownership.mapped(adopter.lane, claim, shifted), (5, 10))
+        at_edge = adopter.advance_base({path: "".join(lines[:3] + [lines[3]] + lines[3:])})
+        for head in (at_edge, adopter.advance_base({path: "".join(lines[:4] + ["new text\n"] + lines[5:])})):
+            with self.assertRaisesRegex(queue.region_ownership.RegionError, "Regrant it against the current base"):
+                queue.region_ownership.mapped(adopter.lane, claim, head)
+
+    def test_a_deleted_duplicate_block_makes_mapping_ambiguous(self) -> None:
+        adopter = self.adopter()
+        path = "src/shared.txt"
+        anchor = adopter.advance_base({path: "header\nA\nB\nC\nA\nB\nC\nfooter\n"})
+        target = adopter.advance_base({path: "header\nA\nB\nC\nfooter\n"})
+        claim = {"path": path, "baseHead": anchor, "start": 3, "end": 4}
+        with self.assertRaisesRegex(queue.region_ownership.RegionError, "repeated lines.*ambiguous"):
+            queue.region_ownership.mapped(adopter.lane, claim, target)
+
+    def test_committed_attributes_control_binary_classification(self) -> None:
+        adopter = self.adopter()
+        path = "src/shared.txt"
+        content = "first\nsecond\nthird\n"
+        anchor = adopter.advance_base({path: content})
+        binary = adopter.lane_commit("binary", {path: content.replace("second", "changed"),
+                                                ".gitattributes": f"{path} -diff\n"})
+        adopter.write(adopter.lane, ".gitattributes", f"{path} diff\n")
+        info = Path(run("rev-parse", "--path-format=absolute", "--git-path", "info/attributes", cwd=adopter.lane))
+        info.parent.mkdir(exist_ok=True)
+        info.write_text(f"{path} diff\n")
+        claim = {"path": path, "baseHead": anchor, "start": 1, "end": 4}
+        with self.assertRaisesRegex(queue.region_ownership.RegionError, "binary"):
+            queue.region_ownership.validate_claim(adopter.lane, {**claim, "baseHead": binary})
+        with self.assertRaisesRegex(queue.region_ownership.RegionError, "binary"):
+            queue.region_ownership.check_change(adopter.lane, path, anchor, binary, [claim])
+
+    def test_region_ownership_refuses_file_level_changes(self) -> None:
+        adopter = self.adopter()
+        path = "src/shared.txt"
+        anchor = adopter.advance_base({path: "first\nsecond\nthird\n"})
+        claim = {"path": path, "baseHead": anchor, "start": 1, "end": 4}
+        repo = adopter.lane
+        for operation, command in (
+            ("deletion", ("rm", path)),
+            ("rename", ("mv", path, "src/renamed.txt")),
+            ("mode", ("update-index", "--chmod=+x", path)),
+        ):
+            with self.subTest(operation=operation):
+                run("checkout", "--quiet", "--detach", anchor, cwd=repo)
+                run(*command, cwd=repo)
+                run("commit", "--quiet", "-m", operation, cwd=repo)
+                head = run("rev-parse", "HEAD", cwd=repo)
+                with self.assertRaisesRegex(queue.region_ownership.RegionError, "whole-file ownership"):
+                    queue.region_ownership.check_change(repo, path, anchor, head, [claim])
+        run("reset", "--hard", anchor, cwd=repo)
+        binary = adopter.lane_commit("binary", {path: "first\nsecond\0third\n"})
+        with self.assertRaisesRegex(queue.region_ownership.RegionError, "binary"):
+            queue.region_ownership.check_change(repo, path, anchor, binary, [claim])
+        with self.assertRaisesRegex(queue.region_ownership.RegionError, "whole-file ownership"):
+            queue.region_ownership.validate_claim(repo, {**claim, "path": "src/missing.txt"})
 
 
 class SyncSafetyTests(MergeQueueTestCase):
@@ -3973,6 +4057,31 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.assertEqual(self.journal(adopter, "check.retried"), [])
         [finished] = self.journal(adopter, "base.rerun.finished")
         self.assertIn(row["baseRerun"]["log"], finished["summary"])
+
+    def test_a_temporary_flake_from_an_old_base_expires_when_the_binding_moves(self) -> None:
+        adopter = self.visible_adopter([check_entry("suite", "--flaky-once", "test_flaky")])
+        old = adopter.tip("main")
+        adopter.lead_write(lambda state: state_tool.patch(
+            adopter.state, writer="lead", version=state["version"],
+            changes={"liveFlakes": [{"baseHead": old, "check": "suite", "tests": ["test_flaky"], "ref": "TEMP"}]}))
+        adopter.advance_base({"docs/base.txt": "next base\n"})
+        self.candidate(adopter)
+        self.assertStopped(self.run_queue(adopter, "feature"), "check_failed")
+        self.assertEqual(self.journal(adopter, "check.retried"), [])
+
+        # The durable declaration now applies to the new base. It supplies the reference in the retry.
+        Path(str(adopter.log) + ".flaked-suite").unlink()
+        binding = {**adopter.binding, "flakes": [{"check": "suite", "tests": ["test_flaky"], "ref": "DURABLE"}]}
+        current = adopter.advance_base({".agents/orchestration.json": json.dumps(binding) + "\n"})
+        adopter.lead_write(lambda state: state_tool.patch(
+            adopter.state, writer="lead", version=state["version"],
+            changes={"liveFlakes": [{"baseHead": current, "check": "suite", "ref": "TEMP"}]}))
+        self.candidate(adopter, name="next-feature")
+        results = self.run_queue(adopter, "next-feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document())
+        [retried] = self.journal(adopter, "check.retried")
+        self.assertIn("DURABLE", retried["summary"])
+        self.assertNotIn("TEMP", retried["summary"])
 
     def test_a_failure_matching_only_a_declared_flake_is_retried_once_and_journaled(self) -> None:
         flakes = [{"check": "suite", "tests": ["test_launcher_.*"], "ref": "FLAKE-7"}]

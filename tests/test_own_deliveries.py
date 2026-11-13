@@ -83,6 +83,10 @@ class FreshClone(unittest.TestCase):
         _git(seed, "init", "-q", "-b", "main")
         _git(seed, "add", "-A")
         _git(seed, "commit", "-q", "-m", "seed")
+        binding = json.loads((seed / ".agents/orchestration.json").read_text(encoding="utf-8"))
+        base = binding["base"]["ref"]
+        if base != "main":
+            _git(seed, "branch", base)
         cls.remote = top / "remote.git"
         _git(top, "clone", "-q", "--bare", str(seed), str(cls.remote))
         cls.clone = top / "clone"
@@ -137,8 +141,11 @@ class FreshClone(unittest.TestCase):
             self.assertTrue((Path(out) / "release/linear-v99.0.0-rc.1.zip").is_file())
 
 
-# linear-v2.1.0-rc.1's archive, as the v2.1.0-rc.1 release publishes and attests it.
-CANDIDATE_SHA256 = "e7feafe885899be8bbb2ec76b27eff4d2a27c4b75fe0fbdb080565c49685ea1c"
+# The archive published and attested for the repository's installed delivery generation.
+ATTESTED_ARCHIVES = {
+    "linear-v2.1.0-rc.1": "e7feafe885899be8bbb2ec76b27eff4d2a27c4b75fe0fbdb080565c49685ea1c",
+    "linear-v2.2.0": "716a4fc4faf371d7ac5bff392958232610c7e1561e6879b28c63bfd2cb721e68",
+}
 HOOK_COMMAND = 'python3 -B "${CLAUDE_PROJECT_DIR}/.agent-skills/current/__main__.py" hook claude-code %s || exit 1'
 
 
@@ -159,13 +166,14 @@ class StandingBinding(unittest.TestCase):
         self.assertEqual(receipt["hooks"], {"created": True, "events": ["session-start", "stop"],
                                             "file": ".claude/settings.json"})
 
-    def test_the_installed_generation_is_the_hooks_candidate(self) -> None:
+    def test_the_installed_delivery_generation_matches_the_attested_archive(self) -> None:
         receipt = json.loads((ROOT / ".agent-skills/active.json").read_text(encoding="utf-8"))
-        self.assertEqual(receipt["release"]["releaseId"], "linear-v2.1.0-rc.1")
+        self.assertIn(receipt["release"]["releaseId"], ATTESTED_ARCHIVES)
+        archive_digest = ATTESTED_ARCHIVES[receipt["release"]["releaseId"]]
         # The attested archive's own digest, which the release notes and its .release.json carry: a generation
         # holding the same release id but other bytes fails here. Applying a later release updates this pin with it.
-        self.assertEqual(receipt["generation"], CANDIDATE_SHA256)
-        self.assertEqual(receipt["release"]["archiveSha256"], CANDIDATE_SHA256)
+        self.assertEqual(receipt["generation"], archive_digest)
+        self.assertEqual(receipt["release"]["archiveSha256"], archive_digest)
         # The installed lifecycle's own verdict: every committed generation file matches the receipt's digests,
         # the projections are current, and the hook entries match the receipt.
         done = subprocess.run(["python3", "-B", ".agent-skills/current/__main__.py", "--root", str(ROOT), "status"],
@@ -174,7 +182,7 @@ class StandingBinding(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         status = json.loads(done.stdout)
         self.assertEqual((status["blockers"], status["lifecycle"]), ([], "current"), done.stdout)
-        self.assertEqual(status["active"]["generation"], CANDIDATE_SHA256)
+        self.assertEqual(status["active"]["generation"], archive_digest)
         self.assertEqual(receipt["release"]["profile"], "linear")
         current = os.readlink(ROOT / ".agent-skills/current")
         self.assertEqual(current, "generations/" + receipt["generation"])
@@ -199,7 +207,10 @@ class StandingBinding(unittest.TestCase):
             self.assertNotIn("delivery-artifacts", text, name)
             self.assertNotIn("backlog-followups", text, name)
         binding = json.loads((ROOT / ".agents/orchestration.json").read_text(encoding="utf-8"))
-        self.assertEqual(binding["base"], {"remote": "origin", "ref": "main"})
+        deliveries = [json.loads(path.read_text(encoding="utf-8"))
+                      for path in (ROOT / ".agents/deliveries").glob("*.json")]
+        branch = _git(ROOT, "branch", "--show-current").strip()
+        self.assert_standing_base(binding, deliveries, branch=self.delivery_check_branch(branch, os.environ))
         self.assertEqual(binding["state"]["liveHome"], "line-map")
         self.assertNotIn("PATH", binding["environment"])
         renderer = next(entry for entry in binding["state"]["renderers"] if entry["id"] == "line-map")
@@ -207,6 +218,47 @@ class StandingBinding(unittest.TestCase):
         # Any later delivery's tickets, not this one's.
         pattern = binding["state"]["forgeSnapshot"]["argv"]
         self.assertEqual(pattern[pattern.index("--subject-pattern") + 1], "V26-[0-9]+")
+
+    @staticmethod
+    def delivery_check_branch(branch: str, environment) -> str:
+        if environment.get("GITHUB_EVENT_NAME") == "pull_request":
+            return environment.get("GITHUB_BASE_REF") or branch
+        if environment.get("GITHUB_EVENT_NAME") == "push":
+            return environment.get("GITHUB_REF_NAME") or branch
+        return branch
+
+    def assert_standing_base(self, binding: dict, deliveries: list[dict], *, branch: str = "") -> None:
+        # A detached check checkout can establish its mode from the committed
+        # binding and delivery declaration alone.
+        self.assertEqual(binding["base"]["remote"], "origin")
+        base = binding["base"]["ref"]
+        if branch == "main" or branch.startswith("integrate/"):
+            self.assertEqual(base, branch, "the standing binding must match the checked base")
+        if base != "main":
+            self.assertRegex(base, r"^integrate/[^/]+$")
+            self.assertIn("integrate/*", binding.get("bases", []))
+            self.assertEqual([d.get("integrationTarget") for d in deliveries if d.get("baseBranch") == base],
+                             ["main"], "the active integration binding needs one matching delivery declaration")
+
+    def test_standing_binding_accepts_only_declared_integration_mode(self) -> None:
+        binding = {"base": {"remote": "origin", "ref": "main"}, "bases": ["main", "integrate/*"]}
+        declaration = {"baseBranch": "integrate/fixture", "integrationTarget": "main"}
+        self.assert_standing_base(binding, [declaration])
+        integration = {**binding, "base": {**binding["base"], "ref": "integrate/fixture"}}
+        self.assert_standing_base(integration, [declaration], branch="integrate/fixture")
+        self.assert_standing_base(integration, [declaration])
+        for branch, environment in (
+            ("main", {}),
+            ("", {"GITHUB_EVENT_NAME": "push", "GITHUB_REF_NAME": "main"}),
+            ("", {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_BASE_REF": "main"}),
+        ):
+            target = self.delivery_check_branch(branch, environment)
+            with self.subTest(branch=branch, environment=environment), self.assertRaises(AssertionError):
+                self.assert_standing_base(integration, [declaration], branch=target)
+        for declarations in ([], [{"baseBranch": "integrate/fixture"}],
+                             [{**declaration, "integrationTarget": "other"}], [declaration, declaration]):
+            with self.subTest(declarations=declarations), self.assertRaises(AssertionError):
+                self.assert_standing_base(integration, declarations)
 
     def test_the_tracker_publisher_posts_linear_updates_and_no_host_publisher_is_left(self) -> None:
         binding = json.loads((ROOT / ".agents/orchestration.json").read_text(encoding="utf-8"))

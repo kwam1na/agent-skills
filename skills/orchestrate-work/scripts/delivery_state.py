@@ -28,6 +28,7 @@ import contextlib
 import copy
 import datetime
 import fnmatch
+import functools
 import json
 import math
 import posixpath
@@ -54,8 +55,10 @@ else:
 STATE_FILE = "state.json"
 JOURNAL_FILE = "journal.jsonl"
 STATE_LOCK = "state.lock"
-# Reserved for the merge-queue runner, which holds it for a whole run.
+# Shared by candidate processing and lead publication.
 QUEUE_LOCK = "queue.lock"
+WRITER_LOCK = "writer.lock"
+_WRITER_OPERATIONS = threading.local()
 # What an earlier generation's `ack` recorded as posted by hand. Nothing writes it now: the tracker publisher reads it
 # once, so a record opened under that generation never posts those entries again.
 PUBLISHED_FILE = "published.json"
@@ -107,7 +110,7 @@ CLOSED_KIND = "delivery.closed"
 RUNNER_META = ("checking", "baseHead", "releasedHead", "checkHistory", "baseReruns", "sources", "sourceReports")
 RUNNER_QUEUE = ("stage", "checks", "syncedHead", "checkSelection")
 # Written only by a lane's hand-off, through the tool: no patch, the lead's or the runner's, changes it.
-HANDOFF_QUEUE = ("evidence",)
+HANDOFF_QUEUE = ("evidence", "acceptedRegionPaths")
 # Written only by the lead's select command, through the tool, so every selection is validated and journaled.
 SELECT_QUEUE = ("leadSelection",)
 EVIDENCE_FIELDS = ("check", "definition", "head", "tree", "result")
@@ -326,8 +329,8 @@ def emit(value: object) -> None:
 
 
 @contextlib.contextmanager
-def file_lock(path: Path, timeout: float | None = None) -> Iterator[None]:
-    """Hold an OS-released exclusive lock on ``path`` for the block."""
+def file_lock(path: Path, timeout: float | None = None, *, shared: bool = False) -> Iterator[None]:
+    """Hold an OS-released lock on ``path``, shared when requested on POSIX."""
     timeout = LOCK_TIMEOUT_SECONDS if timeout is None else timeout
     try:
         descriptor = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
@@ -348,7 +351,7 @@ def file_lock(path: Path, timeout: float | None = None) -> Iterator[None]:
                     os.lseek(descriptor, 0, os.SEEK_SET)
                     msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
                 else:
-                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    fcntl.flock(descriptor, (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB)
                 break
             except OSError:
                 if time.monotonic() >= deadline:
@@ -420,8 +423,39 @@ def _unique(state: dict) -> list[str]:
 
 def state_errors(state: object) -> list[str]:
     errors = validate(state, load_schema("delivery-state/1"))
+    if any(error.startswith("/meta/hold:") for error in errors):
+        errors.append("/meta/hold: use {reason, since} with a nonempty reason and a UTC timestamp, or null to clear")
     if not errors and isinstance(state, dict):
         errors = _unique(state)
+        regions = state.get("laneRegions", [])
+        ownership = state.get("laneOwnership", {})
+        for index, claim in enumerate(regions):
+            path = claim["path"]
+            label = f"/laneRegions/{index}"
+            if any(part in ("", ".", "..") for part in path.split("/")) or "\0" in path:
+                errors.append(f"{label}/path: use a repository-relative path")
+            if claim["lane"] not in ownership:
+                errors.append(f"{label}/lane: name a lane in laneOwnership")
+            if claim["start"] >= claim["end"]:
+                errors.append(f"{label}: end must be greater than start")
+            if any(fnmatch.fnmatchcase(path, pattern) for patterns in ownership.values() for pattern in patterns):
+                errors.append(f"{label}: {path} already has a whole-file claim")
+            for previous in regions[:index]:
+                if (previous["path"] == path and previous["baseHead"] == claim["baseHead"]
+                        and previous["start"] < claim["end"] and claim["start"] < previous["end"]):
+                    errors.append(f"{label}: overlaps an earlier region claim on the same base")
+                    break
+        flakes = state.get("liveFlakes", [])
+        if len({(entry["baseHead"], entry["check"]) for entry in flakes}) != len(flakes):
+            errors.append("/liveFlakes: declare each base head and check only once")
+        for index, entry in enumerate(flakes):
+            if entry.get("tests") == []:
+                errors.append(f"/liveFlakes/{index}/tests: supply a pattern or omit tests for the whole check")
+            for pattern in entry.get("tests", []):
+                try:
+                    re.compile(pattern)
+                except re.error as error:
+                    errors.append(f"/liveFlakes/{index}/tests: {pattern!r} is not a regular expression: {error}")
     return errors
 
 
@@ -442,8 +476,17 @@ def journal_errors(entries: list[object]) -> list[str]:
             errors.extend(f"entry {index + 1}: {problem}" for problem in _review_problems(entry))
             if (entry["kind"] == "review.evidence") != ("reviewArtifact" in entry) or (entry["kind"] == "review.evidence" and entry["subject"] is None):
                 errors.append(f"entry {index + 1}: review.evidence names its subject and artifact")
-            if "reviewCarry" in entry and (entry["kind"] != "decision.recorded" or entry["subject"] is None):
-                errors.append(f"entry {index + 1}: only a decision about a subject carries its review")
+            if "baseMergeAuthorization" in entry:
+                if (entry["kind"] != "decision.recorded" or not entry["subject"] or not entry["lane"]
+                        or not entry["baseMergeAuthorization"]["baseCommits"]):
+                    errors.append(f"entry {index + 1}: a base merge authorization names a story, lane and base commits")
+            if "reviewCarry" in entry:
+                expected = "candidate.handed" if "baseCommits" in entry["reviewCarry"] else "decision.recorded"
+                if (entry["kind"] != expected or not entry["subject"]
+                        or expected == "candidate.handed" and not entry["reviewCarry"]["baseCommits"]):
+                    message = ("only a decision about a subject carries its review" if expected == "decision.recorded"
+                               else "a base merge carry belongs to a hand-off naming its story and base commits")
+                    errors.append(f"entry {index + 1}: {message}")
             if "occurredAt" in entry:
                 if entry["kind"] != "candidate.merged":
                     errors.append(f"entry {index + 1}: only a merge carries occurredAt")
@@ -478,7 +521,139 @@ def _review_problems(entry: dict) -> list[str]:
     return problems
 
 
-def read_state(directory: Path) -> dict:
+def writer_generation() -> dict | None:
+    """The applied archive that owns this script, including a still-running previous generation."""
+    generation = Path(__file__).resolve().parents[3]
+    receipt = generation.parent.parent / "active.json"
+    if generation.parent.name != "generations" or generation.parent.parent.name != ".agent-skills":
+        # Source-corpus tests have no applied archive. They cannot write a pinned record.
+        return None
+    try:
+        active = json.loads(receipt.read_text())
+        entries = [active, active.get("previous") or {}]
+        entry = next(item for item in entries if item.get("generation") == generation.name)
+        identity = {key: entry["release"][key] for key in ("releaseId", "archiveSha256")}
+        schema = load_schema("delivery-state/1")["properties"]["meta"]["properties"]["writerGeneration"]
+        if validate(identity, schema):
+            raise ValueError("invalid release identity")
+        return identity
+    except (OSError, ValueError, KeyError, StopIteration, TypeError, AttributeError) as error:
+        raise StateError("writer_generation_invalid", f"cannot identify running generation {generation.name} from {receipt}") from error
+
+
+def require_writer(state: dict) -> None:
+    running = writer_generation()
+    if not isinstance(state, dict) or not isinstance(state.get("meta"), dict):
+        return  # The schema validator reports malformed records.
+    pinned = state["meta"].get("writerGeneration")
+    if pinned is not None and (not isinstance(pinned, dict) or "archiveSha256" not in pinned):
+        return
+    if pinned is None and running is None:
+        return
+    if pinned is None:
+        raise StateError("writer_generation_unpinned", f"record writer is unpinned; running {running}; "
+                         "upgrade the lead first with lead-upgrade-writer --expected unpinned")
+    if running is None or pinned["archiveSha256"] != running["archiveSha256"]:
+        raise StateError("writer_generation_mismatch", f"record writer {pinned}; running writer {running}; "
+                         "upgrade the lead first with lead-upgrade-writer before a lane writes")
+
+
+def writer_operation(operation):
+    """Keep an admitted multi-write operation on one generation until all its evidence is stored."""
+    @functools.wraps(operation)
+    def admitted(directory: Path, *args, **kwargs):
+        active = getattr(_WRITER_OPERATIONS, "active", set())
+        key = str(directory.resolve())
+        if key in active:
+            return operation(directory, *args, **kwargs)
+        with file_lock(directory / WRITER_LOCK, shared=True):
+            with file_lock(directory / STATE_LOCK):
+                read_state(directory, for_write=True)
+            _WRITER_OPERATIONS.active = active | {key}
+            try:
+                return operation(directory, *args, **kwargs)
+            finally:
+                _WRITER_OPERATIONS.active = active
+    return admitted
+
+
+def _with_writer_generation(current: dict, running: dict, expected: str) -> dict:
+    pinned = current["meta"].get("writerGeneration")
+    digest = pinned["archiveSha256"] if pinned else "unpinned"
+    if digest == running["archiveSha256"]:
+        return current
+    if expected != digest:
+        raise StateError("writer_generation_stale", f"expected {expected}; record writer is {digest}")
+    updated = copy.deepcopy(current)
+    updated["meta"]["writerGeneration"] = running
+    return updated
+
+
+def complete_base_move_locked(directory: Path, *, from_head: str, to_head: str, default_head: str,
+                              expected_base: str | None, expected_writer: str, reason: str) -> dict:
+    """Reconcile a published base and its writer once. The caller holds the queue lock."""
+    running = writer_generation()
+    if running is None or not reason.strip():
+        raise StateError("base_move_invalid", "use the applied generation and give the base move's reason")
+    move = {"from": from_head, "to": to_head, "defaultHead": default_head,
+            "archiveSha256": running["archiveSha256"]}
+    with file_lock(directory / WRITER_LOCK), file_lock(directory / STATE_LOCK):
+        current = read_state(directory)
+        entries = read_journal(directory)
+        summary = f"Base moved from {from_head} to {to_head} by merging {default_head}: {reason}"
+        entry = {"id": len(entries) + 1, "at": now(), "kind": "base.moved", "subject": None,
+                 "lane": None, "summary": summary}
+        errors = journal_errors([*entries, entry])
+        if errors:
+            raise StateError("entry_invalid", "; ".join(errors))
+        _require_unicode(entry, "entry_invalid")
+        if current["meta"].get("baseMove") == move:
+            require_writer(current)
+            if current["meta"]["baseHead"] != to_head:
+                raise StateError("base_move_stale", "the reconciled base head changed")
+            updated = current
+        else:
+            if current["meta"]["baseHead"] != expected_base:
+                raise StateError("base_move_stale", "the record's base head changed before reconciliation")
+            updated = copy.deepcopy(_with_writer_generation(current, running, expected_writer))
+            updated["meta"].update(baseHead=to_head, baseMove=move, updatedAt=now())
+            updated["version"] += 1
+            errors = state_errors(updated)
+            if errors:
+                raise StateError("base_move_invalid", "; ".join(errors))
+            _write_atomically(directory / STATE_FILE, dumps(updated))
+            if current["meta"].get("writerGeneration") != running:
+                _note_change(directory, "writer-upgrade", version=updated["version"])
+            _note_change(directory, "base-move", version=updated["version"])
+        if not any(item["kind"] == "base.moved" and item["summary"] == summary for item in entries):
+            _append_journal_locked(directory, updated, entries, entry)
+        return updated
+
+
+def upgrade_writer(directory: Path, *, expected: str, reason: str) -> dict:
+    """Lead transition under the queue and state locks, after the new reader validates both files."""
+    if not reason.strip():
+        raise StateError("writer_generation_invalid", "give the reason for the lead transition")
+    running = writer_generation()
+    if running is None:
+        raise StateError("writer_generation_invalid", "apply the release and run its installed writer")
+    if str(directory.resolve()) in getattr(_WRITER_OPERATIONS, "active", set()):
+        raise StateError("writer_transition_busy", "finish the admitted operation before upgrading its writer")
+    with file_lock(directory / QUEUE_LOCK), file_lock(directory / WRITER_LOCK):
+        with file_lock(directory / STATE_LOCK):
+            current = read_state(directory)
+            read_journal(directory)
+            updated = _with_writer_generation(current, running, expected)
+            if updated is current:
+                return current
+            updated["version"] += 1
+            updated["meta"]["updatedAt"] = now()
+            _write_atomically(directory / STATE_FILE, dumps(updated))
+            _note_change(directory, f"writer-upgrade: {reason}", version=updated["version"])
+            return updated
+
+
+def read_state(directory: Path, *, for_write: bool = False) -> dict:
     path = directory / STATE_FILE
     try:
         state = json.loads(path.read_bytes().decode("utf-8"))
@@ -488,6 +663,8 @@ def read_state(directory: Path) -> dict:
         raise StateError("state_invalid", "state is not UTF-8") from None
     except json.JSONDecodeError as error:
         raise StateError("state_invalid", f"state is not JSON: {error}") from None
+    if for_write:
+        require_writer(state)
     errors = state_errors(state)
     if errors:
         raise StateError("state_invalid", "; ".join(errors))
@@ -547,12 +724,27 @@ def initial_state(headline: str) -> dict:
     }
 
 
-def init(directory: Path, headline: str) -> dict:
+def init(directory: Path, headline: str, seed: dict | None = None) -> dict:
     directory.mkdir(parents=True, exist_ok=True)
     with file_lock(directory / STATE_LOCK):
         if (directory / STATE_FILE).exists():
             raise StateError("state_exists", f"state already exists at {directory / STATE_FILE}")
         state = initial_state(headline)
+        generation = writer_generation()
+        if generation is not None:
+            state["meta"]["writerGeneration"] = generation
+        if seed is not None:
+            allowed = {"meta", "planned", "finish", "laneOwnership"}
+            if not isinstance(seed, dict) or set(seed) - allowed:
+                raise StateError("state_invalid", "init seed may set only meta, planned, finish and laneOwnership")
+            if not isinstance(seed.get("meta", {}), dict) or set(seed.get("meta", {})) - {
+                "trackerParent", "handoffsNeedAcceptance"
+            }:
+                raise StateError("state_invalid", "init seed meta may set only trackerParent and handoffsNeedAcceptance")
+            state = merge_patch(state, seed)
+            errors = state_errors(state)
+            if errors:
+                raise StateError("state_invalid", "; ".join(errors))
         _require_unicode(state, "state_invalid")
         _write_atomically(directory / STATE_FILE, dumps(state))
         (directory / JOURNAL_FILE).touch()
@@ -648,6 +840,10 @@ def ownership_violations(before: dict, after: dict, writer: str) -> list[str]:
             if item.get(field) != previous.get(field):
                 violations.append(f"/queue[subject={item.get('subject')}]/{field} is written only by the select command")
     meta_before, meta_after = before.get("meta", {}), after.get("meta", {})
+    if meta_before.get("baseMove") != meta_after.get("baseMove"):
+        violations.append("/meta/baseMove is changed only by published base reconciliation")
+    if meta_before.get("writerGeneration") != meta_after.get("writerGeneration"):
+        violations.append("/meta/writerGeneration is changed only by the lead writer transition")
     if meta_before.get("updatedAt") != meta_after.get("updatedAt"):
         violations.append("/meta/updatedAt is maintained by the tool")
     if writer == "runner":
@@ -876,10 +1072,11 @@ def lane_rows_put_back(state: dict, subject: str) -> list[dict]:
     return rows
 
 
+@writer_operation
 def _tool_write(directory: Path, change: Callable[[dict], object]) -> tuple[dict, object]:
     """A write the tool makes for a lane or the lead, under the state lock, with the record's own checks."""
     with file_lock(directory / STATE_LOCK):
-        state = read_state(directory)
+        state = read_state(directory, for_write=True)
         updated = copy.deepcopy(state)
         outcome = change(updated)
         updated["version"] = state["version"] + 1
@@ -927,6 +1124,7 @@ def evidence_errors(evidence: object) -> list[str]:
     return problems
 
 
+@writer_operation
 def handoff(
     directory: Path,
     *,
@@ -938,6 +1136,7 @@ def handoff(
     evidence: list[dict] | None = None,
     run: str | None = None,
     checks: list[str] | None = None,
+    base_merge: dict | None = None,
 ) -> dict:
     """A lane hands its reviewed work to the queue, and the hand-off is journaled.
 
@@ -958,7 +1157,10 @@ def handoff(
     if problems:
         raise StateError("handoff_invalid", "; ".join(problems))
 
+    carried = None
+
     def change(state: dict) -> dict:
+        nonlocal carried
         if lane not in [entry["id"] for entry in state["lanes"]]:
             raise StateError("writer_not_owned", f"there is no lane {lane}")
         if run is not None:
@@ -969,11 +1171,12 @@ def handoff(
                 raise StateError("run_bound", f"run {run} is already bound to {holder}")
         queued = next((item for item in state["queue"] if item["subject"] == subject), None)
         if queued is not None:
-            if queued["lane"] != lane:
-                raise StateError("writer_not_owned", f"{subject} belongs to {queued['lane']}, not {lane}")
+            authorized_lane = queued.get("assignedLane", queued["lane"]) if queued["stage"] == "stopped" else queued["lane"]
+            if authorized_lane != lane:
+                raise StateError("writer_not_owned", f"{subject} belongs to {authorized_lane}, not {lane}")
             if queued["stage"] not in ("queued", "stopped"):
                 raise StateError("handoff_invalid", f"{subject} is {queued['stage']}; hand it off once it stops")
-            queued.update(stage="queued", head=head, syncedHead=None, checks=[], changeRequest=change_request)
+            queued.update(stage="queued", lane=lane, head=head, syncedHead=None, checks=[], changeRequest=change_request)
             queued.pop("checkSelection", None)
             # A lead selection is for the head it was made at; new code is never checked with it.
             if queued.get("leadSelection", {}).get("head") != head:
@@ -996,11 +1199,16 @@ def handoff(
             if planned.get("trackerStarted"):
                 item["trackerStarted"] = True
             state["queue"].append(item)
+        if base_merge is not None:
+            if item.get("runId") or run:
+                raise StateError("carry_invalid", "work built by a product run keeps its own review evidence")
+            carried = base_merge_evidence(directory, read_journal(directory), subject, lane, head, rounds, base_merge)
         if rounds is not None:
             item["reportedRounds"] = rounds
         if run is not None:
             item["runId"] = run
         item.pop("evidence", None)
+        item.pop("acceptedRegionPaths", None)
         if evidence:
             item["evidence"] = [{**entry, "recordedAt": now()} for entry in evidence]
         item.pop("namedChecks", None)
@@ -1031,14 +1239,17 @@ def handoff(
     proof = "".join(f"; suite evidence for {entry['check']} ({entry['result']}) at {entry['head']}"
                     for entry in evidence or [])
     ran = f"; the lane ran {', '.join(checks)}" if checks else ""
-    append_journal(directory, kind="candidate.handed", lane=lane, subject=subject,
-                   summary=f"{lane} handed {subject} at {head} ({change_request}){rounds_text}{proof}{ran}{waiting}")
+    carry_text = (f"; review carried from {carried['from']} to {head} across base commits "
+                  f"{', '.join(carried['baseCommits'])}" if carried else "")
+    append_journal(directory, kind="candidate.handed", lane=lane, subject=subject, review_carry=carried,
+                   summary=f"{lane} handed {subject} at {head} ({change_request}){rounds_text}{proof}{ran}{waiting}{carry_text}")
     return item  # type: ignore[return-value]
 
 
 NO_CHANGE_EVIDENCE = 4000
 
 
+@writer_operation
 def no_change_handoff(directory: Path, *, lane: str, subject: str, base_head: str, evidence: str) -> dict:
     """A lane hands off work whose criteria already hold on the base, with no change: it never enters the queue.
 
@@ -1110,7 +1321,16 @@ def _pending(state: dict, subject: str) -> dict:
     return item
 
 
-def accept_handoff(directory: Path, subject: str) -> dict:
+def handoff_authorization(state: dict, item: dict) -> dict:
+    result = {"ownership": state.get("laneOwnership"), "lane": item["lane"], "head": item["head"]}
+    if "laneRegions" in state:
+        result["regions"] = state["laneRegions"]
+    return result
+
+
+@writer_operation
+def accept_handoff(directory: Path, subject: str, authorization: dict | None = None,
+                   region_paths: list[str] | None = None) -> dict:
     """The lead accepts a waiting hand-off; the runner may now take it."""
 
     def change(state: dict) -> dict:
@@ -1122,6 +1342,13 @@ def accept_handoff(directory: Path, subject: str) -> dict:
             _rest_if_free(state, waiting["lane"])
             return copy.deepcopy(waiting)
         item = _pending(state, subject)
+        if authorization is not None and authorization != handoff_authorization(state, item):
+            raise StateError("handoff_invalid", "the handed head or lane ownership changed; check the hand-off again")
+        if region_paths:
+            authorized_paths = {claim["path"] for claim in state.get("laneRegions", []) if claim["lane"] == item["lane"]}
+            if authorization is None or not set(region_paths) <= authorized_paths:
+                raise StateError("handoff_invalid", "accepted region paths must have current claims for the handing lane")
+            item["acceptedRegionPaths"] = sorted(set(region_paths))
         item.pop("pending")
         return copy.deepcopy(item)
 
@@ -1132,6 +1359,7 @@ def accept_handoff(directory: Path, subject: str) -> dict:
     return item  # type: ignore[return-value]
 
 
+@writer_operation
 def reject_handoff(directory: Path, subject: str, reason: str) -> dict:
     """The lead rejects a waiting hand-off; the work goes back to its lane as planned."""
 
@@ -1146,7 +1374,8 @@ def reject_handoff(directory: Path, subject: str, reason: str) -> dict:
             return copy.deepcopy(waiting)
         item = _pending(state, subject)
         state["queue"] = [entry for entry in state["queue"] if entry["subject"] != subject]
-        back = {"subject": subject, "title": item["title"], "lane": item["lane"], "stage": "review"}
+        back = {"subject": subject, "title": item["title"], "lane": item.get("assignedLane", item["lane"]),
+                "stage": "review"}
         if "changeRequest" in item:
             back["changeRequest"] = item["changeRequest"]
         if item.get("runId") is not None:
@@ -1154,8 +1383,9 @@ def reject_handoff(directory: Path, subject: str, reason: str) -> dict:
         if item.get("trackerStarted"):
             back["trackerStarted"] = True
         state.setdefault("planned", []).append(back)
-        if item["lane"] is not None:
-            _set_lane_state(state, item["lane"], "working")
+        _rest_if_free(state, item["lane"])
+        if back["lane"] is not None:
+            _set_lane_state(state, back["lane"], "working")
         return back
 
     _, back = _tool_write(directory, change)
@@ -1400,6 +1630,7 @@ def base_rerun_notices(state: dict, check_ids: list[str], base_head: str | None)
     return warnings, []
 
 
+@writer_operation
 def select_checks(directory: Path, subject: str, *, binding: dict, head: str | None = None,
                   checks: object = None, reason: str | None = None, repo: Path | None = None,
                   base_head: str | None = None) -> dict:
@@ -1482,6 +1713,7 @@ def set_focus(directory: Path, lane: str, text: str, *, state: str | None = None
     raise AssertionError("unreachable")
 
 
+@writer_operation
 def bind_run(directory: Path, *, lane: str, subject: str, run: str) -> dict:
     """A lane binds the run building its planned work, so the views show the run's rounds before the hand-off.
 
@@ -1523,6 +1755,7 @@ def bind_run(directory: Path, *, lane: str, subject: str, run: str) -> dict:
     return bound  # type: ignore[return-value]
 
 
+@writer_operation
 def patch(
     directory: Path,
     *,
@@ -1544,14 +1777,15 @@ def patch(
         raise StateError("writer_invalid", f"writer must be one of {', '.join(WRITERS)}")
     if writer == "lane" and not lane:
         raise StateError("writer_invalid", "a lane's write names its lane")
-    state = read_state(directory)
+    with file_lock(directory / STATE_LOCK):
+        state = read_state(directory, for_write=True)
     if state["version"] != version:
         raise StateError("version_stale", f"patch is pinned to version {version}; state is at {state['version']}")
     updated = apply_patch(state, changes, selector, assignments)
     if between_read_and_write is not None:
         between_read_and_write()
     with file_lock(directory / STATE_LOCK):
-        current = read_state(directory)
+        current = read_state(directory, for_write=True)
         if current["version"] != version:
             raise StateError("version_stale", f"patch is pinned to version {version}; state is at {current['version']}")
         if writer == "lane":
@@ -1587,6 +1821,7 @@ def patch(
     return updated
 
 
+@writer_operation
 def append_journal(
     directory: Path,
     *,
@@ -1601,21 +1836,31 @@ def append_journal(
     recovery: dict | None = None,
     review_artifact: dict | None = None,
     review_carry: dict | None = None,
+    base_merge_authorization: dict | None = None,
 ) -> dict:
     """Append one entry. ``writer`` is "runner" when the runner writes; the lead and lanes leave it unset."""
     if writer == "runner" and kind == REVIEW_KIND:
         raise StateError("kind_not_owned", f"the runner never writes {REVIEW_KIND}: the lead or the lane records its review")
-    if writer == "lane":
-        if kind != REVIEW_KIND:
-            raise StateError("writer_not_owned", f"a lane journals only {REVIEW_KIND}; the tool journals its hand-off")
-        state = read_state(directory)
-        owner = next((entry.get("lane") for entry in [*state["queue"], *state.get("planned", [])]
-                      if entry["subject"] == subject), None)
-        if lane is None or owner != lane:
-            raise StateError("writer_not_owned", f"{subject} is not {lane}'s work")
     with file_lock(directory / STATE_LOCK):
-        current = read_state(directory)
+        current = read_state(directory, for_write=True)
+        if writer == "lane":
+            if kind != REVIEW_KIND:
+                raise StateError("writer_not_owned", f"a lane journals only {REVIEW_KIND}; the tool journals its hand-off")
+            owner = next((entry.get("assignedLane", entry["lane"]) if entry["stage"] == "stopped" else entry["lane"]
+                          for entry in [*current["queue"], *current.get("planned", [])] if entry["subject"] == subject), None)
+            if lane is None or owner != lane:
+                raise StateError("writer_not_owned", f"{subject} is not {lane}'s work")
         entries = read_journal(directory)
+        if base_merge_authorization is not None:
+            if not isinstance(base_merge_authorization, dict):
+                raise StateError("entry_invalid", "base merge authorization must be a JSON object")
+            if writer is not None or kind != "decision.recorded":
+                raise StateError("writer_not_owned", "only the lead authorizes a base merge")
+            item = next((row for row in [*current["queue"], *current.get("planned", [])]
+                         if row["subject"] == subject), None)
+            if item is None or item.get("assignedLane", item["lane"]) != lane or item["stage"] == "merged":
+                raise StateError("carry_invalid", "base merge authorization must name the current lane of active work")
+            aligned_capture(directory, entries, subject, lane, base_merge_authorization.get("reviewed"))
         entry = {
             "id": len(entries) + 1,
             "at": now(),
@@ -1637,23 +1882,30 @@ def append_journal(
             entry["reviewArtifact"] = review_artifact
         if review_carry is not None:
             entry["reviewCarry"] = review_carry
-        errors = journal_errors([*entries, entry])
-        if errors:
-            raise StateError("entry_invalid", "; ".join(errors))
-        _require_unicode(entry, "entry_invalid")
-        if kind == CLOSED_KIND:
-            # The close's started mark goes in with the entry, so a close journaled by hand carries it too. It is
-            # written first: a delivery.closed line never stands without its mark.
-            current = _with_closing(directory, current, {"started": {"entry": entry["id"], "at": entry["at"]}})
-        line = json.dumps(entry, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n"
-        complete = _journal_text(directory)[1]
-        with open(directory / JOURNAL_FILE, "ab") as stream:
-            # Drop the remains of an append that never finished.
-            stream.truncate(complete)
-            stream.write(line.encode("utf-8"))
-            stream.flush()
-            os.fsync(stream.fileno())
-        _note_change(directory, "journal", version=current["version"], journal=entry["id"])
+        if base_merge_authorization is not None:
+            entry["baseMergeAuthorization"] = {**base_merge_authorization, "token": uuid.uuid4().hex}
+        return _append_journal_locked(directory, current, entries, entry)
+
+
+def _append_journal_locked(directory: Path, current: dict, entries: list[dict], entry: dict) -> dict:
+    """Append validated evidence while the caller holds the state lock."""
+    errors = journal_errors([*entries, entry])
+    if errors:
+        raise StateError("entry_invalid", "; ".join(errors))
+    _require_unicode(entry, "entry_invalid")
+    if entry["kind"] == CLOSED_KIND:
+        # The close's started mark goes in with the entry, so a close journaled by hand carries it too. It is
+        # written first: a delivery.closed line never stands without its mark.
+        current = _with_closing(directory, current, {"started": {"entry": entry["id"], "at": entry["at"]}})
+    line = json.dumps(entry, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n"
+    complete = _journal_text(directory)[1]
+    with open(directory / JOURNAL_FILE, "ab") as stream:
+        # Drop the remains of an append that never finished.
+        stream.truncate(complete)
+        stream.write(line.encode("utf-8"))
+        stream.flush()
+        os.fsync(stream.fileno())
+    _note_change(directory, "journal", version=current["version"], journal=entry["id"])
     return entry
 
 
@@ -1671,13 +1923,14 @@ def _with_closing(directory: Path, current: dict, closing: dict) -> dict:
     return updated
 
 
+@writer_operation
 def close_finished(directory: Path, *, entry: int) -> dict:
     """The close's finished mark: the archive for delivery.closed entry ``entry`` has landed.
 
     Only the latest delivery.closed counts, and only once its started mark is there; marking it again changes nothing.
     """
     with file_lock(directory / STATE_LOCK):
-        current = read_state(directory)
+        current = read_state(directory, for_write=True)
         closed = [item for item in read_journal(directory) if item["kind"] == CLOSED_KIND]
         if not closed or closed[-1]["id"] != entry:
             raise StateError("close_unknown", f"journal entry {entry} is not the latest {CLOSED_KIND}")
@@ -1877,6 +2130,7 @@ def _read_review_file(path: Path, limit: int, budget: list[int] | None = None) -
     return data
 
 
+@writer_operation
 def capture_review(directory: Path, *, subject: str, candidate: str, outcomes: list[Path]) -> dict:
     """Keep exact native outcome bytes and append their observational reference once."""
     try:
@@ -1923,6 +2177,43 @@ def capture_review(directory: Path, *, subject: str, candidate: str, outcomes: l
         raise StateError("review_artifact_invalid", "native review artifact could not be read or stored") from error
 
 
+def aligned_capture(directory: Path, journal: list[dict], subject: str, lane: str, reviewed: str) -> tuple[dict, int]:
+    entries = [entry for entry in journal if entry["subject"] == subject]
+    capture = next((entry for entry in reversed(entries) if entry["kind"] == "review.evidence"), None)
+    latest = next((entry for entry in reversed(entries) if entry["kind"] == "review.round"), None)
+    if (capture is None or latest is None or capture["lane"] != lane or latest["lane"] != lane
+            or latest["id"] >= capture["id"] or capture["reviewArtifact"]["candidateRef"] != reviewed):
+        raise StateError("carry_invalid", "the handing lane needs its latest captured review at the exact reviewed head")
+    reference = capture["reviewArtifact"]
+    data = _read_review_file(_review_artifact_path(directory, reference["digest"]), REVIEW_ARTIFACT_LIMIT)
+    if hashlib.sha256(data).hexdigest() != reference["digest"]:
+        raise StateError("carry_invalid", "the captured review artifact is damaged")
+    outcomes = _review_outcomes(_review_json(data), subject, reviewed)
+    verdicts = latest["review"]["verdicts"]
+    if (outcomes[-1]["outcome"] != "aligned" or latest["review"]["round"] != len(outcomes)
+            or set(verdicts.values()) != {"approve"} or set(verdicts) != {e["lens"] for e in outcomes[-1]["entries"]}):
+        raise StateError("carry_invalid", "the captured review must match the last aligned round")
+    return capture, len(outcomes)
+
+
+def base_merge_evidence(
+    directory: Path, journal: list[dict], subject: str, lane: str, head: str, rounds: int | None, merge: dict,
+) -> dict:
+    if not isinstance(merge, dict) or set(merge) != {"reviewed", "baseCommits"}:
+        raise StateError("carry_invalid", "base merge evidence names a reviewed head and base commits")
+    reviewed, commits = merge["reviewed"], merge["baseCommits"]
+    sha = lambda value: isinstance(value, str) and re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", value)
+    if not sha(reviewed) or reviewed == head or not isinstance(commits, list) or not commits or not all(map(sha, commits)):
+        raise StateError("carry_invalid", "base merge evidence needs exact commit ids and a new head")
+    capture, count = aligned_capture(directory, journal, subject, lane, reviewed)
+    allowed = {commit for entry in journal if entry["id"] > capture["id"] and entry["subject"] == subject
+               and entry["lane"] == lane and entry.get("baseMergeAuthorization", {}).get("reviewed") == reviewed
+               for commit in entry["baseMergeAuthorization"]["baseCommits"]}
+    if rounds != count or not set(commits) <= allowed:
+        raise StateError("carry_invalid", "the handed base commits and review rounds must match the lead authorization")
+    return {"from": reviewed, "to": head, "digest": capture["reviewArtifact"]["digest"], "baseCommits": commits}
+
+
 def _standing_carry(journal: list[dict], subject: str, capture: dict) -> dict | None:
     """The lead's latest carry of a subject's capture, while it still holds: after that capture and its last round."""
     carry = next((entry for entry in reversed(journal) if entry["subject"] == subject and "reviewCarry" in entry), None)
@@ -1932,6 +2223,7 @@ def _standing_carry(journal: list[dict], subject: str, capture: dict) -> dict | 
     return carry if not rounds or max(rounds) < carry["id"] else None
 
 
+@writer_operation
 def carry_review(directory: Path, *, subject: str, from_head: str, to_head: str, reason: str) -> dict:
     """The lead carries a subject's captured review across a commit it judged needs no new round.
 
@@ -2738,6 +3030,7 @@ def _ticket_changes(tickets: dict, listed: dict[str, dict], lead: dict) -> dict:
     return patch
 
 
+@writer_operation
 def reconcile(
     directory: Path,
     snapshot_paths: list[Path],
@@ -2821,6 +3114,7 @@ def _bypass_report(subject: str) -> dict:
                                         "or journal your decision if lead-accept can't take it"}
 
 
+@writer_operation
 def _recover(directory: Path, recoveries: list[dict], changes: list[dict], reports: list[dict]) -> None:
     """Record merges the runner missed, as the runner, only while no runner is running.
 
@@ -2942,6 +3236,7 @@ def _read_recovery(directory: Path) -> dict | None:
     return intent
 
 
+@writer_operation
 def _finish_recovery(directory: Path, finished: list[dict], held: list[dict]) -> None:
     """Finish a recovery a crash interrupted, so its journal entry is never lost or written twice.
 
@@ -3802,7 +4097,7 @@ def _cleanup_note(cleanup: list[dict]) -> dict:
 
 
 # The state directory's own files: a snapshot is never written over one of them.
-RECORD_NAMES = (STATE_FILE, JOURNAL_FILE, CHANGES_FILE, STATE_LOCK, QUEUE_LOCK, PUBLISHED_FILE,
+RECORD_NAMES = (STATE_FILE, JOURNAL_FILE, CHANGES_FILE, STATE_LOCK, QUEUE_LOCK, WRITER_LOCK, PUBLISHED_FILE,
                 OUTBOX_DIRECTORY, RECOVERY_FILE)
 
 
@@ -4063,8 +4358,13 @@ def _json_argument(value: str | None, name: str) -> object:
 
 
 def _handoff_command(args: argparse.Namespace) -> dict:
+    if args.base_merge and (args.accept or args.reject or args.no_change):
+        raise StateError("handoff_invalid", "--base-merge requires a candidate hand-off")
     if args.accept:
-        return accept_handoff(args.dir, args.accept)
+        return accept_handoff(args.dir, args.accept, _json_argument(args.authorization, "--authorization"),
+                              args.region_path)
+    if args.region_path:
+        raise StateError("handoff_invalid", "--region-path requires --accept")
     if args.reject:
         if not args.reason:
             raise StateError("handoff_invalid", "say why with --reason")
@@ -4090,7 +4390,7 @@ def _handoff_command(args: argparse.Namespace) -> dict:
     checks = None if args.checks is None else [name.strip() for name in args.checks.split(",")]
     return handoff(args.dir, lane=args.lane, subject=args.subject, head=args.head,
                    change_request=args.change_request, rounds=args.rounds, evidence=evidence, run=args.run,
-                   checks=checks)
+                   checks=checks, base_merge=_json_argument(args.base_merge, "--base-merge"))
 
 
 def _select_command(args: argparse.Namespace) -> dict:
@@ -4401,6 +4701,7 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     start = commands.add_parser("init", help="create an empty state and journal")
     start.add_argument("--headline", required=True)
+    start.add_argument("--seed", help="seed planned work, finish lines and lane ownership in the initial write")
     commands.add_parser("validate", help="validate the state and the journal")
     change = commands.add_parser("patch", help="apply a JSON merge patch, pinned to a version")
     change.add_argument("--writer", choices=WRITERS, required=True)
@@ -4415,6 +4716,7 @@ def main(argv: list[str] | None = None) -> int:
     entry = commands.add_parser("journal", help="append one journal entry")
     entry.add_argument("--kind", required=True)
     entry.add_argument("--summary", help="required, except on a review.round, whose summary is written for it")
+    entry.add_argument("--base-merge-authorization", help="lead's reviewed head and exact allowed base commits as JSON")
     entry.add_argument("--review", help="a review.round's review as JSON, or - to read it from stdin")
     entry.add_argument("--lane")
     entry.add_argument("--subject")
@@ -4432,6 +4734,9 @@ def main(argv: list[str] | None = None) -> int:
     capture.add_argument("--outcome", type=Path, action="append", required=True, help="actual outcome file, once per round in order")
     hand = commands.add_parser("handoff", help="a lane hands its work to the queue, or the lead accepts or rejects it")
     decide = hand.add_mutually_exclusive_group()
+    hand.add_argument("--base-merge", help="verified base-merge carry at hand-off as JSON")
+    hand.add_argument("--authorization", help="head, handing lane and ownership the lead verified before acceptance")
+    hand.add_argument("--region-path", action="append", help="a region-owned path verified at acceptance")
     decide.add_argument("--accept", metavar="SUBJECT", help="accept a hand-off waiting for the lead")
     decide.add_argument("--reject", metavar="SUBJECT", help="reject a hand-off waiting for the lead")
     hand.add_argument("--reason", help="why a hand-off is rejected")
@@ -4507,10 +4812,30 @@ def main(argv: list[str] | None = None) -> int:
     forge.add_argument("--binding", type=Path, required=True, help="the repository binding, with state.forgeSnapshot")
     forge.add_argument("--output", type=Path, required=True, help="where the snapshot is written; kept on a failure")
     forge.add_argument("--max-age", type=float, help="refuse a snapshot older than this; overrides the binding")
+    upgrade = commands.add_parser("writer-upgrade", help="pin the applied lead writer while the supervisor is parked")
+    upgrade.add_argument("--writer", choices=WRITERS, required=True)
+    upgrade.add_argument("--expected", required=True, help="previous archive digest, or unpinned")
+    upgrade.add_argument("--reason", required=True)
+    moved = commands.add_parser("base-move", help="reconcile a published merge and its applied writer")
+    moved.add_argument("--writer", choices=WRITERS, required=True)
+    for flag in ("from-head", "to-head", "default-head", "expected-base", "expected-writer", "reason"):
+        moved.add_argument("--" + flag, required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "init":
-            result: object = {"ok": True, "state": init(args.dir, args.headline)}
+            result: object = {"ok": True, "state": init(args.dir, args.headline, _json_argument(args.seed, "--seed"))}
+        elif args.command == "base-move":
+            if args.writer != "lead":
+                raise StateError("writer_not_owned", "only the lead reconciles a published base move")
+            with file_lock(args.dir / QUEUE_LOCK):
+                state = complete_base_move_locked(args.dir, from_head=args.from_head, to_head=args.to_head,
+                    default_head=args.default_head, expected_base=None if args.expected_base == "unrecorded" else args.expected_base,
+                    expected_writer=args.expected_writer, reason=args.reason)
+            result = {"ok": True, "state": state}
+        elif args.command == "writer-upgrade":
+            if args.writer != "lead":
+                raise StateError("writer_not_owned", "only the lead upgrades the record writer")
+            result = {"ok": True, "state": upgrade_writer(args.dir, expected=args.expected, reason=args.reason)}
         elif args.command == "validate":
             show(args.dir)
             result = {"ok": True}
@@ -4539,6 +4864,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.dir, kind=args.kind, summary=_journal_summary(args, review),
                     lane=args.lane, subject=args.subject, review=review,
                     writer="lane" if args.writer == "lane" else None,
+                    base_merge_authorization=_json_argument(args.base_merge_authorization, "--base-merge-authorization"),
                 ),
             }
         elif args.command == "close-finished":

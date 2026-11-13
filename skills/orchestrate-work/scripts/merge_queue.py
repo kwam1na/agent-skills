@@ -19,6 +19,7 @@ import sys
 sys.dont_write_bytecode = True
 
 import argparse
+import fnmatch
 import concurrent.futures
 import contextlib
 import copy
@@ -43,6 +44,7 @@ from typing import Callable, Iterable, Iterator
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import delivery_state  # noqa: E402
+import region_ownership  # noqa: E402
 import render_state  # noqa: E402
 from delivery_state import load_schema, validate  # noqa: E402
 
@@ -1135,7 +1137,7 @@ class Runner:
                 found.setdefault(match["id"], (match.groupdict().get("message") or "").strip())
         return [{"id": name, "message": message} for name, message in found.items()]
 
-    def flake_for(self, check_id: str, failures: list[dict]) -> str | None:
+    def flake_for(self, check_id: str, failures: list[dict], base_head: str | None) -> str | None:
         """The references of the declared flakes that cover every failure of this check, or None.
 
         A declaration without test patterns covers the whole check; one with
@@ -1143,6 +1145,9 @@ class Runner:
         pattern cannot read is never retried on its strength.
         """
         declared = [flake for flake in self.binding.get("flakes", []) if flake["check"] == check_id]
+        if not declared and base_head:
+            declared = [flake for flake in self.state().get("liveFlakes", [])
+                        if flake["baseHead"] == base_head and flake["check"] == check_id]
         whole = [flake["ref"] for flake in declared if "tests" not in flake]
         if whole:
             return ", ".join(whole)
@@ -1592,12 +1597,14 @@ class Runner:
         self.checking(subject, item["title"], [{"label": "sync", "state": "running"}])
         context = context.with_values(branch=branch, head=head)
         checkout = self.checkout(head, "sync", prepare=True, context=context.with_values(treeSha=self.tree(head)))
+        self.check_shared_outputs(item, checkout, base_head, head, context)
         self.merge_base_in(checkout, base_head, branch, context)
         declared = self.declared_paths(item)
         self.settle(subject, item, checkout, context, inputs, declared, f"Regenerate after syncing {branch} with {self.base}")
         self.seam("after_sync", subject)
         self.compare_with_review(checkout, item["head"], base_head, declared)
         synced = self.rev("HEAD", cwd=checkout)
+        self.check_regions(item, checkout, base_head, synced)
         self.push(branch, head, synced, subject)
         result.syncedHead = synced
         self.set_item(subject, stage="synced", syncedHead=synced)
@@ -1627,6 +1634,43 @@ class Runner:
         undeclared = [path for path in sorted(touched) if not matches_any(path, declared)]
         if undeclared:
             raise Stop("undeclared_change", "a sync step changed files outside the declared paths", undeclared)
+
+    def check_regions(self, item: dict, checkout: Path, base: str, head: str) -> None:
+        state = self.state()
+        regions = state.get("laneRegions", [])
+        accepted_paths = set(item.get("acceptedRegionPaths", []))
+        if not regions and not accepted_paths:
+            return
+        regional_paths = {claim["path"] for claim in regions}
+        lane = item["lane"]
+        try:
+            changed = region_ownership.changed_paths(checkout, base, head)
+            outside = region_ownership.problems(checkout, lane, base, head, changed, regions)
+            for path in accepted_paths.intersection(changed) - regional_paths:
+                if region_ownership.owners(state["laneOwnership"], path) != [lane]:
+                    outside[path] = "the lane has no current whole-file or region claim"
+        except region_ownership.RegionError as error:
+            raise Stop("unreviewed_change", f"could not check region ownership: {error}") from error
+        if outside:
+            detail = "; ".join(f"{path}: {reason}" for path, reason in outside.items())
+            raise Stop("unreviewed_change", f"region ownership refused {lane}'s changes: {detail}", outside)
+
+    def check_shared_outputs(self, item: dict, checkout: Path, base: str, candidate: str, context: Context) -> None:
+        """A lane may refresh a shared output without a claim when its listing stays the same."""
+        ownership = self.state().get("laneOwnership")
+        regenerable = self.binding["regenerable"]
+        if ownership is None or not regenerable["regenerators"] or not regenerable.get("listings"):
+            return
+        merge_base = self.git("merge-base", base, candidate, cwd=checkout).stdout.strip()
+        changed = set(self.git("diff", "--no-renames", "--name-only", "-z", merge_base, candidate,
+                               cwd=checkout).stdout.split("\0"))
+        for entry in regenerable["listings"]:
+            path = entry["path"]
+            if path not in changed:
+                continue
+            owners = [lane for lane, claims in ownership.items() if any(fnmatch.fnmatchcase(path, g) for g in claims)]
+            if owners != [item["lane"]]:
+                self.check_listing(checkout, path, entry["argv"], merge_base, base, candidate, context)
 
     def merge_base_in(self, checkout: Path, base_head: str, branch: str, context: Context | None = None) -> None:
         self.merge_in(checkout, base_head, base_head, "--theirs", f"Merge {self.base} into {branch}", context=context)
@@ -2224,7 +2268,8 @@ class Runner:
                     completed = future.result()
                     assert completed is not None
                     entry = finish(check, completed)
-                    flake = self.flake_for(check["id"], entry["failures"]) if entry["state"] == "failed" else None
+                    flake = (self.flake_for(check["id"], entry["failures"], context.values.get("baseHead"))
+                             if entry["state"] == "failed" else None)
                     if flake is not None:
                         # Every failure is a declared flake: one retry, on the record.
                         named = ", ".join(failure["id"] for failure in entry["failures"]) or "the whole check"
@@ -2315,7 +2360,8 @@ class Runner:
                     continue
                 failures, log = self.rerun_outcome(check["id"], completed)
                 retried = False
-                flake = self.flake_for(check["id"], failures) if failed_run(completed) and not completed.timed_out else None
+                flake = (self.flake_for(check["id"], failures, base_head)
+                         if failed_run(completed) and not completed.timed_out else None)
                 if flake is not None:
                     # As on the candidate: a failure made only of declared flakes is retried once, on the record.
                     named = ", ".join(failure["id"] for failure in failures) or "the whole check"
@@ -2435,6 +2481,7 @@ class Runner:
         # base commit the synced head lacks went unchecked with this candidate.
         if self.git("merge-base", "--is-ancestor", base_head, synced, check=False).returncode != 0:
             raise Stop("base_moved", f"{self.base} moved to {base_head}, which {subject}'s checked head does not contain")
+        self.check_regions(item, anchor, base_head, synced)
         self.merging.add(subject)
         self.set_item(subject, stage="merging")
         context = context.with_values(
@@ -2511,11 +2558,13 @@ class Runner:
                 if unknown:
                     raise Stop("binding_invalid", f"the binding declares no lead input {unknown}")
                 context = context.with_values(branch=branch, head=head)
+                self.check_shared_outputs(item, checkout, accumulated, head, context)
                 self.merge_in(checkout, head, accumulated, "--ours", f"Merge {branch} into the batch",
                               against="the batch built so far", context=context)
                 declared = self.declared_paths(item)
                 self.settle(subject, item, checkout, context, inputs, declared, f"Regenerate after adding {branch} to the batch")
                 self.compare_with_review(checkout, item["head"], accumulated, declared)
+                self.check_regions(item, checkout, accumulated, self.rev("HEAD", cwd=checkout))
             except Stop as stop:
                 # The tree goes back to what the batch had built before this member.
                 self.git("merge", "--abort", cwd=checkout, check=False)
@@ -2600,6 +2649,7 @@ class Runner:
             "commit-tree", member.tree, "-p", member.head, "-p", base_now,
             "-m", f"Merge {self.base} into {member.branch}",
         ).stdout.strip()
+        self.check_regions(self.item(member.subject), self.repository, base_now, synced)
         self.push(member.branch, member.head, synced, member.subject)
         result.syncedHead = synced
         # Never "checked": only the whole batch was checked, so a run killed here

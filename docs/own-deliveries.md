@@ -128,10 +128,82 @@ brief still bars a full suite in a lane.
 
 ## Later deliveries
 
-The standing binding's base is `main`. A delivery that lands through its own
-integration base changes `base.ref` on that base, in that delivery's first commit,
-and removes the change when it integrates. Its record lives in the lead's checkout,
-`.orchestration/lanes/<delivery>/.orchestration/state`, which git ignores.
+The standing binding serves `main` and `integrate/*`. After applying a verified
+release whose `lead-setup --help` lists `--integration`, set up an integration
+base from a clean checkout on `main`:
+
+```bash
+python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py \
+  lead-setup <delivery> --plan <approved-plan> --integration integrate/<name> \
+  --authority push,draftPullRequests,readyPullRequests --granted-by "<operator>"
+```
+
+Use the lead checkout printed by setup. Its draft names the integration base and
+`main` as the integration target, and its binding already points at the
+integration base. Review the draft, commit the initial binding and delivery
+configuration together, and push the branch. Run `--delivery <delivery> lead-init` and `--delivery <delivery> lead-brief`
+there. The brief names the actual lead checkout and record location. Rerun the
+same setup to resume a matching checkout. The standing-binding test recognizes
+the integration binding through the matching delivery declaration even in a
+detached check checkout. Under the gate posture, the supervisor runs the
+binding's full suite on the integration base.
+
+With an earlier installed release, create the lead worktree from `main` with
+`git worktree add -b integrate/<name> .orchestration/lanes/<delivery> main`.
+From that checkout run the same setup command with `--base integrate/<name>`
+in place of `--integration integrate/<name>`. Set `base.ref` in that checkout's
+binding to the integration branch and add `"integrationTarget": "main"` to the
+draft before committing and pushing them together. Run the named lead commands
+from that checkout and give lanes its path and record location when assigning.
+
+For an ongoing base update, use a released installation whose help lists `lead-sync`. Configure
+`baseMove.provenanceWriter` as `["python3", "-B", "scripts/update-provenance.py"]`, download and verify the
+archive and metadata matching the current `main` receipt, and run from the lead checkout.
+
+```bash
+python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py --delivery <delivery> \
+  lead-sync --merge --archive <verified archive> --metadata <verified metadata>
+```
+
+The command parks the supervisor, merges `main`, applies its generation through the supported lifecycle,
+refreshes provenance and publishes under the queue lock. Resolve named conflicts and stage the resolutions, then run
+`lead-sync --merge --resume` while keeping the merge open. Its pending intent also recovers a publication whose record
+update was interrupted. Keep the intent until reconciliation succeeds. Newly assigned lanes start from the
+moved remote base, and recorded merged SHAs remain reachable. Record shared flake fixes as pending upstream
+in a delivery decision and land the fix on `main` too.
+
+For final integration, follow the orchestration guide's **Reviewing an
+integration base for the default branch** recipe. In a clean integration review
+checkout, replace the branch placeholder with the delivery's recorded base:
+
+```bash
+git fetch origin main integrate/<name>
+git switch -c codex/integration-review origin/integrate/<name>
+git merge --no-ff origin/main
+```
+
+Resolve substantive conflicts, then restore the standing settings and the
+target's installed generation together. Include any additional host projection
+paths named by the target receipt.
+
+```bash
+git restore --source=origin/main --staged --worktree -- \
+  .agents/orchestration.json .agents/run-delivery.json .agents/delivery-posture.json \
+  .agent-skills/ .agents/skills/ .claude/settings.json .claude/skills/
+git diff --exit-code origin/main -- \
+  .agents/orchestration.json .agents/run-delivery.json .agents/delivery-posture.json \
+  .agent-skills/ .agents/skills/ .claude/settings.json .claude/skills/
+git show origin/main:.agent-skills/active.json | python3 -c \
+  'import json,sys; print(json.load(sys.stdin)["release"]["archiveSha256"])'
+python3 -c 'import json; print(json.load(open(".agent-skills/active.json"))["release"]["archiveSha256"])'
+```
+
+Require the digests to match. If a merge is in progress, finish it after resolving
+the conflicts and restoring these paths. Otherwise commit the restore. Retain
+the reviewed product source, tests, catalog, profiles, provenance and delivery
+documents. Keep the record and operational logs in the close-out archive.
+Run the integration gates and review on that exact candidate before publishing
+the change request to `main`.
 
 ## Hooks
 

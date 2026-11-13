@@ -396,7 +396,7 @@ python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lea
 git add -A
 git commit -q -m "<delivery-key>: the lane brief"
 # On an unprotected base: push it. On a protected one, open a pull request (section 8).
-git push -q origin main
+python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py --delivery <delivery-key> lead-push
 ```
 
 ### Assign
@@ -427,7 +427,7 @@ the plan keeps each before and after. Push the commit so lanes see it:
 ```sh example repo
 python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lead-plan change --kind relaxed --subjects <story-key> --criterion greeting-shown --text "The front page shows a greeting" --why "The operator accepted any greeting"
 # On an unprotected base: push it. On a protected one, open a pull request (section 8).
-git push -q origin main
+python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py --delivery <delivery-key> lead-push
 ```
 
 To add a story mid-delivery, one command does it all: `lead-plan change --kind added --subjects <new-key> --title T
@@ -455,8 +455,8 @@ chapter flags every change without one. An edit made to the criteria or `covers`
 
 ### The lane delivers a story
 
-The lane begins its story with `lane-start`, from the main checkout. It makes the story's own checkout from the base,
-runs the prepare step, sets the lane's focus, and records the story's start, which the tracker's start move waits for.
+The lane begins its story with `lane-start` from the lead checkout named in the brief. It makes the story's own
+checkout from the base, runs the prepare step, sets the lane's focus, and records the story's start, which the tracker's start move waits for.
 First it checks the lane's Node and Python, and refuses, before it makes or records anything, when the first `node` on
 `PATH` is below the runtime's `nodeMinimum`, or Python is below 3.11:
 
@@ -748,7 +748,10 @@ refused, naming Bitbucket as the forge that has them.
   brought up to date with `git merge --ff-only origin/<base>`. No lead commits in the operator's checkout or in
   another lead's. `lead-plan change` and `lead-plan approval` run there when its HEAD is the base's tip, or ahead of
   it with that delivery's own delivery file and plan commits only, a clean merge of the base among them: they read the
-  worktree's own delivery file, commit it there, and print the push, `git push origin HEAD:<base>`, which you run. A
+  worktree's own delivery file, commit it there, and print the `lead-push` command. It waits for the merge queue lock
+  and checks the base again before publishing. If the queue or another writer moved the base, update your checkout and
+  run it again. Use `lead-flake --check ID --ref REF --test REGEX` to cover a known failing test during a check.
+  The declaration applies to the exact remote base commit and check id, and the binding takes precedence for that check. A
   worktree behind the base, diverged from it, ahead with any other commit (another lead's, or a merge that adds a file
   of its own), on any delivery's story branch, or with uncommitted changes is refused, naming the reason.
   `doctor --delivery` reads a lead worktree as it reads the base's checkout.
@@ -793,9 +796,10 @@ Where a host offers less otherwise, the workflow takes the path on the right:
 - **Lanes are sessions of their own.** Each lane runs as its own session the operator can open, watch and steer, never
   as a subagent and never as the lead working in its own session. A host that can't start or message sessions stops, as
   the host notes say. Lens reviewers stay subagents of the lane.
-- **Lanes never merge the base.** A lane reads the delivery's settings, plan and brief from the base on the remote, so
-  the lead's pushed changes reach it without a merge; merging the base would move its reviewed head and cost a review
-  round. The merge queue syncs each branch with the base when it merges.
+- **The merge queue normally syncs the base into the lane branch.** To direct a base merge before hand-off,
+  the lead first runs `lead-authorize-base-merge KEY --reviewed HEAD --base COMMIT` and sends the printed
+  merge commands to the lane. A lane that follows them can retain its aligned review if its owned content and story delta are unchanged. It runs its
+  gates and any required in-app and PR checks at the merged head.
 - **Review evidence is captured at hand-off.** `handoff` captures each round's review evidence; without it the line map
   shows no rounds for the story.
 - **Restart long-running commands after an update.** The supervisor, `lead-run`, and the merge queue's `serve` and the
@@ -810,6 +814,67 @@ Where a host offers less otherwise, the workflow takes the path on the right:
   `lead-evidence published`; the page shows application content.
 - **Sign-in values stay out of commands.** They come from the environment or the adopter's own adapter, never from a
   command argument, a record, a log, an archive or a published page.
+
+### Changing the record writer generation
+
+A delivery record initialized by an installed generation pins that applied archive's SHA-256 in
+`meta.writerGeneration`. Every record and journal write checks that identity under the state transaction lock.
+A lane that applies another release must wait for the lead transition before running commands that write the
+shared record. The refusal names the pinned and running releases and their archive digests.
+
+Apply the verified release in the lead checkout through the repository's supported release lifecycle, then run
+its installed command with the previous archive digest and a reason.
+
+```bash example outline
+python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py --delivery KEY \
+  lead-upgrade-writer --expected PREVIOUS_ARCHIVE_SHA256 --reason "Lead applied the verified release"
+```
+
+The command parks the supervisor after its pass, keeps another supervisor from starting, takes the queue lock,
+and loads both record and journal with the new reader before changing the writer pin under the state lock.
+It resumes the supervisor from the applied generation. `--no-supervisor` leaves it parked and prints
+`lead-run --resume`. An integration-base move that applies another generation uses this same transition before
+reconciling the record or resuming processing. Retrying a completed transition leaves the pin and version unchanged.
+
+Unpinned legacy records remain readable. Their first installed writer transition uses `--expected unpinned`.
+The standalone source-corpus fixtures have no applied archive identity and can write their unpinned fixture
+records. They refuse every pinned record. Ordinary patches cannot add, change or remove the writer pin.
+
+A pre-guard generation cannot enforce this admission rule. Park it and its queue before applying the release,
+and move every writer to the pinned generation. A reader error such as `state_invalid: ... no value is allowed here`
+after a lane applies a release means an older reader encountered newer fields. Preserve the record and journal,
+apply the compatible verified generation in the lead checkout, run the lead transition there, then resume its
+supervisor and lanes. The solution note in the repository records the original symptom and recovery.
+
+Admitted write operations hold a shared `writer.lock` through their state, journal, review-artifact and recovery-intent changes. A lead writer transition takes it exclusively after taking the queue lock. The short state transaction lock still checks admission before each record mutation. This lets an admitted hand-off finish its matching journal evidence before the generation changes.
+
+
+### Updating an integration base
+
+An ongoing integration base declares its default branch as `integrationTarget`. Configure the repository's
+provenance writer as `baseMove.provenanceWriter`, then use the installed command with verified archives
+matching the default branch's applied receipt. Both applied generations must support the writer transition.
+
+```bash example outline
+python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py --delivery KEY \
+  lead-sync --merge --archive /path/to/profile-version.zip --metadata /path/to/profile-version.release.json
+```
+
+The command parks the supervisor, takes the queue lock, merges history and applies the verified generation
+through its product lifecycle. It regenerates provenance and publishes a normal fast-forward update. The
+writer pin and recorded base reconcile together. A pending move blocks supervisor processing, including
+an interruption after the remote accepts the new head. `lead-sync --merge --resume` recognizes that head
+and finishes the record once. Existing merged SHAs keep their identities and remain reachable.
+
+Resolve named substantive conflicts and stage the resolutions while leaving the merge open, then resume.
+If both sides changed the provenance output listing differently, merge that listing deliberately. After success,
+newly assigned stories start from the moved remote base. Existing stories follow the lead's base-merge
+review rules. `--no-supervisor` leaves the supervisor parked for the caller's next step.
+
+For a flake shared with the default branch, record the upstream fix and its pending-upstream status in a
+delivery decision. A temporary `lead-flake` remains scoped to the current base head and check. Record the
+upstream landing and include it in the next base move.
+
 
 ## Troubleshooting
 

@@ -1,0 +1,98 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "writtenBy": "run-delivery plan-review",
+  "plan": "docs/plans/2026-11-12-delivery-ownership-and-base.md",
+  "planSha256": "820b80f5b059ce95f65697d3545ecfe4aa98603ff06fb96c0ed44816e333cd89",
+  "planCommit": "1e3dee1c12972465f801d35f006dc7fc234d0950",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": [
+    "lens.outcome-correctness",
+    "lens.adversarial-testing"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "candidate": "96655408fc82a40949fc1e4c1d9672bfd3a3a716",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-13T03:27:17.772840Z",
+      "finishedAt": "2026-11-13T03:29:28.465090Z",
+      "open": [
+        "outcome-correctness-r1-1",
+        "outcome-correctness-r1-2",
+        "outcome-correctness-r1-3",
+        "outcome-correctness-r1-4",
+        "adversarial-testing-r1-1",
+        "adversarial-testing-r1-2",
+        "adversarial-testing-r1-3",
+        "adversarial-testing-r1-4",
+        "adversarial-testing-r1-5"
+      ]
+    },
+    {
+      "round": 2,
+      "candidate": "7113932853c551504789bf645f20df71c5060964",
+      "outcome": "aligned",
+      "startedAt": "2026-11-13T03:30:08.087158Z",
+      "finishedAt": "2026-11-13T03:31:12.154708Z",
+      "open": []
+    },
+    {
+      "round": 3,
+      "candidate": "1e3dee1c12972465f801d35f006dc7fc234d0950",
+      "outcome": "aligned",
+      "startedAt": "2026-11-13T03:36:23.000515Z",
+      "finishedAt": "2026-11-13T03:37:08.218532Z",
+      "open": []
+    }
+  ],
+  "reviews": [
+    {
+      "lens": "lens.outcome-correctness",
+      "round": 3,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.outcome-correctness",
+        "subjectRef": "delivery-ownership-and-base.plan",
+        "candidateRef": "1e3dee1c12972465f801d35f006dc7fc234d0950",
+        "round": 3,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [],
+        "evidence": [
+          "Start and end identity checks in the private checkout both returned tree c6ac49cbd90ec7f4f0fec70fe31f6e9014ad61de and empty git status --porcelain output.",
+          "Derived the delta from the exact round references. No findings remained open after round 2. The revised shared-file fixture retains ordinary lead acceptance and queue sync for disjoint candidates and early review refusal for an overlapping edit. The review-carry fixture retains lead authorization and covers a line shift outside the owned span.",
+          "No scoped sensor commands were assigned, so no tests ran. Model class GPT-6. Realization basis host-convention via native subagent. The host exposed no progress or permission signals.",
+          "Approval conditions: no new findings or conditions."
+        ]
+      },
+      "resultSha256": "e2cdada0e8e3d27b48e15508adff4d940c8889db069bbd148863133b3582c999"
+    },
+    {
+      "lens": "lens.adversarial-testing",
+      "round": 3,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.adversarial-testing",
+        "subjectRef": "delivery-ownership-and-base.plan",
+        "candidateRef": "1e3dee1c12972465f801d35f006dc7fc234d0950",
+        "round": 3,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [],
+        "evidence": [
+          "Start and end identity checks both returned tree c6ac49cbd90ec7f4f0fec70fe31f6e9014ad61de with empty git status --porcelain in the private lens checkout.",
+          "I derived the delta from the exact supplied commits. No findings remained open from round 2. The revised scenarios preserve each round 1 closure, including actual lead acceptance, refusal before review for a candidate editing another lane's region, and successful review carry through an authorized base merge.",
+          "The changed ownership tests exercise three claims, multiple accepted candidates, plain text and non-Python source, line shifts and ambiguous mappings, interior and edge insertions, and whole-file changes. The carry scenario also requires a successful base merge that shifts the claimed span.",
+          "No scoped sensors were assigned, so I ran no tests and planted no mutants. Model class GPT-6. Realization basis host-convention via native subagent. The host exposed no progress or permission signals.",
+          "Approval conditions: the five previous conditions remain satisfied. No new condition is required."
+        ]
+      },
+      "resultSha256": "a0e2a164a32ee860cf673251d0aa063f619abaf3f2707e536d0ce54a44dc3d37"
+    }
+  ],
+  "residualRisks": [
+    "3 review rounds; findings open after each round: 9, 0, 0."
+  ]
+}

@@ -440,6 +440,49 @@
                 }
               }
             }
+          },
+          "writerGeneration": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "releaseId",
+              "archiveSha256"
+            ],
+            "properties": {
+              "releaseId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "archiveSha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          },
+          "baseMove": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "from",
+              "to",
+              "defaultHead",
+              "archiveSha256"
+            ],
+            "properties": {
+              "from": {
+                "$ref": "#/$defs/commit"
+              },
+              "to": {
+                "$ref": "#/$defs/commit"
+              },
+              "defaultHead": {
+                "$ref": "#/$defs/commit"
+              },
+              "archiveSha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
           }
         }
       },
@@ -572,6 +615,10 @@
                   "$ref": "#/$defs/name"
                 }
               ]
+            },
+            "assignedLane": {
+              "description": "The lead's subsequent assignment. The lane that handed off the candidate and its evidence stay on the queue item.",
+              "$ref": "#/$defs/name"
             },
             "stage": {
               "enum": [
@@ -820,6 +867,13 @@
                 }
               }
             },
+            "acceptedRegionPaths": {
+              "description": "Written at acceptance. The candidate's region-owned paths, kept so revoking the last claim cannot remove queue enforcement.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/name"
+              }
+            },
             "namedChecks": {
               "description": "Written only by a hand-off: the checks the lane ran, by catalogue id, which the lead's acceptance proposes beside the checks matching the diff. A hand-off without them drops them. Absent otherwise.",
               "type": "array",
@@ -827,6 +881,80 @@
                 "type": "string",
                 "minLength": 1
               }
+            }
+          }
+        }
+      },
+      "liveFlakes": {
+        "description": "Lead-owned temporary flake declarations scoped to a base commit and check.",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "baseHead",
+            "check",
+            "ref"
+          ],
+          "properties": {
+            "baseHead": {
+              "$ref": "#/$defs/commit"
+            },
+            "check": {
+              "$ref": "#/$defs/name"
+            },
+            "ref": {
+              "$ref": "#/$defs/name"
+            },
+            "tests": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/name"
+              }
+            }
+          }
+        }
+      },
+      "laneOwnership": {
+        "description": "Lead-owned whole-file claims by lane. Absent on records that still use the delivery configuration.",
+        "type": "object",
+        "additionalProperties": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/name"
+          }
+        }
+      },
+      "laneRegions": {
+        "description": "Lead-owned claims on committed text blobs. Line coordinates are one-based and half-open.",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "lane",
+            "path",
+            "baseHead",
+            "start",
+            "end"
+          ],
+          "properties": {
+            "lane": {
+              "$ref": "#/$defs/name"
+            },
+            "path": {
+              "$ref": "#/$defs/name"
+            },
+            "baseHead": {
+              "$ref": "#/$defs/commit"
+            },
+            "start": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "end": {
+              "type": "integer",
+              "minimum": 2
             }
           }
         }
@@ -1153,7 +1281,8 @@
           "review.evidence",
           "check.selected",
           "selection.refused",
-          "hook.held"
+          "hook.held",
+          "base.moved"
         ]
       },
       "lane": {
@@ -1283,8 +1412,35 @@
           }
         }
       },
+      "baseMergeAuthorization": {
+        "description": "A lead decision authorizing the subject and lane to merge exact base commits from a reviewed head.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "reviewed",
+          "baseCommits",
+          "token"
+        ],
+        "properties": {
+          "reviewed": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+          },
+          "token": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$"
+          },
+          "baseCommits": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+            }
+          }
+        }
+      },
       "reviewCarry": {
-        "description": "Written only by the lead's carry-review, on a decision.recorded entry: the captured review evidence (digest) the lead judged still holds for the work after a commit that needs no new round, from the head it covered to the queued head. Display and acceptance evidence only: it creates no run, is no review round, and is no admission evidence. A later review round or capture for the subject ends it.",
+        "description": "Written by the lead's carry-review decision or a hand-off carrying across authorized base merges: the captured review evidence (digest) the lead judged still holds for the work after a commit that needs no new round, from the head it covered to the queued head. Display and acceptance evidence only: it creates no run, is no review round, and is no admission evidence. A later review round or capture for the subject ends it.",
         "type": "object",
         "additionalProperties": false,
         "required": [
@@ -1306,6 +1462,13 @@
           "digest": {
             "type": "string",
             "pattern": "^[0-9a-f]{64}$"
+          },
+          "baseCommits": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+            }
           }
         }
       },

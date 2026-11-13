@@ -16,16 +16,20 @@ assemble briefs, round files or records by hand, and don't edit what they write.
 ## Repository
 
 - Read the repository's root instruction file first. Its rules apply.
-- Begin each story with `{{flow}} lane-start <key> --base {{base_branch}}`, run from the main checkout. It makes the
+- Begin each story with `{{flow}} lane-start <key> --base {{base_branch}}`, run from the lead checkout `{{lead_checkout}}`.
+  The delivery record is at `{{state}}`. The command makes the
   story's own checkout, `{{lane_checkout}}`, on `{{branch}}` from `{{base_ref}}`, runs the repository's prepare step
   there, sets your focus, records the story's start, which its tracker start waits for, and moves the story from
   planned to building in the record, so the line map shows it started. Run again, it changes nothing. Work only in that checkout: the lead reads your gate and in-app evidence from it. Never edit the lead's
   checkout or another lane's.
-- Never merge or rebase `{{base_ref}}` into your branch once it exists. A new head means another gate run, review
-  round and PR review. You don't need the base: `{{flow}}` reads the delivery's plan, brief and settings from
-  `{{base_ref}}` itself, so the lead's changes reach you without a merge, and the merge queue syncs your branch with
-  the base when it merges. If the queue reports a real conflict, the lead returns the story to you, and only then do
-  you merge the base.
+- When the lead completes `lead-sync --merge`, start newly assigned stories from the moved `{{base_ref}}`.
+  Existing story branches follow the lead's base-merge authorization and review rules.
+- The merge queue normally syncs your branch with `{{base_ref}}`. The tool reads the plan, brief and settings from
+  that remote base while you work. Before merging the base into your story branch, wait for the lead to record the
+  authorization for your story, reviewed head and exact base commits with `lead-authorize-base-merge`.
+  Use the lead's printed merge commands with their authorization trailer. If the story diff and your owned content are unchanged, hand-off keeps the aligned review
+  and records the merge. Run gates and any required in-app and PR checks at the new head. A lane commit, an unauthorized
+  merge or a merge that changes the story diff or owned content needs a new review.
 - Branch: `{{branch}}`. Commit subjects start with the story key.
 - Never touch: {{never_touch}}. Change only the files your lane owns (below, and `lanes.<lane>.owns` in
   the delivery file). The lead refuses a hand-off that changes anything else.
@@ -145,3 +149,10 @@ recorded, never by pattern.
 ## Delivery notes
 
 {{notes}}
+
+
+## Record writer generation
+
+The shared record admits one applied archive digest. If this checkout applies another generation, wait for the
+lead to run `lead-upgrade-writer` before writing the record with it. A refusal names both writer generations.
+Resume lane commands from the generation pinned by the lead.
