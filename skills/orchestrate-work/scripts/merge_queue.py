@@ -1136,7 +1136,7 @@ class Runner:
                 found.setdefault(match["id"], (match.groupdict().get("message") or "").strip())
         return [{"id": name, "message": message} for name, message in found.items()]
 
-    def flake_for(self, check_id: str, failures: list[dict]) -> str | None:
+    def flake_for(self, check_id: str, failures: list[dict], base_head: str | None) -> str | None:
         """The references of the declared flakes that cover every failure of this check, or None.
 
         A declaration without test patterns covers the whole check; one with
@@ -1144,6 +1144,9 @@ class Runner:
         pattern cannot read is never retried on its strength.
         """
         declared = [flake for flake in self.binding.get("flakes", []) if flake["check"] == check_id]
+        if not declared and base_head:
+            declared = [flake for flake in self.state().get("liveFlakes", [])
+                        if flake["baseHead"] == base_head and flake["check"] == check_id]
         whole = [flake["ref"] for flake in declared if "tests" not in flake]
         if whole:
             return ", ".join(whole)
@@ -2243,7 +2246,8 @@ class Runner:
                     completed = future.result()
                     assert completed is not None
                     entry = finish(check, completed)
-                    flake = self.flake_for(check["id"], entry["failures"]) if entry["state"] == "failed" else None
+                    flake = (self.flake_for(check["id"], entry["failures"], context.values.get("baseHead"))
+                             if entry["state"] == "failed" else None)
                     if flake is not None:
                         # Every failure is a declared flake: one retry, on the record.
                         named = ", ".join(failure["id"] for failure in entry["failures"]) or "the whole check"
@@ -2334,7 +2338,8 @@ class Runner:
                     continue
                 failures, log = self.rerun_outcome(check["id"], completed)
                 retried = False
-                flake = self.flake_for(check["id"], failures) if failed_run(completed) and not completed.timed_out else None
+                flake = (self.flake_for(check["id"], failures, base_head)
+                         if failed_run(completed) and not completed.timed_out else None)
                 if flake is not None:
                     # As on the candidate: a failure made only of declared flakes is retried once, on the record.
                     named = ", ".join(failure["id"] for failure in failures) or "the whole check"

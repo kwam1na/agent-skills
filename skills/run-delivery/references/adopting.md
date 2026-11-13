@@ -748,7 +748,10 @@ refused, naming Bitbucket as the forge that has them.
   brought up to date with `git merge --ff-only origin/<base>`. No lead commits in the operator's checkout or in
   another lead's. `lead-plan change` and `lead-plan approval` run there when its HEAD is the base's tip, or ahead of
   it with that delivery's own delivery file and plan commits only, a clean merge of the base among them: they read the
-  worktree's own delivery file, commit it there, and print the push, `git push origin HEAD:<base>`, which you run. A
+  worktree's own delivery file, commit it there, and print the `lead-push` command. It waits for the merge queue lock
+  and checks the base again before publishing. If the queue or another writer moved the base, update your checkout and
+  run it again. Use `lead-flake --check ID --ref REF --test REGEX` to cover a known failing test during a check.
+  The declaration applies to the exact remote base commit and check id, and the binding takes precedence for that check. A
   worktree behind the base, diverged from it, ahead with any other commit (another lead's, or a merge that adds a file
   of its own), on any delivery's story branch, or with uncommitted changes is refused, naming the reason.
   `doctor --delivery` reads a lead worktree as it reads the base's checkout.

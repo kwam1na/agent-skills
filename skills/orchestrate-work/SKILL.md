@@ -5,6 +5,9 @@ description: Deliver a decomposed epic with one lead session coordinating lane s
 
 # Orchestrate Work
 
+The merge queue holds the same lock as lead publication. A temporary flake declared in the record applies to its
+base commit and check id. The runner reads it at the retry decision, with precedence given to the binding.
+
 A record initialized by run-delivery can hold lead-owned lane claims. The planned row holds the current story
 lane. A handed candidate keeps the lane that supplied its evidence, and its optional assigned lane tells the
 lead where to return the work. The queue continues to check the handed candidate.

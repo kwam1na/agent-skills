@@ -136,6 +136,24 @@ class StateToolTests(unittest.TestCase):
         self.assertEqual(shown["journal"], [])
         self.assertEqual(run_tool(fresh, "validate"), (0, {"ok": True}))
 
+    def test_an_invalid_hold_names_the_required_shape(self) -> None:
+        before = self.state_bytes()
+        with self.assertRaises(state_tool.StateError) as refused:
+            self.lead(1, {"meta": {"hold": {"reason": "pause"}}})
+        self.assertIn("{reason, since}", str(refused.exception))
+        self.assertEqual(self.state_bytes(), before)
+
+    def test_live_flakes_are_lead_owned_and_validate_test_patterns(self) -> None:
+        flake = {"baseHead": HEAD_A, "check": "suite", "tests": ["test_flaky"], "ref": "FX-1"}
+        before = self.state_bytes()
+        with self.assertRaises(state_tool.StateError) as refused:
+            state_tool.patch(self.directory, writer="runner", version=1, changes={"liveFlakes": [flake]})
+        self.assertEqual(refused.exception.code, "field_not_owned")
+        with self.assertRaisesRegex(state_tool.StateError, "regular expression"):
+            self.lead(1, {"liveFlakes": [{**flake, "tests": ["("]}]})
+        self.assertEqual(self.state_bytes(), before)
+        self.assertEqual(self.lead(1, {"liveFlakes": [flake]})["liveFlakes"], [flake])
+
     def test_init_refuses_to_replace_existing_state(self) -> None:
         before = self.state_bytes()
         with self.assertRaises(state_tool.StateError) as refused:

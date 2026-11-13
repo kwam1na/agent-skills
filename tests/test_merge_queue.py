@@ -3974,6 +3974,31 @@ class CheckVisibilityTests(MergeQueueTestCase):
         [finished] = self.journal(adopter, "base.rerun.finished")
         self.assertIn(row["baseRerun"]["log"], finished["summary"])
 
+    def test_a_temporary_flake_from_an_old_base_expires_when_the_binding_moves(self) -> None:
+        adopter = self.visible_adopter([check_entry("suite", "--flaky-once", "test_flaky")])
+        old = adopter.tip("main")
+        adopter.lead_write(lambda state: state_tool.patch(
+            adopter.state, writer="lead", version=state["version"],
+            changes={"liveFlakes": [{"baseHead": old, "check": "suite", "tests": ["test_flaky"], "ref": "TEMP"}]}))
+        adopter.advance_base({"docs/base.txt": "next base\n"})
+        self.candidate(adopter)
+        self.assertStopped(self.run_queue(adopter, "feature"), "check_failed")
+        self.assertEqual(self.journal(adopter, "check.retried"), [])
+
+        # The durable declaration now applies to the new base. It supplies the reference in the retry.
+        Path(str(adopter.log) + ".flaked-suite").unlink()
+        binding = {**adopter.binding, "flakes": [{"check": "suite", "tests": ["test_flaky"], "ref": "DURABLE"}]}
+        current = adopter.advance_base({".agents/orchestration.json": json.dumps(binding) + "\n"})
+        adopter.lead_write(lambda state: state_tool.patch(
+            adopter.state, writer="lead", version=state["version"],
+            changes={"liveFlakes": [{"baseHead": current, "check": "suite", "ref": "TEMP"}]}))
+        self.candidate(adopter, name="next-feature")
+        results = self.run_queue(adopter, "next-feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document())
+        [retried] = self.journal(adopter, "check.retried")
+        self.assertIn("DURABLE", retried["summary"])
+        self.assertNotIn("TEMP", retried["summary"])
+
     def test_a_failure_matching_only_a_declared_flake_is_retried_once_and_journaled(self) -> None:
         flakes = [{"check": "suite", "tests": ["test_launcher_.*"], "ref": "FLAKE-7"}]
         adopter = self.visible_adopter([check_entry("suite", "--flaky-once", "test_launcher_cancel")], flakes=flakes)
