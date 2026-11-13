@@ -328,17 +328,31 @@ class WriterGenerationTests(unittest.TestCase):
                 worker = threading.Thread(target=handoff)
                 worker.start()
                 self.assertTrue(staged.wait(2))
+                journal_done = threading.Event()
+                def concurrent_journal() -> None:
+                    try:
+                        state_tool.append_journal(self.directory, kind="decision.recorded", summary="Concurrent writer")
+                    except Exception as error:
+                        errors.append(error)
+                    finally:
+                        journal_done.set()
+                journaler = threading.Thread(target=concurrent_journal)
+                journaler.start()
                 lead = threading.Thread(target=transition, name="lead-transition")
                 lead.start()
                 try:
+                    if os.name != "nt":
+                        self.assertTrue(journal_done.wait(2), "normal writer blocked on another admitted operation")
                     self.assertTrue(attempting.wait(1))
                     self.assertFalse(finished.wait(0.2))
                     self.assertEqual(state_tool.read_state(self.directory)["meta"]["writerGeneration"], first)
                 finally:
                     release.set()
                     worker.join(5)
+                    journaler.join(5)
                     lead.join(5)
         self.assertFalse(worker.is_alive())
+        self.assertFalse(journaler.is_alive())
         self.assertFalse(lead.is_alive())
         self.assertEqual(errors, [])
         state = state_tool.read_state(self.directory)

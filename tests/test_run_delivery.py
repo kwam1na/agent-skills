@@ -1760,6 +1760,8 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
             spec.loader.exec_module(tool)
         finally:
             sys.dont_write_bytecode = previous
+        # The source entry-point probe uses the fixture's applied state writer.
+        tool.GENERATION = fx.release
         real, patches = tool.state_tool, []
 
         def raced(*args, check=True):
