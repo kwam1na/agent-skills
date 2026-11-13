@@ -1887,6 +1887,7 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
 
         flow("lead-own", "--lane", "lane-1", "--region", file, "--base", base, "--start", 8, "--end", 16)
         wt = fx.lane("FX-2")
+        sh("git", "config", "merge.log", "true", cwd=wt)
         (wt / "src/one.txt").write_text("one\n")
         (wt / file).write_text("".join(lines[:10] + ["lane edit\n"] + lines[11:]))
         commit(wt, "FX-2: reviewed change")
@@ -2002,6 +2003,8 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         sh(*authorized, cwd=wt)
         sh(*authorized_second, cwd=wt)
         head = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+        self.assertEqual(sh("git", "show", "-s", "--format=%s", head, cwd=wt).stdout.strip(),
+                         "FX-2: Merge delivery base")
         flow("push", "FX-2", cwd=wt)
         code, out = fx.flow("handoff", "FX-2", "--pr", url, cwd=wt)
         self.assertEqual(code, 2, out)

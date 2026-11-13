@@ -4102,7 +4102,8 @@ def lead_authorize_base_merge(args) -> None:
     token = json.loads(recorded.stdout)["entry"]["baseMergeAuthorization"]["token"]
     print(f"{key}: authorized base merges from {reviewed}. Run in the lane checkout, in this order:")
     for base in bases:
-        print(f"git merge --no-ff -m 'Merge delivery base' -m 'Delivery-Base-Merge: {token}' {base}")
+        print(shlex.join(["git", "merge", "--no-ff", "--no-log", "-m", f"{key}: Merge delivery base",
+                          "-m", f"Delivery-Base-Merge: {token}", base]))
 
 
 def delta_entries(helper, root: Path, before: str, after: str) -> dict[bytes, bytes]:

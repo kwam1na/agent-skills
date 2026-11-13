@@ -192,8 +192,8 @@ merge time. A lane can merge the base into its story branch with a recorded auth
 
 Who may push and open pull requests is the operator's grant, written in the delivery file as `authority`
 (`push`, `draftPullRequests`, `grantedBy`, `grantedOn`). `lead-brief` states it in the lane brief, and `push` and
-`open-pr` refuse anything it doesn't grant. Without it, lanes don't push: the lead does. No grant covers force-pushing,
-merging, or marking a pull request ready.
+`open-pr` refuse anything it doesn't grant. Without it, the lead pushes. The lead's merge queue merges pull requests.
+A local base merge into a story branch needs the separate authorization recorded by `lead-authorize-base-merge`.
 
 ## Evidence (video, when relevant)
 
