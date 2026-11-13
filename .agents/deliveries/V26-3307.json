@@ -29,7 +29,8 @@
         "profiles/*",
         "docs/solutions/*",
         "docs/own-deliveries.md",
-        "tests/test_update_provenance.py"
+        "tests/test_update_provenance.py",
+        "tests/test_registry.py"
       ]
     }
   },
