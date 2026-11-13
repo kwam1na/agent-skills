@@ -979,7 +979,7 @@ class AdopterNeutralityTests(unittest.TestCase):
 
     def test_the_tools_assume_no_adopter_default(self) -> None:
         self.assertEqual([path.name for path in self.tool_sources()],
-                         ["delivery_state.py", "merge_queue.py", "render_state.py", "schemas.json"])
+                         ["delivery_state.py", "merge_queue.py", "region_ownership.py", "render_state.py", "schemas.json"])
         for path in self.tool_sources():
             contents = path.read_text(encoding="utf-8")
             for name, pattern in ADOPTER_DEFAULTS:
