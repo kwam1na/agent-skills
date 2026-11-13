@@ -137,8 +137,8 @@ class FreshClone(unittest.TestCase):
             self.assertTrue((Path(out) / "release/linear-v99.0.0-rc.1.zip").is_file())
 
 
-# linear-v2.1.0-rc.1's archive, as the v2.1.0-rc.1 release publishes and attests it.
-CANDIDATE_SHA256 = "e7feafe885899be8bbb2ec76b27eff4d2a27c4b75fe0fbdb080565c49685ea1c"
+# The archive published and attested for the repository's installed delivery generation.
+INSTALLED_ARCHIVE_SHA256 = "716a4fc4faf371d7ac5bff392958232610c7e1561e6879b28c63bfd2cb721e68"
 HOOK_COMMAND = 'python3 -B "${CLAUDE_PROJECT_DIR}/.agent-skills/current/__main__.py" hook claude-code %s || exit 1'
 
 
@@ -159,13 +159,13 @@ class StandingBinding(unittest.TestCase):
         self.assertEqual(receipt["hooks"], {"created": True, "events": ["session-start", "stop"],
                                             "file": ".claude/settings.json"})
 
-    def test_the_installed_generation_is_the_hooks_candidate(self) -> None:
+    def test_the_installed_delivery_generation_matches_the_attested_archive(self) -> None:
         receipt = json.loads((ROOT / ".agent-skills/active.json").read_text(encoding="utf-8"))
-        self.assertEqual(receipt["release"]["releaseId"], "linear-v2.1.0-rc.1")
+        self.assertEqual(receipt["release"]["releaseId"], "linear-v2.2.0")
         # The attested archive's own digest, which the release notes and its .release.json carry: a generation
         # holding the same release id but other bytes fails here. Applying a later release updates this pin with it.
-        self.assertEqual(receipt["generation"], CANDIDATE_SHA256)
-        self.assertEqual(receipt["release"]["archiveSha256"], CANDIDATE_SHA256)
+        self.assertEqual(receipt["generation"], INSTALLED_ARCHIVE_SHA256)
+        self.assertEqual(receipt["release"]["archiveSha256"], INSTALLED_ARCHIVE_SHA256)
         # The installed lifecycle's own verdict: every committed generation file matches the receipt's digests,
         # the projections are current, and the hook entries match the receipt.
         done = subprocess.run(["python3", "-B", ".agent-skills/current/__main__.py", "--root", str(ROOT), "status"],
@@ -174,7 +174,7 @@ class StandingBinding(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         status = json.loads(done.stdout)
         self.assertEqual((status["blockers"], status["lifecycle"]), ([], "current"), done.stdout)
-        self.assertEqual(status["active"]["generation"], CANDIDATE_SHA256)
+        self.assertEqual(status["active"]["generation"], INSTALLED_ARCHIVE_SHA256)
         self.assertEqual(receipt["release"]["profile"], "linear")
         current = os.readlink(ROOT / ".agent-skills/current")
         self.assertEqual(current, "generations/" + receipt["generation"])
