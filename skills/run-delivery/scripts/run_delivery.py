@@ -5130,6 +5130,8 @@ def ownership_overlaps(ownership: dict, files: list[str], shared: set[str]) -> l
 def candidate_ownership(c, lane: str, base: str, head: str, state: dict) -> tuple[list[str], list[str]]:
     changed = list(filter(None, run(["git", "diff", "--no-renames", "--name-only", "-z", base, head]).stdout.split("\0")))
     ownership = c.effective_ownership(state)
+    if "laneOwnership" not in state:
+        return changed, [path for path in changed if lane not in owners_of(ownership, path)]
     shared = shared_outputs(c)
     return changed, [path for path in changed if path not in shared and owners_of(ownership, path) != [lane]]
 
@@ -6059,9 +6061,24 @@ def seed_ownership(c, state: dict) -> dict:
     return {"laneOwnership": ownership}
 
 
+@contextlib.contextmanager
+def ownership_lock(c):
+    """Keep lead ownership writes out of the interval between checking a hand-off and accepting it."""
+    with (c.state / "lane-ownership.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+
+
 def lead_own(args) -> None:
     c = cfg()
     require_lead_checkout(c)
+    if not (c.state / "state.json").is_file():
+        raise Stop("initialize the delivery record before changing lane ownership")
+    with ownership_lock(c):
+        change_ownership(c, args)
+
+
+def change_ownership(c, args) -> None:
     if args.seed:
         if args.lane or args.source:
             raise Stop("--seed takes neither --lane nor --from")
@@ -6128,18 +6145,33 @@ def lead_assign(args) -> None:
                 if c.lane_of(key, state) != args.lane:
                     raise Stop(f"{key} is planned for {c.lane_of(key, state)}, not {args.lane}; seed ownership first")
             return changes
+        planned, queue = state.get("planned", []), state["queue"]
+        moving = [entry for entry in planned if entry["subject"] in keys and entry["lane"] != args.lane]
+        for entry in moving:
+            if entry.get("noChange"):
+                raise Stop(f"{entry['subject']} has a no-change hand-off; settle it before changing its lane")
         changes["planned"] = [
-            {**entry, "lane": args.lane} if entry["subject"] in keys and not entry.get("noChange") else entry
-            for entry in state.get("planned", [])
+            {**entry, "lane": args.lane} if entry in moving else entry for entry in planned
         ]
         changes["queue"] = [
             {**item, "assignedLane": args.lane}
             if item["subject"] in keys and c.lane_of(item["subject"], state) != args.lane else item
-            for item in state["queue"]
+            for item in queue
         ]
-        for entry in state.get("planned", []):
-            if entry["subject"] in keys and entry.get("noChange") and entry["lane"] != args.lane:
-                raise Stop(f"{entry['subject']} has a no-change hand-off; settle it before changing its lane")
+        # A reassignment alone doesn't give the receiving lane work on a candidate already in the queue.
+        if not any(entry["subject"] in keys and entry["stage"] != "settled" for entry in planned):
+            rows = state["lanes"]
+            changes["lanes"] = rows if any(entry["id"] == args.lane for entry in rows) else [
+                *rows, {**row, "state": "idle", "focus": ""}
+            ]
+        previous = {entry["lane"] for entry in moving}
+        busy = {entry["lane"] for entry in changes["planned"] if entry["stage"] != "settled"}
+        busy.update(item["lane"] for item in queue if item["stage"] != "merged")
+        changes["lanes"] = [
+            {**entry, "state": "idle", "focus": "", "waitingOn": None, "since": now()}
+            if entry["id"] in previous - busy and entry["state"] != "idle" else entry
+            for entry in changes["lanes"]
+        ]
         return changes
 
     patch_from(assign, f"{args.lane}'s assignment")
@@ -6262,6 +6294,13 @@ def pr_review_acceptance(conf: dict, url: str, head: str, recorded: dict,
 
 def lead_accept(args) -> None:
     c = cfg()
+    if not (c.state / "state.json").is_file():
+        raise Stop("initialize the delivery record before accepting work")
+    with ownership_lock(c):
+        accept_story(c, args)
+
+
+def accept_story(c, args) -> None:
     if args.requeue:
         requeue(c, c.require(args.requeue))
         return
@@ -6470,10 +6509,10 @@ def lead_accept(args) -> None:
                (f"Hand-off checked as a claim after its merge: its PR merged at {head[:10]} into {c.base_branch}, "
                 f"{len(set(numbers))} round(s) journaled, last approved by every lens, review evidence captured at "
                 f"that head, gates and in-app evidence current; its files could not be checked against "
-                f"{c.lane_of(key)}'s." if merged else
+                f"{lane}'s." if merged else
                 f"Hand-off checked as a claim: {c.remote}/{branch} at {head[:10]}, its PR open at that head into "
                 f"{c.base_branch}, {len(set(numbers))} round(s) journaled, last approved by every lens, review evidence "
-                f"captured at that head, files within {c.lane_of(key)}'s, gates and in-app evidence current.")
+                f"captured at that head, files within {lane}'s, gates and in-app evidence current.")
                + (" " + "; ".join(decisions) + "." if decisions else ""))
     # Accepted already: a plan its registration can't rebuild now (a story added without its reason) says why, and
     # the next rebuild catches up.

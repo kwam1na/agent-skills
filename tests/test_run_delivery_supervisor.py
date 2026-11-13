@@ -1399,6 +1399,8 @@ class LeadAcceptChoosesChecksTests(unittest.TestCase):
     def test_ownership_transfer_keeps_the_running_queue_check(self) -> None:
         fx = self.fixture()
         m = fx.main
+        delivery = m / ".agents/deliveries/FX-1.json"
+        add_story(fx, delivery, "FX-4", why="Exercise the lane that transferred its claim.")
         started, release = fx.tmp / "check-started", fx.tmp / "check-release"
         (m / "tools/check.py").write_text(CHECK + f"""
 from pathlib import Path
@@ -1427,19 +1429,28 @@ if Path({str(started.with_suffix(".armed"))!r}).exists():
                 running_check = before["state"]["meta"]["checking"]
                 check_started = [e["id"] for e in before["journal"] if e["kind"] == "check.started"]
                 self.assertTrue(check_started)
-                wt = fx.lane("FX-3")
-                (wt / "src/one.txt").write_text("next story\n")
-                commit(wt, "FX-3: edit the transferred file")
-                review = wt / ".orchestration/review/FX-3"
-                review.mkdir(parents=True)
-                (review / "context.md").write_text("- fixture evidence\n")
-                review_args = ("review-prepare", "FX-3", "--round", "1")
-                code, out = fx.flow(*review_args, cwd=wt)
+                def candidate(key: str) -> Path:
+                    wt = fx.lane(key)
+                    (wt / "src/one.txt").write_text("next story\n")
+                    commit(wt, f"{key}: edit the transferred file")
+                    review = wt / ".orchestration/review" / key
+                    review.mkdir(parents=True)
+                    (review / "context.md").write_text("- fixture evidence\n")
+                    return wt
+
+                new_owner = candidate("FX-3")
+                old_owner = candidate("FX-4")
+                code, out = fx.flow("review-prepare", "FX-4", "--round", "1", cwd=old_owner)
+                self.assertEqual(code, 0, out)
+                code, out = fx.flow("review-prepare", "FX-3", "--round", "1", cwd=new_owner)
                 self.assertEqual(code, 2, out)
                 self.assertIn("writer_not_owned", out)
                 code, out = fx.flow("lead-own", "--lane", "lane-2", "--move", "src/one*", "--from", "lane-1", cwd=m)
                 self.assertEqual(code, 0, out)
-                code, out = fx.flow(*review_args, cwd=wt)
+                code, out = fx.flow("review-prepare", "FX-4", "--round", "1", "--restart", cwd=old_owner)
+                self.assertEqual(code, 2, out)
+                self.assertIn("outside lane-1", out)
+                code, out = fx.flow("review-prepare", "FX-3", "--round", "1", cwd=new_owner)
                 self.assertEqual(code, 0, out)
                 after = record(fx)
                 self.assertEqual(after["state"]["meta"]["checking"], running_check)
@@ -1479,6 +1490,8 @@ if Path({str(started.with_suffix(".armed"))!r}).exists():
         path.write_text(json.dumps(delivery, indent=2))
         commit(m, "FX-1: both lanes may refresh the provenance lock")
         sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        add_story(fx, path, "FX-4")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
         code, out = fx.flow("lead-init", cwd=m)
         self.assertEqual(code, 0, out)
 
@@ -1492,6 +1505,17 @@ if Path({str(started.with_suffix(".armed"))!r}).exists():
         actual = sh("git", "show", "origin/feature/FX-1:gen/lock.json", cwd=m).stdout
         self.assertEqual(actual, fixture_lock({"src/one.txt": "one\n", "src/two.txt": "two\n"}))
 
+        # A clean merge would preserve the candidate's changed listing without the queue's shared-output guard.
+        sh("git", "merge", "-q", "--ff-only", "origin/feature/FX-1", cwd=m)
+        base = sh("git", "rev-parse", "HEAD", cwd=m).stdout
+        hand_off(fx, "FX-4", "lane-1", files={"gen/lock.json": fixture_lock({"src/one.txt": "one\n"})})
+        code, out = fx.flow("lead-accept", "FX-4", cwd=m)
+        self.assertEqual(code, 0, out)
+        queue_run(fx, "FX-4")
+        self.assertEqual(self.item(fx, "FX-4")["stage"], "stopped")
+        self.assertIn("removed src/two.txt", kinds(fx, "candidate.stopped")[-1]["summary"])
+        self.assertEqual(sh("git", "rev-parse", "origin/feature/FX-1", cwd=m).stdout, base)
+
     def test_reassigning_a_handed_story_preserves_the_handing_lanes_authorization(self) -> None:
         fx = self.fixture()
         hand_off(fx, "FX-2", "lane-1")
@@ -1499,6 +1523,16 @@ if Path({str(started.with_suffix(".armed"))!r}).exists():
         code, out = fx.flow("lead-assign", "FX-2", "--lane", "lane-2", "--title", "Lane 2", cwd=fx.main)
         self.assertEqual(code, 0, out)
         self.assertEqual(self.item(fx), {**before, "assignedLane": "lane-2"})
+        rows = {lane["id"]: lane["state"] for lane in record(fx)["state"]["lanes"]}
+        self.assertEqual(rows, {"lane-1": "handed", "lane-2": "idle"})
+        code, out = fx.flow("lead-own", "--lane", "lane-2", "--move", "src/one*", "--from", "lane-1", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-accept", "FX-2", "--full-suite", cwd=fx.main)
+        self.assertEqual(code, 1, out)
+        self.assertIn("outside lane-1", out)
+        self.assertEqual(self.item(fx), {**before, "assignedLane": "lane-2"})
+        code, out = fx.flow("lead-own", "--lane", "lane-1", "--move", "src/one*", "--from", "lane-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
         code, out = fx.flow("lead-accept", "FX-2", "--full-suite", cwd=fx.main)
         self.assertEqual(code, 0, out)
         self.assertEqual(self.item(fx)["lane"], "lane-1")
