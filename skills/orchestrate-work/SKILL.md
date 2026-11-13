@@ -757,3 +757,5 @@ An unpinned legacy record is readable and requires `--expected unpinned` before 
 Run this low-level transition only while the supervisor is parked. Prefer the run-delivery command, which
 coordinates parking and resuming. The source corpus has no applied receipt and can write only unpinned source
 fixtures. Apply a verified release to write a pinned record.
+
+Admitted write operations hold a shared `writer.lock` through their state, journal, review-artifact and recovery-intent changes. A lead writer transition takes it exclusively after taking the queue lock. The short state transaction lock still checks admission before each record mutation. This lets an admitted hand-off finish its matching journal evidence before the generation changes.
