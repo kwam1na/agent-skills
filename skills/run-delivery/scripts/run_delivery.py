@@ -6403,13 +6403,23 @@ def restore_move_installation(c, intent: dict) -> None:
             git("rm", "-r", "-q", "--ignore-unmatch", "--", path)
 
 
+def managed_installation_paths() -> set[str]:
+    """Use the lifecycle's fixed projection definitions rather than duplicating host paths."""
+    generation = str(GENERATION)
+    if generation not in sys.path:
+        sys.path.insert(0, generation)
+    from agent_skills.hosts import exposure_records
+    from agent_skills.receipt import SETTINGS_FILE
+    return {".agent-skills", SETTINGS_FILE, *[entry["root"] for entry in exposure_records()]}
+
+
 def installation_paths(*receipts: dict) -> list[str]:
     paths = {".agent-skills"}
     for receipt in receipts:
         paths.update(entry["root"] for entry in receipt.get("exposures", []))
         if receipt.get("hooks", {}).get("file"):
             paths.add(receipt["hooks"]["file"])
-    managed = {".agent-skills", ".agents/skills", ".claude/skills", ".claude/settings.json"}
+    managed = managed_installation_paths()
     if not paths <= managed:
         raise Stop("an installation receipt names a path outside the supported managed projections")
     return sorted(paths)
@@ -6484,7 +6494,7 @@ def read_base_move(path: Path) -> dict | None:
             if not isinstance(intent.get(key), list) or not intent[key] or any(not isinstance(item, str) or not item
                                                                             for item in intent[key]):
                 raise ValueError()
-        if not set(intent["installationPaths"]) <= {".agent-skills", ".agents/skills", ".claude/skills", ".claude/settings.json"}:
+        if not set(intent["installationPaths"]) <= managed_installation_paths():
             raise ValueError()
         phase = intent["phase"]
         if phase not in ("merging", "applying", "applied", "committing", "prepared", "published"):
