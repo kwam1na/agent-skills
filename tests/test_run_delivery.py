@@ -1997,6 +1997,7 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         self.assertEqual(hand["reviewCarry"]["from"], reviewed)
         self.assertEqual(hand["reviewCarry"]["to"], head)
         self.assertEqual(hand["reviewCarry"]["digest"], observed["digest"])
+        self.assertTrue(any(f"review captured at {reviewed} and carried to {head}" in e["summary"] for e in doc["journal"]))
 
     def test_lane_and_lead_flow_end_to_end(self) -> None:
         fx = self.fixture()

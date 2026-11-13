@@ -6861,14 +6861,15 @@ def accept_story(c, args) -> None:
     # What the plan's producer proofs are judged by: the accepted head and the in-app items accepted as blocked.
     append_log("acceptance", key, {"head": head, "ready": ready, "blocked": {label: reason for label, reason in
                                                                            blocked.items() if label in accepted_blocked}})
+    review_note = (f"review captured at {carried_review['from']} and carried to {head}"
+                   if carried_review else "review evidence captured at that head")
     state_tool("journal", "--kind", "decision.recorded", "--subject", key, "--summary",
                (f"Hand-off checked as a claim after its merge: its PR merged at {head[:10]} into {c.base_branch}, "
-                f"{len(set(numbers))} round(s) journaled, last approved by every lens, review evidence captured at "
-                f"that head, gates and in-app evidence current; its files could not be checked against "
+                f"{len(set(numbers))} round(s) journaled, last approved by every lens, {review_note}, gates and in-app evidence current; its files could not be checked against "
                 f"{lane}'s." if merged else
                 f"Hand-off checked as a claim: {c.remote}/{branch} at {head[:10]}, its PR open at that head into "
-                f"{c.base_branch}, {len(set(numbers))} round(s) journaled, last approved by every lens, review evidence "
-                f"captured at that head, files within {lane}'s, gates and in-app evidence current.")
+                f"{c.base_branch}, {len(set(numbers))} round(s) journaled, last approved by every lens, {review_note}, "
+                f"files within {lane}'s, gates and in-app evidence current.")
                + (" " + "; ".join(decisions) + "." if decisions else ""))
     # Accepted already: a plan its registration can't rebuild now (a story added without its reason) says why, and
     # the next rebuild catches up.
