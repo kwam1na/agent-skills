@@ -4022,12 +4022,14 @@ class SupervisorPostMergeTests(unittest.TestCase):
         self.addCleanup(fx.close)
         m = fx.main
         old = supervised(fx)
+        tracked(fx, FileBackend)
         previous = json.loads(old.read_text())
         old.unlink()
         (old.parent / "FX-9.json").write_text(json.dumps({**previous, "delivery": "FX-9", "baseBranch": "main", "stories": {}}))
         binding = m / ".agents/orchestration.json"
         standing = json.loads(binding.read_text())
         standing["base"]["ref"] = "main"
+        standing["state"]["publishers"] = []
         standing["bases"] = ["integrate/*"]
         standing["fullHealth"] = [sys.executable, "-B", "scripts/run-tests.py", "--workers", "4"]
         binding.write_text(json.dumps(standing, indent=2))
@@ -4071,8 +4073,11 @@ class SupervisorPostMergeTests(unittest.TestCase):
         initial = lead / ".agents/deliveries/FX-1.json"
         d = json.loads(initial.read_text())
         self.assertEqual((d["baseBranch"], d["integrationTarget"]), ("integrate/fixture", "main"))
-        self.assertEqual(json.loads((lead / ".agents/orchestration.json").read_text()),
-                         {**standing, "base": {**standing["base"], "ref": "integrate/fixture"}})
+        expected = {**standing, "base": {**standing["base"], "ref": "integrate/fixture"},
+                    "state": {**standing["state"], "publishers": [{"id": "tracker", "argv": [
+                        "python3", "-B", ".agent-skills/current/skills/run-delivery/scripts/tracker_publisher.py",
+                        "--state-dir", "{stateDirectory}"], "timeoutSeconds": 600}]}}
+        self.assertEqual(json.loads((lead / ".agents/orchestration.json").read_text()), expected)
         self.assertIn("resume", flow(*setup).lower())
         lead_binding = lead / ".agents/orchestration.json"
         drafted_binding = lead_binding.read_bytes()
