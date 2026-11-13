@@ -205,7 +205,8 @@ class StandingBinding(unittest.TestCase):
         binding = json.loads((ROOT / ".agents/orchestration.json").read_text(encoding="utf-8"))
         deliveries = [json.loads(path.read_text(encoding="utf-8"))
                       for path in (ROOT / ".agents/deliveries").glob("*.json")]
-        self.assert_standing_base(binding, deliveries)
+        branch = _git(ROOT, "branch", "--show-current").strip()
+        self.assert_standing_base(binding, deliveries, branch=self.delivery_check_branch(branch, os.environ))
         self.assertEqual(binding["state"]["liveHome"], "line-map")
         self.assertNotIn("PATH", binding["environment"])
         renderer = next(entry for entry in binding["state"]["renderers"] if entry["id"] == "line-map")
@@ -214,11 +215,21 @@ class StandingBinding(unittest.TestCase):
         pattern = binding["state"]["forgeSnapshot"]["argv"]
         self.assertEqual(pattern[pattern.index("--subject-pattern") + 1], "V26-[0-9]+")
 
-    def assert_standing_base(self, binding: dict, deliveries: list[dict]) -> None:
+    @staticmethod
+    def delivery_check_branch(branch: str, environment) -> str:
+        if environment.get("GITHUB_EVENT_NAME") == "pull_request":
+            return environment.get("GITHUB_BASE_REF") or branch
+        if environment.get("GITHUB_EVENT_NAME") == "push":
+            return environment.get("GITHUB_REF_NAME") or branch
+        return branch
+
+    def assert_standing_base(self, binding: dict, deliveries: list[dict], *, branch: str = "") -> None:
         # A detached check checkout can establish its mode from the committed
         # binding and delivery declaration alone.
         self.assertEqual(binding["base"]["remote"], "origin")
         base = binding["base"]["ref"]
+        if branch == "main" or branch.startswith("integrate/"):
+            self.assertEqual(base, branch, "the standing binding must match the checked base")
         if base != "main":
             self.assertRegex(base, r"^integrate/[^/]+$")
             self.assertIn("integrate/*", binding.get("bases", []))
@@ -230,7 +241,16 @@ class StandingBinding(unittest.TestCase):
         declaration = {"baseBranch": "integrate/fixture", "integrationTarget": "main"}
         self.assert_standing_base(binding, [declaration])
         integration = {**binding, "base": {**binding["base"], "ref": "integrate/fixture"}}
+        self.assert_standing_base(integration, [declaration], branch="integrate/fixture")
         self.assert_standing_base(integration, [declaration])
+        for branch, environment in (
+            ("main", {}),
+            ("", {"GITHUB_EVENT_NAME": "push", "GITHUB_REF_NAME": "main"}),
+            ("", {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_BASE_REF": "main"}),
+        ):
+            target = self.delivery_check_branch(branch, environment)
+            with self.subTest(branch=branch, environment=environment), self.assertRaises(AssertionError):
+                self.assert_standing_base(integration, [declaration], branch=target)
         for declarations in ([], [{"baseBranch": "integrate/fixture"}],
                              [{**declaration, "integrationTarget": "other"}], [declaration, declaration]):
             with self.subTest(declarations=declarations), self.assertRaises(AssertionError):

@@ -5607,9 +5607,18 @@ def verify_integration_checkout(c, root: Path, key: str, base: str, target: str)
         binding = load_json(root / ".agents/orchestration.json") or {}
         if integration_matches(delivery, binding, key, base, target):
             return
+        # Setup writes the delivery first. Complete an interrupted first draft
+        # only on the original standing tree with a matching declaration.
+        standing = git("rev-parse", "--verify", f"refs/heads/{target}")
+        if (binding.get("base", {}).get("ref") == target
+                and integration_matches(delivery, {**binding, "base": {**binding["base"], "ref": base}}, key, base, target)
+                and git("rev-parse", "HEAD", cwd=root) == standing
+                and not git("diff", "HEAD", "--", ".agents/orchestration.json", cwd=root)):
+            binding["base"]["ref"] = base
+            (root / ".agents/orchestration.json").write_text(json.dumps(binding, indent=2) + "\n")
+            return
         # A draft can fail before either file is written. Only resume that
         # checkout if it still holds the unmodified starting tree.
-        standing = git("rev-parse", "--verify", f"refs/heads/{target}")
         if not delivery and binding.get("base", {}).get("ref") == target and clean_head(root) == standing:
             return
     raise Stop(f"{root} already exists and does not hold the integration setup for {key} on {base}")
@@ -5627,7 +5636,7 @@ def integration_checkout(c, key: str, base: str, plan: str) -> tuple[Path, str]:
         target = existing.get("integrationTarget")
         if target and integration_matches(existing, c.binding, key, base, target) and git("branch", "--show-current") == base:
             return root, target
-        if not existing and c.binding_base != base and serves(c.binding, base):
+        if c.binding_base != base and serves(c.binding, base):
             verify_integration_checkout(c, root, key, base, c.binding_base)
             return root, c.binding_base
         raise Stop(f"{root} is not the lead checkout of {key} on {base}")
@@ -5696,7 +5705,10 @@ def lead_setup(args) -> None:
     binding["base"]["ref"] = args.base
     integration.binding_path.write_text(json.dumps(binding, indent=2) + "\n")
     print(f"lead checkout: {root}; review the draft, commit the binding and delivery file there, then push {args.base} "
-          f"to {c.remote} before lead-init. Integrate into {target} at close-out.")
+          f"to {c.remote}. Run these commands there:")
+    for command in ("lead-init", "lead-brief"):
+        print(f"  {flow_command()} --delivery {args.key} {command}")
+    print(f"Integrate into {target} at close-out.")
 
 
 def draft_delivery(c, args, integration_target: str | None = None) -> None:

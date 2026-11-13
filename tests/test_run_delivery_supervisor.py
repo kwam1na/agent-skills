@@ -4022,7 +4022,9 @@ class SupervisorPostMergeTests(unittest.TestCase):
         self.addCleanup(fx.close)
         m = fx.main
         old = supervised(fx)
+        previous = json.loads(old.read_text())
         old.unlink()
+        (old.parent / "FX-9.json").write_text(json.dumps({**previous, "delivery": "FX-9", "baseBranch": "main", "stories": {}}))
         binding = m / ".agents/orchestration.json"
         standing = json.loads(binding.read_text())
         standing["base"]["ref"] = "main"
@@ -4060,7 +4062,9 @@ class SupervisorPostMergeTests(unittest.TestCase):
         self.assertEqual(code, 2, out)
         self.assertIn("match a served base", out)
         self.assertFalse((m / "lanes/FX-1").exists())
-        flow(*setup)
+        drafted = flow(*setup)
+        self.assertIn("--delivery FX-1 lead-init", drafted)
+        self.assertIn("--delivery FX-1 lead-brief", drafted)
         lead = (m / "lanes/FX-1").resolve()
         self.assertEqual(json.loads(binding.read_text()), standing)
         self.assertEqual(sh("git", "branch", "--show-current", cwd=m).stdout.strip(), "main")
@@ -4070,6 +4074,27 @@ class SupervisorPostMergeTests(unittest.TestCase):
         self.assertEqual(json.loads((lead / ".agents/orchestration.json").read_text()),
                          {**standing, "base": {**standing["base"], "ref": "integrate/fixture"}})
         self.assertIn("resume", flow(*setup).lower())
+        lead_binding = lead / ".agents/orchestration.json"
+        drafted_binding = lead_binding.read_bytes()
+        foreign = json.dumps({**standing, "base": {"remote": "origin", "ref": "integrate/foreign"}})
+        lead_binding.write_text(foreign)
+        code, out = fx.flow(*setup, cwd=m)
+        self.assertEqual(code, 2, out)
+        self.assertIn("does not hold the integration setup", out)
+        self.assertEqual(lead_binding.read_text(), foreign)
+        kept = initial.read_bytes()
+        initial.write_text(json.dumps({**d, "integrationTarget": "other"}))
+        lead_binding.write_bytes(drafted_binding)
+        code, out = fx.flow(*setup, cwd=m)
+        self.assertEqual(code, 2, out)
+        self.assertIn("does not hold the integration setup", out)
+        self.assertEqual(json.loads(initial.read_text())["integrationTarget"], "other")
+        self.assertEqual(lead_binding.read_bytes(), drafted_binding)
+        initial.write_bytes(kept)
+        sh("git", "restore", "--", ".agents/orchestration.json", cwd=lead)
+        self.assertIn("resume", flow(*setup).lower())
+        self.assertEqual(lead_binding.read_bytes(), drafted_binding)
+        self.assertEqual(initial.read_bytes(), kept)
 
         d["stories"] = {"FX-2": {**d["stories"]["FX-2"], "lane": "lane-1", "inApp": "none"}}
         d["lanes"] = {"lane-1": {"owns": ["src/one.txt"]}}
@@ -4080,8 +4105,12 @@ class SupervisorPostMergeTests(unittest.TestCase):
         sh("git", "worktree", "remove", lead, cwd=m)
         self.assertIn("resume", flow(*setup).lower())
         self.assertEqual(sh("git", "rev-parse", "HEAD", cwd=lead).stdout.strip(), tip)
-        flow("lead-init", cwd=lead)
-        flow("lead-brief", cwd=lead)
+        sh("git", "worktree", "remove", lead, cwd=m)
+        sh("git", "branch", "-d", "integrate/fixture", cwd=m)
+        self.assertIn("resume", flow(*setup).lower())
+        self.assertEqual(sh("git", "rev-parse", "HEAD", cwd=lead).stdout.strip(), tip)
+        flow("--delivery", "FX-1", "lead-init", cwd=lead)
+        flow("--delivery", "FX-1", "lead-brief", cwd=lead)
         brief = " ".join((lead / d["laneBrief"]).read_text().split())
         directory = lead / ".orchestration/state"
         self.assertIn(f"`{directory}`", brief)

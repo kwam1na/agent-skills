@@ -74,8 +74,8 @@ From the standing base checkout, run `lead-setup KEY --plan PATH --integration B
 authority options. The branch must match a served base in the binding. The command creates the lead's
 delivery checkout, drafts the delivery with `baseBranch` and `integrationTarget`, and points that
 checkout's binding at the integration branch. Rerun the same setup to resume an existing matching checkout.
-Review and commit the initial files there, push the integration branch, then run `lead-init` and
-`lead-brief` there. The brief names the lead checkout and record used by the lanes.
+Review and commit the initial files there, push the integration branch, then run `--delivery KEY lead-init` and
+`--delivery KEY lead-brief` there. The brief names the lead checkout and record used by the lanes.
 
 At close-out, follow **Reviewing an integration base for the default branch** in the orchestrate-work guide.
 
