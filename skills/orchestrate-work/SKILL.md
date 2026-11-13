@@ -5,6 +5,11 @@ description: Deliver a decomposed epic with one lead session coordinating lane s
 
 # Orchestrate Work
 
+A record initialized by run-delivery can hold lead-owned lane claims. The planned row holds the current story
+lane. A handed candidate keeps the lane that supplied its evidence, and its optional assigned lane tells the
+lead where to return the work. The queue continues to check the handed candidate.
+
+
 Deliver a decomposed epic: one lead session plans and assigns tickets to lane
 sessions, owns every merge, shared resource and release, and keeps the
 delivery's state current. Each lane delivers one ticket at a time through the

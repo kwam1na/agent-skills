@@ -469,7 +469,7 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "6da9456e6d1daa3062c0e46afb5d9d0f5b2aad5567c7bc5c1473d9d84d12aa02"
+          "sha256": "5c59ca485898948883f869bc770d404b9c61dd93b23573a93018880fe0ebc0a2"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
@@ -477,15 +477,15 @@
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
-          "sha256": "0cf0ead28d6ecb8a4406712baddd853f8225769474df2129b228353bef87c7a6"
+          "sha256": "55d5b82ae767ef9a0ffbb2d9831802a4e90ff95ad0932551f3627a63e3f272ec"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "30242d0fd0b995aac9dab3a1f0b932d87fdc1e932ee6e40ba5d6c1130999ffc6"
+          "sha256": "8003998662c52136779c0148e6fef4c769ad297b7fa73e7ba57b719355d2d1f3"
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",
-          "sha256": "9c7a53f472112f44f6ce3e5acf45d001e72d0b7cf237a15f940888b04a2c90b4"
+          "sha256": "4353efb42539652336fbe1315d0a3d5556d4b05e456853da461165f4e7d2ca08"
         },
         {
           "path": "skills/orchestrate-work/scripts/render_state.py",
@@ -1018,7 +1018,7 @@
       "outputs": [
         {
           "path": "skills/run-delivery/SKILL.md",
-          "sha256": "ac4fd6d393b96c29dd3c903832c10b9f39e0865449d48dd6736e7ecc2e119d0b"
+          "sha256": "b59369f27a32fc8905258f62a2276146130477c05aa979409a118052f935fe32"
         },
         {
           "path": "skills/run-delivery/adapters/forge_bitbucket.py",
@@ -1058,7 +1058,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "714d91188ef402834d875c0130cf78989105ca0afcc9e1ea7f38579f6270d839"
+          "sha256": "254c06aa0ed0ae74e76c563ebc695d42acd3d17b45928a8186fc1598216ba085"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",

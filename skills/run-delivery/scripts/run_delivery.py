@@ -821,15 +821,30 @@ class Config:
         for k in self.stories:
             self.requirements(k)  # validated on load
 
-    def check_lanes(self) -> None:
-        for key, story in self.stories.items():
-            if story.get("lane") not in self.lanes:
-                raise Stop(f"{self.delivery_where}: story {key} has lane {story.get('lane')!r}, which isn't in `lanes`")
+    def effective_ownership(self, state: dict) -> dict[str, list[str]]:
+        return state.get("laneOwnership", {lane: entry["owns"] for lane, entry in self.lanes.items()})
+
+    def record_state(self) -> dict:
+        # State is replaced atomically. Read only state.json here, without taking the journal lock.
+        return load_json(self.state / "state.json") or {}
+
+    def check_lanes(self, state: dict | None = None) -> None:
+        state = self.record_state() if state is None else state
+        ownership = self.effective_ownership(state)
+        for key in self.stories:
+            lane = self.lane_of(key, state)
+            if lane not in ownership:
+                raise Stop(f"{self.delivery_where}: story {key} has lane {lane!r}, which isn't in `lanes`")
 
     def branch(self, key: str) -> str:
         return self.branch_pattern.format(key=key)
 
-    def lane_of(self, key: str) -> str:
+    def lane_of(self, key: str, state: dict | None = None) -> str:
+        state = self.record_state() if state is None else state
+        if "laneOwnership" in state:
+            for entry in (*state.get("planned", []), *state.get("queue", [])):
+                if entry["subject"] == key:
+                    return entry.get("assignedLane", entry["lane"])
         return self.stories[key]["lane"]
 
     def label(self, key: str) -> str:
@@ -1287,6 +1302,7 @@ def review_prepare(args) -> None:
     candidate = clean_head()
     tree = git("rev-parse", "HEAD^{tree}")
     merge_base = git("merge-base", c.base_ref, "HEAD")
+    lane = check_candidate_ownership(c, key, merge_base, candidate)
     prior_rounds = [json.loads(p.read_text()) for p in round_files(folder)]
     prior_candidate = prior_rounds[-1]["entries"][0]["binding"]["candidateRef"] if prior_rounds else None
     if prior_candidate == candidate:
@@ -1317,7 +1333,7 @@ def review_prepare(args) -> None:
     meta_path.write_text(json.dumps({"round": n, "candidate": candidate, "tree": tree, "startedAt": now(),
                                      "lenses": list(c.lenses), "attempts": attempts, "restarts": restarts}, indent=2))
     append_log("prepares", key, {"round": n, "candidate": candidate, "restart": bool(previous)})
-    state_tool("focus", "--lane", c.lane_of(key), "--text", f"{key} review round {n}", "--state", "reviewing", check=False)
+    state_tool("focus", "--lane", lane, "--text", f"{key} review round {n}", "--state", "reviewing", check=False)
     print(f"{key} round {n}: candidate {candidate[:10]}, tree {tree[:10]}" + (f" (restart {len(restarts)})" if restarts else ""))
     print()
     if n == 1 and not restarts:
@@ -1485,11 +1501,12 @@ def review_reduce(args) -> None:
     c = cfg()
     key = c.require(args.key)
     n = args.round
-    lane = c.lane_of(key)
     folder = review_dir(key)
     done_path = folder / f"round-{n}.json"
     if done_path.exists():  # reduced already: never rewrite it, only finish the journaling if that failed
         outcome = json.loads(done_path.read_text())
+        candidate = outcome["entries"][0]["binding"]["candidateRef"]
+        lane = check_candidate_ownership(c, key, git("merge-base", c.base_ref, candidate), candidate)
         ensure_recorded(key, outcome, lane, folder)
         summarize(key, outcome)
         return
@@ -1497,6 +1514,8 @@ def review_reduce(args) -> None:
     if not meta_path.exists():
         raise Stop(f"round {n} was never prepared: run review-prepare {key} --round {n} first")
     meta = json.loads(meta_path.read_text())
+    candidate = meta["candidate"]
+    lane = check_candidate_ownership(c, key, git("merge-base", c.base_ref, candidate), candidate)
     if meta["lenses"] != list(c.lenses):
         raise Stop(f"round {n} was prepared for {meta['lenses']}, not this repository's lenses {list(c.lenses)}")
     prior = [json.loads(p.read_text()) for p in round_files(folder)]
@@ -4066,6 +4085,7 @@ def handoff(args) -> None:
     ran = check_ids(c, args.checks, "--checks") if args.checks is not None else []
     folder = review_dir(key)
     head = clean_head()
+    lane = check_candidate_ownership(c, key, git("merge-base", c.base_ref, head), head)
     pushed(key, head)
     pr = forge("get", "--url", args.pr)
     if pr.get("state") != "open" or pr.get("source") != c.branch(key) or pr.get("destination") != c.base_branch:
@@ -5073,7 +5093,7 @@ def plan_problems(c, keys: list[str]) -> list[str]:
             f"correct its key in {c.delivery_where}"]
 
 
-# Ownership is the plan's: lead-accept refuses a hand-off that changes a file outside its lane's `owns`. These warn
+# Ownership comes from the record, or from the delivery file for a legacy record. These helpers warn
 # before a lane starts of the files its story will need: the ones its plan names, and (for lead-assign) the ones that
 # have tended to change with them.
 
@@ -5081,12 +5101,39 @@ PATH_TOKEN = re.compile(r"[A-Za-z0-9._*?\[\]-][A-Za-z0-9._/*?\[\]-]*")
 CO_CHANGE = {"commits": 200, "sweep": 40, "support": 3, "share": 0.25, "shown": 5}
 
 
+def shared_outputs(c) -> set[str]:
+    regenerable = c.binding.get("regenerable") or {}
+    if not regenerable.get("regenerators"):
+        return set()
+    return {entry["path"] for entry in regenerable.get("listings", [])}
+
+
+def owners_of(ownership: dict, path: str) -> list[str]:
+    return [lane for lane, patterns in ownership.items() if any(fnmatch.fnmatchcase(path, g) for g in patterns)]
+
+
 def owner_of(c, path: str) -> str | None:
-    return next((lane for lane, entry in c.lanes.items() if any(fnmatch.fnmatch(path, g) for g in entry["owns"])), None)
+    return next(iter(owners_of(c.effective_ownership(c.record_state()), path)), None)
 
 
 def owned_by(c, lane: str, path: str) -> bool:
-    return any(fnmatch.fnmatch(path, g) for g in c.lanes[lane]["owns"])
+    return path in shared_outputs(c) or owners_of(c.effective_ownership(c.record_state()), path) == [lane]
+
+
+def ownership_overlaps(ownership: dict, files: list[str], shared: set[str]) -> list[str]:
+    # Check real paths and claim patterns. A new path not on the base is checked for a unique owner at admission.
+    paths = set(files) | {pattern for patterns in ownership.values() for pattern in patterns}
+    return [f"{' and '.join(lanes)} both own {path}" for path in sorted(paths - shared)
+            if len(lanes := owners_of(ownership, path)) > 1]
+
+
+def candidate_ownership(c, lane: str, base: str, head: str, state: dict) -> tuple[list[str], list[str]]:
+    changed = list(filter(None, run(["git", "diff", "--no-renames", "--name-only", "-z", base, head]).stdout.split("\0")))
+    ownership = c.effective_ownership(state)
+    if "laneOwnership" not in state:
+        return changed, [path for path in changed if lane not in owners_of(ownership, path)]
+    shared = shared_outputs(c)
+    return changed, [path for path in changed if path not in shared and owners_of(ownership, path) != [lane]]
 
 
 def owner_words(c, path: str) -> str:
@@ -5103,6 +5150,19 @@ def tracked_at_base(c) -> list[str]:
     installed = Path(RECEIPT).parent.as_posix() + "/"
     return [f for f in git("ls-tree", "-r", "--name-only", files_ref(c), check=False).splitlines()
             if not f.startswith(installed)]
+
+
+def check_candidate_ownership(c, key: str, base: str, head: str) -> str:
+    state = c.record_state()
+    lane = c.lane_of(key, state)
+    if "laneOwnership" in state:
+        queued = next((item for item in state["queue"] if item["subject"] == key), None)
+        if queued and queued.get("assignedLane", queued["lane"]) != queued["lane"] and queued["stage"] != "stopped":
+            raise Stop(f"{key} has a hand-off from {queued['lane']}; the lead must settle or return it first")
+        _, outside = candidate_ownership(c, lane, base, head, state)
+        if outside:
+            raise Stop(f"writer_not_owned: {key} changes files outside {lane}'s: {outside}")
+    return lane
 
 
 def story_named_files(c, key: str, tracked: list[str]) -> list[str]:
@@ -5739,7 +5799,7 @@ def lead_init(args) -> None:
     c = cfg()
     # Before anything is written, a plan review adopted included: the supervisor it starts runs the Node on this PATH.
     require_node(c.release, "lead-init")
-    c.check_lanes()
+    c.check_lanes({})
     if c.ship and not c.ship.get("toolingCommit"):
         raise Stop(f"{c.delivery_where}: ship.toolingCommit isn't set")
     adoptable = adoptable_plan_review(c, c.plan)
@@ -5761,14 +5821,18 @@ def lead_init(args) -> None:
     if problems:
         raise Stop(f"lead-init refuses until each of these is fixed (doctor --delivery {c.delivery} reports them too):"
                    + "".join(f"\n  - {problem}" for problem in problems))
-    for line in replace_record(c) if args.replace else []:
-        print(line)
-    state_tool("init", "--headline", c.raw.get("headline", c.delivery))
     planned = [planned_entry(c, key) for key in c.stories]
     # The record's finish items take no other keys: covers, label and at are the plan's.
     finish = [{"id": f["id"], "text": f["text"], "met": False} for f in c.finish]
-    patch_from(lambda doc: {"meta": {"trackerParent": c.delivery, "handoffsNeedAcceptance": True}, "planned": planned,
-                            "finish": finish}, "the delivery's planned work and finish lines")
+    ownership = c.effective_ownership({})
+    overlaps = ownership_overlaps(ownership, tracked_at_base(c), shared_outputs(c))
+    if overlaps:
+        raise Stop(f"lanes own the same files: {'; '.join(overlaps)}")
+    seed = {"meta": {"trackerParent": c.delivery, "handoffsNeedAcceptance": True}, "planned": planned,
+            "finish": finish, "laneOwnership": ownership}
+    for line in replace_record(c) if args.replace else []:
+        print(line)
+    state_tool("init", "--headline", c.raw.get("headline", c.delivery), "--seed", json.dumps(seed))
     lease = (f" The {c.in_app.get('lease', 'in-app')} lease is granted on demand through run-delivery app-check's OS lock,"
              " held only for a lane's own in-app checks.") if c.in_app else ""
     shipping = (f" The tooling never ships: the product branch is built from {', '.join(c.ship['paths'])} of the "
@@ -5905,8 +5969,9 @@ def lead_brief(args) -> None:
     template = (TOOL / "templates/lane-brief.md").read_text()
     in_app = (TOOL / "templates/lane-brief.in-app.md").read_text() if c.in_app else ""
     notes = (c.shelf.text(c.brief_notes) or "").strip() if c.brief_notes else ""
-    lane_rows = "\n".join(f"| {lane} | {', '.join(k for k, s in c.stories.items() if s['lane'] == lane)} | "
-                          f"{', '.join(f'`{g}`' for g in entry['owns'])} |" for lane, entry in c.lanes.items())
+    state = c.record_state()
+    lane_rows = "\n".join(f"| {lane} | {', '.join(k for k in c.stories if c.lane_of(k, state) == lane)} | "
+                          f"{', '.join(f'`{g}`' for g in owns)} |" for lane, owns in c.effective_ownership(state).items())
     story_rows = "\n".join(
         f"| {k} | {c.label(k)} | {', '.join(f'`{p}`' for p in s.get('pinned', [])) or '-'} | "
         f"{'; '.join([requirement_label(r) for r in c.requirements(k)] + (['video'] if s.get('evidence') == 'video' else [])) or 'none'} |"
@@ -5980,12 +6045,84 @@ def story_readiness(c, key: str) -> tuple[str, str | None]:
                          f"\"{moves[0]}\" isn't offered; refine it first")
 
 
+def require_lead_checkout(c) -> None:
+    branch = git("rev-parse", "--abbrev-ref", "HEAD", cwd=c.root, check=False)
+    if branch not in (c.base_branch, f"lead/{c.delivery}") and c.root.resolve() != c.lane_checkout(c.delivery).resolve():
+        raise Stop(f"run this in the lead checkout on {c.base_branch} or in {c.lane_checkout(c.delivery)}")
+
+
+def seed_ownership(c, state: dict) -> dict:
+    ownership = c.effective_ownership(state)
+    if "laneOwnership" in state:
+        raise Stop("lane ownership is already in the record")
+    overlaps = ownership_overlaps(ownership, tracked_at_base(c), shared_outputs(c))
+    if overlaps:
+        raise Stop(f"lanes own the same files: {'; '.join(overlaps)}")
+    return {"laneOwnership": ownership}
+
+
+@contextlib.contextmanager
+def ownership_lock(c):
+    """Keep lead ownership writes out of the interval between checking a hand-off and accepting it."""
+    with (c.state / "lane-ownership.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+
+
+def lead_own(args) -> None:
+    c = cfg()
+    require_lead_checkout(c)
+    if not (c.state / "state.json").is_file():
+        raise Stop("initialize the delivery record before changing lane ownership")
+    with ownership_lock(c):
+        change_ownership(c, args)
+
+
+def change_ownership(c, args) -> None:
+    if args.seed:
+        if args.lane or args.source:
+            raise Stop("--seed takes neither --lane nor --from")
+        patch_from(lambda doc: seed_ownership(c, doc["state"]), "the initial lane ownership")
+        print("seeded lane ownership from the delivery configuration")
+        return
+    if not args.lane:
+        raise Stop("name the receiving lane with --lane")
+    if bool(args.move) != bool(args.source) or args.source == args.lane:
+        raise Stop("--move requires --from naming a different lane")
+    pattern = args.move or args.grant
+    if not pattern or Path(pattern).is_absolute() or any(part in ("", ".", "..") for part in pattern.split("/")):
+        raise Stop("name a repository-relative file or pattern")
+    files = tracked_at_base(c)
+    shared = shared_outputs(c)
+
+    def compute(doc: dict) -> list[str]:
+        state = doc["state"]
+        ownership = copy.deepcopy(state.get("laneOwnership"))
+        if ownership is None:
+            raise Stop("seed this record with lead-own --seed first")
+        if args.lane not in ownership or args.source and args.source not in ownership:
+            raise Stop("name lanes recorded for this delivery")
+        if args.source:
+            if pattern not in ownership[args.source]:
+                raise Stop(f"{args.source} has no claim for {pattern}")
+            ownership[args.source].remove(pattern)
+        if pattern not in ownership[args.lane]:
+            ownership[args.lane].append(pattern)
+        overlaps = ownership_overlaps(ownership, files, shared)
+        if overlaps:
+            raise Stop(f"lanes own the same files: {'; '.join(overlaps)}")
+        return ["--set", json.dumps({"/laneOwnership": ownership})]
+
+    patch_from(compute, f"ownership of {pattern}")
+    change = f"{args.lane} owns {pattern}" + (f", moved from {args.source}" if args.source else "")
+    state_tool("journal", "--kind", "decision.recorded", "--summary", change)
+    print(change)
+
+
 def lead_assign(args) -> None:
     c = cfg()
     keys = [c.require(k) for k in args.keys]
-    for key in keys:
-        if c.lane_of(key) != args.lane:
-            raise Stop(f"{key} is planned for {c.lane_of(key)}, not {args.lane}")
+    require_lead_checkout(c)
     problems = plan_problems(c, keys)
     if problems:
         raise Stop("; ".join(problems))
@@ -5995,6 +6132,49 @@ def lead_assign(args) -> None:
     if unready and not args.force:
         raise Stop("; ".join(unready) + "; nothing was assigned. Have the item made ready, or assign it anyway with --force")
     register_stories(c)
+    row = {"id": args.lane, "title": args.title, "focus": f"assigned {', '.join(keys)}", "state": "assigned",
+           "waitingOn": None, "since": now()}
+
+    def assign(doc: dict) -> dict:
+        state = doc["state"]
+        if args.lane not in c.effective_ownership(state):
+            raise Stop(f"{args.lane} is not a lane of {c.delivery}")
+        changes = {"lanes": [*(entry for entry in state["lanes"] if entry["id"] != args.lane), row]}
+        if "laneOwnership" not in state:
+            for key in keys:
+                if c.lane_of(key, state) != args.lane:
+                    raise Stop(f"{key} is planned for {c.lane_of(key, state)}, not {args.lane}; seed ownership first")
+            return changes
+        planned, queue = state.get("planned", []), state["queue"]
+        moving = [entry for entry in planned if entry["subject"] in keys and entry["lane"] != args.lane]
+        for entry in moving:
+            if entry.get("noChange"):
+                raise Stop(f"{entry['subject']} has a no-change hand-off; settle it before changing its lane")
+        changes["planned"] = [
+            {**entry, "lane": args.lane} if entry in moving else entry for entry in planned
+        ]
+        changes["queue"] = [
+            {**item, "assignedLane": args.lane}
+            if item["subject"] in keys and c.lane_of(item["subject"], state) != args.lane else item
+            for item in queue
+        ]
+        # A reassignment alone doesn't give the receiving lane work on a candidate already in the queue.
+        if not any(entry["subject"] in keys and entry["stage"] != "settled" for entry in planned):
+            rows = state["lanes"]
+            changes["lanes"] = rows if any(entry["id"] == args.lane for entry in rows) else [
+                *rows, {**row, "state": "idle", "focus": ""}
+            ]
+        previous = {entry["lane"] for entry in moving}
+        busy = {entry["lane"] for entry in changes["planned"] if entry["stage"] != "settled"}
+        busy.update(item["lane"] for item in queue if item["stage"] != "merged")
+        changes["lanes"] = [
+            {**entry, "state": "idle", "focus": "", "waitingOn": None, "since": now()}
+            if entry["id"] in previous - busy and entry["state"] != "idle" else entry
+            for entry in changes["lanes"]
+        ]
+        return changes
+
+    patch_from(assign, f"{args.lane}'s assignment")
     rebuild_plan(c)
     tracked = tracked_at_base(c)
     warnings = [*(named_outside(c, key, outside) for key in keys if (outside := outside_lane(c, key, tracked))),
@@ -6004,10 +6184,6 @@ def lead_assign(args) -> None:
         for line in warnings:
             print(f"  {line}")
         print(f"Move each to {args.lane}'s owns now, or plan the story on the lane that owns it.\n")
-    row = {"id": args.lane, "title": args.title, "focus": f"assigned {', '.join(keys)}", "state": "assigned",
-           "waitingOn": None, "since": now()}
-    patch_from(lambda doc: {"lanes": [*(entry for entry in doc["state"]["lanes"] if entry["id"] != args.lane), row]},
-               f"{args.lane}'s assignment")
     # One entry per story, so each ticket's start is its own, made when its lane begins it.
     for key in keys:
         state_tool("journal", "--kind", "lane.assigned", "--lane", args.lane, "--subject", key, "--summary",
@@ -6118,6 +6294,13 @@ def pr_review_acceptance(conf: dict, url: str, head: str, recorded: dict,
 
 def lead_accept(args) -> None:
     c = cfg()
+    if not (c.state / "state.json").is_file():
+        raise Stop("initialize the delivery record before accepting work")
+    with ownership_lock(c):
+        accept_story(c, args)
+
+
+def accept_story(c, args) -> None:
     if args.requeue:
         requeue(c, c.require(args.requeue))
         return
@@ -6214,11 +6397,10 @@ def lead_accept(args) -> None:
     git("fetch", "-q", c.remote, c.base_branch)
     base = git("merge-base", c.base_ref, head)
     # Once merged, the base holds the head or a squash of it, so a diff against it no longer says what the work changed.
-    changed = [] if merged else git("diff", "--name-only", f"{base}..{head}").splitlines()
-    owns = c.lanes[c.lane_of(key)]["owns"]
-    outside = [f for f in changed if not any(fnmatch.fnmatch(f, g) for g in owns)]
+    lane = item["lane"] if "laneOwnership" in doc["state"] else c.lane_of(key, doc["state"])
+    changed, outside = ([], []) if merged else candidate_ownership(c, lane, base, head, doc["state"])
     if outside:
-        problems.append(f"the branch changes files outside {c.lane_of(key)}'s: {outside}")
+        problems.append(f"the branch changes files outside {lane}'s: {outside}")
     proposal = None
     if lead_selects(c) and not merged and chosen is None and not args.full_suite:
         # Under lead selection, a candidate accepted with no choice would check on the fallback: the lead says which.
@@ -6318,7 +6500,8 @@ def lead_accept(args) -> None:
         state_tool("select", "--subject", key, "--clear")
         decisions.append(f"cleared the lead selection recorded at {str(before.get('head'))[:10]}, so the fallback runs")
     if not merged:
-        state_tool("handoff", "--accept", key)
+        authorization = {"ownership": doc["state"].get("laneOwnership"), "head": head, "lane": item["lane"]}
+        state_tool("handoff", "--accept", key, "--authorization", json.dumps(authorization))
     # What the plan's producer proofs are judged by: the accepted head and the in-app items accepted as blocked.
     append_log("acceptance", key, {"head": head, "ready": ready, "blocked": {label: reason for label, reason in
                                                                            blocked.items() if label in accepted_blocked}})
@@ -6326,10 +6509,10 @@ def lead_accept(args) -> None:
                (f"Hand-off checked as a claim after its merge: its PR merged at {head[:10]} into {c.base_branch}, "
                 f"{len(set(numbers))} round(s) journaled, last approved by every lens, review evidence captured at "
                 f"that head, gates and in-app evidence current; its files could not be checked against "
-                f"{c.lane_of(key)}'s." if merged else
+                f"{lane}'s." if merged else
                 f"Hand-off checked as a claim: {c.remote}/{branch} at {head[:10]}, its PR open at that head into "
                 f"{c.base_branch}, {len(set(numbers))} round(s) journaled, last approved by every lens, review evidence "
-                f"captured at that head, files within {c.lane_of(key)}'s, gates and in-app evidence current.")
+                f"captured at that head, files within {lane}'s, gates and in-app evidence current.")
                + (" " + "; ".join(decisions) + "." if decisions else ""))
     # Accepted already: a plan its registration can't rebuild now (a story added without its reason) says why, and
     # the next rebuild catches up.
@@ -7797,7 +7980,7 @@ def orientation(seat: Seat) -> str:
         doc = record_of(c)
         if seat.role == "lane":
             story = seat.story or ""
-            lane = c.stories.get(story, {}).get("lane", "")
+            lane = c.lane_of(story, doc["state"])
             lines += [f"run-delivery: this session is {lane} of delivery {c.delivery}, on story {story}.",
                       f"- delivery: {c.delivery}", f"- story: {story}", f"- lane brief: {c.lane_brief.as_posix()}",
                       f"- next lane command: {lane_next(c, doc['state'], story)}"]
@@ -8569,6 +8752,13 @@ def archive_delivery(c) -> tuple[Path, list[str]]:
     for source in (c.state, c.flow_log, c.flow_log.parent / "evidence"):
         if source.exists():
             shutil.copytree(source, archive / source.name)
+    state = load_json(archive / c.state.name / "state.json") or {}
+    archived = copy.deepcopy(c.raw)
+    for lane, owns in c.effective_ownership(state).items():
+        archived["lanes"].setdefault(lane, {})["owns"] = owns
+    for key in c.stories:
+        archived["stories"][key]["lane"] = c.lane_of(key, state)
+    (archive / c.delivery_path.name).write_text(json.dumps(archived, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     reviewed = archive_plan_review(archive)
     return archive, [f"archived the record, the lead-side logs{', the plan review' if reviewed else ''} and the lanes' "
                      f"evidence in {archive}"]
@@ -9924,17 +10114,7 @@ class Doctor:
             return "wrong", f"stories without a lane: {', '.join(unassigned)}; fix: give each a lane in `lanes`"
         files = git("ls-tree", "-r", "--name-only", d.base_ref if self.base_ref() else "HEAD", cwd=self.root,
                     check=False).splitlines()
-        overlaps = []
-        lanes = list(d.lanes.items())
-        for i, (a, first) in enumerate(lanes):
-            for b, second in lanes[i + 1:]:
-                # A pattern one lane owns that the other's patterns also match, or a file at the base both match.
-                shared = {g for g in first["owns"] if any(fnmatch.fnmatch(g, h) for h in second["owns"])}
-                shared |= {h for h in second["owns"] if any(fnmatch.fnmatch(h, g) for g in first["owns"])}
-                shared |= {f for f in files if any(fnmatch.fnmatch(f, g) for g in first["owns"])
-                           and any(fnmatch.fnmatch(f, g) for g in second["owns"])}
-                if shared:
-                    overlaps.append(f"{a} and {b} both own {', '.join(sorted(shared)[:3])}")
+        overlaps = ownership_overlaps(d.effective_ownership(d.record_state()), files, shared_outputs(d))
         if overlaps:
             return "wrong", f"lanes own the same files: {'; '.join(overlaps)}; fix: make each lane's `owns` disjoint"
         self.delivery = d
@@ -10232,6 +10412,13 @@ def main(argv: list[str] | None = None) -> None:
     p = command(sub, "full-health-run", help="one post-merge fullHealth run at a base head, as the supervisor starts it")
     p.add_argument("--head", required=True); p.add_argument("--record", required=True); p.set_defaults(fn=full_health_run)
     p = command(sub, "lead-brief"); p.set_defaults(fn=lead_brief)
+    p = command(sub, "lead-own", help="grant or move a lane's claim in the record")
+    action = p.add_mutually_exclusive_group(required=True)
+    action.add_argument("--seed", action="store_true", help="seed a legacy record from the delivery configuration")
+    action.add_argument("--grant", metavar="PATTERN")
+    action.add_argument("--move", metavar="PATTERN")
+    p.add_argument("--lane"); p.add_argument("--from", dest="source")
+    p.set_defaults(fn=lead_own)
     p = command(sub, "lead-assign"); p.add_argument("keys", nargs="+"); p.add_argument("--lane", required=True)
     p.add_argument("--title", required=True); p.add_argument("--note")
     p.add_argument("--force", action="store_true",

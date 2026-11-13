@@ -19,6 +19,7 @@ import sys
 sys.dont_write_bytecode = True
 
 import argparse
+import fnmatch
 import concurrent.futures
 import contextlib
 import copy
@@ -1592,6 +1593,7 @@ class Runner:
         self.checking(subject, item["title"], [{"label": "sync", "state": "running"}])
         context = context.with_values(branch=branch, head=head)
         checkout = self.checkout(head, "sync", prepare=True, context=context.with_values(treeSha=self.tree(head)))
+        self.check_shared_outputs(item, checkout, base_head, head, context)
         self.merge_base_in(checkout, base_head, branch, context)
         declared = self.declared_paths(item)
         self.settle(subject, item, checkout, context, inputs, declared, f"Regenerate after syncing {branch} with {self.base}")
@@ -1627,6 +1629,23 @@ class Runner:
         undeclared = [path for path in sorted(touched) if not matches_any(path, declared)]
         if undeclared:
             raise Stop("undeclared_change", "a sync step changed files outside the declared paths", undeclared)
+
+    def check_shared_outputs(self, item: dict, checkout: Path, base: str, candidate: str, context: Context) -> None:
+        """A lane may refresh a shared output without a claim when its listing stays the same."""
+        ownership = self.state().get("laneOwnership")
+        regenerable = self.binding["regenerable"]
+        if ownership is None or not regenerable["regenerators"] or not regenerable.get("listings"):
+            return
+        merge_base = self.git("merge-base", base, candidate, cwd=checkout).stdout.strip()
+        changed = set(self.git("diff", "--no-renames", "--name-only", "-z", merge_base, candidate,
+                               cwd=checkout).stdout.split("\0"))
+        for entry in regenerable["listings"]:
+            path = entry["path"]
+            if path not in changed:
+                continue
+            owners = [lane for lane, claims in ownership.items() if any(fnmatch.fnmatchcase(path, g) for g in claims)]
+            if owners != [item["lane"]]:
+                self.check_listing(checkout, path, entry["argv"], merge_base, base, candidate, context)
 
     def merge_base_in(self, checkout: Path, base_head: str, branch: str, context: Context | None = None) -> None:
         self.merge_in(checkout, base_head, base_head, "--theirs", f"Merge {self.base} into {branch}", context=context)
@@ -2511,6 +2530,7 @@ class Runner:
                 if unknown:
                     raise Stop("binding_invalid", f"the binding declares no lead input {unknown}")
                 context = context.with_values(branch=branch, head=head)
+                self.check_shared_outputs(item, checkout, accumulated, head, context)
                 self.merge_in(checkout, head, accumulated, "--ours", f"Merge {branch} into the batch",
                               against="the batch built so far", context=context)
                 declared = self.declared_paths(item)

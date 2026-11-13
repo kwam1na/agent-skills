@@ -573,6 +573,10 @@
                 }
               ]
             },
+            "assignedLane": {
+              "description": "The lead's subsequent assignment. The lane that handed off the candidate and its evidence stay on the queue item.",
+              "$ref": "#/$defs/name"
+            },
             "stage": {
               "enum": [
                 "queued",
@@ -828,6 +832,16 @@
                 "minLength": 1
               }
             }
+          }
+        }
+      },
+      "laneOwnership": {
+        "description": "Lead-owned whole-file claims by lane. Absent on records that still use the delivery configuration.",
+        "type": "object",
+        "additionalProperties": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/name"
           }
         }
       },
