@@ -1734,6 +1734,8 @@ if Path({str(started.with_suffix(".armed"))!r}).exists():
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
 class RegionOwnershipTests(unittest.TestCase):
+    run_serially = True
+
     @classmethod
     def setUpClass(cls) -> None:
         for name, value in vars(installed_release()).items():
