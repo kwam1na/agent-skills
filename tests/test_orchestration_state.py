@@ -3411,6 +3411,23 @@ class LaneWriterTests(unittest.TestCase):
         self.assertEqual((self.directory / state_tool.STATE_FILE).read_bytes(), before)
         return caught.exception.code
 
+    def test_only_the_lead_can_write_lane_ownership(self) -> None:
+        ownership = {"lane-1": ["src/*"], "lane-2": []}
+        self.assertEqual(self.lead({"laneOwnership": ownership})["laneOwnership"], ownership)
+        change = {"laneOwnership": {"lane-1": ["tools/*"]}}
+        self.assertEqual(self.refused(lambda: self.as_lane("lane-1", change)), "writer_not_owned")
+        self.assertEqual(self.refused(lambda: state_tool.patch(
+            self.directory, writer="runner", version=self.version(), changes=change)), "field_not_owned")
+
+    def test_acceptance_rechecks_the_claims_seen_by_the_lead(self) -> None:
+        self.lead({"meta": {"handoffsNeedAcceptance": True}, "laneOwnership": {"lane-1": ["src/*"], "lane-2": []}})
+        item = state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head="a" * 40,
+                                  change_request="https://forge.test/pr/1")
+        authorization = {"ownership": {"lane-1": ["src/*"], "lane-2": []}, "lane": "lane-1", "head": item["head"]}
+        self.lead({"laneOwnership": {"lane-1": [], "lane-2": ["src/*"]}})
+        self.assertEqual(self.refused(lambda: state_tool.accept_handoff(self.directory, "work-a", authorization)),
+                         "handoff_invalid")
+
     def test_a_lane_writes_its_own_focus_state_and_waiting_on(self) -> None:
         written = self.as_lane("lane-1", {"focus": "Wiring the hand-off", "state": "blocked", "waitingOn": "lead"},
                                selector="lanes[id=lane-1]")

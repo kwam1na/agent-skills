@@ -1364,6 +1364,8 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
         code, out = fx.flow("lead-init", cwd=m)
         self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-own", "--lane", "lane-1", "--grant", "requirements.txt", cwd=m)
+        self.assertEqual(code, 0, out)
         wt = fx.lane("FX-2")
         review = wt / ".orchestration/review/FX-2"
         lenses = fx.lenses(wt)
@@ -1742,7 +1744,7 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
                     holder.wait()
                 holder.stdout.close()
 
-    def raced_lead(self, fx: Fixture, argv: list[str], writes: int) -> tuple[int, str, list[str]]:
+    def raced_lead(self, fx: Fixture, argv: list[str], writes: int, ownership: dict | None = None) -> tuple[int, str, list[str]]:
         """Run a lead command in-process, with lane-1 writing its focus just before each of the command's first
         `writes` patches: the record moves between the command's read and its patch, as a supervisor's or a lane's
         write does. Returns (exit code, output, every patch call's first argument)."""
@@ -1760,7 +1762,10 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
             if args and args[0] == "patch":
                 if len(patches) < writes:
                     state = json.loads(real("show").stdout)["state"]
-                    if any(lane["id"] == "lane-1" for lane in state["lanes"]):
+                    if ownership is not None:
+                        real("patch", "--writer", "lead", "--version", str(state["version"]), "--set",
+                             json.dumps({"/laneOwnership": ownership}))
+                    elif any(lane["id"] == "lane-1" for lane in state["lanes"]):
                         real("focus", "--lane", "lane-1", "--text", f"lane-1 at work ({len(patches) + 1})")
                     else:  # no lane yet: another writer moves the record's headline
                         real("patch", "--writer", "lead", "--version", str(state["version"]), "--patch",
@@ -1797,16 +1802,28 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         self.assertEqual((lanes["lane-2"]["state"], lanes["lane-2"]["focus"]), ("assigned", "assigned FX-3"))
         self.assertEqual(lanes["lane-1"]["focus"], "lane-1 at work (1)", "the write in between was overwritten")
 
-    def test_lead_init_raced_by_another_writer_reads_again_and_keeps_both(self) -> None:
+    def test_lead_init_seeds_ownership_and_planned_work_in_the_first_state(self) -> None:
         fx = self.fixture()
         setup_delivery(fx)
         code, out, patches = self.raced_lead(fx, ["lead-init"], writes=1)
         self.assertEqual(code, 0, out)
+        self.assertEqual(patches, [], "the seed must not need a second write")
         state = json.loads((fx.tmp / "record/state.json").read_text())
-        self.assertEqual(state["meta"]["headline"], "moved in between (1)", "the write in between was overwritten")
+        self.assertEqual(state["version"], 1)
         self.assertEqual(state["meta"]["trackerParent"], "FX-1")
-        self.assertEqual({p["subject"] for p in state["planned"]}, {"FX-2", "FX-3"})
-        self.assertEqual(len(patches), 2, patches)
+        self.assertEqual({p["subject"]: p["lane"] for p in state["planned"]}, {"FX-2": "lane-1", "FX-3": "lane-2"})
+        self.assertEqual(state["laneOwnership"], {"lane-1": ["src/one*"], "lane-2": ["src/two*"]})
+
+    def test_a_racing_ownership_grant_survives_a_retried_transfer(self) -> None:
+        fx = self.assigned_fixture()
+        code, out, patches = self.raced_lead(
+            fx, ["lead-own", "--lane", "lane-2", "--move", "src/one*", "--from", "lane-1"], writes=1,
+            ownership={"lane-1": ["src/one*", "docs/new.md"], "lane-2": ["src/two*"]},
+        )
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(patches), 2)
+        state = json.loads((fx.tmp / "record/state.json").read_text())
+        self.assertEqual(state["laneOwnership"], {"lane-1": ["docs/new.md"], "lane-2": ["src/two*", "src/one*"]})
 
     def test_a_story_registered_under_a_race_is_planned_and_journalled_once(self) -> None:
         fx = self.assigned_fixture()
@@ -3056,30 +3073,24 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
 
     def test_trespass_outside_the_lane_is_refused(self) -> None:
         fx = self.fixture()
-        flow_run = fx.flow
         m = fx.main
         setup_delivery(fx)
-        flow_run("lead-init", cwd=m)
-        flow_run("lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2", cwd=m)
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2", cwd=m)
+        self.assertEqual(code, 0, out)
         wt = fx.lane("FX-3")
         (wt / "src/two.txt").write_text("two\n")
         (wt / "src/one.txt").write_text("trespass\n")
         commit(wt, "FX-3: two and trespass")
-        (wt / ".orchestration/review/FX-3").mkdir(parents=True)
-        (wt / ".orchestration/review/FX-3/context.md").write_text("- evidence")
-        flow_run("gate", "FX-3", cwd=wt)
-        code, out = flow_run("app-check", "FX-3", "loaded", "--mode", "loaded", "--path", "/two", "--eval", "true", cwd=wt)
-        expect(code == 0, out)
-        flow_run("review-prepare", "FX-3", "--round", 1, cwd=wt)
-        write_results(wt / ".orchestration/review/FX-3", 1, "FX-3", fx.lenses(wt))
-        code, out = flow_run("review-reduce", "FX-3", "--round", 1, cwd=wt); expect(code == 0, out)
-        sh("git", "push", "-q", "-u", "origin", "HEAD:feature/FX-3", cwd=wt)
-        body = fx.tmp / "body.md"
-        body.write_text("x\n")
-        flow_run("open-pr", "FX-3", "--title", "FX-3: two", "--body-file", body, cwd=wt)
-        code, out = flow_run("handoff", "FX-3", "--pr", "https://forge.test/pr/1", cwd=wt); expect(code == 0, out)
-        code, out = flow_run("lead-accept", "FX-3", cwd=m)
-        expect(code == 1 and "outside lane-2" in out, f"a trespassing branch was accepted: {out}")
+        review = wt / ".orchestration/review/FX-3"
+        review.mkdir(parents=True)
+        (review / "context.md").write_text("- evidence")
+        code, out = fx.flow("review-prepare", "FX-3", "--round", 1, cwd=wt)
+        self.assertEqual(code, 2, out)
+        self.assertIn("writer_not_owned", out)
+        self.assertIn("src/one.txt", out)
+        self.assertEqual(list(review.glob("brief-*")), [])
         # A half-done init is still a record: lead-init names it, and --replace starts again, archiving inside the
         # fixture.
         conf_path = m / ".agents/run-delivery.json"
@@ -3087,9 +3098,9 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
                                          "cleanup": {"archive": str(fx.tmp / "archive/{delivery}")}}, indent=2))
         shutil.rmtree(fx.tmp / "record")
         fx.call("state_tool", "init", "--headline", "half", cwd=m)
-        code, out = flow_run("lead-init", cwd=m)
+        code, out = fx.flow("lead-init", cwd=m)
         expect(code == 2 and "delivery half" in out and "lead-init --replace" in out, f"a half-done init wasn't named: {out}")
-        code, out = flow_run("lead-init", "--replace", cwd=m); expect(code == 0, f"lead-init --replace didn't start again: {out}")
+        code, out = fx.flow("lead-init", "--replace", cwd=m); expect(code == 0, f"lead-init --replace didn't start again: {out}")
 
     def test_a_merge_outside_the_queue_can_still_take_the_leads_decisions_once(self) -> None:
         fx = self.fixture()
@@ -3103,6 +3114,8 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
         flow_run("lead-init", cwd=m)
         flow_run("lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2", cwd=m)
+        code, out = flow_run("lead-own", "--lane", "lane-2", "--move", "src/one*", "--from", "lane-1", cwd=m)
+        self.assertEqual(code, 0, out)
         wt = fx.lane("FX-3")
         (wt / "src/two.txt").write_text("two\n")
         (wt / "src/one.txt").write_text("outside the lane\n")
@@ -8815,6 +8828,50 @@ class LaneStartAndReadinessTests(unittest.TestCase):
                                     "items": [{"subject": subject, **item}, *others]}))
 
     # lane-start, in each mode.
+
+    def test_record_transfer_and_reassignment_take_effect_on_the_unchanged_base(self) -> None:
+        fx = self.delivery(assign=False)
+        before = sh("git", "rev-parse", "origin/feature/FX-1", cwd=fx.main).stdout
+        self.assertEqual(self.record(fx)["state"]["laneOwnership"],
+                         {"lane-1": ["src/one*"], "lane-2": ["src/two*"]})
+        code, out = fx.flow("lead-own", "--lane", "lane-1", "--move", "src/two*", "--from", "lane-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-assign", "FX-3", "--lane", "lane-1", "--title", "Lane 1", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("lane-1 started it: now building", self.started(fx))
+        state = self.record(fx)["state"]
+        self.assertEqual(state["laneOwnership"], {"lane-1": ["src/one*", "src/two*"], "lane-2": []})
+        self.assertEqual(next(p["lane"] for p in state["planned"] if p["subject"] == "FX-3"), "lane-1")
+        self.assertEqual(sh("git", "rev-parse", "origin/feature/FX-1", cwd=fx.main).stdout, before)
+        self.assertEqual(sh("git", "rev-parse", "HEAD", cwd=fx.main).stdout, before)
+
+    def test_legacy_record_uses_config_until_explicitly_seeded(self) -> None:
+        fx = self.delivery()
+        state = fx.tmp / "record/state.json"
+        legacy = json.loads(state.read_text())
+        legacy.pop("laneOwnership")
+        state.write_text(json.dumps(legacy, indent=2) + "\n")
+        move = ("lead-own", "--lane", "lane-1", "--move", "src/two*", "--from", "lane-2")
+        code, out = fx.flow(*move, cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("lead-own --seed", out)
+        self.assertIn("lane-2 started it: now building", self.started(fx))
+        code, out = fx.flow("lead-own", "--seed", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow(*move, cwd=fx.main)
+        self.assertEqual(code, 0, out)
+
+    def test_lead_ownership_rejects_duplicate_grants_and_lane_checkouts(self) -> None:
+        fx = self.delivery(assign=False)
+        wt = fx.lane("FX-3")
+        before = self.record(fx)["state"]["laneOwnership"]
+        code, out = fx.flow("lead-own", "--lane", "lane-2", "--grant", "src/one.txt", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("both own src/one.txt", out)
+        code, out = fx.flow("lead-own", "--lane", "lane-2", "--grant", "src/new.txt", cwd=wt)
+        self.assertEqual(code, 2, out)
+        self.assertIn("lead checkout", out)
+        self.assertEqual(self.record(fx)["state"]["laneOwnership"], before)
 
     def test_in_manual_mode_a_new_start_prints_the_move_and_post_and_moves_the_story_to_building(self) -> None:
         fx = self.delivery("manual")

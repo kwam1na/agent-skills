@@ -547,12 +547,24 @@ def initial_state(headline: str) -> dict:
     }
 
 
-def init(directory: Path, headline: str) -> dict:
+def init(directory: Path, headline: str, seed: dict | None = None) -> dict:
     directory.mkdir(parents=True, exist_ok=True)
     with file_lock(directory / STATE_LOCK):
         if (directory / STATE_FILE).exists():
             raise StateError("state_exists", f"state already exists at {directory / STATE_FILE}")
         state = initial_state(headline)
+        if seed is not None:
+            allowed = {"meta", "planned", "finish", "laneOwnership"}
+            if not isinstance(seed, dict) or set(seed) - allowed:
+                raise StateError("state_invalid", "init seed may set only meta, planned, finish and laneOwnership")
+            if not isinstance(seed.get("meta", {}), dict) or set(seed.get("meta", {})) - {
+                "trackerParent", "handoffsNeedAcceptance"
+            }:
+                raise StateError("state_invalid", "init seed meta may set only trackerParent and handoffsNeedAcceptance")
+            state = merge_patch(state, seed)
+            errors = state_errors(state)
+            if errors:
+                raise StateError("state_invalid", "; ".join(errors))
         _require_unicode(state, "state_invalid")
         _write_atomically(directory / STATE_FILE, dumps(state))
         (directory / JOURNAL_FILE).touch()
@@ -969,11 +981,12 @@ def handoff(
                 raise StateError("run_bound", f"run {run} is already bound to {holder}")
         queued = next((item for item in state["queue"] if item["subject"] == subject), None)
         if queued is not None:
-            if queued["lane"] != lane:
-                raise StateError("writer_not_owned", f"{subject} belongs to {queued['lane']}, not {lane}")
+            authorized_lane = queued.get("assignedLane", queued["lane"]) if queued["stage"] == "stopped" else queued["lane"]
+            if authorized_lane != lane:
+                raise StateError("writer_not_owned", f"{subject} belongs to {authorized_lane}, not {lane}")
             if queued["stage"] not in ("queued", "stopped"):
                 raise StateError("handoff_invalid", f"{subject} is {queued['stage']}; hand it off once it stops")
-            queued.update(stage="queued", head=head, syncedHead=None, checks=[], changeRequest=change_request)
+            queued.update(stage="queued", lane=lane, head=head, syncedHead=None, checks=[], changeRequest=change_request)
             queued.pop("checkSelection", None)
             # A lead selection is for the head it was made at; new code is never checked with it.
             if queued.get("leadSelection", {}).get("head") != head:
@@ -1110,7 +1123,7 @@ def _pending(state: dict, subject: str) -> dict:
     return item
 
 
-def accept_handoff(directory: Path, subject: str) -> dict:
+def accept_handoff(directory: Path, subject: str, authorization: dict | None = None) -> dict:
     """The lead accepts a waiting hand-off; the runner may now take it."""
 
     def change(state: dict) -> dict:
@@ -1122,6 +1135,10 @@ def accept_handoff(directory: Path, subject: str) -> dict:
             _rest_if_free(state, waiting["lane"])
             return copy.deepcopy(waiting)
         item = _pending(state, subject)
+        if authorization is not None and authorization != {
+            "ownership": state.get("laneOwnership"), "lane": item["lane"], "head": item["head"]
+        }:
+            raise StateError("handoff_invalid", "the handed head or lane ownership changed; check the hand-off again")
         item.pop("pending")
         return copy.deepcopy(item)
 
@@ -1146,7 +1163,8 @@ def reject_handoff(directory: Path, subject: str, reason: str) -> dict:
             return copy.deepcopy(waiting)
         item = _pending(state, subject)
         state["queue"] = [entry for entry in state["queue"] if entry["subject"] != subject]
-        back = {"subject": subject, "title": item["title"], "lane": item["lane"], "stage": "review"}
+        back = {"subject": subject, "title": item["title"], "lane": item.get("assignedLane", item["lane"]),
+                "stage": "review"}
         if "changeRequest" in item:
             back["changeRequest"] = item["changeRequest"]
         if item.get("runId") is not None:
@@ -1154,8 +1172,9 @@ def reject_handoff(directory: Path, subject: str, reason: str) -> dict:
         if item.get("trackerStarted"):
             back["trackerStarted"] = True
         state.setdefault("planned", []).append(back)
-        if item["lane"] is not None:
-            _set_lane_state(state, item["lane"], "working")
+        _rest_if_free(state, item["lane"])
+        if back["lane"] is not None:
+            _set_lane_state(state, back["lane"], "working")
         return back
 
     _, back = _tool_write(directory, change)
@@ -1605,16 +1624,15 @@ def append_journal(
     """Append one entry. ``writer`` is "runner" when the runner writes; the lead and lanes leave it unset."""
     if writer == "runner" and kind == REVIEW_KIND:
         raise StateError("kind_not_owned", f"the runner never writes {REVIEW_KIND}: the lead or the lane records its review")
-    if writer == "lane":
-        if kind != REVIEW_KIND:
-            raise StateError("writer_not_owned", f"a lane journals only {REVIEW_KIND}; the tool journals its hand-off")
-        state = read_state(directory)
-        owner = next((entry.get("lane") for entry in [*state["queue"], *state.get("planned", [])]
-                      if entry["subject"] == subject), None)
-        if lane is None or owner != lane:
-            raise StateError("writer_not_owned", f"{subject} is not {lane}'s work")
     with file_lock(directory / STATE_LOCK):
         current = read_state(directory)
+        if writer == "lane":
+            if kind != REVIEW_KIND:
+                raise StateError("writer_not_owned", f"a lane journals only {REVIEW_KIND}; the tool journals its hand-off")
+            owner = next((entry.get("assignedLane", entry["lane"]) if entry["stage"] == "stopped" else entry["lane"]
+                          for entry in [*current["queue"], *current.get("planned", [])] if entry["subject"] == subject), None)
+            if lane is None or owner != lane:
+                raise StateError("writer_not_owned", f"{subject} is not {lane}'s work")
         entries = read_journal(directory)
         entry = {
             "id": len(entries) + 1,
@@ -4064,7 +4082,7 @@ def _json_argument(value: str | None, name: str) -> object:
 
 def _handoff_command(args: argparse.Namespace) -> dict:
     if args.accept:
-        return accept_handoff(args.dir, args.accept)
+        return accept_handoff(args.dir, args.accept, _json_argument(args.authorization, "--authorization"))
     if args.reject:
         if not args.reason:
             raise StateError("handoff_invalid", "say why with --reason")
@@ -4401,6 +4419,7 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     start = commands.add_parser("init", help="create an empty state and journal")
     start.add_argument("--headline", required=True)
+    start.add_argument("--seed", help="seed planned work, finish lines and lane ownership in the initial write")
     commands.add_parser("validate", help="validate the state and the journal")
     change = commands.add_parser("patch", help="apply a JSON merge patch, pinned to a version")
     change.add_argument("--writer", choices=WRITERS, required=True)
@@ -4432,6 +4451,7 @@ def main(argv: list[str] | None = None) -> int:
     capture.add_argument("--outcome", type=Path, action="append", required=True, help="actual outcome file, once per round in order")
     hand = commands.add_parser("handoff", help="a lane hands its work to the queue, or the lead accepts or rejects it")
     decide = hand.add_mutually_exclusive_group()
+    hand.add_argument("--authorization", help="head, handing lane and ownership the lead verified before acceptance")
     decide.add_argument("--accept", metavar="SUBJECT", help="accept a hand-off waiting for the lead")
     decide.add_argument("--reject", metavar="SUBJECT", help="reject a hand-off waiting for the lead")
     hand.add_argument("--reason", help="why a hand-off is rejected")
@@ -4510,7 +4530,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.command == "init":
-            result: object = {"ok": True, "state": init(args.dir, args.headline)}
+            result: object = {"ok": True, "state": init(args.dir, args.headline, _json_argument(args.seed, "--seed"))}
         elif args.command == "validate":
             show(args.dir)
             result = {"ok": True}
