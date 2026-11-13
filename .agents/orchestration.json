@@ -2,7 +2,7 @@
   "schemaVersion": "orchestration-binding/1",
   "base": {
     "remote": "origin",
-    "ref": "integrate/delivery-ownership-and-base"
+    "ref": "main"
   },
   "bases": [
     "main",
