@@ -4092,11 +4092,18 @@ class SupervisorPostMergeTests(unittest.TestCase):
         self.assertEqual(lead_binding.read_bytes(), drafted_binding)
         initial.write_bytes(kept)
         sh("git", "restore", "--", ".agents/orchestration.json", cwd=lead)
+        # Simulate a stop after staging and before replacing the binding.
+        git_dir = Path(sh("git", "rev-parse", "--absolute-git-dir", cwd=lead).stdout.strip())
+        staged = git_dir / "run-delivery/integration-setup-interrupted/orchestration.json"
+        staged.parent.mkdir(parents=True)
+        staged.write_bytes(drafted_binding)
         (m / "main-advanced.txt").write_text("independent main work\n")
         commit(m, "Advance the standing branch after setup starts")
         self.assertIn("resume", flow(*setup).lower())
         self.assertEqual(lead_binding.read_bytes(), drafted_binding)
         self.assertEqual(initial.read_bytes(), kept)
+        self.assertEqual(sh("git", "ls-files", "--others", "--exclude-standard", cwd=lead).stdout.splitlines(),
+                         [".agents/deliveries/FX-1.json"])
 
         d["stories"] = {"FX-2": {**d["stories"]["FX-2"], "lane": "lane-1", "inApp": "none"}}
         d["lanes"] = {"lane-1": {"owns": ["src/one.txt"]}}
