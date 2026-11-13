@@ -424,6 +424,24 @@ def state_errors(state: object) -> list[str]:
         errors.append("/meta/hold: use {reason, since} with a nonempty reason and a UTC timestamp, or null to clear")
     if not errors and isinstance(state, dict):
         errors = _unique(state)
+        regions = state.get("laneRegions", [])
+        ownership = state.get("laneOwnership", {})
+        for index, claim in enumerate(regions):
+            path = claim["path"]
+            label = f"/laneRegions/{index}"
+            if any(part in ("", ".", "..") for part in path.split("/")) or "\0" in path:
+                errors.append(f"{label}/path: use a repository-relative path")
+            if claim["lane"] not in ownership:
+                errors.append(f"{label}/lane: name a lane in laneOwnership")
+            if claim["start"] >= claim["end"]:
+                errors.append(f"{label}: end must be greater than start")
+            if any(fnmatch.fnmatchcase(path, pattern) for patterns in ownership.values() for pattern in patterns):
+                errors.append(f"{label}: {path} already has a whole-file claim")
+            for previous in regions[:index]:
+                if (previous["path"] == path and previous["baseHead"] == claim["baseHead"]
+                        and previous["start"] < claim["end"] and claim["start"] < previous["end"]):
+                    errors.append(f"{label}: overlaps an earlier region claim on the same base")
+                    break
         flakes = state.get("liveFlakes", [])
         if len({(entry["baseHead"], entry["check"]) for entry in flakes}) != len(flakes):
             errors.append("/liveFlakes: declare each base head and check only once")
@@ -1136,6 +1154,13 @@ def _pending(state: dict, subject: str) -> dict:
     return item
 
 
+def handoff_authorization(state: dict, item: dict) -> dict:
+    result = {"ownership": state.get("laneOwnership"), "lane": item["lane"], "head": item["head"]}
+    if "laneRegions" in state:
+        result["regions"] = state["laneRegions"]
+    return result
+
+
 def accept_handoff(directory: Path, subject: str, authorization: dict | None = None) -> dict:
     """The lead accepts a waiting hand-off; the runner may now take it."""
 
@@ -1148,9 +1173,7 @@ def accept_handoff(directory: Path, subject: str, authorization: dict | None = N
             _rest_if_free(state, waiting["lane"])
             return copy.deepcopy(waiting)
         item = _pending(state, subject)
-        if authorization is not None and authorization != {
-            "ownership": state.get("laneOwnership"), "lane": item["lane"], "head": item["head"]
-        }:
+        if authorization is not None and authorization != handoff_authorization(state, item):
             raise StateError("handoff_invalid", "the handed head or lane ownership changed; check the hand-off again")
         item.pop("pending")
         return copy.deepcopy(item)

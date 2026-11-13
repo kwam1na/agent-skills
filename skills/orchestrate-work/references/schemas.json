@@ -875,6 +875,40 @@
           }
         }
       },
+      "laneRegions": {
+        "description": "Lead-owned claims on committed text blobs. Line coordinates are one-based and half-open.",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "lane",
+            "path",
+            "baseHead",
+            "start",
+            "end"
+          ],
+          "properties": {
+            "lane": {
+              "$ref": "#/$defs/name"
+            },
+            "path": {
+              "$ref": "#/$defs/name"
+            },
+            "baseHead": {
+              "$ref": "#/$defs/commit"
+            },
+            "start": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "end": {
+              "type": "integer",
+              "minimum": 2
+            }
+          }
+        }
+      },
       "planned": {
         "description": "Work the lead knows is under way but has not handed to the queue. Optional; the lead owns it.",
         "type": "array",

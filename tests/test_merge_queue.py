@@ -799,6 +799,64 @@ class CandidatePinningTests(MergeQueueTestCase):
         self.assertNotIn("forge merge", " ".join(adopter.log_lines()))
 
 
+class RegionDiffTests(MergeQueueTestCase):
+    def test_insertions_at_edges_and_changes_spanning_claims_are_refused(self) -> None:
+        adopter = self.adopter()
+        path = "src/shared[1].txt"
+        lines = [f"line {number}\n" for number in range(1, 13)]
+        anchor = adopter.advance_base({path: "".join(lines)})
+        claims = [{"path": path, "baseHead": anchor, "start": 3, "end": 6},
+                  {"path": path, "baseHead": anchor, "start": 6, "end": 9}]
+        for name, changed in {
+            "start": lines[:2] + ["inserted\n"] + lines[2:],
+            "edge-between-claims": lines[:5] + ["inserted\n"] + lines[5:],
+            "end": lines[:8] + ["inserted\n"] + lines[8:],
+            "spanning": lines[:4] + ["replaced\n"] + lines[7:],
+        }.items():
+            with self.subTest(name=name):
+                head = adopter.lane_commit(name, {path: "".join(changed)})
+                with self.assertRaisesRegex(queue.region_ownership.RegionError, "outside a single owned span"):
+                    queue.region_ownership.check_change(adopter.lane, path, anchor, head, claims)
+
+    def test_base_edits_to_the_region_or_its_boundary_require_a_regrant(self) -> None:
+        adopter = self.adopter()
+        path = "src/shared.txt"
+        lines = [f"line {number}\n" for number in range(1, 13)]
+        anchor = adopter.advance_base({path: "".join(lines)})
+        claim = {"path": path, "baseHead": anchor, "start": 4, "end": 9}
+        shifted = adopter.advance_base({path: "above\n" + "".join(lines)})
+        self.assertEqual(queue.region_ownership.mapped(adopter.lane, claim, shifted), (5, 10))
+        at_edge = adopter.advance_base({path: "".join(lines[:3] + [lines[3]] + lines[3:])})
+        for head in (at_edge, adopter.advance_base({path: "".join(lines[:4] + ["new text\n"] + lines[5:])})):
+            with self.assertRaisesRegex(queue.region_ownership.RegionError, "Regrant it against the current base"):
+                queue.region_ownership.mapped(adopter.lane, claim, head)
+
+    def test_region_ownership_refuses_file_level_changes(self) -> None:
+        adopter = self.adopter()
+        path = "src/shared.txt"
+        anchor = adopter.advance_base({path: "first\nsecond\nthird\n"})
+        claim = {"path": path, "baseHead": anchor, "start": 1, "end": 4}
+        repo = adopter.lane
+        for operation, command in (
+            ("deletion", ("rm", path)),
+            ("rename", ("mv", path, "src/renamed.txt")),
+            ("mode", ("update-index", "--chmod=+x", path)),
+        ):
+            with self.subTest(operation=operation):
+                run("checkout", "--quiet", "--detach", anchor, cwd=repo)
+                run(*command, cwd=repo)
+                run("commit", "--quiet", "-m", operation, cwd=repo)
+                head = run("rev-parse", "HEAD", cwd=repo)
+                with self.assertRaisesRegex(queue.region_ownership.RegionError, "whole-file ownership"):
+                    queue.region_ownership.check_change(repo, path, anchor, head, [claim])
+        run("reset", "--hard", anchor, cwd=repo)
+        binary = adopter.lane_commit("binary", {path: "first\nsecond\0third\n"})
+        with self.assertRaisesRegex(queue.region_ownership.RegionError, "binary"):
+            queue.region_ownership.check_change(repo, path, anchor, binary, [claim])
+        with self.assertRaisesRegex(queue.region_ownership.RegionError, "whole-file ownership"):
+            queue.region_ownership.validate_claim(repo, {**claim, "path": "src/missing.txt"})
+
+
 class SyncSafetyTests(MergeQueueTestCase):
     def test_a_stale_generated_file_is_regenerated_and_merged(self) -> None:
         adopter = self.adopter()
