@@ -6,8 +6,8 @@ in this order of precedence:
 1. **The orchestrate-work binding** (`.agents/orchestration.json`), because it is what the merge queue actually runs:
    - remote and delivery base: `base.remote`, `base.ref`, and the other bases the binding serves, `bases`: exact
      branch names or patterns whose `*` matches within one segment of the name, such as `["main", "integration-*"]`.
-     A delivery file's `baseBranch` must be `base.ref` or match `bases`, and `lead-setup` requires `--base` once
-     `bases` is declared
+     A delivery file's `baseBranch` must be `base.ref` or match `bases`, and `lead-setup` requires `--base` or
+     `--integration` once `bases` is declared
    - lane gates: the `fallback` checks, with `{baseHead}` meaning the base, each run in its `cwd` with its timeout
      (default: the binding's `checkTimeoutSeconds`). If the binding also selects checks with a `provider`,
      `alwaysRun` or `profiles`, the lane gates must be listed in `run-delivery.json` `gates`.
@@ -211,7 +211,8 @@ checks may need no file at all.
   "headline": "EPIC-1: what the delivery does",
   // "baseBranch" and "stateDirectory" are optional overrides: the binding names the base (baseBranch must be its
   // base.ref or match its bases), and the record lives in the lead's checkout (laneCheckout with the delivery key)
-  // under the binding's state.directory.
+  // under the binding's state.directory. Integration setup writes baseBranch and integrationTarget, the standing
+  // branch that receives the reviewed integration at close-out.
   "plan": "docs/plans/epic-1.md",
   "laneBrief": "docs/plans/epic-1.lane-brief.md",          // written by lead-brief
   "brief": { "notes": "docs/plans/epic-1.lane-notes.md" }, // this delivery's own rules, appended to the brief
