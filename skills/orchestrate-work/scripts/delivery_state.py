@@ -107,7 +107,7 @@ CLOSED_KIND = "delivery.closed"
 RUNNER_META = ("checking", "baseHead", "releasedHead", "checkHistory", "baseReruns", "sources", "sourceReports")
 RUNNER_QUEUE = ("stage", "checks", "syncedHead", "checkSelection")
 # Written only by a lane's hand-off, through the tool: no patch, the lead's or the runner's, changes it.
-HANDOFF_QUEUE = ("evidence",)
+HANDOFF_QUEUE = ("evidence", "acceptedRegionPaths")
 # Written only by the lead's select command, through the tool, so every selection is validated and journaled.
 SELECT_QUEUE = ("leadSelection",)
 EVIDENCE_FIELDS = ("check", "definition", "head", "tree", "result")
@@ -1045,6 +1045,7 @@ def handoff(
         if run is not None:
             item["runId"] = run
         item.pop("evidence", None)
+        item.pop("acceptedRegionPaths", None)
         if evidence:
             item["evidence"] = [{**entry, "recordedAt": now()} for entry in evidence]
         item.pop("namedChecks", None)
@@ -1161,7 +1162,8 @@ def handoff_authorization(state: dict, item: dict) -> dict:
     return result
 
 
-def accept_handoff(directory: Path, subject: str, authorization: dict | None = None) -> dict:
+def accept_handoff(directory: Path, subject: str, authorization: dict | None = None,
+                   region_paths: list[str] | None = None) -> dict:
     """The lead accepts a waiting hand-off; the runner may now take it."""
 
     def change(state: dict) -> dict:
@@ -1175,6 +1177,11 @@ def accept_handoff(directory: Path, subject: str, authorization: dict | None = N
         item = _pending(state, subject)
         if authorization is not None and authorization != handoff_authorization(state, item):
             raise StateError("handoff_invalid", "the handed head or lane ownership changed; check the hand-off again")
+        if region_paths:
+            authorized_paths = {claim["path"] for claim in state.get("laneRegions", []) if claim["lane"] == item["lane"]}
+            if authorization is None or not set(region_paths) <= authorized_paths:
+                raise StateError("handoff_invalid", "accepted region paths must have current claims for the handing lane")
+            item["acceptedRegionPaths"] = sorted(set(region_paths))
         item.pop("pending")
         return copy.deepcopy(item)
 
@@ -4118,7 +4125,10 @@ def _json_argument(value: str | None, name: str) -> object:
 
 def _handoff_command(args: argparse.Namespace) -> dict:
     if args.accept:
-        return accept_handoff(args.dir, args.accept, _json_argument(args.authorization, "--authorization"))
+        return accept_handoff(args.dir, args.accept, _json_argument(args.authorization, "--authorization"),
+                              args.region_path)
+    if args.region_path:
+        raise StateError("handoff_invalid", "--region-path requires --accept")
     if args.reject:
         if not args.reason:
             raise StateError("handoff_invalid", "say why with --reason")
@@ -4488,6 +4498,7 @@ def main(argv: list[str] | None = None) -> int:
     hand = commands.add_parser("handoff", help="a lane hands its work to the queue, or the lead accepts or rejects it")
     decide = hand.add_mutually_exclusive_group()
     hand.add_argument("--authorization", help="head, handing lane and ownership the lead verified before acceptance")
+    hand.add_argument("--region-path", action="append", help="a region-owned path verified at acceptance")
     decide.add_argument("--accept", metavar="SUBJECT", help="accept a hand-off waiting for the lead")
     decide.add_argument("--reject", metavar="SUBJECT", help="reject a hand-off waiting for the lead")
     hand.add_argument("--reason", help="why a hand-off is rejected")

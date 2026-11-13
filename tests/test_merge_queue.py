@@ -831,6 +831,29 @@ class RegionDiffTests(MergeQueueTestCase):
             with self.assertRaisesRegex(queue.region_ownership.RegionError, "Regrant it against the current base"):
                 queue.region_ownership.mapped(adopter.lane, claim, head)
 
+    def test_a_deleted_duplicate_block_makes_mapping_ambiguous(self) -> None:
+        adopter = self.adopter()
+        path = "src/shared.txt"
+        anchor = adopter.advance_base({path: "header\nA\nB\nC\nA\nB\nC\nfooter\n"})
+        target = adopter.advance_base({path: "header\nA\nB\nC\nfooter\n"})
+        claim = {"path": path, "baseHead": anchor, "start": 3, "end": 4}
+        with self.assertRaisesRegex(queue.region_ownership.RegionError, "repeated lines.*ambiguous"):
+            queue.region_ownership.mapped(adopter.lane, claim, target)
+
+    def test_committed_attributes_control_binary_classification(self) -> None:
+        adopter = self.adopter()
+        path = "src/shared.txt"
+        content = "first\nsecond\nthird\n"
+        anchor = adopter.advance_base({path: content})
+        binary = adopter.lane_commit("binary", {path: content.replace("second", "changed"),
+                                                ".gitattributes": f"{path} -diff\n"})
+        adopter.write(adopter.lane, ".gitattributes", f"{path} diff\n")
+        claim = {"path": path, "baseHead": anchor, "start": 1, "end": 4}
+        with self.assertRaisesRegex(queue.region_ownership.RegionError, "binary"):
+            queue.region_ownership.validate_claim(adopter.lane, {**claim, "baseHead": binary})
+        with self.assertRaisesRegex(queue.region_ownership.RegionError, "binary"):
+            queue.region_ownership.check_change(adopter.lane, path, anchor, binary, [claim])
+
     def test_region_ownership_refuses_file_level_changes(self) -> None:
         adopter = self.adopter()
         path = "src/shared.txt"

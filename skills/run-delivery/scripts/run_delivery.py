@@ -6709,7 +6709,9 @@ def accept_story(c, args) -> None:
         decisions.append(f"cleared the lead selection recorded at {str(before.get('head'))[:10]}, so the fallback runs")
     if not merged:
         authorization = _validator().handoff_authorization(doc["state"], item)
-        state_tool("handoff", "--accept", key, "--authorization", json.dumps(authorization))
+        region_paths = {claim["path"] for claim in doc["state"].get("laneRegions", [])}
+        state_tool("handoff", "--accept", key, "--authorization", json.dumps(authorization),
+                   *(arg for path in changed if path in region_paths for arg in ("--region-path", path)))
     # What the plan's producer proofs are judged by: the accepted head and the in-app items accepted as blocked.
     append_log("acceptance", key, {"head": head, "ready": ready, "blocked": {label: reason for label, reason in
                                                                            blocked.items() if label in accepted_blocked}})

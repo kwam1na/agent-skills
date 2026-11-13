@@ -1637,22 +1637,17 @@ class Runner:
 
     def check_regions(self, item: dict, checkout: Path, base: str, head: str) -> None:
         state = self.state()
-        if "laneRegions" not in state:
+        regions = state.get("laneRegions", [])
+        accepted_paths = set(item.get("acceptedRegionPaths", []))
+        if not regions and not accepted_paths:
             return
-        regions = state["laneRegions"]
         regional_paths = {claim["path"] for claim in regions}
-        shared = {entry["path"] for entry in self.binding["regenerable"].get("listings", [])
-                  if self.binding["regenerable"]["regenerators"]}
         lane = item["lane"]
         try:
             changed = region_ownership.changed_paths(checkout, base, head)
             outside = region_ownership.problems(checkout, lane, base, head, changed, regions)
-            # A claim may have been revoked since acceptance. Check the
-            # reviewed source delta too, excluding changes made by queue steps.
-            reviewed_base = self.git("merge-base", base, item["head"], cwd=checkout).stdout.strip()
-            for path in region_ownership.changed_paths(checkout, reviewed_base, item["head"]):
-                if (path not in regional_paths and path not in shared
-                        and region_ownership.owners(state["laneOwnership"], path) != [lane]):
+            for path in accepted_paths.intersection(changed) - regional_paths:
+                if region_ownership.owners(state["laneOwnership"], path) != [lane]:
                     outside[path] = "the lane has no current whole-file or region claim"
         except region_ownership.RegionError as error:
             raise Stop("unreviewed_change", f"could not check region ownership: {error}") from error

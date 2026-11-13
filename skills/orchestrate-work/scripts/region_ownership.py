@@ -6,6 +6,7 @@ import fnmatch
 import os
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 
 
@@ -25,7 +26,7 @@ def owners(ownership: dict, path: str) -> list[str]:
     return [lane for lane, patterns in ownership.items() if any(fnmatch.fnmatchcase(path, g) for g in patterns)]
 
 
-def git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
+def git(repo: Path, *args: str, check: bool = True, index: Path | None = None) -> subprocess.CompletedProcess:
     # Commit and blob reads must use the checkout's object store and literal paths.
     env = os.environ.copy()
     for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
@@ -33,7 +34,11 @@ def git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProce
                  "GIT_DISCOVERY_ACROSS_FILESYSTEM", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
                  "GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_LITERAL_PATHSPECS", "GIT_ICASE_PATHSPECS"):
         env.pop(name, None)
-    result = subprocess.run(["git", "--no-replace-objects", "--literal-pathspecs", *args], cwd=repo,
+    env["GIT_ATTR_NOSYSTEM"] = "1"
+    if index is not None:
+        env["GIT_INDEX_FILE"] = str(index)
+    result = subprocess.run(["git", "--no-replace-objects", "--literal-pathspecs", "-c",
+                             f"core.attributesFile={os.devnull}", *args], cwd=repo,
                             env=env, capture_output=True)
     if check and result.returncode:
         raise RegionError(f"git {args[0]} failed: {result.stderr.decode(errors='replace').strip()}")
@@ -60,19 +65,27 @@ def lines(repo: Path, oid: str) -> list[bytes]:
     if b"\0" in blob:
         raise RegionError("binary changes require whole-file ownership")
     result = blob.split(b"\n")
-    return result if result[-1] else result[:-1]
+    return [line + b"\n" for line in result[:-1]] + ([result[-1]] if result[-1] else [])
 
 
-def require_text_diff(repo: Path, path: str, base: str, head: str) -> None:
-    # A repository may mark a NUL-free blob as binary for this path.
-    stats = git(repo, "diff", "--numstat", "-z", "--no-renames", "--no-textconv", "--no-ext-diff",
-                base, head, "--", path).stdout
-    if stats.startswith(b"-\t-\t"):
+def require_text(repo: Path, commit: str, path: str) -> None:
+    # Git 2.31 supports --cached. Read attributes from the named commit
+    # through a private index so a lane's checkout cannot reclassify a blob.
+    with tempfile.TemporaryDirectory(prefix="region-index-") as directory:
+        index = Path(directory) / "index"
+        git(repo, "read-tree", commit, index=index)
+        attrs = git(repo, "check-attr", "--cached", "-z", "diff", "--", path, index=index).stdout
+    _, _, driver, _ = attrs.split(b"\0")
+    binary = driver == b"unset"
+    if driver not in (b"unset", b"set", b"unspecified"):
+        setting = git(repo, "config", "--bool", "--get", f"diff.{os.fsdecode(driver)}.binary", check=False)
+        binary = setting.stdout.strip() == b"true"
+    if binary:
         raise RegionError("binary changes require whole-file ownership")
 
 
 def hunks(repo: Path, old: str, new: str, algorithm: str = "myers") -> list[tuple[int, int, int]]:
-    patch = git(repo, "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames",
+    patch = git(repo, "diff", "--text", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames",
                 "--no-indent-heuristic", "--inter-hunk-context=0", "--unified=0", "--output-indicator-new=+",
                 "--output-indicator-old=-", "--output-indicator-context= ",
                 f"--diff-algorithm={algorithm}", old, new).stdout
@@ -88,6 +101,7 @@ def hunks(repo: Path, old: str, new: str, algorithm: str = "myers") -> list[tupl
 
 def validate_claim(repo: Path, claim: dict) -> None:
     _, oid = entry(repo, claim["baseHead"], claim["path"])
+    require_text(repo, claim["baseHead"], claim["path"])
     if not 1 <= claim["start"] < claim["end"] <= len(lines(repo, oid)) + 1:
         raise RegionError("the span must name existing lines in the base blob")
 
@@ -100,6 +114,25 @@ def remap(start: int, end: int, edits: list[tuple[int, int, int]]) -> tuple[int,
         if first + removed <= start:
             shift += added - removed
     return start + shift, end + shift
+
+
+def refuse_ambiguous_shifts(
+    before: list[bytes], after: list[bytes], start: int, end: int, edits: list[tuple[int, int, int]],
+) -> None:
+    """Check equivalent positions for a hunk that can slide over repeated lines."""
+    shift, previous_end = 0, 0
+    for i, (first, removed, added) in enumerate(edits):
+        old = first - 1
+        left = right = old
+        while left > previous_end and before[left + removed - 1] == after[left + shift + added - 1]:
+            left -= 1
+        next_start = edits[i + 1][0] - 1 if i + 1 < len(edits) else len(before)
+        while right + removed < next_start and before[right] == after[right + shift]:
+            right += 1
+        if (left != old or right != old) and left + 1 <= end and right + max(1, removed) >= start:
+            raise RegionError("repeated lines make the span's mapping ambiguous")
+        previous_end = old + removed
+        shift += added - removed
 
 
 def mapped(repo: Path, claim: dict, base: str) -> tuple[int, int]:
@@ -115,26 +148,19 @@ def mapped(repo: Path, claim: dict, base: str) -> tuple[int, int]:
         new_mode, new = entry(repo, base, path)
         if old_mode != new_mode:
             raise RegionError("the base changed the file mode")
+        require_text(repo, base, path)
         if old == new:
             return start, end
-        require_text_diff(repo, path, anchor, base)
         before, after = lines(repo, old), lines(repo, new)
-        result = remap(start, end, hunks(repo, old, new))
+        edits = hunks(repo, old, new)
+        result = remap(start, end, edits)
+        refuse_ambiguous_shifts(before, after, start, end, edits)
         alternate = remap(start, end, hunks(repo, old, new, "histogram"))
         if result != alternate or remap(*result, hunks(repo, new, old)) != (start, end):
             raise RegionError("Git produced different line mappings")
         first, last = result
-        # A neighboring identical line could belong to either side of a shift.
-        # Check for that ambiguity even if the diff algorithms picked the same side.
         if after[first - 1:last - 1] != before[start - 1:end - 1]:
             raise RegionError("the claimed lines differ on the target base")
-        for old_edge, new_edge in ((start - 1, first - 1), (end - 1, last - 1)):
-            old_neighbors = before[max(0, old_edge - 1):old_edge + 1]
-            new_neighbors = after[max(0, new_edge - 1):new_edge + 1]
-            if old_neighbors != new_neighbors and any(
-                len(pair) == 2 and pair[0] == pair[1] for pair in (old_neighbors, new_neighbors)
-            ):
-                raise RegionError("repeated lines make a span boundary ambiguous")
         return result
     except RegionError as error:
         raise RegionError(f"{path} [{start}, {end}) at {anchor[:12]}: {error}. Regrant it against the current base") from error
@@ -147,7 +173,7 @@ def check_change(repo: Path, path: str, base: str, head: str, claims: list[dict]
     new_mode, new = entry(repo, head, path)
     if old_mode != new_mode:
         raise RegionError("mode changes require whole-file ownership")
-    require_text_diff(repo, path, base, head)
+    require_text(repo, head, path)
     lines(repo, new)
     spans = [mapped(repo, claim, base) for claim in claims]
     for first, removed, _ in hunks(repo, old, new):

@@ -1792,7 +1792,7 @@ class RegionOwnershipTests(unittest.TestCase):
 
                 inserted = ["inserted first\n", "inserted second\n"] if ext == "txt" else ["// first\n", "// second\n"]
                 hand_off(fx, "FX-2", "lane-1", files={file: "".join(lines[:4] + inserted + lines[4:])})
-                hand_off(fx, "FX-3", "lane-2", files={file: "".join(lines[:16] + lines[17:])})
+                hand_off(fx, "FX-3", "lane-2", files={file: "".join(lines[:18] + lines[19:])})
                 for key in ("FX-2", "FX-3"):
                     code, out = fx.flow("lead-accept", key, cwd=fx.main)
                     self.assertEqual(code, 0, out)
@@ -1801,7 +1801,41 @@ class RegionOwnershipTests(unittest.TestCase):
                     self.assertEqual(item["stage"], "merged", record(fx)["journal"][-5:])
                 sh("git", "fetch", "-q", "origin", cwd=fx.main)
                 combined = sh("git", "show", f"origin/feature/FX-1:{file}", cwd=fx.main).stdout
-                self.assertEqual(combined, "".join(lines[:4] + inserted + lines[4:16] + lines[17:]))
+                self.assertEqual(combined, "".join(lines[:4] + inserted + lines[4:18] + lines[19:]))
+
+    def test_grant_refuses_overlap_after_mapping_to_a_newer_base(self) -> None:
+        file = "src/shared.txt"
+        lines = [f"line {i}\n" for i in range(16)]
+        fx, base = self.fixture(file, lines)
+        code, out = self.grant(fx, file, base, "lane-1", 4, 8)
+        self.assertEqual(code, 0, out)
+        initial = record(fx)["state"]["laneRegions"]
+        (fx.main / file).write_text("above one\nabove two\nabove three\n" + "".join(lines))
+        commit(fx.main, "Shift the first claim down three lines")
+        code, out = fx.flow("lead-push", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        newer = sh("git", "rev-parse", "HEAD", cwd=fx.main).stdout.strip()
+        code, out = self.grant(fx, file, newer, "lane-2", 8, 10)
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("overlaps lane-1's [7, 11)", out)
+        self.assertEqual(record(fx)["state"]["laneRegions"], initial)
+        code, out = self.grant(fx, file, newer, "lane-2", 11, 14)
+        self.assertEqual(code, 0, out)
+
+    def test_accepted_whole_file_candidate_survives_an_unrelated_transfer(self) -> None:
+        file = "src/shared.txt"
+        fx, base = self.fixture(file, ["first\n", "second\n", "third\n"])
+        code, out = self.grant(fx, file, base, "lane-3", 1, 3)
+        self.assertEqual(code, 0, out)
+        hand_off(fx, "FX-2", "lane-1")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-own", "--move", "src/one*", "--from", "lane-1", "--lane", "lane-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        queue_run(fx, "FX-2")
+        doc = record(fx)
+        item = next(item for item in doc["state"]["queue"] if item["subject"] == "FX-2")
+        self.assertEqual(item["stage"], "merged", doc["journal"][-3:])
 
     def test_revocation_blocks_acceptance_and_a_queued_candidate(self) -> None:
         file = "src/shared.txt"
@@ -1809,7 +1843,8 @@ class RegionOwnershipTests(unittest.TestCase):
         fx, base = self.fixture(file, lines)
         code, out = self.grant(fx, file, base, "lane-1", 3, 8)
         self.assertEqual(code, 0, out)
-        hand_off(fx, "FX-2", "lane-1", files={file: "".join(lines[:4] + ["inserted\n"] + lines[4:])})
+        checkout = hand_off(fx, "FX-2", "lane-1", files={file: "".join(lines[:4] + ["inserted\n"] + lines[4:])})
+        handed = sh("git", "rev-parse", "HEAD", cwd=checkout).stdout.strip()
         code, out = self.grant(fx, file, base, "lane-1", 3, 8, revoke=True)
         self.assertEqual(code, 0, out)
         code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
@@ -1822,11 +1857,20 @@ class RegionOwnershipTests(unittest.TestCase):
         code, out = self.grant(fx, file, base, "lane-1", 3, 8, revoke=True)
         self.assertEqual(code, 0, out)
         queue_run(fx, "FX-2")
-        state = record(fx)["state"]
-        item = next(item for item in state["queue"] if item["subject"] == "FX-2")
+        self.assertIn("no current whole-file or region claim", record(fx)["journal"][-1]["summary"])
+        code, out = self.grant(fx, file, base, "lane-1", 8, 12)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-accept", "--requeue", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        queue_run(fx, "FX-2")
+        doc = record(fx)
+        item = next(item for item in doc["state"]["queue"] if item["subject"] == "FX-2")
         self.assertEqual(item["stage"], "stopped", item)
         self.assertIsNone(item["syncedHead"], item)
-        self.assertEqual(sh("git", "ls-remote", "origin", "refs/heads/feature/FX-1", cwd=fx.main).stdout.split()[0], base)
+        self.assertIn("outside a single owned span", doc["journal"][-1]["summary"])
+        for branch, head in (("FX-1", base), ("FX-2", handed)):
+            remote = sh("git", "ls-remote", "origin", f"refs/heads/feature/{branch}", cwd=fx.main)
+            self.assertEqual(remote.stdout.split()[0], head)
 
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)

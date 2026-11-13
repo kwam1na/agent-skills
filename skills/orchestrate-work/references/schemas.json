@@ -824,6 +824,13 @@
                 }
               }
             },
+            "acceptedRegionPaths": {
+              "description": "Written at acceptance. The candidate's region-owned paths, kept so revoking the last claim cannot remove queue enforcement.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/name"
+              }
+            },
             "namedChecks": {
               "description": "Written only by a hand-off: the checks the lane ran, by catalogue id, which the lead's acceptance proposes beside the checks matching the diff. A hand-off without them drops them. Absent otherwise.",
               "type": "array",
