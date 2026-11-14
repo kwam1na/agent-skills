@@ -9275,6 +9275,97 @@ class SupervisorLineListenerTests(unittest.TestCase):
                 self.assertEqual(tool.listener_words(c), "")
 
 
+class StateReadInProcessTests(unittest.TestCase):
+    """A read of the record goes through the state tool's own `show` calls inside the command's process, since the
+    tool run as a command is compiled again every time: it gives what the command prints, refuses in the command's
+    words, and a tool it can't read with is still run as a command."""
+
+    STATE = ROOT / "skills/orchestrate-work/scripts/delivery_state.py"
+
+    def setUp(self) -> None:
+        self.tool = fresh_tool("run_delivery_for_state_reads")
+        self.folder = Path(tempfile.mkdtemp(prefix="run-delivery-state-read-"))
+        self.addCleanup(shutil.rmtree, self.folder, True)
+        self.addCleanup(lambda: [sys.modules.pop(name) for name in list(sys.modules) if name.startswith("delivery_state_reader_")])
+        self.record = self.folder / "record"
+        sh(sys.executable, "-B", self.STATE, "--dir", self.record, "init", "--headline", "a delivery")
+        sh(sys.executable, "-B", self.STATE, "--dir", self.record, "journal", "--kind", "decision.recorded", "--summary", "one entry")
+
+    def printed(self) -> dict:
+        return json.loads(sh(sys.executable, "-B", self.STATE, "--dir", self.record, "show").stdout)
+
+    def release(self, source: str) -> Path:
+        """A release whose state tool is `source`."""
+        release = Path(tempfile.mkdtemp(prefix="release-", dir=self.folder))
+        (release / "skills/orchestrate-work/scripts").mkdir(parents=True)
+        (release / "skills/orchestrate-work/scripts/delivery_state.py").write_text(source, encoding="utf-8")
+        return release
+
+    def stopped(self, release: Path) -> str:
+        with self.assertRaises(self.tool.Stop) as stop:
+            self.tool.shown_record(release, self.record)
+        return str(stop.exception)
+
+    def test_a_read_is_what_the_command_prints_and_runs_no_command(self) -> None:
+        printed = self.printed()
+        self.assertEqual([entry["kind"] for entry in printed["journal"]], ["decision.recorded"])
+        c = types.SimpleNamespace(release=ROOT, state=self.record)
+        with mock.patch.object(self.tool, "run", side_effect=AssertionError("a read ran a command")), \
+                mock.patch.object(self.tool, "cfg", lambda: c):
+            self.assertEqual(self.tool.shown_record(ROOT, self.record), printed)
+            self.assertEqual(self.tool.load_state(), printed)
+            self.assertEqual(self.tool.journal_entries("decision.recorded", None), printed["journal"])
+            # What another command wrote since is read, by the one module the first read loaded.
+            sh(sys.executable, "-B", self.STATE, "--dir", self.record, "journal", "--kind", "decision.recorded", "--summary", "two")
+            self.assertEqual(len(self.tool.load_state()["journal"]), 2)
+        self.assertEqual(list(self.tool.STATE_READERS), [str(self.STATE)])
+        self.assertEqual(bytecode_under(self.STATE.parent), [], "the read left bytecode beside the state tool")
+
+    def test_a_refused_read_stops_in_the_words_the_failed_command_does(self) -> None:
+        refusals = {
+            "a record that is not JSON": lambda: (self.record / "state.json").write_text("{not json", encoding="utf-8"),
+            "no record": lambda: shutil.rmtree(self.record),
+        }
+        for name, spoil in refusals.items():
+            with self.subTest(name):
+                spoil()
+                read = self.stopped(ROOT)
+                with mock.patch.object(self.tool, "state_reader", return_value=None):
+                    ran = self.stopped(ROOT)
+                self.assertEqual(read, ran)
+                self.assertIn(f"{self.STATE} --dir ... failed: ", read)
+                self.assertIn('"ok": false', read)
+        with self.subTest("the tool's own fault"), \
+                mock.patch.object(self.tool.state_reader(self.STATE), "show", side_effect=RuntimeError("a fault in the tool")):
+            fault = self.stopped(ROOT)
+            self.assertIn("failed: ", fault)
+            self.assertTrue(fault.endswith("RuntimeError: a fault in the tool"), fault)
+
+    def test_a_state_tool_that_cannot_be_read_with_is_run_as_a_command(self) -> None:
+        command = 'print(\'{"from": "the command"}\')\n'
+        tools = {
+            "one without the calls a read makes": "def show(directory): return {}\nif __name__ == '__main__':\n    " + command,
+            "one that exits as it loads": "import sys\nif __name__ != '__main__':\n    sys.exit(3)\n" + command,
+            "one that fails as it loads": "if __name__ != '__main__':\n    raise RuntimeError('not a module')\n" + command,
+        }
+        for name, source in tools.items():
+            with self.subTest(name):
+                release = self.release(source)
+                self.assertEqual(self.tool.shown_record(release, self.record), {"from": "the command"})
+                self.assertEqual(bytecode_under(release), [])
+        self.assertEqual([name for name in sys.modules if name.startswith("delivery_state_reader_")], [])
+        # One that can't run either says so as the command does.
+        broken = self.stopped(self.release("def broken(:\n"))
+        self.assertIn("failed: ", broken)
+        self.assertIn("SyntaxError", broken)
+
+    def test_a_release_without_its_state_tool_is_named_before_any_read(self) -> None:
+        c = types.SimpleNamespace(release=self.folder / "no-release", state=self.record)
+        with mock.patch.object(self.tool, "cfg", lambda: c), self.assertRaises(self.tool.Stop) as stop:
+            self.tool.load_state()
+        self.assertIn(f"no agent-skills release at {c.release}", str(stop.exception))
+
+
 class RunDeliveryRenderHalvesTests(unittest.TestCase):
     """A supervisor pass publishes, derives "Needs you", then renders: each half runs only its own entries."""
 

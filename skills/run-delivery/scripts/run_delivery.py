@@ -50,6 +50,7 @@ import fcntl
 import collections
 import fnmatch
 import hashlib
+import importlib.util
 import json
 import re
 import shlex
@@ -59,6 +60,7 @@ import socket
 import subprocess
 import tempfile
 import time
+import traceback
 import warnings
 import zipfile
 from collections.abc import Callable
@@ -904,15 +906,73 @@ def cfg() -> Config:
     return CFG
 
 
-def state_tool(*args: str, check: bool = True) -> subprocess.CompletedProcess:
-    script = cfg().release / "skills/orchestrate-work/scripts/delivery_state.py"
+STATE_TOOL = "skills/orchestrate-work/scripts/delivery_state.py"
+
+
+def state_script() -> Path:
+    script = cfg().release / STATE_TOOL
     if not script.exists():
         raise Stop(f"no agent-skills release at {cfg().release} (its delivery_state.py is missing)")
-    return run([sys.executable, "-B", str(script), "--dir", str(cfg().state), *args], check=check)
+    return script
+
+
+def state_tool(*args: str, check: bool = True) -> subprocess.CompletedProcess:
+    return run([sys.executable, "-B", str(state_script()), "--dir", str(cfg().state), *args], check=check)
+
+
+# What a read takes from the state tool as a module: the three calls its `show` command makes, and its refusal.
+STATE_READER_NAMES = ("show", "publication", "emitted", "StateError")
+STATE_READERS: dict[str, object] = {}
+
+
+def state_reader(script: Path):
+    """The state tool at `script` as a module of this process, loaded once, or None when it can't be read with here.
+
+    Started as a command, the tool is compiled from source every time, and most of what a command asks of it is a
+    read. A tool that doesn't load, or lacks what a read takes, as another release's may, is run as a command instead,
+    which says what is wrong with it."""
+    key = str(script)
+    if key not in STATE_READERS:
+        name = f"delivery_state_reader_{hashlib.sha256(key.encode()).hexdigest()[:12]}"
+        tool = None
+        try:
+            spec = importlib.util.spec_from_file_location(name, script)
+            tool = importlib.util.module_from_spec(spec)
+            sys.modules[name] = tool  # where the tool's own classes look their module up
+            sys.dont_write_bytecode = True  # the release's modules leave no bytecode in the installed generation
+            spec.loader.exec_module(tool)
+        except BaseException as error:
+            sys.modules.pop(name, None)
+            if isinstance(error, KeyboardInterrupt):
+                raise
+            tool = None
+        if tool is not None and not all(callable(getattr(tool, wanted, None)) for wanted in STATE_READER_NAMES):
+            sys.modules.pop(name, None)
+            tool = None
+        STATE_READERS[key] = tool
+    return STATE_READERS[key]
+
+
+def shown_record(release: Path, state: Path) -> dict:
+    """What the release's state tool prints for `show` on the record at `state`: read in this process, through the
+    calls the command itself makes, and refused in the words a failed command is."""
+    script = release / STATE_TOOL
+    argv = [sys.executable, "-B", str(script), "--dir", str(state), "show"]
+    tool = state_reader(script)
+    if tool is None:
+        return json.loads(run(argv).stdout)
+    try:
+        return json.loads(tool.emitted({**tool.show(Path(state)), "publication": tool.publication(Path(state))}))
+    except tool.StateError as error:
+        refused = tool.emitted({"ok": False, "code": error.code, "error": str(error)})
+    except Exception:
+        refused = traceback.format_exc()
+    raise Stop(f"{' '.join(map(str, argv[:4]))} ... failed: {refused.strip()[-600:]}")
 
 
 def load_state() -> dict:
-    return json.loads(state_tool("show").stdout)
+    state_script()
+    return shown_record(cfg().release, cfg().state)
 
 
 def journal_entries(kind: str, subject: str) -> list[dict]:
@@ -8102,8 +8162,7 @@ def clears_by_itself(item: dict) -> bool:
 def closed_status(c) -> str | None:
     """What a stopped supervisor says of the close: finished, or stopped partway and what finishes it. A record with no
     marks reads as before, by closed.json alone."""
-    tool = c.release / "skills/orchestrate-work/scripts/delivery_state.py"
-    doc = json.loads(run([sys.executable, "-B", str(tool), "--dir", str(c.state), "show"]).stdout)
+    doc = shown_record(c.release, c.state)
     closed = kept_close(c, last_close(doc["journal"]))
     progress = close_progress(doc)
     if progress == "partway":
@@ -8564,8 +8623,7 @@ def listener_lines(c) -> list[str]:
     background, or that one listens. Nothing otherwise."""
     if not (c.state / "state.json").exists():
         return []
-    tool = c.release / "skills/orchestrate-work/scripts/delivery_state.py"
-    doc = json.loads(run([sys.executable, "-B", str(tool), "--dir", str(c.state), "show"]).stdout)
+    doc = shown_record(c.release, c.state)
     needed = listener_needed(doc["state"])
     if not needed:
         return []
@@ -9664,7 +9722,7 @@ def finish_close(c, closed: dict, archive: Path) -> list[str]:
     copy = archive / c.state.name
     if not (copy / "state.json").exists():
         return ["marked the close finished in the record"]
-    tool = c.release / "skills/orchestrate-work/scripts/delivery_state.py"
+    tool = c.release / STATE_TOOL
     run([sys.executable, "-B", str(tool), "--dir", str(copy), "close-finished", "--entry", str(closed["id"])])
     config = binding_state(c)
     if config is not None:
@@ -11027,8 +11085,7 @@ class Doctor:
                 and any(key in d.stories for key in entry["subjects"])]
         waiting = []
         if (d.state / "state.json").exists():
-            doc = json.loads(run([sys.executable, "-B", str(d.release / "skills/orchestrate-work/scripts/delivery_state.py"),
-                                  "--dir", str(d.state), "show"]).stdout)
+            doc = shown_record(d.release, d.state)
             waiting = unreasoned_problems(d, unregistered(d, doc["state"]))
         problems = []
         if bare:
@@ -11063,8 +11120,7 @@ class Doctor:
         if not tracker_conf(d)["transitions"].get("start"):
             return "ok", "lanes make no start move, so there is no readiness to check"
         if (d.state / "state.json").exists():
-            doc = json.loads(run([sys.executable, "-B", str(d.release / "skills/orchestrate-work/scripts/delivery_state.py"),
-                                  "--dir", str(d.state), "show"]).stdout)
+            doc = shown_record(d.release, d.state)
             waiting = [e["subject"] for e in doc["state"].get("planned", []) if e.get("stage") == "planned"]
         else:  # Before lead-init, every story is still to start.
             waiting = list(d.stories)
