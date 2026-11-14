@@ -133,6 +133,10 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "Never point `TMPDIR` under a checkout",
         "`scripts/cut-release.py` prints nothing on success",
         "An instruction that allows a fallback gets read as permission to use it",
+        "A change that adds tests keeps the suite inside the budget",
+        "It never raises a number in the budget; only the operator does",
+        "is marked `run_quietly`, never `run_serially`",
+        "a release waits until the suite is back inside it",
         "A lens's follow-up does not outrank a binding ruling",
         "must include the case where nothing observes the clear",
         "by mutating a file `provenance.lock.json` covers takes the digests"

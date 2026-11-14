@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "suite-budget/1",
+  "reference": "macOS on a 10-core Apple M1 Pro with Python 3.11, nothing else running",
+  "workers": 4,
+  "wallSeconds": 1740,
+  "serialSeconds": 90,
+  "unitSeconds": 450,
+  "serial": {
+    "tests.test_delivery_views_history.CollectHistoryTests": "its deadline cases time real reads, a fraction of a second each",
+    "tests.test_delivery_views_render.CollectRunsTests": "its deadline cases time real reads, a fraction of a second each",
+    "tests.test_run_delivery_supervisor.HeldRunLockTests": "it stages a race 0.2 seconds wide",
+    "tests.test_run_delivery_supervisor.LiveViewAddressTests": "its cases bind a derived or recorded port",
+    "tests.test_run_delivery_supervisor.SettledLockTests": "it stages a race 0.2 seconds wide"
+  }
+}

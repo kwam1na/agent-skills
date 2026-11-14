@@ -20,7 +20,10 @@ others fill in as they finish. A quiet module still splits into a unit per
 class. Every unit runs in its
 own process, so a crash or a hang ends that unit only; the run then fails,
 naming it. On macOS a worker's ``PATH`` starts with git's own programs, since
-``/usr/bin/git`` looks them up again on every call. With ``--timings-from``, the slowest units start first.
+``/usr/bin/git`` looks them up again on every call. With ``--timings-from``,
+the slowest units start first. Without it, the units that cannot be split
+start before the chunks: the long units are among them, and the chunks, a few
+tests each, fill the workers evenly at the end.
 
 A unit that runs longer than ``--unit-timeout`` seconds is stopped with its
 whole process group, as an interrupt stops it, and reported as timed out with
@@ -35,9 +38,16 @@ group is stopped: a child a test moved into a session of its own is not.
     .venv/bin/python scripts/run-tests.py --quiet-workers 4
     .venv/bin/python scripts/run-tests.py --timings timings.json
     .venv/bin/python scripts/run-tests.py --timings-from timings.json
+    .venv/bin/python scripts/run-tests.py --workers 4 --budget tests/suite-budget.json
+
+With ``--budget``, the run is checked against a ``suite-budget/1`` file: how
+long the whole run, the units that run alone and the slowest unit may take, at
+the worker count the file names. What each took is printed beside its limit.
+A budget is for the whole suite, so it is refused with ``-p``.
 
 The exit code is 0 when every test passed, 1 when any failed, errored, passed
-unexpectedly, timed out or its unit crashed, 2 on a usage error, 5 when no test ran, as
+unexpectedly, timed out or its unit crashed, 2 on a usage error, 3 when every
+test passed and the run went over its budget, 5 when no test ran, as
 under discover, and 130 when the run was interrupted, after every worker and
 whatever it started is stopped. ``--timings`` writes the total,
 per-unit, per-module and per-test wall times. Standard library only.
@@ -73,6 +83,9 @@ UNIT_TIMEOUT_FACTOR = 5
 UNIT_TIMEOUT_FLOOR = 300
 # Without earlier timings.
 UNIT_TIMEOUT_DEFAULT = 1800
+# A budget file's schema, and the limits it sets, in seconds.
+BUDGET_SCHEMA = "suite-budget/1"
+BUDGET_LIMITS = ("wallSeconds", "serialSeconds", "unitSeconds")
 # macOS's git: a launcher that looks the real one up on every call.
 MACOS_GIT_LAUNCHER = "/usr/bin/git"
 
@@ -90,7 +103,7 @@ def _own(cls: type, name: str) -> bool:
 
 
 def discover_units(start: str, top: str, pattern: str, chunk: int = CHUNK) -> list[dict]:
-    """The units to run, in discovery order: ``{name, names, serial, quiet, tests}``."""
+    """The units to run, in discovery order: ``{name, names, serial, quiet, split, tests}``."""
     sys.path.insert(0, os.path.abspath(top))
     suite = unittest.defaultTestLoader.discover(start, pattern=pattern, top_level_dir=top)
     groups: dict[str, dict] = {}
@@ -123,12 +136,14 @@ def discover_units(start: str, top: str, pattern: str, chunk: int = CHUNK) -> li
         if group["whole"] or len(group["ids"]) <= chunk:
             names = [group["name"]] if group["whole"] else group["ids"]
             units.append({"name": group["name"], "names": names, "serial": group["serial"],
-                          "quiet": group["quiet"], "tests": len(group["ids"]), "ids": group["ids"], "pattern": pattern})
+                          "quiet": group["quiet"], "split": False, "tests": len(group["ids"]), "ids": group["ids"],
+                          "pattern": pattern})
             continue
         parts = [group["ids"][index:index + chunk] for index in range(0, len(group["ids"]), chunk)]
         for number, part in enumerate(parts, start=1):
             units.append({"name": f"{group['name']}[{number}/{len(parts)}]", "names": part,
-                          "serial": group["serial"], "quiet": group["quiet"], "tests": len(part), "ids": part, "pattern": pattern})
+                          "serial": group["serial"], "quiet": group["quiet"], "split": True, "tests": len(part),
+                          "ids": part, "pattern": pattern})
     return units
 
 
@@ -431,6 +446,42 @@ def report(combined: dict, seconds: float, out=sys.stdout) -> bool:
     return passed
 
 
+def read_budget(path: Path) -> dict:
+    """The budget in ``path``; a ValueError says what is wrong with the file."""
+    try:
+        budget = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise ValueError(f"{path} cannot be read as a budget: {error}") from None
+    if not isinstance(budget, dict) or budget.get("schemaVersion") != BUDGET_SCHEMA:
+        raise ValueError(f"{path} is not a {BUDGET_SCHEMA} file")
+    for name in ("workers", *BUDGET_LIMITS):
+        value = budget.get(name)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+            raise ValueError(f"{path}: {name} is not a number above 0")
+    return budget
+
+
+def spent(budget: dict, units: list[dict], combined: dict, seconds: float) -> tuple[list[str], bool]:
+    """What the run took beside each of the budget's limits, as lines, and whether any went over."""
+    took = combined["units"]
+    alone = sum(took.get(unit["name"], 0) for unit in units if unit["serial"])
+    slowest = max(took, key=took.get, default=None)
+    measured = (
+        ("wallSeconds", "the run", seconds),
+        ("serialSeconds", "the units that run alone", alone),
+        ("unitSeconds", f"the slowest unit, {slowest},", took.get(slowest, 0)),
+    )
+    lines, over = [], False
+    for name, what, value in measured:
+        limit = budget[name]
+        if value > limit:
+            over = True
+            lines.append(f"OVER BUDGET: {what} took {value:.0f}s, {value - limit:.0f}s over its {limit:g}s")
+        else:
+            lines.append(f"budget: {what} took {value:.0f}s of {limit:g}s")
+    return lines, over
+
+
 def write_timings(path: Path, combined: dict, seconds: float, workers: int) -> None:
     modules: dict[str, float] = {}
     for test, elapsed in combined["timings"].items():
@@ -455,6 +506,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="how many units run at once; cores / 2 when absent")
     parser.add_argument("--quiet-workers", type=int,
                         help="how many units run at once while a quiet one does; two fifths of the cores when absent, never more than --workers")
+    parser.add_argument("--budget", type=Path,
+                        help="a suite-budget/1 file to check the whole run against; over it, the exit code is 3")
     parser.add_argument("--timings", type=Path, help="write per-unit, per-module and per-test times here")
     parser.add_argument("--timings-from", type=Path, help="an earlier --timings file: start the slowest units first")
     parser.add_argument("--chunk", type=int, default=CHUNK, help=f"tests per unit when a class is split; {CHUNK}")
@@ -480,6 +533,16 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--quiet-workers must be at least 1")
     if args.unit_timeout is not None and not (math.isfinite(args.unit_timeout) and args.unit_timeout >= 0):
         parser.error("--unit-timeout must be a finite number of seconds, 0 for none")
+    args.limits = None
+    if args.budget is not None:
+        try:
+            args.limits = read_budget(args.budget)
+        except ValueError as error:
+            parser.error(str(error))
+        if args.pattern != parser.get_default("pattern"):
+            parser.error("--budget is for the whole suite: it cannot be checked with -p")
+        if args.workers != args.limits["workers"]:
+            parser.error(f"--budget {args.budget} is measured with --workers {args.limits['workers']:g}")
     try:
         return _discover_and_run(args)
     except KeyboardInterrupt:
@@ -533,6 +596,9 @@ def _discover_and_run(args: argparse.Namespace) -> int:
             mark = "  (serial)" if unit["serial"] else "  (quiet)" if unit["quiet"] else ""
             print(f"{unit['name']}{mark}  {unit['tests']}")
         return 0
+    if args.timings_from is None:
+        # Nothing says which units are slow: the ones that cannot be split first, the chunks to fill in after them.
+        units.sort(key=lambda unit: unit["split"])
     note = f" (default: {timings_note})" if timings_note and args.unit_timeout is None else ""
     print(f"unit timeout: {f'{unit_timeout:g}s' if unit_timeout else 'none'}{note}", flush=True)
     started = time.perf_counter()
@@ -544,11 +610,17 @@ def _discover_and_run(args: argparse.Namespace) -> int:
         return 130
     seconds = time.perf_counter() - started
     passed = report(combined, seconds)
+    over = False
+    if args.limits is not None:
+        lines, over = spent(args.limits, units, combined, seconds)
+        print("\n".join(lines), flush=True)
     if args.timings is not None:
         write_timings(args.timings, combined, seconds, args.workers)
     if not combined["testsRun"] and not combined["crashed"] and not combined["timedOut"]:
         return 5
-    return 0 if passed else 1
+    if not passed:
+        return 1
+    return 3 if over else 0
 
 
 # Set by the handler, so an interrupt the test loader swallowed during discovery is still seen.

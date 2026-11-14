@@ -54,8 +54,12 @@ to it, the version CI runs:
 ```bash
 uv python install 3.11
 python3 scripts/bootstrap-test-environment.py
-.venv/bin/python scripts/run-tests.py
+.venv/bin/python scripts/run-tests.py --workers 4 --budget tests/suite-budget.json
 ```
+
+That run is checked against the suite's time budget, described below, and exits 3
+when every test passed and it went over: a release waits until the suite is back
+inside it.
 
 Windows is not validated. Its code fixes and guards stay, unproven, and CI does not
 run it.
@@ -118,7 +122,8 @@ merge check may use it the same way:
 ```
 
 It exits 0 when every test passed, 1 when any failed, errored, passed
-unexpectedly, timed out or its worker crashed, 2 on a usage error, 5 when no
+unexpectedly, timed out or its worker crashed, 2 on a usage error, 3 when every
+test passed and the run went over its `--budget`, 5 when no
 test ran, and 130 when interrupted, after stopping every worker and what it
 started. A unit that hangs is stopped after `--unit-timeout` seconds and named.
 Without the option the limit is five times the slowest unit an earlier
@@ -134,11 +139,25 @@ each test module writes.
 
 Mark a test class `run_serially = True`, or a module `RUN_SERIALLY = True`,
 when it cannot share the machine: a fixed port, a fixed path outside its own
-temporary folder, or process-wide state.
+temporary folder, process-wide state, or a race or deadline a fraction of a
+second wide.
 Mark a class `run_quietly = True`, or a module
 `RUN_QUIETLY = True`, when it keeps to its own folders, ports and processes but
 waits on real processes within bounds a busy machine can make miss: while it
 runs, at most `--quiet-workers` units run in all.
+
+The full suite has a time budget, `tests/suite-budget.json`: how long the whole
+run, the units that run alone and the slowest unit may take with `--workers 4`
+on the machine it names, with nothing else running. `scripts/run-tests.py
+--workers 4 --budget tests/suite-budget.json` checks a run against it. A change
+that adds tests keeps the suite inside the budget: it makes its own tests
+cheaper, or other tests cheaper in the same change. It never raises a number in
+the budget; only the operator does, and the ceilings `tests/test_suite_budget.py`
+pins move in that same change. A unit that runs alone is listed in the budget
+with its reason, and that test fails until it is: a class that keeps to its own
+folders, ports and processes is marked `run_quietly`, never `run_serially`. What
+a test costs is mostly the processes it starts, so a new case reuses a fixture a
+class already builds before it builds another.
 
 Stop only processes you started, by the pid you recorded, and never by pattern with
 `pkill` or `killall`. BSD `pkill` stops reading options at the first pattern, so one
