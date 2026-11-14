@@ -38,7 +38,8 @@ from tests.test_run_delivery_tracker import FileBackend, JiraBackend
 
 # Each class that starts supervisors marks itself run_quietly, so its cases run one at a time and beside other quiet
 # units only: each keeps to its own fixture folder and stops what it started by the pid it recorded, but its waits on
-# real processes are bounded. The two that stage a 0.2 s race mark themselves run_serially and run alone on the machine.
+# real processes are bounded. The two that stage a 0.2 s race, and the one that binds a recorded port, mark themselves
+# run_serially and run alone on the machine.
 
 FORGE = r'''
 import argparse, json, os, subprocess, sys
@@ -780,7 +781,7 @@ class SupervisorNodeTests(unittest.TestCase):
     takes the lock, stops anything or starts a child; a supervisor records its Node in its lock, and doctor --delivery
     judges it."""
 
-    run_serially = True
+    run_quietly = True
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -1736,7 +1737,7 @@ if Path({str(started.with_suffix(".armed"))!r}).exists():
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
 class RegionOwnershipTests(unittest.TestCase):
-    run_serially = True
+    run_quietly = True
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -2723,7 +2724,7 @@ class LeadListenerTests(unittest.TestCase):
     """The lead's listener: the lead commands print the lead-wait to start, and while none runs the supervisor's "Needs
     you", the live view and the status line say so."""
 
-    run_serially = True
+    run_quietly = True
 
     @classmethod
     def setUpClass(cls) -> None:

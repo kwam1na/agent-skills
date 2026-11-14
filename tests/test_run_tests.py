@@ -261,6 +261,119 @@ class ParallelRunnerTests(unittest.TestCase):
         spans = self.spans()
         self.assertEqual(max(self.busiest(spans, name) for name in spans), 2, spans)
 
+    def test_units_that_cannot_be_split_start_before_the_chunks_unless_timings_say_otherwise(self) -> None:
+        body = """
+            import os, unittest
+            def mark(name):
+                with open(os.environ["TRACE"], "a") as trace:
+                    trace.write(name + "\\n")
+        """
+        self.module("test_a_split", body + """
+            class Split(unittest.TestCase):
+                def test_1(self): mark("split")
+                def test_2(self): mark("split")
+        """)
+        self.module("test_b_whole", body + """
+            class Whole(unittest.TestCase):
+                @classmethod
+                def setUpClass(cls): mark("whole")
+                def test_1(self): pass
+                def test_2(self): pass
+        """)
+        listed = self.run_runner("--list", "--chunk", "1").stdout.splitlines()
+        self.assertEqual(listed, ["suite.test_a_split.Split[1/2]  1", "suite.test_a_split.Split[2/2]  1",
+                                  "suite.test_b_whole.Whole  2"])
+        run = self.run_runner("--workers", "1", "--chunk", "1")
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assertEqual(self.trace.read_text().split(), ["whole", "split", "split"])
+        # An earlier run's times decide instead, when they are given.
+        self.trace.unlink()
+        timings = self.root / "timings.json"
+        timings.write_text(json.dumps({"testTimes": {"suite.test_a_split.Split.test_1": 9.0,
+                                                     "suite.test_b_whole.Whole.test_1": 1.0}}), encoding="utf-8")
+        run = self.run_runner("--workers", "1", "--chunk", "1", "--timings-from", str(timings))
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assertEqual(self.trace.read_text().split(), ["split", "whole", "split"])
+
+    def budget(self, **changed: object) -> Path:
+        path = self.root / "budget.json"
+        document = {"schemaVersion": "suite-budget/1", "workers": 2, "wallSeconds": 60, "serialSeconds": 60,
+                    "unitSeconds": 60, **changed}
+        path.write_text(json.dumps({name: value for name, value in document.items() if value is not None}),
+                        encoding="utf-8")
+        return path
+
+    def slow_suite(self) -> None:
+        self.module("test_slow", """
+            import time, unittest
+            class Alone(unittest.TestCase):
+                run_serially = True
+                def test_alone(self): time.sleep(0.3)
+            class Beside(unittest.TestCase):
+                def test_beside(self): pass
+        """)
+
+    def test_a_run_inside_its_budget_passes_and_says_what_each_limit_took(self) -> None:
+        self.slow_suite()
+        run = self.run_runner("--workers", "2", "--budget", str(self.budget()))
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        lines = [line for line in run.stdout.splitlines() if "budget" in line.lower()]
+        self.assertEqual(len(lines), 3, run.stdout)
+        self.assertRegex(lines[0], r"^budget: the run took \d+s of 60s$")
+        self.assertRegex(lines[1], r"^budget: the units that run alone took \d+s of 60s$")
+        self.assertRegex(lines[2], r"^budget: the slowest unit, suite\.test_slow\.Alone, took \d+s of 60s$")
+        # Without one, nothing is said of a budget.
+        self.assertNotIn("budget", self.run_runner("--workers", "2").stdout.lower())
+
+    def test_a_passing_run_over_any_one_limit_exits_3_and_names_it(self) -> None:
+        self.slow_suite()
+        over = {
+            "wallSeconds": r"^OVER BUDGET: the run took \d+s, \d+s over its 0\.05s$",
+            "serialSeconds": r"^OVER BUDGET: the units that run alone took \d+s, \d+s over its 0\.05s$",
+            "unitSeconds": r"^OVER BUDGET: the slowest unit, suite\.test_slow\.Alone, took \d+s, \d+s over its 0\.05s$",
+        }
+        for limit, words in over.items():
+            with self.subTest(limit):
+                run = self.run_runner("--workers", "2", "--budget", str(self.budget(**{limit: 0.05})))
+                self.assertEqual(run.returncode, 3, run.stdout + run.stderr)
+                said = [line for line in run.stdout.splitlines() if line.startswith("OVER BUDGET")]
+                self.assertEqual(len(said), 1, run.stdout)
+                self.assertRegex(said[0], words)
+                self.assertIn("\nOK\n", run.stdout)
+
+    def test_a_failing_run_exits_1_whatever_its_budget(self) -> None:
+        self.module("test_broken", """
+            import unittest
+            class Broken(unittest.TestCase):
+                def test_fails(self): self.fail("broken")
+        """)
+        run = self.run_runner("--workers", "2", "--budget", str(self.budget(wallSeconds=0.05)))
+        self.assertEqual(run.returncode, 1, run.stdout + run.stderr)
+        self.assertIn("OVER BUDGET: the run took", run.stdout)
+
+    def test_a_budget_that_cannot_be_checked_is_a_usage_error_and_nothing_runs(self) -> None:
+        self.slow_suite()
+        (self.root / "not.json").write_text("{", encoding="utf-8")
+        absent, broken = self.root / "absent.json", self.root / "not.json"
+        refusals = {
+            "part of the suite": (["--workers", "2", "-p", "test_slow.py"], {}, "--budget is for the whole suite"),
+            "another worker count": (["--workers", "3"], {}, "is measured with --workers 2"),
+            "no file": (["--workers", "2"], absent, "cannot be read as a budget"),
+            "not JSON": (["--workers", "2"], broken, "cannot be read as a budget"),
+            "another schema": (["--workers", "2"], {"schemaVersion": "suite-budget/2"}, "is not a suite-budget/1 file"),
+            "a limit left out": (["--workers", "2"], {"serialSeconds": None}, "serialSeconds is not a number above 0"),
+            "a limit of nothing": (["--workers", "2"], {"unitSeconds": 0}, "unitSeconds is not a number above 0"),
+            "a limit that is not a number": (["--workers", "2"], {"wallSeconds": True},
+                                             "wallSeconds is not a number above 0"),
+        }
+        for name, (arguments, budget, words) in refusals.items():
+            with self.subTest(name):
+                path = budget if isinstance(budget, Path) else self.budget(**budget)
+                run = self.run_runner(*arguments, "--budget", str(path))
+                self.assertEqual(run.returncode, 2, run.stdout + run.stderr)
+                self.assertIn(words, run.stderr)
+                self.assertNotIn("unit timeout:", run.stdout, "the run started")
+
     def load_runner(self):
         spec = importlib.util.spec_from_file_location("run_tests_for_direct_git", RUNNER)
         runner = importlib.util.module_from_spec(spec)

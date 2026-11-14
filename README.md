@@ -47,6 +47,13 @@ timed out, while the rest of the run carries on:
 .venv/bin/python scripts/run-tests.py --timings .test-timings.json
 ```
 
+`tests/suite-budget.json` is the suite's time budget: how long the whole run, the
+units that run alone and the slowest unit may take with `--workers 4` on the
+machine it names. `--budget tests/suite-budget.json` checks a whole run against
+it and prints what each took beside its limit. `tests/test_suite_budget.py` keeps
+the limits from being raised and every unit that runs alone listed with its
+reason.
+
 `scripts/measure-test-writes.py` runs the same suite and reports, per test module,
 the files it wrote to temp folders and what it left there. It counts file events,
 so it measures on macOS; `--compare` shows two runs side by side anywhere:
@@ -333,8 +340,12 @@ job cannot verify:
 ```bash
 uv python install 3.11
 python3 scripts/bootstrap-test-environment.py
-.venv/bin/python scripts/run-tests.py
+.venv/bin/python scripts/run-tests.py --workers 4 --budget tests/suite-budget.json
 ```
+
+`--budget` checks the run against the suite's time budget, and exits 3 when every
+test passed and the run went over it, so a release waits until the suite is back
+inside.
 
 Windows is not validated: CI does not run it, and the fixes made for it are unproven.
 
