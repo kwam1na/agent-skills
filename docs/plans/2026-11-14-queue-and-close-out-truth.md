@@ -35,21 +35,24 @@ and the operator approves them with the plan.
    full suite runs once, at final integration, and is this delivery's gate.
 4. Lanes may push and open draft change requests, and the lead may mark them ready.
 5. A stopped base rerun is one whose process died by a signal (a negative return code), one that exited with a
-   status that reports a signal (128 plus the signal's number, as `scripts/run-tests.py` exits 130 when it is
-   interrupted or terminated), or one that ended without a verdict because the runner itself was interrupted. A
-   check that exits 130 or 143 with no signal sent cannot be told from one that was stopped, and reads as stopped;
-   Decision 6's bound covers it. A rerun that times out is still a failure, as
+   status that reports a signal (128 plus a signal's number, from 129 up to 128 plus the platform's highest
+   signal, as `scripts/run-tests.py` exits 130 when it is interrupted or terminated), or one that ended without a verdict because the runner itself was interrupted. A
+   status of 128 itself, or one above that range, is a failure. A check that exits with a status in the range and
+   no signal sent cannot be told from one that was stopped, and reads as stopped; Decision 6's bound covers it. A
+   stopped rerun is not recorded as a failed base rerun. A rerun that times out is still a failure, as
    `test_a_base_rerun_that_times_out_is_never_retried_even_under_a_whole_check_flake` pins today.
 6. After a stopped rerun the candidate goes back to `queued` and is checked again without the lead, once for each
    pair of candidate head and base head. The queue is not held, and the lead's wait does not wake for
    `base.rerun.stopped`. A second stopped rerun at the same pair stops the candidate with a reason of its own,
    `base_rerun_stopped`, and journals `candidate.stopped`, which the wait already wakes on, with no `base.broken`.
+   The reason joins the result schema's list and the guide's table of what the lead does for each reason.
 7. The lead names a repair on its queue row, through the state tool, and the row's field is a record-shape addition.
    While the base awaits repair, `serve` takes only that row, alone and never in a batch. Its merge journals
    `base.repaired`, naming the candidate, and clears the mark. A `base.repaired` journalled any other way clears the
    mark too, and the lead withdraws a mark through the command that sets it.
-8. When `base.repaired` is journalled, a candidate that stopped with `base_broken` on the head that broke goes back
-   to `queued`. Nothing else stopped is requeued.
+8. When `base.repaired` is journalled, by a repair's merge, by the lead or by a `fullHealth` pass, a candidate that
+   stopped with `base_broken` on the head that broke goes back to `queued`. Nothing else stopped is requeued. Only
+   a row at `queued` can be named as the repair.
 9. Batch members define one check alike when `check_definition`'s digest matches. The first member's reasons and
    title are the ones kept.
 10. The base rerun's cross-talk change is wording only: the stop's detail and the guide name it as possible. The
@@ -69,7 +72,7 @@ and the operator approves them with the plan.
 16. An evidence note is an evidence string that contains `Declined`, `not filed` or `surviving mutant`, compared
     without regard to case. Under `noDeferrals` the round brief tells each lens to report that it declined nothing,
     left nothing unfiled and left no mutant alive in the words "nothing left unfixed", which hold none of the three
-    phrases, and that brief wording is pinned. `lead-accept` prints the last round's notes under `noDeferrals` only.
+    phrases, and to use the three phrases only for something left unfixed. That brief wording is pinned. `lead-accept` prints the last round's notes under `noDeferrals` only.
     Accepting a note by name is not built.
 17. A raised finding keeps how it was filed, as a new `filed` field beside its `state`, through both projections.
     The round card's pill reads "Approved with N deferrable notes", or "Approved with 1 deferrable note" for one,
@@ -99,9 +102,11 @@ checks from the modules its section names, and the two standing guards join ever
 
 A row that asserts new behaviour is proven red against the code before its change. A row that asserts behaviour
 kept passes on today's code, so it is proven red against an over-correcting mutant of the new code, reverted
-afterwards. The mutants are: every non-zero rerun classified as stopped; `deferred_findings` ignoring the last
+afterwards. The mutants include: every non-zero rerun classified as stopped; `deferred_findings` ignoring the last
 round; a missing `covers` key treated as the lead's; batching on a check's id alone; the pill's count shown on every
-approval; and the hand-off refusal applied without the setting. A wording deliverable has a presence pin, proven by
+approval; the hand-off refusal applied without the setting; `select` comparing whole check objects; `noDeferrals`
+read by the key's presence and not its value; every round's notes read at hand-off; and any empty `criteria`
+treated as the lead's. A wording deliverable has a presence pin, proven by
 removing the phrase, beside any absence pin. A proof that mutates a file `provenance.lock.json`
 covers refreshes that file's digest with the mutation, as `AGENTS.md` says. When a releasable skill changes, its
 catalog entry, every selecting profile and its provenance digest change with it, through
@@ -157,12 +162,16 @@ candidate:
 - a check that dies from the signal;
 - a check that traps SIGTERM and exits 143, and one that traps SIGINT and exits 130, as `scripts/run-tests.py` does;
 - a rerun that ends without a verdict because the runner is interrupted;
-- a rerun stopped during its flake retry.
+- a rerun stopped during its flake retry;
+- a check that exits 137 with no signal sent.
 
-A rerun that exits 1 by itself still breaks the base, and so does one that times out. A rerun stopped twice at the
+No stopped row leaves a `failed` entry in `meta.baseReruns`, and `select` at that base head prints no warning for
+the check. A rerun that exits 1 by itself still breaks the base, and so does one that exits 128, one that exits
+255, and one that times out. A rerun stopped twice at the
 same candidate and base heads leaves the candidate stopped as `base_rerun_stopped`, journals `candidate.stopped`
 and no `base.broken`, and `serve` takes the next candidate. A new base head lets the candidate be put back once
-more. `wait` does not return on `base.rerun.stopped`. The line map shows the new kind's label.
+more, and so does a new candidate head on the same base head. The guide's reason table has a row for
+`base_rerun_stopped`, pinned. `wait` does not return on `base.rerun.stopped`. The line map shows the new kind's label.
 
 ### V26-3258. Let a base repair go through a held queue first, and batch selections by what they run
 
@@ -189,10 +198,14 @@ Scenarios, for the repair:
   after its merge, and the other three are then taken.
 - The same fixture also holds a candidate stopped for its own failing check and one stopped with `base_broken` on
   another base head. Both are still stopped, with their reasons unchanged, after `base.repaired`.
-- A repair named while the base is healthy is refused. Two repairs named at once are refused.
+- A repair named while the base is healthy is refused. Two repairs named at once are refused. A row that is not
+  `queued` is refused as the repair.
 - A repair that fails its own checks leaves the base awaiting repair and names itself.
 - After a `base.repaired` the lead journals by hand, no row carries the mark. A withdrawn mark lets another row be
   named.
+- With no repair named, two candidates stopped by the break and one stopped for its own failing check, a
+  `base.repaired` the lead journals by hand puts the two back to `queued`, `serve` takes them, and the third stays
+  stopped with its reason unchanged.
 - A `base_broken` stop's detail, read from a fixture run, names possible cross-talk. "Needs you" for a held queue
   says candidates resume on `base.repaired` with no `--requeue`. The guide's wording for both is pinned.
 
@@ -218,7 +231,7 @@ guides' wording in line with it.
 
 Scenarios. In each "never" row every unit's proofs are done, so an unready fixture cannot satisfy it:
 
-- a line with `covers: {}`, and one with `covers: {"criteria": [], "proofs": []}`, is never journalled as met by a
+- a line with `covers: {}`, one with `covers: null`, and one with `covers: {"criteria": [], "proofs": []}`, is never journalled as met by a
   supervisor pass, and each holds the close, which names it; once the lead marks and journals it, the close follows;
 - a line with `covers: {"criteria": [], "proofs": ["merged"]}` is marked by the supervisor once that proof is done;
 - a line with no `covers` key, and one with `"criteria": "all"`, is marked by the supervisor when every
@@ -244,14 +257,15 @@ follow-up only for a finding still deferred at the story's last captured round. 
 
 Scenarios:
 
-- a finding deferred in round 1 and listed `fixed` in round 2 by its lens files no follow-up;
+- a finding deferred in round 1 and listed in round 2 by its lens as `closed`, as `fixed` or as `withdrawn` files
+  no follow-up, one case each;
 - a finding deferred in the last captured round files exactly one;
 - a finding deferred in round 1 that round 2 does not list, lists as `deferred`, or lists as `open` files exactly
   one, and so does one that only another lens's round-2 result lists as `fixed`;
 - under `noDeferrals`, a finding still deferred at merge files none, is journalled as a blocker once across two
   supervisor passes, shows in "Needs you" and holds the close until resolved;
-- under `noDeferrals`, a finding deferred in round 1 and listed `fixed` in round 2 journals no blocker and does not
-  hold the close;
+- under `noDeferrals`, a finding deferred in round 1 and listed `fixed` in round 2, and one listed `withdrawn`,
+  journals no blocker and does not hold the close;
 - a delivery file with `"noDeferrals": false` behaves as one without the key;
 - a lens result that leaves an earlier deferred finding out of `resolvedFindings` is still a valid result;
 - the verification brief and the review contract carry the re-check-and-list rule, and neither carries the old
@@ -300,6 +314,7 @@ Scenarios, under `noDeferrals` unless a row says otherwise:
 - a hand-off whose last round has a "Declined" note is refused naming it, and so is one with a "not filed" note,
   one with a "surviving mutant" note, and one with a lower-case "declined" note;
 - a last round with two notes from two lenses is refused naming both notes and both lenses;
+- a last round whose evidence says "nothing left unfixed" and also holds a "Declined" note is refused;
 - a last round whose evidence says "nothing left unfixed" passes, and a brief prepared under the setting carries
   the instruction to say so, which is pinned;
 - a note in an earlier round that the last round does not repeat refuses nothing;
