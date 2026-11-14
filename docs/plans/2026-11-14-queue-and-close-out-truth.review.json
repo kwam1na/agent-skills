@@ -1,0 +1,153 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "writtenBy": "run-delivery plan-review",
+  "plan": "docs/plans/2026-11-14-queue-and-close-out-truth.md",
+  "planSha256": "6291ec5b87c4e7191f2a0e807b512f5d2b5e397aebd941fb15cfab190faaf9fb",
+  "planCommit": "65016fd8815064b5f8104bf230b4153933256057",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": [
+    "lens.outcome-correctness",
+    "lens.adversarial-testing"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "candidate": "3e29da0fc44482c11acc2a754c3132d13fa10714",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-14T22:55:04.966651Z",
+      "finishedAt": "2026-11-14T22:59:34.618775Z",
+      "open": [
+        "outcome-correctness-r1-1",
+        "outcome-correctness-r1-2",
+        "outcome-correctness-r1-3",
+        "outcome-correctness-r1-4",
+        "outcome-correctness-r1-5",
+        "adversarial-testing-r1-1",
+        "adversarial-testing-r1-2",
+        "adversarial-testing-r1-3",
+        "adversarial-testing-r1-4",
+        "adversarial-testing-r1-5",
+        "adversarial-testing-r1-6",
+        "adversarial-testing-r1-7",
+        "adversarial-testing-r1-8",
+        "adversarial-testing-r1-9",
+        "adversarial-testing-r1-10"
+      ]
+    },
+    {
+      "round": 2,
+      "candidate": "52560b4eac7dff4c438bdf450e382eddb0b15ada",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-14T23:00:34.902157Z",
+      "finishedAt": "2026-11-14T23:03:53.052059Z",
+      "open": [
+        "adversarial-testing-r2-1",
+        "adversarial-testing-r2-2",
+        "adversarial-testing-r2-3"
+      ]
+    },
+    {
+      "round": 3,
+      "candidate": "65016fd8815064b5f8104bf230b4153933256057",
+      "outcome": "aligned",
+      "startedAt": "2026-11-14T23:04:02.855607Z",
+      "finishedAt": "2026-11-14T23:09:12.698277Z",
+      "open": []
+    }
+  ],
+  "reviews": [
+    {
+      "lens": "lens.outcome-correctness",
+      "round": 3,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.outcome-correctness",
+        "subjectRef": "queue-and-close-out-truth.plan",
+        "candidateRef": "65016fd8815064b5f8104bf230b4153933256057",
+        "round": 3,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [],
+        "evidence": [
+          "Reviewed tree SHA d3ffc92ba04041fd32915c55b6dd6f6f0151de98 in the private checkout .orchestration/plan-review/queue-and-close-out-truth/checkouts/lens.outcome-correctness, detached at 65016fd8815064b5f8104bf230b4153933256057.",
+          "Start identity check passed: `git rev-parse HEAD^{tree}` gave d3ffc92ba04041fd32915c55b6dd6f6f0151de98 and `git status --porcelain` was empty.",
+          "End identity check passed: same tree SHA d3ffc92ba04041fd32915c55b6dd6f6f0151de98 and an empty `git status --porcelain`. No probe, mutant or file was added to the checkout.",
+          "Delta derived with `git diff 52560b4eac7dff4c438bdf450e382eddb0b15ada..65016fd8815064b5f8104bf230b4153933256057`: one file, docs/plans/2026-11-14-queue-and-close-out-truth.md, 32 insertions and 17 deletions.",
+          "Carried findings: this lens raised outcome-correctness-r1-1 to r1-5 in round 1 and closed all five as fixed in round 2, so none is open and `resolvedFindings` is empty. I re-checked each against the revision anyway; all five stay fixed, and the delta tightens each one and weakens none.",
+          "Re-check of outcome-correctness-r1-1: Decision 5 keeps the signal-exit rule and now bounds it. 129 up to 128 plus the platform's highest signal is stopped, while 128 itself and anything above the range is a failure. V26-3300 keeps the 143 and 130 rows and adds rows for 137 with no signal sent (stopped) and for 128 and 255 (still break the base).",
+          "Re-check of outcome-correctness-r1-2: Decision 6's once-per-pair bound is unchanged. The delta adds that `base_rerun_stopped` joins the result schema's list and the guide's reason table, with the guide row pinned. V26-3300 adds a row that a new candidate head on the same base head lets the candidate be put back once more, which matches the pair rule.",
+          "Re-check of outcome-correctness-r1-3: Decision 13 is unchanged. V26-3340 now has one case each for `closed`, `fixed` and `withdrawn` filing no follow-up, and a `withdrawn` case under `noDeferrals` that journals no blocker.",
+          "Re-check of outcome-correctness-r1-4: Decision 16 keeps \"nothing left unfixed\" and now also has the pinned brief tell a lens to use the three phrases only for something left unfixed. V26-3424 adds a row that a last round holding both \"nothing left unfixed\" and a \"Declined\" note is refused, so the clean statement cannot mask a real note.",
+          "Re-check of outcome-correctness-r1-5: Decision 7 is unchanged. Decision 8 now says a `base.repaired` journalled by a repair's merge, by the lead or by a `fullHealth` pass requeues the candidates stopped with `base_broken` on the head that broke, and that only a `queued` row can be named as the repair. V26-3258 adds rows for the non-queued refusal and for a hand-journalled `base.repaired` with no repair named.",
+          "Model class: claude-fable-5-2, run as a native subagent. Realization basis: host-convention. The host exposes no progress or permission signals to this lens. No subagent was spawned.",
+          "Checks run: none; a plan review has no scoped sensors or test files. No mutation or fault injection was done. Every judgement rests on reading the plan's delta against the code at the reviewed tree.",
+          "Code read for the delta: skills/orchestrate-work/scripts/merge_queue.py (rerun_on_base, record_rerun, end_rerun, flake_for, stopped, QUEUE_STOPPING, _finish_build, _put_back, serve), skills/orchestrate-work/scripts/delivery_state.py (base_rerun_notices, base_awaits_repair), skills/run-delivery/scripts/run_delivery.py (plan_covers, finished_lines, journal_finish_met, full_health_break, only_full_health_breaks, run_full_health, record_full_health) and skills/delivery-views/scripts/views_common.py (_plan_covers, _plan_finish).",
+          "My round-2 note on `meta.baseReruns` is adopted: Decision 5 says a stopped rerun is not recorded as a failed base rerun, and V26-3300 asserts no `failed` entry and no `select` warning at that base head. This is realizable: `record_rerun` writes the `failed` entry only when it is handed a verdict (merge_queue.py:2378-2379, 2415-2419), so the classification can come before that call.",
+          "My round-2 notes on the new stop reason and on the three phrases are adopted too: the reason joins the schema's list and the guide's table with a pinned row, and the brief instruction limits the phrases to something left unfixed.",
+          "Decision 8's three sources of `base.repaired` are realizable at one site. A `fullHealth` pass journals through the state tool's `journal` command (run_delivery.py:9278), the same path the lead uses by hand. A `fullHealth` pass journals `base.repaired` only when every break since the last repair is its own (run_delivery.py:9212-9216, 9275), and a `fullHealth` break stops no candidate, so that path has nothing stopped with `base_broken` to requeue. The V26-3258 row for a hand-journalled `base.repaired` therefore exercises the shared path, and the missing `fullHealth` row hides no failure I can state.",
+          "Decision 5's range is realizable: a signal death gives a negative return code, a timeout gives no return code with `timed_out` set, and the platform's highest signal is readable, so 137 falls inside the range on macOS and Linux while 128 and 255 fall outside it.",
+          "Note (P3, not filed): Decision 8 lets any `queued` row be named as the repair, but `serve` skips a queued row still marked `pending`, one whose hand-off the lead has not accepted (merge_queue.py:3205-3207). A repair named on such a row is taken by nothing until the lead accepts it. The lead does both steps, so the queue is no worse held than today. Smallest plan edit, if wanted: refuse a `pending` row as the repair, or say in the guide that the repair is accepted first.",
+          "Note (P3, not filed): the new `covers: null` row, like the existing `covers: {}` row, describes a line the views' plan validator refuses, because `_plan_covers` requires an object with both `criteria` and `proofs` (views_common.py:769-770), and `plan_covers` passes `null` through unchanged (run_delivery.py:4602). The row's own assertions (never journalled as met, holds the close, named by it) are still reachable by a fixture, so I state no failure against the plan. The implementer should expect the view to report such a plan as invalid.",
+          "Note (P3, not filed, carried from round 2): a rerun the lead stops on its first run is still retried when a whole-check flake is declared for that check, because `flake_for` returns before any failure is read (merge_queue.py:1151-1153). The delta does not change this.",
+          "Note (P3, not filed, carried from round 2): `serve --until-idle` returns when nothing it took left `queued` (merge_queue.py:3265-3269), so a lone candidate put back after a stopped rerun is not checked again in that mode. The delta does not change this.",
+          "Declined: the mutant list now reads 'The mutants include', which no longer claims to be complete. Each kept-behaviour row still has to be proven red by the preceding sentence, so nothing is weakened.",
+          "Declined: the 137 row asserts the candidate at `queued` and `serve` taking the next candidate, while a check that always exits 137 reaches the twice-stopped stop on the next turn. The row asserts the state after the first stopped rerun and the twice-stopped row covers the second, so the two do not conflict.",
+          "Approval conditions: none, since this round raises no finding. The notes above bind nothing."
+        ]
+      },
+      "resultSha256": "b1ea3f79022945b82631ea77e458f8374bec3d26c9c960afdf1dd1d6232794ea"
+    },
+    {
+      "lens": "lens.adversarial-testing",
+      "round": 3,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.adversarial-testing",
+        "subjectRef": "queue-and-close-out-truth.plan",
+        "candidateRef": "65016fd8815064b5f8104bf230b4153933256057",
+        "round": 3,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [
+          {
+            "id": "adversarial-testing-r2-1",
+            "state": "fixed",
+            "resolution": "Adopted as written. Decision 5 (lines 37-43) states both ends of the range, 129 up to 128 plus the platform's highest signal, and says 128 itself and any status above the range are failures. V26-3300 adds the stopped row for a check that exits 137 with no signal sent (line 166) and the failure rows for exit 128 and exit 255 beside exit 1 (lines 169-170). The mutant `returncode >= 128` now fails on the 255 row, and the mutant `returncode in (130, 143)` fails on the 137 row."
+          },
+          {
+            "id": "adversarial-testing-r2-2",
+            "state": "fixed",
+            "resolution": "Adopted as written. Lines 260-261 give one case each for a round-2 listing of `closed`, `fixed` and `withdrawn` filing no follow-up. Lines 267-268 extend the noDeferrals row with a finding listed `withdrawn`, journalling no blocker and not holding the close. A `deferred_findings` that clears only on `fixed` now fails two cases."
+          },
+          {
+            "id": "adversarial-testing-r2-3",
+            "state": "fixed",
+            "resolution": "Adopted in its first form. Decision 8 (lines 53-55) names the three ways base.repaired is journalled: a repair's merge, the lead, and a fullHealth pass. Lines 206-208 add the row as proposed: with no repair named, a hand-journalled base.repaired puts the two candidates the break stopped back to `queued`, `serve` takes them, and the candidate stopped for its own failing check stays stopped with its reason unchanged. A requeue done only where serve merges a named repair now fails that row."
+          }
+        ],
+        "evidence": [
+          "Reviewed tree SHA d3ffc92ba04041fd32915c55b6dd6f6f0151de98. Start identity check passed in the private checkout: HEAD 65016fd8815064b5f8104bf230b4153933256057, `git rev-parse HEAD^{tree}` equal to the tree SHA, `git status --porcelain` empty. End identity check passed with the same three values.",
+          "Re-check of carried findings against the delta I derived with `git diff 52560b4eac7dff4c438bdf450e382eddb0b15ada..65016fd8815064b5f8104bf230b4153933256057` (one file, the plan, 32 insertions and 17 deletions): adversarial-testing-r2-1, r2-2 and r2-3 are fixed, each adopted as its approval condition asked; `resolvedFindings` gives the lines. None was declined or adopted differently. The ten round-1 findings were closed as fixed in round 2, and the delta removes none of the rows that closed them.",
+          "Round-2 notes re-checked: the mutant list at line 105 now reads 'The mutants include' and names four more; line 317 adds the refusal row for 'nothing left unfixed' beside a 'Declined' note; line 173 adds a new candidate head on the same base head; line 234 adds `covers: null`; lines 201-202 refuse a row that is not `queued` as the repair. Not adopted and still a P3 note: a rerun stopped on its first run while a whole-check flake is declared has no row.",
+          "Review of the delta itself found no P0 or P1. Each new row was traced to a mutation it turns red: exit 128 and exit 255 as failures against 'every non-zero rerun classified as stopped'; exit 137 against a classifier listing only 130 and 143; the hand-journalled requeue against a merge-only requeue; the not-`queued` refusal has its allow side in the main repair scenario at lines 195-198.",
+          "Model class: claude-fable-5-2, run as a native subagent. Realization basis: host-convention. The host exposes no progress or permission signals to this lens. No subagents were spawned.",
+          "No checks were run, as the brief sets none for a plan review. No mutant was planted and no file was written in the checkout. Every mutation named is a described edit on lines the plan's stories change (Runner.rerun_on_base, record_rerun and serve in skills/orchestrate-work/scripts/merge_queue.py; deferred_findings in skills/run-delivery/scripts/run_delivery.py), so the mutants kept to the candidate's planned scope.",
+          "Read to ground the review, one path at a time: docs/plans/2026-11-14-queue-and-close-out-truth.md (whole); skills/orchestrate-work/scripts/merge_queue.py lines 2327-2425 (record_rerun writes `failed` or `passed` to meta.baseReruns from failed_run alone); skills/orchestrate-work/scripts/delivery_state.py lines 1610-1630 (base_rerun_notices warns from the latest entry for a check at the base head); skills/run-delivery/scripts/run_delivery.py lines 9205-9280 (a fullHealth pass journals base.repaired through the state tool's `journal` command, the same command the lead uses by hand, and only when every break since the last repair is fullHealth's own); skills/orchestrate-work/references/schemas.json lines 2170-2195 (the stop reasons' list).",
+          "P2 note (lines 41-42 and 168): the new row asserts only that a stopped rerun leaves no `failed` entry in meta.baseReruns and that `select` prints no warning. A mutant that records the stopped rerun as `passed` keeps both green. Because base_rerun_notices reads the latest entry for a check at a head, that `passed` would hide an earlier real failure at the same head from `select`. Asserting that a stopped row adds no meta.baseReruns entry at all, with Decision 5 saying so, closes it.",
+          "P3 note (Decision 5, line 38): the range's ends have no row at the edge. A classifier of `130 <= code <= 143` keeps every row green and reads 129 as a failure; rows for 129 and for 128 plus the highest signal would close it. Round 2's condition asked for one in-range code and was met, so this is not raised as a finding.",
+          "P3 note (Decision 6, line 48): the reason joining the result schema's list has no row of its own; only the guide's table is pinned (line 173). It is covered only if an existing test validates a stop's reason against skills/orchestrate-work/references/schemas.json or ties that list to the guide's table, which I did not confirm.",
+          "P3 note (Decision 8, line 53): the fullHealth arm has no row. It shares the state tool's `journal` command with the lead's hand entry, which line 206 covers. A fullHealth pass repairs only breaks fullHealth itself found, so no candidate stopped with base_broken is normally waiting on it.",
+          "P3 note (Decision 16, lines 75 and 318): the row pins the instruction to say 'nothing left unfixed'. It does not plainly cover the new clause, to use the three phrases only for something left unfixed, though the decision says the wording is pinned.",
+          "Findings considered and left out, with reasons: whether a hand-journalled base.repaired can identify 'the head that broke' when several breaks preceded it is a design question, not a surviving mutation; whether a stopped rerun should be recorded in meta.baseReruns under a third result is a contract question, noted above only as far as the `passed` mutant goes; a requeue missing on the fullHealth arm alone was not raised, because that arm shares a code path with the covered one.",
+          "Approval conditions: this result raises no finding, so there is none to state. The three round-2 findings are resolved as their conditions asked, and the plan is ready to approve from this lens. The P2 and P3 notes above are optional and do not hold the outcome."
+        ]
+      },
+      "resultSha256": "49009b9840a0d6fc0632f0679da518180f257e6d51370ce208c0e66c31784ba2"
+    }
+  ],
+  "residualRisks": [
+    "3 review rounds; findings open after each round: 15, 3, 0."
+  ]
+}
