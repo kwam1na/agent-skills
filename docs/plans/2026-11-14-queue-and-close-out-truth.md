@@ -9,8 +9,8 @@ queue, the close-out or the views report: V26-3300, V26-3258, V26-3170, V26-3340
 The other five add mechanisms and are a later delivery (Out of scope). Each story was checked against `main` at
 `0879492` on 2026-11-14, and each section says what that check found.
 
-Start from `main` at `0879492`. Apply the verified `linear-v2.2.0` release, the latest, on the integration base as its first commit. Deliver on the integration branch
-`integrate/queue-truth`, so delivery commits and the record's bookkeeping do not move `main`. The generation that
+Start from `main` at `0879492`. The integration base carries the verified `linear-v2.3.0` release, cut from that
+commit on 2026-11-14 so that lanes can share a file. Deliver on the integration branch `integrate/queue-truth`, so delivery commits and the record's bookkeeping do not move `main`. The generation that
 delivers this work is not the one that will contain it: a change made in `skills/` shows in a delivery here only after
 a release holding it is applied.
 
@@ -78,6 +78,11 @@ and the operator approves them with the plan.
     The round card's pill reads "Approved with N deferrable notes", or "Approved with 1 deferrable note" for one,
     and each such row reads "Deferred" with the severity words the card already uses.
 18. V26-3302 is delivered as documentation: its behaviour landed with V26-3358.
+19. Three lanes work at once and share four text files by region, which `linear-v2.3.0` supports and no delivery
+    here has used before. The lead grants each region in the record with `lead-own --region` after `lead-init`,
+    against the base head at that moment, and regrants one against the current base when an edit makes its
+    mapping ambiguous. A lane refreshes `provenance.lock.json`'s digests without owning it. Moving a story to
+    another lane is the lead's recorded decision.
 
 ## Out of scope
 
@@ -130,12 +135,31 @@ No story needs a shared port, a browser session or a database. Fixtures use thei
 
 ## Units and order
 
-The installed generation enforces whole-file ownership, and every story changes `provenance.lock.json`. One lane
-holds every file, and the stories run in order.
+Three lanes run at once. Lane 1 takes the merge queue's stories, lane 2 the close-out's and the hand-off's, and
+lane 3 the round card. The table holds each lane's whole-file claims.
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | V26-3300, V26-3258, V26-3170, V26-3340, V26-3271, V26-3424, V26-3302 | `skills/orchestrate-work/`, `skills/run-delivery/`, `skills/delivery-views/`, `skills/review-work/`, `skills/obtain-review/`, `tests/test_merge_queue.py`, `tests/test_orchestration_state.py`, `tests/test_orchestration_adopter.py`, `tests/test_orchestration_render.py`, `tests/test_lane_rows.py`, `tests/test_lead_wait.py`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_tracker.py`, `tests/test_delivery_views_page.py`, `tests/delivery_views_page/`, `tests/test_delivery_views_review_projection.py`, `tests/test_delivery_views_render.py`, `tests/test_delivery_views_history.py`, `tests/test_delivery_views_plan.py`, `tests/test_round_brief_template_corpus.py`, `tests/test_review_bound_corpus.py`, `tests/test_review_and_compounding.py`, `tests/test_linear_qualification.py`, `tests/test_compound_learning_corpus.py`, `tests/fixtures/`, `provenance.lock.json`, `catalog.json`, `profiles/`, `docs/solutions/` |
+| 1 | 1 | V26-3300, V26-3258 | `skills/orchestrate-work/scripts/`, `skills/orchestrate-work/references/schemas.json`, `skills/orchestrate-work/SKILL.md`, `skills/run-delivery/scripts/tracker_publisher.py`, `skills/delivery-views/assets/line-map.js`, `tests/test_merge_queue.py`, `tests/test_orchestration_state.py`, `tests/test_orchestration_adopter.py`, `tests/test_orchestration_render.py`, `tests/test_lane_rows.py`, `tests/test_lead_wait.py`, `tests/test_run_delivery_tracker.py`, `tests/delivery_views_page/line-map-kinds.test.mjs`, `docs/solutions/` |
+| 1 | 2 | V26-3170, V26-3340, V26-3424, V26-3302 | `skills/run-delivery/SKILL.md`, `skills/run-delivery/references/`, `skills/run-delivery/templates/`, `skills/review-work/`, `skills/obtain-review/`, `tests/test_run_delivery.py`, `tests/test_round_brief_template_corpus.py`, `tests/test_review_bound_corpus.py`, `tests/test_review_and_compounding.py` |
+| 1 | 3 | V26-3271 | `skills/delivery-views/assets/run-summary.js`, `skills/delivery-views/assets/run-summary.css`, `skills/delivery-views/scripts/review_projection.py`, `skills/delivery-views/scripts/render.py`, `tests/test_delivery_views_page.py`, `tests/delivery_views_page/golden.test.mjs`, `tests/delivery_views_page/history-golden.test.mjs`, `tests/delivery_views_page/line-map.test.mjs`, `tests/delivery_views_page/round-reports.mjs`, `tests/test_delivery_views_review_projection.py`, `tests/test_delivery_views_render.py`, `tests/test_delivery_views_history.py`, `tests/fixtures/delivery-views/` |
+
+Four text files are shared by region (Decision 19). No lane holds a whole-file claim on any of them:
+
+- `skills/run-delivery/scripts/run_delivery.py`: lane 1 holds the span of `needs_you`, and lane 2 the spans before
+  and after it.
+- `tests/test_run_delivery_supervisor.py`: lane 1 holds the span of the class its "Needs you" row joins, and lane 2
+  the spans before and after it.
+- `skills/orchestrate-work/references/orchestration-guide.md`: lane 2 holds the spans of the finish-line wording
+  and of the review result's shape and the close-out's follow-ups. Lane 1 holds the rest.
+- `skills/delivery-views/SKILL.md`: lane 2 holds the span of the `covers` wording, and lane 3 the rest.
+
+A region covers edits inside it only. A story that has to add lines at a span's edge, or outside its lane's spans,
+asks the lead, who widens the claim or moves it. Creating a file takes a whole-file claim: lane 1's are in the
+table, and the lead grants lane 2 the path of V26-3302's solution note when the lane reaches it.
+
+Every story that changes a file under `skills/` refreshes `provenance.lock.json` with the provenance writer. The
+queue regenerates it at sync, so two lanes' refreshes do not conflict. No story adds or removes a listed output.
 
 ## Stories
 
@@ -144,7 +168,7 @@ holds every file, and the stories run in order.
 Lane 1, tier 1, not blocked. Test-first. Files: `skills/orchestrate-work/`, `skills/run-delivery/scripts/tracker_publisher.py`,
 `skills/delivery-views/assets/line-map.js`, `tests/test_merge_queue.py`, `tests/test_orchestration_state.py`,
 `tests/test_orchestration_adopter.py`, `tests/test_run_delivery_tracker.py`, `tests/test_lead_wait.py`,
-`tests/delivery_views_page/` and `docs/solutions/`.
+`tests/delivery_views_page/line-map-kinds.test.mjs` and `docs/solutions/`.
 
 Found on `main`: `Runner.rerun_on_base` in `merge_queue.py` reads any non-zero return code as a failure, so a rerun
 the lead stopped journals `base.broken` and holds every candidate.
@@ -171,13 +195,14 @@ the check. A rerun that exits 1 by itself still breaks the base, and so does one
 same candidate and base heads leaves the candidate stopped as `base_rerun_stopped`, journals `candidate.stopped`
 and no `base.broken`, and `serve` takes the next candidate. A new base head lets the candidate be put back once
 more, and so does a new candidate head on the same base head. The guide's reason table has a row for
-`base_rerun_stopped`, pinned. `wait` does not return on `base.rerun.stopped`. The line map shows the new kind's label.
+`base_rerun_stopped`, pinned. `wait` does not return on `base.rerun.stopped`. The line map shows the new kind's label, in a page test file of
+this story's own.
 
 ### V26-3258. Let a base repair go through a held queue first, and batch selections by what they run
 
 Lane 1, tier 1, after V26-3300. Test-first. Files: `skills/orchestrate-work/`, `skills/run-delivery/scripts/run_delivery.py`,
-`skills/run-delivery/SKILL.md`, `tests/test_merge_queue.py`, `tests/test_orchestration_state.py`,
-`tests/test_run_delivery_supervisor.py` and `docs/solutions/`.
+`tests/test_merge_queue.py`, `tests/test_orchestration_state.py`, `tests/test_run_delivery_supervisor.py` and
+`docs/solutions/`. In `run_delivery.py` and the supervisor's tests it works inside lane 1's regions only.
 
 Found on `main`: nothing lets a lead name a repair, so `serve` takes nothing while the base awaits repair, and the
 lead journals `base.repaired` before the fix has landed. `Runner.lead_checks` compares two members' checks as whole
@@ -219,7 +244,7 @@ For batching and `select`:
 
 ### V26-3170. Stop a finish line with no criteria reading as met
 
-Lane 1, tier 1, after V26-3258. Test-first. Files: `skills/run-delivery/`, `skills/orchestrate-work/references/orchestration-guide.md`,
+Lane 2, tier 1, not blocked. Test-first. Files: `skills/run-delivery/`, `skills/orchestrate-work/references/orchestration-guide.md`,
 `skills/delivery-views/SKILL.md`, `tests/test_run_delivery_supervisor.py` and `tests/test_run_delivery.py`.
 
 Found on `main`: the ticket's wake on a failed `fullHealth` and its test's process scope are delivered. Its first
@@ -243,7 +268,7 @@ Scenarios. In each "never" row every unit's proofs are done, so an unready fixtu
 
 ### V26-3340. Stop the close-out filing follow-ups for review findings the lane already fixed
 
-Lane 1, tier 1, after V26-3170. Test-first. Files: `skills/run-delivery/`, `skills/review-work/`, `skills/obtain-review/`,
+Lane 2, tier 1, after V26-3170. Test-first. Files: `skills/run-delivery/`, `skills/review-work/`, `skills/obtain-review/`,
 `skills/orchestrate-work/references/orchestration-guide.md`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery.py`,
 `tests/test_round_brief_template_corpus.py`, `tests/test_review_bound_corpus.py` and `tests/test_review_and_compounding.py`.
 
@@ -273,9 +298,14 @@ Scenarios:
 
 ### V26-3271. Say on a round card that an approval carried deferrable findings
 
-Lane 1, tier 1, after V26-3340. Test-first. Files: `skills/delivery-views/`, `tests/test_delivery_views_page.py`,
+Lane 3, tier 1, not blocked. Test-first. Files: `skills/delivery-views/assets/run-summary.js`,
+`skills/delivery-views/assets/run-summary.css`, `skills/delivery-views/scripts/review_projection.py`,
+`skills/delivery-views/scripts/render.py`, `skills/delivery-views/SKILL.md`, `tests/test_delivery_views_page.py`,
 `tests/delivery_views_page/`, `tests/test_delivery_views_review_projection.py`, `tests/test_delivery_views_render.py`,
-`tests/test_delivery_views_history.py` and `tests/fixtures/`.
+`tests/test_delivery_views_history.py` and `tests/fixtures/delivery-views/`.
+
+It builds to Decision 13's rule, which this plan fixes, and so does not wait for V26-3340: its fixtures list a
+fixed finding in a later round's `resolvedFindings`, as a record reads under that rule.
 
 Found on `main`: `card()` in `run-summary.js` shows "Approved" for every approval, and both projections overwrite a
 raised finding's filed state with its final one.
@@ -299,7 +329,7 @@ Scenarios:
 
 ### V26-3424. Count a lens's evidence notes at hand-off under a no-deferrals ruling
 
-Lane 1, tier 1, after V26-3340 and V26-3271. Test-first. Files: `skills/run-delivery/`, `tests/test_run_delivery.py` and
+Lane 2, tier 1, after V26-3340. Test-first. Files: `skills/run-delivery/`, `tests/test_run_delivery.py` and
 `tests/test_run_delivery_supervisor.py`.
 
 Found on `main`: `handoff` checks only that the last round aligned and every lens answered, and never reads a
@@ -325,7 +355,7 @@ Scenarios, under `noDeferrals` unless a row says otherwise:
 
 ### V26-3302. Say what cleanup does for a story its forge merged by squash
 
-Lane 1, tier 1, after V26-3424. Sensor-only. Files: `skills/run-delivery/references/adopting.md`,
+Lane 2, tier 1, after V26-3424. Sensor-only. Files: `skills/run-delivery/references/adopting.md`,
 `tests/test_run_delivery.py` and `docs/solutions/`.
 
 Found on `main`: V26-3358 delivered the behaviour and its tests. The adoption guide's "Merge strategy" paragraph
