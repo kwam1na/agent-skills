@@ -36,8 +36,9 @@ from tests.test_run_delivery import (PATTERN, POSIX_ONLY, Fixture, add_story, co
 from tests.test_run_delivery import stop_and_reap  # a process the case started: stopped, then waited for
 from tests.test_run_delivery_tracker import FileBackend, JiraBackend
 
-# Each class that starts supervisors marks itself run_serially, so its cases run one at a time and alone on the machine.
-# The module isn't marked: marked, it would be one unit of every class, past the runner's unit limit on a macOS runner.
+# Each class that starts supervisors marks itself run_quietly, so its cases run one at a time and beside other quiet
+# units only: each keeps to its own fixture folder and stops what it started by the pid it recorded, but its waits on
+# real processes are bounded. The two that stage a 0.2 s race mark themselves run_serially and run alone on the machine.
 
 FORGE = r'''
 import argparse, json, os, subprocess, sys
@@ -314,19 +315,20 @@ def alive(pid: int) -> bool:
 
 
 class ModuleUnitsTests(unittest.TestCase):
-    """The runner plans this module as one unit per class, and runs every class that starts supervisors alone."""
+    """The runner plans this module as one unit per class, and runs every class that starts supervisors on a quiet
+    machine, or alone."""
 
-    def test_each_supervisor_class_is_a_serial_unit_of_its_own(self) -> None:
+    def test_each_supervisor_class_is_a_quiet_or_serial_unit_of_its_own(self) -> None:
         root = Path(__file__).resolve().parents[1]
         listed = subprocess.run([sys.executable, "-B", str(root / "scripts/run-tests.py"), "--list", "-p", Path(__file__).name],
                                 cwd=root, capture_output=True, text=True, timeout=120, check=True).stdout
-        units = {line.split()[0]: "(serial)" in line for line in listed.splitlines() if line.strip()}
+        units = {line.split()[0]: "(serial)" in line or "(quiet)" in line for line in listed.splitlines() if line.strip()}
         self.assertNotIn(__name__, units, "the module is planned as one unit")
         starters = [name for name, cls in sorted(globals().items()) if isinstance(cls, type)
                     and issubclass(cls, unittest.TestCase) and "setUpClass" in vars(cls)]
         self.assertGreaterEqual(len(starters), 8, starters)
         for name in starters:
-            self.assertIs(units.get(f"{__name__}.{name}"), True, f"{name} isn't a serial unit of its own: {listed}")
+            self.assertIs(units.get(f"{__name__}.{name}"), True, f"{name} isn't a quiet or serial unit of its own: {listed}")
 
 
 class ProofStateTests(unittest.TestCase):
@@ -506,7 +508,7 @@ class RecordedPidGuardTests(unittest.TestCase):
 class SupervisorProcessTests(unittest.TestCase):
     """The real supervisor: detached, holding its lock, keeping serve and the live view running."""
 
-    run_serially = True
+    run_quietly = True
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -1348,7 +1350,7 @@ class LeadAcceptChoosesChecksTests(unittest.TestCase):
     """Under selection.lead, the lead's acceptance chooses a candidate's checks or the fallback, never neither; the
     lane's hand-off names the checks it ran; and a binding without the option accepts as before."""
 
-    run_serially = True
+    run_quietly = True
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -1879,7 +1881,7 @@ class RegionOwnershipTests(unittest.TestCase):
 class SupervisorPassTests(unittest.TestCase):
     """One pass at a time, with `lead-run --once`: acceptance, the finish lines, "Needs you" and the close-out."""
 
-    run_serially = True
+    run_quietly = True
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -2931,7 +2933,7 @@ class SupervisorTrackerTests(unittest.TestCase):
     """What the supervisor reads of the tracker publisher: its "Needs you", its follow-up filings, and its ledger's
     cover of delivery.closed."""
 
-    run_serially = True
+    run_quietly = True
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -3192,7 +3194,7 @@ def fix_criteria(path: Path) -> None:
 class SupervisorPostureTests(unittest.TestCase):
     """`focused` on the delivery's base: the close-out runs no fullHealth, says so everywhere, and never reads as a pass."""
 
-    run_serially = True
+    run_quietly = True
     setUpClass = classmethod(SupervisorPassTests.setUpClass.__func__)
     merged = SupervisorPassTests.merged
     once = SupervisorPassTests.once
@@ -3453,7 +3455,7 @@ class SupervisorPostureRestoredTests(unittest.TestCase):
     """A skip, then `gate`, with the tracker holding the close open between the two passes: a real run starts, and once
     it passes nothing says skipped."""
 
-    run_serially = True
+    run_quietly = True
     setUpClass = classmethod(SupervisorTrackerTests.setUpClass.__func__)
     once = SupervisorTrackerTests.once
     closable = SupervisorTrackerTests.closable
@@ -3612,7 +3614,7 @@ class CloseStoppedPartwayTests(unittest.TestCase):
     """A close that stopped partway says so, by the record's two marks, and names what finishes it: each stop is made
     by the real commands, stopped where a kill would have stopped them, and then finished by the command named."""
 
-    run_serially = True
+    run_quietly = True
     setUpClass = classmethod(SupervisorTrackerTests.setUpClass.__func__)
     fixture = SupervisorTrackerTests.fixture
     once = SupervisorTrackerTests.once
@@ -3980,7 +3982,7 @@ def read_lock_held(fx: Fixture) -> bool:
 class SupervisorPostMergeTests(unittest.TestCase):
     """The post-merge tier: under `gate`, the binding's fullHealth runs after each merge, not only at close-out."""
 
-    run_serially = True
+    run_quietly = True
     setUpClass = classmethod(SupervisorPassTests.setUpClass.__func__)
     merged = SupervisorPassTests.merged
     once = SupervisorPassTests.once
@@ -4438,7 +4440,7 @@ class SupervisorPostMergeTests(unittest.TestCase):
 class SupervisorBackgroundHealthTests(unittest.TestCase):
     """A running supervisor starts the post-merge fullHealth as a child of its own and keeps passing while it runs."""
 
-    run_serially = True
+    run_quietly = True
     setUpClass = classmethod(SupervisorPassTests.setUpClass.__func__)
     merged = SupervisorPassTests.merged
     fixture = SupervisorPostMergeTests.fixture
@@ -4779,7 +4781,7 @@ class NoSupervisorOutlivesItsCaseTests(unittest.TestCase):
     test runner interrupts it. And a supervisor whose record or install is gone exits on its own. Each guard is proved
     with the other out of the way."""
 
-    run_serially = True
+    run_quietly = True
 
     @classmethod
     def setUpClass(cls) -> None:

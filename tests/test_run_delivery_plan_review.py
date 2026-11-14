@@ -18,7 +18,7 @@ from pathlib import Path
 
 from tests.test_run_delivery import POSIX_ONLY, ROOT, Fixture, call, commit, installed_release, plan_delivery, sh
 
-RUN_SERIALLY = True
+RUN_QUIETLY = True
 
 OC, AT = "lens.outcome-correctness", "lens.adversarial-testing"
 SHORT = {OC: "outcome-correctness", AT: "adversarial-testing"}

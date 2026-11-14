@@ -32,7 +32,11 @@ python3 scripts/bootstrap-test-environment.py
 `scripts/run-tests.py` runs the same suite across worker processes, half the
 cores by default, and gives the same verdict as `unittest discover` in a
 fraction of the time. A test class that sets `run_serially = True`, or a
-module that sets `RUN_SERIALLY = True`, runs with nothing beside it.
+module that sets `RUN_SERIALLY = True`, runs with nothing beside it. While one
+that sets `run_quietly = True`, or `RUN_QUIETLY = True`, runs, at most
+`--quiet-workers` units run in all, two fifths of the cores by default. On
+macOS the workers call git's own programs rather than `/usr/bin/git`, which
+looks them up again on every call.
 `--timings <file>` records per-test times, and `--timings-from <file>` starts
 the slowest work first. A unit that runs past `--unit-timeout` seconds, by
 default five times the slowest unit in the earlier timings and at least 300,
