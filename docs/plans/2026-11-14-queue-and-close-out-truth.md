@@ -39,7 +39,7 @@ and the operator approves them with the plan.
    signal, as `scripts/run-tests.py` exits 130 when it is interrupted or terminated), or one that ended without a verdict because the runner itself was interrupted. A
    status of 128 itself, or one above that range, is a failure. A check that exits with a status in the range and
    no signal sent cannot be told from one that was stopped, and reads as stopped; Decision 6's bound covers it. A
-   stopped rerun is not recorded as a failed base rerun. A rerun that times out is still a failure, as
+   stopped rerun is not recorded as a base rerun's result, failed or passed. A rerun that times out is still a failure, as
    `test_a_base_rerun_that_times_out_is_never_retried_even_under_a_whole_check_flake` pins today.
 6. After a stopped rerun the candidate goes back to `queued` and is checked again without the lead, once for each
    pair of candidate head and base head. The queue is not held, and the lead's wait does not wake for
@@ -80,8 +80,8 @@ and the operator approves them with the plan.
 18. V26-3302 is delivered as documentation: its behaviour landed with V26-3358.
 19. Three lanes work at once and share four text files by region, which `linear-v2.3.0` supports and no delivery
     here has used before. The lead grants each region in the record with `lead-own --region` after `lead-init`,
-    against the base head at that moment, and regrants one against the current base when an edit makes its
-    mapping ambiguous. A lane refreshes `provenance.lock.json`'s digests without owning it. Moving a story to
+    against the base head at that moment, and regrants one against the current base after each merge that edits
+    inside it, or when an edit makes its mapping ambiguous. A lane refreshes `provenance.lock.json`'s digests without owning it. Moving a story to
     another lane is the lead's recorded decision.
 
 ## Out of scope
@@ -113,9 +113,9 @@ approval; the hand-off refusal applied without the setting; `select` comparing w
 read by the key's presence and not its value; every round's notes read at hand-off; and any empty `criteria`
 treated as the lead's. A wording deliverable has a presence pin, proven by
 removing the phrase, beside any absence pin. A proof that mutates a file `provenance.lock.json`
-covers refreshes that file's digest with the mutation, as `AGENTS.md` says. When a releasable skill changes, its
-catalog entry, every selecting profile and its provenance digest change with it, through
-`scripts/update-provenance.py`.
+covers refreshes that file's digest with the mutation, as `AGENTS.md` says. When a story changes a releasable skill,
+it refreshes that skill's provenance digest through `scripts/update-provenance.py`; the catalog's and the profiles'
+wording is the lead's, as Units and order says.
 
 V26-3300 and V26-3258 each add to the record's shape: a journal kind and a queue row field. Search the existing
 tests for literal lists and counts of journal kinds and row fields, and update those pins in the same story. The
@@ -140,26 +140,29 @@ lane 3 the round card. The table holds each lane's whole-file claims.
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | V26-3300, V26-3258 | `skills/orchestrate-work/scripts/`, `skills/orchestrate-work/references/schemas.json`, `skills/orchestrate-work/SKILL.md`, `skills/run-delivery/scripts/tracker_publisher.py`, `skills/delivery-views/assets/line-map.js`, `tests/test_merge_queue.py`, `tests/test_orchestration_state.py`, `tests/test_orchestration_adopter.py`, `tests/test_orchestration_render.py`, `tests/test_lane_rows.py`, `tests/test_lead_wait.py`, `tests/test_run_delivery_tracker.py`, `tests/delivery_views_page/line-map-kinds.test.mjs`, `docs/solutions/` |
-| 1 | 2 | V26-3170, V26-3340, V26-3424, V26-3302 | `skills/run-delivery/SKILL.md`, `skills/run-delivery/references/`, `skills/run-delivery/templates/`, `skills/review-work/`, `skills/obtain-review/`, `tests/test_run_delivery.py`, `tests/test_round_brief_template_corpus.py`, `tests/test_review_bound_corpus.py`, `tests/test_review_and_compounding.py` |
+| 1 | 1 | V26-3300, V26-3258 | `skills/orchestrate-work/scripts/`, `skills/orchestrate-work/references/schemas.json`, `skills/orchestrate-work/SKILL.md`, `skills/run-delivery/scripts/tracker_publisher.py`, `skills/delivery-views/assets/line-map.js`, `tests/test_merge_queue.py`, `tests/test_orchestration_state.py`, `tests/test_orchestration_adopter.py`, `tests/test_orchestration_render.py`, `tests/test_lane_rows.py`, `tests/test_lead_wait.py`, `tests/test_run_delivery_tracker.py`, `tests/delivery_views_page/line-map-kinds.test.mjs`, `docs/solutions/best-practices/a-stopped-base-rerun-is-not-a-broken-base-2026-11-14.md` |
+| 1 | 2 | V26-3170, V26-3340, V26-3424, V26-3302 | `skills/run-delivery/SKILL.md`, `skills/run-delivery/references/`, `skills/run-delivery/templates/`, `skills/review-work/`, `skills/obtain-review/`, `tests/test_run_delivery.py`, `tests/test_round_brief_template_corpus.py`, `tests/test_review_bound_corpus.py`, `tests/test_review_and_compounding.py`, `docs/solutions/best-practices/cleanup-of-a-squash-merged-story-2026-11-14.md` |
 | 1 | 3 | V26-3271 | `skills/delivery-views/assets/run-summary.js`, `skills/delivery-views/assets/run-summary.css`, `skills/delivery-views/scripts/review_projection.py`, `skills/delivery-views/scripts/render.py`, `tests/test_delivery_views_page.py`, `tests/delivery_views_page/golden.test.mjs`, `tests/delivery_views_page/history-golden.test.mjs`, `tests/delivery_views_page/line-map.test.mjs`, `tests/delivery_views_page/round-reports.mjs`, `tests/test_delivery_views_review_projection.py`, `tests/test_delivery_views_render.py`, `tests/test_delivery_views_history.py`, `tests/fixtures/delivery-views/` |
 
 Four text files are shared by region (Decision 19). No lane holds a whole-file claim on any of them:
 
 - `skills/run-delivery/scripts/run_delivery.py`: lane 1 holds the span of `needs_you`, and lane 2 the spans before
   and after it.
-- `tests/test_run_delivery_supervisor.py`: lane 1 holds the span of the class its "Needs you" row joins, and lane 2
-  the spans before and after it.
+- `tests/test_run_delivery_supervisor.py`: lane 1 holds the span of `SupervisorPostMergeTests`, which its "Needs
+  you" row joins, and lane 2 the spans before and after it.
 - `skills/orchestrate-work/references/orchestration-guide.md`: lane 2 holds the spans of the finish-line wording
   and of the review result's shape and the close-out's follow-ups. Lane 1 holds the rest.
 - `skills/delivery-views/SKILL.md`: lane 2 holds the span of the `covers` wording, and lane 3 the rest.
 
 A region covers edits inside it only. A story that has to add lines at a span's edge, or outside its lane's spans,
-asks the lead, who widens the claim or moves it. Creating a file takes a whole-file claim: lane 1's are in the
-table, and the lead grants lane 2 the path of V26-3302's solution note when the lane reaches it.
+asks the lead, who widens the claim or moves it. Creating a file takes a whole-file claim, and the path of every
+file a story creates is in the table: the page test and the solution note of V26-3300, and the solution note of
+V26-3302. No lane claims a folder that another lane's new file would fall in.
 
 Every story that changes a file under `skills/` refreshes `provenance.lock.json` with the provenance writer. The
 queue regenerates it at sync, so two lanes' refreshes do not conflict. No story adds or removes a listed output.
+No story edits `catalog.json` or `profiles/`, which no lane owns: the lead writes the catalog's and the profiles'
+wording for this delivery's skill changes once, on the integration branch, before the change request to `main`.
 
 ## Stories
 
@@ -168,7 +171,8 @@ queue regenerates it at sync, so two lanes' refreshes do not conflict. No story 
 Lane 1, tier 1, not blocked. Test-first. Files: `skills/orchestrate-work/`, `skills/run-delivery/scripts/tracker_publisher.py`,
 `skills/delivery-views/assets/line-map.js`, `tests/test_merge_queue.py`, `tests/test_orchestration_state.py`,
 `tests/test_orchestration_adopter.py`, `tests/test_run_delivery_tracker.py`, `tests/test_lead_wait.py`,
-`tests/delivery_views_page/line-map-kinds.test.mjs` and `docs/solutions/`.
+`tests/delivery_views_page/line-map-kinds.test.mjs` and
+`docs/solutions/best-practices/a-stopped-base-rerun-is-not-a-broken-base-2026-11-14.md`.
 
 Found on `main`: `Runner.rerun_on_base` in `merge_queue.py` reads any non-zero return code as a failure, so a rerun
 the lead stopped journals `base.broken` and holds every candidate.
@@ -189,7 +193,7 @@ candidate:
 - a rerun stopped during its flake retry;
 - a check that exits 137 with no signal sent.
 
-No stopped row leaves a `failed` entry in `meta.baseReruns`, and `select` at that base head prints no warning for
+No stopped row adds an entry of any result to `meta.baseReruns`, and `select` at that base head prints no warning for
 the check. A rerun that exits 1 by itself still breaks the base, and so does one that exits 128, one that exits
 255, and one that times out. A rerun stopped twice at the
 same candidate and base heads leaves the candidate stopped as `base_rerun_stopped`, journals `candidate.stopped`
@@ -201,8 +205,8 @@ this story's own.
 ### V26-3258. Let a base repair go through a held queue first, and batch selections by what they run
 
 Lane 1, tier 1, after V26-3300. Test-first. Files: `skills/orchestrate-work/`, `skills/run-delivery/scripts/run_delivery.py`,
-`tests/test_merge_queue.py`, `tests/test_orchestration_state.py`, `tests/test_run_delivery_supervisor.py` and
-`docs/solutions/`. In `run_delivery.py` and the supervisor's tests it works inside lane 1's regions only.
+`tests/test_merge_queue.py`, `tests/test_orchestration_state.py` and `tests/test_run_delivery_supervisor.py`. In
+`run_delivery.py` and the supervisor's tests it works inside lane 1's regions only.
 
 Found on `main`: nothing lets a lead name a repair, so `serve` takes nothing while the base awaits repair, and the
 lead journals `base.repaired` before the fix has landed. `Runner.lead_checks` compares two members' checks as whole
@@ -356,7 +360,7 @@ Scenarios, under `noDeferrals` unless a row says otherwise:
 ### V26-3302. Say what cleanup does for a story its forge merged by squash
 
 Lane 2, tier 1, after V26-3424. Sensor-only. Files: `skills/run-delivery/references/adopting.md`,
-`tests/test_run_delivery.py` and `docs/solutions/`.
+`tests/test_run_delivery.py` and `docs/solutions/best-practices/cleanup-of-a-squash-merged-story-2026-11-14.md`.
 
 Found on `main`: V26-3358 delivered the behaviour and its tests. The adoption guide's "Merge strategy" paragraph
 still says a squashed story's cleanup reports it unmerged and leaves its checkout, and no solution note records the
