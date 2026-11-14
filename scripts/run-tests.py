@@ -12,9 +12,15 @@ skipped test, as under discover. A test class imported into a module that
 has module fixtures runs again inside that module's unit, wherever the class
 is defined. A
 class that sets ``run_serially = True``, or a module marked ``RUN_SERIALLY``,
-runs alone: no other worker is running while it does. Every unit runs in its
+runs alone: no other worker is running while it does. A class that sets
+``run_quietly = True``, or a module marked ``RUN_QUIETLY``, needs a quiet
+machine rather than an empty one: while one of its units runs, at most
+``--quiet-workers`` units run in all. The quiet units start first, and the
+others fill in as they finish. A quiet module still splits into a unit per
+class. Every unit runs in its
 own process, so a crash or a hang ends that unit only; the run then fails,
-naming it. With ``--timings-from``, the slowest units start first.
+naming it. On macOS a worker's ``PATH`` starts with git's own programs, since
+``/usr/bin/git`` looks them up again on every call. With ``--timings-from``, the slowest units start first.
 
 A unit that runs longer than ``--unit-timeout`` seconds is stopped with its
 whole process group, as an interrupt stops it, and reported as timed out with
@@ -26,6 +32,7 @@ group is stopped: a child a test moved into a session of its own is not.
 
     .venv/bin/python scripts/run-tests.py                 # cores / 2 workers
     .venv/bin/python scripts/run-tests.py --workers 1     # one at a time
+    .venv/bin/python scripts/run-tests.py --quiet-workers 4
     .venv/bin/python scripts/run-tests.py --timings timings.json
     .venv/bin/python scripts/run-tests.py --timings-from timings.json
 
@@ -55,6 +62,8 @@ from pathlib import Path
 
 SERIAL_MODULE = "RUN_SERIALLY"
 SERIAL_CLASS = "run_serially"
+QUIET_MODULE = "RUN_QUIETLY"
+QUIET_CLASS = "run_quietly"
 # How long a stopped worker gets to exit before it is killed.
 STOP_GRACE_SECONDS = 3
 # Tests per unit, when a class may be split.
@@ -64,6 +73,8 @@ UNIT_TIMEOUT_FACTOR = 5
 UNIT_TIMEOUT_FLOOR = 300
 # Without earlier timings.
 UNIT_TIMEOUT_DEFAULT = 1800
+# macOS's git: a launcher that looks the real one up on every call.
+MACOS_GIT_LAUNCHER = "/usr/bin/git"
 
 
 def _flatten(suite: unittest.TestSuite):
@@ -79,7 +90,7 @@ def _own(cls: type, name: str) -> bool:
 
 
 def discover_units(start: str, top: str, pattern: str, chunk: int = CHUNK) -> list[dict]:
-    """The units to run, in discovery order: ``{name, names, serial, tests}``."""
+    """The units to run, in discovery order: ``{name, names, serial, quiet, tests}``."""
     sys.path.insert(0, os.path.abspath(top))
     suite = unittest.defaultTestLoader.discover(start, pattern=pattern, top_level_dir=top)
     groups: dict[str, dict] = {}
@@ -87,7 +98,8 @@ def discover_units(start: str, top: str, pattern: str, chunk: int = CHUNK) -> li
         if type(test).__name__ in ("_FailedTest", "ModuleSkipped"):
             # A module that failed to import, or skipped itself as it was: its worker imports it again.
             name = test.id().rsplit(f"{type(test).__name__}.", 1)[-1]
-            groups.setdefault(name, {"name": name, "whole": True, "serial": False, "ids": []})["ids"].append(name)
+            groups.setdefault(name, {"name": name, "whole": True, "serial": False, "quiet": False,
+                                     "ids": []})["ids"].append(name)
             continue
         cls = type(test)
         module = sys.modules.get(cls.__module__)
@@ -96,21 +108,27 @@ def discover_units(start: str, top: str, pattern: str, chunk: int = CHUNK) -> li
                                                or getattr(module, SERIAL_MODULE, False))
         name = cls.__module__ if module_whole else f"{cls.__module__}.{cls.__qualname__}"
         group = groups.setdefault(name, {"name": name, "whole": module_whole or _own(cls, "setUpClass")
-                                         or _own(cls, "tearDownClass"), "serial": False, "ids": []})
+                                         or _own(cls, "tearDownClass"), "serial": False, "quiet": False,
+                                         "ids": []})
         group["serial"] = group["serial"] or bool(getattr(module, SERIAL_MODULE, False)
                                                   or getattr(cls, SERIAL_CLASS, False))
+        group["quiet"] = group["quiet"] or bool(getattr(module, QUIET_MODULE, False)
+                                                or getattr(cls, QUIET_CLASS, False))
         group["ids"].append(test.id())
     units = []
+    for group in groups.values():
+        # Alone is the stronger need.
+        group["quiet"] = group["quiet"] and not group["serial"]
     for group in groups.values():
         if group["whole"] or len(group["ids"]) <= chunk:
             names = [group["name"]] if group["whole"] else group["ids"]
             units.append({"name": group["name"], "names": names, "serial": group["serial"],
-                          "tests": len(group["ids"]), "ids": group["ids"], "pattern": pattern})
+                          "quiet": group["quiet"], "tests": len(group["ids"]), "ids": group["ids"], "pattern": pattern})
             continue
         parts = [group["ids"][index:index + chunk] for index in range(0, len(group["ids"]), chunk)]
         for number, part in enumerate(parts, start=1):
             units.append({"name": f"{group['name']}[{number}/{len(parts)}]", "names": part,
-                          "serial": group["serial"], "tests": len(part), "ids": part, "pattern": pattern})
+                          "serial": group["serial"], "quiet": group["quiet"], "tests": len(part), "ids": part, "pattern": pattern})
     return units
 
 
@@ -228,9 +246,33 @@ def _stop_all(processes: list[subprocess.Popen], *, ignore_interrupts: bool = Tr
             signal.signal(signum, handler)
 
 
+def _direct_git(environment: dict[str, str]) -> dict[str, str]:
+    """``environment`` with git's own programs first on ``PATH``, where ``git`` is only a launcher for them.
+
+    macOS's ``/usr/bin/git`` finds the real one again on every call, which
+    takes longer than most of the calls the suite makes, and the suite makes
+    hundreds in a test. Anywhere else, or when the real one cannot be found,
+    the environment is returned as it was.
+    """
+    if sys.platform != "darwin" or shutil.which("git", path=environment.get("PATH")) != MACOS_GIT_LAUNCHER:
+        return environment
+    try:
+        programs = subprocess.run([MACOS_GIT_LAUNCHER, "--exec-path"], stdin=subprocess.DEVNULL, capture_output=True,
+                                  text=True, timeout=60, env=environment).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return environment
+    if not programs or not os.access(os.path.join(programs, "git"), os.X_OK):
+        return environment
+    return {**environment, "PATH": os.pathsep.join([programs, environment.get("PATH", "")])}
+
+
 def run_suite(units: list[dict], *, workers: int, top: str, unit_timeout: float | None = None,
-              out=sys.stdout, unit_temp: Path | None = None) -> dict:
+              out=sys.stdout, unit_temp: Path | None = None, quiet_workers: int = 1) -> dict:
     """Run every unit, at most ``workers`` at once, serial units alone; return the combined result.
+
+    While a quiet unit runs, at most ``quiet_workers`` units run in all. The
+    quiet units start first, since they are the long ones, and the others
+    take their places as they finish, so no worker waits for a phase to end.
 
     A unit still running after ``unit_timeout`` seconds is stopped, with
     everything it started, and recorded as timed out. With ``unit_temp``, each
@@ -238,9 +280,10 @@ def run_suite(units: list[dict], *, workers: int, top: str, unit_timeout: float 
     ``unitTemp``, so what a unit writes there can be told from another's.
     """
     scratch = Path(tempfile.mkdtemp(prefix="run-tests-"))
-    parallel = [unit for unit in units if not unit["serial"]]
+    environment = _direct_git(dict(os.environ))
     serial = [unit for unit in units if unit["serial"]]
-    pending = [*parallel]
+    quiet = [unit for unit in units if not unit["serial"] and unit.get("quiet")]
+    pending = [unit for unit in units if not unit["serial"] and not unit.get("quiet")]
     running: dict[str, tuple[subprocess.Popen, Path, Path, float, dict]] = {}
     combined = {"testsRun": 0, "failures": [], "errors": [], "skipped": 0, "expectedFailures": 0,
                 "unexpectedSuccesses": [], "crashed": [], "timedOut": [], "timings": {}, "units": {}, "unitTemp": {}}
@@ -250,12 +293,12 @@ def run_suite(units: list[dict], *, workers: int, top: str, unit_timeout: float 
         result_path, log_path = scratch / f"{index}.json", scratch / f"{index}.log"
         names_path = scratch / f"{index}.names.json"
         names_path.write_text(json.dumps({"names": unit["names"], "pattern": unit["pattern"]}), encoding="utf-8")
-        environment = None
+        unit_environment = environment
         if unit_temp is not None:
             temp = unit_temp / str(index)
             temp.mkdir()
             combined["unitTemp"][unit["name"]] = str(temp)
-            environment = {**os.environ, "TMPDIR": str(temp), "TEMP": str(temp), "TMP": str(temp)}
+            unit_environment = {**environment, "TMPDIR": str(temp), "TEMP": str(temp), "TMP": str(temp)}
         # An interrupt must not land between starting a worker and recording it: it would be left running.
         blocked = hasattr(signal, "pthread_sigmask")
         if blocked:
@@ -265,7 +308,7 @@ def run_suite(units: list[dict], *, workers: int, top: str, unit_timeout: float 
                 process = subprocess.Popen(
                     [sys.executable, "-B", os.path.abspath(__file__), "--unit", str(names_path),
                      "--result", str(result_path), "--top-level-dir", top],
-                    stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, cwd=top, env=environment,
+                    stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, cwd=top, env=unit_environment,
                     **({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
                        else {"start_new_session": True}))
             running[unit["name"]] = (process, result_path, log_path, time.perf_counter(), unit)
@@ -312,8 +355,16 @@ def run_suite(units: list[dict], *, workers: int, top: str, unit_timeout: float 
             combined["timedOut"].append({"unit": name, "seconds": unit_timeout, "tests": unit["ids"], "log": tail})
             print(f"TIMED OUT {name} (after {unit_timeout:g}s)", file=out, flush=True)
 
-    def drain(limit: int) -> None:
-        while len(running) >= limit or (limit == 1 and running):
+    def room() -> int:
+        # A quiet unit still running holds every unit beside it to its own bound.
+        if any(unit.get("quiet") for *_rest, unit in running.values()):
+            return max(min(quiet_workers, workers), 1)
+        return max(workers, 1)
+
+    def drain(limit) -> None:
+        """Wait until fewer than ``limit`` units are running, or none when it is 1; a callable is asked each time."""
+        bound = limit if callable(limit) else lambda: limit
+        while len(running) >= bound() or (bound() == 1 and running):
             late = []
             for name, (process, _result, _log, started, _unit) in list(running.items()):
                 if process.poll() is not None:
@@ -322,12 +373,12 @@ def run_suite(units: list[dict], *, workers: int, top: str, unit_timeout: float 
                     late.append(name)
             if late:
                 expire(late)
-            if len(running) >= limit or (limit == 1 and running):
+            if len(running) >= bound() or (bound() == 1 and running):
                 time.sleep(0.05)
 
     try:
-        for unit in pending:
-            drain(max(workers, 1))
+        for unit in [*quiet, *pending]:
+            drain(room)
             start(unit)
         drain(1)
         for unit in serial:
@@ -402,6 +453,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-p", "--pattern", default="test_*.py")
     parser.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) // 2),
                         help="how many units run at once; cores / 2 when absent")
+    parser.add_argument("--quiet-workers", type=int,
+                        help="how many units run at once while a quiet one does; two fifths of the cores when absent, never more than --workers")
     parser.add_argument("--timings", type=Path, help="write per-unit, per-module and per-test times here")
     parser.add_argument("--timings-from", type=Path, help="an earlier --timings file: start the slowest units first")
     parser.add_argument("--chunk", type=int, default=CHUNK, help=f"tests per unit when a class is split; {CHUNK}")
@@ -421,6 +474,10 @@ def main(argv: list[str] | None = None) -> int:
         return run_unit(args.unit, args.result, args.top_level_dir)
     if args.workers < 1 or args.chunk < 1:
         parser.error("--workers and --chunk must be at least 1")
+    if args.quiet_workers is None:
+        args.quiet_workers = min(args.workers, max(1, (os.cpu_count() or 2) * 2 // 5))
+    elif args.quiet_workers < 1:
+        parser.error("--quiet-workers must be at least 1")
     if args.unit_timeout is not None and not (math.isfinite(args.unit_timeout) and args.unit_timeout >= 0):
         parser.error("--unit-timeout must be a finite number of seconds, 0 for none")
     try:
@@ -473,13 +530,15 @@ def _discover_and_run(args: argparse.Namespace) -> int:
             timings_note = f"{args.timings_from.name} records no usable time for a current test"
     if args.list:
         for unit in units:
-            print(f"{unit['name']}{'  (serial)' if unit['serial'] else ''}  {unit['tests']}")
+            mark = "  (serial)" if unit["serial"] else "  (quiet)" if unit["quiet"] else ""
+            print(f"{unit['name']}{mark}  {unit['tests']}")
         return 0
     note = f" (default: {timings_note})" if timings_note and args.unit_timeout is None else ""
     print(f"unit timeout: {f'{unit_timeout:g}s' if unit_timeout else 'none'}{note}", flush=True)
     started = time.perf_counter()
     try:
-        combined = run_suite(units, workers=args.workers, top=args.top_level_dir, unit_timeout=unit_timeout)
+        combined = run_suite(units, workers=args.workers, top=args.top_level_dir, unit_timeout=unit_timeout,
+                             quiet_workers=args.quiet_workers)
     except KeyboardInterrupt:
         print("interrupted: every worker was stopped", file=sys.stderr)
         return 130

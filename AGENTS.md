@@ -135,6 +135,10 @@ each test module writes.
 Mark a test class `run_serially = True`, or a module `RUN_SERIALLY = True`,
 when it cannot share the machine: a fixed port, a fixed path outside its own
 temporary folder, or process-wide state.
+Mark a class `run_quietly = True`, or a module
+`RUN_QUIETLY = True`, when it keeps to its own folders, ports and processes but
+waits on real processes within bounds a busy machine can make miss: while it
+runs, at most `--quiet-workers` units run in all.
 
 Stop only processes you started, by the pid you recorded, and never by pattern with
 `pkill` or `killall`. BSD `pkill` stops reading options at the first pattern, so one

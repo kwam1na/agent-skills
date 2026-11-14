@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -174,6 +175,152 @@ class ParallelRunnerTests(unittest.TestCase):
         self.assertEqual(overlapping, [], spans)
         # The others did share the machine.
         self.assertTrue(spans["A"][0] < spans["B"][1] and spans["B"][0] < spans["A"][1], spans)
+
+    def quiet_suite(self) -> None:
+        body = """
+            import os, time, unittest
+            def mark(name):
+                with open(os.environ["TRACE"], "a") as trace:
+                    trace.write(f"{name} start {time.time()}\\n")
+                time.sleep(0.6)
+                with open(os.environ["TRACE"], "a") as trace:
+                    trace.write(f"{name} end {time.time()}\\n")
+        """
+        self.module("test_busy", body + """
+            class A(unittest.TestCase):
+                def test_a(self): mark("A")
+            class B(unittest.TestCase):
+                def test_b(self): mark("B")
+            class E(unittest.TestCase):
+                def test_e(self): mark("E")
+            class F(unittest.TestCase):
+                def test_f(self): mark("F")
+            class Hushed(unittest.TestCase):
+                run_quietly = True
+                def test_hushed(self): mark("Hushed")
+            class Alone(unittest.TestCase):
+                run_quietly = True
+                run_serially = True
+                def test_alone(self): mark("Alone")
+        """)
+        self.module("test_hush", body + """
+            RUN_QUIETLY = True
+            class C(unittest.TestCase):
+                def test_c(self): mark("C")
+            class D(unittest.TestCase):
+                def test_d(self): mark("D")
+        """)
+
+    def spans(self) -> dict[str, list[float]]:
+        spans: dict[str, list[float]] = {}
+        for line in self.trace.read_text().splitlines():
+            name, _, moment = line.split()
+            spans.setdefault(name, []).append(float(moment))
+        return spans
+
+    def busiest(self, spans: dict[str, list[float]], name: str) -> int:
+        """The most units running at once at any moment ``name`` was."""
+        start, end = spans[name]
+        moments = [moment for begin, _finish in spans.values() for moment in (begin,) if start <= moment < end]
+        return max(sum(1 for begin, finish in spans.values() if begin <= moment < finish) for moment in moments)
+
+    def test_while_a_quiet_unit_runs_no_more_than_its_bound_run_in_all(self) -> None:
+        self.quiet_suite()
+        listed = self.run_runner("--list").stdout.splitlines()
+        # A quiet module is a unit per class, and a class marked both ways runs alone.
+        self.assertEqual(listed, ["suite.test_busy.A  1", "suite.test_busy.Alone  (serial)  1", "suite.test_busy.B  1",
+                                  "suite.test_busy.E  1", "suite.test_busy.F  1", "suite.test_busy.Hushed  (quiet)  1",
+                                  "suite.test_hush.C  (quiet)  1", "suite.test_hush.D  (quiet)  1"])
+        run = self.run_runner("--workers", "3", "--quiet-workers", "2")
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        spans = self.spans()
+        self.assertEqual(set(spans), {"A", "B", "E", "F", "Hushed", "Alone", "C", "D"})
+        quiet = ("Hushed", "C", "D")
+        self.assertEqual(max(self.busiest(spans, name) for name in quiet), 2, spans)
+        self.assertEqual(self.busiest(spans, "Alone"), 1, spans)
+        # The quiet units start first, and the others fill in to their own bound once none is running.
+        self.assertLess(min(spans[name][0] for name in quiet), min(spans[name][0] for name in "ABEF"), spans)
+        self.assertEqual(max(self.busiest(spans, name) for name in "ABEF"), 3, spans)
+        self.assertLess(max(spans[name][1] for name in spans if name != "Alone"), spans["Alone"][0], spans)
+
+    def test_a_quiet_unit_runs_alone_with_one_quiet_worker(self) -> None:
+        self.quiet_suite()
+        run = self.run_runner("--workers", "4", "--quiet-workers", "1")
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        spans = self.spans()
+        self.assertEqual({name: self.busiest(spans, name) for name in ("Hushed", "C", "D")},
+                         {"Hushed": 1, "C": 1, "D": 1}, spans)
+        refused = self.run_runner("--quiet-workers", "0")
+        self.assertEqual(refused.returncode, 2, refused.stdout + refused.stderr)
+        self.assertIn("--quiet-workers must be at least 1", refused.stderr)
+
+    def test_never_more_than_the_workers_run_beside_a_quiet_unit(self) -> None:
+        self.quiet_suite()
+        run = self.run_runner("--workers", "2", "--quiet-workers", "5")
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        spans = self.spans()
+        self.assertEqual(max(self.busiest(spans, name) for name in spans), 2, spans)
+
+    def load_runner(self):
+        spec = importlib.util.spec_from_file_location("run_tests_for_direct_git", RUNNER)
+        runner = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(runner)
+        return runner
+
+    def test_where_git_is_only_a_launcher_the_workers_path_starts_with_git_s_own_programs(self) -> None:
+        runner = self.load_runner()
+        programs = self.root / "git-core"
+        programs.mkdir()
+        (programs / "git").write_text("#!/bin/sh\n", encoding="utf-8")
+        (programs / "git").chmod(0o755)
+        asked: list[list[str]] = []
+
+        def exec_path(argv, **_options):
+            asked.append(argv)
+            return subprocess.CompletedProcess(argv, 0, stdout=f"{programs}\n", stderr="")
+
+        before = {"PATH": "/usr/bin:/bin", "KEPT": "as it was"}
+        with mock.patch.object(runner.sys, "platform", "darwin"), \
+                mock.patch.object(runner.shutil, "which", return_value="/usr/bin/git"), \
+                mock.patch.object(runner.subprocess, "run", side_effect=exec_path):
+            after = runner._direct_git(dict(before))
+            self.assertEqual(after, {"PATH": f"{programs}{os.pathsep}/usr/bin:/bin", "KEPT": "as it was"})
+            self.assertEqual(asked, [["/usr/bin/git", "--exec-path"]])
+            # No real git where it says: the launcher stays.
+            (programs / "git").unlink()
+            self.assertEqual(runner._direct_git(dict(before)), before)
+        refusals = {
+            "another platform": ("linux", "/usr/bin/git", exec_path),
+            "a git of the machine's own": ("darwin", "/opt/homebrew/bin/git", exec_path),
+            "no git": ("darwin", None, exec_path),
+            "a launcher that cannot run": ("darwin", "/usr/bin/git", OSError("no launcher")),
+            "a launcher that hangs": ("darwin", "/usr/bin/git", subprocess.TimeoutExpired("git", 60)),
+        }
+        (programs / "git").write_text("#!/bin/sh\n", encoding="utf-8")
+        (programs / "git").chmod(0o755)
+        for name, (platform, found, answer) in refusals.items():
+            with self.subTest(name), mock.patch.object(runner.sys, "platform", platform), \
+                    mock.patch.object(runner.shutil, "which", return_value=found), \
+                    mock.patch.object(runner.subprocess, "run", side_effect=answer):
+                self.assertEqual(runner._direct_git(dict(before)), before)
+
+    def test_a_worker_runs_the_same_git_as_the_runner(self) -> None:
+        self.module("test_git", """
+            import os, shutil, subprocess, unittest
+            class Git(unittest.TestCase):
+                def test_git(self):
+                    version = subprocess.run(["git", "--version"], capture_output=True, text=True, check=True).stdout
+                    with open(os.environ["TRACE"], "a") as trace:
+                        trace.write(f"{shutil.which('git')}\\n{version}")
+        """)
+        run = self.run_runner()
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        found, version = self.trace.read_text().splitlines()
+        self.assertEqual(version, subprocess.run(["git", "--version"], capture_output=True, text=True).stdout.strip())
+        if sys.platform == "darwin" and shutil.which("git") == "/usr/bin/git":
+            self.assertNotEqual(found, "/usr/bin/git", "the worker still calls the launcher")
+        else:
+            self.assertEqual(found, shutil.which("git"))
 
     def interrupted_run(self, *signals: int) -> tuple[subprocess.Popen, str, list[int]]:
         # Each worker ignores SIGTERM and leaves a grandchild in its group that ignores it too.

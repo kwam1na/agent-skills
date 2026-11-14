@@ -54,10 +54,11 @@ from quiet_git import quieten
 from tests.test_merge_queue import SERVING_BINDING, SERVING_RULE  # the rule both tools apply
 
 
-# The cases share one fixture repository's in-app lease lock and the
-# environment variables its fake adapters read, and the timeout case looks for
-# leftover processes machine-wide.
-RUN_SERIALLY = True
+# Every case keeps to its own fixture folder, port and lease lock, and looks for
+# leftover processes by its own group or folder, so the classes can run beside
+# each other. They wait on real processes within bounds, which a machine with
+# every core busy can make miss: each class is a quiet unit.
+RUN_QUIETLY = True
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "skills/run-delivery"
