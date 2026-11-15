@@ -6822,6 +6822,21 @@ class CheckCatalogueTests(unittest.TestCase):
         self.assertEqual(error.code, "binding_invalid")
         self.assertIn("cycle", str(error))
 
+    def test_the_binding_schema_takes_complete_readers_and_unread_paths(self) -> None:
+        schema = json.loads(SCHEMA_FILE.read_text(encoding="utf-8"))["orchestration-binding/1"]
+        validator = Draft202012Validator({"$ref": "#/properties/selection", "properties": schema["properties"],
+                                          "$defs": schema["$defs"]})
+        # A readers entry may say its paths are everything its checks read, and a binding may name what nothing reads.
+        reader = {"paths": ["src/**"], "checks": ["run-delivery"]}
+        for good in ({"readers": [{**reader, "complete": True}]}, {"readers": [{**reader, "complete": False}]},
+                     {"unread": ["docs/**", "README.md"]}, {"unread": []}):
+            with self.subTest(good=good):
+                self.assertEqual([error.message for error in validator.iter_errors({**self.binding["selection"], **good})], [])
+        for bad in ({"readers": [{**reader, "complete": "yes"}]}, {"readers": [{**reader, "complete": 1}]},
+                    {"unread": "docs/**"}, {"unread": [3]}, {"unread": [""]}):
+            with self.subTest(bad=bad):
+                self.assertNotEqual(list(validator.iter_errors({**self.binding["selection"], **bad})), [])
+
     def test_the_binding_schema_takes_the_catalogue_guards_and_readers(self) -> None:
         schema = json.loads(SCHEMA_FILE.read_text(encoding="utf-8"))["orchestration-binding/1"]
         selection = {**schema, "$ref": "#/properties/selection"}
@@ -6833,16 +6848,6 @@ class CheckCatalogueTests(unittest.TestCase):
         self.assertEqual([error.message for error in validator.iter_errors(self.binding["selection"])], [])
         self.assertNotEqual(list(validator.iter_errors({**self.binding["selection"], "aliases": []})), [])
         self.assertNotEqual(list(validator.iter_errors({**self.binding["selection"], "readers": [{"paths": ["a"]}]})), [])
-        # A readers entry may say its paths are everything its checks read, and a binding may name what nothing reads.
-        reader = {"paths": ["src/**"], "checks": ["run-delivery"]}
-        for good in ({"readers": [{**reader, "complete": True}]}, {"readers": [{**reader, "complete": False}]},
-                     {"unread": ["docs/**", "README.md"]}, {"unread": []}):
-            with self.subTest(good=good):
-                self.assertEqual([error.message for error in validator.iter_errors({**self.binding["selection"], **good})], [])
-        for bad in ({"readers": [{**reader, "complete": "yes"}]}, {"readers": [{**reader, "complete": 1}]},
-                    {"unread": "docs/**"}, {"unread": [3]}, {"unread": [""]}):
-            with self.subTest(bad=bad):
-                self.assertNotEqual(list(validator.iter_errors({**self.binding["selection"], **bad})), [])
 
     # -- the base head warning -------------------------------------------------------------------------------------
 
