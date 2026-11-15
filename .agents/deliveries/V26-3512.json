@@ -173,6 +173,10 @@
         {
           "id": "v26-3513-4",
           "text": "The lead-upgrade-writer row uses a small non-zero checkTimeoutSeconds and shows the waiter file before the refusal, and one lead row reads the holder file and finds the fixture delivery named."
+        },
+        {
+          "id": "v26-3513-5",
+          "text": "The guide queue_locked row says what to do for each cause, the queue lock and a held slot, and the sentence is pinned. No behaviour changes, and the suite stays inside tests/suite-budget.json."
         }
       ],
       "after": [
