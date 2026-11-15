@@ -1,0 +1,233 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3512",
+  "headline": "V26-3512: keep deliveries on a shared base out of each other's way",
+  "baseBranch": "integrate/shared-base",
+  "plan": "docs/plans/2026-11-15-deliveries-on-a-shared-base.md",
+  "laneBrief": "docs/plans/2026-11-15-deliveries-on-a-shared-base.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-15-deliveries-on-a-shared-base.lane-notes.md"
+  },
+  "context": {
+    "sections": [
+      "Decisions"
+    ]
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "skills/orchestrate-work/scripts/merge_queue.py",
+        "skills/orchestrate-work/scripts/delivery_state.py",
+        "skills/orchestrate-work/references/schemas.json",
+        "skills/orchestrate-work/SKILL.md",
+        "skills/run-delivery/scripts/tracker_publisher.py",
+        "skills/delivery-views/assets/line-map.js",
+        "tests/test_merge_queue.py",
+        "tests/test_orchestration_state.py",
+        "tests/test_orchestration_adopter.py",
+        "tests/test_lane_rows.py",
+        "tests/test_run_delivery_tracker.py",
+        "tests/delivery_views_page/line-map-kinds.test.mjs",
+        "docs/solutions/best-practices/select-by-what-reads-a-change-2026-11-08.md",
+        "docs/solutions/best-practices/one-merge-slot-for-each-base-2026-11-15.md"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "skills/run-delivery/SKILL.md",
+        "skills/run-delivery/references/*",
+        "tests/test_run_delivery_supervisor.py",
+        "tests/test_own_deliveries.py",
+        "docs/own-deliveries.md"
+      ]
+    },
+    "lane-3": {
+      "owns": [
+        "skills/orchestrate-work/scripts/render_state.py",
+        "tests/test_orchestration_render.py",
+        "tests/test_run_delivery_peers.py"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3319": {
+      "title": "Re-sync instead of restarting a check when the base moved only in files it doesn't read",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "v26-3319-1",
+          "text": "When the base moved only in files outside the candidate's diff and its checks' readers, the candidate merges without re-running, and check.carried names the commits."
+        },
+        {
+          "id": "v26-3319-2",
+          "text": "When the base moved in a file a selected check reads, only that check re-runs."
+        },
+        {
+          "id": "v26-3319-3",
+          "text": "A base move that conflicts with the candidate stops it as today."
+        },
+        {
+          "id": "v26-3319-4",
+          "text": "A binding with no readers mapping restarts every check as today. Each has a row in tests/test_merge_queue.py."
+        }
+      ]
+    },
+    "V26-3318": {
+      "title": "Share one merge slot for each base across every delivery's queue on a machine",
+      "lane": "lane-1",
+      "after": [
+        "V26-3319"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3318-1",
+          "text": "Two deliveries' queues and a lead push run against one fixture base. No candidate stops with base_moved because of the other delivery, and a row pins it."
+        },
+        {
+          "id": "v26-3318-2",
+          "text": "A lead push waits for a running check of another delivery, then lands after it ends."
+        },
+        {
+          "id": "v26-3318-3",
+          "text": "A dead holder's slot is reclaimed, and a row pins it."
+        },
+        {
+          "id": "v26-3318-4",
+          "text": "With one delivery, behaviour is unchanged."
+        }
+      ]
+    },
+    "V26-3425": {
+      "title": "Tell a fullHealth failure that passes alone from one that reproduces",
+      "lane": "lane-2",
+      "criteria": [
+        {
+          "id": "v26-3425-1",
+          "text": "A fullHealth whose only failure passes when rerun alone doesn't journal base.broken, and does record the test as flaky."
+        },
+        {
+          "id": "v26-3425-2",
+          "text": "lead-resolve full-health with a moved head says what to do instead."
+        }
+      ]
+    },
+    "V26-3264": {
+      "title": "Run the lead's full suite in its own detached checkout of a commit",
+      "lane": "lane-2",
+      "after": [
+        "V26-3425"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3264-1",
+          "text": "Running it at a commit and then editing the lead's checkout leaves the run's result unchanged."
+        },
+        {
+          "id": "v26-3264-2",
+          "text": "The record carries the run's commit and toolchain."
+        }
+      ]
+    },
+    "V26-3320": {
+      "title": "Let deliveries on one base see each other and claim shared files",
+      "lane": "lane-3",
+      "after": [
+        "V26-3318"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3320-1",
+          "text": "With two deliveries on one fixture base, doctor --delivery in each lists the other and what it is checking."
+        },
+        {
+          "id": "v26-3320-2",
+          "text": "lead-accept on a candidate touching the other delivery's claimed file warns, naming the claim, and still accepts."
+        },
+        {
+          "id": "v26-3320-3",
+          "text": "A peer's merge touching an open story's file is journaled in this delivery's record."
+        },
+        {
+          "id": "v26-3320-4",
+          "text": "A delivery alone on its base shows no peers and no warnings."
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "Every story",
+      "text": "Each of the five stories lands on integrate/shared-base through the merge queue, or closes with its reason recorded",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the integration candidate, inside tests/suite-budget.json",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "integration",
+      "label": "Integration",
+      "text": "The integration reaches main through a change request the operator approves",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "main-ci",
+      "label": "Main CI",
+      "text": "CI's Ubuntu and cut-release jobs pass for that push to main",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "readyPullRequests": true,
+    "grantedBy": "Kwamina",
+    "grantedOn": "2026-11-15"
+  },
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  },
+  "integrationTarget": "main",
+  "approvals": [
+    {
+      "id": "approval-1",
+      "text": "The operator approves this plan, with its decisions, before `lead-setup`.",
+      "state": "done",
+      "who": "Kwamina"
+    },
+    {
+      "id": "approval-2",
+      "text": "The operator approves the final integration's change request to `main`.",
+      "state": "waiting"
+    }
+  ],
+  "outOfScope": [
+    "A lock or a registry that spans machines.",
+    "An order between deliveries, and claims on part of a file across deliveries.",
+    "A stopped post-merge `fullHealth`, which records no result today.",
+    "Carrying a base move in a batch, and a bound on how many base moves in a row one candidate is carried across.",
+    "Declaring `fullHealthRerun`, `selection.unread` or a complete readers entry in this repository's own binding.",
+    "A release tag. The lock change and the record's new kinds go out as a release candidate, cut separately."
+  ]
+}
