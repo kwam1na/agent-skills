@@ -5770,17 +5770,22 @@ class LeadSuiteTests(unittest.TestCase):
         self.assertEqual(code, 2, out)
         self.assertIn(f"{'f' * 40} is no commit", out)
         self.assertEqual((len(self.runs(fx)), len(self.lines(fx))), (runs, lines))
-        # A suite past the binding's fullHealth timeout fails, and its line keeps the version already read.
+        # A suite past the binding's fullHealth timeout fails, and its line keeps the version already read. The bound
+        # also holds each prepare step, so it leaves a busy machine room for one before the suite waits past it.
         bound = fx.main / ".agents/orchestration.json"
-        bound.write_text(json.dumps({**json.loads(bound.read_text()), "fullHealthTimeoutSeconds": 2}, indent=2))
+        bound.write_text(json.dumps({**json.loads(bound.read_text()), "fullHealthTimeoutSeconds": 10}, indent=2))
         commit(fx.main, "FX-1: a short fullHealth timeout")
         sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
         (fx.tmp / "suite-mode").write_text("wait")
+        for name in ("suite-gate.started", "suite-gate.worker"):
+            (fx.tmp / name).unlink(missing_ok=True)
         code, out = fx.flow("lead-suite", cwd=fx.main)
         self.assertEqual(code, 1, out)
+        worker = self.pid_in(fx.tmp / "suite-gate.worker")
+        wait_for(lambda: not alive(worker), "the timed-out suite's worker to stop with its group")
         timed_out = self.lines(fx)[-1]
         self.assertEqual((timed_out["result"], timed_out["interpreter"]), ("failed", "Python 3.99.1"), timed_out)
-        self.assertIn("took longer than 2s and was stopped", timed_out["output"])
+        self.assertIn("took longer than 10s and was stopped", timed_out["output"])
         self.assertNotIn("interpreterUnread", timed_out)
         self.assertEqual(self.suite_checkouts(fx), [])
 
