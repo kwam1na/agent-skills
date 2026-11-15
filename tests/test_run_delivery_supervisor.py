@@ -133,7 +133,10 @@ if said == "lane-done":
                     "--lane", "lane-1", "--text", "done", "--state", "done"], check=True, capture_output=True)
 if said == "fail":
     print("fullHealth: test_parser failed")
-sys.exit(1 if said == "fail" else 0)
+if said == "flaky":
+    # A failure the binding's fullHealthRerun names, which the rerun decides.
+    print("FAIL: tests.fx.T.test_flaky")
+sys.exit(1 if said in ("fail", "flaky") else 0)
 '''
 
 # Holds a lock as a supervisor would, recording what it is given.
@@ -160,7 +163,7 @@ def supervised(fx: Fixture, *, grant_ready: bool = True, merge_needs_ready: bool
     path = setup_delivery(fx)
     m = fx.main
     tools = {"fake_forge.py": FORGE, "candidate.py": CANDIDATE, "merge.py": MERGE, "check.py": CHECK,
-             "full_health.py": FULL_HEALTH, "snapshot.py": SNAPSHOT}
+             "full_health.py": FULL_HEALTH, "snapshot.py": SNAPSHOT, "rerun.py": RERUN}
     for name, text in tools.items():
         (m / "tools" / name).write_text(text)
     py = lambda name: [sys.executable, "-B", f"tools/{name}"]
@@ -188,7 +191,8 @@ def supervised(fx: Fixture, *, grant_ready: bool = True, merge_needs_ready: bool
     (m / ".gitignore").write_text(".orchestration/\nout/\nlanes/\n")
     commit(m, "FX-1: a binding whose queue merges")
     sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
-    fx.env.update(FX_SIGNALS=str(fx.tmp / "signals.jsonl"), FX_HEALTH=str(fx.tmp / "health"))
+    fx.env.update(FX_SIGNALS=str(fx.tmp / "signals.jsonl"), FX_HEALTH=str(fx.tmp / "health"),
+                  FX_RERUN_RUNS=str(fx.tmp / "reruns.jsonl"))
     return path
 
 
@@ -444,6 +448,137 @@ class DeferredFindingTests(unittest.TestCase):
         self.assertEqual(self.tool.followups_step(c, doc), (True, "follow-ups: 0 recorded"))
         self.assertEqual(len(calls), 2, calls)
         self.assertEqual(doc["state"]["followups"], [])
+
+
+# A fullHealth rerun as a binding declares it: each named test passes alone unless FX_RERUN_FAILS names it, or names
+# "first" and this is the rerun's first run. It records its cwd and arguments, one line per run.
+RERUN = r'''
+import json, os, pathlib, sys
+runs = pathlib.Path(os.environ["FX_RERUN_RUNS"])
+earlier = runs.read_text().splitlines() if runs.exists() else []
+with open(runs, "a") as out:
+    out.write(json.dumps({"cwd": os.getcwd(), "tests": sys.argv[1:]}) + "\n")
+fails = os.environ.get("FX_RERUN_FAILS", "").split(",")
+failing = [name for name in sys.argv[1:] if name in fails] or (["first"] if "first" in fails and not earlier else [])
+print("\n".join(f"FAIL: {name}" for name in failing))
+if os.environ.get("FX_RERUN_SILENT") != "1":
+    print(f"Ran {len(sys.argv) - 1} tests in 0.1s")
+sys.exit(1 if failing else 0)
+'''
+
+
+# The fixture binding's fullHealthRerun: the RERUN tool, read as this repository's runner prints.
+FLAKY_RERUN = {"argv": [sys.executable, "-B", "tools/rerun.py", "{tests}"],
+               "failurePattern": r"(?m)^(?:FAIL|ERROR|UNEXPECTED SUCCESS): (\S+)$",
+               "ranPattern": r"(?m)^Ran [1-9]\d* tests? in ", "unrecheckedPattern": r"(?m)^(?:CRASHED|TIMED OUT): "}
+
+
+class FullHealthRerunTests(unittest.TestCase):
+    """Decision 20: a failed fullHealth is flaky only when the binding declares fullHealthRerun, nothing in its output
+    matches unrecheckedPattern, failurePattern names a test, and one run of argv with those tests, in the failed run's
+    checkout, exits 0 with output ranPattern matches."""
+
+    def setUp(self) -> None:
+        self.tool = loaded_run_delivery(self, "run_delivery_for_full_health_rerun")
+        self.tmp = Path(tempfile.mkdtemp(prefix="full-health-rerun-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.checkout = self.tmp / "checkout"
+        self.checkout.mkdir()
+        (self.tmp / "rerun.py").write_text(RERUN)
+        self.runs = self.tmp / "runs.jsonl"
+        self.enterContext(mock.patch.dict(os.environ, {"FX_RERUN_RUNS": str(self.runs)}))
+        for name in ("FX_RERUN_FAILS", "FX_RERUN_SILENT"):
+            self.enterContext(mock.patch.dict(os.environ, {name: ""}))
+        self.member = {"argv": [sys.executable, "-B", str(self.tmp / "rerun.py"), "{tests}"],
+                       "failurePattern": r"(?m)^(?:FAIL|ERROR|UNEXPECTED SUCCESS): (\S+)$",
+                       "ranPattern": r"(?m)^Ran [1-9]\d* tests? in ",
+                       "unrecheckedPattern": r"(?m)^(?:CRASHED|TIMED OUT): "}
+
+    def flaky(self, out: str, member: dict | None = "declared", **env: str):
+        with mock.patch.dict(os.environ, env):
+            return self.tool.flaky_tests(self.member if member == "declared" else member, out, self.checkout, 60)
+
+    def reruns(self) -> list[dict]:
+        return [json.loads(line) for line in self.runs.read_text().splitlines()] if self.runs.exists() else []
+
+    def test_a_failing_test_that_passes_alone_is_flaky(self) -> None:
+        self.assertEqual(self.flaky("FAIL: tests.a.A.test_one\nFAILED (failures=1)\n"), ["tests.a.A.test_one"])
+        # Once, in the checkout the failed run used, with each test one argument.
+        self.assertEqual(self.reruns(), [{"cwd": str(self.checkout.resolve()), "tests": ["tests.a.A.test_one"]}])
+
+    def test_a_failure_that_reproduces_alone_or_any_of_two_that_does_is_not_flaky(self) -> None:
+        self.assertIsNone(self.flaky("FAIL: tests.a.A.test_one\n", FX_RERUN_FAILS="tests.a.A.test_one"))
+        two = "ERROR: tests.a.A.test_one\nUNEXPECTED SUCCESS: tests.b.B.test_two\n"
+        self.assertIsNone(self.flaky(two, FX_RERUN_FAILS="tests.b.B.test_two"))
+        self.assertEqual(self.reruns()[-1]["tests"], ["tests.a.A.test_one", "tests.b.B.test_two"])
+
+    def test_a_failure_the_rerun_cannot_recheck_starts_no_rerun(self) -> None:
+        self.assertIsNone(self.flaky("FAIL: tests.a.A.test_one\nCRASHED: tests.c.C (exit 9)\n"))
+        self.assertIsNone(self.flaky("TIMED OUT: tests.c.C after 3s\n"))
+        self.assertEqual(self.reruns(), [])
+
+    def test_no_named_test_no_member_or_a_rerun_that_ran_nothing_is_not_flaky(self) -> None:
+        self.assertIsNone(self.flaky("Traceback: the runner itself failed\n"))
+        self.assertIsNone(self.flaky("FAIL: tests.a.A.test_one\n", member=None))
+        self.assertEqual(self.reruns(), [])
+        self.assertIsNone(self.flaky("FAIL: tests.a.A.test_one\n", FX_RERUN_SILENT="1"))
+        self.assertEqual(len(self.reruns()), 1)
+
+    def test_the_rerun_runs_once_though_a_second_would_pass(self) -> None:
+        self.assertIsNone(self.flaky("FAIL: tests.a.A.test_one\n", FX_RERUN_FAILS="first"))
+        self.assertEqual(len(self.reruns()), 1)
+
+    def test_a_failure_named_far_from_the_output_s_end_is_found(self) -> None:
+        out = "FAIL: tests.a.A.test_one\n" + "x" * 5000 + "\nFAILED (failures=1)\n"
+        self.assertEqual(self.flaky(out), ["tests.a.A.test_one"])
+
+
+class MovedHeadTests(unittest.TestCase):
+    """Decision 22: at a base head past a failed fullHealth's, lead-resolve names what stands there."""
+
+    def stands(self, running=None, posture="gate", last=None, journal=()) -> str:
+        tool = loaded_run_delivery(self, "run_delivery_for_moved_heads")
+        with mock.patch.multiple(tool, full_health_running=lambda c: running,
+                                 delivery_posture=lambda c: {"posture": posture}):
+            return tool.moved_head_stands(None, {"journal": list(journal)}, "b" * 40, last)
+
+    def test_a_run_running_at_the_new_head_is_named_and_none_is_due_under_focused(self) -> None:
+        said = self.stands(running={"head": "b" * 40, "pid": 4321, "startedAt": "2026-11-15T10:00:00Z"})
+        self.assertTrue(said.startswith("a run is running (fullHealth running at bbbbbbbbbb since 2026-11-15T10:00:00Z "
+                                        "(pid 4321)): wait for its result"), said)
+        self.assertNotIn("due", said)
+        # A run at another head is not this one's; under focused no run comes.
+        self.assertTrue(self.stands(running={"head": "a" * 40, "pid": 1}).startswith("a run is due"))
+        self.assertTrue(self.stands(posture="focused").startswith("nothing stands"))
+
+
+class FlakyFullHealthWordingTests(unittest.TestCase):
+    """The guide's close-out and run-delivery's skill say what a flaky fullHealth is and what lead-resolve names."""
+
+    @staticmethod
+    def normal(path: str) -> str:
+        return " ".join((Path(__file__).resolve().parents[1] / path).read_text(encoding="utf-8").split())
+
+    def test_the_guide_and_the_skill_say_what_a_flaky_run_does_and_what_stands_at_a_moved_head(self) -> None:
+        guide = self.normal("skills/orchestrate-work/references/orchestration-guide.md")
+        close_out = guide[guide.index("### 8. Close out"):guide.index("## Lane brief template")]
+        stands = ("names what stands at the new head: a run running there, a run due there, a `base.broken` that still "
+                  "awaits `base.repaired`, or none of these")
+        for phrase in (
+                "A binding that declares `fullHealthRerun` has a failed run re-checked once, in the checkout it ran in, "
+                "before it breaks the base",
+                "It journals `base.flaky`, naming the tests and the head, and no `base.broken`.",
+                "A flaky run is that head's result: it pauses nothing and holds nothing at the close, and \"Needs you\" "
+                "lists its tests without holding.",
+                "It is not a pass either: it repairs nothing, so a `base.broken` that still stands keeps serve paused, and "
+                "the first pass after it journals `base.repaired` when a `fullHealth` break still stands, and "
+                "`base.verified` when none does.",
+                stands):
+            with self.subTest(phrase=phrase[:50]):
+                self.assertIn(phrase, close_out)
+        self.assertIn(stands, self.normal("skills/run-delivery/SKILL.md"))
+        self.assertIn('| `base.flaky` | None: the post-merge `fullHealth` failed and its failing tests passed when re-run '
+                      'alone, so the base isn\'t broken;', guide)
 
 
 class FinishMarkOrderTests(unittest.TestCase):
@@ -4246,7 +4381,22 @@ class SupervisorPostMergeTests(unittest.TestCase):
             state_tool(fx, "focus", "--lane", lane, "--text", "done", "--state", "done")
 
     def base_events(self, fx: Fixture) -> list[dict]:
-        return [e for e in record(fx)["journal"] if e["kind"] in ("base.verified", "base.broken", "base.repaired")]
+        return [e for e in record(fx)["journal"] if e["kind"] in ("base.verified", "base.broken", "base.repaired",
+                                                                   "base.flaky")]
+
+    def serve_until_idle(self, fx: Fixture) -> None:
+        """The merge queue's serve, until nothing more can be taken: what a held queue takes, and what it leaves."""
+        sh(sys.executable, "-B", fx.release / "skills/orchestrate-work/scripts/merge_queue.py", "--repo", fx.main,
+           "--state", fx.tmp / "record", "--remote", "origin", "--base", "feature/FX-1", "serve", "--until-idle",
+           "--poll", "0.1", cwd=fx.main, env=fx.env, check=False)
+
+    def stage(self, fx: Fixture, key: str) -> str:
+        return next(q for q in record(fx)["state"]["queue"] if q["subject"] == key)["stage"]
+
+    def queued(self, fx: Fixture, key: str, lane: str) -> None:
+        hand_off(fx, key, lane)
+        code, out = fx.flow("lead-accept", key, cwd=fx.main)
+        self.assertEqual(code, 0, out)
 
     def results(self, fx: Fixture) -> list[dict]:
         log = fx.tmp / "flow-log/FX-1.full-health.jsonl"
@@ -4401,6 +4551,81 @@ class SupervisorPostMergeTests(unittest.TestCase):
         results = [json.loads(line) for line in (archive / "flow-log/FX-1.full-health.jsonl").read_text().splitlines()]
         self.assertTrue(any(e.get("head") == merged and e.get("result") == "passed" for e in results), results)
         self.assertEqual(json.loads(binding.read_text()), standing)
+
+    def test_a_failure_that_passes_alone_is_flaky_holds_nothing_and_the_next_pass_verifies(self) -> None:
+        fx = self.fixture(fullHealthRerun=FLAKY_RERUN)
+        (fx.tmp / "health").write_text("flaky")
+        self.merged(fx, "FX-2", "lane-1")
+        last = self.once(fx)
+        self.assertEqual([e["kind"] for e in self.base_events(fx)], ["base.flaky"])
+        head = self.base_tip(fx)
+        self.assertIn(f"fullHealth failed at {head[:10]}", kinds(fx, "base.flaky")[0]["summary"])
+        self.assertIn("tests.fx.T.test_flaky", kinds(fx, "base.flaky")[0]["summary"])
+        self.assertEqual((self.results(fx)[-1]["result"], self.results(fx)[-1]["tests"]), ("flaky", ["tests.fx.T.test_flaky"]))
+        # Rerun once, alone, in the checkout the failed run used: not the lead's, and gone with the run.
+        [rerun] = [json.loads(line) for line in (fx.tmp / "reruns.jsonl").read_text().splitlines()]
+        self.assertEqual(rerun["tests"], ["tests.fx.T.test_flaky"])
+        self.assertNotEqual(Path(rerun["cwd"]).resolve(), fx.main.resolve())
+        self.assertTrue(rerun["cwd"].endswith("/base") and not Path(rerun["cwd"]).exists(), rerun)
+        # "Needs you" names the flaky test, holding nothing, and serve takes the next candidate.
+        [flaky] = [item for item in last["needsYou"] if "passed alone" in item["text"]]
+        self.assertFalse(flaky["holding"], flaky)
+        self.assertIn("tests.fx.T.test_flaky", flaky["text"])
+        (fx.tmp / "health").write_text("pass")
+        self.queued(fx, "FX-3", "lane-2")
+        self.serve_until_idle(fx)
+        self.assertEqual(self.stage(fx, "FX-3"), "merged")
+        # The pass after it verifies the base: there is no break for it to repair. A lane at work keeps it from closing.
+        state_tool(fx, "focus", "--lane", "lane-2", "--text", "still at work", "--state", "working")
+        self.once(fx)
+        self.assertEqual([e["kind"] for e in self.base_events(fx)], ["base.flaky", "base.verified"])
+        self.assertEqual(kinds(fx, "delivery.closed"), [])
+        # A flaky head with no break standing holds nothing at the close: the close-out reads its result and closes.
+        (fx.tmp / "health").write_text("flaky")
+        declare(fx, "landed by hand\n", path="src/landed.txt")
+        self.done(fx, "lane-1", "lane-2")
+        last = self.once(fx)
+        self.assertEqual([e["kind"] for e in self.base_events(fx)], ["base.flaky", "base.verified", "base.flaky"])
+        self.assertEqual(last["closeHeldBy"], [], last)
+        self.assertEqual(last["closeOut"][0], f"fullHealth flaky at {self.base_tip(fx)[:10]}", last)
+        self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)
+
+    def test_a_flaky_run_repairs_no_standing_break_and_lead_resolve_names_what_stands_at_a_moved_head(self) -> None:
+        fx = self.fixture(fullHealthRerun=FLAKY_RERUN)
+        (fx.tmp / "health").write_text("fail")
+        self.merged(fx, "FX-2", "lane-1")
+        self.once(fx)
+        [broken] = kinds(fx, "base.broken")
+        resolve = lambda: fx.flow("lead-resolve", "full-health", "--why", "flaky", cwd=fx.main)
+        # Head B, past the failed head A, with no run there yet: a run is due, and the break still stands.
+        (fx.tmp / "health").write_text("flaky")
+        declare(fx, "landed by hand\n", path="src/landed.txt")
+        code, out = resolve()
+        self.assertEqual(code, 2, out)
+        self.assertIn("which is no longer the base head", out)
+        self.assertIn("a run is due on the supervisor's next pass", out)
+        self.assertIn(f"base.broken (journal entry {broken['id']}) still awaits base.repaired", out)
+        # Flaky at B: no base.repaired, and serve stays paused.
+        self.once(fx)
+        self.assertEqual([e["kind"] for e in self.base_events(fx)], ["base.broken", "base.flaky"])
+        self.queued(fx, "FX-3", "lane-2")
+        self.serve_until_idle(fx)
+        self.assertEqual(self.stage(fx, "FX-3"), "queued")
+        code, out = resolve()
+        self.assertNotIn("a run is due", out)
+        self.assertIn("still awaits base.repaired", out)
+        # A pass at head C repairs the break, and serve takes the next candidate.
+        (fx.tmp / "health").write_text("pass")
+        declare(fx, "landed again\n", path="src/landed.txt")
+        self.once(fx)
+        self.assertEqual([e["kind"] for e in self.base_events(fx)], ["base.broken", "base.flaky", "base.repaired"])
+        self.serve_until_idle(fx)
+        self.assertEqual(self.stage(fx, "FX-3"), "merged")
+        # Its merge's head passes too, and then nothing stands.
+        self.once(fx)
+        code, out = resolve()
+        self.assertEqual(code, 2, out)
+        self.assertIn("nothing stands: no run is running or due, and no base.broken awaits repair", out)
 
     def test_a_merge_runs_full_health_with_the_close_still_held_and_once_at_its_head(self) -> None:
         fx = self.fixture()
