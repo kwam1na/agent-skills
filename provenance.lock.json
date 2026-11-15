@@ -229,8 +229,16 @@
           "sha256": "d372aaa6757cf4ed321492f2aa8ad17585279c1380184a89882cfeba752589ae"
         },
         {
+          "path": "skills/delivery-views/references/hosted-snapshot.schema.json",
+          "sha256": "6e624866560de4ebc93040bcad55328f120e32d7bb9e286e27c2a851b5426fb4"
+        },
+        {
+          "path": "skills/delivery-views/scripts/public_projection.py",
+          "sha256": "54beef863b7f8a4f72db35963ae60886ff9d9f1a85156d86425db5ab9c9bd3f6"
+        },
+        {
           "path": "skills/delivery-views/scripts/render.py",
-          "sha256": "f57337a8da5d5dbb315edaf6c68365fd19970fc9172495a229c99d419456dbf3"
+          "sha256": "73a2c4fc65e2a9ec4c05146e97c1088327f439420e056dd1e0393f222654e296"
         },
         {
           "path": "skills/delivery-views/scripts/review_projection.py",
