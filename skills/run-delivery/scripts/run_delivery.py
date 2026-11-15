@@ -52,6 +52,7 @@ import fnmatch
 import hashlib
 import importlib.util
 import json
+import platform
 import re
 import shlex
 import shutil
@@ -9515,6 +9516,23 @@ def flaky_tests(rerun: dict | None, out: str, checkout: Path, timeout: int,
     return tests if code == 0 and re.search(rerun["ranPattern"], said) else None
 
 
+def in_detached_checkout(c, commit: str, checkout: Path, work: Callable[[Path], object], timeout: int):
+    """Make a fresh detached checkout of a commit at `checkout`, run the repository's prepare steps in it, each in a
+    process group of its own within `timeout`, and return what `work` makes of it. The checkout, and the folder it sits
+    in, are removed however that ends: a stop runs the removal too, once what a step or the run started has been
+    stopped with its group."""
+    try:
+        git("worktree", "add", "--detach", "-q", str(checkout), commit, cwd=c.root)
+        for step in prepare_commands():
+            code, said = run_group(step, checkout, timeout)
+            if code != 0:
+                raise Stop(f"the prepare step {shlex.join(step)} failed (exit {code}): {said.strip()[-600:]}")
+        return work(checkout)
+    finally:
+        run(["git", "worktree", "remove", "--force", str(checkout)], cwd=c.root, check=False)
+        shutil.rmtree(checkout.parent, ignore_errors=True)
+
+
 def run_full_health(c, binding: dict, head: str, posture: dict, named: str,
                     started: Callable[[int], None] | None = None, checkout: Path | None = None) -> tuple[bool, str]:
     """One gate run of fullHealth at this base head, in a fresh checkout of it. Its result goes to the full-health log,
@@ -9525,19 +9543,17 @@ def run_full_health(c, binding: dict, head: str, posture: dict, named: str,
     before = [e for e in read_log("full-health", c.delivery) if e.get("result")]
     merge, after = merge_words(c, doc, head, before[-1].get("journalThrough", 0) if before else 0)
     checkout = checkout or Path(tempfile.mkdtemp(prefix="run-delivery-full-health-")) / "base"
-    try:
-        git("worktree", "add", "--detach", "-q", str(checkout), head, cwd=c.root)
-        for step in prepare_commands():
-            run(step, cwd=checkout)
+
+    def gate(checkout: Path) -> tuple[int, str, list[str] | None]:
         code, out = run_group(list(binding["fullHealth"]), checkout, full_health_timeout(binding), started=started)
         # A failure is re-checked once, in this same checkout, before it can break the base.
         flaky = None if code == 0 else flaky_tests(binding.get("fullHealthRerun"), out, checkout,
                                                    full_health_timeout(binding), started=started)
+        return code, out, flaky
+    try:
+        code, out, flaky = in_detached_checkout(c, head, checkout, gate, full_health_timeout(binding))
     except Stop as error:
         code, out, flaky = 1, str(error), None
-    finally:
-        run(["git", "worktree", "remove", "--force", str(checkout)], cwd=c.root, check=False)
-        shutil.rmtree(checkout.parent, ignore_errors=True)
     result = "passed" if code == 0 else "flaky" if flaky else "failed"
     through = max((e["id"] for e in doc["journal"]), default=0)
     # Held off through the journal entry, and in the state tool it starts, which inherits the mask.
@@ -10627,6 +10643,66 @@ def lead_run(args) -> None:
         print(f"supervisor: running; live view {address}{live_fallback(c.state)}" + listener_words(c))
         return
     Supervisor(c, once=args.once).run()
+
+
+def program_version(program: str, checkout: Path) -> tuple[str | None, str | None]:
+    """(the version `program --version` prints in the checkout, or None, and why it could not be read)."""
+    try:
+        done = subprocess.run([program, "--version"], cwd=checkout, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as error:
+        return None, f"{program} --version could not run: {error}"
+    said = (done.stdout or done.stderr).strip().splitlines()
+    if done.returncode != 0 or not said:
+        return None, f"{program} --version printed no version" + (f" (exit {done.returncode})" if done.returncode else "")
+    return said[0], None
+
+
+def lead_suite(args) -> None:
+    """The lead's own run of the binding's fullHealth, under any posture, at --at or the base head on the remote: in a
+    detached checkout of that commit under the binding's work folder, prepared first and removed after, so nothing the
+    lead does in its own checkout reaches the run. Its result is one line of the flow log's suite.jsonl, which the lead
+    cites when marking a finish line; it journals nothing."""
+    c = cfg()
+    binding = c.shelf.json(".agents/orchestration.json") or {}
+    if not binding.get("fullHealth"):
+        raise Stop("the binding declares no fullHealth, so there is no suite to run")
+    git("fetch", "-q", c.remote, c.base_branch, check=False)
+    if args.at:
+        commit = git("rev-parse", "--verify", "--quiet", f"{args.at}^{{commit}}", check=False)
+        if not commit:
+            raise Stop(f"{args.at} is no commit in this repository; fetch it, or name another")
+    else:
+        commit = base_head(c)
+    argv = [*binding["fullHealth"], *(args.extra[1:] if args.extra[:1] == ["--"] else args.extra)]
+    folder = c.root / (binding.get("workRoot") or f"{c.work}/work") / "suite"
+    folder.mkdir(parents=True, exist_ok=True)
+    checkout = Path(tempfile.mkdtemp(prefix=f"{commit[:12]}-", dir=folder)) / "checkout"
+    # A stop ends the run through main's handler, as an interruption does: its command's group is stopped, by
+    # run_group, and its checkout removed, by in_detached_checkout.
+    began = time.monotonic()
+
+    def suite(checkout: Path) -> tuple[int, str, tuple[str | None, str | None]]:
+        asked = program_version(argv[0], checkout)
+        try:
+            code, out = run_group(argv, checkout, full_health_timeout(binding))
+        except Stop as error:  # its timeout: a failure, with the version already read
+            code, out = 1, str(error)
+        return code, out, asked
+    print(f"lead-suite: running {shlex.join(argv)} at {commit[:10]} in {checkout}", flush=True)
+    try:
+        code, out, (version, unread) = in_detached_checkout(c, commit, checkout, suite, full_health_timeout(binding))
+    except Stop as error:  # the checkout or a prepare step failed, before the interpreter was asked
+        code, out, version, unread = 1, str(error), None, "the run ended before its interpreter was asked"
+    seconds = round(time.monotonic() - began, 1)
+    result = "passed" if code == 0 else "failed"
+    append_log("suite", c.delivery, {"commit": commit, "result": result, "exit": code, "argv": argv, "seconds": seconds,
+                                     "output": out[-2000:], "platform": platform.platform(), "interpreter": version,
+                                     **({"interpreterUnread": unread} if unread else {})})
+    print(out[-2000:].rstrip())
+    print(f"lead-suite: {result} at {commit[:10]} (exit {code}, {seconds}s); "
+          f"recorded in {flow_log('suite', c.delivery)}")
+    if code:
+        sys.exit(code if 0 < code < 256 else 1)
 
 
 def moved_head_stands(c, doc: dict, head: str, last: dict | None) -> str:
@@ -11903,6 +11979,10 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--to", dest="to_head", required=True, help="the story's queued head")
     p.add_argument("--reason", required=True, help="why the commits between them need no new round")
     p.set_defaults(fn=lead_carry_review)
+    p = command(sub, "lead-suite", help="run the binding's fullHealth at a commit, in a detached checkout of its own")
+    p.add_argument("--at", help="the commit to run at; the base head on the remote when absent")
+    p.add_argument("extra", nargs=argparse.REMAINDER, help="after --, arguments appended to the fullHealth argv")
+    p.set_defaults(fn=lead_suite)
     p = command(sub, "lead-resolve", help="resolve a recorded blocker, or rerun a failed fullHealth")
     p.add_argument("id", help="the blocker's journal id, or full-health to rerun a failed fullHealth")
     p.add_argument("--why", required=True)

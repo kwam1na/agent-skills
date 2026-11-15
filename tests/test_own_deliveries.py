@@ -576,6 +576,14 @@ class FullHealthRerunMember(unittest.TestCase):
         self.assertNotEqual(rerun(named).returncode, 0)
 
 
+class LeadSuite(unittest.TestCase):
+    def test_the_lead_s_full_suite_is_run_with_lead_suite_and_the_budget(self) -> None:
+        text = " ".join((ROOT / "docs/own-deliveries.md").read_text(encoding="utf-8").split())
+        self.assertIn("lead-suite --at <commit> -- --budget tests/suite-budget.json", text)
+        self.assertIn("appends its result, with the commit, the platform and the interpreter's version, to the flow "
+                      "log's `<delivery>.suite.jsonl`. Cite that line when marking the finish line.", text)
+
+
 class TrackerUpdatesAndCredentials(unittest.TestCase):
     """The document says what the switched binding does: the tracker publisher posts with LINEAR_API_KEY, and an agent
     shell gets the key the way the operator's never reaches it."""

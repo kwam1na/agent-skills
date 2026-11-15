@@ -166,6 +166,21 @@ the integration binding through the matching delivery declaration even in a
 detached check checkout. Under the gate posture, the supervisor runs the
 binding's full suite on the integration base.
 
+The lead's own run of the full suite, the one `AGENTS.md` and the finish line ask
+for before an integration reaches `main`, goes through run-delivery under any
+posture, at the integration candidate, with the suite's budget:
+
+```bash
+python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py \
+  lead-suite --at <commit> -- --budget tests/suite-budget.json
+```
+
+It runs in a detached checkout of that commit under the work folder, so an edit in
+the lead's checkout while it runs changes nothing, and appends its result, with the
+commit, the platform and the interpreter's version, to the flow log's
+`<delivery>.suite.jsonl`. Cite that line when marking the finish line. A run over
+its budget exits 3 and is recorded so.
+
 With an earlier installed release, create the lead worktree from `main` with
 `git worktree add -b integrate/<name> .orchestration/lanes/<delivery> main`.
 From that checkout run the same setup command with `--base integrate/<name>`
