@@ -133,6 +133,7 @@ the lead and the lanes make them instead, as the commands print them.
 | `base.moved` | On the epic, record the previous and published base heads and the default branch commit. |
 | `base.rerun.started` | None: the candidate's failure already reached the lead as `check.failed`, and the record and the views show the re-run in progress. |
 | `base.rerun.finished` | None: its verdict posts with `candidate.stopped`, or with `base.broken` when the base fails the check too. |
+| `base.rerun.stopped` | None: a stopped re-run has no verdict, the candidate is queued again and checked once more, and a second stop at the same heads posts with `candidate.stopped`. |
 | `lease.granted` | On the ticket whose work needs the lease: the lease, its holder and when it will be released. |
 | `lease.released` | On the same ticket: the lease is released. |
 | `release.started` | None: the release posts once it finishes. |
@@ -312,10 +313,11 @@ supervisor's.
   | `undeclared_change`, `unreviewed_change` | The sync produced changes the binding does not declare, or code the lenses did not review. Return it to the lane, or declare the path in the binding. |
   | `prepare_failed`, `dirty_checkout` | A checkout could not be prepared, or was not clean after preparing or checking. Fix `prepare` or the check that writes files. |
   | `no_checks`, `profile_unknown` | The selection was empty while files changed, or a check named an unknown profile. Fix the provider, `alwaysRun`, `fallback` or `profiles`. |
-  | `selection_invalid` | Your check selection no longer fits the binding, or two batch members' selections define one check differently. Select again, or clear it, and re-queue. |
+  | `selection_invalid` | Your check selection no longer fits the binding, or two batch members' selections run one check differently: its argv, cwd, prerequisites, timeout or environment, never its reasons or title. Select again, or clear it, and re-queue. |
   | `provider_refused` | Under `selection.refusalStops`, the provider exited non-zero, so no check ran and the candidate is held. Its words are in `checkSelection.detail` and in `selection.refused`. Select its checks for its reviewed head, then re-queue it. |
   | `check_failed` | Return the failing check's output to the lane. |
   | `base_broken` | Stop and follow the base-broken rules. |
+  | `base_rerun_stopped` | The base re-run of the candidate's failing check was stopped twice at the same candidate and base heads, so its failure is neither the base's nor known to be its own. Find what stopped the re-run, then re-queue. |
   | `base_moved` | The base moved after the candidate was synced. `run` re-syncs and re-checks once and stops on a second move; a standalone `check` or `merge` stops at once. Re-queue. |
   | `not_synced` | Run `sync` before `check` or `merge`. |
   | `push_refused`, `ready_refused`, `merge_refused` | The forge refused the push, the `ready` gate, or the merge. Read the output, resolve it, and re-queue. |
@@ -360,9 +362,13 @@ renders, publishers included, after each of its own writes.
 With run-delivery's supervisor running, the supervisor judges `finish.met` by
 the record's covers and proofs: a line whose covered criteria have every proof
 it names done is marked met and journalled once, and an entry the lead
-journalled by hand is skipped. Only a finish line the record can't prove is
-the lead's: a finish line the record can't prove holds the close until the
-lead checks it as below, marks it met and journals it.
+journalled by hand is skipped. The supervisor marks a line met once: a line it
+marked that the lead then unmarks stays unmarked. Only a finish line the record
+can't prove is the lead's: a finish line the record can't prove holds the close
+until the lead checks it as below, marks it met and journals it. A line whose
+`covers` names no criteria and no proofs is the lead's: the supervisor never
+marks it met, and it holds the close until the lead marks it. A line with no
+`covers` key covers every criterion, and `doctor --delivery` warns of one.
 
 - For each finish line, run the observable check the plan names, against the
   merged base, not against a lane's checkout.
@@ -413,8 +419,9 @@ for one head, and a run that outlives a killed supervisor is adopted by the next
 one rather than started again; `lead-close` stops it, and it records no result.
 Once nothing holds the close, the supervisor runs
 `fullHealth` at the final head only when no run at that head has happened, as
-in a delivery that merged nothing, then files a follow-up for each deferred
-finding, journals `delivery.closed` and waits until the tracker has every
+in a delivery that merged nothing, then files a follow-up for each finding
+still deferred at its story's last captured round, journals `delivery.closed`
+and waits until the tracker has every
 update, archives the record, aligns the operator's checkout when it is clean,
 and writes a friction note stub for `$compound-learning`, in that order. The lead's part is what holds the close,
 which every lead command names from the supervisor's last pass, and the
@@ -653,6 +660,14 @@ naming its follow-up item. A P0 is never deferred, and a P2 or P3 can be. A P1
 can be deferred only when a verification round files it new against lines
 outside the delta: its id is listed in `lateFindings` and it carries
 `deferredIssue`. Closing a carried finding as `deferred` stays a P2 or P3 move.
+A deferral is fixed only when a later round of the lens that filed it lists it
+in `resolvedFindings` as `closed`, `fixed` or `withdrawn`; one listed as
+`deferred` or `open`, listed by another lens, or not listed stays deferred, and
+the close-out files its follow-up. A delivery file that declares
+`"noDeferrals": true` takes no deferrals: a finding still deferred when its
+story merges is journalled as a `blocker.recorded` on the story, shown in
+"Needs you" and holding the close until the lead resolves it with
+`lead-resolve`, and no follow-up is filed for it.
 
 Save every lens's result for every round, one outcome file per round, as the lens
 returned it, outside your checkout, and keep the files until close-out:
@@ -986,21 +1001,44 @@ round. A lane's own judgement does not close another lens's finding.
 The runner classifies a failing check as `base_broken`, not `check_failed`,
 only when every path the check names exists unchanged at the base head, and
 the same check also fails on a fresh checkout of the base head. A broken base
-stops the whole queue, because no candidate can be checked against it.
+stops the whole queue, because no candidate can be checked against it. A
+re-run that was stopped before its verdict fails nothing, and journals
+`base.rerun.stopped`, not `base.broken` (see "A stopped base re-run").
 
 When the runner reports `base_broken`:
 
 1. **Fix forward first.** Land the smallest change that makes the check pass
-   on the base, through the queue like any candidate.
+   on the base, through the queue like any candidate. Name the fix as the
+   base's repair: `delivery_state.py repair --subject <key>` marks a queued
+   candidate, and while the base awaits repair `serve` takes only that
+   candidate, alone. Its merge journals `base.repaired`, naming it. Only a queued candidate can
+   be named, one at a time and only while the base is broken, and
+   `repair --subject <key> --withdraw` drops the mark. A repair that fails
+   its own checks stops as any candidate does, keeps its mark and says so,
+   and the base still awaits repair.
 2. **Close the gap that let it through.** Either declare the missing
    membership in the repository's affected-checks provider, so the check is
    selected for the changes that can break it, or add the check to the
    binding's `alwaysRun`.
 3. **Record a decision** in the journal (`--kind decision.recorded`), naming
    the check, the cause and the gap closed. Journal `base.repaired` when the
-   base passes again.
+   base passes again, if the repair's merge did not.
 
-Then restart the queue from the first stopped candidate.
+Every candidate the break stopped, with `base_broken` at the base head that
+broke, goes back to `queued` on `base.repaired`, with no `--requeue`.
+That holds however `base.repaired` is journaled: by the repair's merge, by
+the lead, or by a `fullHealth` pass. A candidate stopped for anything else,
+or by a break at another base head, stays stopped, and every repair mark
+clears.
+
+A check that fails on the base re-run could also be cross-talk with another
+run on the same machine: a shared port, a fixed path, a service, or a load
+that makes a deadline miss. The verdict is the same, `base_broken`, and the stop's detail says it
+could be cross-talk. Keep the queue's checks apart from lanes' own runs: give
+the queue's checks their own ports, temporary folders and services, through
+an `environmentProfile` or the binding's `environment`, and don't run a
+lane's full suite on the machine while the queue checks. Confirm a break on a
+quiet machine before you fix forward.
 
 ## Binding guide
 
@@ -1276,6 +1314,12 @@ or a selection that leaves it out.
   older base head, or of a check you didn't select, says nothing. A head this
   delivery's queue never re-ran a check on, such as one another delivery's
   merge made, gives no warning, and a note says that nothing is known there.
+- **A selection that runs a check differently.** Batch members define one
+  check alike when it runs alike, by the digest of its argv, cwd,
+  prerequisites, timeout and environment; reasons and title don't count, and
+  the batch keeps the first member's. `select` warns, and still records the
+  selection, when another queued candidate's selection runs the same check id
+  differently, since a batch with both stops as `selection_invalid`.
 - **Checked.** The runner refuses a binding whose catalogue repeats an id,
   reuses a binding check's id, names a prerequisite outside it, forms a cycle,
   names an unknown profile or exceeds the ceiling, or whose guards or readers
@@ -1390,6 +1434,19 @@ binding declares may change.
   `base_broken` stop and its `base.broken` entry name the check, its failing
   tests and the re-run's log, in the words `check.failed` uses for the
   candidate's run, and `base.rerun.finished` links each re-run's log.
+- **A stopped base re-run.** A re-run whose check was stopped is no verdict on
+  the base: one that died by a signal, one that exited 129 up to 128 plus the
+  platform's highest signal number (130 or 143 from a runner that was
+  interrupted or terminated), or one that ended because the runner itself was
+  interrupted. A check that exits in that range with no signal sent cannot be
+  told from a stopped one and reads as stopped. An exit of 128, one above the
+  range, and a timeout are failures, as before. A stopped re-run journals
+  `base.rerun.stopped` in place of `base.rerun.finished`, joins no
+  `meta.baseReruns`, journals no `base.broken`, and leaves the queue free: the
+  candidate goes back to `queued` and is checked again without the lead, once
+  for each pair of candidate head and base head, and the lead's wait does not
+  wake for it. A second stopped re-run at the same pair stops the candidate as
+  `base_rerun_stopped`, journaled as `candidate.stopped`.
 - **Queue estimates.** The state tool's `show` adds a position and an expected
   start for each candidate waiting at `queued`. The start counts what remains
   of the run in progress once (a batch is one run), then one median run for

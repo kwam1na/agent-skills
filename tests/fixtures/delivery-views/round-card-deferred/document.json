@@ -1,0 +1,179 @@
+{
+  "state": {
+    "lanes": [],
+    "queue": [
+      {
+        "subject": "WORK-1",
+        "title": "Work",
+        "stage": "merged",
+        "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "runId": null
+      }
+    ]
+  },
+  "journal": [],
+  "reviewEvidence": {
+    "WORK-1": {
+      "candidateRef": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "outcomes": [
+        {
+          "round": 1,
+          "outcome": "aligned",
+          "entries": [
+            {
+              "lens": "lens.outcome-correctness",
+              "state": "obtained",
+              "binding": {
+                "subjectRef": "WORK-1",
+                "candidateRef": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "round": 1
+              },
+              "result": {
+                "schemaVersion": "review-lens-result/1",
+                "lensId": "lens.outcome-correctness",
+                "subjectRef": "WORK-1",
+                "candidateRef": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "round": 1,
+                "evidence": {
+                  "observed": true
+                },
+                "outcome": "aligned",
+                "findings": [
+                  {
+                    "id": "oc-1",
+                    "severity": "P2",
+                    "summary": "The queue line keeps a stale head after a rebase",
+                    "state": "deferred",
+                    "deferredIssue": "WORK-11"
+                  },
+                  {
+                    "id": "oc-2",
+                    "severity": "P3",
+                    "summary": "The hand-off message repeats the story key",
+                    "state": "deferred",
+                    "deferredIssue": "WORK-12"
+                  }
+                ],
+                "resolvedFindings": []
+              }
+            },
+            {
+              "lens": "lens.adversarial-testing",
+              "state": "obtained",
+              "binding": {
+                "subjectRef": "WORK-1",
+                "candidateRef": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "round": 1
+              },
+              "result": {
+                "schemaVersion": "review-lens-result/1",
+                "lensId": "lens.adversarial-testing",
+                "subjectRef": "WORK-1",
+                "candidateRef": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "round": 1,
+                "evidence": {
+                  "observed": true
+                },
+                "outcome": "aligned",
+                "findings": [
+                  {
+                    "id": "at-1",
+                    "severity": "P3",
+                    "summary": "No row covers an empty lane list",
+                    "state": "deferred",
+                    "deferredIssue": "WORK-13"
+                  },
+                  {
+                    "id": "at-2",
+                    "severity": "P3",
+                    "summary": "A test name says merged where it means accepted",
+                    "state": "deferred",
+                    "deferredIssue": "WORK-14"
+                  }
+                ],
+                "resolvedFindings": []
+              }
+            }
+          ]
+        },
+        {
+          "round": 2,
+          "outcome": "aligned",
+          "entries": [
+            {
+              "lens": "lens.outcome-correctness",
+              "state": "obtained",
+              "binding": {
+                "subjectRef": "WORK-1",
+                "candidateRef": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "round": 2
+              },
+              "result": {
+                "schemaVersion": "review-lens-result/1",
+                "lensId": "lens.outcome-correctness",
+                "subjectRef": "WORK-1",
+                "candidateRef": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "round": 2,
+                "evidence": {
+                  "observed": true
+                },
+                "outcome": "aligned",
+                "findings": [],
+                "resolvedFindings": [
+                  {
+                    "id": "oc-1",
+                    "state": "fixed",
+                    "fixCommit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "resolution": "Fixed at the next head."
+                  },
+                  {
+                    "id": "oc-2",
+                    "state": "fixed",
+                    "fixCommit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "resolution": "Fixed at the next head."
+                  }
+                ]
+              }
+            },
+            {
+              "lens": "lens.adversarial-testing",
+              "state": "obtained",
+              "binding": {
+                "subjectRef": "WORK-1",
+                "candidateRef": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "round": 2
+              },
+              "result": {
+                "schemaVersion": "review-lens-result/1",
+                "lensId": "lens.adversarial-testing",
+                "subjectRef": "WORK-1",
+                "candidateRef": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "round": 2,
+                "evidence": {
+                  "observed": true
+                },
+                "outcome": "aligned",
+                "findings": [],
+                "resolvedFindings": [
+                  {
+                    "id": "at-1",
+                    "state": "fixed",
+                    "fixCommit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "resolution": "Fixed at the next head."
+                  },
+                  {
+                    "id": "at-2",
+                    "state": "fixed",
+                    "fixCommit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "resolution": "Fixed at the next head."
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

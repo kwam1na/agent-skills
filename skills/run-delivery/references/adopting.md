@@ -541,8 +541,11 @@ Everything else is the supervisor's. Each pass it reconciles the forge and the t
 once its lane has moved off it, journals `finish.met` for each finish line it can prove, renders the views and posts
 the tracker's updates, and copies the record to `latest` at the archive location. It judges each finish line by the
 record's covers and proofs: once every criterion a line covers has every proof it names done, the line is met and
-journalled once. An entry you journalled by hand is skipped. A line the record can't prove holds the close until you
-check it, mark it met and journal `finish.met`.
+journalled once. An entry you journalled by hand is skipped, and a line the supervisor marked that you unmark stays
+unmarked. A line the record can't prove holds the close until you check it, mark it met and journal `finish.met`. A
+line whose `covers` names no criteria and no proofs, `{"criteria": [], "proofs": []}`, is yours: the supervisor never
+marks it met, and it holds the close until you mark it. A line with no `covers` covers every criterion, and
+`doctor --delivery` warns of one.
 
 What waits on you is what holds the close, and every lead command ends by saying so: "the close waits on" whatever the
 supervisor's last pass found, as `doctor --delivery` does too. Each pass writes the same list to the flow log's
@@ -730,10 +733,14 @@ refused, naming Bitbucket as the forge that has them.
   live view outlives the stop: the resumed supervisor replaces a view of the old release on the same port, and keeps
   one of the same release, so the address the operator has open stays the same.
 - **Merge strategy.** Merge with merge commits. After each merge, the queue checks that the base holds the checked
-  head's tree on top of the base it checked against, and a squash passes that too. But a squashed story's branch never
-  reaches the base, so the supervisor's cleanup reports it unmerged and leaves its checkout and branches for you, and
-  the supervisor's close waits on "not cleaned up: <story>" until you remove that checkout.
-  Squash, with the adapter's `--strategy squash`, only where the forge requires it.
+  head's tree on top of the base it checked against, and a squash passes that too. A squashed story's branch never
+  reaches the base, so cleanup asks the forge instead: it removes a squash-merged story's checkout, and deletes its local
+  branch, when the story's recorded change request is merged and every tip of the story, the checkout's HEAD, its local
+  branch and its remote branch, is at or below the merged head. A tip past the merged head, or uncommitted or untracked
+  files, keeps the checkout, and cleanup names what it found. Cleanup still reports a story unmerged, and leaves its
+  checkout for you, when the forge adapter has no `get` or the queue row has no recorded change request; the
+  supervisor's close then waits on "not cleaned up: <story>" until you remove that checkout. Squash, with the
+  adapter's `--strategy squash`, only where the forge requires it.
 - **A test account that allows one session at a time.** The in-app lease serializes every lane's checks of the running
   app, so one account signs in for one check at a time. Give the lease's lock a path every checkout shares.
 - **Lanes create their own worktrees.** `lane-start` makes each story's checkout from the delivery's base, so a lane

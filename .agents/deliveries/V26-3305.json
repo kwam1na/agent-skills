@@ -1,0 +1,287 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3305",
+  "headline": "V26-3305: make the merge queue and the close-out tell the truth",
+  "plan": "docs/plans/2026-11-14-queue-and-close-out-truth.md",
+  "laneBrief": "docs/plans/2026-11-14-queue-and-close-out-truth.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-14-queue-and-close-out-truth.lane-notes.md"
+  },
+  "context": {
+    "sections": [
+      "Decisions"
+    ]
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "skills/orchestrate-work/scripts/*",
+        "skills/orchestrate-work/references/schemas.json",
+        "skills/orchestrate-work/SKILL.md",
+        "skills/run-delivery/scripts/tracker_publisher.py",
+        "skills/delivery-views/assets/line-map.js",
+        "tests/test_merge_queue.py",
+        "tests/test_orchestration_state.py",
+        "tests/test_orchestration_adopter.py",
+        "tests/test_orchestration_render.py",
+        "tests/test_lane_rows.py",
+        "tests/test_lead_wait.py",
+        "tests/test_run_delivery_tracker.py",
+        "tests/delivery_views_page/line-map-kinds.test.mjs",
+        "docs/solutions/best-practices/a-stopped-base-rerun-is-not-a-broken-base-2026-11-14.md"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "skills/run-delivery/SKILL.md",
+        "skills/run-delivery/references/*",
+        "skills/run-delivery/templates/*",
+        "skills/review-work/*",
+        "skills/obtain-review/*",
+        "tests/test_run_delivery.py",
+        "tests/test_round_brief_template_corpus.py",
+        "tests/test_review_bound_corpus.py",
+        "tests/test_review_and_compounding.py",
+        "docs/solutions/best-practices/cleanup-of-a-squash-merged-story-2026-11-14.md"
+      ]
+    },
+    "lane-3": {
+      "owns": [
+        "skills/delivery-views/assets/run-summary.js",
+        "skills/delivery-views/assets/run-summary.css",
+        "skills/delivery-views/scripts/review_projection.py",
+        "skills/delivery-views/scripts/render.py",
+        "tests/test_delivery_views_page.py",
+        "tests/delivery_views_page/golden.test.mjs",
+        "tests/delivery_views_page/history-golden.test.mjs",
+        "tests/delivery_views_page/line-map.test.mjs",
+        "tests/delivery_views_page/round-reports.mjs",
+        "tests/test_delivery_views_review_projection.py",
+        "tests/test_delivery_views_render.py",
+        "tests/test_delivery_views_history.py",
+        "tests/fixtures/delivery-views/*"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3300": {
+      "title": "Tell a stopped base rerun from a failed one, and record the hazard",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "v26-3300-1",
+          "text": "A row stops a base rerun's process by its recorded pid and asserts that no base.broken is journaled, that the candidate is put back, and that the queue isn't held."
+        },
+        {
+          "id": "v26-3300-2",
+          "text": "A row with a rerun that genuinely fails still journals base.broken."
+        },
+        {
+          "id": "v26-3300-3",
+          "text": "The solution note names the symptom (base_broken: also fails on main right after a stop), the cause and the recovery."
+        }
+      ]
+    },
+    "V26-3258": {
+      "title": "Let a base repair go through a held queue first, and batch selections by what they run",
+      "lane": "lane-1",
+      "after": [
+        "V26-3300"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3258-1",
+          "text": "A held queue with a named repair and two stopped candidates merges the repair first, then lets the others through."
+        },
+        {
+          "id": "v26-3258-2",
+          "text": "Two selections differing only in reason text batch together."
+        }
+      ]
+    },
+    "V26-3170": {
+      "title": "Stop a finish line with no criteria reading as met",
+      "lane": "lane-2",
+      "criteria": [
+        {
+          "id": "v26-3170-1",
+          "text": "A finish line with empty covers isn't journaled as met by the supervisor, and a test holds that."
+        },
+        {
+          "id": "v26-3170-2",
+          "text": "The wait returns when fullHealth fails."
+        },
+        {
+          "id": "v26-3170-3",
+          "text": "The test passes with an unrelated sleep 30 running."
+        }
+      ]
+    },
+    "V26-3340": {
+      "title": "Stop the close-out filing follow-ups for review findings the lane already fixed",
+      "lane": "lane-2",
+      "after": [
+        "V26-3170"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3340-1",
+          "text": "A finding a lens deferred in round N and that the lane fixed before a later round produces no follow-up at close."
+        },
+        {
+          "id": "v26-3340-2",
+          "text": "A finding still deferred in the story's last captured round produces exactly one follow-up, as today."
+        },
+        {
+          "id": "v26-3340-3",
+          "text": "The rule for \"fixed\" comes from the review record, not a heuristic. Either the lens marks a carried-forward finding resolved in later rounds, or the close-out reads only the final round's open deferrals. Whichever is chosen, the review-work or orchestrate-work contract says so."
+        },
+        {
+          "id": "v26-3340-4",
+          "text": "Under a delivery that grants no deferrals, a finding still deferred at merge is shown in Needs you as a breach, not filed silently as a follow-up."
+        },
+        {
+          "id": "v26-3340-5",
+          "text": "Tests cover each case, each proven red against the current deferred_findings."
+        }
+      ]
+    },
+    "V26-3271": {
+      "title": "Say on a round card that an approval carried deferrable findings",
+      "lane": "lane-3",
+      "criteria": [
+        {
+          "id": "v26-3271-1",
+          "text": "A golden shows round 1 of a two-round fixture, which approved with one P2 and three P3 deferrals that round 2 fixed. Its pill reads \"Approved with 4 deferrable notes\", each of the four rows reads \"Deferred\", and the \"All 4 fixed \u2026 confirmed round 2\" line is unchanged."
+        },
+        {
+          "id": "v26-3271-2",
+          "text": "A round with no findings still reads \"Approved\", and a notes-open round still reads \"Approved, notes open\". A row pins each."
+        },
+        {
+          "id": "v26-3271-3",
+          "text": "Each new row fails when the wording it pins is removed."
+        }
+      ]
+    },
+    "V26-3424": {
+      "title": "Count a lens's evidence notes at hand-off under a no-deferrals ruling",
+      "lane": "lane-2",
+      "after": [
+        "V26-3340"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3424-1",
+          "text": "Under noDeferrals, a hand-off whose last round's evidence has a \"Declined\" or \"not filed\" note is refused, naming the note. The same hand-off without the setting passes as today."
+        },
+        {
+          "id": "v26-3424-2",
+          "text": "lead-accept shows the last round's unfixed evidence notes in plain text."
+        }
+      ]
+    },
+    "V26-3302": {
+      "title": "Say what cleanup does for a story its forge merged by squash",
+      "lane": "lane-2",
+      "after": [
+        "V26-3424"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3302-1",
+          "text": "A row squash-merges a story through a fake forge and asserts that the supervisor's cleanup removes its checkout, so the close isn't held."
+        },
+        {
+          "id": "v26-3302-2",
+          "text": "A row with a commit after the merged head keeps the checkout and names the commit."
+        },
+        {
+          "id": "v26-3302-3",
+          "text": "The adoption guide's end-to-end test still passes under a merge-commit forge."
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "Every story",
+      "text": "Each of the seven stories lands on integrate/queue-truth through the merge queue, or closes with its reason recorded",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the integration candidate, inside tests/suite-budget.json",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "integration",
+      "label": "Integration",
+      "text": "The integration reaches main through a change request the operator approves",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "main-ci",
+      "label": "Main CI",
+      "text": "CI's Ubuntu and cut-release jobs pass for that push to main",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "readyPullRequests": true,
+    "grantedBy": "Kwamina",
+    "grantedOn": "2026-11-14"
+  },
+  "approvals": [
+    {
+      "id": "approval-1",
+      "text": "The operator approves this plan, with its decisions, before `lead-setup`.",
+      "state": "done",
+      "who": "Kwamina"
+    },
+    {
+      "id": "approval-2",
+      "text": "The operator approves the final integration's change request to `main`.",
+      "state": "waiting"
+    }
+  ],
+  "outOfScope": [
+    "V26-3425, V26-3264, V26-3319, V26-3318 and V26-3320, which stay open under the epic for a later delivery.",
+    "A stopped post-merge `fullHealth`, which records no result today.",
+    "`wait` waking on `base.verified`, and a merge after `delivery.closed` restarting `fullHealth`, both raised in V26-3170's comments.",
+    "A forge adapter without `get`, or a queue row with no recorded change request, reading as unmerged at cleanup.",
+    "Accepting an evidence note by name at `lead-accept`.",
+    "A release tag. The batch release that carries this work is cut separately."
+  ],
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  },
+  "baseBranch": "integrate/queue-truth",
+  "integrationTarget": "main",
+  "outcome": {
+    "summary": "The merge queue, the close-out and the round card report what happened.",
+    "text": "A stopped base rerun no longer reads as a broken base, a named repair lands first through a held queue, a finish line with no criteria is the lead's to mark, the close-out files follow-ups only for findings still deferred, a round card says when an approval carried deferrable notes, a hand-off under a no-deferrals ruling counts evidence notes, and the guide says what cleanup does for a squash-merged story."
+  }
+}

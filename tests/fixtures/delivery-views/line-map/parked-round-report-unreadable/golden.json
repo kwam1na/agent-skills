@@ -426,6 +426,7 @@
                 "severity": "P1",
                 "summary": "A retry after a timeout charges twice",
                 "state": "resolved",
+                "filed": "open",
                 "deferredIssue": null
               },
               {
@@ -434,6 +435,7 @@
                 "severity": "P2",
                 "summary": "The receipt keeps the first attempt's total",
                 "state": "resolved",
+                "filed": "open",
                 "deferredIssue": null
               },
               {
@@ -442,6 +444,7 @@
                 "severity": "P2",
                 "summary": "No test covers a dropped second attempt",
                 "state": "unresolved",
+                "filed": "open",
                 "deferredIssue": null
               }
             ],

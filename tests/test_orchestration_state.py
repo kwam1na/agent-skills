@@ -5721,12 +5721,12 @@ VALID_FIXTURES = {
     "with tickets", "snapshot with a summary", "planned with a run", "planned with its ticket started",
     "queued with its ticket started", "lane wait set by the queue", "a decision carrying a review",
     "queue check with a title", "queue check with its node", "step with a title", "a close started", "a close finished", "queue check with its base re-run",
-    "checking now awaiting the base rerun",
+    "checking now awaiting the base rerun", "queue row named as the repair",
 }
 JOURNAL_KINDS = [
     "lane.assigned", "review.round", "candidate.handed", "check.started", "check.finished",
     "check.failed", "check.retried", "check.reused", "candidate.merged", "candidate.stopped", "base.verified", "base.broken",
-    "base.repaired", "base.rerun.started", "base.rerun.finished",
+    "base.repaired", "base.rerun.started", "base.rerun.finished", "base.rerun.stopped",
     "lease.granted", "lease.released", "release.started", "release.finished",
     "finish.met", "decision.recorded", "blocker.recorded", "delivery.closed", "review.evidence", "check.selected",
     "selection.refused", "hook.held", "base.moved",
@@ -5772,6 +5772,9 @@ class SchemaAgreementTests(unittest.TestCase):
                 ("queue check with a title", with_change(state, ("queue", 0, "checks"),
                                                          [{"id": "unit", "state": "passed", "title": "Unit tests"},
                                                           {"id": "lint", "state": "passed"}])),
+                ("queue row named as the repair", with_change(state, ("queue", 0, "repair"),
+                                                             {"namedAt": "2026-11-14T10:00:00Z"})),
+                ("queue row with a repair mark of another shape", with_change(state, ("queue", 0, "repair"), True)),
                 ("queue check with its base re-run", with_change(state, ("queue", 0, "checks"), [
                     {"id": "unit", "state": "failed", "failures": ["test_a"], "log": "logs/a.log",
                      "baseRerun": {"failures": ["test_a"], "log": "logs/b.log"}},

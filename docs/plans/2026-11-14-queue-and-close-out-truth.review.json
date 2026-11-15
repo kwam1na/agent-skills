@@ -1,0 +1,161 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "writtenBy": "run-delivery plan-review",
+  "plan": "docs/plans/2026-11-14-queue-and-close-out-truth.md",
+  "planSha256": "edf24c449cd98dd96a55f7872ee634ab335031a9ae6ade566bbcf5f411af3200",
+  "planCommit": "9a2e34742b3b5750f38b8fb46b758d4d2009309e",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": [
+    "lens.outcome-correctness",
+    "lens.adversarial-testing"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "candidate": "3e29da0fc44482c11acc2a754c3132d13fa10714",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-14T22:55:04.966651Z",
+      "finishedAt": "2026-11-14T22:59:34.618775Z",
+      "open": [
+        "outcome-correctness-r1-1",
+        "outcome-correctness-r1-2",
+        "outcome-correctness-r1-3",
+        "outcome-correctness-r1-4",
+        "outcome-correctness-r1-5",
+        "adversarial-testing-r1-1",
+        "adversarial-testing-r1-2",
+        "adversarial-testing-r1-3",
+        "adversarial-testing-r1-4",
+        "adversarial-testing-r1-5",
+        "adversarial-testing-r1-6",
+        "adversarial-testing-r1-7",
+        "adversarial-testing-r1-8",
+        "adversarial-testing-r1-9",
+        "adversarial-testing-r1-10"
+      ]
+    },
+    {
+      "round": 2,
+      "candidate": "52560b4eac7dff4c438bdf450e382eddb0b15ada",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-14T23:00:34.902157Z",
+      "finishedAt": "2026-11-14T23:03:53.052059Z",
+      "open": [
+        "adversarial-testing-r2-1",
+        "adversarial-testing-r2-2",
+        "adversarial-testing-r2-3"
+      ]
+    },
+    {
+      "round": 3,
+      "candidate": "65016fd8815064b5f8104bf230b4153933256057",
+      "outcome": "aligned",
+      "startedAt": "2026-11-14T23:04:02.855607Z",
+      "finishedAt": "2026-11-14T23:09:12.698277Z",
+      "open": []
+    },
+    {
+      "round": 4,
+      "candidate": "d36819753cc63442e601b22f4034c9212ff6edaa",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-14T23:23:11.892839Z",
+      "finishedAt": "2026-11-14T23:29:23.656107Z",
+      "open": [
+        "outcome-correctness-r4-1",
+        "outcome-correctness-r4-2"
+      ]
+    },
+    {
+      "round": 5,
+      "candidate": "9a2e34742b3b5750f38b8fb46b758d4d2009309e",
+      "outcome": "aligned",
+      "startedAt": "2026-11-14T23:29:33.539001Z",
+      "finishedAt": "2026-11-14T23:31:01.974286Z",
+      "open": []
+    }
+  ],
+  "reviews": [
+    {
+      "lens": "lens.outcome-correctness",
+      "round": 5,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.outcome-correctness",
+        "subjectRef": "queue-and-close-out-truth.plan",
+        "candidateRef": "9a2e34742b3b5750f38b8fb46b758d4d2009309e",
+        "round": 5,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [
+          {
+            "id": "outcome-correctness-r4-1",
+            "state": "fixed",
+            "resolution": "Lane 1's whole-directory claim on `docs/solutions/` is gone. Lane 1 now owns the exact path of V26-3300's note and lane 2 the exact path of V26-3302's note, and the plan no longer has the lead grant a path later. `plan_paths` seeds each as an exact pattern (skills/run-delivery/scripts/run_delivery.py:6027-6036), the two patterns match different paths, so `ownership_overlaps` reports nothing and each new file has exactly one owner at admission (`candidate_ownership`). Adopted as proposed. V26-3258 no longer lists `docs/solutions/` in its Files; its tracker item says 'Compounding Opportunity: None expected' and its section asks for no note, so lane 1 needs only the one path."
+          },
+          {
+            "id": "outcome-correctness-r4-2",
+            "state": "fixed",
+            "resolution": "The first alternative is adopted. The sensors paragraph now says a story refreshes only its skill's provenance digest and that the catalog's and the profiles' wording is the lead's. Units and order says no story edits `catalog.json` or `profiles/`, which no lane owns, and the lead writes that wording once on the integration branch before the change request to `main`. The sentence and the Owns table now agree, which was the approval condition's proviso. `catalog.json` carries no digest, so a story's skill change does not force a catalog edit for the registry to validate."
+          }
+        ],
+        "evidence": [
+          "Reviewed tree SHA 8ba0b67270f11b014b1f755263238574406e85f6 in the private checkout .orchestration/plan-review/queue-and-close-out-truth/checkouts/lens.outcome-correctness, detached at 9a2e34742b3b5750f38b8fb46b758d4d2009309e.",
+          "Start identity check passed: `git rev-parse HEAD^{tree}` gave 8ba0b67270f11b014b1f755263238574406e85f6 and `git status --porcelain` was empty.",
+          "End identity check passed: same tree SHA 8ba0b67270f11b014b1f755263238574406e85f6 and an empty `git status --porcelain`. No probe, mutant or file was added to the checkout.",
+          "Delta derived with `git diff d36819753cc63442e601b22f4034c9212ff6edaa..9a2e34742b3b5750f38b8fb46b758d4d2009309e`: one file, docs/plans/2026-11-14-queue-and-close-out-truth.md, 21 insertions and 17 deletions.",
+          "Re-check of outcome-correctness-r4-1 and r4-2: both fixed in this revision, each adopted as proposed; the detail is in resolvedFindings.",
+          "Re-check of outcome-correctness-r1-1 to r1-5, which this lens closed as fixed in round 2: the delta touches Decision 5 and V26-3300's rows only to widen 'not recorded as a failed base rerun' to 'not recorded as a base rerun's result, failed or passed'. It changes no line of Decisions 6, 7, 8, 13 or 16 and removes no scenario row, so all five stay fixed.",
+          "The widened `meta.baseReruns` rule is realizable: `record_rerun` adds an entry only when it is handed a verdict, and `rerun_on_base` hands one only after the final run of a check (skills/orchestrate-work/scripts/merge_queue.py:2378-2379, 2414-2419). A rerun stopped during its flake retry has recorded nothing for the first run at that point, so the classification can come before the call. `base_rerun_notices` warns only on a `failed` entry (skills/orchestrate-work/scripts/delivery_state.py:1627-1629).",
+          "My round-4 note on regranting is adopted: Decision 19 now says the lead regrants a region after each merge that edits inside it.",
+          "Other delta claims that hold at this tree: `SupervisorPostMergeTests` is a class in tests/test_run_delivery_supervisor.py (line 3983), so lane 1's span there is nameable. `docs/solutions/best-practices/` exists and both note paths have the `<slug>-<YYYY-MM-DD>.md` shape tests/test_compound_learning_corpus.py walks for. Neither note path holds a glob character. `provenance.lock.json` is still the only declared regenerable path in .agents/orchestration.json.",
+          "Tracker item V26-3258 was read read-only, to confirm it requires no solution note.",
+          "Model class: claude-fable-5-2, run as a native subagent. Realization basis: host-convention. The host exposes no progress or permission signals to this lens. No subagent was spawned.",
+          "Checks run: none; a plan review has no scoped sensors or test files. No mutation or fault injection was done. Every judgement rests on reading the plan's delta against the code at the reviewed tree.",
+          "Note (P3, not filed): 'No stopped row adds an entry of any result to `meta.baseReruns`' holds for the listed rows, which each rerun one check. When a rerun covers several checks and an earlier one passes on the base before a later one is stopped, the earlier check's `passed` entry is already written. That entry is true, and no listed row has that shape, so I state no failure.",
+          "Note (P3, not filed): the sentence that every created file's path is in the table names three files. V26-3271's new fixtures fall under lane 3's folder claim `tests/fixtures/delivery-views/`, so they are covered by a folder and not by a path. No other lane creates a file in that folder.",
+          "Note (P3, not filed, carried from round 4): lane 2's `covers` wording in skills/delivery-views/SKILL.md sits in three separate places, so its 'span' there is three spans; several stories' Files sentences still name whole folders that hold other lanes' files, which `lead-assign` reports as warnings only.",
+          "Note (P3, not filed, carried from rounds 2 and 3): a rerun the lead stops on its first run is still retried when a whole-check flake is declared; `serve --until-idle` does not retake a lone candidate put back after a stopped rerun; a `pending` row can be named as the repair and is taken by nothing until accepted; a `covers: null` line is one the views' plan validator refuses. The delta changes none of these.",
+          "Declined: the lead's catalog and profile wording lands on the integration branch outside the merge queue. It is reviewed in the change request to `main`, which the finish line and the approval handoffs already require, and `AGENTS.md`'s 'in the same change' is met by that change request, so there is no failure to state.",
+          "Approval conditions: none, since this round raises no finding. The notes above bind nothing."
+        ]
+      },
+      "resultSha256": "98be55cb37d86f2d6f1e650195ecfeb5951ff8ecb678fcfa5f91d3c822260dc2"
+    },
+    {
+      "lens": "lens.adversarial-testing",
+      "round": 5,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.adversarial-testing",
+        "subjectRef": "queue-and-close-out-truth.plan",
+        "candidateRef": "9a2e34742b3b5750f38b8fb46b758d4d2009309e",
+        "round": 5,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [],
+        "evidence": [
+          "Reviewed tree SHA 8ba0b67270f11b014b1f755263238574406e85f6. Start identity check passed in the private checkout: HEAD 9a2e34742b3b5750f38b8fb46b758d4d2009309e, `git rev-parse HEAD^{tree}` equal to the tree SHA, `git status --porcelain` empty. End identity check passed with the same three values.",
+          "Re-check of carried findings: none is open. Round 2 closed the ten round-1 findings as fixed, round 3 closed the three round-2 findings as fixed, and rounds 3 and 4 raised none, so `resolvedFindings` is empty. I derived the delta with `git diff d36819753cc63442e601b22f4034c9212ff6edaa..9a2e34742b3b5750f38b8fb46b758d4d2009309e`: one file, the plan, 21 insertions and 17 deletions. It removes or weakens none of the rows that closed the thirteen findings. The only scenario text it changes is the `meta.baseReruns` row in V26-3300, which it strengthens.",
+          "Review of the delta found no P0 or P1. Its changes are: Decision 5 and the V26-3300 row on `meta.baseReruns`; Decision 19's regrant after each merge that edits inside a region; the catalog's and the profiles' wording moved to the lead; the two solution notes' paths named in the table and the stories, in place of `docs/solutions/` as a folder; and `SupervisorPostMergeTests` named as lane 1's span in tests/test_run_delivery_supervisor.py.",
+          "Round-4 P2 note, now adopted: Decision 5 says a stopped rerun is not recorded as a base rerun's result, failed or passed, and the V26-3300 row reads 'No stopped row adds an entry of any result to `meta.baseReruns`'. A mutant that records a stopped rerun as `passed`, or under a third result, now fails that row. The row is an absence assertion, but it is not vacuous: tests/test_merge_queue.py already reads an entry that a real rerun writes to `meta.baseReruns` (line 6168), so the mechanism the absence is measured against exists and is observed.",
+          "Round-4 P3 note, now adopted: the plan names `SupervisorPostMergeTests` as lane 1's span. I confirmed the class exists at tests/test_run_delivery_supervisor.py line 3983 and that it borrows `setUpClass`, `merged` and `once` from `SupervisorPassTests` by reference. `SupervisorPassTests` stays in lane 2's span, so lane 2's rows for V26-3170 and V26-3340 can still reuse that fixture.",
+          "Checked: V26-3258 no longer lists `docs/solutions/` among its files. No scenario or deliverable in V26-3258 asked for a solution note, in this revision or the one before, so the removal drops no row. The two notes the plan does ask for, V26-3300's and V26-3302's, keep their deliverable text and each now has a named path with a whole-file claim.",
+          "Checked: the catalog's and the profiles' wording moving to the lead removes no proof. Catalog entries carry no digest, no story adds a skill or an output, and each story still refreshes its skill's provenance digest through `scripts/update-provenance.py`. This closes the round-4 observation that no lane listed `catalog.json` or `profiles/`.",
+          "Model class: claude-fable-5-2, run as a native subagent. Realization basis: host-convention. The host exposes no progress or permission signals to this lens. No subagents were spawned.",
+          "No checks were run, as the brief sets none for a plan review. No mutant was planted and no file was written in the checkout. The mutations considered were described edits on lines the plan's stories change (`Runner.rerun_on_base` and `record_rerun` in skills/orchestrate-work/scripts/merge_queue.py), so they kept to the candidate's planned scope.",
+          "Read to ground the review, one path at a time: docs/plans/2026-11-14-queue-and-close-out-truth.md (the delta, then lines 84-260 and a grep of its solution-note, catalog and profile mentions); tests/test_run_delivery_supervisor.py (its class list, lines 3983-3990, and a grep of its \"Needs you\" tests); a grep of `baseReruns` in tests/test_merge_queue.py and tests/test_orchestration_state.py; a listing of docs/solutions/best-practices/ to confirm the folder the two named notes fall in exists.",
+          "P3 notes carried from rounds 3 and 4, still open and optional: no row at the edges of Decision 5's range (129, and 128 plus the highest signal); no row for `base_rerun_stopped` joining the result schema's list; no row for the `fullHealth` arm of Decision 8; the brief-wording pin does not plainly cover the clause 'use the three phrases only for something left unfixed'; a rerun stopped on its first run while a whole-check flake is declared has no row; literal pins of journal kinds in files outside lane 1's claims would need the lead's grant, and a red pin there would be loud, not a silent survivor.",
+          "P3 note (delta, Decision 19): the regrant 'after each merge that edits inside it' is the lead's procedure with no sensor in this plan. Region grants are a mechanism of the installed `linear-v2.3.0` release, which this delivery does not change, so no row is asked for it.",
+          "Findings considered and left out, with reasons: the lead's single catalog and profile edit before the change request has no row of its own, but it is wording with no digest and the registry validation in the full suite at the finish line reads it, so no product mutation survives because of it; the sentence 'No lane claims a folder that another lane's new file would fall in' is a claim about the ownership table, which the table as written satisfies, and it is not product behaviour a mutation could falsify.",
+          "Approval conditions: this result raises no finding, so there is none to state. No carried finding is open, and the plan is ready to approve from this lens. The P3 notes above are optional and do not hold the outcome."
+        ]
+      },
+      "resultSha256": "0ebb9609cf176a70373f8450d8e50e7ae18672d1a7afa4c8e6cb84cbb0576fa2"
+    }
+  ],
+  "residualRisks": [
+    "5 review rounds; findings open after each round: 15, 3, 0, 2, 0."
+  ]
+}

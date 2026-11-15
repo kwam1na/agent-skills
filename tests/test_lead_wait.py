@@ -122,6 +122,17 @@ class EventTests(RecordCase):
                 self.assertEqual(result["events"][0]["summary"], f"the {kind} summary")
                 self.assertEqual(result["through"], identifier)
 
+    def test_a_stopped_base_rerun_does_not_end_a_running_wait(self) -> None:
+        # The queue checks the candidate again itself; only a second stop at the same heads, as candidate.stopped, wakes.
+        process = self.record.start_wait()
+        self.assert_running(process)
+        self.record.journal("base.rerun.stopped", "the base re-run was stopped before its verdict")
+        self.assert_running(process)
+        identifier = self.record.journal("candidate.stopped", "base_rerun_stopped: stopped twice")
+        code, result = _finish(process)
+        self.assertEqual(code, 0)
+        self.assertEqual([(event["id"], event["kind"]) for event in result["events"]], [(identifier, "candidate.stopped")])
+
     def test_a_hand_off_through_the_tool_ends_a_running_wait(self) -> None:
         self.record.add_lanes("lane-1")
         version = self.record.tool("show")["state"]["version"]

@@ -198,7 +198,7 @@
       "outputs": [
         {
           "path": "skills/delivery-views/SKILL.md",
-          "sha256": "2e3dd82f9dca581148b9578b9a862d0d10451c9984e71be8cecb5c2580747f9e"
+          "sha256": "4e6a2e34315cf4326a998bc7bb6022d6c2366350ffff9fae7b8753e8f0d0a9cd"
         },
         {
           "path": "skills/delivery-views/assets/history.css",
@@ -214,15 +214,15 @@
         },
         {
           "path": "skills/delivery-views/assets/line-map.js",
-          "sha256": "856ca266373bc7c6869748993fa85075cda847a7471089665161efb2ec65432f"
+          "sha256": "3c78d1bab419ab1e36523a897748d72c51bf03412c927c3015d35dfc2d9de112"
         },
         {
           "path": "skills/delivery-views/assets/run-summary.css",
-          "sha256": "ec3a04c25d5f2a22f30a4aedce43262c834bfaa75191c2748fc21ceae8b67611"
+          "sha256": "6028c227833a2d0292bd54cfb4e797d742338877fb2aba396d00706a069ddbb8"
         },
         {
           "path": "skills/delivery-views/assets/run-summary.js",
-          "sha256": "3dbf64b44491812b680b6316bbbe095c6a69115f362f5a5cd2c624bf5309b6b5"
+          "sha256": "5d8ff15abaf6d1de04ed5d8102e763d4daa5caf10bee4c1fb4ca1fcfa883b605"
         },
         {
           "path": "skills/delivery-views/references/delivery-plan.schema.json",
@@ -230,11 +230,11 @@
         },
         {
           "path": "skills/delivery-views/scripts/render.py",
-          "sha256": "410726390f37005abc9c16c64e362047d05c3b2d1f0dd7606c49e5734bfd1858"
+          "sha256": "f57337a8da5d5dbb315edaf6c68365fd19970fc9172495a229c99d419456dbf3"
         },
         {
           "path": "skills/delivery-views/scripts/review_projection.py",
-          "sha256": "4f5a7ffe717fc5db4fa4a414e748cfc1df86fdfb852d036ce8f089becf934983"
+          "sha256": "31970f3cc1ca30b32338f32dc3754fa125d8b24e64c6b530742aed264e5dea85"
         },
         {
           "path": "skills/delivery-views/scripts/snapshot.py",
@@ -469,23 +469,23 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "6e7d062a466f89ed4e3837725daffbfc5073491856cadee0f70ed8bee9040032"
+          "sha256": "da2e6d2e0cfba763be3ad69b45f66c8c36bd5295245bed969dd3e99beef9cc46"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "8fe7032084e2bb47003afaef9b54d21d52cfb6f421ed4b2946c9276b8c543274"
+          "sha256": "165b0e4aa5aa462be8a9a76a446b96e34edab22f9cb564ddc6e6f19d85092814"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
-          "sha256": "84d1333b519ee381ec535a44b6fadaf5ce2af6ade867dce6e355f1537a11773d"
+          "sha256": "b509fd3420973b03d4d8569b51bf470d5c56440f62a44b14dbc2c2d4ab6475fb"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "b213b3d4b993a98195930d207ff4fa4aa81f0b9d7064d9ce57d82b50344afa56"
+          "sha256": "2a675b71a6c2b1f63f7d58595fe51feb40150da423d03df90c7f65b7456e761d"
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",
-          "sha256": "74d969dbca860038351d1316c08364211f0c6d4eb51daeaaf5e9ddd0c1cfc4d9"
+          "sha256": "a69fffbb384d327dd6214947b0478a2efd41763e018949d062e0ae98b07cc7a2"
         },
         {
           "path": "skills/orchestrate-work/scripts/region_ownership.py",
@@ -997,7 +997,7 @@
       "outputs": [
         {
           "path": "skills/review-work/SKILL.md",
-          "sha256": "24ab712cbee42f033fa7e0348a7f8e7f11468b9b1cd405f14c1f7da28fa393f0"
+          "sha256": "a54da94befcab3056a7d15bd6dd6d79a9a6721edc294fff858a70d15942f7493"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -1022,7 +1022,7 @@
       "outputs": [
         {
           "path": "skills/run-delivery/SKILL.md",
-          "sha256": "28f1aa30e661b5d51dabcde8c749db70de0e42d9b505081177459176961e658a"
+          "sha256": "a5b2e21803a5a6a2922ddf1517a1cffb386926040429998972f90fc685a6a6ae"
         },
         {
           "path": "skills/run-delivery/adapters/forge_bitbucket.py",
@@ -1050,11 +1050,11 @@
         },
         {
           "path": "skills/run-delivery/references/adopting.md",
-          "sha256": "382c87aee57fd7b10346d31cfa2cbe608d5769c7392f62cd4aa93afc96d97663"
+          "sha256": "01b7f3a58eec3ca9e58ea133f6b90cc16724ae7dea5242c92d558c6e7d668c8d"
         },
         {
           "path": "skills/run-delivery/references/config.md",
-          "sha256": "44c9581c6ad64fced8092d70430a917f26340fda053028d1bf1f3e1b633159aa"
+          "sha256": "e9f1bce3e988d5883eec8fcfb3275c8d0d903af93c739919b786dc35dbf73e99"
         },
         {
           "path": "skills/run-delivery/scripts/pr_review_gates.py",
@@ -1062,11 +1062,11 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "f7cb24c6200e845b3540e10f039e9b437bf8be107879b4e8a1d8e583d7e2d5bb"
+          "sha256": "30f2ea2ef843e7304bba4c5c8a004ce87be9f87a38e0e24792f13ad3eae0e45f"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
-          "sha256": "31b6363f5d89f1a8e45ed24f197ff49d00c38df0ca6174cb973edc51668767a0"
+          "sha256": "7366da80ffb437892f7bff905f715851330d14bb02ac7c3a349d4d392fb346ef"
         },
         {
           "path": "skills/run-delivery/templates/evidence.html",

@@ -576,8 +576,13 @@ DIVERGENCES = (
         (),
         (
             (
-                "Every finding this lens raised in an earlier round that is still open must appear (one deferred "
-                "earlier needn't); one closed in an earlier round may be listed again or left out."
+                "Every finding this lens raised in an earlier round that is still open must appear; one closed in an "
+                "earlier round may be listed again or left out."
+            ),
+            (
+                "Re-check each finding this lens deferred in an earlier round, and list each one you find fixed as "
+                "`closed`, `fixed` or `withdrawn`: only that listing records a deferral as fixed, and one listed as "
+                "`deferred` or `open`, or not listed, stays deferred and is filed as a follow-up at close."
             ),
             'A deferral (P2/P3 only) also carries `deferredIssue`.',
             'Every carried finding must appear; a plan review defers none.',
@@ -844,8 +849,13 @@ KIND_ONLY = (
         (
             "A deferred finding doesn't block `aligned`.",
             (
-                "Every finding this lens raised in an earlier round that is still open must appear (one deferred "
-                "earlier needn't); one closed in an earlier round may be listed again or left out."
+                "Every finding this lens raised in an earlier round that is still open must appear; one closed in an "
+                "earlier round may be listed again or left out."
+            ),
+            (
+                "Re-check each finding this lens deferred in an earlier round, and list each one you find fixed as "
+                "`closed`, `fixed` or `withdrawn`: only that listing records a deferral as fixed, and one listed as "
+                "`deferred` or `open`, or not listed, stays deferred and is filed as a follow-up at close."
             ),
             'A deferral (P2/P3 only) also carries `deferredIssue`.',
             (
@@ -1024,7 +1034,7 @@ def _tool():
     return _TOOL
 
 
-def _render(brief_template: str) -> list[str]:
+def _render(brief_template: str, no_deferrals: bool = False) -> list[str]:
     """run-delivery's brief as run_delivery.py renders it from `brief_template`, for every round it writes: a story's
     assessment, verification and grace rounds, and a plan review's assessment and verification rounds. Only what a
     delivery would read from its release, settings, review folder and git is stood in for."""
@@ -1036,7 +1046,8 @@ def _render(brief_template: str) -> list[str]:
         (root / "charter.md").write_text("<charter text, verbatim>\n", encoding="utf-8")
         (root / "context.md").write_text("<context refs>\n", encoding="utf-8")
         config = types.SimpleNamespace(lenses={"lens.example": ("example", str(root / "charter.md"))}, bound=4,
-                                       plan="docs/plans/example.md", delivery="EX-1", plan_store=None)
+                                       plan="docs/plans/example.md", delivery="EX-1", plan_store=None,
+                                       no_deferrals=no_deferrals)
         release = {name: "<value>" for name in ("releaseId", "profile", "archiveSha256", "metadataSha256")}
         prior = [{"binding": {"round": 1}, "state": "obtained", "result": {"outcome": "aligned"}}]
         story = ("EX-1", "lens.example", "<candidate>", "<tree>", "<merge base>", Path("<checkout>"))
@@ -1064,6 +1075,71 @@ def _divergence(template: str, renders: list[str]) -> dict[str, tuple[set[str], 
         mine = set(_items(body))
         found[heading] = (mine - theirs, theirs - mine)
     return found
+
+
+# A deferral a lens fixed is recorded only by that lens listing it later; nothing may excuse a lens from re-checking one.
+DEFERRAL_RECHECK = (
+    "Re-check each finding this lens deferred in an earlier round, and list each one you find fixed as `closed`, "
+    "`fixed` or `withdrawn`: only that listing records a deferral as fixed, and one listed as `deferred` or `open`, or "
+    "not listed, stays deferred and is filed as a follow-up at close."
+)
+DEFERRAL_EXCUSE = (
+    r"(?:needn'?t|need not|needs not|does not need|doesn't need|do not need|don't need|is not required|isn't required"
+    r"|are not required|aren't required|may be omitted|can be omitted|may be left out|can be left out|may omit|can omit"
+    r"|may skip|can skip|is excused|are excused|is exempt|are exempt|optional)"
+)
+DEFERRAL_EXCUSES = (
+    re.compile(rf"deferr\w*[^.;:]{{0,60}}\b{DEFERRAL_EXCUSE}", re.IGNORECASE),
+    re.compile(rf"{DEFERRAL_EXCUSE}[^.;:]{{0,60}}\bdeferr\w*", re.IGNORECASE),
+)
+
+
+class DeferralRecheckTests(unittest.TestCase):
+    """The verification brief asks each lens to re-check its earlier deferrals and list each it finds fixed, and no
+    skill's text or rendered brief excuses a lens from listing one."""
+
+    def renders(self) -> list[str]:
+        return [" ".join(text.split()) for text in _render((ROOT / RUN_DELIVERY_BRIEF).read_text(encoding="utf-8"))]
+
+    def test_a_story_verification_brief_asks_for_each_deferral_found_fixed(self) -> None:
+        assessment, verification, grace, *_ = self.renders()
+        self.assertIn(DEFERRAL_RECHECK, verification)
+        self.assertIn(DEFERRAL_RECHECK, grace)
+        self.assertNotIn(DEFERRAL_RECHECK, assessment)
+
+    def test_nothing_excuses_a_lens_from_listing_a_deferral(self) -> None:
+        texts = {f"rendered brief {n}": text for n, text in enumerate(self.renders())}
+        for path in sorted((ROOT / "skills").rglob("*")):
+            if path.is_file() and path.suffix in (".md", ".py", ".json", ".js", ".mjs", ".html"):
+                texts[str(path.relative_to(ROOT))] = " ".join(path.read_text(encoding="utf-8", errors="replace").split())
+        for name, text in texts.items():
+            for pattern in DEFERRAL_EXCUSES:
+                with self.subTest(text=name, pattern=pattern.pattern[:40]):
+                    self.assertIsNone(pattern.search(text))
+
+    def test_the_excuse_patterns_catch_the_withdrawn_wording_and_its_synonyms(self) -> None:
+        for excuse in ("must appear (one deferred earlier needn't)", "a deferred finding need not be listed",
+                       "listing a deferral is optional", "deferrals may be left out", "one deferred earlier is exempt"):
+            with self.subTest(excuse=excuse):
+                self.assertTrue(any(pattern.search(excuse) for pattern in DEFERRAL_EXCUSES))
+
+
+# Under noDeferrals each story round's brief asks a lens that left nothing unfixed to say so in these words.
+NO_DEFERRALS_EVIDENCE = (
+    'This delivery takes no deferrals: when you declined nothing, left nothing unfiled and left no mutant alive, say '
+    'so in `evidence` in the words "nothing left unfixed". Write "Declined", "not filed" or "surviving mutant" in '
+    "`evidence` only for something you left unfixed: the hand-off refuses a round whose evidence carries one."
+)
+
+
+class NoDeferralsBriefTests(unittest.TestCase):
+    def test_a_story_brief_under_no_deferrals_asks_for_nothing_left_unfixed_and_one_without_it_does_not(self) -> None:
+        template = (ROOT / RUN_DELIVERY_BRIEF).read_text(encoding="utf-8")
+        under = [" ".join(text.split()) for text in _render(template, no_deferrals=True)]
+        for text in under[:3]:  # a story's assessment, verification and grace rounds
+            self.assertIn(NO_DEFERRALS_EVIDENCE, text)
+        for text in [" ".join(text.split()) for text in _render(template)] + under[3:]:  # without it, or a plan review
+            self.assertNotIn("nothing left unfixed", text)
 
 
 class RoundBriefTemplateCorpusTests(unittest.TestCase):

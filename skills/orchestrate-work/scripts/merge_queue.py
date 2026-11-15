@@ -24,7 +24,6 @@ import concurrent.futures
 import contextlib
 import copy
 import datetime
-import hashlib
 import json
 import os
 import re
@@ -59,6 +58,8 @@ PLACEHOLDER = re.compile(r"^\{([A-Za-z]+)\}$")
 FULL_HEALTH_TIMEOUT_MOST = 2147483
 # Reasons that stop the whole queue rather than one candidate.
 QUEUE_STOPPING = frozenset({"base_broken", "merged_unverified", "batch_tree_mismatch"})
+# The highest signal number: an exit of 128 plus one up to this reports a run stopped by that signal.
+HIGHEST_SIGNAL = signal.NSIG - 1
 # Reasons for which the runner attempted nothing and leaves the queue as it was.
 REFUSALS = frozenset({
     "queue_locked", "candidate_unknown", "already_merged", "binding_invalid", "not_synced",
@@ -267,11 +268,13 @@ def now() -> str:
 class Stop(Exception):
     """The runner stopped with one of the result schema's reasons."""
 
-    def __init__(self, reason: str, detail: str, paths: Iterable[str] = ()) -> None:
+    def __init__(self, reason: str, detail: str, paths: Iterable[str] = (), requeued: bool = False) -> None:
         super().__init__(f"{reason}: {detail}")
         self.reason = reason
         self.detail = detail
         self.paths = sorted(set(paths))
+        # The candidate goes back to queued rather than stopping, and no stop is journaled for it.
+        self.requeued = requeued
 
 
 # ---------------------------------------------------------------------------
@@ -488,6 +491,20 @@ def failed_run(completed: Completed) -> bool:
     return completed.timed_out or completed.returncode != 0
 
 
+def stopped_run(completed: Completed) -> bool:
+    """Whether a run was stopped rather than failed: killed by a signal, or exiting as a stopped run reports one, 128
+    plus the signal's number (130 or 143 from a runner interrupted or terminated). Such an exit with no signal sent
+    reads as stopped too; 128 itself, or anything above the range, is a failure, and so is a timeout."""
+    code = completed.returncode
+    return not completed.timed_out and code is not None and (code < 0 or 128 < code <= 128 + HIGHEST_SIGNAL)
+
+
+def stopped_words(check_id: str, completed: Completed) -> str:
+    """How a stopped run ended, as the journal names it."""
+    code = completed.returncode
+    return f"{check_id} ended by signal {-code}" if code is not None and code < 0 else f"{check_id} exited {code}"
+
+
 def failure_words(check_id: str, failures: list[str], log: str | None) -> str:
     """A failed check as a stop or the journal names it: the check, its failing tests and its log."""
     parts = []
@@ -510,32 +527,8 @@ def check_title(check: dict) -> dict:
     return {"title": title if len(title) <= TITLE_LIMIT else title[:TITLE_LIMIT - 1] + "…"}
 
 
-def check_definition(check: dict, binding: dict) -> str:
-    """How a check runs, as one digest: its argv, cwd, prerequisites, timeout and environment.
-
-    The argv is digested before its placeholders are filled in, so the same
-    definition digests alike on every tree; a reusable check may use only
-    ``{treeSha}``, which the tree determines. The binding's prepare steps,
-    which set up every check's checkout, are part of it. A change to the
-    binding that changes how the check runs changes the digest; its reasons,
-    title and ``parallelSafe`` do not.
-    """
-    profile = check.get("environmentProfile")
-    described = {
-        "id": check["id"],
-        "argv": check["argv"],
-        "cwd": check["cwd"],
-        "prerequisites": check["prerequisites"],
-        "timeoutSeconds": check.get("timeoutSeconds", binding["checkTimeoutSeconds"]),
-        "environmentProfile": profile,
-        "profileEnvironment": binding["profiles"].get(profile, {"environment": {}})["environment"] if profile else {},
-        "environment": binding["environment"],
-        # Every check runs in a checkout the prepare steps set up, with or without its hooks.
-        "prepare": binding["prepare"],
-        "hooks": binding["hooks"],
-    }
-    text = json.dumps(described, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    return "sha256:" + hashlib.sha256(text.encode("ascii")).hexdigest()
+# How a check runs, as one digest; the state tool's select compares selections by it too.
+check_definition = delivery_state.check_definition
 
 
 def selection_errors(checks: list[dict], binding: dict, check_cwd: Path | None) -> list[str]:
@@ -1976,11 +1969,16 @@ class Runner:
         return [{"subject": item["subject"], **copy.deepcopy(item["leadSelection"])} for item in current]
 
     def lead_checks(self, members: list[dict], checkout: Path) -> list[dict]:
-        """The union of the members' selections, in member order, refused when two disagree on a check."""
+        """The union of the members' selections, in member order, refused when two run a check differently.
+
+        Two members define a check alike when it runs alike, by its definition's digest: reasons and title don't
+        count, and the first member's are the ones kept.
+        """
         chosen: dict[str, dict] = {}
         for member in members:
             for check in member["checks"]:
-                if check["id"] in chosen and chosen[check["id"]] != check:
+                if (check["id"] in chosen
+                        and check_definition(chosen[check["id"]], self.binding) != check_definition(check, self.binding)):
                     raise Stop("selection_invalid", f"the lead's selections for the batch define {check['id']} differently")
                 chosen.setdefault(check["id"], check)
         checks = list(chosen.values())
@@ -2329,7 +2327,9 @@ class Runner:
 
         The candidate already failed, so the checking panel says it waits on the
         re-run, and the journal reads failure, re-run start, verdict, stop.
-        Raises base_broken when a check also fails on the base.
+        Raises base_broken when a check also fails on the base. A re-run that was
+        stopped, or that the runner's own interruption ended, has no verdict and
+        raises base_rerun_stopped instead (see rerun_stopped).
         """
         names = ", ".join(check["id"] for check in candidates)
         began = time.monotonic()
@@ -2344,6 +2344,7 @@ class Runner:
                      f"Rerunning {names} on {self.base} at {base_head}, to tell whether the failure is the base's own", subject)
         verdicts: list[str] = []
         broken: Stop | None = None
+        stopped: str | None = None
         try:
             base_checkout = self.checkout(base_head, "base-rerun", context=context.with_values(treeSha=self.tree(base_head)))
             base_context = context.with_values(head=base_head, treeSha=self.tree(base_head))
@@ -2359,6 +2360,10 @@ class Runner:
                     verdicts.append(f"{check['id']} could not start there")
                     continue
                 failures, log = self.rerun_outcome(check["id"], completed)
+                if stopped_run(completed):
+                    self.record_rerun(subject, check["id"], failures, log)
+                    stopped = f"{stopped_words(check['id'], completed)} (log {log})"
+                    break
                 retried = False
                 flake = (self.flake_for(check["id"], failures, base_head)
                          if failed_run(completed) and not completed.timed_out else None)
@@ -2375,22 +2380,62 @@ class Runner:
                         verdicts.append(f"{check['id']} could not start there on its flake retry")
                         continue
                     failures, log = self.rerun_outcome(check["id"], completed)
+                    if stopped_run(completed):
+                        self.record_rerun(subject, check["id"], failures, log)
+                        stopped = f"{stopped_words(check['id'], completed)} on its flake retry (log {log})"
+                        break
                 self.record_rerun(subject, check["id"], failures, log,
                                   verdict=("failed" if failed_run(completed) else "passed", base_head))
                 if failed_run(completed):
                     named = failure_words(check["id"], [failure["id"] for failure in failures], log)
                     verdicts.append(f"{check['id']} also fails{named[len(check['id']):]}")
-                    broken = Stop("base_broken", f"{named} also fails on {self.base} at {base_head}")
+                    broken = Stop("base_broken", f"{named} also fails on {self.base} at {base_head}; it could also be "
+                                                 "cross-talk with another run on the same machine (a shared port, "
+                                                 "file or service), so confirm on a quiet machine")
                     break
                 verdicts.append(f"{check['id']} passed{' after a flake retry' if retried else ''} (log {log})")
+        except KeyboardInterrupt:
+            # The runner itself was stopped mid-re-run, which says nothing of the base either: the candidate's row is
+            # settled here, since the interruption ends the turn before any stop is.
+            with contextlib.suppress(Exception):
+                stop = self.rerun_stopped(subject, base_head, began, "the runner was interrupted")
+                self.stopped(Result("check", subject), stop, subject)
+            raise
         except BaseException as error:
             self.end_rerun(subject, base_head, began, f"ended without a verdict ({type(error).__name__})")
             raise
+        if stopped is not None:
+            raise self.rerun_stopped(subject, base_head, began, stopped)
         verdict = "; ".join(verdicts)
         if broken is not None:
             self.end_rerun(subject, base_head, began, f"{verdict}: the base is broken")
             raise broken
         self.end_rerun(subject, base_head, began, f"{verdict}: the failure is the candidate's")
+
+    def rerun_stopped(self, subject: str, base_head: str, began: float, why: str) -> Stop:
+        """A base re-run stopped before its verdict: journal base.rerun.stopped, record no verdict, and say what follows.
+
+        The stop says nothing of the base, so the queue stays free and the candidate goes back to queued, to be
+        checked again without the lead, once for each pair of its head and the base head. A second stop at the same
+        pair stops the candidate as base_rerun_stopped, which the lead's wait wakes on as candidate.stopped.
+        """
+        head = ""
+        with contextlib.suppress(Stop, delivery_state.StateError):
+            head = self.item(subject)["head"] or ""
+        pair = f"{subject} at {head or 'an unknown head'}, {self.base} at {base_head}"
+        again = bool(head) and any(
+            entry["kind"] == "base.rerun.stopped" and entry.get("subject") == subject
+            and head in entry["summary"] and base_head in entry["summary"]
+            for entry in delivery_state.read_journal(self.state_directory)
+        )
+        self.end_rerun(subject, base_head, began, f"stopped before its verdict ({why}), which says nothing of the base; "
+                                                  f"heads {pair}", kind="base.rerun.stopped")
+        if again:
+            return Stop("base_rerun_stopped", f"the base re-run was stopped again at the same heads, {pair} ({why}); "
+                                              "the lead finds what stopped it")
+        return Stop("base_rerun_stopped", f"the base re-run was stopped before its verdict ({why}), which says nothing "
+                                          f"of the base; {subject} is queued again, to be checked once more at {pair}",
+                    requeued=True)
 
     def rerun_outcome(self, check_id: str, completed: Completed) -> tuple[list[dict], str]:
         """A base re-run's failing tests, as the binding's failure pattern finds them, and its kept log."""
@@ -2421,8 +2466,8 @@ class Runner:
         with contextlib.suppress(Stop, delivery_state.StateError):
             self.write(build=build)
 
-    def end_rerun(self, subject: str, base_head: str, began: float, verdict: str) -> None:
-        """Journal the base re-run's verdict and how long the candidate waited on it, and end the waiting state."""
+    def end_rerun(self, subject: str, base_head: str, began: float, verdict: str, kind: str = "base.rerun.finished") -> None:
+        """Journal the base re-run's verdict, or its stop, and how long the candidate waited on it, and end the waiting state."""
 
         def build(current: dict) -> tuple[dict, dict]:
             checking = current["meta"]["checking"]["now"]
@@ -2432,7 +2477,7 @@ class Runner:
 
         with contextlib.suppress(Stop, delivery_state.StateError):
             self.write(build=build)
-        self.journal("base.rerun.finished",
+        self.journal(kind,
                      f"Base re-run on {self.base} at {base_head} after {int(round(time.monotonic() - began))}s: {verdict}", subject)
 
     @staticmethod
@@ -2507,6 +2552,9 @@ class Runner:
         self.finish_item(subject, "merged")
         self.write(assignments={"/meta/baseHead": merged})
         self.journal("candidate.merged", f"Merged {item['title']} at {synced}", subject)
+        if item.get("repair") and delivery_state.base_awaits_repair(delivery_state.read_journal(self.state_directory)):
+            # The named repair landed: the base is repaired, which clears the mark and puts back what the break stopped.
+            self.journal("base.repaired", f"{subject}, the named repair, merged at {merged}", subject)
         result.outcome = "merged"
 
     def review_gate(self, subject: str, synced: str, anchor: Path, context: Context) -> None:
@@ -2719,7 +2767,7 @@ class Runner:
                         self.classify(culprit.subject, failing.failed, failing.checks, failing.checkout, base_head, failing.changes,
                                       self.context(culprit.subject, base_head), failing.result)
                     except Stop as classified:
-                        if classified.reason == "base_broken":
+                        if classified.reason in ("base_broken", "base_rerun_stopped"):
                             stop = classified
                 documents[culprit.subject].selection = failing.result.selection
                 documents[culprit.subject].checks = failing.result.checks
@@ -2877,6 +2925,17 @@ class Runner:
         refused = stop.reason in REFUSALS
         result.outcome = "refused" if refused else "stopped"
         if stop.reason == "queue_locked":
+            return
+        with contextlib.suppress(Stop, delivery_state.StateError):
+            if subject is not None and self.item(subject).get("repair") and stop.reason not in REFUSALS:
+                # The named repair did not land, so the base still waits on it, and the stop says so.
+                stop.detail += f"; {subject} is the base's named repair, so the base still awaits repair"
+                result.stop["detail"] = stop.detail
+        if stop.requeued:
+            # Nothing was at fault: the candidate is queued again, and neither a stop nor a broken base is journaled.
+            if subject is not None:
+                with contextlib.suppress(Stop, delivery_state.StateError):
+                    self.write(build=_put_back(subject))
             return
         with contextlib.suppress(Stop, delivery_state.StateError):
             # A refusal leaves the queue as it was, but never a stage mid-step.
@@ -3149,7 +3208,8 @@ def serve(
     Two or more queued candidates run as one batch; one runs alone. A
     candidate waiting for the lead to accept its hand-off is left alone. The
     lead's meta.hold pauses serving, and so does a stop that stopped the queue
-    until the lead journals base.repaired; a stopped candidate waits for its
+    until base.repaired is journaled, except for the candidate the lead named
+    as the repair, which serve takes alone; a stopped candidate waits for its
     lane to hand it off again, and so does a refused one, which serve would
     otherwise take again every turn. Before each turn that takes work, and
     after any stop or refusal other than queue_locked, serve checks its
@@ -3206,7 +3266,11 @@ def serve(
             item["subject"] for item in sorted(state["queue"], key=lambda entry: (entry["order"], entry["subject"]))
             if item["stage"] == "queued" and not item.get("pending")
         ]
-        if state["meta"].get("hold") or delivery_state.base_awaits_repair(journal) or not waiting:
+        if delivery_state.base_awaits_repair(journal):
+            # Only the lead's named repair goes through a held queue, alone and first; nothing else while the base waits.
+            waiting = [subject for subject in waiting
+                       if next(item for item in state["queue"] if item["subject"] == subject).get("repair")][:1]
+        if state["meta"].get("hold") or not waiting:
             if until_idle:
                 return results
             pause()
@@ -3262,7 +3326,9 @@ def serve(
         if until_idle:
             results += taken
         after = delivery_state.read_state(state_directory)
-        moved = any(item["subject"] in waiting and item["stage"] != "queued" for item in after["queue"])
+        # A candidate a stopped base re-run put back moved too: it is checked again, and a second stop stops it.
+        moved = any(item["subject"] in waiting and item["stage"] != "queued" for item in after["queue"]) or any(
+            result.stop is not None and result.stop["reason"] == "base_rerun_stopped" for result in taken)
         if not moved:
             # Nothing it took left queued (another runner held the lock): wait rather than spin.
             if until_idle:

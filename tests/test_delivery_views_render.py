@@ -97,9 +97,9 @@ class RoundReportTests(unittest.TestCase):
     def test_attaches_each_rounds_findings_with_their_latest_observed_state_and_the_findings_it_settled(self) -> None:
         first, second = self.rounds(report_view())
         self.assertEqual(first["raised"], [
-            {"id": "r1-f1", "lens": "lens.adversarial-testing", "severity": "P1", "summary": "A retry after a timeout charges twice", "state": "resolved", "deferredIssue": None},
-            {"id": "r1-f2", "lens": "lens.outcome-correctness", "severity": "P2", "summary": "The receipt keeps the first attempt's total", "state": "resolved", "deferredIssue": None},
-            {"id": "r1-f3", "lens": "lens.adversarial-testing", "severity": "P2", "summary": "No test covers a dropped second attempt", "state": "unresolved", "deferredIssue": None},
+            {"id": "r1-f1", "lens": "lens.adversarial-testing", "severity": "P1", "summary": "A retry after a timeout charges twice", "state": "resolved", "filed": "open", "deferredIssue": None},
+            {"id": "r1-f2", "lens": "lens.outcome-correctness", "severity": "P2", "summary": "The receipt keeps the first attempt's total", "state": "resolved", "filed": "open", "deferredIssue": None},
+            {"id": "r1-f3", "lens": "lens.adversarial-testing", "severity": "P2", "summary": "No test covers a dropped second attempt", "state": "unresolved", "filed": "open", "deferredIssue": None},
         ])
         self.assertEqual(first["settled"], [])
         self.assertEqual([[note["id"], note["state"]] for note in second["raised"]], [["r2-f1", "unresolved"]])

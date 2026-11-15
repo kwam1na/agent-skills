@@ -11,7 +11,7 @@ import json
 import unittest
 from pathlib import Path
 
-from tests.delivery_views_fixtures import views_common
+from tests.delivery_views_fixtures import ROOT, VIEW, reading, reference, render, report, views_common
 import review_projection  # noqa: E402  (beside views_common, on the path the fixtures put first)
 
 
@@ -207,8 +207,62 @@ class PlanReviewProjectionTests(unittest.TestCase):
                                    "findings": {"P0": 0, "P1": 0, "P2": 1, "P3": 0},
                                    "verdicts": {A: "changes", B: "unavailable"},
                                    "raised": [{"id": "F1", "lens": A, "severity": "P2", "summary": "s",
-                                               "state": "deferred", "deferredIssue": "FX-9"}],
+                                               "state": "deferred", "filed": "deferred", "deferredIssue": "FX-9"}],
                                    "settled": [], "detailsUnavailable": True}])
+
+
+DEFERRED = ROOT / "tests" / "fixtures" / "delivery-views" / "round-card-deferred" / "document.json"
+
+
+class FiledStateTests(unittest.TestCase):
+    """A raised finding keeps how its lens filed it beside the state later rounds give it, on both projections."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.outcomes = json.loads(DEFERRED.read_text(encoding="utf-8"))["reviewEvidence"]["WORK-1"]["outcomes"]
+
+    def filings(self, rounds: list[dict]) -> list[tuple]:
+        return [(note["id"], note["severity"], note["filed"], note["state"]) for note in rounds[0]["raised"]]
+
+    def test_the_native_projection_keeps_each_deferred_filing_after_a_later_round_fixes_it(self) -> None:
+        rounds = review_projection.round_detail(self.outcomes)
+        self.assertEqual(self.filings(rounds), [("oc-1", "P2", "deferred", "resolved"), ("oc-2", "P3", "deferred", "resolved"),
+                                                ("at-1", "P3", "deferred", "resolved"), ("at-2", "P3", "deferred", "resolved")])
+        self.assertEqual(rounds[0]["outcome"], "approve")
+
+    def report_rounds(self, outcomes: list[dict]) -> list[dict]:
+        """The same review as a run's round reports: round 1 raises what its lenses filed, round 2 reports what it
+        closed, and the run's finding history observes each deferred and then resolved."""
+        first, second = outcomes
+        raised = [{"id": finding["id"], "lens": entry["lens"], "severity": finding["severity"], "summary": finding["summary"],
+                   "state": finding["state"], "deferredIssue": finding["deferredIssue"]}
+                  for entry in first["entries"] for finding in entry["result"]["findings"]]
+        resolved = [{"id": closure["id"], "state": closure["state"], "fixCommit": closure["fixCommit"], "deferredIssue": None}
+                    for entry in second["entries"] for closure in entry["result"]["resolvedFindings"]]
+        ids = [note["id"] for note in raised]
+        history = [{"id": ident, "label": ident, "fields": [{"label": "State", "value": state}]}
+                   for state in ("deferred", "resolved") for ident in ids]
+        view = {**VIEW, "sections": [*VIEW["sections"],
+                                     {"id": "reports", "items": [reference(1, "artifact-round-1"), reference(2, "artifact-round-2")]},
+                                     {"id": "finding-history", "items": history}]}
+        readings = {"artifact-round-1": reading(report(1, raised=raised, resolved=[])),
+                    "artifact-round-2": reading(report(2, raised=[], resolved=resolved))}
+        summary = render.summarize_run_view(view, {"runId": "run-7"})
+        return render.with_round_reports(summary, view, readings, ["review-round-report/1"])["roundDetail"]
+
+    def test_the_round_report_projection_keeps_each_deferred_filing_after_the_run_observes_it_resolved(self) -> None:
+        self.assertEqual(self.filings(self.report_rounds(self.outcomes)),
+                         [("oc-1", "P2", "deferred", "resolved"), ("oc-2", "P3", "deferred", "resolved"),
+                          ("at-1", "P3", "deferred", "resolved"), ("at-2", "P3", "deferred", "resolved")])
+
+    def test_a_finding_filed_open_reads_open_and_a_plan_review_says_nothing_of_filing(self) -> None:
+        outcomes = json.loads(json.dumps(self.outcomes))
+        outcomes[0]["entries"][0]["result"]["findings"][0].update(state="open")
+        self.assertEqual(review_projection.round_detail(outcomes)[0]["raised"][0]["filed"], "open")
+        # Each projection reads the filing from the finding's own state, not from whether it names a follow-up.
+        self.assertEqual(self.report_rounds(outcomes)[0]["raised"][0]["filed"], "open")
+        plan = review_projection.round_detail(outcomes, {1: "1" * 40, 2: "2" * 40})
+        self.assertFalse(any("filed" in note for entry in plan for note in entry["raised"]))
 
 
 if __name__ == "__main__":
