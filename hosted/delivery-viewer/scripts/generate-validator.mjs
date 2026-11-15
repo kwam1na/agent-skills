@@ -1,0 +1,11 @@
+import { readFile, writeFile } from 'node:fs/promises';
+import Ajv2020 from 'ajv/dist/2020.js';
+import standaloneCode from 'ajv/dist/standalone/index.js';
+const schema = JSON.parse(await readFile(new URL('../../../skills/delivery-views/references/hosted-snapshot.schema.json', import.meta.url), 'utf8'));
+const ajv = new Ajv2020({ strict: true, allowUnionTypes: true, code: { source: true, esm: true }, allErrors: false });
+const validate = ajv.compile(schema);
+await writeFile(new URL('../src/generated-validator.js', import.meta.url), standaloneCode(ajv, validate));
+const fixtureRoot = new URL('../../../tests/fixtures/delivery-views/hosted/', import.meta.url);
+const manifest = JSON.parse(await readFile(new URL('manifest.json', fixtureRoot), 'utf8'));
+const cases = await Promise.all(manifest.cases.map(async entry => ({ ...entry, body: JSON.parse(await readFile(new URL(entry.file, fixtureRoot), 'utf8')) })));
+await writeFile(new URL('../test/fixtures.generated.ts', import.meta.url), `export const cases = ${JSON.stringify(cases)};\n`);

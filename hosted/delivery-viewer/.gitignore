@@ -1,0 +1,8 @@
+node_modules/
+.wrangler/
+dist/
+src/generated-validator.js
+worker-configuration.d.ts
+.dev.vars*
+.env*
+test/fixtures.generated.ts
