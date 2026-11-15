@@ -4598,8 +4598,17 @@ def plan_unit(c, key: str) -> dict:
 
 
 def plan_covers(line: dict) -> dict:
-    """A finish line's covers; a line that declares none covers every criterion, by every proof its units owe."""
-    return line.get("covers", {"criteria": "all", "proofs": []})
+    """A finish line's covers; a line that declares none covers every criterion, by every proof its units owe. One
+    declared empty, `{}` or null, covers no criteria and names no proofs, so the line is the lead's to check."""
+    if "covers" not in line:
+        return {"criteria": "all", "proofs": []}
+    return {"criteria": [], "proofs": []} if line["covers"] in (None, {}) else line["covers"]
+
+
+def leads_line(line: dict) -> bool:
+    """A finish line that names no criteria and no proofs: nothing the record proves, so only the lead marks it."""
+    covers = plan_covers(line)
+    return not isinstance(covers, dict) or not (covers.get("criteria") or covers.get("proofs"))
 
 
 def plan_finish(c, at: str) -> list[dict]:
@@ -8391,12 +8400,15 @@ def proof_state(c, plan: dict, doc: dict, unit: dict, kind: str) -> str:
 
 
 def finished_lines(c, plan: dict, doc: dict) -> list[str]:
-    """The finish lines whose covered criteria have every covered proof done (a waiver isn't done)."""
+    """The finish lines whose covered criteria have every covered proof done (a waiver isn't done). A line that names
+    no criteria and no proofs has nothing the record proves: it is the lead's, and never among them."""
     units = [unit for unit in plan.get("units", []) if not unit.get("removed")]
     criteria = [(item["id"], unit) for unit in units for item in unit.get("criteria", [])]
     ready = []
     for line in plan.get("finish", []):
-        covers = line.get("covers") or {"criteria": "all", "proofs": []}
+        if leads_line(line):
+            continue
+        covers = plan_covers(line)
         named = covers.get("criteria")
         if named == "all":
             rows = [unit for _, unit in criteria]
@@ -8415,27 +8427,38 @@ def finished_lines(c, plan: dict, doc: dict) -> list[str]:
     return ready
 
 
+FINISH_MET_SAID = "Every criterion it covers has its proofs done."
+
+
 def journal_finish_met(c, doc: dict) -> list[str]:
     """Mark and journal each finish line whose criteria and proofs are all done, once: a line the lead already
-    marked or journalled by hand is left as it is."""
+    marked or journalled by hand is left as it is, and so is one the supervisor marked before and finds unmarked,
+    which the lead unmarked. Its marks are kept in the flow log; a line it journalled is one it marked, as an older
+    generation kept no log."""
     plan = load_json(c.state / PLAN_FILE)
     if not plan:
         return []
     ready = set(finished_lines(c, plan, doc))
+    marked = {entry["line"] for entry in read_log("finish", c.delivery)}
     said = []
     for line in doc["state"]["finish"]:
         if line["id"] not in ready:
             continue
-        journalled = any(e["kind"] == "finish.met" and (e.get("subject") == line["id"] or re.search(
-            rf"(?<![\w-]){re.escape(line['id'])}(?![\w-])", e.get("summary", ""))) for e in doc["journal"])
+        journalled = [e for e in doc["journal"] if e["kind"] == "finish.met" and (e.get("subject") == line["id"] or re.search(
+            rf"(?<![\w-]){re.escape(line['id'])}(?![\w-])", e.get("summary", "")))]
+        if line["id"] in marked or any(e.get("subject") == line["id"] and e.get("summary", "").endswith(FINISH_MET_SAID)
+                                       for e in journalled):
+            continue
         if not line.get("met"):
             patch_from(lambda fresh, line=line: {"finish": [{**entry, "met": True} if entry["id"] == line["id"] else entry
                                                             for entry in fresh["state"]["finish"]]},
                        f"finish line {line['id']} met")
         if not journalled:
             state_tool("journal", "--kind", "finish.met", "--subject", line["id"], "--summary",
-                       f"{line['id']}: {line['text']} Every criterion it covers has its proofs done.")
+                       f"{line['id']}: {line['text']} {FINISH_MET_SAID}")
             said.append(f"finish line {line['id']} met")
+        # Logged last, so a pass whose journal failed leaves the line for the next pass to journal.
+        append_log("finish", c.delivery, {"line": line["id"]})
     return said
 
 
@@ -10602,6 +10625,7 @@ class Doctor:
             ("story-files", "story files", ("plan-sections",), self.story_files),
             ("readiness", "story readiness", ("delivery",), self.story_readiness),
             ("context-sections", "context sections", ("delivery",), self.context_planned),
+            ("finish-lines", "finish lines", ("delivery",), self.finish_lines),
             ("remote-base", "configuration on the remote base", ("delivery",), self.remote_base),
             ("ready", "pull requests marked ready", ("delivery",), self.ready),
             ("supervisor", "delivery supervisor", ("delivery",), self.supervisor),
@@ -11141,6 +11165,21 @@ class Doctor:
             return self.not_applicable("no context.sections declared")
         problems = context_problems(d)
         return ("wrong", problems[0]) if problems else ("ok", f"{d.plan} has each of {', '.join(map(repr, d.context_sections))}")
+
+    def finish_lines(self):
+        d = self.delivery
+        if not d.finish:
+            return self.not_applicable("no finish lines declared")
+        bare = [line.get("id", "?") for line in d.finish if "covers" not in line]
+        if bare:
+            # A warning, not a failure: a line with no `covers` is still read as covering every criterion.
+            return "warn", (f"{', '.join(bare)} {'declares' if len(bare) == 1 else 'declare'} no `covers`, so the "
+                            "supervisor reads each as covering every criterion and marks it met once every story's "
+                            "proofs are done; fix: give each its `covers`, `{\"criteria\": [], \"proofs\": []}` for a "
+                            "line you check and mark yourself")
+        lead = sum(1 for line in d.finish if leads_line(line))
+        return "ok", (f"each of the {len(d.finish)} finish lines declares its `covers`; "
+                      f"{lead} {'is' if lead == 1 else 'are'} yours to check and mark")
 
     def remote_base(self):
         d = self.delivery

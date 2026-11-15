@@ -541,8 +541,11 @@ Everything else is the supervisor's. Each pass it reconciles the forge and the t
 once its lane has moved off it, journals `finish.met` for each finish line it can prove, renders the views and posts
 the tracker's updates, and copies the record to `latest` at the archive location. It judges each finish line by the
 record's covers and proofs: once every criterion a line covers has every proof it names done, the line is met and
-journalled once. An entry you journalled by hand is skipped. A line the record can't prove holds the close until you
-check it, mark it met and journal `finish.met`.
+journalled once. An entry you journalled by hand is skipped, and a line the supervisor marked that you unmark stays
+unmarked. A line the record can't prove holds the close until you check it, mark it met and journal `finish.met`. A
+line whose `covers` names no criteria and no proofs, `{"criteria": [], "proofs": []}`, is yours: the supervisor never
+marks it met, and it holds the close until you mark it. A line with no `covers` covers every criterion, and
+`doctor --delivery` warns of one.
 
 What waits on you is what holds the close, and every lead command ends by saying so: "the close waits on" whatever the
 supervisor's last pass found, as `doctor --delivery` does too. Each pass writes the same list to the flow log's

@@ -332,6 +332,40 @@ class ModuleUnitsTests(unittest.TestCase):
             self.assertIs(units.get(f"{__name__}.{name}"), True, f"{name} isn't a quiet or serial unit of its own: {listed}")
 
 
+class FinishMarkOrderTests(unittest.TestCase):
+    def test_a_pass_whose_journal_fails_leaves_the_line_for_the_next_pass_to_journal_once(self) -> None:
+        path = Path(__file__).resolve().parents[1] / "skills" / "run-delivery" / "scripts" / "run_delivery.py"
+        spec = importlib.util.spec_from_file_location("run_delivery_for_finish_marks", path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        self.addCleanup(sys.modules.pop, spec.name, None)
+        spec.loader.exec_module(module)
+        doc = {"state": {"finish": [{"id": "merged", "text": "Every story merged", "met": False}]}, "journal": []}
+        marks, calls = [], []
+
+        def journal(*argv, **_):
+            calls.append(argv)
+            if len(calls) == 1:
+                raise subprocess.CalledProcessError(1, "delivery_state.py journal")
+            doc["journal"].append({"kind": "finish.met", "subject": argv[argv.index("--subject") + 1],
+                                   "summary": argv[argv.index("--summary") + 1]})
+
+        def patch(compute, what):
+            doc["state"] = {**doc["state"], **compute(doc)}
+        c = types.SimpleNamespace(state=Path("/nonexistent"), delivery="FX-1")
+        with mock.patch.multiple(module, load_json=lambda _: {"finish": []}, finished_lines=lambda *_: ["merged"],
+                                 patch_from=patch, state_tool=journal, read_log=lambda *_: [{"line": l} for l in marks],
+                                 append_log=lambda _, __, entry: marks.append(entry["line"])):
+            with self.assertRaises(subprocess.CalledProcessError):
+                module.journal_finish_met(c, doc)
+            self.assertEqual(marks, [], "a line whose journal failed was logged as marked")
+            self.assertEqual(module.journal_finish_met(c, doc), ["finish line merged met"])
+            self.assertEqual(module.journal_finish_met(c, doc), [])
+        self.assertEqual([e["subject"] for e in doc["journal"]], ["merged"])
+        self.assertEqual(marks, ["merged"])
+        self.assertTrue(doc["state"]["finish"][0]["met"])
+
+
 class ProofStateTests(unittest.TestCase):
     def test_a_merged_item_is_past_waiting_as_the_line_map_reads_it(self) -> None:
         path = Path(__file__).resolve().parents[1] / "skills" / "run-delivery" / "scripts" / "run_delivery.py"
@@ -2399,6 +2433,63 @@ class SupervisorPassTests(unittest.TestCase):
         self.once(fx)
         self.assertEqual([e.get("subject") for e in kinds(fx, "finish.met")], ["two", None, "one"])
         self.assertTrue(all(line["met"] for line in record(fx)["state"]["finish"]))
+
+    def test_a_line_that_covers_nothing_is_the_leads_and_a_line_is_marked_met_once(self) -> None:
+        fx = self.fixture()
+        path = fx.main / ".agents/deliveries/FX-1.json"
+        d = json.loads(path.read_text())
+        d["stories"]["FX-2"]["criteria"] = [{"id": "one-works", "text": "One works"}]
+        d["stories"]["FX-3"]["criteria"] = [{"id": "two-works", "text": "Two works"}]
+        lead_lines = {"empty": {}, "null": None, "nothing": {"criteria": [], "proofs": []}}
+        d["finish"] = [*({"id": ident, "text": f"The lead checks {ident}", "covers": covers}
+                         for ident, covers in lead_lines.items()),
+                       {"id": "merged", "text": "Every story merged", "covers": {"criteria": [], "proofs": ["merged"]}},
+                       {"id": "every", "text": "Every criterion, no covers"},
+                       {"id": "all", "text": "Every criterion", "covers": {"criteria": "all", "proofs": []}}]
+        path.write_text(json.dumps(d, indent=2))
+        commit(fx.main, "FX-1: finish lines the lead checks, and lines the record proves")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+        code, out = fx.flow("lead-init", "--replace", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        # The lead journals `every` by hand ahead of its proofs, without marking it: the supervisor marks it later.
+        state_tool(fx, "journal", "--kind", "finish.met", "--subject", "every", "--summary", "By hand, ahead of time.")
+        self.merged(fx, "FX-2", "lane-1")
+        self.merged(fx, "FX-3", "lane-2")
+        for lane in ("lane-1", "lane-2"):
+            state_tool(fx, "focus", "--lane", lane, "--text", "done", "--state", "done")
+        for _ in range(2):
+            held = self.holds(fx)
+        # Every unit's proofs are done, so the lines the record proves are met, and only the lead's lines hold the close.
+        met = lambda: {line["id"]: line.get("met", False) for line in record(fx)["state"]["finish"]}
+        self.assertEqual(met(), {"empty": False, "null": False, "nothing": False, "merged": True, "every": True,
+                                 "all": True})
+        self.assertEqual(sorted(e["subject"] for e in kinds(fx, "finish.met")), ["all", "every", "merged"])
+        self.assertIn("finish lines not met: empty, null, nothing", held)
+        self.assertEqual(kinds(fx, "delivery.closed"), [])
+        # The lead unmarks a line the supervisor journalled and one it only marked: neither is marked again.
+        for ident in ("all", "every"):
+            doc = record(fx)
+            state_tool(fx, "patch", "--writer", "lead", "--version", str(doc["state"]["version"]), "--patch",
+                       json.dumps({"finish": [{**line, "met": False} if line["id"] == ident else line
+                                              for line in doc["state"]["finish"]]}))
+        # A record an older generation kept has no flow log: the supervisor's own journal of `all` is its mark.
+        marks = fx.tmp / "flow-log/FX-1.finish.jsonl"
+        marks.write_text("".join(line + "\n" for line in marks.read_text().splitlines()
+                                 if json.loads(line)["line"] != "all"))
+        for _ in range(2):
+            held = self.holds(fx)
+        self.assertEqual(met(), {"empty": False, "null": False, "nothing": False, "merged": True, "every": False,
+                                 "all": False})
+        self.assertIn("finish lines not met: empty, null, nothing, every, all", held)
+        self.assertEqual(len(kinds(fx, "finish.met")), 3)
+        # Once the lead marks and journals each line, the close follows.
+        doc = record(fx)
+        state_tool(fx, "patch", "--writer", "lead", "--version", str(doc["state"]["version"]), "--patch",
+                   json.dumps({"finish": [{**line, "met": True} for line in doc["state"]["finish"]]}))
+        for ident in (*lead_lines, "all"):
+            state_tool(fx, "journal", "--kind", "finish.met", "--subject", ident, "--summary", f"{ident} checked by hand.")
+        last = self.once(fx)
+        self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)
 
     def holds(self, fx: Fixture) -> list[str]:
         return self.once(fx)["closeHeldBy"]

@@ -5771,7 +5771,7 @@ DOCTOR_LABELS = ["host and tools", "orchestration binding", "merge queue candida
                  "pipeline PR review", "gh", "forge find", "forge write access", "tracker snapshot token",
                  "snapshots and publishers", "in-app adapters", "in-app adapter contract", "video evidence tools",
                  "Node", "harness configuration", "delivery file", "plan chapter", "added stories' reasons",
-                 "plan sections", "story files", "story readiness", "context sections",
+                 "plan sections", "story files", "story readiness", "context sections", "finish lines",
                  "configuration on the remote base", "pull requests marked ready", "delivery supervisor",
                  "gates on the base"]
 
@@ -7494,6 +7494,15 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         self.assertEqual(doctor_lines(out)["plan chapter"],
                          ("ok", "3 criteria across 2 stories; the plan they make passes delivery-views check-plan"), out)
         self.assertEqual(failing(out), {}, out)
+        # Lines the lead checks, declared `{}` or null, declare their covers: no warning, and they are counted.
+        d["finish"] += [{"id": "suite", "text": "The suite passes", "covers": {}},
+                        {"id": "main", "text": "It reaches main", "covers": None}]
+        path.write_text(json.dumps(d, indent=2))
+        out = self.doctor(fx, "--offline")
+        self.assertEqual(doctor_lines(out)["finish lines"],
+                         ("ok", "each of the 3 finish lines declares its `covers`; 2 are yours to check and mark"), out)
+        self.assertEqual(failing(out), {}, out)
+        d["finish"] = d["finish"][:1]
         d["finish"][0]["covers"]["criteria"].append("no-such-criterion")
         path.write_text(json.dumps(d, indent=2))
         out = self.doctor(fx, "--offline")
@@ -7689,6 +7698,11 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         self.assertEqual(failing(out), {}, out)
         self.assertIn("not verified", lines["forge write access"][1])
         self.assertEqual(len(out.splitlines()), len(DOCTOR_LABELS), "doctor prints one line per check")
+        # The fixture's one finish line declares no `covers`: a warning that it covers every criterion, not a failure.
+        status, detail = lines["finish lines"]
+        self.assertEqual(status, "warn", out)
+        self.assertIn("acs declares no `covers`, so the supervisor reads each as covering every criterion", detail)
+        self.assertIn('fix: give each its `covers`, `{"criteria": [], "proofs": []}` for a line you check', detail)
 
     def test_each_missing_prerequisite_yields_one_failing_line_with_its_fix(self) -> None:
         fx = self.fixture()
@@ -10739,6 +10753,44 @@ class NodeAndPythonMinimumTests(unittest.TestCase):
         code, out = fx.flow("lead-run", "--once", cwd=fx.main, env=env)
         self.assertNotIn("refuses", out)
         self.assertEqual(code, 0, out)
+
+
+class FinishLineWordingTests(unittest.TestCase):
+    """A finish line that covers nothing is the lead's, and the supervisor marks a line met once, in each guide."""
+
+    @staticmethod
+    def normal(path: str) -> str:
+        return " ".join((ROOT / path).read_text(encoding="utf-8").split())
+
+    def test_each_guide_leaves_a_line_that_covers_nothing_to_the_lead(self) -> None:
+        guide = self.normal("skills/orchestrate-work/references/orchestration-guide.md")
+        live = guide[guide.index("### 6. Check the finish lines live"):guide.index("### 7. Release with approval")]
+        for phrase in (
+            "The supervisor marks a line met once: a line it marked that the lead then unmarks stays unmarked.",
+            "A line whose `covers` names no criteria and no proofs is the lead's: the supervisor never marks it met, "
+            "and it holds the close until the lead marks it.",
+            "A line with no `covers` key covers every criterion, and `doctor --delivery` warns of one.",
+        ):
+            with self.subTest(file="orchestration-guide", phrase=phrase):
+                self.assertIn(phrase, live)
+        views = self.normal("skills/delivery-views/SKILL.md")
+        for phrase in (
+            "`[]` covers no criteria by design, and a line with `[]` and no proofs is the lead's: the supervisor never "
+            "marks it met. |",
+            "A line with `[]` and no proofs has nothing to count, so it shows no bar and says so: it is the lead's "
+            "line, which the supervisor never marks met.",
+        ):
+            with self.subTest(file="delivery-views", phrase=phrase):
+                self.assertIn(phrase, views)
+        adopting = self.normal("skills/run-delivery/references/adopting.md")
+        for phrase in (
+            "An entry you journalled by hand is skipped, and a line the supervisor marked that you unmark stays unmarked.",
+            "A line whose `covers` names no criteria and no proofs, `{\"criteria\": [], \"proofs\": []}`, is yours: "
+            "the supervisor never marks it met, and it holds the close until you mark it.",
+            "A line with no `covers` covers every criterion, and `doctor --delivery` warns of one.",
+        ):
+            with self.subTest(file="adopting", phrase=phrase):
+                self.assertIn(phrase, adopting)
 
 
 if __name__ == "__main__":

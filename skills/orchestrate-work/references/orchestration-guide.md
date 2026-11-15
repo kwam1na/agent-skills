@@ -362,9 +362,13 @@ renders, publishers included, after each of its own writes.
 With run-delivery's supervisor running, the supervisor judges `finish.met` by
 the record's covers and proofs: a line whose covered criteria have every proof
 it names done is marked met and journalled once, and an entry the lead
-journalled by hand is skipped. Only a finish line the record can't prove is
-the lead's: a finish line the record can't prove holds the close until the
-lead checks it as below, marks it met and journals it.
+journalled by hand is skipped. The supervisor marks a line met once: a line it
+marked that the lead then unmarks stays unmarked. Only a finish line the record
+can't prove is the lead's: a finish line the record can't prove holds the close
+until the lead checks it as below, marks it met and journals it. A line whose
+`covers` names no criteria and no proofs is the lead's: the supervisor never
+marks it met, and it holds the close until the lead marks it. A line with no
+`covers` key covers every criterion, and `doctor --delivery` warns of one.
 
 - For each finish line, run the observable check the plan names, against the
   merged base, not against a lane's checkout.
