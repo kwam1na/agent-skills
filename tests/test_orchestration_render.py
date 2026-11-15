@@ -2705,5 +2705,77 @@ new Function(program)();
         self.assertIn("Live headline", shown["text"])
 
 
+class PeerSectionTests(unittest.TestCase):
+    """The built-in page's peers: the deliveries registered on this record's base beside the repository's git common
+    directory, and who holds the base's merge slot, read on every page served."""
+
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.repo = self.root / "repo"
+        self.repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        self.registry = self.repo / ".git/agent-skills/deliveries"
+        self.registry.mkdir(parents=True)
+        self.own = self.root / "own"
+        self.register("FX-1", "main", self.own)
+
+    def register(self, key: str, base: str, state: Path, pid: int | None = None, **record) -> None:
+        (self.registry / f"{key}.json").write_text(json.dumps(
+            {"key": key, "base": base, "lead": str(self.root / f"lead-{key}"), "state": str(state), "pid": pid}))
+        if record:
+            state.mkdir(parents=True, exist_ok=True)
+            (state / "state.json").write_text(json.dumps(record))
+
+    def test_a_delivery_alone_on_its_base_with_the_slot_free_shows_no_section(self) -> None:
+        self.register("FX-7", "other", self.root / "seven", queue=[])
+        self.assertEqual(render_state.peer_lines(self.own, self.repo), ("main", [], None))
+        self.assertEqual(render_state.peers_markup(self.own, self.repo), "")
+        # Without a repository, or without this record's own entry, nothing is listed either.
+        self.register("FX-9", "main", self.root / "nine", queue=[])
+        self.assertEqual(render_state.peers_markup(self.own, None), "")
+        self.assertEqual(render_state.peer_lines(self.root / "elsewhere", self.repo), (None, [], None))
+
+    def test_each_peer_on_the_base_with_its_supervisor_its_queue_and_the_slots_holder(self) -> None:
+        stopped = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        stopped.kill()
+        stopped.wait()
+        self.register("FX-8", "main", self.root / "eight", pid=stopped.pid, queue=[])
+        self.register("FX-9", "main", self.root / "nine", pid=os.getpid(),
+                      meta={"checking": {"now": {"subject": "FX-92"}}},
+                      queue=[{"subject": "FX-92", "stage": "checking"}, {"subject": "FX-93", "stage": "queued"},
+                             {"subject": "FX-94", "stage": "merged"}])
+        self.register("FX-6", "main", self.root / "six")
+        (self.registry / "FX-5.json").write_text("{not json")
+        lock = delivery_state.merge_slot_path(self.repo, "main")
+        lock.parent.mkdir(parents=True)
+        (lock.parent / "main.holder").write_text(json.dumps({"delivery": "FX-9", "pid": os.getpid(),
+                                                              "since": "2026-11-15T10:00:00Z", "base": "main"}))
+        base, lines, holder = render_state.peer_lines(self.own, self.repo)
+        self.assertEqual(base, "main")
+        self.assertEqual(lines, [
+            f"FX-6 (no supervisor; led from {self.root / 'lead-FX-6'}): its record {self.root / 'six'} can't be read",
+            f"FX-8 (stale: its supervisor, pid {stopped.pid}, isn't running; led from {self.root / 'lead-FX-8'}): "
+            "checking nothing; queued nothing",
+            f"FX-9 (live, pid {os.getpid()}; led from {self.root / 'lead-FX-9'}): checking FX-92; queued FX-93",
+            "FX-5.json: unreadable"])
+        self.assertEqual(holder, f"held by FX-9 (pid {os.getpid()}, since 2026-11-15T10:00:00Z)")
+        markup = render_state.peers_markup(self.own, self.repo)
+        self.assertIn("<h2>Deliveries on main</h2>", markup)
+        self.assertIn(f"<p>main&#x27;s merge slot is held by FX-9 (pid {os.getpid()}, since", markup)
+        # A holder file its pid outlived says nothing of who holds the slot.
+        (lock.parent / "main.holder").write_text(json.dumps({"delivery": "FX-9", "pid": stopped.pid, "since": "x"}))
+        self.assertIsNone(render_state.peer_lines(self.own, self.repo)[2])
+        self.assertIn("main&#x27;s merge slot is free", render_state.peers_markup(self.own, self.repo))
+
+    def test_the_built_in_live_page_carries_the_section_and_escapes_what_a_record_says(self) -> None:
+        self.register("FX-9", "main", self.root / "nine", queue=[{"subject": "<b>FX-93</b>", "stage": "queued"}])
+        markup = render_state.peers_markup(self.own, self.repo)
+        self.assertIn("queued &lt;b&gt;FX-93&lt;/b&gt;", markup)
+        self.assertNotIn("<b>FX-93", markup)
+        page = render_state.render_static_page({"state": {}, "journal": []}, live=True, banner=markup)
+        self.assertIn('<section id="peers">', page)
+
+
 if __name__ == "__main__":
     unittest.main()

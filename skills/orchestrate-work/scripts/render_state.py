@@ -114,7 +114,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from delivery_state import (  # noqa: E402
     CHANGES_FILE, JOURNAL_FILE, OUTBOX_DIRECTORY, PUBLISHED_FILE, QUEUE_LOCK, RECOVERY_FILE,
     RECOVERY_QUARANTINE, STATE_FILE, STATE_LOCK, StateError,
-    dumps, load_schema, show,
+    dumps, load_schema, merge_slot_path, show, slot_holder,
 )
 
 
@@ -1547,14 +1547,97 @@ def _banner_markup(status_file: Path | None) -> str:
             f"<script>\n{_SUPERVISOR_WATCH}\n</script>\n")
 
 
+def _registry(repository: Path) -> Path | None:
+    """The folder deliveries on this machine register in, beside the repository's git common directory."""
+    try:
+        found = subprocess.run(["git", "rev-parse", "--git-common-dir"], cwd=repository, capture_output=True,
+                               text=True, check=False)
+    except OSError:
+        return None
+    if found.returncode != 0 or not found.stdout.strip():
+        return None
+    common = Path(found.stdout.strip())
+    return (common if common.is_absolute() else Path(repository) / common).resolve() / "agent-skills" / "deliveries"
+
+
+def _peer_words(entry: dict) -> str:
+    """A registered peer as the page lists it: its supervisor, its lead checkout, and what its queue is checking and
+    has queued, read from its record."""
+    pid = entry.get("pid")
+    status = ("no supervisor" if pid is None else f"live, pid {pid}" if _pid_runs(pid)
+              else f"stale: its supervisor, pid {pid}, isn't running")
+    said = f"{entry['key']} ({status}; led from {entry.get('lead')})"
+    try:
+        state = json.loads((Path(entry["state"]) / STATE_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = None
+    if not isinstance(state, dict):
+        return f"{said}: its record {entry['state']} can't be read"
+    current = ((state.get("meta") or {}).get("checking") or {}).get("now")
+    checking = current.get("subject") if isinstance(current, dict) else None
+    queued = [item.get("subject") for item in state.get("queue") or [] if isinstance(item, dict)
+              and item.get("stage") in ("queued", "syncing", "synced", "checked") and item.get("subject") != checking]
+    return f"{said}: checking {checking or 'nothing'}; queued {', '.join(queued) or 'nothing'}"
+
+
+def peer_lines(directory: Path, repository: Path | None) -> tuple[str | None, list[str], str | None]:
+    """This record's base, the deliveries registered on it other than this one (an entry that can't be read is
+    named as unreadable), and its merge slot's holder and since when while the holder's pid runs. This record's own
+    entry, the one naming its folder, says which base: none, and nothing is listed."""
+    folder = _registry(repository) if repository is not None else None
+    if folder is None or not folder.is_dir():
+        return None, [], None
+    entries, unreadable = [], []
+    for path in sorted(folder.glob("*.json")):
+        try:
+            entry = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            entry = None
+        if not (isinstance(entry, dict) and all(isinstance(entry.get(name), str) and entry[name]
+                                                for name in ("key", "base", "state"))
+                and (entry.get("pid") is None or (isinstance(entry["pid"], int) and not isinstance(entry["pid"], bool)))):
+            unreadable.append(f"{path.name}: unreadable")
+            continue
+        entries.append(entry)
+    own = Path(directory).resolve()
+    mine = next((entry for entry in entries if Path(entry["state"]).resolve() == own), None)
+    if mine is None:
+        return None, [], None
+    base = mine["base"]
+    lines = [_peer_words(entry) for entry in entries if entry is not mine and entry["base"] == base] + unreadable
+    holder = None
+    try:
+        said = slot_holder(merge_slot_path(repository, base))
+    except StateError:
+        said = None
+    if said and _pid_runs(said.get("pid")):
+        holder = (f"held by {said.get('delivery') or 'an unnamed delivery'} (pid {said['pid']}, since "
+                  f"{said.get('since') or 'an unrecorded time'})")
+    return base, lines, holder
+
+
+def peers_markup(directory: Path, repository: Path | None) -> str:
+    """The peers section of the built-in page: empty for a delivery alone on its base whose merge slot is free."""
+    base, lines, holder = peer_lines(directory, repository)
+    if base is None or not (lines or holder):
+        return ""
+    rows = "".join(f"<li>{html.escape(line)}</li>\n" for line in lines) or "<li>no other delivery</li>\n"
+    slot = f"{base}'s merge slot is " + (holder or "free")
+    return (f'<section id="peers">\n<h2>Deliveries on {html.escape(base)}</h2>\n<ul>\n{rows}</ul>\n'
+            f"<p>{html.escape(slot)}</p>\n</section>\n")
+
+
 class LiveView:
     """The latest valid document, re-read and re-rendered when the record changes."""
 
-    def __init__(self, directory: Path, config: object, status_file: Path | None = None) -> None:
+    def __init__(self, directory: Path, config: object, status_file: Path | None = None,
+                 repository: Path | None = None) -> None:
         self.directory = Path(directory)
         self.config = config
         # The supervisor's status file, re-read on every page served; None leaves the pages as they were.
         self.status_file = status_file
+        # The repository whose registry lists this record's peers, read on every page served; None lists none.
+        self.repository = repository
         self.changed = threading.Condition()
         self.generation = 0
         self.document: dict | None = None
@@ -1661,7 +1744,8 @@ def _live_handler(view: LiveView, accepts: Callable[[str], bool], flags: tuple[s
                     self._plain(503, b"the record is not readable yet\n")
                     return
                 page = render_static_page(document, live=True, flags=flags,
-                                          banner=_banner_markup(view.status_file)).encode("utf-8")
+                                          banner=_banner_markup(view.status_file)
+                                          + peers_markup(view.directory, view.repository)).encode("utf-8")
                 self._plain(200, page, "text/html; charset=utf-8")
             elif path == "/document":
                 with view.changed:
@@ -1853,10 +1937,11 @@ def _live_hosts(host: str, port: int) -> Callable[[str], bool]:
 
 
 def serve_live(directory: Path, config: object, *, host: str, port: int, announce: Callable[[str], None],
-               flags: tuple[str, ...] = (), status_file: Path | None = None) -> None:
+               flags: tuple[str, ...] = (), status_file: Path | None = None, repository: Path | None = None) -> None:
     """Serve the live view until interrupted. Renders on every record change; never writes the record. With a
-    status file, every page carries the supervisor's banner, read from it as the page is served."""
-    view = LiveView(directory, config, status_file)
+    status file, every page carries the supervisor's banner, read from it as the page is served. With a repository,
+    the built-in page lists the other deliveries registered on this record's base and who holds its merge slot."""
+    view = LiveView(directory, config, status_file, repository)
     view.refresh()
     server = (_LiveServer6 if ":" in host else _LiveServer)((host, port), _live_handler(view, lambda header: False, flags))
     if _is_wildcard(str(server.server_address[0])):
@@ -1899,6 +1984,8 @@ def _live_from_args(argv: list[str]) -> tuple[int, dict]:
     parser.add_argument("--port", type=int, default=0, help="the port; 0 picks a free one")
     parser.add_argument("--status-file", type=Path,
                         help="the supervisor's status file, re-read on every page: a banner says when it is down")
+    parser.add_argument("--repo", type=Path,
+                        help="the repository whose registry lists this record's peers on its base, on every page")
     args = parser.parse_args(argv)
     if _is_wildcard(args.host):
         # Every address at once would put the record in front of the network;
@@ -1925,7 +2012,7 @@ def _live_from_args(argv: list[str]) -> tuple[int, dict]:
 
     try:
         serve_live(args.dir, config, host=args.host, port=args.port, announce=announce, flags=flags,
-                   status_file=args.status_file)
+                   status_file=args.status_file, repository=args.repo)
     except OSError as error:
         return 2, {"ok": False, "code": "live_unavailable",
                    "error": f"cannot listen on {args.host}:{args.port}: {error.strerror or error}"}

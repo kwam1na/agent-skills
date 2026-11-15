@@ -5890,7 +5890,7 @@ DOCTOR_LABELS = ["host and tools", "orchestration binding", "merge queue candida
                  "snapshots and publishers", "in-app adapters", "in-app adapter contract", "video evidence tools",
                  "Node", "harness configuration", "delivery file", "plan chapter", "added stories' reasons",
                  "plan sections", "story files", "story readiness", "context sections", "finish lines",
-                 "configuration on the remote base", "pull requests marked ready", "delivery supervisor",
+                 "configuration on the remote base", "pull requests marked ready", "delivery supervisor", "deliveries on this base", "merge slot",
                  "gates on the base"]
 
 
@@ -6644,6 +6644,53 @@ tool.main(sys.argv[2:])
         code, out = self.move(fx)
         self.assertEqual(code, 0, out)
 
+    def test_a_base_move_waits_for_the_merge_slot_another_delivery_holds_and_refuses_naming_it(self) -> None:
+        fx, old = self.fixture()
+        scripts = self.release.generation / "skills/orchestrate-work/scripts"
+        holder, release = RunDeliveryLeadWorktreeTests.hold_slot(self, fx, scripts, fx.main, "integrate/fixture")
+        code, out = self.move(fx, "--wait-seconds", "0")
+        self.assertEqual(code, 2, out)
+        self.assertIn("slot_held", out)
+        self.assertIn("Delivery C", out)
+        self.assertFalse(self.pending_path(fx).exists())
+        self.assertEqual(sh("git", "ls-remote", "origin", "refs/heads/integrate/fixture", cwd=fx.main).stdout.split()[0], old)
+        # Let go while the move waits, it lands after.
+        with subprocess.Popen([sys.executable, "-B", str(fx.tool), "lead-sync", "--merge", "--archive", self.new_archive,
+                               "--metadata", self.new_metadata, "--no-supervisor", "--wait-seconds", "60"],
+                              cwd=fx.main, env=fx.env, text=True, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT) as moving:
+            RunDeliveryLeadWorktreeTests.await_waiter(self, fx.main, "integrate/fixture")
+            release.write_text("")
+            out, _ = moving.communicate(timeout=120)
+        self.assertEqual(moving.returncode, 0, out)
+        self.assertNotEqual(sh("git", "ls-remote", "origin", "refs/heads/integrate/fixture", cwd=fx.main).stdout.split()[0], old)
+
+    def test_a_base_move_takes_the_merge_slot_before_the_queue_lock_and_names_its_delivery(self) -> None:
+        from tests.test_orchestration_state import state_tool
+        fx, old = self.fixture()
+        common = Path(sh("git", "rev-parse", "--git-common-dir", cwd=fx.main).stdout.strip())
+        holder_file = (fx.main / common).resolve() / "agent-skills/merge-slot/integrate%2Ffixture.holder"
+        seen: list = []
+        queue_lock = contextlib.ExitStack()
+        queue_lock.enter_context(state_tool.file_lock(fx.record / "queue.lock"))
+        with subprocess.Popen([sys.executable, "-B", str(fx.tool), "lead-sync", "--merge", "--archive",
+                               self.new_archive, "--metadata", self.new_metadata, "--no-supervisor",
+                               "--wait-seconds", "60"], cwd=fx.main, env=fx.env, text=True,
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as moving:
+            try:
+                # While it waits for the queue lock it already holds the slot, under its delivery's name.
+                deadline = time.monotonic() + 60
+                while not holder_file.exists() and moving.poll() is None and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                if holder_file.exists():
+                    seen.append(json.loads(holder_file.read_text()))
+            finally:
+                queue_lock.close()
+            out, _ = moving.communicate(timeout=120)
+        self.assertEqual(moving.returncode, 0, out)
+        self.assertEqual([holder["delivery"] for holder in seen], ["FX-1"])
+        self.assertFalse(holder_file.exists())
+
     def test_valid_archive_for_another_receipt_is_refused_before_installation(self) -> None:
         fx, old = self.fixture()
         files = [fx.record / name for name in ("state.json", "journal.jsonl", "changes.jsonl")]
@@ -6839,8 +6886,9 @@ class RunDeliveryLeadWorktreeTests(unittest.TestCase):
         for name, value in vars(installed_release()).items():
             setattr(cls, name, value)
 
-    def fixture(self) -> tuple[Fixture, Path, Path]:
-        """The plan fixture, initialised, with one approval waiting, and the lead's worktree on lead/FX-1 at the base."""
+    def fixture(self, check_timeout: int | None = None) -> tuple[Fixture, Path, Path]:
+        """The plan fixture, initialised, with one approval waiting, and the lead's worktree on lead/FX-1 at the base.
+        ``check_timeout`` sets the binding's checkTimeoutSeconds, the wait a lead command without --wait-seconds takes."""
         fx = Fixture(self.generation, self.receipt)
         self.addCleanup(fx.close)
         m = fx.main
@@ -6853,6 +6901,8 @@ class RunDeliveryLeadWorktreeTests(unittest.TestCase):
         bound = json.loads(binding.read_text()) if binding.exists() else {}
         bound.setdefault("base", {}).update(remote="origin", ref="feature/FX-1")
         bound.setdefault("state", {}).setdefault("forgeSnapshot", {"argv": ["true"]})
+        if check_timeout is not None:
+            bound["checkTimeoutSeconds"] = check_timeout
         binding.write_text(json.dumps(bound, indent=2) + "\n")
         commit(m, "FX-1: an approval, and the binding's base")
         sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
@@ -6861,6 +6911,115 @@ class RunDeliveryLeadWorktreeTests(unittest.TestCase):
         lead = fx.tmp / "lead-FX-1"
         sh("git", "worktree", "add", "-q", "--no-track", "-b", "lead/FX-1", lead, "origin/feature/FX-1", cwd=m)
         return fx, lead, lead / ".agents/deliveries/FX-1.json"
+
+    # Another delivery's command holding a base's merge slot until the test writes its release file.
+    HOLD_SLOT = """
+import pathlib, sys, time
+sys.path.insert(0, sys.argv[1])
+import delivery_state
+repository, base, ready, release = sys.argv[2:6]
+with delivery_state.merge_slot(pathlib.Path(repository), base, delivery="Delivery C", timeout=60):
+    pathlib.Path(ready).write_text("held")
+    while not pathlib.Path(release).exists():
+        time.sleep(0.02)
+"""
+
+    @staticmethod
+    def hold_slot(case: unittest.TestCase, fx: Fixture, scripts: Path, repository: Path,
+                  base: str) -> tuple[subprocess.Popen, Path]:
+        ready, release = fx.tmp / "slot-held", fx.tmp / "slot-release"
+        holder = subprocess.Popen([sys.executable, "-B", "-c", RunDeliveryLeadWorktreeTests.HOLD_SLOT, str(scripts),
+                                   str(repository), base, str(ready), str(release)])
+        case.addCleanup(lambda: (release.write_text(""), holder.wait(30)))
+        deadline = time.monotonic() + 30
+        while not ready.exists():
+            case.assertIsNone(holder.poll(), "the holder ended before it held the slot")
+            case.assertLess(time.monotonic(), deadline)
+            time.sleep(0.02)
+        return holder, release
+
+    @staticmethod
+    def await_waiter(case: unittest.TestCase, repository: Path, base: str) -> None:
+        """Until a command waits for the slot, as its file in the waiting folder says."""
+        common = Path(sh("git", "rev-parse", "--git-common-dir", cwd=repository).stdout.strip())
+        name = base.replace("%", "%25").replace("/", "%2F")
+        waiting = (repository / common).resolve() / "agent-skills" / "merge-slot" / "waiting" / name
+        deadline = time.monotonic() + 60
+        while not (waiting.is_dir() and any(waiting.iterdir())):
+            case.assertLess(time.monotonic(), deadline, "no command waited for the slot")
+            time.sleep(0.05)
+
+    def test_lead_push_waits_for_the_merge_slot_another_delivery_holds_and_refuses_naming_it(self) -> None:
+        fx, lead, _ = self.fixture()
+        (lead / "docs/plan.md").write_text("pending plan\n")
+        commit(lead, "pending plan")
+        head = sh("git", "rev-parse", "HEAD", cwd=lead).stdout.strip()
+        original = sh("git", "rev-parse", "origin/feature/FX-1", cwd=lead).stdout.strip()
+        scripts = self.generation / "skills/orchestrate-work/scripts"
+        _, release = self.hold_slot(self, fx, scripts, fx.main, "feature/FX-1")
+        code, out = fx.flow("lead-push", "--delivery", "FX-1", "--wait-seconds", "0", cwd=lead)
+        self.assertEqual(code, 2, out)
+        self.assertIn("slot_held", out)
+        self.assertIn("Delivery C", out)
+        self.assertEqual(sh("git", "ls-remote", "origin", "refs/heads/feature/FX-1", cwd=lead).stdout.split()[0], original)
+        # Let go while it waits, from the other worktree of the same repository, the push lands after.
+        with subprocess.Popen([sys.executable, "-B", str(fx.tool), "lead-push", "--delivery", "FX-1",
+                               "--wait-seconds", "60"], cwd=lead, env=fx.env, text=True, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT) as pushing:
+            self.await_waiter(self, lead / "docs", "feature/FX-1")
+            self.assertEqual(sh("git", "ls-remote", "origin", "refs/heads/feature/FX-1", cwd=lead).stdout.split()[0],
+                             original)
+            release.write_text("")
+            out, _ = pushing.communicate(timeout=60)
+        self.assertEqual(pushing.returncode, 0, out)
+        self.assertEqual(sh("git", "ls-remote", "origin", "refs/heads/feature/FX-1", cwd=lead).stdout.split()[0], head)
+
+    def test_lead_push_beside_its_own_queues_command_lands_once_that_command_ends(self) -> None:
+        # The queue's command holds the slot, then the delivery's own queue lock, as the queue takes them, over its
+        # candidates; lead-push takes them in the same order, so neither waits on the other past the command's work.
+        fx, lead, _ = self.fixture()
+        (lead / "docs/plan.md").write_text("pending plan\n")
+        commit(lead, "pending plan")
+        head = sh("git", "rev-parse", "HEAD", cwd=lead).stdout.strip()
+        scripts = self.generation / "skills/orchestrate-work/scripts"
+        _, release = self.hold_slot(self, fx, scripts, fx.main, "feature/FX-1")
+        with (fx.tmp / "record/queue.lock").open("a") as queue_lock:
+            with subprocess.Popen([sys.executable, "-B", str(fx.tool), "lead-push", "--delivery", "FX-1",
+                                   "--wait-seconds", "60"], cwd=lead, env=fx.env, text=True, stdout=subprocess.PIPE,
+                                  stderr=subprocess.STDOUT) as pushing:
+                fcntl.flock(queue_lock, fcntl.LOCK_EX)
+                self.await_waiter(self, lead, "feature/FX-1")
+                fcntl.flock(queue_lock, fcntl.LOCK_UN)
+                release.write_text("")
+                out, _ = pushing.communicate(timeout=60)
+        self.assertEqual(pushing.returncode, 0, out)
+        self.assertEqual(sh("git", "ls-remote", "origin", "refs/heads/feature/FX-1", cwd=lead).stdout.split()[0], head)
+
+    def test_lead_upgrade_writer_takes_the_merge_slot_and_refuses_naming_its_holder_past_its_wait(self) -> None:
+        fx, _, _ = self.fixture(check_timeout=2)
+        scripts = self.generation / "skills/orchestrate-work/scripts"
+        _, release = self.hold_slot(self, fx, scripts, fx.main, "feature/FX-1")
+        began = time.monotonic()
+        with subprocess.Popen([sys.executable, "-B", str(fx.tool), "lead-upgrade-writer", "--expected", "0" * 64,
+                               "--reason", "a transition", "--no-supervisor"], cwd=fx.main, env=fx.env, text=True,
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as upgrading:
+            # Its wait is the binding's checkTimeoutSeconds, and it waits named in the slot's waiting folder.
+            self.await_waiter(self, fx.main, "feature/FX-1")
+            out, _ = upgrading.communicate(timeout=60)
+        waited = time.monotonic() - began
+        self.assertEqual(upgrading.returncode, 2, out)
+        # Within the binding's 2s, and no longer, beside the command's own start.
+        self.assertGreaterEqual(waited, 1.5)
+        self.assertLess(waited, 5)
+        self.assertIn("slot_held", out)
+        self.assertIn("Delivery C", out)
+        # With the slot free it goes on to the transition and lands.
+        release.write_text("")
+        time.sleep(0.2)
+        code, out = fx.flow("lead-upgrade-writer", "--expected", "0" * 64, "--reason", "a transition",
+                            "--no-supervisor", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn("record writer is", out)
 
     def test_lead_push_rechecks_the_remote_under_the_queue_lock(self) -> None:
         fx, lead, _ = self.fixture()

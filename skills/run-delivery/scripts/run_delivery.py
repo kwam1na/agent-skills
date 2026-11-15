@@ -52,6 +52,7 @@ import fnmatch
 import hashlib
 import importlib.util
 import json
+import platform
 import re
 import shlex
 import shutil
@@ -6262,9 +6263,103 @@ def lead_init(args) -> None:
     print(f"initialized {c.state} with {len(planned)} planned stories across {len(c.lanes)} lanes"
           + (f"; wrote {c.state / PLAN_FILE}" if (c.state / PLAN_FILE).exists() else ""))
     if args.no_supervisor or supervisor_off():
+        register_delivery(c, None)
         print(f"supervisor: not started; start it with {flow_command()} lead-run --resume")
     else:
         print(f"supervisor: running; live view {start_supervisor(c)}{live_fallback(c.state)}")
+
+# The deliveries on one machine's checkouts of a repository, beside its git common directory, where the merge slots
+# are: one entry a delivery, <git-common-dir>/agent-skills/deliveries/<key>.json, holding its key, base, lead
+# checkout, record folder and supervisor's pid, null while it was started with none. Every checkout and linked
+# worktree of the repository names the same folder.
+def registry_folder(root: Path) -> Path:
+    common = Path(git("rev-parse", "--git-common-dir", cwd=root))
+    return (common if common.is_absolute() else Path(root) / common).resolve() / "agent-skills" / "deliveries"
+
+
+def registry_path(root: Path, key: str) -> Path:
+    return registry_folder(root) / f"{key.replace('%', '%25').replace('/', '%2F')}.json"
+
+
+def register_delivery(c, pid: int | None) -> None:
+    """Write or refresh this delivery's registry entry: lead-init's with no pid when it starts no supervisor, and a
+    supervisor's each time it takes its lock, which registers a delivery initialized before the registry existed too."""
+    path = registry_path(c.root, c.delivery)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    entry = {"key": c.delivery, "base": c.base_branch, "lead": str(c.root.resolve()), "state": str(c.state.resolve()),
+             "pid": pid}
+    staging = path.with_name(f".{path.name}.{os.getpid()}")
+    staging.write_text(json.dumps(entry, indent=2) + "\n")
+    os.replace(staging, path)
+
+
+def unregister_delivery(c) -> str | None:
+    path = registry_path(c.root, c.delivery)
+    if not path.exists():
+        return None
+    path.unlink(missing_ok=True)
+    return f"removed {c.delivery} from the deliveries registered beside the repository ({path})"
+
+
+def peer_deliveries(c) -> list[dict]:
+    """The other deliveries registered on this delivery's base, each with its `status`: `live` while its supervisor's
+    pid runs, `stale` once it doesn't, `none` when it was started with no supervisor. An entry that can't be read is
+    listed whatever its base, as `{file, status: unreadable}`, and stops nothing."""
+    folder = registry_folder(c.root)
+    peers = []
+    for path in sorted(folder.glob("*.json")) if folder.is_dir() else []:
+        try:
+            entry = json.loads(path.read_text())
+        except (OSError, ValueError):
+            entry = None
+        if not (isinstance(entry, dict) and all(isinstance(entry.get(name), str) and entry[name]
+                                                for name in ("key", "base", "state"))
+                and (entry.get("pid") is None or valid_pid(entry["pid"]))):
+            peers.append({"file": path.name, "status": "unreadable"})
+            continue
+        if entry["key"] == c.delivery or entry["base"] != c.base_branch:
+            continue
+        pid = entry.get("pid")
+        peers.append({**entry, "status": "none" if pid is None else "live" if pid_runs(pid) else "stale"})
+    return peers
+
+
+def peer_status_words(peer: dict) -> str:
+    if peer["status"] == "live":
+        return f"live, pid {peer['pid']}"
+    if peer["status"] == "stale":
+        return f"stale: its supervisor, pid {peer['pid']}, isn't running"
+    return "no supervisor"
+
+
+def peer_line(peer: dict) -> str:
+    """A peer as doctor --delivery lists it: its supervisor, its lead checkout, and what its queue is checking and
+    has queued, read from its record through its entry."""
+    if peer["status"] == "unreadable":
+        return f"{peer['file']}: unreadable"
+    said = f"{peer['key']} ({peer_status_words(peer)}; led from {peer.get('lead')})"
+    state = json_object(Path(peer["state"]) / "state.json")
+    if not state:
+        return f"{said}: its record {peer['state']} can't be read"
+    current = ((state.get("meta") or {}).get("checking") or {}).get("now")
+    checking = current.get("subject") if isinstance(current, dict) else None
+    queued = [item.get("subject") for item in state.get("queue") or [] if isinstance(item, dict)
+              and item.get("stage") in ("queued", "syncing", "synced", "checked") and item.get("subject") != checking]
+    return f"{said}: checking {checking or 'nothing'}; queued {', '.join(queued) or 'nothing'}"
+
+
+def slot_line(c) -> str:
+    """Who holds this delivery's base's merge slot, and since when, from the holder file beside it: shown only while
+    the pid it names runs, since the file of a holder that died stays behind."""
+    scripts = str(c.release / "skills/orchestrate-work/scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import delivery_state
+    holder = delivery_state.slot_holder(delivery_state.merge_slot_path(c.root, c.base_branch))
+    if holder and valid_pid(holder.get("pid")) and pid_runs(holder["pid"]):
+        return (f"{c.base_branch}'s merge slot is held by {holder.get('delivery') or 'an unnamed delivery'} "
+                f"(pid {holder['pid']}, since {holder.get('since') or 'an unrecorded time'})")
+    return f"{c.base_branch}'s merge slot is free"
 
 
 def planned_entry(c, key: str) -> dict:
@@ -6731,7 +6826,9 @@ def lead_sync(args) -> None:
 
     c.flow_log.mkdir(parents=True, exist_ok=True)
     try:
+        # The base's merge slot first, which every delivery on this machine shares, then this delivery's queue lock.
         with delivery_state.file_lock(supervisor_lock_path(c)), \
+                delivery_state.merge_slot(c.root, c.base_branch, delivery=c.delivery, timeout=args.wait_seconds), \
                 delivery_state.file_lock(c.state / delivery_state.QUEUE_LOCK, timeout=args.wait_seconds):
             published = remote_head(c.base_branch)
             if published not in (intent["oldHead"], intent.get("preparedHead")):
@@ -6837,8 +6934,11 @@ def lead_upgrade_writer(args) -> None:
 
     c.flow_log.mkdir(parents=True, exist_ok=True)
     try:
-        # Prevent another supervisor from starting between the parked check and transition.
-        with delivery_state.file_lock(supervisor_lock_path(c)):
+        # Prevent another supervisor from starting between the parked check and transition, and hold the base's merge
+        # slot, as the queue does, within the binding's check timeout, around the transition's queue lock.
+        with delivery_state.file_lock(supervisor_lock_path(c)), \
+                delivery_state.merge_slot(c.root, c.base_branch, delivery=c.delivery,
+                                          timeout=float(c.binding.get("checkTimeoutSeconds", 0))):
             result = state_tool("writer-upgrade", "--writer", "lead", "--expected", args.expected,
                                 "--reason", args.reason)
             pinned = json.loads(result.stdout)["state"]["meta"]["writerGeneration"]
@@ -6874,7 +6974,8 @@ def lead_push(args) -> None:
 
     print(f"Waiting for the merge queue's lock to publish {c.base_branch}.", flush=True)
     try:
-        with delivery_state.file_lock(c.state / delivery_state.QUEUE_LOCK, timeout=args.wait_seconds):
+        with delivery_state.merge_slot(c.root, c.base_branch, delivery=c.delivery, timeout=args.wait_seconds), \
+                delivery_state.file_lock(c.state / delivery_state.QUEUE_LOCK, timeout=args.wait_seconds):
             git("fetch", "-q", c.remote, c.base_branch)
             current = remote_head(c.base_branch)
             if current != before:
@@ -6999,8 +7100,12 @@ def change_regions(c, args) -> None:
 
 
 def change_ownership(c, args) -> None:
-    if not (args.region or args.revoke_region) and any(value is not None for value in (args.base, args.start, args.end)):
+    if not (args.region or args.revoke_region or args.claim) and any(
+            value is not None for value in (args.base, args.start, args.end)):
         raise Stop("--base, --start and --end require --region or --revoke-region")
+    if args.claim:
+        change_claims(c, args)
+        return
     if args.seed:
         if args.lane or args.source:
             raise Stop("--seed takes neither --lane nor --from")
@@ -7129,6 +7234,7 @@ def lead_assign(args) -> None:
         for line in warnings:
             print(f"  {line}")
         print(f"Move each to {args.lane}'s owns now, or plan the story on the lane that owns it.\n")
+    print_peer_claims(c, [path for key in keys for path in story_named_files(c, key, tracked)])
     # One entry per story, so each ticket's start is its own, made when its lane begins it.
     for key in keys:
         state_tool("journal", "--kind", "lane.assigned", "--lane", args.lane, "--subject", key, "--summary",
@@ -7155,6 +7261,81 @@ def lead_assign(args) -> None:
           "key and the outcome (handed off, or blocked and on what): the lead sees its first lines. Then the branch, "
           "PR, reviewed head, review rounds and verdicts, gates, in-app checks, and any decision you need from the "
           "lead. The lead checks the hand-off and tells you when to start your next story.")
+
+# A delivery's claims on its base, kept in its own record's extensions for its peers to read (Decision 29).
+def change_claims(c, args) -> None:
+    """lead-own --claim PATTERN: whole files this delivery claims on its base. A peer's lead-assign and lead-accept
+    warn of a story or candidate that touches one; a claim refuses nothing and orders no delivery before another."""
+    pattern = args.claim
+    if (any(value is not None for value in (args.base, args.start, args.end))
+            or re.search(r"(?::\d+(?:-\d+)?|#L\d+(?:-L?\d+)?)$", pattern)):
+        raise Stop("a claim is of whole files: name a file or a pattern, not a region or a line range")
+    if args.lane or args.source:
+        raise Stop("--claim takes neither --lane nor --from: a claim is the delivery's, not a lane's")
+    if Path(pattern).is_absolute() or any(part in ("", ".", "..") for part in pattern.split("/")):
+        raise Stop("name a repository-relative file or pattern")
+
+    def compute(doc: dict) -> list[str]:
+        extensions = doc["state"].get("extensions")
+        claims = list((extensions or {}).get("claims") or [])
+        if pattern in claims:
+            raise Stop(f"{c.delivery} already claims {pattern}")
+        if extensions is None:
+            return ["--set", json.dumps({"/extensions": {"claims": [pattern]}})]
+        return ["--set", json.dumps({"/extensions/claims": [*claims, pattern]})]
+
+    patch_from(compute, f"{c.delivery}'s claim of {pattern}")
+    change = f"{c.delivery} claims {pattern} on {c.base_branch}: a peer's lead-assign and lead-accept warn of it"
+    state_tool("journal", "--kind", "decision.recorded", "--summary", change)
+    print(change)
+
+
+def peer_stories_on(state: dict, path: str) -> str:
+    """A peer's stories on a file, from its record: those of the lanes whose claims or regions cover it, each with
+    its stage, its queue stage once it is queued."""
+    ownership = state.get("laneOwnership") if isinstance(state.get("laneOwnership"), dict) else {}
+    lanes = {lane for lane, patterns in ownership.items() if isinstance(patterns, list)
+             and any(isinstance(p, str) and fnmatch.fnmatchcase(path, p) for p in patterns)}
+    lanes |= {claim.get("lane") for claim in state.get("laneRegions") or [] if isinstance(claim, dict)
+              and claim.get("path") == path}
+    stages: dict[str, str] = {}
+    for kind in ("planned", "queue"):
+        for item in state.get(kind) or []:
+            if isinstance(item, dict) and isinstance(item.get("subject"), str) and (
+                    item.get("lane") in lanes or item.get("assignedLane") in lanes):
+                stages[item["subject"]] = str(item.get("stage"))
+    return ", ".join(f"{key} ({stage})" for key, stage in sorted(stages.items())) or "none"
+
+
+def peer_claim_lines(c, files: list[str]) -> list[str]:
+    """For each file a peer on this base claims, the claim, the peer's stories on the file and their stages, and
+    whether the peer is stale or has no supervisor; and each registry entry that can't be read."""
+    lines = []
+    for peer in peer_deliveries(c):
+        if peer["status"] == "unreadable":
+            lines.append(f"{peer['file']}, a delivery registered beside this repository, is unreadable: its claims, "
+                         "if any, aren't known")
+            continue
+        state = json_object(Path(peer["state"]) / "state.json")
+        extensions = state.get("extensions") if isinstance(state.get("extensions"), dict) else {}
+        claims = [p for p in extensions.get("claims") or [] if isinstance(p, str)]
+        note = {"stale": f"; {peer['key']} is {peer_status_words(peer)}",
+                "none": f"; {peer['key']} has no supervisor"}.get(peer["status"], "")
+        for path in sorted(set(files)):
+            pattern = next((p for p in claims if fnmatch.fnmatchcase(path, p)), None)
+            if pattern:
+                lines.append(f"{path} is claimed by {peer['key']} ({pattern}{note}); its stories on it: "
+                             f"{peer_stories_on(state, path)}")
+    return lines
+
+
+def print_peer_claims(c, files: list[str]) -> None:
+    lines = peer_claim_lines(c, files)
+    if lines:
+        print(f"Files another delivery on {c.base_branch} claims (a warning; nothing is refused):")
+        for line in lines:
+            print(f"  {line}")
+        print()
 
 
 def accept_no_change(c, key: str, entry: dict) -> None:
@@ -7507,6 +7688,7 @@ def accept_story(c, args) -> None:
     except Unreasoned as error:
         print(f"plan: not rebuilt: {error}")
     print(f"accepted {key} after its merge" if merged else f"accepted {key}; the runner may take it")
+    print_peer_claims(c, changed)
     if needs_video(key):
         print("  once it merges: lead-evidence page, republish the page (same address), lead-evidence published --url, "
               "and link its section from the story in the tracker")
@@ -7895,6 +8077,9 @@ def lead_close(args) -> None:
         else:
             if port_open(port):
                 left.append(port_busy(port))
+    said = unregister_delivery(c)
+    if said:
+        done.append(said)
     # The live view last, by the pid live.json records: it served the close until now.
     try:
         said = stop_view(c.state)
@@ -9087,6 +9272,11 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                       f"runs again at a later base head, or when you judge it flaky: {flow_command()} lead-resolve "
                       "full-health --why TEXT",
                       "clears": f"a pass at a later base head, or {flow_command()} lead-resolve full-health --why TEXT"})
+    if last and last["result"] == "flaky":
+        items.append({"holding": False, "source": "fullHealth",
+                      "text": f"fullHealth failed at {head[:10]}, and its failing tests passed alone, so the base isn't "
+                      f"broken: {', '.join(last.get('tests', []))}. They are flaky: fix them",
+                      "clears": "a fullHealth pass at a later base head"})
     events = [e for e in doc["journal"] if e["kind"] in ("base.broken", "base.repaired")]
     if events and events[-1]["kind"] == "base.broken":
         # A break fullHealth found clears with its next pass; the queue's own break waits for the lead. Under focused no
@@ -9275,6 +9465,12 @@ def full_health_break(entry: dict) -> bool:
     return entry["kind"] == "base.broken" and entry.get("summary", "").startswith("fullHealth failed")
 
 
+def base_breaks_standing(journal: list[dict]) -> list[dict]:
+    """The base.broken entries since the latest base.repaired: what a base.repaired would answer."""
+    repaired = max((e["id"] for e in journal if e["kind"] == "base.repaired"), default=0)
+    return [e for e in journal if e["kind"] == "base.broken" and e["id"] > repaired]
+
+
 def only_full_health_breaks(journal: list[dict]) -> bool:
     """Whether every base.broken since the latest base.repaired is fullHealth's own: a pass may repair those, never a
     break the queue found, which the lead confirms however many breaks of fullHealth's follow it."""
@@ -9298,6 +9494,45 @@ def merge_words(c, doc: dict, head: str, since: int) -> tuple[dict | None, str]:
     return {"subject": last.get("subject"), "journal": last["id"]}, words
 
 
+def flaky_tests(rerun: dict | None, out: str, checkout: Path, timeout: int,
+                started: Callable[[int], None] | None = None) -> list[str] | None:
+    """The tests a failed fullHealth names, when they pass alone: the binding's fullHealthRerun declared, nothing in the
+    run's whole output its unrecheckedPattern matches, at least one test its failurePattern's first group names, and
+    one run of its argv with those tests, in the failed run's checkout, that exits 0 with output its ranPattern
+    matches. None in every other case, so the failure stands."""
+    if not rerun:
+        return None
+    unrechecked = rerun.get("unrecheckedPattern")
+    if unrechecked and re.search(unrechecked, out):
+        return None
+    tests = list(dict.fromkeys(match.group(1) for match in re.finditer(rerun["failurePattern"], out) if match.group(1)))
+    if not tests:
+        return None
+    argv = [arg for element in rerun["argv"] for arg in (tests if element == "{tests}" else [element])]
+    try:
+        code, said = run_group(argv, checkout, timeout, started=started)
+    except Stop:
+        return None
+    return tests if code == 0 and re.search(rerun["ranPattern"], said) else None
+
+
+def in_detached_checkout(c, commit: str, checkout: Path, work: Callable[[Path], object], timeout: int):
+    """Make a fresh detached checkout of a commit at `checkout`, run the repository's prepare steps in it, each in a
+    process group of its own within `timeout`, and return what `work` makes of it. The checkout, and the folder it sits
+    in, are removed however that ends: a stop runs the removal too, once what a step or the run started has been
+    stopped with its group."""
+    try:
+        git("worktree", "add", "--detach", "-q", str(checkout), commit, cwd=c.root)
+        for step in prepare_commands():
+            code, said = run_group(step, checkout, timeout)
+            if code != 0:
+                raise Stop(f"the prepare step {shlex.join(step)} failed (exit {code}): {said.strip()[-600:]}")
+        return work(checkout)
+    finally:
+        run(["git", "worktree", "remove", "--force", str(checkout)], cwd=c.root, check=False)
+        shutil.rmtree(checkout.parent, ignore_errors=True)
+
+
 def run_full_health(c, binding: dict, head: str, posture: dict, named: str,
                     started: Callable[[int], None] | None = None, checkout: Path | None = None) -> tuple[bool, str]:
     """One gate run of fullHealth at this base head, in a fresh checkout of it. Its result goes to the full-health log,
@@ -9308,37 +9543,48 @@ def run_full_health(c, binding: dict, head: str, posture: dict, named: str,
     before = [e for e in read_log("full-health", c.delivery) if e.get("result")]
     merge, after = merge_words(c, doc, head, before[-1].get("journalThrough", 0) if before else 0)
     checkout = checkout or Path(tempfile.mkdtemp(prefix="run-delivery-full-health-")) / "base"
-    try:
-        git("worktree", "add", "--detach", "-q", str(checkout), head, cwd=c.root)
-        for step in prepare_commands():
-            run(step, cwd=checkout)
+
+    def gate(checkout: Path) -> tuple[int, str, list[str] | None]:
         code, out = run_group(list(binding["fullHealth"]), checkout, full_health_timeout(binding), started=started)
+        # A failure is re-checked once, in this same checkout, before it can break the base.
+        flaky = None if code == 0 else flaky_tests(binding.get("fullHealthRerun"), out, checkout,
+                                                   full_health_timeout(binding), started=started)
+        return code, out, flaky
+    try:
+        code, out, flaky = in_detached_checkout(c, head, checkout, gate, full_health_timeout(binding))
     except Stop as error:
-        code, out = 1, str(error)
-    finally:
-        run(["git", "worktree", "remove", "--force", str(checkout)], cwd=c.root, check=False)
-        shutil.rmtree(checkout.parent, ignore_errors=True)
-    result = "passed" if code == 0 else "failed"
+        code, out, flaky = 1, str(error), None
+    result = "passed" if code == 0 else "flaky" if flaky else "failed"
     through = max((e["id"] for e in doc["journal"]), default=0)
     # Held off through the journal entry, and in the state tool it starts, which inherits the mask.
     signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
     try:
-        return record_full_health(c, head, result, out, posture, merge, after, through, before, doc, named)
+        return record_full_health(c, head, result, out, posture, merge, after, through, before, doc, named, flaky)
     finally:
         signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
 
 
 def record_full_health(c, head: str, result: str, out: str, posture: dict, merge: dict | None, after: str,
-                       through: int, before: list[dict], doc: dict, named: str) -> tuple[bool, str]:
-    """A run's result in the full-health log, and the journal entry that says what it means for the base."""
+                       through: int, before: list[dict], doc: dict, named: str,
+                       flaky: list[str] | None = None) -> tuple[bool, str]:
+    """A run's result in the full-health log, and the journal entry that says what it means for the base. A flaky run,
+    whose failing tests passed alone, is the head's result and journals base.flaky: it breaks nothing and repairs
+    nothing."""
     with plan_lock(c):
         append_full_health(c, {"head": head, "result": result, "output": out[-2000:], "posture": "gate",
-                               "code": posture["code"], "merge": merge, "journalThrough": through})
+                               "code": posture["code"], "merge": merge, "journalThrough": through,
+                               **({"tests": flaky} if flaky else {})})
     if result == "failed":
         kind, words = "base.broken", f"fullHealth failed at {head[:10]} {after}: {out.strip()[-300:] or 'no output'}"
+    elif result == "flaky":
+        kind = "base.flaky"
+        words = f"fullHealth failed at {head[:10]} {after}, and its failing tests passed alone: {', '.join(flaky or [])}"
     else:
         # A repair only of a break fullHealth found: a pass never confirms a break the queue found, which the lead does.
-        repairs = before and before[-1]["result"] == "failed" and only_full_health_breaks(doc["journal"])
+        # After a flaky run, which repairs nothing, a pass repairs the fullHealth break that still stands, if one does.
+        latest = before[-1]["result"] if before else None
+        standing = latest == "flaky" and base_breaks_standing(doc["journal"])
+        repairs = (latest == "failed" or standing) and only_full_health_breaks(doc["journal"])
         kind = "base.repaired" if repairs else "base.verified"
         words = f"fullHealth passed at {head[:10]} {after}"
     state_tool("journal", "--kind", kind, "--summary", words,
@@ -9486,14 +9732,16 @@ def full_health_step(c, wait: bool = False) -> tuple[bool, str]:
     git("fetch", "-q", c.remote, c.base_branch, check=False)
     head = base_head(c)
     last, rerun = full_health_results(c, head)
-    if last and last["result"] == "passed":
-        return True, f"fullHealth passed at {head[:10]}{named}"
+    # A flaky run is the head's result, which holds nothing at the close by itself.
+    if last and last["result"] in ("passed", "flaky"):
+        return True, f"fullHealth {last['result']} at {head[:10]}{named}"
     if last and not rerun:
         return False, f"fullHealth failed at {head[:10]}{named}; it runs again at a later head, or on lead-resolve full-health"
     # No run at this head: after a merge the post-merge step has run, so this is a delivery that merged nothing.
     line = launch_full_health(c, head, named, wait)
     last, _ = full_health_results(c, head)
-    return bool(last and last["result"] == "passed" and line.startswith("fullHealth passed")), line
+    return bool(last and last["result"] in ("passed", "flaky")
+                and line.startswith(("fullHealth passed", "fullHealth flaky"))), line
 
 
 def full_health_run(args) -> None:
@@ -9973,7 +10221,7 @@ class Supervisor:
         config = binding_state(c)
         if name == "live":
             return [sys.executable, "-B", str(scripts / "render_state.py"), "live", "--dir", str(c.state),
-                    *(["--state-config", json.dumps(config)] if config is not None else [])]
+                    "--repo", str(c.root), *(["--state-config", json.dumps(config)] if config is not None else [])]
         if config is None:
             return None  # the queue needs a binding
         return [sys.executable, "-B", str(scripts / "merge_queue.py"), "--repo", str(c.root), "--state", str(c.state),
@@ -10157,6 +10405,7 @@ class Supervisor:
             return cleanup_merged(c, doc, entry["laneWords"])
 
         steps = (("reconcile", reconcile_once), ("cleanup", cleanup), ("fullHealth", lambda: post_merge_step(c, self.once)),
+                 ("peers", lambda: self.peer_merges(entry)),
                  ("finish", lambda: journal_finish_met(c, load_state())),
                  ("deferrals", lambda: deferral_breaches(c, load_state())),
                  ("publish", lambda: render_views(c, only="publishers")), ("needs", derive),
@@ -10191,6 +10440,98 @@ class Supervisor:
         append_log("supervisor", c.delivery, entry)
         return closed
 
+    def peer_merges(self, entry: dict) -> str:
+        """Journal `peer.merged` for each `candidate.merged` of a peer on this base, since this record began, that it
+        hasn't handled and whose merge changed a file one of this delivery's open stories names: one entry a story,
+        naming the peer, its story and the files. How far it has read each peer's journal is kept in the flow log's
+        `peers` log, written as soon as each entry is journalled, and shown as the pass's `peerReads`, so a supervisor
+        started again journals nothing twice; a merge whose commit isn't on the base here yet is read again later."""
+        c = self.c
+        reads: dict[str, int] = {}
+        for read in read_log("peers", c.delivery):
+            if isinstance(read.get("peer"), str) and type(read.get("through")) is int:
+                reads[read["peer"]] = max(read["through"], reads.get(read["peer"], 0))
+        entry["peerReads"] = reads
+        peers = [peer for peer in peer_deliveries(c) if peer["status"] != "unreadable"]
+        if not peers:
+            return "no peers"
+        scripts = str(c.release / "skills/orchestrate-work/scripts")
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+        import delivery_state
+        doc = load_state()
+        state, journal = doc["state"], doc["journal"]
+        began = journal[0]["at"] if journal else now()
+        done = ({item["subject"] for item in state["queue"] if item.get("stage") == "merged"}
+                | {item["subject"] for item in state.get("planned", []) if item.get("stage") == "settled"})
+        tracked = tracked_at_base(c)
+        named = {key: set(story_named_files(c, key, tracked)) for key in c.stories if key not in done}
+        said = []
+        for peer in peers:
+            try:
+                theirs = delivery_state.read_journal(Path(peer["state"]))
+            except (delivery_state.StateError, OSError, ValueError):
+                said.append(f"{peer['key']}: its journal can't be read")
+                continue
+            through = start = reads.get(peer["key"], 0)
+            for merged in theirs:
+                if merged["id"] <= through:
+                    continue
+                if merged["kind"] == "candidate.merged" and merged["at"] >= began:
+                    found = self.peer_merge_files(peer, merged)
+                    if found is None:
+                        said.append(f"{peer['key']}: {merged['subject']}'s merge isn't on {c.base_ref} yet")
+                        break
+                    commit, files = found
+                    for key, names in named.items():
+                        hit = sorted(files & names)
+                        summary = (f"{peer['key']}, a delivery on {c.base_branch}, merged {merged['subject']} at "
+                                   f"{commit[:10]}, changing {', '.join(hit)}, which {key} names")
+                        if hit:
+                            lane = c.lane_of(key, state)
+                            state_tool("journal", "--kind", "peer.merged", "--subject", key,
+                                       *(["--lane", lane] if lane else []), "--summary", summary)
+                            said.append(summary)
+                    # Kept at once, so a supervisor stopped mid-pass doesn't journal this merge again.
+                    append_log("peers", c.delivery, {"peer": peer["key"], "through": merged["id"]})
+                through = reads[peer["key"]] = merged["id"]
+            if through != start:
+                append_log("peers", c.delivery, {"peer": peer["key"], "through": through})
+        return "; ".join(said) or "nothing new"
+
+    def peer_merge_files(self, peer: dict, merged: dict) -> tuple[str, set[str]] | None:
+        """The commit a peer's merge made and the files it changed. The head comes from the entry, the runner's or one
+        recovered from a forge snapshot ("at <head>"), else from the peer's queue. The commit is the base's
+        first-parent commit whose tree is that head's, diffed against its first parent. For a merge no such commit
+        matches, even once the base is fetched (a merge commit, a squash of a head behind the base, or one too far
+        back), it is the head, diffed against its merge base with the base. The fetch comes first because nothing else
+        in a pass is sure to: a peer's runner fetches into a ref of its own, and the post-merge step fetches only when
+        it runs a check. An entry that names no head changed nothing this can see. None while the head isn't in this
+        repository, even after the fetch, so a later pass reads it again."""
+        c = self.c
+        head = re.search(r"\bat ([0-9a-f]{40})\b", merged.get("summary") or "")
+        item = next((q for q in json_object(Path(peer["state"]) / "state.json").get("queue") or []
+                     if isinstance(q, dict) and q.get("subject") == merged.get("subject")), {})
+        synced = head.group(1) if head else item.get("syncedHead") or item.get("head")
+        if not isinstance(synced, str) or not synced:
+            return "", set()
+        def on_base() -> str | None:
+            tree = git("rev-parse", f"{synced}^{{tree}}", check=False)
+            rows = git("log", "--first-parent", "-n", "500", "--format=%H %T", c.base_ref, check=False).splitlines()
+            return next((row.split()[0] for row in rows if tree and row.endswith(f" {tree}")), None)
+
+        known = lambda: git("rev-parse", "--verify", "-q", f"{synced}^{{commit}}", check=False)
+        commit = on_base() if known() else None
+        if commit is None:
+            git("fetch", "-q", c.remote, c.base_branch, check=False)
+            if not known():
+                return None
+            commit = on_base()
+        if commit:
+            return commit, set(git("diff", "--name-only", f"{commit}^1", commit, check=False).splitlines())
+        since = git("merge-base", c.base_ref, synced, check=False)
+        return synced, set(git("diff", "--name-only", since, synced, check=False).splitlines()) if since else set()
+
     def run(self) -> None:
         c = self.c
         # Detached by its own session, never by ignoring signals: its children start with the defaults.
@@ -10221,6 +10562,8 @@ class Supervisor:
         closed, stopped_by = False, None
         try:
             self.write_lock()
+            with contextlib.suppress(OSError, Stop, subprocess.SubprocessError):
+                register_delivery(c, os.getpid())
             if not self.once:
                 # Who stops it says why in supervisor.json; a signal nobody explained is recorded by the supervisor.
                 write_supervisor_status(c.state, os.getpid(), True)
@@ -10302,15 +10645,99 @@ def lead_run(args) -> None:
     Supervisor(c, once=args.once).run()
 
 
+def program_version(program: str, checkout: Path) -> tuple[str | None, str | None]:
+    """(the version `program --version` prints in the checkout, or None, and why it could not be read)."""
+    try:
+        done = subprocess.run([program, "--version"], cwd=checkout, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as error:
+        return None, f"{program} --version could not run: {error}"
+    said = (done.stdout or done.stderr).strip().splitlines()
+    if done.returncode != 0 or not said:
+        return None, f"{program} --version printed no version" + (f" (exit {done.returncode})" if done.returncode else "")
+    return said[0], None
+
+
+def lead_suite(args) -> None:
+    """The lead's own run of the binding's fullHealth, under any posture, at --at or the base head on the remote: in a
+    detached checkout of that commit under the binding's work folder, prepared first and removed after, so nothing the
+    lead does in its own checkout reaches the run. Its result is one line of the flow log's suite.jsonl, which the lead
+    cites when marking a finish line; it journals nothing."""
+    c = cfg()
+    binding = c.shelf.json(".agents/orchestration.json") or {}
+    if not binding.get("fullHealth"):
+        raise Stop("the binding declares no fullHealth, so there is no suite to run")
+    git("fetch", "-q", c.remote, c.base_branch, check=False)
+    if args.at:
+        commit = git("rev-parse", "--verify", "--quiet", f"{args.at}^{{commit}}", check=False)
+        if not commit:
+            raise Stop(f"{args.at} is no commit in this repository; fetch it, or name another")
+    else:
+        commit = base_head(c)
+    argv = [*binding["fullHealth"], *(args.extra[1:] if args.extra[:1] == ["--"] else args.extra)]
+    folder = c.root / (binding.get("workRoot") or f"{c.work}/work") / "suite"
+    folder.mkdir(parents=True, exist_ok=True)
+    checkout = Path(tempfile.mkdtemp(prefix=f"{commit[:12]}-", dir=folder)) / "checkout"
+    # A stop ends the run through main's handler, as an interruption does: its command's group is stopped, by
+    # run_group, and its checkout removed, by in_detached_checkout.
+    began = time.monotonic()
+
+    def suite(checkout: Path) -> tuple[int, str, tuple[str | None, str | None]]:
+        asked = program_version(argv[0], checkout)
+        try:
+            code, out = run_group(argv, checkout, full_health_timeout(binding))
+        except Stop as error:  # its timeout: a failure, with the version already read
+            code, out = 1, str(error)
+        return code, out, asked
+    print(f"lead-suite: running {shlex.join(argv)} at {commit[:10]} in {checkout}", flush=True)
+    try:
+        code, out, (version, unread) = in_detached_checkout(c, commit, checkout, suite, full_health_timeout(binding))
+    except Stop as error:  # the checkout or a prepare step failed, before the interpreter was asked
+        code, out, version, unread = 1, str(error), None, "the run ended before its interpreter was asked"
+    seconds = round(time.monotonic() - began, 1)
+    result = "passed" if code == 0 else "failed"
+    append_log("suite", c.delivery, {"commit": commit, "result": result, "exit": code, "argv": argv, "seconds": seconds,
+                                     "output": out[-2000:], "platform": platform.platform(), "interpreter": version,
+                                     **({"interpreterUnread": unread} if unread else {})})
+    print(out[-2000:].rstrip())
+    print(f"lead-suite: {result} at {commit[:10]} (exit {code}, {seconds}s); "
+          f"recorded in {flow_log('suite', c.delivery)}")
+    if code:
+        sys.exit(code if 0 < code < 256 else 1)
+
+
+def moved_head_stands(c, doc: dict, head: str, last: dict | None) -> str:
+    """What stands at a base head past a failed fullHealth's: a run running there, a run due there, a base.broken that
+    still awaits base.repaired, or none of these."""
+    stands = []
+    running = full_health_running(c)
+    if running is not None and running.get("head") == head:
+        stands.append(f"a run is running ({running_words(running)}): wait for its result")
+    elif last is None and delivery_posture(c)["posture"] != "focused":
+        stands.append("a run is due on the supervisor's next pass: wait for its result")
+    breaks = base_breaks_standing(doc["journal"])
+    if breaks:
+        # A pass repairs only a break fullHealth found; the queue's own waits for the lead.
+        by_pass = "a fullHealth pass there journals it, or, " if only_full_health_breaks(doc["journal"]) else ""
+        stands.append(f"base.broken (journal entry {breaks[-1]['id']}) still awaits base.repaired: {by_pass}once you "
+                      "have checked the base, journal base.repaired with your reason")
+    return "; ".join(stands) if stands else "nothing stands: no run is running or due, and no base.broken awaits repair"
+
+
 def lead_resolve(args) -> None:
     """Resolve the blocker a journal entry records, or ask the next pass to rerun a failed fullHealth, with the lead's
     reason. The resolution is the flow log's; the journal says so."""
     c = cfg()
     doc = load_state()
     if args.id == "full-health":
+        # The base head as the remote has it, so a failed head the base has moved past reads as moved.
+        git("fetch", "-q", c.remote, c.base_branch, check=False)
         head = base_head(c)
         last, rerun = full_health_results(c, head)
         if not last or last["result"] != "failed":
+            failed = next((e for e in reversed(read_log("full-health", c.delivery)) if e.get("result") == "failed"), None)
+            if failed and failed["head"] != head:
+                raise Stop(f"fullHealth failed at {failed['head'][:10]}, which is no longer the base head; the base is at "
+                           f"{head[:10]}, where {moved_head_stands(c, doc, head, last)}")
             raise Stop(f"fullHealth hasn't failed at the base head {head[:10]}; there is nothing to rerun")
         # Under focused no run starts, so the rerun waits on the base returning to gate.
         when = ("if the base returns to gate" if delivery_posture(c)["posture"] == "focused"
@@ -10719,6 +11146,8 @@ class Doctor:
             ("remote-base", "configuration on the remote base", ("delivery",), self.remote_base),
             ("ready", "pull requests marked ready", ("delivery",), self.ready),
             ("supervisor", "delivery supervisor", ("delivery",), self.supervisor),
+            ("peers", "deliveries on this base", ("delivery",), self.peers),
+            ("merge-slot", "merge slot", ("delivery",), self.merge_slot),
             ("base-gates", "gates on the base", ("gates", "committed"), self.base_gates),
         ]
 
@@ -11319,6 +11748,17 @@ class Doctor:
                              + f"; fix: lead-close or stop them, then {flow_command()} lead-run --resume")
         return status, said()
 
+    def peers(self):
+        """The other deliveries registered on this base, each with what its queue is checking and has queued; an
+        entry that can't be read is named, and fails nothing."""
+        found = peer_deliveries(self.delivery)
+        if not found:
+            return "ok", f"no other delivery is registered on {self.delivery.base_branch}"
+        return "ok", " | ".join(peer_line(peer) for peer in found)
+
+    def merge_slot(self):
+        return "ok", slot_line(self.delivery)
+
     def supervisor_node(self, recorded: dict) -> tuple[str, str]:
         """The Node the running supervisor recorded in its lock as it started, which its queue's checks run unless
         their profile says otherwise, judged against the runtime's nodeMinimum: (status, words)."""
@@ -11510,6 +11950,7 @@ def main(argv: list[str] | None = None) -> None:
     action.add_argument("--revoke", metavar="PATTERN", help="remove a whole-file claim by exact pattern")
     action.add_argument("--region", metavar="PATH", help="grant a span in a committed text file")
     action.add_argument("--revoke-region", metavar="PATH", help="remove a region claim by its exact coordinates")
+    action.add_argument("--claim", metavar="PATTERN", help="claim whole files on the base for this delivery's peers")
     p.add_argument("--lane"); p.add_argument("--from", dest="source")
     p.add_argument("--base", metavar="COMMIT")
     p.add_argument("--start", type=int, metavar="LINE", help="first owned line, starting at 1")
@@ -11538,6 +11979,10 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--to", dest="to_head", required=True, help="the story's queued head")
     p.add_argument("--reason", required=True, help="why the commits between them need no new round")
     p.set_defaults(fn=lead_carry_review)
+    p = command(sub, "lead-suite", help="run the binding's fullHealth at a commit, in a detached checkout of its own")
+    p.add_argument("--at", help="the commit to run at; the base head on the remote when absent")
+    p.add_argument("extra", nargs=argparse.REMAINDER, help="after --, arguments appended to the fullHealth argv")
+    p.set_defaults(fn=lead_suite)
     p = command(sub, "lead-resolve", help="resolve a recorded blocker, or rerun a failed fullHealth")
     p.add_argument("id", help="the blocker's journal id, or full-health to rerun a failed fullHealth")
     p.add_argument("--why", required=True)

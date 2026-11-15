@@ -373,6 +373,138 @@ def file_lock(path: Path, timeout: float | None = None, *, shared: bool = False)
         os.close(descriptor)
 
 
+# How often a command waiting for a base's merge slot tries it again, and the most a queue that just merged defers.
+SLOT_POLL_SECONDS = 0.25
+
+
+def slot_name(base: str) -> str:
+    """A base's name as its merge slot's file names it: ``%`` as ``%25``, then ``/`` as ``%2F``."""
+    return base.replace("%", "%25").replace("/", "%2F")
+
+
+def merge_slot_path(repository: Path, base: str) -> Path:
+    """The lock every delivery's queue and lead commands on ``base`` share: one for each base, beside the
+    repository's git common directory, so every checkout and linked worktree of it names the same file."""
+    try:
+        found = subprocess.run(["git", "rev-parse", "--git-common-dir"], cwd=repository, capture_output=True,
+                               text=True, check=False)
+    except OSError as error:
+        raise StateError("slot_unavailable", f"cannot run git in {repository}: {error}") from None
+    if found.returncode != 0 or not found.stdout.strip():
+        raise StateError("slot_unavailable", f"{repository} is not in a git checkout: {found.stderr.strip()}")
+    common = Path(found.stdout.strip())
+    if not common.is_absolute():
+        common = Path(repository) / common
+    return common.resolve() / "agent-skills" / "merge-slot" / f"{slot_name(base)}.lock"
+
+
+def pid_alive(pid: int) -> bool:
+    """Whether a process runs with ``pid``; asking never signals it."""
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)  # type: ignore[attr-defined]
+        if not handle:
+            return False
+        ctypes.windll.kernel32.CloseHandle(handle)  # type: ignore[attr-defined]
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def slot_waiters(waiting: Path, own: int | None = None) -> list[int]:
+    """The pids of the live commands waiting for a slot, other than ``own``; a dead waiter's file is removed."""
+    alive = []
+    for entry in sorted(waiting.iterdir()) if waiting.is_dir() else []:
+        try:
+            pid = int(entry.name)
+        except ValueError:
+            continue
+        if pid == own:
+            continue
+        if pid_alive(pid):
+            alive.append(pid)
+        else:
+            with contextlib.suppress(OSError):
+                entry.unlink()
+    return alive
+
+
+def slot_holder(lock: Path) -> dict | None:
+    """What the holder file beside a slot says: for display only, since only the lock says whether it is held."""
+    try:
+        said = json.loads((lock.parent / (lock.name[:-len(".lock")] + ".holder")).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return said if isinstance(said, dict) else None
+
+
+def holder_words(holder: dict | None) -> str:
+    if not holder:
+        return "a process that left no holder file"
+    return f"delivery {holder.get('delivery', 'unknown')} (pid {holder.get('pid', '?')}, since {holder.get('since', '?')})"
+
+
+@contextlib.contextmanager
+def merge_slot(repository: Path, base: str, *, delivery: str, timeout: float, poll: float = SLOT_POLL_SECONDS,
+               after_merge: bool = False, sleep: Callable[[float], None] = time.sleep,
+               clock: Callable[[], float] = time.monotonic) -> Iterator[Path]:
+    """Hold ``base``'s merge slot, shared by every delivery on this machine, for the duration of one command.
+
+    A command that finds it held writes its pid in the slot's ``waiting`` folder, tries again every ``poll``
+    seconds within ``timeout``, and removes its file when it takes the slot or gives up, which raises
+    ``slot_held`` naming the holder. ``after_merge``, for a queue whose last command merged, waits one poll first
+    when another live command waits, and never more, so the waiter goes first. The holder file names the holder's
+    delivery, pid and start; only the lock, which the operating system releases with a dead holder, decides.
+    """
+    lock = merge_slot_path(repository, base)
+    stem = lock.name[:-len(".lock")]
+    waiting = lock.parent / "waiting" / stem
+    holder = lock.parent / f"{stem}.holder"
+    own = os.getpid()
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    if after_merge and slot_waiters(waiting, own):
+        sleep(poll)
+    with contextlib.ExitStack() as held:
+        mine: Path | None = None
+        deadline = clock() + timeout
+        try:
+            while True:
+                try:
+                    held.enter_context(file_lock(lock, timeout=0))
+                    break
+                except StateError as error:
+                    if error.code != "lock_timeout":
+                        raise
+                if mine is None:
+                    waiting.mkdir(parents=True, exist_ok=True)
+                    mine = waiting / str(own)
+                    mine.write_text(json.dumps({"pid": own, "delivery": delivery, "since": now()}) + "\n",
+                                    encoding="utf-8")
+                if clock() >= deadline:
+                    raise StateError("slot_held", f"the merge slot for {base} is held by "
+                                                  f"{holder_words(slot_holder(lock))}")
+                sleep(poll)
+        finally:
+            if mine is not None:
+                with contextlib.suppress(OSError):
+                    mine.unlink()
+        _write_atomically(holder, json.dumps({"delivery": delivery, "pid": own, "since": now(),
+                                              "base": base}, sort_keys=True) + "\n")
+        try:
+            yield lock
+        finally:
+            with contextlib.suppress(OSError):
+                if (slot_holder(lock) or {}).get("pid") == own:
+                    holder.unlink()
+
+
 def _note_change(directory: Path, change: str, *, version: int | None = None, journal: int | None = None) -> None:
     """Record one successful write, for a live view; called under the state lock.
 

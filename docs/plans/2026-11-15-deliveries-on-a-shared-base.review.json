@@ -1,0 +1,149 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "writtenBy": "run-delivery plan-review",
+  "plan": "docs/plans/2026-11-15-deliveries-on-a-shared-base.md",
+  "planSha256": "0fef3ca48ebcd7af281023d17b94e9388503bcbb29833a667e860614494233bd",
+  "planCommit": "f56072f86c8b99950c3a69b161a3e8ebb8626382",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": [
+    "lens.outcome-correctness",
+    "lens.adversarial-testing"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "candidate": "4b862f79c3310dc88eb32d8df2b65c3653a9e092",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-15T13:37:29.947582Z",
+      "finishedAt": "2026-11-15T13:42:19.590324Z",
+      "open": [
+        "outcome-correctness-r1-1",
+        "outcome-correctness-r1-2",
+        "outcome-correctness-r1-3",
+        "outcome-correctness-r1-4",
+        "adversarial-testing-r1-1",
+        "adversarial-testing-r1-2",
+        "adversarial-testing-r1-3",
+        "adversarial-testing-r1-4",
+        "adversarial-testing-r1-5",
+        "adversarial-testing-r1-6",
+        "adversarial-testing-r1-7",
+        "adversarial-testing-r1-8",
+        "adversarial-testing-r1-9",
+        "adversarial-testing-r1-10",
+        "adversarial-testing-r1-11",
+        "adversarial-testing-r1-12"
+      ]
+    },
+    {
+      "round": 2,
+      "candidate": "b7d20b5c54e2d9dadd935e5322c2a1fd8e66dd4c",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-15T13:44:55.069103Z",
+      "finishedAt": "2026-11-15T13:48:06.348141Z",
+      "open": [
+        "outcome-correctness-r2-1",
+        "adversarial-testing-r2-1",
+        "adversarial-testing-r2-2"
+      ]
+    },
+    {
+      "round": 3,
+      "candidate": "f56072f86c8b99950c3a69b161a3e8ebb8626382",
+      "outcome": "aligned",
+      "startedAt": "2026-11-15T13:48:44.784867Z",
+      "finishedAt": "2026-11-15T13:50:07.009316Z",
+      "open": []
+    }
+  ],
+  "reviews": [
+    {
+      "lens": "lens.outcome-correctness",
+      "round": 3,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.outcome-correctness",
+        "subjectRef": "deliveries-on-a-shared-base.plan",
+        "candidateRef": "f56072f86c8b99950c3a69b161a3e8ebb8626382",
+        "round": 3,
+        "outcome": "aligned",
+        "findings": [],
+        "evidence": [
+          "Reviewed tree SHA d9b8f7832b70946f5232d4c81d076362be030fb8 in the private checkout at /Users/kwamina/agent-skills/.orchestration/plan-review/deliveries-on-a-shared-base/checkouts/lens.outcome-correctness, detached at f56072f86c8b99950c3a69b161a3e8ebb8626382.",
+          "Start identity check succeeded: `git rev-parse HEAD^{tree}` gave d9b8f7832b70946f5232d4c81d076362be030fb8 and `git status --porcelain` was empty.",
+          "End identity check succeeded: the same tree SHA and an empty `git status --porcelain`. Nothing was written, mutated or run in the checkout beyond read-only git, sed and grep. No mutation or fault injection was done, and no checks were run: the brief scopes none for a plan review.",
+          "Delta derived with `git diff b7d20b5c54e2d9dadd935e5322c2a1fd8e66dd4c..f56072f86c8b99950c3a69b161a3e8ebb8626382`: one file, `docs/plans/2026-11-15-deliveries-on-a-shared-base.md`, 49 insertions and 28 deletions. I read the whole delta and the whole revised plan.",
+          "Re-check of outcome-correctness-r2-1: fixed, by the first proposed change as written. Decision 19 adds `ranPattern`, read over the rerun's whole output, and validation refuses a member without it or with one that does not compile. Decision 20 counts the rerun as a pass only when it exits 0 with output `ranPattern` matches. The V26-3425 row now reads 'a rerun that exits 0 with output `ranPattern` does not match journals `base.broken`', and the validation row in `tests/test_orchestration_state.py` names the missing and the non-compiling `ranPattern`.",
+          "Round 1's findings outcome-correctness-r1-1 to r1-4 were closed as fixed in round 2. The delta weakens none of them: Decision 8 only adds that a known read set is the paths of all of a check's complete entries together; Decisions 24, 25 and 27 are unchanged in substance; the `unrecheckedPattern` rule in Decision 20 is unchanged.",
+          "Round 2's P2 notes, re-checked. Decision 10 now says the binding file never matches `selection.unread`, with a row. The real-output row now includes a test that passes unexpectedly.",
+          "Round 2's P3 notes, re-checked. V26-3425's file list now holds `docs/own-deliveries.md` and `tests/test_own_deliveries.py`, and Decision 26 says that file gives the member. Decision 19 says `{tests}` becomes one argument for each test. Not taken up, and still P3 notes: the plan's list of edits that cross lanes does not name the record shape `lead-own --claim` adds in lane 1's `delivery_state.py` and `schemas.json`, and Decision 25 records neither Node nor test counts.",
+          "Review of the delta, V26-3319: Decision 8's union of complete entries has a row for a mixed complete and plain entry, a row for two complete entries, and a mutant.",
+          "Review of the delta, V26-3425: Decision 20's 'the checkout the failed run used' can be built, since `run_full_health` removes its checkout only after the argv returns, and it has a row. Decision 21's new last sentence needs `record_full_health` to stop reading only the last result (`before[-1][\"result\"] == \"failed\"`). The rows 'broken at A, flaky at B, pass at C journals `base.repaired`' and 'a pass after a flaky with no standing break journals `base.verified`' pin both branches.",
+          "Review of the delta, V26-3318, V26-3264 and V26-3320: the new rows (a live waiter that never takes the slot, a waiter's file removed on giving up, a relative stub interpreter that exists only in the detached checkout, a failing suite's checkout removed, a peer on another base journalling no `peer.merged`, a stale peer's claim warning) each match a decision and contradict none.",
+          "Read beyond the plan this round: `scripts/run-tests.py` (`report` and the argument parser) and `record_full_health` and `run_full_health` in `skills/run-delivery/scripts/run_delivery.py`. The runner prints `FAIL: `, `ERROR: `, `UNEXPECTED SUCCESS: `, `CRASHED: ` and `TIMED OUT: ` lines and `Ran N tests in`, so a member that meets the real-output row can be written for this repository. The runner takes one `-p` file pattern and no test ids, so that member's `argv` will have to be another command, such as `python -m unittest {tests}`; the row, which reads the member from `docs/own-deliveries.md`, will show whether the one V26-3425 writes works.",
+          "P2 note, not filed: `ranPattern` shows that the rerun ran a test, not that it ran every test `failurePattern` named. With a selector that silently skips a name it does not match (for example `-k`), a reproducing failure beside a flaky one is journalled `base.flaky`. I declined to file it: it is my own round 2 proposal adopted as written, a rerun by test id fails on an unknown name, and the guide's wording for the member can say the argv must fail on a name it cannot select.",
+          "P3 notes, not filed: the real-output row does not require that `ranPattern` fail to match `Ran 0 tests`; this repository's runner exits 5 there, so the exit code covers it. Decision 29's 'has no supervisor' warning has no row, only the stale one.",
+          "No finding is raised this round, so there is no late finding and no declined finding beyond the P2 note above.",
+          "Model class: claude-fable-5-2, running as a native subagent. Realization basis: host-convention. The host exposes no progress or permission signals to this lens. No subagent was spawned.",
+          "Approval conditions: none. This result raises no finding; the one carried finding, outcome-correctness-r2-1, is fixed by its proposed change adopted as written."
+        ],
+        "resolvedFindings": [
+          {
+            "id": "outcome-correctness-r2-1",
+            "state": "fixed",
+            "resolution": "Decision 19 adds a required `ranPattern`, read over the rerun's whole output and refused when missing or not compiling. Decision 20 counts the rerun as a pass only when it exits 0 with output `ranPattern` matches. The V26-3425 row and the validation row are reworded to match."
+          }
+        ]
+      },
+      "resultSha256": "dae81bd9b46c7950a88fc0e4e9e79f17829c56491a0dcdb2696cb067a9597076"
+    },
+    {
+      "lens": "lens.adversarial-testing",
+      "round": 3,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.adversarial-testing",
+        "subjectRef": "deliveries-on-a-shared-base.plan",
+        "candidateRef": "f56072f86c8b99950c3a69b161a3e8ebb8626382",
+        "round": 3,
+        "outcome": "aligned",
+        "findings": [],
+        "evidence": [
+          "Reviewed tree SHA d9b8f7832b70946f5232d4c81d076362be030fb8 in the private checkout at HEAD f56072f86c8b99950c3a69b161a3e8ebb8626382. Start identity check passed: `git rev-parse HEAD^{tree}` matched and `git status --porcelain` was empty. End identity check passed: same tree SHA, status empty.",
+          "Verification round. Delta derived with `git diff b7d20b5c54e2d9dadd935e5322c2a1fd8e66dd4c..f56072f86c8b99950c3a69b161a3e8ebb8626382`: one file, the plan, 49 insertions and 28 deletions. The candidate resolution pairs in the brief were matched by exact text.",
+          "Model class: claude-fable-5-2, run as a native subagent. Realization basis: host-convention. The host exposes no progress or permission signals to this lens; no run ID exists.",
+          "No checks were run (the brief names none for a plan review) and no mutants were planted; the checkout was only read. The mutations considered are reasoned against the plan's rows and the code its stories change or call: `record_full_health`, `full_health_break` and `only_full_health_breaks` in `skills/run-delivery/scripts/run_delivery.py`. They stay within that scope.",
+          "Re-check r2-1: fixed, adopted as written. Decision 8 now says a known read set is the paths of all the complete entries naming the check together. Row (a) is at lines 250-251 (one complete and one plain entry runs again on a move touching neither), row (b) at lines 252-253 (two complete entries: runs again on a move only the second lists, carried when the move touches neither). The mutant is in the list at line 167.",
+          "Re-check r2-2: fixed. Decision 21 states that the first passing run after a flaky result journals `base.repaired` when a `fullHealth` break still stands and `base.verified` when none does. The row at lines 350-352 extends the sequence to a passing run at head C, asserting `base.repaired` and that `serve` takes the next candidate. The row at line 353 pins `base.verified` and no `base.repaired` with no standing break.",
+          "Round-2 P2 and P3 notes adopted in the delta, each checked: `docs/own-deliveries.md` gives the member and the row reads it from that file (Decision 26, lines 359-362, Files at lines 323-324), with the unexpected-success case added; the two-test row fixes which test reproduces (line 338) and Decision 19 says the pattern applies to every match; the binding file never matches `selection.unread` (Decision 10, row at line 258); the `unread` row includes a check with an unknown read set (lines 256-257); a live waiter that never takes the slot and a waiter that gives up have rows (lines 304-305); a peer on another base journals no `peer.merged` (line 425); the rerun's checkout has a row (line 343); a non-compiling `unrecheckedPattern` and `ranPattern` are named in the validation row (lines 347-349); the stub interpreter is a relative path that exists only in the detached checkout (lines 385-387); a failing suite's checkout is gone (line 392); a stale peer's claim warns and says so (Decision 29, line 426).",
+          "Delta reviewed for new surviving mutations. `ranPattern` has both sides pinned: the flaky row at lines 335-336 needs a match, and the row at line 342 denies exit 0 without one. First-match use of `failurePattern` is killed by line 338. No P0 or P1 found.",
+          "P2 note: Decision 29 says a claim of a peer with no supervisor warns and says which, but the row at line 426 covers only the stale peer. A mutant that skips the claims of registry entries with no pid survives unless the fixture peer in the row at lines 421-422 happens to have no supervisor.",
+          "P2 note: Decision 19's '`{tests}` becomes one argument for each test' has no row that states it. A mutant that joins the names into one argument survives unless the fixture rerun at line 338, or the real-runner row at lines 359-362, is run with two names and tells them apart.",
+          "P2 note: the row at line 342 does not say the failed run's own output matches `ranPattern`. A mutant that applies `ranPattern` to the failed run's output instead of the rerun's survives if the fixture's failed output does not match it.",
+          "P2 note: in the real-runner row (lines 359-362), `ranPattern` has allow-only coverage: a pattern that matches any output passes. Here `scripts/run-tests.py` exits 5 when no test ran, so the exit code guards this repository, but an adopter copying the pattern is not guarded.",
+          "P2 note: Decision 21's 'when a `fullHealth` break still stands' is pinned only for a `fullHealth` break. On `main` `only_full_health_breaks` keeps a pass from repairing a break the queue found; no row carries that guard across a flaky result (queue-found `base.broken`, then `base.flaky`, then a pass, expecting `base.verified`).",
+          "P3 note: the `lead-resolve full-health` row at lines 356-358 has no case with a `base.flaky` result at the new head. Decision 19 does not say whether `{tests}` must be a whole argv element.",
+          "Approval conditions: no finding is raised this round, so none applies. adversarial-testing-r2-1 and adversarial-testing-r2-2 met their round-2 approval conditions as recorded above."
+        ],
+        "resolvedFindings": [
+          {
+            "id": "adversarial-testing-r2-1",
+            "state": "fixed",
+            "resolution": "Adopted as written: Decision 8 states the read set is all complete entries' paths together; rows at lines 250-251 and 252-253; mutant listed at line 167."
+          },
+          {
+            "id": "adversarial-testing-r2-2",
+            "state": "fixed",
+            "resolution": "Decision 21 states what the first pass after a flaky result journals; rows at lines 350-352 and 353 assert the journal kind and that `serve` takes the next candidate."
+          }
+        ]
+      },
+      "resultSha256": "3f64dc50a722bd44cc2d4d843e6fe7e7b419d5e4403994225665d81851f9d54d"
+    }
+  ],
+  "residualRisks": [
+    "3 review rounds; findings open after each round: 16, 3, 0."
+  ]
+}

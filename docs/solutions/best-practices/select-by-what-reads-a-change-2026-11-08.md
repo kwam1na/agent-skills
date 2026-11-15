@@ -33,6 +33,17 @@ unless the binding says so: readers are declared, never inferred from text.
 base head failed, from the queue's `meta.baseReruns`, so a selection that would
 stop as `base_broken` is seen before it queues.
 
+The same declarations tell a base move that matters from one that doesn't. A
+plain readers entry only says which checks a change adds, so it can't say a
+check is safe from a change elsewhere. An entry marked `"complete": true` says
+its paths are everything its checks read, their test modules included, and
+`selection.unread` names what nothing reads. When the base moves after a
+candidate's checks passed, the queue lists the move's files without rename
+detection. A check whose read set is known and untouched, or every check when
+the whole move is unread, is carried to the new base with no run again, and
+one `check.carried` names it and the base commits it was not run on. A file in
+the candidate's own diff, or the binding file, carries nothing.
+
 ## Why This Matters
 
 A change's blast radius is what consumes it, not where it lives. Keying checks
@@ -49,6 +60,10 @@ memory.
   selection can leave them out.
 - Read `select`'s warnings before queueing: a selected check failing at the
   base head would stop the queue.
+- Mark a readers entry complete only when its paths really are everything its
+  checks read. A complete entry that misses a read file carries a check over a
+  base change that breaks it, and only the post-merge `fullHealth` run would
+  catch it.
 
 ## Examples
 
@@ -71,6 +86,14 @@ fixtures:
 A story changing `schemas.json`, selected with `--checks schema-readers`, runs
 `schema-readers`, `corpus-guards` and `plan-fixtures` without the lead naming
 the last two.
+
+Re-checking by what reads the base's change: a queued candidate's
+`run-delivery` check passed, and then the base moved, in a merge that changed
+only `tests/test_delivery_views_render.py`. With
+`{"paths": ["skills/run-delivery/**", "tests/test_run_delivery.py"], "checks": ["run-delivery"], "complete": true}`,
+that check is carried and the candidate merges without running it again.
+`"unread": ["docs/plans/**"]` lets a base move that only adds a plan carry
+every check.
 
 ## Related
 

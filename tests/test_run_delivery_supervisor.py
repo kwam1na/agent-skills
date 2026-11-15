@@ -13,6 +13,7 @@ import html
 import importlib.util
 import json
 import os
+import platform
 import re
 import shlex
 import shutil
@@ -133,7 +134,10 @@ if said == "lane-done":
                     "--lane", "lane-1", "--text", "done", "--state", "done"], check=True, capture_output=True)
 if said == "fail":
     print("fullHealth: test_parser failed")
-sys.exit(1 if said == "fail" else 0)
+if said == "flaky":
+    # A failure the binding's fullHealthRerun names, which the rerun decides.
+    print("FAIL: tests.fx.T.test_flaky")
+sys.exit(1 if said in ("fail", "flaky") else 0)
 '''
 
 # Holds a lock as a supervisor would, recording what it is given.
@@ -160,7 +164,7 @@ def supervised(fx: Fixture, *, grant_ready: bool = True, merge_needs_ready: bool
     path = setup_delivery(fx)
     m = fx.main
     tools = {"fake_forge.py": FORGE, "candidate.py": CANDIDATE, "merge.py": MERGE, "check.py": CHECK,
-             "full_health.py": FULL_HEALTH, "snapshot.py": SNAPSHOT}
+             "full_health.py": FULL_HEALTH, "snapshot.py": SNAPSHOT, "rerun.py": RERUN}
     for name, text in tools.items():
         (m / "tools" / name).write_text(text)
     py = lambda name: [sys.executable, "-B", f"tools/{name}"]
@@ -188,7 +192,8 @@ def supervised(fx: Fixture, *, grant_ready: bool = True, merge_needs_ready: bool
     (m / ".gitignore").write_text(".orchestration/\nout/\nlanes/\n")
     commit(m, "FX-1: a binding whose queue merges")
     sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
-    fx.env.update(FX_SIGNALS=str(fx.tmp / "signals.jsonl"), FX_HEALTH=str(fx.tmp / "health"))
+    fx.env.update(FX_SIGNALS=str(fx.tmp / "signals.jsonl"), FX_HEALTH=str(fx.tmp / "health"),
+                  FX_RERUN_RUNS=str(fx.tmp / "reruns.jsonl"))
     return path
 
 
@@ -444,6 +449,173 @@ class DeferredFindingTests(unittest.TestCase):
         self.assertEqual(self.tool.followups_step(c, doc), (True, "follow-ups: 0 recorded"))
         self.assertEqual(len(calls), 2, calls)
         self.assertEqual(doc["state"]["followups"], [])
+
+
+# A fullHealth rerun as a binding declares it: each named test passes alone unless FX_RERUN_FAILS names it, or names
+# "first" and this is the rerun's first run. It records its cwd and arguments, one line per run.
+RERUN = r'''
+import json, os, pathlib, sys, time
+runs = pathlib.Path(os.environ["FX_RERUN_RUNS"])
+earlier = runs.read_text().splitlines() if runs.exists() else []
+with open(runs, "a") as out:
+    out.write(json.dumps({"cwd": os.getcwd(), "tests": sys.argv[1:]}) + "\n")
+fails = os.environ.get("FX_RERUN_FAILS", "").split(",")
+failing = [name for name in sys.argv[1:] if name in fails] or (["first"] if "first" in fails and not earlier else [])
+print("\n".join(f"FAIL: {name}" for name in failing))
+if os.environ.get("FX_RERUN_HANGS") == "1":
+    time.sleep(60)
+if os.environ.get("FX_RERUN_SILENT") != "1":
+    print(f"Ran {len(sys.argv) - 1} tests in 0.1s")
+sys.exit(1 if failing else 0)
+'''
+
+
+# The fixture binding's fullHealthRerun: the RERUN tool, read as this repository's runner prints.
+FLAKY_RERUN = {"argv": [sys.executable, "-B", "tools/rerun.py", "{tests}"],
+               "failurePattern": r"(?m)^(?:FAIL|ERROR|UNEXPECTED SUCCESS): (\S+)$",
+               "ranPattern": r"(?m)^Ran [1-9]\d* tests? in ",
+               "unrecheckedPattern": r"(?m)^(?:CRASHED|TIMED OUT): |^(?:FAIL|ERROR|UNEXPECTED SUCCESS): \S+ "}
+
+
+class FullHealthRerunTests(unittest.TestCase):
+    """Decision 20: a failed fullHealth is flaky only when the binding declares fullHealthRerun, nothing in its output
+    matches unrecheckedPattern, failurePattern names a test, and one run of argv with those tests, in the failed run's
+    checkout, exits 0 with output ranPattern matches."""
+
+    def setUp(self) -> None:
+        self.tool = loaded_run_delivery(self, "run_delivery_for_full_health_rerun")
+        self.tmp = Path(tempfile.mkdtemp(prefix="full-health-rerun-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.checkout = self.tmp / "checkout"
+        self.checkout.mkdir()
+        (self.tmp / "rerun.py").write_text(RERUN)
+        self.runs = self.tmp / "runs.jsonl"
+        self.enterContext(mock.patch.dict(os.environ, {"FX_RERUN_RUNS": str(self.runs)}))
+        for name in ("FX_RERUN_FAILS", "FX_RERUN_SILENT", "FX_RERUN_HANGS"):
+            self.enterContext(mock.patch.dict(os.environ, {name: ""}))
+        self.member = {"argv": [sys.executable, "-B", str(self.tmp / "rerun.py"), "{tests}"],
+                       "failurePattern": r"(?m)^(?:FAIL|ERROR|UNEXPECTED SUCCESS): (\S+)$",
+                       "ranPattern": r"(?m)^Ran [1-9]\d* tests? in ",
+                       "unrecheckedPattern": r"(?m)^(?:CRASHED|TIMED OUT): "}
+
+    def flaky(self, out: str, member: dict | None = "declared", timeout: int = 60, started=None, **env: str):
+        with mock.patch.dict(os.environ, env):
+            return self.tool.flaky_tests(self.member if member == "declared" else member, out, self.checkout, timeout,
+                                         started=started)
+
+    def reruns(self) -> list[dict]:
+        return [json.loads(line) for line in self.runs.read_text().splitlines()] if self.runs.exists() else []
+
+    def test_a_failing_test_that_passes_alone_is_flaky(self) -> None:
+        self.assertEqual(self.flaky("FAIL: tests.a.A.test_one\nFAILED (failures=1)\n"), ["tests.a.A.test_one"])
+        # Once, in the checkout the failed run used, with each test one argument.
+        self.assertEqual(self.reruns(), [{"cwd": str(self.checkout.resolve()), "tests": ["tests.a.A.test_one"]}])
+
+    def test_a_failure_that_reproduces_alone_or_any_of_two_that_does_is_not_flaky(self) -> None:
+        self.assertIsNone(self.flaky("FAIL: tests.a.A.test_one\n", FX_RERUN_FAILS="tests.a.A.test_one"))
+        two = "ERROR: tests.a.A.test_one\nUNEXPECTED SUCCESS: tests.b.B.test_two\n"
+        self.assertIsNone(self.flaky(two, FX_RERUN_FAILS="tests.b.B.test_two"))
+        self.assertEqual(self.reruns()[-1]["tests"], ["tests.a.A.test_one", "tests.b.B.test_two"])
+
+    def test_a_failure_the_rerun_cannot_recheck_starts_no_rerun(self) -> None:
+        self.assertIsNone(self.flaky("FAIL: tests.a.A.test_one\nCRASHED: tests.c.C (exit 9)\n"))
+        self.assertIsNone(self.flaky("TIMED OUT: tests.c.C after 3s\n"))
+        self.assertEqual(self.reruns(), [])
+
+    def test_no_named_test_no_member_or_a_rerun_that_ran_nothing_is_not_flaky(self) -> None:
+        self.assertIsNone(self.flaky("Traceback: the runner itself failed\n"))
+        self.assertIsNone(self.flaky("FAIL: tests.a.A.test_one\n", member=None))
+        self.assertEqual(self.reruns(), [])
+        self.assertIsNone(self.flaky("FAIL: tests.a.A.test_one\n", FX_RERUN_SILENT="1"))
+        self.assertEqual(len(self.reruns()), 1)
+
+    def test_the_rerun_runs_once_though_a_second_would_pass(self) -> None:
+        self.assertIsNone(self.flaky("FAIL: tests.a.A.test_one\n", FX_RERUN_FAILS="first"))
+        self.assertEqual(len(self.reruns()), 1)
+
+    def test_a_rerun_stopped_by_its_timeout_is_not_flaky_and_its_pid_reaches_the_run_s_stop(self) -> None:
+        pids = []
+        self.assertIsNone(self.flaky("FAIL: tests.a.A.test_one\n", timeout=1, started=pids.append, FX_RERUN_HANGS="1"))
+        self.assertEqual(len(pids), 1, pids)
+        self.assertEqual(len(self.reruns()), 1)
+
+    def test_a_failure_named_far_from_the_output_s_end_is_found(self) -> None:
+        out = "FAIL: tests.a.A.test_one\n" + "x" * 5000 + "\nFAILED (failures=1)\n"
+        self.assertEqual(self.flaky(out), ["tests.a.A.test_one"])
+
+
+class MovedHeadTests(unittest.TestCase):
+    """Decision 22: at a base head past a failed fullHealth's, lead-resolve names what stands there."""
+
+    def stands(self, running=None, posture="gate", last=None, journal=()) -> str:
+        tool = loaded_run_delivery(self, "run_delivery_for_moved_heads")
+        with mock.patch.multiple(tool, full_health_running=lambda c: running,
+                                 delivery_posture=lambda c: {"posture": posture}):
+            return tool.moved_head_stands(None, {"journal": list(journal)}, "b" * 40, last)
+
+    def test_a_run_running_at_the_new_head_is_named_and_none_is_due_under_focused(self) -> None:
+        said = self.stands(running={"head": "b" * 40, "pid": 4321, "startedAt": "2026-11-15T10:00:00Z"})
+        self.assertTrue(said.startswith("a run is running (fullHealth running at bbbbbbbbbb since 2026-11-15T10:00:00Z "
+                                        "(pid 4321)): wait for its result"), said)
+        self.assertNotIn("due", said)
+        # A run at another head is not this one's; under focused no run comes.
+        self.assertTrue(self.stands(running={"head": "a" * 40, "pid": 1}).startswith("a run is due"))
+        self.assertTrue(self.stands(posture="focused").startswith("nothing stands"))
+
+    def test_a_pass_is_named_as_the_repair_only_of_a_break_full_health_found(self) -> None:
+        found = {"id": 7, "kind": "base.broken", "summary": "fullHealth failed at aaaaaaaaaa after FX-2's merge: x"}
+        queue = {"id": 7, "kind": "base.broken", "summary": "base_broken: lint also fails on the base"}
+        by_pass = "a fullHealth pass there journals it, or, once you have checked the base"
+        self.assertIn(by_pass, self.stands(last={"result": "passed"}, journal=[found]))
+        said = self.stands(last={"result": "passed"}, journal=[queue])
+        self.assertIn("base.broken (journal entry 7) still awaits base.repaired: once you have checked the base", said)
+        self.assertNotIn("a fullHealth pass", said)
+
+
+class FlakyFullHealthWordingTests(unittest.TestCase):
+    """The guide's close-out and run-delivery's skill say what a flaky fullHealth is and what lead-resolve names."""
+
+    @staticmethod
+    def normal(path: str) -> str:
+        return " ".join((Path(__file__).resolve().parents[1] / path).read_text(encoding="utf-8").split())
+
+    def test_the_guide_and_the_skill_say_what_a_flaky_run_does_and_what_stands_at_a_moved_head(self) -> None:
+        guide = self.normal("skills/orchestrate-work/references/orchestration-guide.md")
+        close_out = guide[guide.index("### 8. Close out"):guide.index("## Lane brief template")]
+        stands = ("names what stands at the new head: a run running there, a run due there, a `base.broken` that still "
+                  "awaits `base.repaired`, or none of these")
+        for phrase in (
+                "A binding that declares `fullHealthRerun` has a failed run re-checked once, in the checkout it ran in, "
+                "before it breaks the base",
+                "It journals `base.flaky`, naming the tests and the head, and no `base.broken`.",
+                "A flaky run is that head's result: it pauses nothing and holds nothing at the close, and \"Needs you\" "
+                "lists its tests without holding.",
+                "It is not a pass either: it repairs nothing, so a `base.broken` that still stands keeps serve paused, and "
+                "the first pass after it journals `base.repaired` when a `fullHealth` break still stands, and "
+                "`base.verified` when none does.",
+                stands):
+            with self.subTest(phrase=phrase[:50]):
+                self.assertIn(phrase, close_out)
+        self.assertIn(stands, self.normal("skills/run-delivery/SKILL.md"))
+        self.assertIn('| `base.flaky` | None: the post-merge `fullHealth` failed and its failing tests passed when re-run '
+                      'alone, so the base isn\'t broken;', guide)
+
+
+class LeadSuiteWordingTests(unittest.TestCase):
+    """The guide's integration step and run-delivery's skill name lead-suite for the lead's own full suite."""
+
+    def test_the_guide_s_integration_step_and_the_skill_name_lead_suite(self) -> None:
+        normal = lambda path: " ".join((Path(__file__).resolve().parents[1] / path).read_text(encoding="utf-8").split())
+        guide = normal("skills/orchestrate-work/references/orchestration-guide.md")
+        step = guide[guide.index("1. **Integrate.**"):guide.index("2. **Review the integration.**")]
+        for phrase in ("Run the lead's own full suite with run-delivery's `lead-suite --at <commit>`",
+                       "in a detached checkout of that commit under the binding's work folder, so nothing done in the "
+                       "lead's checkout while it runs reaches it, and appends its result to the flow log's "
+                       "`<delivery>.suite.jsonl`."):
+            with self.subTest(phrase=phrase[:40]):
+                self.assertIn(phrase, step)
+        self.assertIn("| Lead | `lead-suite [--at COMMIT] [-- ARG...]` | Runs the binding's `fullHealth`",
+                      normal("skills/run-delivery/SKILL.md"))
 
 
 class FinishMarkOrderTests(unittest.TestCase):
@@ -4246,7 +4418,22 @@ class SupervisorPostMergeTests(unittest.TestCase):
             state_tool(fx, "focus", "--lane", lane, "--text", "done", "--state", "done")
 
     def base_events(self, fx: Fixture) -> list[dict]:
-        return [e for e in record(fx)["journal"] if e["kind"] in ("base.verified", "base.broken", "base.repaired")]
+        return [e for e in record(fx)["journal"] if e["kind"] in ("base.verified", "base.broken", "base.repaired",
+                                                                   "base.flaky")]
+
+    def serve_until_idle(self, fx: Fixture) -> None:
+        """The merge queue's serve, until nothing more can be taken: what a held queue takes, and what it leaves."""
+        sh(sys.executable, "-B", fx.release / "skills/orchestrate-work/scripts/merge_queue.py", "--repo", fx.main,
+           "--state", fx.tmp / "record", "--remote", "origin", "--base", "feature/FX-1", "serve", "--until-idle",
+           "--poll", "0.1", cwd=fx.main, env=fx.env, check=False)
+
+    def stage(self, fx: Fixture, key: str) -> str:
+        return next(q for q in record(fx)["state"]["queue"] if q["subject"] == key)["stage"]
+
+    def queued(self, fx: Fixture, key: str, lane: str) -> None:
+        hand_off(fx, key, lane)
+        code, out = fx.flow("lead-accept", key, cwd=fx.main)
+        self.assertEqual(code, 0, out)
 
     def results(self, fx: Fixture) -> list[dict]:
         log = fx.tmp / "flow-log/FX-1.full-health.jsonl"
@@ -4401,6 +4588,108 @@ class SupervisorPostMergeTests(unittest.TestCase):
         results = [json.loads(line) for line in (archive / "flow-log/FX-1.full-health.jsonl").read_text().splitlines()]
         self.assertTrue(any(e.get("head") == merged and e.get("result") == "passed" for e in results), results)
         self.assertEqual(json.loads(binding.read_text()), standing)
+
+    def test_a_failure_that_passes_alone_is_flaky_holds_nothing_and_the_next_pass_verifies(self) -> None:
+        fx = self.fixture(fullHealthRerun=FLAKY_RERUN)
+        (fx.tmp / "health").write_text("flaky")
+        self.merged(fx, "FX-2", "lane-1")
+        last = self.once(fx)
+        self.assertEqual([e["kind"] for e in self.base_events(fx)], ["base.flaky"])
+        head = self.base_tip(fx)
+        self.assertIn(f"fullHealth failed at {head[:10]}", kinds(fx, "base.flaky")[0]["summary"])
+        self.assertIn("tests.fx.T.test_flaky", kinds(fx, "base.flaky")[0]["summary"])
+        self.assertEqual((self.results(fx)[-1]["result"], self.results(fx)[-1]["tests"]), ("flaky", ["tests.fx.T.test_flaky"]))
+        # Rerun once, alone, in the checkout the failed run used: not the lead's, and gone with the run.
+        [rerun] = [json.loads(line) for line in (fx.tmp / "reruns.jsonl").read_text().splitlines()]
+        self.assertEqual(rerun["tests"], ["tests.fx.T.test_flaky"])
+        self.assertNotEqual(Path(rerun["cwd"]).resolve(), fx.main.resolve())
+        self.assertTrue(rerun["cwd"].endswith("/base") and not Path(rerun["cwd"]).exists(), rerun)
+        # "Needs you" names the flaky test, holding nothing, and serve takes the next candidate.
+        [flaky] = [item for item in last["needsYou"] if "passed alone" in item["text"]]
+        self.assertFalse(flaky["holding"], flaky)
+        self.assertIn("tests.fx.T.test_flaky", flaky["text"])
+        (fx.tmp / "health").write_text("pass")
+        self.queued(fx, "FX-3", "lane-2")
+        self.serve_until_idle(fx)
+        self.assertEqual(self.stage(fx, "FX-3"), "merged")
+        # The pass after it verifies the base: there is no break for it to repair. A lane at work keeps it from closing.
+        state_tool(fx, "focus", "--lane", "lane-2", "--text", "still at work", "--state", "working")
+        self.once(fx)
+        self.assertEqual([e["kind"] for e in self.base_events(fx)], ["base.flaky", "base.verified"])
+        self.assertEqual(kinds(fx, "delivery.closed"), [])
+        # A flaky head with no break standing holds nothing at the close: the close-out reads its result and closes.
+        (fx.tmp / "health").write_text("flaky")
+        declare(fx, "landed by hand\n", path="src/landed.txt")
+        self.done(fx, "lane-1", "lane-2")
+        last = self.once(fx)
+        self.assertEqual([e["kind"] for e in self.base_events(fx)], ["base.flaky", "base.verified", "base.flaky"])
+        self.assertEqual(last["closeHeldBy"], [], last)
+        self.assertEqual(last["closeOut"][0], f"fullHealth flaky at {self.base_tip(fx)[:10]}", last)
+        self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)
+
+    def test_a_flaky_run_repairs_no_standing_break_and_lead_resolve_names_what_stands_at_a_moved_head(self) -> None:
+        fx = self.fixture(fullHealthRerun=FLAKY_RERUN)
+        (fx.tmp / "health").write_text("fail")
+        self.merged(fx, "FX-2", "lane-1")
+        self.once(fx)
+        [broken] = kinds(fx, "base.broken")
+        resolve = lambda: fx.flow("lead-resolve", "full-health", "--why", "flaky", cwd=fx.main)
+        # Head B, past the failed head A, with no run there yet: a run is due, and the break still stands.
+        (fx.tmp / "health").write_text("flaky")
+        declare(fx, "landed by hand\n", path="src/landed.txt")
+        code, out = resolve()
+        self.assertEqual(code, 2, out)
+        self.assertIn("which is no longer the base head", out)
+        self.assertIn("a run is due on the supervisor's next pass", out)
+        self.assertIn(f"base.broken (journal entry {broken['id']}) still awaits base.repaired", out)
+        # Flaky at B: no base.repaired, and serve stays paused.
+        self.once(fx)
+        self.assertEqual([e["kind"] for e in self.base_events(fx)], ["base.broken", "base.flaky"])
+        self.queued(fx, "FX-3", "lane-2")
+        self.serve_until_idle(fx)
+        self.assertEqual(self.stage(fx, "FX-3"), "queued")
+        code, out = resolve()
+        self.assertNotIn("a run is due", out)
+        self.assertIn("still awaits base.repaired", out)
+        # A pass at head C repairs the break, and serve takes the next candidate.
+        (fx.tmp / "health").write_text("pass")
+        declare(fx, "landed again\n", path="src/landed.txt")
+        self.once(fx)
+        self.assertEqual([e["kind"] for e in self.base_events(fx)], ["base.broken", "base.flaky", "base.repaired"])
+        self.serve_until_idle(fx)
+        self.assertEqual(self.stage(fx, "FX-3"), "merged")
+        # Its merge's head passes too, and then nothing stands.
+        self.once(fx)
+        code, out = resolve()
+        self.assertEqual(code, 2, out)
+        self.assertIn("nothing stands: no run is running or due, and no base.broken awaits repair", out)
+
+    def test_a_pass_after_a_flaky_run_never_repairs_a_break_the_queue_journalled(self) -> None:
+        fx = self.fixture(fullHealthRerun=FLAKY_RERUN)
+        self.merged(fx, "FX-2", "lane-1")
+        self.once(fx)
+        state_tool(fx, "journal", "--kind", "base.broken", "--summary", "base_broken: lint also fails on the base")
+        for health, text in (("flaky", "landed by hand\n"), ("pass", "landed again\n")):
+            (fx.tmp / "health").write_text(health)
+            declare(fx, text, path="src/landed.txt")
+            self.once(fx)
+        self.assertEqual([e["kind"] for e in self.base_events(fx)],
+                         ["base.verified", "base.broken", "base.flaky", "base.verified"])
+        self.queued(fx, "FX-3", "lane-2")
+        self.serve_until_idle(fx)
+        self.assertEqual(self.stage(fx, "FX-3"), "queued")
+
+    def test_a_close_out_run_of_its_own_that_is_flaky_holds_nothing(self) -> None:
+        fx = self.fixture(fullHealthRerun=FLAKY_RERUN)
+        (fx.tmp / "health").write_text("flaky")
+        (fx.tmp / "flow-log").mkdir(parents=True, exist_ok=True)
+        with open(fx.tmp / "flow-log/plan-changes.jsonl", "a") as changes:
+            changes.write(json.dumps({"type": "change", "id": "c1", "kind": "removed", "subjects": ["FX-2", "FX-3"],
+                                      "by": "lead", "why": "Out of scope.", "at": "2026-01-01T00:00:00Z"}) + "\n")
+        last = self.once(fx)
+        self.assertEqual([e["kind"] for e in self.base_events(fx)], ["base.flaky"])
+        self.assertTrue(last["closeOut"][0].startswith("fullHealth flaky at"), last)
+        self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)
 
     def test_a_merge_runs_full_health_with_the_close_still_held_and_once_at_its_head(self) -> None:
         fx = self.fixture()
@@ -5285,6 +5574,250 @@ class NoSupervisorOutlivesItsCaseTests(unittest.TestCase):
         self.assertTrue(alive(recorded["pid"]), "the supervisor stopped with its record and install in place")
         self.assertEqual(lock_of(fx)["pid"], recorded["pid"])
         self.assertNotIn("supervisor: stopping", self.supervisor_log(fx))
+
+
+# The lead's suite, as a fixture binding's fullHealth runs it: it logs what it saw, then passes, fails, exits 3 for its
+# budget, or waits on a gate file the test controls. FX_SUITE_MODE names a file holding the mode.
+SUITE = r'''
+import json, os, pathlib, sys, time
+mode_file = pathlib.Path(os.environ["FX_SUITE_MODE"])
+mode = mode_file.read_text().strip() if mode_file.exists() else "pass"
+one = pathlib.Path("src/one.txt")
+with open(os.environ["FX_SUITE_LOG"], "a") as log:
+    log.write(json.dumps({"cwd": os.getcwd(), "args": sys.argv[1:], "pid": os.getpid(),
+                          "prepared": pathlib.Path("prepared.txt").exists()}) + "\n")
+if mode == "wait":
+    # A worker of its own, as a real suite starts: only a stop of the run's whole group reaches it.
+    import subprocess
+    worker = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])
+    gate = pathlib.Path(os.environ["FX_SUITE_GATE"])
+    pathlib.Path(str(gate) + ".worker").write_text(str(worker.pid))
+    pathlib.Path(str(gate) + ".started").write_text(str(os.getpid()))
+    while not gate.exists():
+        time.sleep(0.05)
+    worker.kill()
+print("x" * 3000)
+print("src/one.txt reads:", one.read_text().strip() if one.exists() else "(absent)")
+sys.exit({"pass": 0, "fail": 1, "budget": 3, "wait": 0}[mode])
+'''
+
+# The prepare step: it marks the checkout prepared and makes the interpreter the suite's argv starts with, a stub that
+# exists only in a checkout this step ran in, and reports the version FX_STUB_VERSION gives, or none.
+PREP = r'''
+import os, pathlib, sys, time
+mode_file = pathlib.Path(os.environ["FX_PREP_MODE"])
+mode = mode_file.read_text().strip() if mode_file.exists() else ""
+if mode == "fail":
+    print("the prepare step fails")
+    sys.exit(1)
+if mode == "hang":
+    # A prepare step that starts a child of its own and is stopped while it waits.
+    import subprocess
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])
+    gate = pathlib.Path(os.environ["FX_SUITE_GATE"])
+    pathlib.Path(str(gate) + ".prep-child").write_text(str(child.pid))
+    while not gate.exists():
+        time.sleep(0.05)
+pathlib.Path("prepared.txt").write_text("prepared\n")
+stub = pathlib.Path("gen/python")
+stub.parent.mkdir(exist_ok=True)
+version = os.environ.get("FX_STUB_VERSION", "Python 3.99.1")
+said = f"echo '{version}'" if version else "true"
+stub.write_text(f'#!/bin/sh\nif [ "$1" = "--version" ]; then {said}; exit 0; fi\nexec "{sys.executable}" "$@"\n')
+stub.chmod(0o755)
+'''
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class LeadSuiteTests(unittest.TestCase):
+    """Decisions 24 and 25: lead-suite runs the binding's fullHealth, after its prepare steps, in a detached checkout of
+    one commit under the binding's work folder, removes it, and appends one line to the flow log's suite.jsonl."""
+
+    run_quietly = True
+    setUpClass = classmethod(SupervisorPassTests.setUpClass.__func__)
+
+    def fixture(self) -> Fixture:
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        self.addCleanup(stop_supervisors, fx.tmp)
+        supervised(fx)
+        m = fx.main
+        (m / "tools/suite.py").write_text(SUITE)
+        (m / "tools/prep.py").write_text(PREP)
+        bound = m / ".agents/orchestration.json"
+        binding = json.loads(bound.read_text())
+        binding["fullHealth"] = ["gen/python", "-B", "tools/suite.py"]
+        bound.write_text(json.dumps(binding, indent=2))
+        conf_path = m / ".agents/run-delivery.json"
+        conf = json.loads(conf_path.read_text())
+        conf.setdefault("review", {})["prepare"] = [[sys.executable, "-B", "tools/prep.py"]]
+        conf_path.write_text(json.dumps(conf, indent=2))
+        commit(m, "FX-1: the lead's suite")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        fx.env.update(FX_SUITE_LOG=str(fx.tmp / "suite-runs.jsonl"), FX_SUITE_MODE=str(fx.tmp / "suite-mode"),
+                      FX_SUITE_GATE=str(fx.tmp / "suite-gate"), FX_PREP_MODE=str(fx.tmp / "prep-mode"))
+        return fx
+
+    def pid_in(self, path: Path) -> int:
+        """A pid a fixture process wrote, which the case stops by that pid if it is still alive when the case ends."""
+        pid = int(wait_for(lambda: path.exists() and path.read_text(), f"{path.name} to be written"))
+        self.addCleanup(lambda: alive(pid) and os.kill(pid, signal.SIGKILL))
+        return pid
+
+    def lines(self, fx: Fixture) -> list[dict]:
+        log = fx.tmp / "flow-log/FX-1.suite.jsonl"
+        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+    def runs(self, fx: Fixture) -> list[dict]:
+        log = fx.tmp / "suite-runs.jsonl"
+        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+    def suite_checkouts(self, fx: Fixture) -> list[str]:
+        """The repository's worktrees under the work folder's suite folder, and whatever is left in that folder."""
+        folder = fx.main / ".orchestration/work/suite"
+        listed = sh("git", "worktree", "list", "--porcelain", cwd=fx.main).stdout
+        return [line for line in listed.splitlines() if "/suite/" in line] + (
+            [str(p) for p in folder.iterdir()] if folder.exists() else [])
+
+    def remote_head(self, fx: Fixture) -> str:
+        return sh("git", "ls-remote", "origin", "refs/heads/feature/FX-1", cwd=fx.main).stdout.split()[0]
+
+    def background(self, fx: Fixture, *argv: str) -> subprocess.Popen:
+        proc = subprocess.Popen([sys.executable, "-B", str(fx.tool), "lead-suite", *argv], cwd=fx.main, env=fx.env,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        self.addCleanup(lambda: proc.poll() is None and (proc.kill(), proc.wait()))
+        return proc
+
+    def test_a_run_at_a_commit_is_that_commit_s_whatever_the_lead_s_checkout_does_and_leaves_one_line_a_run(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        at = self.remote_head(fx)
+        (fx.tmp / "suite-mode").write_text("wait")
+        proc = self.background(fx, "--at", at)
+        wait_for(lambda: (fx.tmp / "suite-gate.started").exists(), "the suite to start")
+        # The lead edits and commits in its own checkout while the run goes on: the run is the commit's.
+        (m / "src/one.txt").write_text("edited under the run\n")
+        commit(m, "FX-1: an edit under the suite")
+        (fx.tmp / "suite-gate").write_text("go")
+        out, _ = proc.communicate(timeout=120)
+        self.assertEqual(proc.returncode, 0, out)
+        [ran] = self.runs(fx)
+        checkout = Path(ran["cwd"])
+        self.assertEqual(checkout.parent.parent.resolve(), (m / ".orchestration/work/suite").resolve(), ran)
+        self.assertTrue(ran["prepared"], "the prepare steps didn't run in the checkout before the argv")
+        self.assertFalse(checkout.exists(), "the run's checkout outlived it")
+        self.assertEqual(self.suite_checkouts(fx), [])
+        [line] = self.lines(fx)
+        self.assertEqual((line["commit"], line["result"], line["exit"]), (at, "passed", 0), line)
+        self.assertEqual(line["argv"], ["gen/python", "-B", "tools/suite.py"])
+        self.assertNotIn("edited under the run", line["output"])
+        self.assertIn("src/one.txt reads:", line["output"])
+        self.assertGreater(line["seconds"], 0)
+        # The output's tail: its last line, past 3000 characters of other output.
+        self.assertTrue(line["output"].rstrip().splitlines()[-1].startswith("src/one.txt reads: "), line["output"][-200:])
+        self.assertEqual(line["platform"], platform.platform())
+        # The interpreter the argv ran, asked of its first element in the checkout: the stub only that checkout had.
+        self.assertEqual(line["interpreter"], "Python 3.99.1")
+        # No --at: the remote's base head as it is now, moved from another clone, not the lead checkout's own head,
+        # which is a commit ahead, nor its tracking ref; a second line, the first unchanged.
+        moved = declare(fx, "landed elsewhere\n", path="src/elsewhere.txt")
+        self.assertNotIn(sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip(), (at, moved))
+        (fx.tmp / "suite-mode").write_text("pass")
+        code, out = fx.flow("lead-suite", cwd=m, env={**fx.env, "FX_STUB_VERSION": ""})
+        self.assertEqual(code, 0, out)
+        first, second = self.lines(fx)
+        self.assertEqual(first, line)
+        self.assertEqual(second["commit"], moved)
+        self.assertIsNone(second["interpreter"], second)
+        self.assertIn("gen/python --version printed no version", second["interpreterUnread"])
+
+    def test_extra_arguments_a_budget_exit_and_a_failure_each_exit_non_zero_with_their_line(self) -> None:
+        fx = self.fixture()
+        (fx.tmp / "suite-mode").write_text("budget")
+        code, out = fx.flow("lead-suite", "--", "--budget", "tests/suite-budget.json", cwd=fx.main)
+        self.assertEqual(code, 3, out)
+        [budget] = self.lines(fx)
+        self.assertEqual(budget["argv"], ["gen/python", "-B", "tools/suite.py", "--budget", "tests/suite-budget.json"])
+        self.assertEqual(self.runs(fx)[-1]["args"], ["--budget", "tests/suite-budget.json"])
+        self.assertEqual((budget["result"], budget["exit"]), ("failed", 3), budget)
+        (fx.tmp / "suite-mode").write_text("fail")
+        code, out = fx.flow("lead-suite", cwd=fx.main)
+        self.assertEqual(code, 1, out)
+        self.assertEqual([(line["result"], line["exit"]) for line in self.lines(fx)], [("failed", 3), ("failed", 1)])
+        self.assertEqual(self.suite_checkouts(fx), [])
+        self.assertFalse(Path(self.runs(fx)[-1]["cwd"]).exists())
+        # A short --at is recorded as the commit it resolves to.
+        at = self.remote_head(fx)
+        (fx.tmp / "suite-mode").write_text("pass")
+        code, out = fx.flow("lead-suite", "--at", at[:8], cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.lines(fx)[-1]["commit"], at)
+        # A failed prepare step fails the run: it writes its line, with no version asked, and leaves no checkout.
+        (fx.tmp / "prep-mode").write_text("fail")
+        code, out = fx.flow("lead-suite", cwd=fx.main)
+        self.assertEqual(code, 1, out)
+        failed = self.lines(fx)[-1]
+        self.assertEqual((failed["result"], failed["exit"], failed["interpreter"]), ("failed", 1, None), failed)
+        self.assertIn("the prepare step", failed["output"])
+        self.assertIn("before its interpreter was asked", failed["interpreterUnread"])
+        self.assertEqual(self.suite_checkouts(fx), [])
+        (fx.tmp / "prep-mode").unlink()
+        runs, lines = len(self.runs(fx)), len(self.lines(fx))
+        # A commit that does not exist is refused before any checkout is made.
+        code, out = fx.flow("lead-suite", "--at", "f" * 40, cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn(f"{'f' * 40} is no commit", out)
+        self.assertEqual((len(self.runs(fx)), len(self.lines(fx))), (runs, lines))
+        # A suite past the binding's fullHealth timeout fails, and its line keeps the version already read. The bound
+        # also holds each prepare step, so it leaves a busy machine room for one before the suite waits past it.
+        bound = fx.main / ".agents/orchestration.json"
+        bound.write_text(json.dumps({**json.loads(bound.read_text()), "fullHealthTimeoutSeconds": 10}, indent=2))
+        commit(fx.main, "FX-1: a short fullHealth timeout")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+        (fx.tmp / "suite-mode").write_text("wait")
+        for name in ("suite-gate.started", "suite-gate.worker"):
+            (fx.tmp / name).unlink(missing_ok=True)
+        code, out = fx.flow("lead-suite", cwd=fx.main)
+        self.assertEqual(code, 1, out)
+        worker = self.pid_in(fx.tmp / "suite-gate.worker")
+        wait_for(lambda: not alive(worker), "the timed-out suite's worker to stop with its group")
+        timed_out = self.lines(fx)[-1]
+        self.assertEqual((timed_out["result"], timed_out["interpreter"]), ("failed", "Python 3.99.1"), timed_out)
+        self.assertIn("took longer than 10s and was stopped", timed_out["output"])
+        self.assertNotIn("interpreterUnread", timed_out)
+        self.assertEqual(self.suite_checkouts(fx), [])
+
+    def test_it_runs_under_focused_journals_no_base_entry_and_an_interrupted_run_leaves_nothing(self) -> None:
+        fx = self.fixture()
+        declare(fx, declaration("focused"))
+        before = [e for e in record(fx)["journal"] if e["kind"].startswith("base.")]
+        code, out = fx.flow("lead-suite", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(self.lines(fx)), 1)
+        self.assertEqual([e for e in record(fx)["journal"] if e["kind"].startswith("base.")], before)
+        # Stopped by its pid while the suite runs: it stops the suite's group and removes its checkout.
+        (fx.tmp / "suite-mode").write_text("wait")
+        proc = self.background(fx)
+        suite_pid = self.pid_in(fx.tmp / "suite-gate.started")
+        worker = self.pid_in(fx.tmp / "suite-gate.worker")
+        os.kill(proc.pid, signal.SIGTERM)
+        proc.communicate(timeout=60)
+        self.assertNotEqual(proc.returncode, 0)
+        wait_for(lambda: not alive(suite_pid) and not alive(worker), "the suite and its worker to stop")
+        self.assertEqual(self.suite_checkouts(fx), [])
+        self.assertFalse(Path(self.runs(fx)[-1]["cwd"]).exists())
+        # Stopped while a prepare step runs: the step's own child stops with it, and no checkout is left.
+        (fx.tmp / "prep-mode").write_text("hang")
+        proc = self.background(fx)
+        child = self.pid_in(fx.tmp / "suite-gate.prep-child")
+        os.kill(proc.pid, signal.SIGTERM)
+        proc.communicate(timeout=60)
+        self.assertNotEqual(proc.returncode, 0)
+        wait_for(lambda: not alive(child), "the prepare step's child to stop")
+        self.assertEqual(self.suite_checkouts(fx), [])
+
 
 if __name__ == "__main__":
     unittest.main()
