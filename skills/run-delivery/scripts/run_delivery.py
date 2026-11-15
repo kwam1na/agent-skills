@@ -9332,14 +9332,17 @@ def flaky_tests(rerun: dict | None, out: str, checkout: Path, timeout: int,
     return tests if code == 0 and re.search(rerun["ranPattern"], said) else None
 
 
-def in_detached_checkout(c, commit: str, checkout: Path, work: Callable[[Path], object]):
-    """Make a fresh detached checkout of a commit at `checkout`, run the repository's prepare steps in it, and return
-    what `work` makes of it. The checkout, and the folder it sits in, are removed however that ends: a stop runs the
-    removal too, once the command a run started has been stopped with its group."""
+def in_detached_checkout(c, commit: str, checkout: Path, work: Callable[[Path], object], timeout: int):
+    """Make a fresh detached checkout of a commit at `checkout`, run the repository's prepare steps in it, each in a
+    process group of its own within `timeout`, and return what `work` makes of it. The checkout, and the folder it sits
+    in, are removed however that ends: a stop runs the removal too, once what a step or the run started has been
+    stopped with its group."""
     try:
         git("worktree", "add", "--detach", "-q", str(checkout), commit, cwd=c.root)
         for step in prepare_commands():
-            run(step, cwd=checkout)
+            code, said = run_group(step, checkout, timeout)
+            if code != 0:
+                raise Stop(f"the prepare step {shlex.join(step)} failed (exit {code}): {said.strip()[-600:]}")
         return work(checkout)
     finally:
         run(["git", "worktree", "remove", "--force", str(checkout)], cwd=c.root, check=False)
@@ -9364,7 +9367,7 @@ def run_full_health(c, binding: dict, head: str, posture: dict, named: str,
                                                    full_health_timeout(binding), started=started)
         return code, out, flaky
     try:
-        code, out, flaky = in_detached_checkout(c, head, checkout, gate)
+        code, out, flaky = in_detached_checkout(c, head, checkout, gate, full_health_timeout(binding))
     except Stop as error:
         code, out, flaky = 1, str(error), None
     result = "passed" if code == 0 else "flaky" if flaky else "failed"
@@ -10401,12 +10404,15 @@ def lead_suite(args) -> None:
 
     def suite(checkout: Path) -> tuple[int, str, tuple[str | None, str | None]]:
         asked = program_version(argv[0], checkout)
-        code, out = run_group(argv, checkout, full_health_timeout(binding))
+        try:
+            code, out = run_group(argv, checkout, full_health_timeout(binding))
+        except Stop as error:  # its timeout: a failure, with the version already read
+            code, out = 1, str(error)
         return code, out, asked
     print(f"lead-suite: running {shlex.join(argv)} at {commit[:10]} in {checkout}", flush=True)
     try:
-        code, out, (version, unread) = in_detached_checkout(c, commit, checkout, suite)
-    except Stop as error:
+        code, out, (version, unread) = in_detached_checkout(c, commit, checkout, suite, full_health_timeout(binding))
+    except Stop as error:  # the checkout or a prepare step failed, before the interpreter was asked
         code, out, version, unread = 1, str(error), None, "the run ended before its interpreter was asked"
     seconds = round(time.monotonic() - began, 1)
     result = "passed" if code == 0 else "failed"

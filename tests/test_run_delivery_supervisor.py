@@ -5587,10 +5587,16 @@ with open(os.environ["FX_SUITE_LOG"], "a") as log:
     log.write(json.dumps({"cwd": os.getcwd(), "args": sys.argv[1:], "pid": os.getpid(),
                           "prepared": pathlib.Path("prepared.txt").exists()}) + "\n")
 if mode == "wait":
+    # A worker of its own, as a real suite starts: only a stop of the run's whole group reaches it.
+    import subprocess
+    worker = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])
     gate = pathlib.Path(os.environ["FX_SUITE_GATE"])
+    pathlib.Path(str(gate) + ".worker").write_text(str(worker.pid))
     pathlib.Path(str(gate) + ".started").write_text(str(os.getpid()))
     while not gate.exists():
         time.sleep(0.05)
+    worker.kill()
+print("x" * 3000)
 print("src/one.txt reads:", one.read_text().strip() if one.exists() else "(absent)")
 sys.exit({"pass": 0, "fail": 1, "budget": 3, "wait": 0}[mode])
 '''
@@ -5598,7 +5604,20 @@ sys.exit({"pass": 0, "fail": 1, "budget": 3, "wait": 0}[mode])
 # The prepare step: it marks the checkout prepared and makes the interpreter the suite's argv starts with, a stub that
 # exists only in a checkout this step ran in, and reports the version FX_STUB_VERSION gives, or none.
 PREP = r'''
-import os, pathlib, sys
+import os, pathlib, sys, time
+mode_file = pathlib.Path(os.environ["FX_PREP_MODE"])
+mode = mode_file.read_text().strip() if mode_file.exists() else ""
+if mode == "fail":
+    print("the prepare step fails")
+    sys.exit(1)
+if mode == "hang":
+    # A prepare step that starts a child of its own and is stopped while it waits.
+    import subprocess
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])
+    gate = pathlib.Path(os.environ["FX_SUITE_GATE"])
+    pathlib.Path(str(gate) + ".prep-child").write_text(str(child.pid))
+    while not gate.exists():
+        time.sleep(0.05)
 pathlib.Path("prepared.txt").write_text("prepared\n")
 stub = pathlib.Path("gen/python")
 stub.parent.mkdir(exist_ok=True)
@@ -5638,8 +5657,14 @@ class LeadSuiteTests(unittest.TestCase):
         code, out = fx.flow("lead-init", cwd=m)
         self.assertEqual(code, 0, out)
         fx.env.update(FX_SUITE_LOG=str(fx.tmp / "suite-runs.jsonl"), FX_SUITE_MODE=str(fx.tmp / "suite-mode"),
-                      FX_SUITE_GATE=str(fx.tmp / "suite-gate"))
+                      FX_SUITE_GATE=str(fx.tmp / "suite-gate"), FX_PREP_MODE=str(fx.tmp / "prep-mode"))
         return fx
+
+    def pid_in(self, path: Path) -> int:
+        """A pid a fixture process wrote, which the case stops by that pid if it is still alive when the case ends."""
+        pid = int(wait_for(lambda: path.exists() and path.read_text(), f"{path.name} to be written"))
+        self.addCleanup(lambda: alive(pid) and os.kill(pid, signal.SIGKILL))
+        return pid
 
     def lines(self, fx: Fixture) -> list[dict]:
         log = fx.tmp / "flow-log/FX-1.suite.jsonl"
@@ -5689,19 +5714,22 @@ class LeadSuiteTests(unittest.TestCase):
         self.assertEqual(line["argv"], ["gen/python", "-B", "tools/suite.py"])
         self.assertNotIn("edited under the run", line["output"])
         self.assertIn("src/one.txt reads:", line["output"])
-        self.assertIsInstance(line["seconds"], (int, float))
+        self.assertGreater(line["seconds"], 0)
+        # The output's tail: its last line, past 3000 characters of other output.
+        self.assertTrue(line["output"].rstrip().splitlines()[-1].startswith("src/one.txt reads: "), line["output"][-200:])
         self.assertEqual(line["platform"], platform.platform())
         # The interpreter the argv ran, asked of its first element in the checkout: the stub only that checkout had.
         self.assertEqual(line["interpreter"], "Python 3.99.1")
-        # No --at: the remote's base head, not the lead checkout's own, which is a commit ahead; a second line, the
-        # first unchanged.
-        self.assertNotEqual(sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip(), at)
+        # No --at: the remote's base head as it is now, moved from another clone, not the lead checkout's own head,
+        # which is a commit ahead, nor its tracking ref; a second line, the first unchanged.
+        moved = declare(fx, "landed elsewhere\n", path="src/elsewhere.txt")
+        self.assertNotIn(sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip(), (at, moved))
         (fx.tmp / "suite-mode").write_text("pass")
         code, out = fx.flow("lead-suite", cwd=m, env={**fx.env, "FX_STUB_VERSION": ""})
         self.assertEqual(code, 0, out)
         first, second = self.lines(fx)
         self.assertEqual(first, line)
-        self.assertEqual(second["commit"], at)
+        self.assertEqual(second["commit"], moved)
         self.assertIsNone(second["interpreter"], second)
         self.assertIn("gen/python --version printed no version", second["interpreterUnread"])
 
@@ -5720,12 +5748,28 @@ class LeadSuiteTests(unittest.TestCase):
         self.assertEqual([(line["result"], line["exit"]) for line in self.lines(fx)], [("failed", 3), ("failed", 1)])
         self.assertEqual(self.suite_checkouts(fx), [])
         self.assertFalse(Path(self.runs(fx)[-1]["cwd"]).exists())
+        # A short --at is recorded as the commit it resolves to.
+        at = self.remote_head(fx)
+        (fx.tmp / "suite-mode").write_text("pass")
+        code, out = fx.flow("lead-suite", "--at", at[:8], cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.lines(fx)[-1]["commit"], at)
+        # A failed prepare step fails the run: it writes its line, with no version asked, and leaves no checkout.
+        (fx.tmp / "prep-mode").write_text("fail")
+        code, out = fx.flow("lead-suite", cwd=fx.main)
+        self.assertEqual(code, 1, out)
+        failed = self.lines(fx)[-1]
+        self.assertEqual((failed["result"], failed["exit"], failed["interpreter"]), ("failed", 1, None), failed)
+        self.assertIn("the prepare step", failed["output"])
+        self.assertIn("before its interpreter was asked", failed["interpreterUnread"])
+        self.assertEqual(self.suite_checkouts(fx), [])
+        (fx.tmp / "prep-mode").unlink()
+        runs, lines = len(self.runs(fx)), len(self.lines(fx))
         # A commit that does not exist is refused before any checkout is made.
         code, out = fx.flow("lead-suite", "--at", "f" * 40, cwd=fx.main)
         self.assertEqual(code, 2, out)
         self.assertIn(f"{'f' * 40} is no commit", out)
-        self.assertEqual(len(self.runs(fx)), 2)
-        self.assertEqual(len(self.lines(fx)), 2)
+        self.assertEqual((len(self.runs(fx)), len(self.lines(fx))), (runs, lines))
 
     def test_it_runs_under_focused_journals_no_base_entry_and_an_interrupted_run_leaves_nothing(self) -> None:
         fx = self.fixture()
@@ -5738,14 +5782,23 @@ class LeadSuiteTests(unittest.TestCase):
         # Stopped by its pid while the suite runs: it stops the suite's group and removes its checkout.
         (fx.tmp / "suite-mode").write_text("wait")
         proc = self.background(fx)
-        wait_for(lambda: (fx.tmp / "suite-gate.started").exists(), "the suite to start")
-        suite_pid = int((fx.tmp / "suite-gate.started").read_text())
+        suite_pid = self.pid_in(fx.tmp / "suite-gate.started")
+        worker = self.pid_in(fx.tmp / "suite-gate.worker")
         os.kill(proc.pid, signal.SIGTERM)
         proc.communicate(timeout=60)
         self.assertNotEqual(proc.returncode, 0)
-        wait_for(lambda: not alive(suite_pid), "the suite it started to stop")
+        wait_for(lambda: not alive(suite_pid) and not alive(worker), "the suite and its worker to stop")
         self.assertEqual(self.suite_checkouts(fx), [])
         self.assertFalse(Path(self.runs(fx)[-1]["cwd"]).exists())
+        # Stopped while a prepare step runs: the step's own child stops with it, and no checkout is left.
+        (fx.tmp / "prep-mode").write_text("hang")
+        proc = self.background(fx)
+        child = self.pid_in(fx.tmp / "suite-gate.prep-child")
+        os.kill(proc.pid, signal.SIGTERM)
+        proc.communicate(timeout=60)
+        self.assertNotEqual(proc.returncode, 0)
+        wait_for(lambda: not alive(child), "the prepare step's child to stop")
+        self.assertEqual(self.suite_checkouts(fx), [])
 
 
 if __name__ == "__main__":
