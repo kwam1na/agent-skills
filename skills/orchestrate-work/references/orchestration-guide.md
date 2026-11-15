@@ -135,6 +135,7 @@ the lead and the lanes make them instead, as the commands print them.
 | `base.rerun.started` | None: the candidate's failure already reached the lead as `check.failed`, and the record and the views show the re-run in progress. |
 | `base.rerun.finished` | None: its verdict posts with `candidate.stopped`, or with `base.broken` when the base fails the check too. |
 | `base.rerun.stopped` | None: a stopped re-run has no verdict, the candidate is queued again and checked once more, and a second stop at the same heads posts with `candidate.stopped`. |
+| `base.flaky` | None: the post-merge `fullHealth` failed and its failing tests passed when re-run alone, so the base isn't broken; the flaky tests show in the record, the views and "Needs you". |
 | `lease.granted` | On the ticket whose work needs the lease: the lease, its holder and when it will be released. |
 | `lease.released` | On the same ticket: the lease is released. |
 | `release.started` | None: the release posts once it finishes. |
@@ -412,7 +413,19 @@ merge. A `base.broken` it journals stops the queue as any other does, and its
 `base.repaired` reopens it; a pass never repairs a break the queue found, which
 the lead confirms. If the base turns `focused` while such a break stands, the
 break holds nothing at the close, since no run comes to clear it, but it stays
-listed in "Needs you" and serve still waits for `base.repaired`. The run is a
+listed in "Needs you" and serve still waits for `base.repaired`. A binding that
+declares `fullHealthRerun` has a failed run re-checked once, in the checkout it
+ran in, before it breaks the base: when the tests its output names pass alone,
+and nothing in it is a failure the rerun cannot re-check, the run is flaky. It
+journals `base.flaky`, naming the tests and the head, and no `base.broken`. A
+flaky run is that head's result: it pauses nothing and holds nothing at the close,
+and "Needs you" lists its tests without holding. It is not a pass either: it
+repairs nothing, so a `base.broken` that still stands keeps serve paused, and the
+first pass after it journals `base.repaired` when a `fullHealth` break still
+stands, and `base.verified` when none does. When the failed head is no longer the
+base head, `lead-resolve full-health` says so and names what stands at the new
+head: a run running there, a run due there, a `base.broken` that still awaits
+`base.repaired`, or none of these. The run is a
 child of its own, so the supervisor keeps passing beside it: it keeps `serve`
 and the live view up and "Needs you" current, where the run holds the close
 until it ends. One run at a time holds its lock, so two passes never start two

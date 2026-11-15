@@ -9087,6 +9087,11 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                       f"runs again at a later base head, or when you judge it flaky: {flow_command()} lead-resolve "
                       "full-health --why TEXT",
                       "clears": f"a pass at a later base head, or {flow_command()} lead-resolve full-health --why TEXT"})
+    if last and last["result"] == "flaky":
+        items.append({"holding": False, "source": "fullHealth",
+                      "text": f"fullHealth failed at {head[:10]}, and its failing tests passed alone, so the base isn't "
+                      f"broken: {', '.join(last.get('tests', []))}. They are flaky: fix them",
+                      "clears": "a fullHealth pass at a later base head"})
     events = [e for e in doc["journal"] if e["kind"] in ("base.broken", "base.repaired")]
     if events and events[-1]["kind"] == "base.broken":
         # A break fullHealth found clears with its next pass; the queue's own break waits for the lead. Under focused no
@@ -9275,6 +9280,12 @@ def full_health_break(entry: dict) -> bool:
     return entry["kind"] == "base.broken" and entry.get("summary", "").startswith("fullHealth failed")
 
 
+def base_breaks_standing(journal: list[dict]) -> list[dict]:
+    """The base.broken entries since the latest base.repaired: what a base.repaired would answer."""
+    repaired = max((e["id"] for e in journal if e["kind"] == "base.repaired"), default=0)
+    return [e for e in journal if e["kind"] == "base.broken" and e["id"] > repaired]
+
+
 def only_full_health_breaks(journal: list[dict]) -> bool:
     """Whether every base.broken since the latest base.repaired is fullHealth's own: a pass may repair those, never a
     break the queue found, which the lead confirms however many breaks of fullHealth's follow it."""
@@ -9298,6 +9309,28 @@ def merge_words(c, doc: dict, head: str, since: int) -> tuple[dict | None, str]:
     return {"subject": last.get("subject"), "journal": last["id"]}, words
 
 
+def flaky_tests(rerun: dict | None, out: str, checkout: Path, timeout: int,
+                started: Callable[[int], None] | None = None) -> list[str] | None:
+    """The tests a failed fullHealth names, when they pass alone: the binding's fullHealthRerun declared, nothing in the
+    run's whole output its unrecheckedPattern matches, at least one test its failurePattern's first group names, and
+    one run of its argv with those tests, in the failed run's checkout, that exits 0 with output its ranPattern
+    matches. None in every other case, so the failure stands."""
+    if not rerun:
+        return None
+    unrechecked = rerun.get("unrecheckedPattern")
+    if unrechecked and re.search(unrechecked, out):
+        return None
+    tests = list(dict.fromkeys(match.group(1) for match in re.finditer(rerun["failurePattern"], out) if match.group(1)))
+    if not tests:
+        return None
+    argv = [arg for element in rerun["argv"] for arg in (tests if element == "{tests}" else [element])]
+    try:
+        code, said = run_group(argv, checkout, timeout, started=started)
+    except Stop:
+        return None
+    return tests if code == 0 and re.search(rerun["ranPattern"], said) else None
+
+
 def run_full_health(c, binding: dict, head: str, posture: dict, named: str,
                     started: Callable[[int], None] | None = None, checkout: Path | None = None) -> tuple[bool, str]:
     """One gate run of fullHealth at this base head, in a fresh checkout of it. Its result goes to the full-health log,
@@ -9313,32 +9346,45 @@ def run_full_health(c, binding: dict, head: str, posture: dict, named: str,
         for step in prepare_commands():
             run(step, cwd=checkout)
         code, out = run_group(list(binding["fullHealth"]), checkout, full_health_timeout(binding), started=started)
+        # A failure is re-checked once, in this same checkout, before it can break the base.
+        flaky = None if code == 0 else flaky_tests(binding.get("fullHealthRerun"), out, checkout,
+                                                   full_health_timeout(binding), started=started)
     except Stop as error:
-        code, out = 1, str(error)
+        code, out, flaky = 1, str(error), None
     finally:
         run(["git", "worktree", "remove", "--force", str(checkout)], cwd=c.root, check=False)
         shutil.rmtree(checkout.parent, ignore_errors=True)
-    result = "passed" if code == 0 else "failed"
+    result = "passed" if code == 0 else "flaky" if flaky else "failed"
     through = max((e["id"] for e in doc["journal"]), default=0)
     # Held off through the journal entry, and in the state tool it starts, which inherits the mask.
     signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
     try:
-        return record_full_health(c, head, result, out, posture, merge, after, through, before, doc, named)
+        return record_full_health(c, head, result, out, posture, merge, after, through, before, doc, named, flaky)
     finally:
         signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
 
 
 def record_full_health(c, head: str, result: str, out: str, posture: dict, merge: dict | None, after: str,
-                       through: int, before: list[dict], doc: dict, named: str) -> tuple[bool, str]:
-    """A run's result in the full-health log, and the journal entry that says what it means for the base."""
+                       through: int, before: list[dict], doc: dict, named: str,
+                       flaky: list[str] | None = None) -> tuple[bool, str]:
+    """A run's result in the full-health log, and the journal entry that says what it means for the base. A flaky run,
+    whose failing tests passed alone, is the head's result and journals base.flaky: it breaks nothing and repairs
+    nothing."""
     with plan_lock(c):
         append_full_health(c, {"head": head, "result": result, "output": out[-2000:], "posture": "gate",
-                               "code": posture["code"], "merge": merge, "journalThrough": through})
+                               "code": posture["code"], "merge": merge, "journalThrough": through,
+                               **({"tests": flaky} if flaky else {})})
     if result == "failed":
         kind, words = "base.broken", f"fullHealth failed at {head[:10]} {after}: {out.strip()[-300:] or 'no output'}"
+    elif result == "flaky":
+        kind = "base.flaky"
+        words = f"fullHealth failed at {head[:10]} {after}, and its failing tests passed alone: {', '.join(flaky or [])}"
     else:
         # A repair only of a break fullHealth found: a pass never confirms a break the queue found, which the lead does.
-        repairs = before and before[-1]["result"] == "failed" and only_full_health_breaks(doc["journal"])
+        # After a flaky run, which repairs nothing, a pass repairs the fullHealth break that still stands, if one does.
+        latest = before[-1]["result"] if before else None
+        standing = latest == "flaky" and base_breaks_standing(doc["journal"])
+        repairs = (latest == "failed" or standing) and only_full_health_breaks(doc["journal"])
         kind = "base.repaired" if repairs else "base.verified"
         words = f"fullHealth passed at {head[:10]} {after}"
     state_tool("journal", "--kind", kind, "--summary", words,
@@ -9486,14 +9532,16 @@ def full_health_step(c, wait: bool = False) -> tuple[bool, str]:
     git("fetch", "-q", c.remote, c.base_branch, check=False)
     head = base_head(c)
     last, rerun = full_health_results(c, head)
-    if last and last["result"] == "passed":
-        return True, f"fullHealth passed at {head[:10]}{named}"
+    # A flaky run is the head's result, which holds nothing at the close by itself.
+    if last and last["result"] in ("passed", "flaky"):
+        return True, f"fullHealth {last['result']} at {head[:10]}{named}"
     if last and not rerun:
         return False, f"fullHealth failed at {head[:10]}{named}; it runs again at a later head, or on lead-resolve full-health"
     # No run at this head: after a merge the post-merge step has run, so this is a delivery that merged nothing.
     line = launch_full_health(c, head, named, wait)
     last, _ = full_health_results(c, head)
-    return bool(last and last["result"] == "passed" and line.startswith("fullHealth passed")), line
+    return bool(last and last["result"] in ("passed", "flaky")
+                and line.startswith(("fullHealth passed", "fullHealth flaky"))), line
 
 
 def full_health_run(args) -> None:
@@ -10302,15 +10350,39 @@ def lead_run(args) -> None:
     Supervisor(c, once=args.once).run()
 
 
+def moved_head_stands(c, doc: dict, head: str, last: dict | None) -> str:
+    """What stands at a base head past a failed fullHealth's: a run running there, a run due there, a base.broken that
+    still awaits base.repaired, or none of these."""
+    stands = []
+    running = full_health_running(c)
+    if running is not None and running.get("head") == head:
+        stands.append(f"a run is running ({running_words(running)}): wait for its result")
+    elif last is None and delivery_posture(c)["posture"] != "focused":
+        stands.append("a run is due on the supervisor's next pass: wait for its result")
+    breaks = base_breaks_standing(doc["journal"])
+    if breaks:
+        # A pass repairs only a break fullHealth found; the queue's own waits for the lead.
+        by_pass = "a fullHealth pass there journals it, or, " if only_full_health_breaks(doc["journal"]) else ""
+        stands.append(f"base.broken (journal entry {breaks[-1]['id']}) still awaits base.repaired: {by_pass}once you "
+                      "have checked the base, journal base.repaired with your reason")
+    return "; ".join(stands) if stands else "nothing stands: no run is running or due, and no base.broken awaits repair"
+
+
 def lead_resolve(args) -> None:
     """Resolve the blocker a journal entry records, or ask the next pass to rerun a failed fullHealth, with the lead's
     reason. The resolution is the flow log's; the journal says so."""
     c = cfg()
     doc = load_state()
     if args.id == "full-health":
+        # The base head as the remote has it, so a failed head the base has moved past reads as moved.
+        git("fetch", "-q", c.remote, c.base_branch, check=False)
         head = base_head(c)
         last, rerun = full_health_results(c, head)
         if not last or last["result"] != "failed":
+            failed = next((e for e in reversed(read_log("full-health", c.delivery)) if e.get("result") == "failed"), None)
+            if failed and failed["head"] != head:
+                raise Stop(f"fullHealth failed at {failed['head'][:10]}, which is no longer the base head; the base is at "
+                           f"{head[:10]}, where {moved_head_stands(c, doc, head, last)}")
             raise Stop(f"fullHealth hasn't failed at the base head {head[:10]}; there is nothing to rerun")
         # Under focused no run starts, so the rerun waits on the base returning to gate.
         when = ("if the base returns to gate" if delivery_posture(c)["posture"] == "focused"

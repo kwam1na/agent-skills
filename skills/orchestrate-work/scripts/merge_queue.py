@@ -411,6 +411,17 @@ def binding_errors(binding: object) -> list[str]:
     # A wait longer than the platform's process wait can take would overflow it rather than time out.
     if binding.get("fullHealthTimeoutSeconds", 0) > FULL_HEALTH_TIMEOUT_MOST:
         errors.append(f"/fullHealthTimeoutSeconds: above {FULL_HEALTH_TIMEOUT_MOST}, the most a process wait can take")
+    rerun = binding.get("fullHealthRerun")
+    if rerun is not None and "{tests}" not in rerun["argv"]:
+        errors.append("/fullHealthRerun/argv: must use {tests} as a whole element, which becomes one argument a test")
+    for member in ("failurePattern", "ranPattern", "unrecheckedPattern") if rerun is not None else ():
+        try:
+            groups = re.compile(rerun[member]).groups if member in rerun else 1
+        except re.error as error:
+            errors.append(f"/fullHealthRerun/{member}: doesn't compile: {error}")
+            continue
+        if member == "failurePattern" and not groups:
+            errors.append("/fullHealthRerun/failurePattern: needs a group, whose first names a failing test")
     selection = binding.get("selection") or {}
     if selection.get("refusalStops") and not selection.get("lead"):
         errors.append("/selection/refusalStops: needs selection.lead, since only the lead's selection releases a "
