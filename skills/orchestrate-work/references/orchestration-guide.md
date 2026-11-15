@@ -122,6 +122,7 @@ the lead and the lanes make them instead, as the commands print them.
 | `check.failed` | None: its outcome posts with `candidate.stopped` once the failure is classified. |
 | `check.retried` | On the flake's tracking reference: one more retry, naming the candidate and the failing tests, as evidence for fixing the flake. |
 | `check.reused` | None: the candidate's work item already says it was handed off and is being checked; the reused check shows in the record and the views. |
+| `check.carried` | None: the candidate's work item already says it was handed off and is being checked; the carried checks and the base commits they were not run on show in the record and the views. |
 | `check.selected` | None: the lead's selection and its reason show in the record and the views, and the checks it ran post with `candidate.merged` or `candidate.stopped`. |
 | `selection.refused` | None: the stop posts with `candidate.stopped`, and the provider's words show in the record and the views. |
 | `hook.held` | None: a host hook held, or warned about, a lead's stop while no listener ran, and the entry shows in the record and the views. |
@@ -318,7 +319,7 @@ supervisor's.
   | `check_failed` | Return the failing check's output to the lane. |
   | `base_broken` | Stop and follow the base-broken rules. |
   | `base_rerun_stopped` | The base re-run of the candidate's failing check was stopped twice at the same candidate and base heads, so its failure is neither the base's nor known to be its own. Find what stopped the re-run, then re-queue. |
-  | `base_moved` | The base moved after the candidate was synced. `run` re-syncs and re-checks once and stops on a second move; a standalone `check` or `merge` stops at once. Re-queue. |
+  | `base_moved` | The base moved after the candidate was synced. `run` re-syncs and re-checks once and stops on a second move; a standalone `check` or `merge` stops at once. A move that carries at least one passed check (see "Carried over a base move") is re-synced without spending that one retry. Re-queue. |
   | `not_synced` | Run `sync` before `check` or `merge`. |
   | `push_refused`, `ready_refused`, `merge_refused` | The forge refused the push, the `ready` gate, or the merge. Read the output, resolve it, and re-queue. |
   | `merged_unverified` | Stop the queue and confirm the base by hand before anything else merges. |
@@ -1101,7 +1102,7 @@ it is not a freshness proof or permission to skip any admission check.
 | `checkOutput` | Optional. `{failurePattern}`: a regular expression with a named group `id` and an optional named group `message`, matched line by line against a failed check's output. Each match is a failing test or step, shown in the record, the journal and the views. |
 | `flakes` | Optional. Known flakes, each `{check, tests?, ref}`: the check's id, the regular expressions its flaky failure ids match in full (leave `tests` out when the whole check is flaky), and the reference that tracks the flake. See "Flakes and retries". |
 | `parallelChecks` | Optional. How many checks marked `parallelSafe` may run at once; 1 when absent. A check without `parallelSafe` always runs alone. |
-| `selection` | Optional. `{lead, refusalStops?, catalogue?, guards?, readers?}`: `lead: true` lets the lead choose a candidate's checks with the state tool's `select` command, in place of the provider's answer and `fallback`. `refusalStops: true`, which needs `lead: true`, makes a provider that exits non-zero stop the candidate with `provider_refused` instead of widening to `fallback`. `catalogue` names checks the lead selects by id, `guards` lists catalogue ids added to every lead selection, and `readers` maps paths to the catalogue checks that read them. Each is off when absent, so every candidate is checked as before. See "Lead-selected checks" and "The check catalogue". |
+| `selection` | Optional. `{lead, refusalStops?, catalogue?, guards?, readers?, unread?}`: `lead: true` lets the lead choose a candidate's checks with the state tool's `select` command, in place of the provider's answer and `fallback`. `refusalStops: true`, which needs `lead: true`, makes a provider that exits non-zero stop the candidate with `provider_refused` instead of widening to `fallback`. `catalogue` names checks the lead selects by id, `guards` lists catalogue ids added to every lead selection, `readers` maps paths to the catalogue checks that read them, and `unread` names paths no check reads. Each is off when absent, so every candidate is checked as before. See "Lead-selected checks" and "The check catalogue". |
 | `reusableChecks` | Optional. Ids of the binding's own checks (`alwaysRun` or `fallback`) the runner may reuse from a lane's hand-off evidence instead of running them again. Each may use no placeholder but `{treeSha}`, and no binding check may name it as a prerequisite. None when absent, so nothing is reused until you opt in. See "Reused checks". |
 | `batch` | Optional. `{culpritSearch}`: how `batch` finds the member that failed a batch's checks, `bisect` (the default, fewest check runs) or `serial` (each prefix in order). |
 | `environment` | Variables set for every argv the runner runs. It must not set `GIT_LITERAL_PATHSPECS`, `GIT_GLOB_PATHSPECS`, `GIT_NOGLOB_PATHSPECS` or `GIT_ICASE_PATHSPECS`, which would change the paths the workRoot checks match; these names are matched without case. The runner drops an inherited setting of them before running git or any declared argv; a profile's environment may still set them for its checks. |
@@ -1302,7 +1303,29 @@ or a selection that leaves it out.
   says so. `select` reads the diff from `--repo`, the current directory when
   left out, against the base's remote-tracking ref there (or `--base-head`),
   and refuses rather than skips the readers when it can't. Fetch the base
-  first.
+  first. A plain readers entry says only which checks a change to its paths
+  adds; it says nothing of what else those checks read. An entry with
+  `"complete": true` says its paths are everything its checks read, their own
+  test modules among them. A check's read set is known only when every entry
+  naming it is complete, and is then the paths of all of them together.
+- **Unread.** `selection.unread` names paths no check reads. A list of
+  patterns, under the binding's own rule; the binding file never matches one.
+- **Carried over a base move.** When the base moves after a candidate's checks
+  passed, a selected check is carried to the new base, with no run again, when
+  no file the move changed is in the candidate's diff and either every such
+  file matches `selection.unread` or the check's read set is known and no such
+  file is in it. The move's files are listed without rename detection, so a
+  rename is a path removed and a path added, and the binding file counts as
+  read by every check. Every other check runs again, and so does every
+  `alwaysRun` check unless every changed file is unread. When one check or more
+  is carried, `run` merges the new base into the synced head, as any re-sync
+  does, runs only the rest, and journals one `check.carried` naming the carried
+  checks and the base commits they were not run on. The merge still passes the
+  region check against the new base, and is refused if the base moved again.
+  A move that conflicts stops the candidate as before, a batch is never
+  carried, and a candidate whose every check runs again is journaled as
+  before. The post-merge `fullHealth` run backs a carried check as it backs a
+  lead selection.
 - **What was added.** The `check.selected` entry names each check added
   beyond what you named, and why: a guard, a prerequisite, or the changed path
   it reads.

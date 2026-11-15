@@ -1,5 +1,5 @@
-// A journal kind the line map names: a base re-run that was stopped, not failed, reads as stopped in the feed and in
-// the piece's merge check, never as a verdict.
+// Journal kinds the line map names. A base re-run that was stopped, not failed, reads as stopped in the feed and in
+// the piece's merge check, never as a verdict. A check carried over a base move reads as carried.
 import { test } from "node:test";
 
 import { REPLAYED_RUNS, expect, openPage, pageWithRuns } from "./support.mjs";
@@ -22,5 +22,21 @@ test("a stopped base rerun reads as stopped in the feed and in the piece's merge
   expect(feed.some((words) => words.startsWith("Rerun verdict"))).toBe(false);
   const history = card.app.querySelector("#detail .mh");
   expect(history.querySelector("summary .mh-sub").textContent).toMatch(/^ · Rerun stopped /);
+  expect([...history.querySelectorAll("li span")].map((row) => row.textContent).at(-1)).toBe(summary);
+});
+
+test("a check carried over a base move reads as carried in the feed and in the piece's merge check", async () => {
+  const summary = "Carried lib to main at bbbbbbbbbb: 1 base commit changed nothing lib reads or A changes";
+  const document = record({
+    queue: [item("A", "checking")],
+    journal: journal([[10, "candidate.handed", "A"], [11, "check.started", "A"], [12, "check.finished", "A"],
+      [13, "candidate.stopped", "A"], [14, "check.started", "A"], [15, "check.carried", "A", { summary }]]),
+  });
+  const [shown, card] = await openPage(pageWithRuns(document, {}, { config: CONFIG }),
+    { now: NOW, store: false, steps: [{ click: '.stop-btn[data-subject="A"]' }] });
+  const feed = [...shown.app.querySelectorAll(".who")].map((who) => who.textContent);
+  expect(feed).toContain("Check carried · Lane one · A");
+  const history = card.app.querySelector("#detail .mh");
+  expect(history.querySelector("summary .mh-sub").textContent).toMatch(/^ · Check carried /);
   expect([...history.querySelectorAll("li span")].map((row) => row.textContent).at(-1)).toBe(summary);
 });

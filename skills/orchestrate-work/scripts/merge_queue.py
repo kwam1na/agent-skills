@@ -23,6 +23,7 @@ import fnmatch
 import concurrent.futures
 import contextlib
 import copy
+import functools
 import datetime
 import json
 import os
@@ -1830,7 +1831,7 @@ class Runner:
 
     # -- check -------------------------------------------------------------
 
-    def check(self, subject: str, result: Result) -> None:
+    def check(self, subject: str, result: Result, carried: dict | None = None) -> None:
         item = self.item(subject)
         synced = item["syncedHead"]
         if synced is None or item["stage"] not in ("synced", "checking", "checked", "stopped"):
@@ -1858,10 +1859,11 @@ class Runner:
             if changes:
                 raise Stop("no_checks", "nothing would check this candidate's changes")
             result.notes.append("the candidate changes nothing, so no check was selected")
+        carry = self.carry(subject, checks, carried, result)
         self.write_progress([subject], [{"id": check["id"], "state": "pending", **check_title(check)} for check in checks])
         reused = self.reusable([(subject, item)], checks, self.tree(synced))
         outcomes = self.run_checks([subject], checks, checkout, context.with_values(treeSha=self.tree(synced)), result,
-                                   reused=reused)
+                                   reused=reused, carried=carry)
         self.assert_clean(checkout, "the checkout after the checks")
         failed = [check for check in checks if outcomes[check["id"]] in ("failed", "timed_out")]
         if failed:
@@ -1871,10 +1873,80 @@ class Runner:
         self.journal("check.finished", f"Checks passed for {item['title']}", subject)
         result.outcome = "checked"
 
+    def carry(self, subject: str, checks: list[dict], carried: dict | None, result: Result) -> dict[str, dict]:
+        """Of the checks selected now, those the base move carries, journaled once; a check that runs again needs its
+        prerequisites' output, so they run again too."""
+        if not carried:
+            return {}
+        carry = {check["id"]: carried["checks"][check["id"]] for check in checks if check["id"] in carried["checks"]}
+        dropped = True
+        while dropped:
+            dropped = False
+            for check in checks:
+                if check["id"] not in carry:
+                    for name in check["prerequisites"]:
+                        if carry.pop(name, None) is not None:
+                            dropped = True
+        if carry:
+            commits = carried["commits"]
+            again = [check["id"] for check in checks if check["id"] not in carry]
+            words = (f"Carried {', '.join(carry)} to {self.base} at {carried['to']}: {len(commits)} base "
+                     f"commit{'' if len(commits) == 1 else 's'} ({', '.join(commits)}) changed nothing "
+                     f"{'it reads' if len(carry) == 1 else 'they read'} or {subject} changes; "
+                     + (f"ran again: {', '.join(again)}" if again else "nothing ran again"))
+            self.journal("check.carried", words, subject)
+            result.notes.append(words)
+        return carry
+
     def assert_clean(self, checkout: Path, what: str) -> None:
         changed = self.changed_paths(checkout)
         if changed:
             raise Stop("dirty_checkout", f"{what} is not clean", changed)
+
+    def carry_plan(self, subject: str) -> dict | None:
+        """The passed checks a base move carries to the new base with no run again, or None when it carries none.
+
+        The move is the base's commits since the base the synced head was checked on, its files listed without rename
+        detection, so a rename is a path removed and a path added. Nothing carries when one of them is in the
+        candidate's own diff. Otherwise every passed check carries when every file matches ``selection.unread``;
+        failing that, a check carries when its read set is known, every readers entry naming it being complete, and no
+        file is in it. The binding file is read by every check and matches no unread pattern. An alwaysRun check
+        carries only on a move wholly unread.
+        """
+        selection = self.binding.get("selection") or {}
+        readers = selection.get("readers") or []
+        unread = selection.get("unread") or []
+        item = self.item(subject)
+        synced = item["syncedHead"]
+        if synced is None:
+            return None
+        moved_to = self.fetch(self.base, "base")
+        checked_on = self.git("merge-base", synced, moved_to, check=False).stdout.strip()
+        if not checked_on or checked_on == moved_to:
+            return None
+        moved = sorted({path for path in self.git("diff", "--name-only", "--no-renames", "-z", checked_on, moved_to)
+                       .stdout.split("\0") if path})
+        own = {path for change in self.changes(checked_on, synced) for path in (change["path"], change.get("oldPath"))
+               if path}
+        if not moved or own.intersection(moved):
+            return None
+        unread_only = all(path != BINDING_PATH and matches_any(path, unread) for path in moved)
+        # Readers name catalogue ids only, so an alwaysRun check's read set is never known; the rule says so anyway.
+        always = {check["id"] for check in self.binding["alwaysRun"]}
+        carried = {}
+        for row in item["checks"]:
+            if row["state"] not in ("passed", "reused"):
+                continue
+            entries = [entry for entry in readers if row["id"] in entry["checks"]]
+            known = bool(entries) and all(entry.get("complete") is True for entry in entries)
+            read = [pattern for entry in entries for pattern in entry["paths"]]
+            if unread_only or (row["id"] not in always and known and BINDING_PATH not in moved
+                               and not any(matches_any(path, read) for path in moved)):
+                carried[row["id"]] = row
+        if not carried:
+            return None
+        commits = self.git("rev-list", "--reverse", f"{checked_on}..{moved_to}").stdout.split()
+        return {"checks": carried, "to": moved_to, "commits": commits}
 
     def changes(self, base_head: str, head: str) -> list[dict]:
         listed = self.git("diff", "--name-status", "-z", "-M", "-C", base_head, head).stdout.split("\0")
@@ -2167,10 +2239,14 @@ class Runner:
 
     def run_checks(
         self, subjects: list[str], checks: list[dict], checkout: Path, context: Context, result: Result,
-        whole_run: bool = True, reused: dict[str, dict] | None = None,
+        whole_run: bool = True, reused: dict[str, dict] | None = None, carried: dict[str, dict] | None = None,
     ) -> dict[str, str]:
-        """Run the checks in order, and record each one the lane's evidence lets this run reuse instead."""
+        """Run the checks in order, and record each one the lane's evidence lets this run reuse instead.
+
+        A check a base move carried keeps the record of its passed run before the move, and does not run.
+        """
         reused = reused or {}
+        carried = carried or {}
         outcomes: dict[str, str] = {}
         records = {check["id"]: {"id": check["id"], "state": "pending", **check_title(check)} for check in checks}
         history = self.history()["checks"]
@@ -2227,6 +2303,13 @@ class Runner:
                         outcomes[check["id"]] = "skipped"
                         records[check["id"]]["state"] = "skipped"
                         result.checks.append({"id": check["id"], "state": "skipped", "exitCode": None, "seconds": 0})
+                        show()
+                        continue
+                    if check["id"] in carried:
+                        # Its run before the base move stands: the move changed nothing it reads.
+                        pending.pop(0)
+                        outcomes[check["id"]] = "passed"
+                        records[check["id"]] = {**carried[check["id"]], "id": check["id"], "state": "passed"}
                         show()
                         continue
                     if check["id"] in reused:
@@ -2295,7 +2378,7 @@ class Runner:
                     for subject in subjects:
                         self.journal("check.failed", said + self.failure_text(entry["id"], result), subject)
         # A run that reused a check is not a whole run, so it does not shorten the run estimates.
-        whole = checks and whole_run and not reused
+        whole = checks and whole_run and not reused and not carried
         self.record_history(passed, flaked, int(round(time.monotonic() - began)) if whole else None)
         return outcomes
 
@@ -2998,18 +3081,32 @@ class Runner:
         return results
 
     def _run_one(self, subject: str, results: list[Result]) -> str:
-        """Sync, check and merge one candidate; a base that moves once is re-synced."""
-        for attempt in (1, 2):
+        """Sync, check and merge one candidate; a base that moves once is re-synced.
+
+        A move after the checks passed that carries at least one of them to the new base (see carry_plan) is re-synced
+        too, running only what it doesn't carry, and doesn't spend that one retry.
+        """
+        retries = 1
+        carried: dict | None = None
+        while True:
             for name, step in (("sync", self.sync), ("check", self.check), ("merge", self.merge)):
+                if name == "check" and carried:
+                    step = functools.partial(self.check, carried=carried)
                 result = self.prepared(name, subject, lambda result, step=step: step(subject, result))
                 results.append(result)
                 if result.outcome == "stopped" or result.outcome == "refused":
-                    if result.stop and result.stop["reason"] == "base_moved" and attempt == 1:
-                        break
+                    if result.stop and result.stop["reason"] == "base_moved":
+                        with contextlib.suppress(Stop, RuntimeError, delivery_state.StateError):
+                            carried = self.carry_plan(subject) if name == "merge" else None
+                        if name == "merge" and carried:
+                            break
+                        carried = None
+                        if retries:
+                            retries -= 1
+                            break
                     return "stopped"
             else:
                 return "merged"
-        return "stopped"
 
 
 # ---------------------------------------------------------------------------

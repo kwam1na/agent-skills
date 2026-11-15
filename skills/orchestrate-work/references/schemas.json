@@ -1276,6 +1276,7 @@
           "check.failed",
           "check.retried",
           "check.reused",
+          "check.carried",
           "candidate.merged",
           "candidate.stopped",
           "base.verified",
@@ -2440,7 +2441,7 @@
         }
       },
       "selection": {
-        "description": "Optional. lead: true lets the lead choose a candidate's checks from its diff with the state tool's select command; the runner then runs the lead's selection and alwaysRun instead of the provider's answer and fallback, while the selection is for the candidate's reviewed head. A candidate without one is checked as before. Off when absent. refusalStops: true, which needs lead: true, makes a provider that exits non-zero stop the candidate as provider_refused instead of widening to fallback: no check runs, and the candidate is held, never merged, until the lead's selection for its reviewed head lets it be checked. Off when absent. catalogue, guards and readers make the lead's selections cheaper to write: select --checks takes catalogue ids, comma-separated, as well as a JSON list of full entries; every guard is added to each lead selection; and a candidate changing a file a readers entry names gets that entry's checks. Each is optional and changes nothing when absent.",
+        "description": "Optional. lead: true lets the lead choose a candidate's checks from its diff with the state tool's select command; the runner then runs the lead's selection and alwaysRun instead of the provider's answer and fallback, while the selection is for the candidate's reviewed head. A candidate without one is checked as before. Off when absent. refusalStops: true, which needs lead: true, makes a provider that exits non-zero stop the candidate as provider_refused instead of widening to fallback: no check runs, and the candidate is held, never merged, until the lead's selection for its reviewed head lets it be checked. Off when absent. catalogue, guards and readers make the lead's selections cheaper to write: select --checks takes catalogue ids, comma-separated, as well as a JSON list of full entries; every guard is added to each lead selection; and a candidate changing a file a readers entry names gets that entry's checks. Each is optional and changes nothing when absent. readers and unread also let a base move carry a selected check's run to the new base, with no run again, when the move changed nothing the check reads (see readers and unread).",
         "type": "object",
         "additionalProperties": false,
         "required": [
@@ -2468,7 +2469,7 @@
             }
           },
           "readers": {
-            "description": "What reads a file, named here rather than inferred from what a test mentions. A lead selection for a candidate whose diff from the base changes a path matching paths includes checks, catalogue ids, such as every reader of a schema and the captured fixtures written to it.",
+            "description": "What reads a file, named here rather than inferred from what a test mentions. A lead selection for a candidate whose diff from the base changes a path matching paths includes checks, catalogue ids, such as every reader of a schema and the captured fixtures written to it. A plain entry says only which checks a change to its paths adds, never what else they read. An entry with complete: true says its paths are everything its checks read, their own test modules among them; a check's read set is known only when every entry naming it is complete, and is then the paths of all of them, which a base move outside it does not make the check run again.",
             "type": "array",
             "items": {
               "type": "object",
@@ -2490,8 +2491,19 @@
                   "items": {
                     "$ref": "#/$defs/name"
                   }
+                },
+                "complete": {
+                  "description": "true: paths are everything these checks read. Absent or false: a plain entry.",
+                  "type": "boolean"
                 }
               }
+            }
+          },
+          "unread": {
+            "description": "Patterns for paths no check reads, such as prose a test never opens. A base move whose every changed file matches one carries every selected check and the alwaysRun ones, with no run again. The binding file never matches.",
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/path"
             }
           }
         }

@@ -4705,6 +4705,245 @@ class BaseRepairTests(MergeQueueTestCase):
         self.assertEqual(len(self.journal(adopter, "candidate.stopped", "own")), 1)
 
 
+class CarriedBaseMoveTests(MergeQueueTestCase):
+    """A base that moved only in files a selected check doesn't read carries that check's run to the new base."""
+
+    CATALOGUE = [check_entry("lib", "src/lib.txt"), check_entry("app", "src/app.txt"), check_entry("loose")]
+    LIB = {"paths": ["src/lib.txt"], "checks": ["lib"], "complete": True}
+    APP = {"paths": ["src/app.txt"], "checks": ["app"], "complete": True}
+
+    def carrying(self, readers: list[dict] | None, *, unread: list[str] | None = None, always: bool = False,
+                 base: dict[str, str] | None = None) -> Adopter:
+        selection = {"lead": True, "catalogue": self.CATALOGUE, **({"readers": readers} if readers is not None else {}),
+                     **({"unread": unread} if unread is not None else {})}
+        adopter = self.adopter({"selection": selection, "alwaysRun": [check_entry("always")] if always else []})
+        if base:
+            adopter.advance_base(base)
+        return adopter
+
+    def candidate_with(self, adopter: Adopter, checks: list[str], files: dict[str, str] | None = None,
+                       name: str = "feature") -> None:
+        self.candidate(adopter, files or {"src/feature.txt": "feature\n"}, name=name)
+        run("fetch", "--quiet", "origin", cwd=adopter.operator)
+        state_tool.select_checks(adopter.state, name, binding=adopter.binding, head=adopter.item(name)["head"],
+                                 checks=checks, reason="the lead's reason", repo=adopter.operator,
+                                 base_head=adopter.tip("main"))
+
+    def moved(self, adopter: Adopter, *moves: Callable[[], str], subject: str = "feature") -> tuple[list, list[str]]:
+        """Run the candidate with the base moved before each of its first merges, one move a merge."""
+        pending, made = list(moves), []
+
+        def base_moves(runner, moving):
+            if pending:
+                made.append(pending.pop(0)())
+
+        return self.run_queue(adopter, subject, seams={"before_merge": base_moves}), made
+
+    def base_files(self, adopter: Adopter, files: dict[str, str]) -> Callable[[], str]:
+        return lambda: adopter.advance_base(files)
+
+    def base_git(self, adopter: Adopter, *commands: list[str]) -> Callable[[], str]:
+        """A base commit made by git commands in the lane clone, for a rename or a deletion."""
+        def move() -> str:
+            run("fetch", "--quiet", "origin", cwd=adopter.lane)
+            run("checkout", "--quiet", "-B", "base-work", "origin/main", cwd=adopter.lane)
+            for command in commands:
+                run(*command, cwd=adopter.lane)
+            run("commit", "--quiet", "-m", "move the base", cwd=adopter.lane)
+            run("push", "--quiet", "origin", "base-work:main", cwd=adopter.lane)
+            return run("rev-parse", "HEAD", cwd=adopter.lane)
+        return move
+
+    def runs(self, adopter: Adopter) -> dict[str, int]:
+        counted: dict[str, int] = {}
+        for line in adopter.log_lines():
+            if line.startswith("check "):
+                counted[line.split()[1]] = counted.get(line.split()[1], 0) + 1
+        return counted
+
+    def carried(self, adopter: Adopter) -> list[dict]:
+        return [entry for entry in state_tool.read_journal(adopter.state) if entry["kind"] == "check.carried"]
+
+    def merged(self, results: list) -> None:
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+
+    def test_a_move_outside_the_diff_and_every_checks_complete_read_set_merges_with_no_check_run_again(self) -> None:
+        adopter = self.carrying([self.LIB, self.APP])
+        self.candidate_with(adopter, ["lib", "app"])
+        results, [moved] = self.moved(adopter, self.base_files(adopter, {"docs/other.txt": "other\n"}))
+        self.merged(results)
+        self.assertEqual(self.runs(adopter), {"lib": 1, "app": 1})
+        [carried] = self.carried(adopter)
+        self.assertEqual(carried["subject"], "feature")
+        self.assertIn("lib, app", carried["summary"])
+        self.assertIn(moved, carried["summary"])
+        # The merged head holds the new base, as its first parent.
+        run("fetch", "--quiet", "origin", cwd=adopter.lane)
+        self.assertEqual(run("rev-parse", "origin/main^1", cwd=adopter.lane), moved)
+        self.assertEqual(adopter.show("origin/main", "docs/other.txt"), "other")
+
+    def test_a_move_in_a_file_one_complete_entry_lists_runs_that_check_and_the_always_run_ones_again(self) -> None:
+        adopter = self.carrying([self.LIB, self.APP], always=True)
+        self.candidate_with(adopter, ["lib", "app"])
+        results, _ = self.moved(adopter, self.base_files(adopter, {"src/lib.txt": "lib two\n"}))
+        self.merged(results)
+        self.assertEqual(self.runs(adopter), {"lib": 2, "app": 1, "always": 2})
+        [carried] = self.carried(adopter)
+        self.assertIn("app", carried["summary"])
+        self.assertNotIn("lib", carried["summary"].split(":")[0])
+
+    def test_a_check_named_only_by_a_plain_entry_runs_again_on_any_move(self) -> None:
+        for name, files in (("its own test module", {"tests/test_loose.txt": "changed\n"}),
+                            ("any other file", {"docs/other.txt": "other\n"})):
+            with self.subTest(name):
+                self.fresh()
+                adopter = self.carrying([{"paths": ["tests/test_loose.txt"], "checks": ["loose"]}])
+                self.candidate_with(adopter, ["loose"])
+                results, _ = self.moved(adopter, self.base_files(adopter, files))
+                self.merged(results)
+                self.assertEqual(self.runs(adopter)["loose"], 2)
+                self.assertEqual(self.carried(adopter), [])
+
+    def test_a_check_named_by_a_complete_and_a_plain_entry_runs_again_on_a_move_outside_both(self) -> None:
+        adopter = self.carrying([self.LIB, {"paths": ["tests/test_lib.txt"], "checks": ["lib"]}])
+        self.candidate_with(adopter, ["lib"])
+        results, _ = self.moved(adopter, self.base_files(adopter, {"docs/other.txt": "other\n"}))
+        self.merged(results)
+        self.assertEqual(self.runs(adopter)["lib"], 2)
+        self.assertEqual(self.carried(adopter), [])
+
+    def test_a_check_named_by_two_complete_entries_reads_the_paths_of_both(self) -> None:
+        both = [self.LIB, {"paths": ["tests/test_lib.txt"], "checks": ["lib"], "complete": True}]
+        for name, files, runs in (("in the second's paths", {"tests/test_lib.txt": "changed\n"}, 2),
+                                  ("in neither's", {"docs/other.txt": "other\n"}, 1)):
+            with self.subTest(name):
+                self.fresh()
+                adopter = self.carrying(both)
+                self.candidate_with(adopter, ["lib"])
+                results, _ = self.moved(adopter, self.base_files(adopter, files))
+                self.merged(results)
+                self.assertEqual(self.runs(adopter)["lib"], runs)
+                self.assertEqual(len(self.carried(adopter)), 2 - runs)
+
+    def test_a_check_no_readers_entry_names_runs_again_beside_a_carried_one(self) -> None:
+        adopter = self.carrying([self.LIB], always=True)
+        self.candidate_with(adopter, ["lib", "loose"])
+        results, _ = self.moved(adopter, self.base_files(adopter, {"docs/other.txt": "other\n"}))
+        self.merged(results)
+        self.assertEqual(self.runs(adopter), {"lib": 1, "loose": 2, "always": 2})
+        [carried] = self.carried(adopter)
+        self.assertIn("lib", carried["summary"])
+
+    def test_a_move_wholly_inside_unread_carries_every_check_and_one_file_outside_it_does_not(self) -> None:
+        adopter = self.carrying([self.LIB], unread=["docs/**"], always=True)
+        self.candidate_with(adopter, ["lib", "loose"])
+        results, _ = self.moved(adopter, self.base_files(adopter, {"docs/a.txt": "a\n", "docs/deep/b.txt": "b\n"}))
+        self.merged(results)
+        self.assertEqual(self.runs(adopter), {"lib": 1, "loose": 1, "always": 1})
+        [carried] = self.carried(adopter)
+        self.assertIn("always", carried["summary"])
+        self.fresh()
+        adopter = self.carrying([self.LIB], unread=["docs/**"], always=True)
+        self.candidate_with(adopter, ["lib", "loose"])
+        results, _ = self.moved(adopter, self.base_files(adopter, {"docs/a.txt": "a\n", "src/other.txt": "other\n"}))
+        self.merged(results)
+        # lib's read set is known and untouched; the others' are not.
+        self.assertEqual(self.runs(adopter), {"lib": 1, "loose": 2, "always": 2})
+
+    def test_a_move_of_the_binding_file_runs_every_check_again_even_when_unread_matches_it(self) -> None:
+        for name, unread in (("no unread", None), ("unread matching the binding", [".agents/**"])):
+            with self.subTest(name):
+                self.fresh()
+                adopter = self.carrying([self.LIB], unread=unread)
+                self.candidate_with(adopter, ["lib"])
+                rewritten = json.dumps(adopter.binding, indent=4) + "\n"
+                results, _ = self.moved(adopter, self.base_files(adopter, {".agents/orchestration.json": rewritten}))
+                self.merged(results)
+                self.assertEqual(self.runs(adopter)["lib"], 2)
+                self.assertEqual(self.carried(adopter), [])
+
+    def test_a_complete_entry_with_a_double_star_runs_its_check_again_for_a_nested_file(self) -> None:
+        adopter = self.carrying([{"paths": ["src/**"], "checks": ["lib"], "complete": True}])
+        self.candidate_with(adopter, ["lib"], {"docs/feature.txt": "feature\n"})
+        results, _ = self.moved(adopter, self.base_files(adopter, {"src/deep/nested.txt": "nested\n"}))
+        self.merged(results)
+        self.assertEqual(self.runs(adopter)["lib"], 2)
+
+    def test_a_rename_out_of_a_complete_entry_and_a_deletion_under_it_each_run_its_check_again(self) -> None:
+        data = {"data/a.txt": "a\n" * 20, "data/b.txt": "b\n"}
+        entry = {"paths": ["data/**"], "checks": ["lib"], "complete": True}
+        for name, commands in (("rename out", [["mv", "data/a.txt", "elsewhere.txt"]]),
+                               ("deletion", [["rm", "--quiet", "data/b.txt"]])):
+            with self.subTest(name):
+                self.fresh()
+                adopter = self.carrying([entry], base=data)
+                self.candidate_with(adopter, ["lib"])
+                results, _ = self.moved(adopter, self.base_git(adopter, *commands))
+                self.merged(results)
+                self.assertEqual(self.runs(adopter)["lib"], 2)
+                self.assertEqual(self.carried(adopter), [])
+
+    def test_a_move_in_a_file_the_candidate_changes_runs_every_check_again(self) -> None:
+        shared = "".join(f"line {number}\n" for number in range(1, 9))
+        adopter = self.carrying([self.LIB], base={"docs/shared.txt": shared})
+        self.candidate_with(adopter, ["lib"], {"docs/shared.txt": shared.replace("line 1\n", "candidate\n")})
+        results, _ = self.moved(adopter, self.base_files(adopter, {"docs/shared.txt": shared.replace("line 8\n", "base\n")}))
+        self.merged(results)
+        self.assertEqual(self.runs(adopter)["lib"], 2)
+        self.assertEqual(self.carried(adopter), [])
+        self.assertEqual(adopter.show("origin/main", "docs/shared.txt").splitlines()[::7], ["candidate", "base"])
+
+    def test_a_move_that_conflicts_stops_the_candidate_as_today(self) -> None:
+        adopter = self.carrying([self.LIB], base={"docs/shared.txt": "one\n"})
+        self.candidate_with(adopter, ["lib"], {"docs/shared.txt": "candidate\n"})
+        results, _ = self.moved(adopter, self.base_files(adopter, {"docs/shared.txt": "base\n"}))
+        self.assertStopped(results, "source_conflict")
+        self.assertEqual(self.carried(adopter), [])
+
+    def test_a_binding_with_no_readers_and_no_unread_runs_every_check_again(self) -> None:
+        adopter = self.carrying(None, always=True)
+        self.candidate_with(adopter, ["lib", "app"])
+        results, _ = self.moved(adopter, self.base_files(adopter, {"docs/other.txt": "other\n"}))
+        self.merged(results)
+        self.assertEqual(self.runs(adopter), {"lib": 2, "app": 2, "always": 2})
+        self.assertEqual(self.carried(adopter), [])
+        self.assertEqual([result.document()["subcommand"] for result in results],
+                         ["sync", "check", "merge", "sync", "check", "merge"])
+
+    def test_a_batch_is_never_carried(self) -> None:
+        adopter = self.carrying([self.LIB], unread=["docs/**"])
+        self.candidate_with(adopter, ["lib"], {"src/first.txt": "first\n"}, name="first")
+        self.candidate_with(adopter, ["lib"], {"src/second.txt": "second\n"}, name="second")
+        moves = [self.base_files(adopter, {"docs/other.txt": "other\n"})]
+
+        def push_base(runner, subject):
+            if moves:
+                moves.pop()()
+
+        results = adopter.runner(seams={"before_batch_landing": push_base}).run_command("batch", ["first", "second"])
+        self.assertIn("batch_tree_mismatch", {result.document()["stop"]["reason"] for result in results
+                                              if result.document()["stop"]})
+        self.assertEqual(self.carried(adopter), [])
+
+    def test_a_carried_re_sync_does_not_spend_runs_one_retry(self) -> None:
+        adopter = self.carrying([self.LIB])
+        self.candidate_with(adopter, ["lib"])
+        results, made = self.moved(adopter, self.base_files(adopter, {"docs/other.txt": "other\n"}),
+                                   self.base_files(adopter, {"src/lib.txt": "lib two\n"}))
+        self.merged(results)
+        self.assertEqual(len(made), 2)
+        self.assertEqual(self.runs(adopter)["lib"], 2)
+        self.assertEqual(len(self.carried(adopter)), 1)
+        # A third move would stop it: the retry the second move used was the only one.
+        self.fresh()
+        adopter = self.carrying([self.LIB])
+        self.candidate_with(adopter, ["lib"])
+        results, _ = self.moved(adopter, self.base_files(adopter, {"docs/other.txt": "other\n"}),
+                                self.base_files(adopter, {"src/lib.txt": "lib two\n"}),
+                                self.base_files(adopter, {"src/lib.txt": "lib three\n"}))
+        self.assertStopped(results, "base_moved")
+
+
 class ServeTests(MergeQueueTestCase):
     """serve takes what is queued, in order, as a batch or alone, until the queue is idle or the lead holds it."""
 
@@ -6049,6 +6288,21 @@ class ContractTests(unittest.TestCase):
             "on `base.repaired`, with no `--requeue`.",
             "A check that fails on the base re-run could also be cross-talk with another run on the same machine",
             "Keep the queue's checks apart from lanes' own runs:",
+        ):
+            with self.subTest(phrase=phrase[:40]):
+                self.assertIn(phrase, guide)
+
+    def test_the_guide_says_what_a_plain_and_a_complete_readers_entry_mean_and_when_a_base_move_is_carried(self) -> None:
+        guide = " ".join((SCRIPTS.parent / "references" / "orchestration-guide.md").read_text(encoding="utf-8").split())
+        for phrase in (
+            "A plain readers entry says only which checks a change to its paths adds; it says nothing of what else "
+            "those checks read.",
+            "An entry with `\"complete\": true` says its paths are everything its checks read, their own test modules "
+            "among them.",
+            "`selection.unread` names paths no check reads.",
+            "When the base moves after a candidate's checks passed, a selected check is carried to the new base, with "
+            "no run again, when no file the move changed is in the candidate's diff and either every such file matches "
+            "`selection.unread` or the check's read set is known and no such file is in it.",
         ):
             with self.subTest(phrase=phrase[:40]):
                 self.assertIn(phrase, guide)

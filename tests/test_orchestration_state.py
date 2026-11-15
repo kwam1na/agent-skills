@@ -5725,7 +5725,7 @@ VALID_FIXTURES = {
 }
 JOURNAL_KINDS = [
     "lane.assigned", "review.round", "candidate.handed", "check.started", "check.finished",
-    "check.failed", "check.retried", "check.reused", "candidate.merged", "candidate.stopped", "base.verified", "base.broken",
+    "check.failed", "check.retried", "check.reused", "check.carried", "candidate.merged", "candidate.stopped", "base.verified", "base.broken",
     "base.repaired", "base.rerun.started", "base.rerun.finished", "base.rerun.stopped",
     "lease.granted", "lease.released", "release.started", "release.finished",
     "finish.met", "decision.recorded", "blocker.recorded", "delivery.closed", "review.evidence", "check.selected",
@@ -6833,6 +6833,16 @@ class CheckCatalogueTests(unittest.TestCase):
         self.assertEqual([error.message for error in validator.iter_errors(self.binding["selection"])], [])
         self.assertNotEqual(list(validator.iter_errors({**self.binding["selection"], "aliases": []})), [])
         self.assertNotEqual(list(validator.iter_errors({**self.binding["selection"], "readers": [{"paths": ["a"]}]})), [])
+        # A readers entry may say its paths are everything its checks read, and a binding may name what nothing reads.
+        reader = {"paths": ["src/**"], "checks": ["run-delivery"]}
+        for good in ({"readers": [{**reader, "complete": True}]}, {"readers": [{**reader, "complete": False}]},
+                     {"unread": ["docs/**", "README.md"]}, {"unread": []}):
+            with self.subTest(good=good):
+                self.assertEqual([error.message for error in validator.iter_errors({**self.binding["selection"], **good})], [])
+        for bad in ({"readers": [{**reader, "complete": "yes"}]}, {"readers": [{**reader, "complete": 1}]},
+                    {"unread": "docs/**"}, {"unread": [3]}, {"unread": [""]}):
+            with self.subTest(bad=bad):
+                self.assertNotEqual(list(validator.iter_errors({**self.binding["selection"], **bad})), [])
 
     # -- the base head warning -------------------------------------------------------------------------------------
 
