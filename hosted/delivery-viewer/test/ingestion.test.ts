@@ -165,8 +165,15 @@ describe('independent transport contract guards', () => {
 describe('shared numeric projection boundary', () => {
   it('rejects unsafe numbers so journal identities cannot lose precision',async()=>{
     const publicId=id();await session(publicId);
-    const body=fixture();body.document.journal[0].id=Number.MAX_SAFE_INTEGER+1;
-    expect((await upload(publicId,1,body)).status).toBe(400);
-    expect((await current(publicId)).status).toBe(404);
+    const body=fixture();body.document.journal[0].id=Number.MAX_SAFE_INTEGER;
+    const accepted=await upload(publicId,1,body);expect(accepted.status).toBe(200);
+    const {digest:hash}=await accepted.json() as {digest:string};
+    const snapshot=await request(`/d/${publicId}/snapshots/${hash}`,{},null);
+    expect(snapshot.status).toBe(200);
+    const published=await snapshot.json() as {document:{journal:{id:number}[]}};
+    expect(published.document.journal[0].id).toBe(Number.MAX_SAFE_INTEGER);
+    body.document.journal[0].id=Number.MAX_SAFE_INTEGER+1;
+    expect((await upload(publicId,2,body)).status).toBe(400);
+    expect(await (await current(publicId)).json()).toMatchObject({sequence:1,digest:hash});
   });
 });
