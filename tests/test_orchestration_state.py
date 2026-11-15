@@ -5725,7 +5725,7 @@ VALID_FIXTURES = {
 }
 JOURNAL_KINDS = [
     "lane.assigned", "review.round", "candidate.handed", "check.started", "check.finished",
-    "check.failed", "check.retried", "check.reused", "candidate.merged", "candidate.stopped", "base.verified", "base.broken",
+    "check.failed", "check.retried", "check.reused", "check.carried", "candidate.merged", "candidate.stopped", "base.verified", "base.broken",
     "base.repaired", "base.rerun.started", "base.rerun.finished", "base.rerun.stopped", "base.flaky",
     "lease.granted", "lease.released", "release.started", "release.finished",
     "finish.met", "decision.recorded", "blocker.recorded", "delivery.closed", "review.evidence", "check.selected",
@@ -6821,6 +6821,21 @@ class CheckCatalogueTests(unittest.TestCase):
         error = self.refused(lambda: self.select(["x"], head, binding=cyclic))
         self.assertEqual(error.code, "binding_invalid")
         self.assertIn("cycle", str(error))
+
+    def test_the_binding_schema_takes_complete_readers_and_unread_paths(self) -> None:
+        schema = json.loads(SCHEMA_FILE.read_text(encoding="utf-8"))["orchestration-binding/1"]
+        validator = Draft202012Validator({"$ref": "#/properties/selection", "properties": schema["properties"],
+                                          "$defs": schema["$defs"]})
+        # A readers entry may say its paths are everything its checks read, and a binding may name what nothing reads.
+        reader = {"paths": ["src/**"], "checks": ["run-delivery"]}
+        for good in ({"readers": [{**reader, "complete": True}]}, {"readers": [{**reader, "complete": False}]},
+                     {"unread": ["docs/**", "README.md"]}, {"unread": []}):
+            with self.subTest(good=good):
+                self.assertEqual([error.message for error in validator.iter_errors({**self.binding["selection"], **good})], [])
+        for bad in ({"readers": [{**reader, "complete": "yes"}]}, {"readers": [{**reader, "complete": 1}]},
+                    {"unread": "docs/**"}, {"unread": [3]}, {"unread": [""]}):
+            with self.subTest(bad=bad):
+                self.assertNotEqual(list(validator.iter_errors({**self.binding["selection"], **bad})), [])
 
     def test_the_binding_schema_takes_the_catalogue_guards_and_readers(self) -> None:
         schema = json.loads(SCHEMA_FILE.read_text(encoding="utf-8"))["orchestration-binding/1"]

@@ -325,7 +325,10 @@ python3 -B <skill>/scripts/merge_queue.py [--repo <checkout top level>] --state 
 - `run <candidate>...` does sync, check and merge in order for each candidate,
   stopping at the first failure. When the base moves after a sync, `run`
   re-syncs and re-checks once; a second move stops with `base_moved`. A
-  candidate is merged only onto the exact base it was checked against.
+  candidate is merged only onto the exact base it was checked against. A move
+  after the checks passed that changed nothing a check reads, by the binding's
+  complete `readers` entries and its `unread` paths, carries that check: the
+  re-sync runs only the rest, journals `check.carried`, and spends no retry.
 - `batch <candidate> <candidate>...` checks two or more candidates once, as
   one combined tree, then lands each in order with exactly the tree the batch
   recorded for it. A member that conflicts drops out and the rest continue.

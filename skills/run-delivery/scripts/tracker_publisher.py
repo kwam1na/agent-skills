@@ -66,6 +66,7 @@ UPDATES: dict[str, tuple[str, str] | None] = {
     "check.failed": None,
     "check.retried": ("ticket-or-epic", "Check retried"),
     "check.reused": None,
+    "check.carried": None,
     "check.selected": None,
     "selection.refused": None,
     "hook.held": None,
