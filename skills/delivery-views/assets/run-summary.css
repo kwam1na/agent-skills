@@ -56,6 +56,8 @@
 .run-fate { font: 500 11px/16px var(--mono, ui-monospace, monospace); white-space: nowrap; color: var(--soft, #4d545a); font-variant-numeric: tabular-nums; }
 .run-fate.is-fixed { color: var(--ink, #141719); font-weight: 500; }
 .run-fate.is-open { color: var(--faint, #8f979c); }
+.run-marks { display: inline-flex; gap: 8px; align-items: baseline; }
+.run-filed { font: 500 11px/16px var(--mono, ui-monospace, monospace); white-space: nowrap; color: var(--soft, #4d545a); }
 .run-commit { font: 12px var(--mono, ui-monospace, monospace); color: inherit; }
 a.run-commit { text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 2px; }
 .run-settled { margin: 0; padding-top: 12px; border-top: 1px solid var(--hair, #dfe2de); font-size: 13px; color: var(--ink, #141719); }

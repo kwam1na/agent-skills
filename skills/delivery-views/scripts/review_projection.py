@@ -69,7 +69,8 @@ def _plan_text(value: object, cap: int) -> str:
 def round_detail(outcomes: list[dict], commits: dict[int, str] | None = None) -> list[dict]:
     """One `roundDetail` entry per review outcome. With `commits`, each round's candidate commit, it is a plan
     review's: fixed closures carry their closing round's commit, the round's time is when it finished, and no entry
-    says it is deferred or that its details are unavailable."""
+    says it is deferred, how it was filed or that its details are unavailable. Otherwise each raised finding's
+    `filed` keeps how its lens filed it, `deferred` or `open`, whatever its `state` became."""
     plan = commits is not None
     rounds, states, severities = [], {}, {}
     for outcome in outcomes:
@@ -92,8 +93,10 @@ def round_detail(outcomes: list[dict], commits: dict[int, str] | None = None) ->
                     raised.append({"id": finding["id"], "lens": lens, "severity": finding["severity"],
                                    "summary": _plan_text(finding["summary"], SUMMARY_LENGTH), "state": state})
                     continue
+                # How the lens filed it stays beside the state later rounds give it.
                 raised.append({"id": finding["id"], "lens": lens, "severity": finding["severity"],
                                "summary": plain(finding["summary"])[:SUMMARY_LENGTH], "state": state,
+                               "filed": "deferred" if state == "deferred" else "open",
                                "deferredIssue": issue(finding.get("deferredIssue"))})
             for closure in result.get("resolvedFindings", result.get("resolutions", [])):
                 state = CLOSURE_STATES[closure["state"]]
