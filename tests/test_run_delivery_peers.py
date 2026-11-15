@@ -40,6 +40,18 @@ with delivery_state.merge_slot(Path(sys.argv[2]), sys.argv[3], delivery=sys.argv
     time.sleep(120)
 '''
 
+# One supervisor pass's peers step, run directly after the base's remote-tracking ref is set back to an earlier commit,
+# as a long-running supervisor that no step of its pass fetched for would find it.
+PEER_STEP = r'''
+import json, subprocess, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import run_delivery as flow
+flow.CFG = c = flow.Config(Path.cwd(), sys.argv[2])
+subprocess.run(["git", "update-ref", f"refs/remotes/{c.remote}/{c.base_branch}", sys.argv[3]], check=True)
+print(json.dumps(flow.Supervisor(c, True).peer_merges({})))
+'''
+
 # Appends one journal entry as the merge queue writes it.
 RUNNER_ENTRY = r'''
 import sys
@@ -378,6 +390,7 @@ class PeerDeliveryTests(unittest.TestCase):
         # FX-3 is merged in FX-1's own record: a file only it names is no open story's.
         self.queued(fx, fx.tmp / "record", "FX-3", "lane-2", stage="merged")
         # FX-9 merges one story touching FX-2's file, one touching only FX-3's, and one touching no story's.
+        stale = sh("git", "rev-parse", "origin/feature/FX-1", cwd=m).stdout.strip()
         touched = self.merged_on_base(fx, lead, "FX-9", "FX-92", "src/one.txt", "one, by FX-9\n")
         self.merged_on_base(fx, lead, "FX-9", "FX-93", "src/two.txt", "two, by FX-9\n")
         self.merged_on_base(fx, lead, "FX-9", "FX-94", "docs/notes.md", "notes\n")
@@ -400,8 +413,11 @@ class PeerDeliveryTests(unittest.TestCase):
         sh("git", "push", "-q", "origin", "HEAD:feature/FX-7", cwd=other)
         sh(sys.executable, "-B", "-c", RUNNER_ENTRY, fx.release / "skills/orchestrate-work/scripts",
            fx.tmp / "record-FX-7", "candidate.merged", f"Merged FX-72 at {seven}", "FX-72")
-        # One pass journals FX-92's and FX-95's merges once each; a second, by a supervisor started again, journals
-        # nothing more.
+        # A pass that finds the base's ref behind these merges fetches it before it reads one's files, so FX-93's merge
+        # isn't read as changing FX-92's file too. It journals FX-92's and FX-95's merges once each; passes by a
+        # supervisor started again journal nothing more.
+        sh(sys.executable, "-B", "-c", PEER_STEP, fx.tool.parent, "FX-1", stale, cwd=m, env=fx.env)
+        self.assertEqual(len(self.peer_merged(fx)), 2, self.peer_merged(fx))
         for _ in range(2):
             self.flow(fx, "FX-1", "lead-run", "--once", cwd=m)
             entries = self.peer_merged(fx)
@@ -437,12 +453,20 @@ class PeerDeliveryTests(unittest.TestCase):
         self.assertEqual([e["summary"] for e in self.peer_merged(fx)][2:],
                          [f"FX-9, a delivery on feature/FX-1, merged FX-96 at {late[:10]}, changing src/one.txt, "
                           "which FX-2 names"])
+        # A merge entry that names no head is read past: it holds back no later merge.
+        sh(sys.executable, "-B", "-c", RUNNER_ENTRY, fx.release / "skills/orchestrate-work/scripts",
+           fx.tmp / "record-FX-9", "candidate.merged", "Merged FX-98", "FX-98")
+        after = self.merged_on_base(fx, lead, "FX-9", "FX-99", "src/one.txt", "one, after a headless merge\n")
+        self.flow(fx, "FX-1", "lead-run", "--once", cwd=m)
+        self.assertEqual([e["summary"] for e in self.peer_merged(fx)][3:],
+                         [f"FX-9, a delivery on feature/FX-1, merged FX-99 at {after[:10]}, changing src/one.txt, "
+                          "which FX-2 names"])
         # Once FX-2 is settled, a peer's merge of its file is no open story's.
         self.patch(fx, fx.tmp / "record", "lead", "--element", "planned[subject=FX-2]", "--set",
                    json.dumps({"/stage": "settled"}))
         self.merged_on_base(fx, lead, "FX-9", "FX-97", "src/one.txt", "one, after FX-2 settled\n")
         self.flow(fx, "FX-1", "lead-run", "--once", cwd=m)
-        self.assertEqual(len(self.peer_merged(fx)), 3)
+        self.assertEqual(len(self.peer_merged(fx)), 4)
         # The tracker publisher posts nothing for it.
         self.assertIsNone(tracker_publisher.UPDATES["peer.merged"])
 
