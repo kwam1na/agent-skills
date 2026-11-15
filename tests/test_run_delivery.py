@@ -7006,8 +7006,11 @@ with delivery_state.merge_slot(pathlib.Path(repository), base, delivery="Deliver
             # Its wait is the binding's checkTimeoutSeconds, and it waits named in the slot's waiting folder.
             self.await_waiter(self, fx.main, "feature/FX-1")
             out, _ = upgrading.communicate(timeout=60)
+        waited = time.monotonic() - began
         self.assertEqual(upgrading.returncode, 2, out)
-        self.assertGreaterEqual(time.monotonic() - began, 1.5)
+        # Within the binding's 2s, and no longer, beside the command's own start.
+        self.assertGreaterEqual(waited, 1.5)
+        self.assertLess(waited, 5)
         self.assertIn("slot_held", out)
         self.assertIn("Delivery C", out)
         # With the slot free it goes on to the transition and lands.

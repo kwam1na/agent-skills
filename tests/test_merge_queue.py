@@ -5250,7 +5250,9 @@ class MergeSlotQueueTests(MergeQueueTestCase):
         self.assertEqual(results[-1].document()["stop"]["reason"], "queue_locked", results[-1].document()["stop"])
         self.assertIn("Delivery C", results[-1].document()["stop"]["detail"])
         self.assertIn([str(os.getpid())], seen)
+        # Within the binding's 2s, and no longer: a wait from anywhere else would overrun it.
         self.assertGreaterEqual(waited, 1.5)
+        self.assertLess(waited, 4.5)
         self.assertEqual(adopter.item("feature")["stage"], "queued")
 
     def test_a_queue_command_takes_the_slot_before_its_own_queue_lock(self) -> None:
