@@ -4508,6 +4508,9 @@ class SupervisorPostMergeTests(unittest.TestCase):
         self.assertEqual([e["kind"] for e in self.base_events(fx)], ["base.verified", "base.broken", "base.verified"])
         needs = [item for item in passes(fx)[-1]["needsYou"] if "(base.broken)" in item["source"]]
         self.assertEqual(needs[0]["clears"], "journalling base.repaired", needs)
+        # The held queue says how a repair goes first, and that the stopped candidates resume by themselves.
+        self.assertIn("name a queued candidate as its repair with", needs[0]["text"])
+        self.assertIn("the candidates the break stopped resume on base.repaired, with no --requeue", needs[0]["text"])
 
     def test_a_pass_never_repairs_a_break_the_queue_found_after_a_hand_repair(self) -> None:
         fx = self.fixture()
