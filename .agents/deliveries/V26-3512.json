@@ -152,6 +152,20 @@
           "text": "A delivery alone on its base shows no peers and no warnings."
         }
       ]
+    },
+    "V26-3513": {
+      "title": "Pin the merge slot's order and its wait, and say what to do when the slot is held",
+      "lane": "lane-1",
+      "why": "V26-3318's review aligned with three P2 and two P3 notes open: four missing rows for the slot's order and wait, and one guide sentence. The lead accepted V26-3318 so the peer story could start, and this story closes all five before integration.",
+      "criteria": [
+        {
+          "id": "v26-3513-1",
+          "text": "A queue row with the slot wait unset and a small non-zero checkTimeoutSeconds shows the command's waiter file before it returns queue_locked, and fails when the wait is read as 0."
+        }
+      ],
+      "after": [
+        "V26-3318"
+      ]
     }
   },
   "finish": [
