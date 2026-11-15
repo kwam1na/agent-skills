@@ -6987,6 +6987,156 @@ class CheckCatalogueTests(unittest.TestCase):
             "field_not_owned")
 
 
+# A process that holds a base's merge slot for another delivery until the test lets it go, as another delivery's
+# queue command would: it says when it holds the slot, and leaves it when the release file appears.
+HOLD_SLOT = """
+import pathlib, sys, time
+sys.path.insert(0, sys.argv[1])
+import delivery_state
+repository, base, delivery, ready, release = sys.argv[2:7]
+with delivery_state.merge_slot(pathlib.Path(repository), base, delivery=delivery, timeout=30):
+    pathlib.Path(ready).write_text("held")
+    while not pathlib.Path(release).exists():
+        time.sleep(0.02)
+"""
+
+
+class MergeSlotTests(unittest.TestCase):
+    """One merge slot for each base, beside the git common directory, shared by every delivery on the machine."""
+
+    run_quietly = True
+
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp(prefix="merge-slot-test-")).resolve()
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.repository = self.root / "main"
+        self.repository.mkdir()
+        for command in (["init", "-q", "-b", "main"], ["commit", "-q", "--allow-empty", "-m", "initial"]):
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", *command],
+                           cwd=self.repository, check=True, capture_output=True)
+        quieten(self.repository)
+
+    def hold(self, base: str = "main", delivery: str = "Other delivery") -> tuple[subprocess.Popen, Path]:
+        """Another delivery's command holding the slot; returns it and the file that lets it go."""
+        ready, release = self.root / f"ready-{len(list(self.root.iterdir()))}", self.root / "release"
+        release.unlink(missing_ok=True)
+        holder = subprocess.Popen([sys.executable, "-B", "-c", HOLD_SLOT, str(SCRIPTS), str(self.repository), base,
+                                   delivery, str(ready), str(release)])
+        self.addCleanup(self.stop, holder)
+        deadline = time.monotonic() + 30
+        while not ready.exists():
+            self.assertIsNone(holder.poll(), "the holder ended before it held the slot")
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.02)
+        return holder, release
+
+    @staticmethod
+    def stop(process: subprocess.Popen) -> None:
+        if process.poll() is None:
+            process.kill()
+        process.wait(30)
+
+    def sleeper(self) -> subprocess.Popen:
+        """A live process of the test's own, stopped by its pid when the test ends."""
+        process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        self.addCleanup(self.stop, process)
+        return process
+
+    def waiting(self, base: str = "main") -> Path:
+        return state_tool.merge_slot_path(self.repository, base).parent / "waiting" / state_tool.slot_name(base)
+
+    def test_two_linked_worktrees_and_a_subfolder_resolve_one_absolute_lock_path(self) -> None:
+        other = self.root / "other"
+        subprocess.run(["git", "worktree", "add", "-q", "-b", "other", str(other)], cwd=self.repository, check=True,
+                       capture_output=True)
+        (other / "deep").mkdir()
+        here = state_tool.merge_slot_path(self.repository, "main")
+        self.assertTrue(here.is_absolute())
+        self.assertEqual(state_tool.merge_slot_path(other / "deep", "main"), here)
+        self.assertEqual(here, (self.repository / ".git").resolve() / "agent-skills" / "merge-slot" / "main.lock")
+
+    def test_a_slash_and_a_percent_in_a_base_name_never_share_a_lock(self) -> None:
+        slashed = state_tool.merge_slot_path(self.repository, "integrate/x")
+        escaped = state_tool.merge_slot_path(self.repository, "integrate%2Fx")
+        self.assertEqual((slashed.name, escaped.name), ("integrate%2Fx.lock", "integrate%252Fx.lock"))
+        self.assertEqual(slashed.parent, escaped.parent)
+
+    def test_a_held_slot_is_waited_for_and_taken_when_its_holder_lets_it_go(self) -> None:
+        _, release = self.hold(delivery="Delivery A")
+        lock = state_tool.merge_slot_path(self.repository, "main")
+        self.assertEqual(state_tool.slot_holder(lock)["delivery"], "Delivery A")
+        seen: list[list[str]] = []
+
+        def sleep(seconds: float) -> None:
+            seen.append(sorted(entry.name for entry in self.waiting().iterdir()))
+            release.write_text("")
+            time.sleep(0.1)
+
+        with state_tool.merge_slot(self.repository, "main", delivery="Delivery B", timeout=30, sleep=sleep):
+            holder = state_tool.slot_holder(lock)
+            self.assertEqual((holder["delivery"], holder["pid"]), ("Delivery B", os.getpid()))
+        # It waited, named in the waiting folder while it did, and took its name out once it held the slot.
+        self.assertIn([str(os.getpid())], seen)
+        self.assertEqual(list(self.waiting().iterdir()), [])
+        self.assertIsNone(state_tool.slot_holder(lock))
+
+    def test_a_wait_that_gives_up_names_the_holder_and_removes_its_own_waiters_file(self) -> None:
+        self.hold(delivery="Delivery A")
+        with self.assertRaises(state_tool.StateError) as held:
+            with state_tool.merge_slot(self.repository, "main", delivery="Delivery B", timeout=0.3, poll=0.05):
+                self.fail("took a held slot")
+        self.assertEqual(held.exception.code, "slot_held")
+        self.assertIn("Delivery A", str(held.exception))
+        self.assertEqual(list(self.waiting().iterdir()), [])
+
+    def test_a_dead_holders_slot_is_taken_whatever_its_holder_file_says(self) -> None:
+        holder, _ = self.hold(delivery="Delivery A")
+        holder.kill()
+        holder.wait(30)
+        lock = state_tool.merge_slot_path(self.repository, "main")
+        self.assertEqual(state_tool.slot_holder(lock)["delivery"], "Delivery A")
+        with state_tool.merge_slot(self.repository, "main", delivery="Delivery B", timeout=0):
+            self.assertEqual(state_tool.slot_holder(lock)["delivery"], "Delivery B")
+
+    def test_a_free_slot_is_taken_at_once_though_its_holder_file_names_a_live_process(self) -> None:
+        lock = state_tool.merge_slot_path(self.repository, "main")
+        lock.parent.mkdir(parents=True)
+        stale = {"delivery": "Delivery A", "pid": self.sleeper().pid, "since": "2026-11-15T00:00:00Z"}
+        (lock.parent / "main.holder").write_text(json.dumps(stale))
+        with state_tool.merge_slot(self.repository, "main", delivery="Delivery B", timeout=0):
+            self.assertEqual(state_tool.slot_holder(lock)["delivery"], "Delivery B")
+
+    def test_after_a_merge_a_live_waiter_goes_first_for_one_poll_and_no_more(self) -> None:
+        waiting = self.waiting()
+        waiting.mkdir(parents=True)
+        (waiting / str(self.sleeper().pid)).write_text("{}")
+        slept: list[float] = []
+        with state_tool.merge_slot(self.repository, "main", delivery="Delivery A", timeout=0, poll=0.05,
+                                   after_merge=True, sleep=slept.append):
+            pass
+        self.assertEqual(slept, [0.05])
+        # A queue whose last command did not merge takes it at once.
+        slept.clear()
+        with state_tool.merge_slot(self.repository, "main", delivery="Delivery A", timeout=0, poll=0.05,
+                                   sleep=slept.append):
+            pass
+        self.assertEqual(slept, [])
+
+    def test_after_a_merge_a_dead_waiters_file_delays_nothing_and_is_removed(self) -> None:
+        waiting = self.waiting()
+        waiting.mkdir(parents=True)
+        gone = self.sleeper()
+        gone.kill()
+        gone.wait(30)
+        (waiting / str(gone.pid)).write_text("{}")
+        slept: list[float] = []
+        with state_tool.merge_slot(self.repository, "main", delivery="Delivery A", timeout=0, poll=0.05,
+                                   after_merge=True, sleep=slept.append):
+            pass
+        self.assertEqual(slept, [])
+        self.assertEqual(list(waiting.iterdir()), [])
+
+
 if __name__ == "__main__":
     # Run as a script, the repository root is not on the path, and a row imports the tests package from it.
     sys.path.insert(0, str(ROOT))

@@ -6731,7 +6731,9 @@ def lead_sync(args) -> None:
 
     c.flow_log.mkdir(parents=True, exist_ok=True)
     try:
+        # The base's merge slot first, which every delivery on this machine shares, then this delivery's queue lock.
         with delivery_state.file_lock(supervisor_lock_path(c)), \
+                delivery_state.merge_slot(c.root, c.base_branch, delivery=c.delivery, timeout=args.wait_seconds), \
                 delivery_state.file_lock(c.state / delivery_state.QUEUE_LOCK, timeout=args.wait_seconds):
             published = remote_head(c.base_branch)
             if published not in (intent["oldHead"], intent.get("preparedHead")):
@@ -6837,8 +6839,11 @@ def lead_upgrade_writer(args) -> None:
 
     c.flow_log.mkdir(parents=True, exist_ok=True)
     try:
-        # Prevent another supervisor from starting between the parked check and transition.
-        with delivery_state.file_lock(supervisor_lock_path(c)):
+        # Prevent another supervisor from starting between the parked check and transition, and hold the base's merge
+        # slot, as the queue does, within the binding's check timeout, around the transition's queue lock.
+        with delivery_state.file_lock(supervisor_lock_path(c)), \
+                delivery_state.merge_slot(c.root, c.base_branch, delivery=c.delivery,
+                                          timeout=float(c.binding.get("checkTimeoutSeconds", 0))):
             result = state_tool("writer-upgrade", "--writer", "lead", "--expected", args.expected,
                                 "--reason", args.reason)
             pinned = json.loads(result.stdout)["state"]["meta"]["writerGeneration"]
@@ -6874,7 +6879,8 @@ def lead_push(args) -> None:
 
     print(f"Waiting for the merge queue's lock to publish {c.base_branch}.", flush=True)
     try:
-        with delivery_state.file_lock(c.state / delivery_state.QUEUE_LOCK, timeout=args.wait_seconds):
+        with delivery_state.merge_slot(c.root, c.base_branch, delivery=c.delivery, timeout=args.wait_seconds), \
+                delivery_state.file_lock(c.state / delivery_state.QUEUE_LOCK, timeout=args.wait_seconds):
             git("fetch", "-q", c.remote, c.base_branch)
             current = remote_head(c.base_branch)
             if current != before:
