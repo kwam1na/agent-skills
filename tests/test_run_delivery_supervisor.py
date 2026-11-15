@@ -332,6 +332,40 @@ class ModuleUnitsTests(unittest.TestCase):
             self.assertIs(units.get(f"{__name__}.{name}"), True, f"{name} isn't a quiet or serial unit of its own: {listed}")
 
 
+class FinishMarkOrderTests(unittest.TestCase):
+    def test_a_pass_whose_journal_fails_leaves_the_line_for_the_next_pass_to_journal_once(self) -> None:
+        path = Path(__file__).resolve().parents[1] / "skills" / "run-delivery" / "scripts" / "run_delivery.py"
+        spec = importlib.util.spec_from_file_location("run_delivery_for_finish_marks", path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        self.addCleanup(sys.modules.pop, spec.name, None)
+        spec.loader.exec_module(module)
+        doc = {"state": {"finish": [{"id": "merged", "text": "Every story merged", "met": False}]}, "journal": []}
+        marks, calls = [], []
+
+        def journal(*argv, **_):
+            calls.append(argv)
+            if len(calls) == 1:
+                raise subprocess.CalledProcessError(1, "delivery_state.py journal")
+            doc["journal"].append({"kind": "finish.met", "subject": argv[argv.index("--subject") + 1],
+                                   "summary": argv[argv.index("--summary") + 1]})
+
+        def patch(compute, what):
+            doc["state"] = {**doc["state"], **compute(doc)}
+        c = types.SimpleNamespace(state=Path("/nonexistent"), delivery="FX-1")
+        with mock.patch.multiple(module, load_json=lambda _: {"finish": []}, finished_lines=lambda *_: ["merged"],
+                                 patch_from=patch, state_tool=journal, read_log=lambda *_: [{"line": l} for l in marks],
+                                 append_log=lambda _, __, entry: marks.append(entry["line"])):
+            with self.assertRaises(subprocess.CalledProcessError):
+                module.journal_finish_met(c, doc)
+            self.assertEqual(marks, [], "a line whose journal failed was logged as marked")
+            self.assertEqual(module.journal_finish_met(c, doc), ["finish line merged met"])
+            self.assertEqual(module.journal_finish_met(c, doc), [])
+        self.assertEqual([e["subject"] for e in doc["journal"]], ["merged"])
+        self.assertEqual(marks, ["merged"])
+        self.assertTrue(doc["state"]["finish"][0]["met"])
+
+
 class ProofStateTests(unittest.TestCase):
     def test_a_merged_item_is_past_waiting_as_the_line_map_reads_it(self) -> None:
         path = Path(__file__).resolve().parents[1] / "skills" / "run-delivery" / "scripts" / "run_delivery.py"
