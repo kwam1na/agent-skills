@@ -10363,7 +10363,7 @@ def lead_run(args) -> None:
     Supervisor(c, once=args.once).run()
 
 
-def interpreter_version(program: str, checkout: Path) -> tuple[str | None, str | None]:
+def program_version(program: str, checkout: Path) -> tuple[str | None, str | None]:
     """(the version `program --version` prints in the checkout, or None, and why it could not be read)."""
     try:
         done = subprocess.run([program, "--version"], cwd=checkout, capture_output=True, text=True, timeout=30)
@@ -10400,7 +10400,7 @@ def lead_suite(args) -> None:
     began = time.monotonic()
 
     def suite(checkout: Path) -> tuple[int, str, tuple[str | None, str | None]]:
-        asked = interpreter_version(argv[0], checkout)
+        asked = program_version(argv[0], checkout)
         code, out = run_group(argv, checkout, full_health_timeout(binding))
         return code, out, asked
     print(f"lead-suite: running {shlex.join(argv)} at {commit[:10]} in {checkout}", flush=True)
