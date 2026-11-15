@@ -1276,6 +1276,22 @@ def in_app_summary(key: str) -> str:
                                "whether each eval actually proves its acceptance criterion.")
 
 
+# Under noDeferrals: an evidence string holding one of these, compared without regard to case, marks something a lens
+# left unfixed, and the brief asks a lens that left nothing so to say it in words that hold none of them.
+EVIDENCE_NOTE_WORDS = ("declined", "not filed", "surviving mutant")
+NO_DEFERRALS_EVIDENCE = ('This delivery takes no deferrals: when you declined nothing, left nothing unfiled and left no '
+                         'mutant alive, say so in `evidence` in the words "nothing left unfixed". Write "Declined", '
+                         '"not filed" or "surviving mutant" in `evidence` only for something you left unfixed: the '
+                         "hand-off refuses a round whose evidence carries one.")
+
+
+def evidence_notes(outcome: dict) -> list[tuple[str, str]]:
+    """A round's evidence notes, (lens, note), in its entries' order: each evidence string that holds a note word."""
+    return [(entry["lens"], text) for entry in outcome.get("entries", [])
+            for text in (entry.get("result") or {}).get("evidence", [])
+            if isinstance(text, str) and any(word in text.lower() for word in EVIDENCE_NOTE_WORDS)]
+
+
 def scoped_checks(span: str) -> str:
     """The brief's two per-round fills: the sensors to run, and the files the round's span changes."""
     changed = git("diff", "--name-only", span).splitlines()
@@ -1317,6 +1333,8 @@ def brief(key: str, round_no: int, lens: str, candidate: str, tree: str, merge_b
                  "one you find fixed as `closed`, `fixed` or `withdrawn`: only that listing records a deferral as fixed, "
                  "and one listed as `deferred` or `open`, or not listed, stays deferred and is filed as a follow-up at "
                  "close. A deferral (P2/P3 only) also carries `deferredIssue`.")
+    if getattr(c, "no_deferrals", False):
+        later += f"\n- {NO_DEFERRALS_EVIDENCE}"
     span = f"{merge_base}..{candidate}" if round_no == 1 else f"{prior_candidate}..{candidate}"
     if round_no <= c.bound:
         bound_text = f"`ordinary counted`: round {round_no} of {c.bound}, counted against the declared bound."
@@ -4291,6 +4309,11 @@ def handoff(args) -> None:
         raise Stop(f"round {last['round']} is {last['outcome']}; the lenses have not all approved")
     if {e["lens"] for e in last["entries"]} != set(c.lenses):
         raise Stop(f"round {last['round']} doesn't carry every lens")
+    notes = evidence_notes(last) if c.no_deferrals else []
+    if notes:
+        raise Stop(f"round {last['round']}'s evidence holds notes, and this delivery takes no deferrals: fix each, then "
+                   "review again, where each lens says \"nothing left unfixed\":\n  "
+                   + "\n  ".join(f"{lens}: {note}" for lens, note in notes))
     reviewed = last["entries"][0]["binding"]["candidateRef"]
     base_merge = None
     if reviewed != head:
@@ -7214,6 +7237,18 @@ def pr_review_acceptance(conf: dict, url: str, head: str, recorded: dict,
     return problems, decisions
 
 
+def print_evidence_notes(key: str, n: int) -> None:
+    """Under noDeferrals, the story's round n's evidence notes, each with its lens, in plain text for the lead."""
+    path = next((folder / f"round-{n}.json" for folder in story_folders(key) if (folder / f"round-{n}.json").is_file()),
+                None)
+    if path is None:
+        print(f"round {n}'s evidence notes: its round file isn't in the story's review folders, so they can't be read")
+        return
+    notes = evidence_notes(json.loads(path.read_text()))
+    print(f"round {n}'s evidence notes, under noDeferrals:"
+          + ("".join(f"\n  {lens}: {note}" for lens, note in notes) if notes else " none"))
+
+
 def lead_accept(args) -> None:
     c = cfg()
     if not (c.state / "state.json").is_file():
@@ -7271,6 +7306,8 @@ def accept_story(c, args) -> None:
     last = max(rounds, key=lambda e: e["review"]["round"], default=None)
     if not last or set(last["review"]["verdicts"]) != set(c.lenses) or set(last["review"]["verdicts"].values()) != {"approve"}:
         problems.append("the last journaled round is not approved by every lens")
+    if last and c.no_deferrals:
+        print_evidence_notes(key, last["review"]["round"])
     evidence = [e for e in doc["journal"] if e.get("kind") == "review.evidence" and e.get("subject") == key]
     carried_review = None
     if not evidence or evidence[-1]["reviewArtifact"]["candidateRef"] != head:
