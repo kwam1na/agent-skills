@@ -73,7 +73,8 @@
           "briefs": {
             "lens.security": {
               "brief": {
-                "text": "RAW ARTIFACT"
+                "text": "RAW ARTIFACT",
+                "unavailable": true
               }
             }
           }
