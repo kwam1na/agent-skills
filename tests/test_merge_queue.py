@@ -4975,8 +4975,9 @@ class CarriedBaseMoveTests(MergeQueueTestCase):
         calls: list[int] = []
 
         def second_fails(runner, subject):
+            # Every plan after the first fails, as a fetch that keeps failing would.
             calls.append(1)
-            if len(calls) == 2:
+            if len(calls) >= 2:
                 raise RuntimeError("git fetch failed")
             return real(runner, subject)
 
@@ -4987,6 +4988,16 @@ class CarriedBaseMoveTests(MergeQueueTestCase):
         # The first move's plan is never reused for the second: lib runs again over src/lib.txt.
         self.assertEqual(self.runs(adopter)["lib"], 2)
         self.assertEqual(len(self.carried(adopter)), 1)
+        # The failed plan spent the one retry at once, so a third move stops the candidate.
+        self.fresh()
+        adopter = self.carrying([self.LIB])
+        self.candidate_with(adopter, ["lib"])
+        calls.clear()
+        with mock.patch.object(queue.Runner, "carry_plan", second_fails):
+            results, _ = self.moved(adopter, self.base_files(adopter, {"docs/other.txt": "other\n"}),
+                                    self.base_files(adopter, {"src/lib.txt": "lib two\n"}),
+                                    self.base_files(adopter, {"src/lib.txt": "lib three\n"}))
+        self.assertStopped(results, "base_moved")
 
     def test_a_re_sync_whose_carry_the_check_empties_spends_the_retry(self) -> None:
         # app builds on lib, so a move in app's read set runs both again, and lib's carry comes to nothing.
