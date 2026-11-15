@@ -5729,7 +5729,7 @@ JOURNAL_KINDS = [
     "base.repaired", "base.rerun.started", "base.rerun.finished", "base.rerun.stopped", "base.flaky",
     "lease.granted", "lease.released", "release.started", "release.finished",
     "finish.met", "decision.recorded", "blocker.recorded", "delivery.closed", "review.evidence", "check.selected",
-    "selection.refused", "hook.held", "base.moved",
+    "selection.refused", "hook.held", "base.moved", "peer.merged",
 ]
 
 

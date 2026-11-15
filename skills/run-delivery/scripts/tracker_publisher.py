@@ -80,6 +80,7 @@ UPDATES: dict[str, tuple[str, str] | None] = {
     "base.rerun.finished": None,
     "base.rerun.stopped": None,
     "base.flaky": None,
+    "peer.merged": None,
     "lease.granted": ("ticket-or-epic", "Lease granted"),
     "lease.released": ("ticket-or-epic", "Lease released"),
     "release.started": None,

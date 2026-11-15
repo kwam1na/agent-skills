@@ -6262,9 +6262,103 @@ def lead_init(args) -> None:
     print(f"initialized {c.state} with {len(planned)} planned stories across {len(c.lanes)} lanes"
           + (f"; wrote {c.state / PLAN_FILE}" if (c.state / PLAN_FILE).exists() else ""))
     if args.no_supervisor or supervisor_off():
+        register_delivery(c, None)
         print(f"supervisor: not started; start it with {flow_command()} lead-run --resume")
     else:
         print(f"supervisor: running; live view {start_supervisor(c)}{live_fallback(c.state)}")
+
+# The deliveries on one machine's checkouts of a repository, beside its git common directory, where the merge slots
+# are: one entry a delivery, <git-common-dir>/agent-skills/deliveries/<key>.json, holding its key, base, lead
+# checkout, record folder and supervisor's pid, null while it was started with none. Every checkout and linked
+# worktree of the repository names the same folder.
+def registry_folder(root: Path) -> Path:
+    common = Path(git("rev-parse", "--git-common-dir", cwd=root))
+    return (common if common.is_absolute() else Path(root) / common).resolve() / "agent-skills" / "deliveries"
+
+
+def registry_path(root: Path, key: str) -> Path:
+    return registry_folder(root) / f"{key.replace('%', '%25').replace('/', '%2F')}.json"
+
+
+def register_delivery(c, pid: int | None) -> None:
+    """Write or refresh this delivery's registry entry: lead-init's with no pid when it starts no supervisor, and a
+    supervisor's each time it takes its lock, which registers a delivery initialized before the registry existed too."""
+    path = registry_path(c.root, c.delivery)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    entry = {"key": c.delivery, "base": c.base_branch, "lead": str(c.root.resolve()), "state": str(c.state.resolve()),
+             "pid": pid}
+    staging = path.with_name(f".{path.name}.{os.getpid()}")
+    staging.write_text(json.dumps(entry, indent=2) + "\n")
+    os.replace(staging, path)
+
+
+def unregister_delivery(c) -> str | None:
+    path = registry_path(c.root, c.delivery)
+    if not path.exists():
+        return None
+    path.unlink(missing_ok=True)
+    return f"removed {c.delivery} from the deliveries registered beside the repository ({path})"
+
+
+def peer_deliveries(c) -> list[dict]:
+    """The other deliveries registered on this delivery's base, each with its `status`: `live` while its supervisor's
+    pid runs, `stale` once it doesn't, `none` when it was started with no supervisor. An entry that can't be read is
+    listed whatever its base, as `{file, status: unreadable}`, and stops nothing."""
+    folder = registry_folder(c.root)
+    peers = []
+    for path in sorted(folder.glob("*.json")) if folder.is_dir() else []:
+        try:
+            entry = json.loads(path.read_text())
+        except (OSError, ValueError):
+            entry = None
+        if not (isinstance(entry, dict) and all(isinstance(entry.get(name), str) and entry[name]
+                                                for name in ("key", "base", "state"))
+                and (entry.get("pid") is None or valid_pid(entry["pid"]))):
+            peers.append({"file": path.name, "status": "unreadable"})
+            continue
+        if entry["key"] == c.delivery or entry["base"] != c.base_branch:
+            continue
+        pid = entry.get("pid")
+        peers.append({**entry, "status": "none" if pid is None else "live" if pid_runs(pid) else "stale"})
+    return peers
+
+
+def peer_status_words(peer: dict) -> str:
+    if peer["status"] == "live":
+        return f"live, pid {peer['pid']}"
+    if peer["status"] == "stale":
+        return f"stale: its supervisor, pid {peer['pid']}, isn't running"
+    return "no supervisor"
+
+
+def peer_line(peer: dict) -> str:
+    """A peer as doctor --delivery lists it: its supervisor, its lead checkout, and what its queue is checking and
+    has queued, read from its record through its entry."""
+    if peer["status"] == "unreadable":
+        return f"{peer['file']}: unreadable"
+    said = f"{peer['key']} ({peer_status_words(peer)}; led from {peer.get('lead')})"
+    state = json_object(Path(peer["state"]) / "state.json")
+    if not state:
+        return f"{said}: its record {peer['state']} can't be read"
+    current = ((state.get("meta") or {}).get("checking") or {}).get("now")
+    checking = current.get("subject") if isinstance(current, dict) else None
+    queued = [item.get("subject") for item in state.get("queue") or [] if isinstance(item, dict)
+              and item.get("stage") in ("queued", "syncing", "synced", "checked") and item.get("subject") != checking]
+    return f"{said}: checking {checking or 'nothing'}; queued {', '.join(queued) or 'nothing'}"
+
+
+def slot_line(c) -> str:
+    """Who holds this delivery's base's merge slot, and since when, from the holder file beside it: shown only while
+    the pid it names runs, since the file of a holder that died stays behind."""
+    scripts = str(c.release / "skills/orchestrate-work/scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import delivery_state
+    holder = delivery_state.slot_holder(delivery_state.merge_slot_path(c.root, c.base_branch))
+    if holder and valid_pid(holder.get("pid")) and pid_runs(holder["pid"]):
+        return (f"{c.base_branch}'s merge slot is held by {holder.get('delivery') or 'an unnamed delivery'} "
+                f"(pid {holder['pid']}, since {holder.get('since') or 'an unrecorded time'})")
+    return f"{c.base_branch}'s merge slot is free"
 
 
 def planned_entry(c, key: str) -> dict:
@@ -7005,8 +7099,12 @@ def change_regions(c, args) -> None:
 
 
 def change_ownership(c, args) -> None:
-    if not (args.region or args.revoke_region) and any(value is not None for value in (args.base, args.start, args.end)):
+    if not (args.region or args.revoke_region or args.claim) and any(
+            value is not None for value in (args.base, args.start, args.end)):
         raise Stop("--base, --start and --end require --region or --revoke-region")
+    if args.claim:
+        change_claims(c, args)
+        return
     if args.seed:
         if args.lane or args.source:
             raise Stop("--seed takes neither --lane nor --from")
@@ -7135,6 +7233,7 @@ def lead_assign(args) -> None:
         for line in warnings:
             print(f"  {line}")
         print(f"Move each to {args.lane}'s owns now, or plan the story on the lane that owns it.\n")
+    print_peer_claims(c, [path for key in keys for path in story_named_files(c, key, tracked)])
     # One entry per story, so each ticket's start is its own, made when its lane begins it.
     for key in keys:
         state_tool("journal", "--kind", "lane.assigned", "--lane", args.lane, "--subject", key, "--summary",
@@ -7161,6 +7260,81 @@ def lead_assign(args) -> None:
           "key and the outcome (handed off, or blocked and on what): the lead sees its first lines. Then the branch, "
           "PR, reviewed head, review rounds and verdicts, gates, in-app checks, and any decision you need from the "
           "lead. The lead checks the hand-off and tells you when to start your next story.")
+
+# A delivery's claims on its base, kept in its own record's extensions for its peers to read (Decision 29).
+def change_claims(c, args) -> None:
+    """lead-own --claim PATTERN: whole files this delivery claims on its base. A peer's lead-assign and lead-accept
+    warn of a story or candidate that touches one; a claim refuses nothing and orders no delivery before another."""
+    pattern = args.claim
+    if (any(value is not None for value in (args.base, args.start, args.end))
+            or re.search(r"(?::\d+(?:-\d+)?|#L\d+(?:-L?\d+)?)$", pattern)):
+        raise Stop("a claim is of whole files: name a file or a pattern, not a region or a line range")
+    if args.lane or args.source:
+        raise Stop("--claim takes neither --lane nor --from: a claim is the delivery's, not a lane's")
+    if Path(pattern).is_absolute() or any(part in ("", ".", "..") for part in pattern.split("/")):
+        raise Stop("name a repository-relative file or pattern")
+
+    def compute(doc: dict) -> list[str]:
+        extensions = doc["state"].get("extensions")
+        claims = list((extensions or {}).get("claims") or [])
+        if pattern in claims:
+            raise Stop(f"{c.delivery} already claims {pattern}")
+        if extensions is None:
+            return ["--set", json.dumps({"/extensions": {"claims": [pattern]}})]
+        return ["--set", json.dumps({"/extensions/claims": [*claims, pattern]})]
+
+    patch_from(compute, f"{c.delivery}'s claim of {pattern}")
+    change = f"{c.delivery} claims {pattern} on {c.base_branch}: a peer's lead-assign and lead-accept warn of it"
+    state_tool("journal", "--kind", "decision.recorded", "--summary", change)
+    print(change)
+
+
+def peer_stories_on(state: dict, path: str) -> str:
+    """A peer's stories on a file, from its record: those of the lanes whose claims or regions cover it, each with
+    its stage, its queue stage once it is queued."""
+    ownership = state.get("laneOwnership") if isinstance(state.get("laneOwnership"), dict) else {}
+    lanes = {lane for lane, patterns in ownership.items() if isinstance(patterns, list)
+             and any(isinstance(p, str) and fnmatch.fnmatchcase(path, p) for p in patterns)}
+    lanes |= {claim.get("lane") for claim in state.get("laneRegions") or [] if isinstance(claim, dict)
+              and claim.get("path") == path}
+    stages: dict[str, str] = {}
+    for kind in ("planned", "queue"):
+        for item in state.get(kind) or []:
+            if isinstance(item, dict) and isinstance(item.get("subject"), str) and (
+                    item.get("lane") in lanes or item.get("assignedLane") in lanes):
+                stages[item["subject"]] = str(item.get("stage"))
+    return ", ".join(f"{key} ({stage})" for key, stage in sorted(stages.items())) or "none"
+
+
+def peer_claim_lines(c, files: list[str]) -> list[str]:
+    """For each file a peer on this base claims, the claim, the peer's stories on the file and their stages, and
+    whether the peer is stale or has no supervisor; and each registry entry that can't be read."""
+    lines = []
+    for peer in peer_deliveries(c):
+        if peer["status"] == "unreadable":
+            lines.append(f"{peer['file']}, a delivery registered beside this repository, is unreadable: its claims, "
+                         "if any, aren't known")
+            continue
+        state = json_object(Path(peer["state"]) / "state.json")
+        extensions = state.get("extensions") if isinstance(state.get("extensions"), dict) else {}
+        claims = [p for p in extensions.get("claims") or [] if isinstance(p, str)]
+        note = {"stale": f"; {peer['key']} is {peer_status_words(peer)}",
+                "none": f"; {peer['key']} has no supervisor"}.get(peer["status"], "")
+        for path in sorted(set(files)):
+            pattern = next((p for p in claims if fnmatch.fnmatchcase(path, p)), None)
+            if pattern:
+                lines.append(f"{path} is claimed by {peer['key']} ({pattern}{note}); its stories on it: "
+                             f"{peer_stories_on(state, path)}")
+    return lines
+
+
+def print_peer_claims(c, files: list[str]) -> None:
+    lines = peer_claim_lines(c, files)
+    if lines:
+        print(f"Files another delivery on {c.base_branch} claims (a warning; nothing is refused):")
+        for line in lines:
+            print(f"  {line}")
+        print()
 
 
 def accept_no_change(c, key: str, entry: dict) -> None:
@@ -7513,6 +7687,7 @@ def accept_story(c, args) -> None:
     except Unreasoned as error:
         print(f"plan: not rebuilt: {error}")
     print(f"accepted {key} after its merge" if merged else f"accepted {key}; the runner may take it")
+    print_peer_claims(c, changed)
     if needs_video(key):
         print("  once it merges: lead-evidence page, republish the page (same address), lead-evidence published --url, "
               "and link its section from the story in the tracker")
@@ -7901,6 +8076,9 @@ def lead_close(args) -> None:
         else:
             if port_open(port):
                 left.append(port_busy(port))
+    said = unregister_delivery(c)
+    if said:
+        done.append(said)
     # The live view last, by the pid live.json records: it served the close until now.
     try:
         said = stop_view(c.state)
@@ -10027,7 +10205,7 @@ class Supervisor:
         config = binding_state(c)
         if name == "live":
             return [sys.executable, "-B", str(scripts / "render_state.py"), "live", "--dir", str(c.state),
-                    *(["--state-config", json.dumps(config)] if config is not None else [])]
+                    "--repo", str(c.root), *(["--state-config", json.dumps(config)] if config is not None else [])]
         if config is None:
             return None  # the queue needs a binding
         return [sys.executable, "-B", str(scripts / "merge_queue.py"), "--repo", str(c.root), "--state", str(c.state),
@@ -10211,6 +10389,7 @@ class Supervisor:
             return cleanup_merged(c, doc, entry["laneWords"])
 
         steps = (("reconcile", reconcile_once), ("cleanup", cleanup), ("fullHealth", lambda: post_merge_step(c, self.once)),
+                 ("peers", lambda: self.peer_merges(entry)),
                  ("finish", lambda: journal_finish_met(c, load_state())),
                  ("deferrals", lambda: deferral_breaches(c, load_state())),
                  ("publish", lambda: render_views(c, only="publishers")), ("needs", derive),
@@ -10245,6 +10424,83 @@ class Supervisor:
         append_log("supervisor", c.delivery, entry)
         return closed
 
+    def peer_merges(self, entry: dict) -> str:
+        """Journal `peer.merged` for each `candidate.merged` of a peer on this base, since this record began, that it
+        hasn't handled and whose merge changed a file one of this delivery's open stories names: one entry a story,
+        naming the peer, its story and the files. How far it has read each peer's journal is kept in the flow log's
+        `peers` log, written as soon as each entry is journalled, and shown as the pass's `peerReads`, so a supervisor
+        started again journals nothing twice; a merge whose commit isn't on the base here yet is read again later."""
+        c = self.c
+        reads: dict[str, int] = {}
+        for read in read_log("peers", c.delivery):
+            if isinstance(read.get("peer"), str) and type(read.get("through")) is int:
+                reads[read["peer"]] = max(read["through"], reads.get(read["peer"], 0))
+        entry["peerReads"] = reads
+        peers = [peer for peer in peer_deliveries(c) if peer["status"] != "unreadable"]
+        if not peers:
+            return "no peers"
+        scripts = str(c.release / "skills/orchestrate-work/scripts")
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+        import delivery_state
+        doc = load_state()
+        state, journal = doc["state"], doc["journal"]
+        began = journal[0]["at"] if journal else now()
+        done = ({item["subject"] for item in state["queue"] if item.get("stage") == "merged"}
+                | {item["subject"] for item in state.get("planned", []) if item.get("stage") == "settled"})
+        tracked = tracked_at_base(c)
+        named = {key: set(story_named_files(c, key, tracked)) for key in c.stories if key not in done}
+        said = []
+        for peer in peers:
+            try:
+                theirs = delivery_state.read_journal(Path(peer["state"]))
+            except (delivery_state.StateError, OSError, ValueError):
+                said.append(f"{peer['key']}: its journal can't be read")
+                continue
+            through = start = reads.get(peer["key"], 0)
+            for merged in theirs:
+                if merged["id"] <= through:
+                    continue
+                if merged["kind"] == "candidate.merged" and merged["at"] >= began:
+                    found = self.peer_merge_files(peer, merged)
+                    if found is None:
+                        said.append(f"{peer['key']}: {merged['subject']}'s merge isn't on {c.base_ref} yet")
+                        break
+                    commit, files = found
+                    for key, names in named.items():
+                        hit = sorted(files & names)
+                        summary = (f"{peer['key']}, a delivery on {c.base_branch}, merged {merged['subject']} at "
+                                   f"{commit[:10]}, changing {', '.join(hit)}, which {key} names")
+                        if hit:
+                            lane = c.lane_of(key, state)
+                            state_tool("journal", "--kind", "peer.merged", "--subject", key,
+                                       *(["--lane", lane] if lane else []), "--summary", summary)
+                            said.append(summary)
+                    # Kept at once, so a supervisor stopped mid-pass doesn't journal this merge again.
+                    append_log("peers", c.delivery, {"peer": peer["key"], "through": merged["id"]})
+                through = reads[peer["key"]] = merged["id"]
+            if through != start:
+                append_log("peers", c.delivery, {"peer": peer["key"], "through": through})
+        return "; ".join(said) or "nothing new"
+
+    def peer_merge_files(self, peer: dict, merged: dict) -> tuple[str, set[str]] | None:
+        """The commit on the base a peer's merge made and the files it changed: the base's first-parent commit whose
+        tree is the merged head's, named by the runner's entry or the peer's queue. None while it isn't there."""
+        c = self.c
+        head = re.search(r" at ([0-9a-f]{40})$", merged.get("summary") or "")
+        item = next((q for q in json_object(Path(peer["state"]) / "state.json").get("queue") or []
+                     if isinstance(q, dict) and q.get("subject") == merged.get("subject")), {})
+        synced = head.group(1) if head else item.get("syncedHead") or item.get("head")
+        for attempt in range(2):
+            tree = git("rev-parse", "--verify", "-q", f"{synced}^{{tree}}", check=False) if synced else ""
+            rows = git("log", "--first-parent", "-n", "500", "--format=%H %T", c.base_ref, check=False).splitlines()
+            commit = next((row.split()[0] for row in rows if tree and row.endswith(f" {tree}")), None)
+            if commit:
+                return commit, set(git("diff", "--name-only", f"{commit}^1", commit, check=False).splitlines())
+            if attempt == 0:
+                git("fetch", "-q", c.remote, c.base_branch, check=False)
+        return None
+
     def run(self) -> None:
         c = self.c
         # Detached by its own session, never by ignoring signals: its children start with the defaults.
@@ -10275,6 +10531,8 @@ class Supervisor:
         closed, stopped_by = False, None
         try:
             self.write_lock()
+            with contextlib.suppress(OSError, Stop, subprocess.SubprocessError):
+                register_delivery(c, os.getpid())
             if not self.once:
                 # Who stops it says why in supervisor.json; a signal nobody explained is recorded by the supervisor.
                 write_supervisor_status(c.state, os.getpid(), True)
@@ -10797,6 +11055,8 @@ class Doctor:
             ("remote-base", "configuration on the remote base", ("delivery",), self.remote_base),
             ("ready", "pull requests marked ready", ("delivery",), self.ready),
             ("supervisor", "delivery supervisor", ("delivery",), self.supervisor),
+            ("peers", "deliveries on this base", ("delivery",), self.peers),
+            ("merge-slot", "merge slot", ("delivery",), self.merge_slot),
             ("base-gates", "gates on the base", ("gates", "committed"), self.base_gates),
         ]
 
@@ -11397,6 +11657,17 @@ class Doctor:
                              + f"; fix: lead-close or stop them, then {flow_command()} lead-run --resume")
         return status, said()
 
+    def peers(self):
+        """The other deliveries registered on this base, each with what its queue is checking and has queued; an
+        entry that can't be read is named, and fails nothing."""
+        found = peer_deliveries(self.delivery)
+        if not found:
+            return "ok", f"no other delivery is registered on {self.delivery.base_branch}"
+        return "ok", " | ".join(peer_line(peer) for peer in found)
+
+    def merge_slot(self):
+        return "ok", slot_line(self.delivery)
+
     def supervisor_node(self, recorded: dict) -> tuple[str, str]:
         """The Node the running supervisor recorded in its lock as it started, which its queue's checks run unless
         their profile says otherwise, judged against the runtime's nodeMinimum: (status, words)."""
@@ -11588,6 +11859,7 @@ def main(argv: list[str] | None = None) -> None:
     action.add_argument("--revoke", metavar="PATTERN", help="remove a whole-file claim by exact pattern")
     action.add_argument("--region", metavar="PATH", help="grant a span in a committed text file")
     action.add_argument("--revoke-region", metavar="PATH", help="remove a region claim by its exact coordinates")
+    action.add_argument("--claim", metavar="PATTERN", help="claim whole files on the base for this delivery's peers")
     p.add_argument("--lane"); p.add_argument("--from", dest="source")
     p.add_argument("--base", metavar="COMMIT")
     p.add_argument("--start", type=int, metavar="LINE", help="first owned line, starting at 1")
