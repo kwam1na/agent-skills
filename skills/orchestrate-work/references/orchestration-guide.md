@@ -313,7 +313,7 @@ supervisor's.
   | `undeclared_change`, `unreviewed_change` | The sync produced changes the binding does not declare, or code the lenses did not review. Return it to the lane, or declare the path in the binding. |
   | `prepare_failed`, `dirty_checkout` | A checkout could not be prepared, or was not clean after preparing or checking. Fix `prepare` or the check that writes files. |
   | `no_checks`, `profile_unknown` | The selection was empty while files changed, or a check named an unknown profile. Fix the provider, `alwaysRun`, `fallback` or `profiles`. |
-  | `selection_invalid` | Your check selection no longer fits the binding, or two batch members' selections define one check differently. Select again, or clear it, and re-queue. |
+  | `selection_invalid` | Your check selection no longer fits the binding, or two batch members' selections run one check differently: its argv, cwd, prerequisites, timeout or environment, never its reasons or title. Select again, or clear it, and re-queue. |
   | `provider_refused` | Under `selection.refusalStops`, the provider exited non-zero, so no check ran and the candidate is held. Its words are in `checkSelection.detail` and in `selection.refused`. Select its checks for its reviewed head, then re-queue it. |
   | `check_failed` | Return the failing check's output to the lane. |
   | `base_broken` | Stop and follow the base-broken rules. |
@@ -995,16 +995,37 @@ re-run that was stopped before its verdict fails nothing, and journals
 When the runner reports `base_broken`:
 
 1. **Fix forward first.** Land the smallest change that makes the check pass
-   on the base, through the queue like any candidate.
+   on the base, through the queue like any candidate. Name the fix as the
+   base's repair: `delivery_state.py repair --subject <key>` marks a queued
+   candidate, and while the base awaits repair `serve` takes only that
+   candidate, alone. Its merge journals `base.repaired`, naming it. Only a queued candidate can
+   be named, one at a time and only while the base is broken, and
+   `repair --subject <key> --withdraw` drops the mark. A repair that fails
+   its own checks stops as any candidate does, keeps its mark and says so,
+   and the base still awaits repair.
 2. **Close the gap that let it through.** Either declare the missing
    membership in the repository's affected-checks provider, so the check is
    selected for the changes that can break it, or add the check to the
    binding's `alwaysRun`.
 3. **Record a decision** in the journal (`--kind decision.recorded`), naming
    the check, the cause and the gap closed. Journal `base.repaired` when the
-   base passes again.
+   base passes again, if the repair's merge did not.
 
-Then restart the queue from the first stopped candidate.
+Every candidate the break stopped, with `base_broken` at the base head that
+broke, goes back to `queued` on `base.repaired`, with no `--requeue`.
+That holds however `base.repaired` is journaled: by the repair's merge, by
+the lead, or by a `fullHealth` pass. A candidate stopped for anything else,
+or by a break at another base head, stays stopped, and every repair mark
+clears.
+
+A check that fails on the base re-run could also be cross-talk with another
+run on the same machine: a shared port, a fixed path, a service, or a load
+that makes a deadline miss. The verdict is the same, `base_broken`, and the stop's detail says it
+could be cross-talk. Keep the queue's checks apart from lanes' own runs: give
+the queue's checks their own ports, temporary folders and services, through
+an `environmentProfile` or the binding's `environment`, and don't run a
+lane's full suite on the machine while the queue checks. Confirm a break on a
+quiet machine before you fix forward.
 
 ## Binding guide
 
@@ -1280,6 +1301,12 @@ or a selection that leaves it out.
   older base head, or of a check you didn't select, says nothing. A head this
   delivery's queue never re-ran a check on, such as one another delivery's
   merge made, gives no warning, and a note says that nothing is known there.
+- **A selection that runs a check differently.** Batch members define one
+  check alike when it runs alike, by the digest of its argv, cwd,
+  prerequisites, timeout and environment; reasons and title don't count, and
+  the batch keeps the first member's. `select` warns, and still records the
+  selection, when another queued candidate's selection runs the same check id
+  differently, since a batch with both stops as `selection_invalid`.
 - **Checked.** The runner refuses a binding whose catalogue repeats an id,
   reuses a binding check's id, names a prerequisite outside it, forms a cycle,
   names an unknown profile or exceeds the ceiling, or whose guards or readers

@@ -827,6 +827,19 @@
                 }
               }
             },
+            "repair": {
+              "description": "Written only by the state tool's repair command: the lead named this candidate as the broken base's repair, while it was queued. While the base awaits repair, serve takes only this row, alone. Its merge journals base.repaired, and a base.repaired journaled any way clears the mark. Absent otherwise.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "namedAt"
+              ],
+              "properties": {
+                "namedAt": {
+                  "$ref": "#/$defs/timestamp"
+                }
+              }
+            },
             "checkSelection": {
               "description": "Written by the runner when it selects checks: whether its latest checks came from the lead's selection or the provider's answer. For the lead's, the reviewed head it was recorded at and the lead's reason. For a provider refusal under selection.refusalStops, outcome provider_refused and the provider's own words in detail. A hand-off at a new head drops it. Absent until the runner first selects.",
               "type": "object",
