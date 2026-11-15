@@ -534,7 +534,12 @@ three steps, with the supervisor or without it:
 1. **Integrate.** Build the product-only change, with run-delivery's `ship`
    where the repository uses it. Merge the default branch into the delivery's
    base first when it moved, resolve its conflicts, and fix what the merged
-   tree breaks.
+   tree breaks. Run the lead's own full suite with run-delivery's
+   `lead-suite --at <commit>`: it runs the binding's `fullHealth`, after its
+   prepare steps, in a detached checkout of that commit under the binding's
+   work folder, so nothing done in the lead's checkout while it runs reaches
+   it, and appends its result to the flow log's `<delivery>.suite.jsonl`. Cite
+   that line when marking the finish line that asks for the suite.
 2. **Review the integration.** Run `$review-work` with the delivery's lenses and
    round bound on the lead's own changes since the last unit merged: removing
    the delivery-only files, any merge of the default branch with its conflict

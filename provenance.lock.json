@@ -473,7 +473,7 @@
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "1fc58014361a43811c2d27a32d5c1e1b2ced730833598a0869c07729461ca56c"
+          "sha256": "0aa6d60814419241e19a2579c2f678841e7e30495598987cffc32de1bf2e52f6"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
@@ -1022,7 +1022,7 @@
       "outputs": [
         {
           "path": "skills/run-delivery/SKILL.md",
-          "sha256": "c0e01d7cf64151e2b476548473f931749adeda02bdc6edd7e37499c4567f9a19"
+          "sha256": "526b44493c29b88baeaa1a37dcc64c4d32b611bc88481f5f8110ba3401dee859"
         },
         {
           "path": "skills/run-delivery/adapters/forge_bitbucket.py",
@@ -1062,7 +1062,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "8985791447aa94fd38abd59542e724b03887abd099d278c8b8f54a56a7c01742"
+          "sha256": "e213471b53d62bf79b149fe9cdea9a1e6686d4ebbecc20b46038827f03a3371f"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",

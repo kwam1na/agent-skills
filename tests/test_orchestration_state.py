@@ -6008,7 +6008,9 @@ def bullets_after(text: str, lead_in: str) -> list[str]:
 ADOPTER_FILES = frozenset({".agents/orchestration.json", ".agents/delivery-posture.json", "delivery.md", "delivery.html",
                            "published.json", "recovery.json", "changes.jsonl", "plan.json", "closed.json",
                            # run-delivery's lead-wait: its lease in the record and its default output beside the flow logs
-                           "<state>/lead-wait.json", "<delivery>.wait.json"})
+                           "<state>/lead-wait.json", "<delivery>.wait.json",
+                           # run-delivery's lead-suite: the flow log it appends each run of the lead's suite to
+                           "<delivery>.suite.jsonl"})
 
 
 def review_round(number: int, candidate: str, *, finding: bool = False, resolved: bool = False) -> dict:
