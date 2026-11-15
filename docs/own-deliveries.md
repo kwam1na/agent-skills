@@ -130,15 +130,17 @@ A failed post-merge `fullHealth` is re-checked before it breaks the base once a
 release that holds the binding's `fullHealthRerun` member is installed. Until then
 the binding declares no member, which the installed release would refuse. Then it
 declares this one, which reads `scripts/run-tests.py`'s own output: a failed, erroring
-or unexpectedly passing test is named and re-run alone, once, with `unittest`, and a
-crashed or timed-out unit, which names no test, is not re-checked:
+or unexpectedly passing test is named and re-run alone, once, with `unittest`. A
+crashed or timed-out unit names no test, and nor does a failing subTest or a class's
+or module's fixture, whose line names more than a test id: a run with any of these is
+not re-checked:
 
 ```json fullHealthRerun
 {
   "argv": [".venv/bin/python", "-B", "-m", "unittest", "{tests}"],
   "failurePattern": "(?m)^(?:FAIL|ERROR|UNEXPECTED SUCCESS): (\\S+)$",
   "ranPattern": "(?m)^Ran [1-9]\\d* tests? in ",
-  "unrecheckedPattern": "(?m)^(?:CRASHED|TIMED OUT): "
+  "unrecheckedPattern": "(?m)^(?:CRASHED|TIMED OUT): |^(?:FAIL|ERROR|UNEXPECTED SUCCESS): \\S+ "
 }
 ```
 

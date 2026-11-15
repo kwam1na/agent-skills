@@ -6843,6 +6843,8 @@ class CheckCatalogueTests(unittest.TestCase):
         self.assertEqual(runner.binding_errors({**binding, "fullHealthRerun": rerun}), [])
         for name, change, said in (
                 ("no {tests}", {"argv": ["python3", "-m", "unittest"]}, "/fullHealthRerun/argv: must use {tests}"),
+                ("{tests} in a longer element", {"argv": ["python3", "--tests={tests}"]},
+                 "/fullHealthRerun/argv: must use {tests}"),
                 ("no group", {"failurePattern": r"(?m)^FAIL: \S+$"}, "/fullHealthRerun/failurePattern: needs a group"),
                 ("no ranPattern", {"ranPattern": None}, "ranPattern"),
                 ("failurePattern", {"failurePattern": "(unclosed"}, "/fullHealthRerun/failurePattern: doesn't compile"),

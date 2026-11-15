@@ -514,6 +514,19 @@ class Hangs(unittest.TestCase):
     def test_hangs(self):
         time.sleep(120)
 
+class SubTests(unittest.TestCase):
+    def test_sub(self):
+        with self.subTest(i=1):
+            self.fail("always")
+
+class Fixture(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        raise RuntimeError("fixture")
+
+    def test_under_fixture(self):
+        pass
+
 class Passes(unittest.TestCase):
     def test_passes(self):
         pass
@@ -540,15 +553,17 @@ class FullHealthRerunMember(unittest.TestCase):
         named = [match.group(1) for match in re.finditer(member["failurePattern"], out)]
         self.assertEqual(sorted(named), ["probe.test_kinds.Errors.test_errors", "probe.test_kinds.Fails.test_fails",
                                          "probe.test_kinds.Unexpected.test_passes_unexpectedly"], out)
-        unrechecked = [line for line in out.splitlines() if re.search(member["unrecheckedPattern"], line + "\n")]
-        self.assertEqual(len(unrechecked), 2, out)
-        # Every unit the runner reports as failed is either named for a rerun or matched as unrechecked.
-        failed = re.findall(r"(?m)^(?:FAIL|CRASHED|TIMED OUT) (probe\.\S+)", out)
-        self.assertEqual(len(failed), 5, out)
-        for unit in failed:
-            with self.subTest(unit=unit):
-                self.assertTrue(any(name.startswith(unit + ".") for name in named)
-                                or any(unit in line for line in unrechecked), out)
+        # Each failure line the runner prints is either named for a rerun or matched as unrechecked, line by line.
+        lines = re.findall(r"(?m)^(?:FAIL|ERROR|UNEXPECTED SUCCESS|CRASHED|TIMED OUT): .*$", out)
+        self.assertEqual(len(lines), 7, out)
+        unrechecked = [line for line in lines if re.search(member["unrecheckedPattern"], line)]
+        self.assertEqual(len(unrechecked), 4, out)
+        for line in lines:
+            with self.subTest(line=line):
+                self.assertTrue(re.fullmatch(member["failurePattern"].replace("(?m)", ""), line)
+                                or line in unrechecked, line)
+                self.assertFalse(re.fullmatch(member["failurePattern"].replace("(?m)", ""), line) and line in unrechecked,
+                                 f"named and unrechecked at once: {line}")
         # The member's argv, its interpreter this one since the probe has no .venv: a test that ran is matched, and
         # the named failures fail again.
         rerun = lambda tests: subprocess.run(
