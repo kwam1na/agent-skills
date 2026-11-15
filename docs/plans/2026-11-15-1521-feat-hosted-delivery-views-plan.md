@@ -404,7 +404,7 @@ Collect related fixes before rerunning affected sensors and reviewers, and rerun
 | Registry | `.venv/bin/python scripts/validate-registry.py` | Catalog/profile/config or corpus output changes |
 | Provenance | `.venv/bin/python scripts/update-provenance.py --check` | After deliberate output-list edits and writer refresh |
 | Focused Python coverage | Relevant U1/U4/U5/U6 test modules, including orchestration render and adopter/release integration | While implementing affected units |
-| Full repository suite | `.venv/bin/python scripts/run-tests.py` | Final candidate; macOS Python 3.11 before any release tag |
+| Full repository suite | `.venv/bin/python scripts/run-tests.py --workers 4 --budget tests/suite-budget.json` | Final candidate; macOS Python 3.11 before any release tag |
 | Worker type/build/runtime/browser lane | Package-local locked scripts `typecheck`, `build`, `test`, `test:browser` defined by U2/U3/U6 | Service and shared asset changes |
 | Hosted CI | Exact candidate's Ubuntu and cut-release gate plus new service lane | Report not-started, absent or failed checks explicitly |
 | Installed adopter | Exact candidate/final archive verification and apply receipt | Release-dependent delivery integration |
@@ -432,7 +432,7 @@ Do not broaden a passing check without a new change or unresolved concern.
 
 - Track the outcome under the existing parent V26-3070 in the yaegars team's agent delivery harness project; keep its original description and seven child outcomes.
 - Deliver from the verified installed linear-v2.3.0 generation on `integrate/hosted-deliveries`, targeting `main`. The published product source remains `skills/`.
-- Use two independent lane sessions, with subagents only for each lane's review lenses; lanes never integrate or release.
+- Use two independent lane sessions, with subagents only for each lane's review lenses; lanes never integrate or release. After the corpus lifecycle story merges, transfer its file claims to the service lane for packaging and qualification.
 - The corpus lane updates mandatory catalog/profile/output-list metadata in each releasable change so every candidate validates; the queue regenerates digests. The lead owns cross-lane integration and the check catalogue. This refines the earlier metadata-batching guidance to satisfy AGENTS.md.
 - The lead runs a macOS Python 3.11 full-suite budget check on the final integration even though the base's focused posture skips supervisor fullHealth. No skipped check is a pass.
 - Use the installed plan-review and delivery-review evidence contracts; prior CE planning review remains context, not substitute evidence. Plan review is unbounded; lane delivery review uses its declared bound and risk-relevant lenses.
@@ -440,10 +440,11 @@ Do not broaden a passing check without a new change or unresolved concern.
 
 ## Units and order
 
-| Tier | Lane | Owns | Work |
+| Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | `.github/workflows/hosted-delivery-viewer.yml`, `catalog.json`, `docs/hosted-deliveries.md`, `docs/own-deliveries.md`, `profiles/delivery-views.json`, `profiles/jira.json`, `profiles/linear.json`, `profiles/run-delivery.json`, `provenance.lock.json`, `skills/delivery-views/SKILL.md`, `skills/delivery-views/references/hosted-snapshot.schema.json`, `skills/delivery-views/scripts/hosted.py`, `skills/delivery-views/scripts/public_projection.py`, `skills/delivery-views/scripts/render.py`, `skills/delivery-views/scripts/views_common.py`, `skills/run-delivery/SKILL.md`, `skills/run-delivery/references/adopting.md`, `skills/run-delivery/references/config.md`, `skills/run-delivery/scripts/run_delivery.py`, `tests/fixtures/delivery-views/hosted/`, `tests/test_delivery_views_adopter.py`, `tests/test_delivery_views_hosted.py`, `tests/test_delivery_views_hosted_projection.py`, `tests/test_own_deliveries.py`, `tests/test_registry.py`, `tests/test_release_integration.py`, `tests/test_run_delivery_hosted.py`, `tests/test_run_delivery_supervisor.py` | Public projection, uploader, lifecycle, qualification |
-| 2 | 2 | `hosted/delivery-viewer/` | Ingestion, viewer, deploy proof |
+| 1 | 1 | V26-3514, V26-3517, V26-3518 | `.github/workflows/hosted-delivery-viewer.yml`, `catalog.json`, `docs/hosted-deliveries.md`, `docs/own-deliveries.md`, `profiles/delivery-views.json`, `profiles/jira.json`, `profiles/linear.json`, `profiles/run-delivery.json`, `provenance.lock.json`, `skills/delivery-views/SKILL.md`, `skills/delivery-views/references/hosted-snapshot.schema.json`, `skills/delivery-views/scripts/hosted.py`, `skills/delivery-views/scripts/public_projection.py`, `skills/delivery-views/scripts/render.py`, `skills/delivery-views/scripts/views_common.py`, `skills/run-delivery/SKILL.md`, `skills/run-delivery/references/adopting.md`, `skills/run-delivery/references/config.md`, `skills/run-delivery/scripts/run_delivery.py`, `tests/fixtures/delivery-views/hosted/`, `tests/test_delivery_views_adopter.py`, `tests/test_delivery_views_hosted.py`, `tests/test_delivery_views_hosted_projection.py`, `tests/test_own_deliveries.py`, `tests/test_registry.py`, `tests/test_release_integration.py`, `tests/test_run_delivery_hosted.py`, `tests/test_run_delivery_supervisor.py` |
+| 2 | 2 | V26-3515, V26-3516 | `hosted/delivery-viewer/` |
+| 5 | 2 | V26-3519, V26-3520 | `.github/workflows/hosted-delivery-viewer.yml`, `catalog.json`, `docs/hosted-deliveries.md`, `docs/own-deliveries.md`, `profiles/delivery-views.json`, `profiles/jira.json`, `profiles/linear.json`, `profiles/run-delivery.json`, `provenance.lock.json`, `skills/delivery-views/SKILL.md`, `skills/delivery-views/references/hosted-snapshot.schema.json`, `skills/delivery-views/scripts/hosted.py`, `skills/delivery-views/scripts/public_projection.py`, `skills/delivery-views/scripts/render.py`, `skills/delivery-views/scripts/views_common.py`, `skills/run-delivery/SKILL.md`, `skills/run-delivery/references/adopting.md`, `skills/run-delivery/references/config.md`, `skills/run-delivery/scripts/run_delivery.py`, `tests/fixtures/delivery-views/hosted/`, `tests/test_delivery_views_adopter.py`, `tests/test_delivery_views_hosted.py`, `tests/test_delivery_views_hosted_projection.py`, `tests/test_own_deliveries.py`, `tests/test_registry.py`, `tests/test_release_integration.py`, `tests/test_run_delivery_hosted.py`, `tests/test_run_delivery_supervisor.py`, `hosted/delivery-viewer/` |
 
 ## Stories
 
@@ -469,7 +470,7 @@ Lane 1, tier 4, after V26-3517. Implements U5 above, including its complete Requ
 
 ### V26-3519. Package, document and qualify the integration
 
-Lane 1, tier 5, after V26-3514, V26-3515, V26-3516, V26-3517, V26-3518. Implements U6 above, including its complete Requirements, Approach, Test scenarios and Verification. Files: `catalog.json`, `profiles/delivery-views.json`, `profiles/run-delivery.json`, `profiles/linear.json`, `profiles/jira.json`, `provenance.lock.json`, `docs/own-deliveries.md`, `docs/hosted-deliveries.md`, `tests/test_delivery_views_adopter.py`, `tests/test_registry.py`, `tests/test_release_integration.py`, `.github/workflows/hosted-delivery-viewer.yml`, `hosted/delivery-viewer/README.md`.
+Lane 2, tier 5, after V26-3514, V26-3515, V26-3516, V26-3517, V26-3518. Implements U6 above, including its complete Requirements, Approach, Test scenarios and Verification. Files: `catalog.json`, `profiles/delivery-views.json`, `profiles/run-delivery.json`, `profiles/linear.json`, `profiles/jira.json`, `provenance.lock.json`, `docs/own-deliveries.md`, `docs/hosted-deliveries.md`, `tests/test_delivery_views_adopter.py`, `tests/test_registry.py`, `tests/test_release_integration.py`, `.github/workflows/hosted-delivery-viewer.yml`, `hosted/delivery-viewer/README.md`.
 
 ### V26-3520. Deploy and prove a real adopter delivery
 
