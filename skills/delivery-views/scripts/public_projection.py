@@ -191,6 +191,30 @@ def project(document: dict, runs: dict, config: dict, *, source_fingerprint: str
     selected = {key: value for key, value in runs.items() if key in named}
     data = render.line_map_data(document, selected, config, theme_key='hosted-delivery', history=None,
                                 plan=plan, needs=needs)
+    # Keep the existing per-lens null/unavailable distinction without publishing
+    # artifact text. A shortened source also uses the existing round-level
+    # clipping note, which the trusted shared consumer already displays.
+    for summary in [*data['runs'].values(), *data['reviews'].values()]:
+        for row in summary.get('roundDetail', []):
+            briefs = row.get('briefs')
+            if not isinstance(briefs, dict):
+                continue
+            markers = {}
+            shortened = False
+            for lens, pair in briefs.items():
+                markers[lens] = {}
+                for part in ('brief', 'result'):
+                    if not isinstance(pair, dict) or part not in pair:
+                        continue
+                    raw = pair[part]
+                    marker = None if raw is None else {'unavailable': True}
+                    if isinstance(raw, dict) and type(raw.get('shortened')) is bool:
+                        marker['shortened'] = raw['shortened']
+                        shortened = shortened or raw['shortened']
+                    markers[lens][part] = marker
+            row['briefs'] = markers
+            if shortened:
+                row.setdefault('clipped', {})['texts'] = True
     # Paths and parser diagnostics are local-only. Preserve the indicator, not the diagnostic.
     if isinstance(data.get('plan'), dict):
         if 'unreadable' in data['plan']:

@@ -70,7 +70,13 @@
               "state": "unresolved"
             }
           ],
-          "briefs": {}
+          "briefs": {
+            "lens.security": {
+              "brief": {
+                "text": "RAW ARTIFACT"
+              }
+            }
+          }
         }
       ]
     }

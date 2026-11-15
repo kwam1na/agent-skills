@@ -68,7 +68,7 @@ class ProjectionTests(unittest.TestCase):
         doc['state']['queue'][0].update(argv=['TOKEN'], cwd='/Users/private', checks=[{'id': 'lint', 'state': 'failed', 'log': '/tmp/log'}])
         value = public.project(doc, runs, config(), source_fingerprint='1' * 64)
         encoded = json.dumps(value)
-        for canary in ('TOKEN', '/Users/private', '/tmp/log', 'briefs'):
+        for canary in ('TOKEN', '/Users/private', '/tmp/log'):
             self.assertNotIn(canary, encoded)
         for edit in [lambda v: v.update(token='x'), lambda v: v['runs']['run-1'].update(argv=[]),
                      lambda v: v['document']['state']['meta'].update(cwd='x')]:
@@ -94,10 +94,53 @@ class ProjectionTests(unittest.TestCase):
 
     def test_byte_bound_and_credential_shaped_map_fields_are_refused(self):
         value = self.project()
-        with mock.patch.object(public, 'MAX_BYTES', 100):
-            with self.assertRaises(public.ProjectionError): public.validate(value)
+        self.assertEqual(public.MAX_BYTES, 16 * 1024 * 1024)
+        # Observe the exact inclusive byte boundary without allocating a large
+        # repeated JSON body or changing the contractual limit under test.
+        class SizedBytes:
+            def __init__(self, length): self.length = length
+            def __len__(self): return self.length
+        with mock.patch.object(public, 'encode', return_value=SizedBytes(16 * 1024 * 1024)):
+            public.validate(value)
+        with mock.patch.object(public, 'encode', return_value=SizedBytes(16 * 1024 * 1024 + 1)):
+            with self.assertRaisesRegex(public.ProjectionError, '^snapshot.byte_bound$'): public.validate(value)
         value['view']['lenses']['token'] = {'name': 'Credential-shaped field', 'icon': None}
         with self.assertRaises(public.ProjectionError): public.validate(value)
+
+    def test_per_lens_evidence_markers_survive_without_raw_text(self):
+        doc, runs = source()
+        runs['run-1']['roundDetail'][0]['briefs'] = {
+            'lens.missing': {'brief': {'unavailable': True}, 'result': None},
+            'lens.clipped': {'brief': {'text': 'RAW BRIEF CANARY', 'shortened': True},
+                             'result': {'text': 'RAW RESULT CANARY', 'shortened': False}}}
+        value = public.project(doc, runs, config(), source_fingerprint='1' * 64)
+        row = value['runs']['run-1']['roundDetail'][0]
+        self.assertEqual(row['briefs'], {
+            'lens.missing': {'brief': {'unavailable': True}, 'result': None},
+            'lens.clipped': {'brief': {'unavailable': True, 'shortened': True},
+                             'result': {'unavailable': True, 'shortened': False}}})
+        self.assertTrue(row['clipped']['texts'])
+        self.assertNotIn('RAW BRIEF CANARY', json.dumps(value))
+        self.assertNotIn('RAW RESULT CANARY', json.dumps(value))
+
+    def test_populated_progress_chapters_survive(self):
+        doc, runs = source()
+        state = doc['state']
+        state.update(lanes=[{'id': 'one', 'title': 'Lane one', 'focus': 'Checking', 'state': 'working',
+                             'waitingOn': 'lead', 'since': '2026-11-15T00:00:00Z'}],
+                     finish=[{'id': 'all', 'text': 'Every criterion', 'met': False}],
+                     leases=[{'id': 'browser', 'holder': 'one', 'since': '2026-11-15T00:00:00Z'}],
+                     followups=[{'id': 'later', 'title': 'Preserve follow-up', 'reference': 'APP-2'}],
+                     tickets={'APP-1': {'title': 'Public title', 'summary': 'Progress details'}})
+        state['meta']['checking'] = {'now': None, 'next': ['APP-1']}
+        doc.update(stats={'APP-1': {'rounds': 1, 'findings': {'P0': 0, 'P1': 1, 'P2': 0, 'P3': 0}}},
+                   estimates={'APP-1': {'position': 1, 'expectedStart': None}}, focus={'one': 'Checking'})
+        value = public.project(doc, runs, config(), source_fingerprint='1' * 64)
+        for key in ('lanes', 'finish', 'leases', 'followups', 'tickets'):
+            self.assertEqual(value['document']['state'][key], state[key])
+        for key in ('stats', 'estimates', 'focus', 'journal'):
+            self.assertEqual(value['document'][key], doc[key])
+        self.assertEqual(value['document']['state']['meta']['checking'], state['meta']['checking'])
 
     def test_native_review_truth_and_unavailability_survive_without_raw_outcomes(self):
         doc = json.loads((ROOT / 'tests/fixtures/delivery-views/round-card-deferred/document.json').read_text())
@@ -122,6 +165,25 @@ class ProjectionTests(unittest.TestCase):
         self.assertTrue(value['plan']['clipped']['overShare'])
         self.assertTrue(value['plan']['plan']['planReview']['rounds'])
 
+    def test_secrets_in_plan_review_and_needs_are_rejected_recursively(self):
+        base = ROOT / 'tests/fixtures/delivery-views/line-map/plan-review'
+        doc = json.loads((base / 'document.json').read_text())
+        clean_plan = render.plan_block(json.loads((base / 'plan.json').read_text()))
+        clean_needs = {'running': True, 'at': '2026-11-15T00:00:00Z',
+                       'items': [{'holding': True, 'source': 'review', 'text': 'Fix dissent', 'clears': 'A new round'}]}
+        public.project(doc, {}, config(), source_fingerprint='1' * 64, plan=clean_plan, needs=clean_needs,
+                       secret_values=['KNOWN-CREDENTIAL-CANARY'])
+        for placement in ('plan', 'review', 'needs'):
+            plan, needs = copy.deepcopy(clean_plan), copy.deepcopy(clean_needs)
+            if placement == 'plan': plan['plan']['outcome']['text'] = 'KNOWN-CREDENTIAL-CANARY'
+            elif placement == 'review':
+                plan['plan']['planReview']['rounds'][0]['raised'][0]['summary'] = 'KNOWN-CREDENTIAL-CANARY'
+            else: needs['items'][0]['text'] = 'KNOWN-CREDENTIAL-CANARY'
+            with self.subTest(placement=placement):
+                with self.assertRaisesRegex(public.ProjectionError, '^snapshot.configured_secret$'):
+                    public.project(doc, {}, config(), source_fingerprint='1' * 64, plan=plan, needs=needs,
+                                   secret_values=['KNOWN-CREDENTIAL-CANARY'])
+
     def test_source_cut_rejects_mutation_missing_to_present_and_symlink_escape(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder); path = root / 'state.json'; path.write_text('old')
@@ -133,6 +195,14 @@ class ProjectionTests(unittest.TestCase):
             with self.assertRaises(public.ProjectionError): public.capture(root, ['escape/private'], self.project)
             value = public.capture(root, ['state.json', 'plan.json'], self.project)
             self.assertRegex(value['sourceFingerprint'], '^[a-f0-9]{64}$')
+            same = public.capture(root, ['state.json', 'plan.json'], self.project)
+            self.assertEqual(value['sourceFingerprint'], same['sourceFingerprint'])
+            path.write_text('different source')
+            changed = public.capture(root, ['state.json', 'plan.json'], self.project)
+            self.assertNotEqual(changed['sourceFingerprint'], value['sourceFingerprint'])
+            path.unlink(); path.write_text('different source')
+            replaced = public.capture(root, ['state.json', 'plan.json'], self.project)
+            self.assertNotEqual(replaced['sourceFingerprint'], changed['sourceFingerprint'])
             def added_review(): (root / 'round.json').write_text('{}'); return self.project()
             with self.assertRaises(public.SourceChanged):
                 public.capture(root, lambda: [p.name for p in root.glob('*.json')], added_review)

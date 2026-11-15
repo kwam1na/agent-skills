@@ -230,11 +230,11 @@
         },
         {
           "path": "skills/delivery-views/references/hosted-snapshot.schema.json",
-          "sha256": "50085382e075970d3dbf6193b759b3ecfd9bcfdea5e8473ca3a1ecb7cafab4f8"
+          "sha256": "6e624866560de4ebc93040bcad55328f120e32d7bb9e286e27c2a851b5426fb4"
         },
         {
           "path": "skills/delivery-views/scripts/public_projection.py",
-          "sha256": "0f6d225fc448db13f29e2db8af221d460cd5fc155ddfcc45a3305fe26827e658"
+          "sha256": "54beef863b7f8a4f72db35963ae60886ff9d9f1a85156d86425db5ab9c9bd3f6"
         },
         {
           "path": "skills/delivery-views/scripts/render.py",

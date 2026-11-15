@@ -1634,6 +1634,68 @@
                     }
                   },
                   "maxProperties": 10000
+                },
+                "briefs": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "maxProperties": 2,
+                    "properties": {
+                      "brief": {
+                        "anyOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "maxProperties": 2,
+                            "properties": {
+                              "unavailable": {
+                                "const": true
+                              },
+                              "shortened": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "unavailable"
+                            ]
+                          }
+                        ]
+                      },
+                      "result": {
+                        "anyOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "maxProperties": 2,
+                            "properties": {
+                              "unavailable": {
+                                "const": true
+                              },
+                              "shortened": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "unavailable"
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "maxProperties": 100,
+                  "propertyNames": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "pattern": "^[A-Za-z0-9_.:-]+$"
+                  }
                 }
               },
               "maxProperties": 10000
@@ -2169,6 +2231,68 @@
                     }
                   },
                   "maxProperties": 10000
+                },
+                "briefs": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "maxProperties": 2,
+                    "properties": {
+                      "brief": {
+                        "anyOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "maxProperties": 2,
+                            "properties": {
+                              "unavailable": {
+                                "const": true
+                              },
+                              "shortened": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "unavailable"
+                            ]
+                          }
+                        ]
+                      },
+                      "result": {
+                        "anyOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "maxProperties": 2,
+                            "properties": {
+                              "unavailable": {
+                                "const": true
+                              },
+                              "shortened": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "unavailable"
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "maxProperties": 100,
+                  "propertyNames": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "pattern": "^[A-Za-z0-9_.:-]+$"
+                  }
                 }
               },
               "maxProperties": 10000

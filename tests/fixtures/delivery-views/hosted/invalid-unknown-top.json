@@ -69,7 +69,14 @@
               "summary": "<img onerror=x>",
               "state": "unresolved"
             }
-          ]
+          ],
+          "briefs": {
+            "lens.security": {
+              "brief": {
+                "unavailable": true
+              }
+            }
+          }
         }
       ]
     }

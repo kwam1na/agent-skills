@@ -7,6 +7,11 @@
       "layer": "schema"
     },
     {
+      "file": "valid-evidence-markers.json",
+      "valid": true,
+      "layer": "schema"
+    },
+    {
       "file": "valid-plan-review.json",
       "valid": true,
       "layer": "schema"
