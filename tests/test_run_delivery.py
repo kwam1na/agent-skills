@@ -6665,6 +6665,32 @@ tool.main(sys.argv[2:])
         self.assertEqual(moving.returncode, 0, out)
         self.assertNotEqual(sh("git", "ls-remote", "origin", "refs/heads/integrate/fixture", cwd=fx.main).stdout.split()[0], old)
 
+    def test_a_base_move_takes_the_merge_slot_before_the_queue_lock_and_names_its_delivery(self) -> None:
+        from tests.test_orchestration_state import state_tool
+        fx, old = self.fixture()
+        common = Path(sh("git", "rev-parse", "--git-common-dir", cwd=fx.main).stdout.strip())
+        holder_file = (fx.main / common).resolve() / "agent-skills/merge-slot/integrate%2Ffixture.holder"
+        seen: list = []
+        queue_lock = contextlib.ExitStack()
+        queue_lock.enter_context(state_tool.file_lock(fx.record / "queue.lock"))
+        with subprocess.Popen([sys.executable, "-B", str(fx.tool), "lead-sync", "--merge", "--archive",
+                               self.new_archive, "--metadata", self.new_metadata, "--no-supervisor",
+                               "--wait-seconds", "60"], cwd=fx.main, env=fx.env, text=True,
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as moving:
+            try:
+                # While it waits for the queue lock it already holds the slot, under its delivery's name.
+                deadline = time.monotonic() + 60
+                while not holder_file.exists() and moving.poll() is None and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                if holder_file.exists():
+                    seen.append(json.loads(holder_file.read_text()))
+            finally:
+                queue_lock.close()
+            out, _ = moving.communicate(timeout=120)
+        self.assertEqual(moving.returncode, 0, out)
+        self.assertEqual([holder["delivery"] for holder in seen], ["FX-1"])
+        self.assertFalse(holder_file.exists())
+
     def test_valid_archive_for_another_receipt_is_refused_before_installation(self) -> None:
         fx, old = self.fixture()
         files = [fx.record / name for name in ("state.json", "journal.jsonl", "changes.jsonl")]
@@ -6860,8 +6886,9 @@ class RunDeliveryLeadWorktreeTests(unittest.TestCase):
         for name, value in vars(installed_release()).items():
             setattr(cls, name, value)
 
-    def fixture(self) -> tuple[Fixture, Path, Path]:
-        """The plan fixture, initialised, with one approval waiting, and the lead's worktree on lead/FX-1 at the base."""
+    def fixture(self, check_timeout: int | None = None) -> tuple[Fixture, Path, Path]:
+        """The plan fixture, initialised, with one approval waiting, and the lead's worktree on lead/FX-1 at the base.
+        ``check_timeout`` sets the binding's checkTimeoutSeconds, the wait a lead command without --wait-seconds takes."""
         fx = Fixture(self.generation, self.receipt)
         self.addCleanup(fx.close)
         m = fx.main
@@ -6874,6 +6901,8 @@ class RunDeliveryLeadWorktreeTests(unittest.TestCase):
         bound = json.loads(binding.read_text()) if binding.exists() else {}
         bound.setdefault("base", {}).update(remote="origin", ref="feature/FX-1")
         bound.setdefault("state", {}).setdefault("forgeSnapshot", {"argv": ["true"]})
+        if check_timeout is not None:
+            bound["checkTimeoutSeconds"] = check_timeout
         binding.write_text(json.dumps(bound, indent=2) + "\n")
         commit(m, "FX-1: an approval, and the binding's base")
         sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
@@ -6967,12 +6996,18 @@ with delivery_state.merge_slot(pathlib.Path(repository), base, delivery="Deliver
         self.assertEqual(sh("git", "ls-remote", "origin", "refs/heads/feature/FX-1", cwd=lead).stdout.split()[0], head)
 
     def test_lead_upgrade_writer_takes_the_merge_slot_and_refuses_naming_its_holder_past_its_wait(self) -> None:
-        fx, _, _ = self.fixture()
+        fx, _, _ = self.fixture(check_timeout=2)
         scripts = self.generation / "skills/orchestrate-work/scripts"
         _, release = self.hold_slot(self, fx, scripts, fx.main, "feature/FX-1")
-        code, out = fx.flow("lead-upgrade-writer", "--expected", "0" * 64, "--reason", "a transition",
-                            "--no-supervisor", cwd=fx.main)
-        self.assertEqual(code, 2, out)
+        began = time.monotonic()
+        with subprocess.Popen([sys.executable, "-B", str(fx.tool), "lead-upgrade-writer", "--expected", "0" * 64,
+                               "--reason", "a transition", "--no-supervisor"], cwd=fx.main, env=fx.env, text=True,
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as upgrading:
+            # Its wait is the binding's checkTimeoutSeconds, and it waits named in the slot's waiting folder.
+            self.await_waiter(self, fx.main, "feature/FX-1")
+            out, _ = upgrading.communicate(timeout=60)
+        self.assertEqual(upgrading.returncode, 2, out)
+        self.assertGreaterEqual(time.monotonic() - began, 1.5)
         self.assertIn("slot_held", out)
         self.assertIn("Delivery C", out)
         # With the slot free it goes on to the transition and lands.
