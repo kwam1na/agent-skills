@@ -350,7 +350,7 @@ supervisor's.
   | `merged_unverified` | Stop the queue and confirm the base by hand before anything else merges. |
   | `batch_tree_mismatch` | The base's tree is no longer the one the batch recorded, so something landed that the batch did not check. Stop the queue, confirm the base by hand, then batch the members that did not land again; they are back at `queued`. |
   | `binding_invalid` | Fix the binding on the base branch. |
-  | `queue_locked` | Another runner holds the queue, or another delivery holds the base's merge slot past the wait, and the detail names it. Nothing was attempted. Wait for it, or raise `--wait`; `serve` tries again on its own. |
+  | `queue_locked` | Another runner holds the queue, or another delivery holds the base's merge slot past the wait, and the detail names it. Nothing was attempted. For the queue lock, wait for it or raise `--wait`, which bounds only that lock. A held slot is waited for within the binding's `checkTimeoutSeconds`, not `--wait`, and `serve` tries again on its own. |
   | `runner_error` | Read the result document and the runner's output; investigate before retrying. |
 
 - When a candidate merges, move its ticket to its review or completed state

@@ -5232,6 +5232,48 @@ class MergeSlotQueueTests(MergeQueueTestCase):
         self.assertEqual([kind for kind in self.journal_kinds(adopter.state) if kind not in ("decision.recorded",)],
                          ["check.started", "check.finished", "candidate.merged"])
 
+    def test_a_queue_waits_for_a_held_slot_within_the_bindings_check_timeout_by_default(self) -> None:
+        adopter = self.adopter({"checkTimeoutSeconds": 2})
+        self.candidate(adopter)
+        self.hold(adopter)
+        seen: list[list[str]] = []
+        results: list = []
+        began = time.monotonic()
+        # No slot_wait: the wait is checkTimeoutSeconds in the binding as this checkout last fetched it.
+        command = threading.Thread(target=lambda: results.extend(adopter.runner().run_command("run", ["feature"])))
+        command.start()
+        while command.is_alive():
+            seen.append(self.waiters(adopter))
+            time.sleep(0.02)
+        command.join()
+        waited = time.monotonic() - began
+        self.assertEqual(results[-1].document()["stop"]["reason"], "queue_locked", results[-1].document()["stop"])
+        self.assertIn("Delivery C", results[-1].document()["stop"]["detail"])
+        self.assertIn([str(os.getpid())], seen)
+        # Within the binding's 2s, and no longer: a wait from anywhere else would overrun it.
+        self.assertGreaterEqual(waited, 1.5)
+        self.assertLess(waited, 4.5)
+        self.assertEqual(adopter.item("feature")["stage"], "queued")
+
+    def test_a_queue_command_takes_the_slot_before_its_own_queue_lock(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        seen: list = []
+        results: list = []
+        with state_tool.file_lock(adopter.state / state_tool.QUEUE_LOCK):
+            command = threading.Thread(
+                target=lambda: results.extend(adopter.runner(lock_wait=1).run_command("run", ["feature"])))
+            command.start()
+            while command.is_alive():
+                seen.append(self.holder(adopter))
+                time.sleep(0.02)
+            command.join()
+        # While it waited for the queue lock it already held the slot, under this delivery's name.
+        self.assertIn("Fixture delivery", [holder["delivery"] for holder in seen if holder])
+        self.assertEqual(results[-1].document()["stop"]["reason"], "queue_locked")
+        self.assertIn("another runner holds the queue", results[-1].document()["stop"]["detail"])
+        self.assertIsNone(self.holder(adopter))
+
     def test_a_turn_that_merged_lets_a_waiter_go_first_on_the_next(self) -> None:
         adopter = self.adopter()
         self.candidate(adopter, name="first")
@@ -6626,6 +6668,8 @@ class ContractTests(unittest.TestCase):
             "ends, however it ends;",
             "A post-merge `fullHealth` run holds no slot.",
             "Only the lock says whether the slot is held, and the operating system lets a dead holder's go;",
+            "For the queue lock, wait for it or raise `--wait`, which bounds only that lock. A held slot is waited for "
+            "within the binding's `checkTimeoutSeconds`, not `--wait`, and `serve` tries again on its own.",
         ):
             with self.subTest(phrase=phrase[:40]):
                 self.assertIn(phrase, guide)
