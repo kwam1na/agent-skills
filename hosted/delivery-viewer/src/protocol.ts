@@ -70,6 +70,7 @@ export function parse(bytes: Uint8Array): unknown {
 const localPath = /(?:file:\/\/|(?:^|[\s"'(])(?:\/[A-Za-z0-9_.-]+\/|[A-Za-z]:[\\/]|\\\\)|(?:^|\s)~[/\\]|(?:^|[\s"'(])(?:\.?agents|\.orchestration|docs|scripts|skills|tests)\/)/;
 const credentialKey = /^(?:password|token|secret|api[_-]?key|credential|authorization|cookie)$/i;
 function scan(value: unknown): void {
+  if (typeof value === 'number' && (!Number.isFinite(value) || Math.abs(value) > Number.MAX_SAFE_INTEGER)) fail('invalid_projection');
   if (typeof value === 'string' && localPath.test(value)) fail('invalid_projection');
   if (value && typeof value === 'object') {
     for (const [key, entry] of Object.entries(value)) {

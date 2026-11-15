@@ -39,7 +39,7 @@ export default {
         if (action === 'session') {
           const body = object(parse(await readBytes(request, 2048)));
           exact(body, ['deliveryKey', 'ownerId', 'mode', 'epoch']);
-          if (!['acquire', 'resume', 'takeover'].includes(String(body.mode))) fail('invalid_envelope');
+          if (typeof body.mode !== 'string' || !['acquire', 'resume', 'takeover'].includes(body.mode)) fail('invalid_envelope');
           const session: Session = { deliveryKey: identifier(body.deliveryKey, KEY), ownerId: identifier(body.ownerId), mode: body.mode as Session['mode'] };
           if (session.mode === 'acquire') { if (body.epoch !== undefined) fail('invalid_envelope'); }
           else session.epoch = integer(body.epoch);

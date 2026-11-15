@@ -2,7 +2,7 @@ import { SELF } from 'cloudflare:test';
 import { describe, it, expect } from 'vitest';
 import { cases } from './fixtures.generated';
 import { id, session, request, route, sql, upload, current, OTHER_TOKEN, TOKEN, fixture } from './helpers';
-import { MAX_BYTES, RENDERER, digest } from '../src/protocol';
+import { MAX_BYTES, RENDERER, digest, parse } from '../src/protocol';
 
 describe('ingestion boundary', () => {
   it('authenticates scope before any durable metadata and keeps public unknown reads empty', async () => {
@@ -81,5 +81,92 @@ describe('ingestion boundary', () => {
     expect((await request(`/d/${publicId}/current`, {method:'POST'}, null)).status).toBe(404);
     expect(response.headers.get('referrer-policy')).toBe('no-referrer');
     expect(response.headers.get('x-robots-tag')).toContain('noindex');
+  });
+});
+
+describe('independent transport contract guards', () => {
+  it('rejects snapshot and confirmation auth bypasses without mutating a committed delivery', async () => {
+    const publicId=id(); await session(publicId); const accepted=await upload(publicId); expect(accepted.status).toBe(200);
+    const before=await (await current(publicId)).json();
+    const bytes=JSON.stringify(fixture()); const hash=await digest(new TextEncoder().encode(bytes));
+    const headers={'X-Writer-Epoch':'1','X-Snapshot-Sequence':'2','X-Snapshot-Digest':hash,'X-Renderer-Version':RENDERER};
+    for (const token of [null,'wrong'.repeat(16),OTHER_TOKEN]) {
+      expect((await request(route(publicId,'snapshots'),{method:'POST',headers,body:bytes},token)).status).toBe(401);
+      expect((await request(route(publicId,'confirm'),{method:'POST',headers,body:JSON.stringify({sourceFingerprint:'1'.repeat(64)})},token)).status).toBe(401);
+      expect((await request(route(publicId,'status'),{},token)).status).toBe(401);
+    }
+    for(const action of ['snapshots','confirm']){
+      const body=action==='snapshots'?bytes:JSON.stringify({sourceFingerprint:'1'.repeat(64)});
+      expect((await request(route(publicId,action,'repo-b'),{method:'POST',headers,body},OTHER_TOKEN)).status).toBe(404);
+    }
+    expect((await request(route(publicId,'status','repo-b'),{},OTHER_TOKEN)).status).toBe(404);
+    expect((await request(route(publicId,'status'))).status).toBe(200);
+    expect(await (await current(publicId)).json()).toEqual(before);
+    expect((await sql<{n:number}>(publicId,'SELECT count(*) AS n FROM receipts'))[0].n).toBe(1);
+  });
+  it('accepts the digest of noncanonical bytes and rejects a reserialized digest for those bytes', async () => {
+    const publicId=id(); await session(publicId);
+    const value=fixture(); const body=JSON.stringify(value,null,2)+'\n';
+    const canonicalHash=await digest(new TextEncoder().encode(JSON.stringify(value)));
+    const headers={'X-Writer-Epoch':'1','X-Snapshot-Sequence':'1','X-Snapshot-Digest':canonicalHash,'X-Renderer-Version':RENDERER};
+    expect((await request(route(publicId,'snapshots'),{method:'POST',headers,body})).status).toBe(422);
+    const accepted=await upload(publicId,1,body);expect(accepted.status).toBe(200);
+    const exactHash=await digest(new TextEncoder().encode(body));
+    const stored=await request(`/d/${publicId}/snapshots/${exactHash}`,{},null);
+    expect(stored.status).toBe(200);expect(await stored.text()).toBe(body);
+    expect((await accepted.json() as {digest:string}).digest).toBe(exactHash);
+  });
+  it('rejects credential-shaped identifier map keys even when the structural schema permits them', async () => {
+    const publicId=id();await session(publicId);
+    const value=fixture();
+    Object.assign(value.links.issues,{ordinary:'https://linear.app/v26-technologies/issue/APP-1'});
+    expect((await upload(publicId,1,value)).status).toBe(200);
+    Object.assign(value.links.issues,{token:'https://linear.app/v26-technologies/issue/APP-1'});
+    expect((await upload(publicId,2,value)).status).toBe(400);
+    expect((await current(publicId)).status).toBe(200);
+  });
+  it('enforces exactly sixteen MiB on finite chunked input without a length hint', async () => {
+    const publicId=id(); await session(publicId);
+    const limit=16*1024*1024;expect(MAX_BYTES).toBe(limit);
+    let emitted=0;
+    const stream=new ReadableStream<Uint8Array>({pull(controller){
+      if(emitted===limit+1){controller.close();return;}
+      const size=Math.min(1024*1024,limit+1-emitted);emitted+=size;controller.enqueue(new Uint8Array(size));
+    }});
+    const headers={'X-Writer-Epoch':'1','X-Snapshot-Sequence':'1','X-Snapshot-Digest':'a'.repeat(64),'X-Renderer-Version':RENDERER};
+    expect((await request(route(publicId,'snapshots'),{method:'POST',headers,body:stream})).status).toBe(413);
+    expect((await current(publicId)).status).toBe(404);
+    const exact=JSON.stringify(fixture()).padEnd(limit,' ');
+    expect((await upload(publicId,1,exact)).status).toBe(200);
+  });
+  it('pins the parser depth with syntactically valid JSON at and beyond the boundary',()=>{
+    const encode=(depth:number)=>new TextEncoder().encode('['.repeat(depth)+'0'+']'.repeat(depth));
+    expect(parse(encode(64))).toBeInstanceOf(Array);
+    expect(()=>parse(encode(65))).toThrow('invalid_json');
+  });
+  it('keeps successful and error capability responses private and non-executable',async()=>{
+    const publicId=id();await session(publicId);const accepted=await upload(publicId);expect(accepted.status).toBe(200);
+    const {digest:hash}=await accepted.json() as {digest:string};
+    const responses=[await current(publicId),await request(`/d/${publicId}/snapshots/${hash}`,{},null),
+      await request('/unknown',{},null),await request(route(publicId,'status'),{},null),
+      await request(route(publicId,'session'),{method:'POST',body:'{}'})];
+    expect(responses.map(row=>row.status)).toEqual([200,200,404,401,400]);
+    for(const response of responses){
+      expect(response.headers.get('Cache-Control')).toBe('no-store');
+      expect(response.headers.get('Referrer-Policy')).toBe('no-referrer');
+      expect(response.headers.get('X-Robots-Tag')).toBe('noindex, nofollow, noarchive');
+      expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff');
+      expect(response.headers.get('Content-Security-Policy')).toBe("default-src 'none'; frame-ancestors 'none'; base-uri 'none'");
+      await response.arrayBuffer();
+    }
+  });
+});
+
+describe('shared numeric projection boundary', () => {
+  it('rejects unsafe numbers so journal identities cannot lose precision',async()=>{
+    const publicId=id();await session(publicId);
+    const body=fixture();body.document.journal[0].id=Number.MAX_SAFE_INTEGER+1;
+    expect((await upload(publicId,1,body)).status).toBe(400);
+    expect((await current(publicId)).status).toBe(404);
   });
 });

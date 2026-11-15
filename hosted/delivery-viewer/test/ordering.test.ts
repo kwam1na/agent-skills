@@ -5,8 +5,8 @@ import { id, session, upload, current, sql, expire, fixture, pauseR2, stub, requ
 import { RENDERER, digest, type Receipt } from '../src/protocol';
 
 async function receipt(response: Response): Promise<Receipt> { expect(response.status).toBe(200); return response.json() as Promise<Receipt>; }
-async function confirm(publicId: string, value: Receipt, fingerprint = value.sourceFingerprint) {
-  return request(route(publicId, 'confirm'), {method:'POST', headers: {'X-Renderer-Version':RENDERER, 'X-Writer-Epoch':String(value.epoch), 'X-Snapshot-Sequence':String(value.sequence), 'X-Snapshot-Digest':value.digest}, body:JSON.stringify({sourceFingerprint:fingerprint}) });
+async function confirm(publicId: string, value: Receipt, fingerprint = value.sourceFingerprint, extra: Record<string,unknown> = {}) {
+  return request(route(publicId, 'confirm'), {method:'POST', headers: {'X-Renderer-Version':RENDERER, 'X-Writer-Epoch':String(value.epoch), 'X-Snapshot-Sequence':String(value.sequence), 'X-Snapshot-Digest':value.digest}, body:JSON.stringify({sourceFingerprint:fingerprint,...extra}) });
 }
 
 describe('persistent commit ordering', () => {
@@ -139,5 +139,71 @@ describe('persistent commit ordering', () => {
     const {OTHER_TOKEN}=await import('./helpers');
     expect((await session(other,{},'repo-b',OTHER_TOKEN)).status).toBe(200);
     expect(other).not.toBe(publicId);
+  });
+});
+
+describe('session and freshness contract guards', () => {
+  it('rejects coerced session modes before they can replace an expired writer', async () => {
+    const publicId=id();await session(publicId);await expire(publicId);
+    for(const mode of [['resume'],['takeover'],null,1,{}]){
+      expect((await session(publicId,{mode,epoch:1,ownerId:'f'.repeat(64)})).status).toBe(400);
+      expect((await sql<{epoch:number;ownerId:string}>(publicId,'SELECT epoch,ownerId FROM delivery'))[0]).toEqual({epoch:1,ownerId:owner});
+    }
+  });
+  it('refuses takeover of an active lease and pins the 180s lease and 120s stale API contracts', async () => {
+    const publicId=id();await session(publicId);
+    const accepted=await receipt(await upload(publicId));
+    const before=await sql(publicId,'SELECT * FROM delivery');
+    const refused=await session(publicId,{mode:'takeover',epoch:1,ownerId:'f'.repeat(64)});
+    expect(refused.status).toBe(409);expect(await refused.json()).toEqual({error:'lease_held'});
+    expect(await sql(publicId,'SELECT * FROM delivery')).toEqual(before);
+    const status=await (await request(route(publicId,'status'))).json() as {epoch:number;ownerId:string;leaseUntil:number};
+    expect(status.epoch).toBe(1);expect(status.ownerId).toBe(owner);
+    expect(status.leaseUntil-accepted.sourceConfirmedAt).toBe(180000);
+    const meta=await (await current(publicId)).json() as {staleAfterMs:number};
+    expect(meta.staleAfterMs).toBe(120000);
+    expect((await upload(publicId,2)).status).toBe(200);
+  });
+});
+
+
+describe('durable confirmation and strict envelopes',()=>{
+  it('never renews metadata for exact or historical receipt retries',async()=>{
+    const publicId=id();await session(publicId);const first=await receipt(await upload(publicId));
+    await sql(publicId,'UPDATE delivery SET confirmedAt=1000,leaseUntil=? WHERE singleton=1',Date.now()+111000);
+    const before=await sql(publicId,'SELECT * FROM delivery');
+    expect(await receipt(await upload(publicId))).toEqual(first);
+    expect(await sql(publicId,'SELECT * FROM delivery')).toEqual(before);
+    const next=fixture();next.sourceFingerprint='8'.repeat(64);await receipt(await upload(publicId,2,next));
+    await sql(publicId,'UPDATE delivery SET confirmedAt=2000,leaseUntil=? WHERE singleton=1',Date.now()+112000);
+    const newer=await sql(publicId,'SELECT * FROM delivery');
+    expect(await receipt(await upload(publicId))).toEqual(first);
+    expect(await sql(publicId,'SELECT * FROM delivery')).toEqual(newer);
+  });
+  it('uses the precise lease and stale windows with controlled source-confirmation time',async()=>{
+    const clock=vi.spyOn(Date,'now').mockReturnValue(1000000);
+    try{
+      const publicId=id();const acquired=await (await session(publicId)).json() as {leaseUntil:number};
+      expect(acquired.leaseUntil).toBe(1180000);
+      const accepted=await receipt(await upload(publicId));
+      clock.mockReturnValue(1119999);
+      expect((await (await current(publicId)).json() as {stale:boolean}).stale).toBe(false);
+      clock.mockReturnValue(1120000);
+      expect((await (await current(publicId)).json() as {stale:boolean}).stale).toBe(true);
+      const confirmed=await confirm(publicId,accepted);expect(confirmed.status).toBe(200);
+      expect(await confirmed.json()).toMatchObject({sourceConfirmedAt:1120000,leaseUntil:1300000});
+      expect((await (await current(publicId)).json() as {stale:boolean}).stale).toBe(false);
+    }finally{clock.mockRestore();}
+  });
+  it('rejects unknown session and confirmation keys before changing state',async()=>{
+    const publicId=id();const bad=await session(publicId,{extra:true});
+    expect(bad.status).toBe(400);expect(await bad.json()).toEqual({error:'invalid_envelope'});
+    expect((await current(publicId)).status).toBe(404);
+    expect((await session(publicId)).status).toBe(200);
+    const accepted=await receipt(await upload(publicId));const before=await sql(publicId,'SELECT * FROM delivery');
+    const refused=await confirm(publicId,accepted,accepted.sourceFingerprint,{extra:true});
+    expect(refused.status).toBe(400);expect(await refused.json()).toEqual({error:'invalid_envelope'});
+    expect(await sql(publicId,'SELECT * FROM delivery')).toEqual(before);
+    expect((await confirm(publicId,accepted)).status).toBe(200);
   });
 });

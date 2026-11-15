@@ -74,7 +74,7 @@ The entire body is the raw UTF-8 `hosted-delivery-snapshot/1` projection, at mos
 The receiver counts streamed bytes even without an honest Content-Length,
 rejects nesting deeper than 64, malformed UTF-8/JSON, unknown schema fields and
 versions, unsupported renderers, credential-shaped keys, recognizable local
-paths, unsafe links and unrelated evidence. It accepts all meaningful valid U1
+paths, unsafe links, numbers beyond JavaScript safe precision and unrelated evidence. It accepts all meaningful valid U1
 fixtures, including public markup as data. Publishers still scan all projected
 text for their configured secret values before transport; no service scanner
 claims to recognize arbitrary prose secrets.
