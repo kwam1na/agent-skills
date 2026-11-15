@@ -47,11 +47,11 @@ For V26-3319:
 8. `selection.readers` keeps its meaning: for each path, the checks a change there adds. It does not say what a
    check reads in all. A readers entry may declare `"complete": true`: its paths are then everything its checks
    read, the checks' own test modules among them. A check's read set is known only when every readers entry that
-   names it is complete.
+   names it is complete, and is then the paths of all of those entries together.
 9. A binding may also declare `selection.unread`: patterns for paths that no check reads.
 10. The files a base move changed are listed without rename detection, so a rename counts as a path removed and a
     path added, and are matched with the binding's own pattern rule. The binding file itself counts as read by
-    every check.
+    every check, and never matches `selection.unread`.
 11. For a base move, a selected check is carried, with no re-run, when no file the move changed is in the
     candidate's diff and either every such file matches `selection.unread`, or the check's read set is known and
     no such file matches it. Every other selected check runs again. So does every `alwaysRun` check, unless every
@@ -84,19 +84,22 @@ For V26-3318:
 For V26-3425:
 
 19. A binding names how a failed `fullHealth` is re-checked, in a new optional member, `fullHealthRerun`:
-    a `failurePattern` whose first group is a failing test's name; an `argv` that holds `{tests}`; and an optional
-    `unrecheckedPattern`, for a failure the rerun cannot re-check, such as a unit that crashed or timed out. Both
-    patterns read the run's whole output. Binding validation refuses an `argv` without `{tests}`, a
-    `failurePattern` with no group, and a pattern that does not compile, naming the member. A binding without the
-    member behaves as today.
+    a `failurePattern` whose first group is a failing test's name, applied to every match; an `argv` that holds
+    `{tests}`, which becomes one argument for each test; a `ranPattern`, which the rerun's output matches when it
+    ran a test; and an optional `unrecheckedPattern`, for a failure the rerun cannot re-check, such as a unit that
+    crashed or timed out. The patterns read a run's whole output. Binding validation refuses an `argv` without
+    `{tests}`, a `failurePattern` with no group, a member with no `ranPattern`, and any of the three patterns that
+    does not compile, naming the member. A binding without the member behaves as today.
 20. A failed `fullHealth` is flaky only when all of this holds: the binding declares the member;
     `unrecheckedPattern` matches nothing; `failurePattern` names at least one test; and one run of `argv` with
-    those tests, in the same checkout, passes and runs at least one test. The supervisor then journals
+    those tests, in the checkout the failed run used, exits 0 with output that `ranPattern` matches. The supervisor then journals
     `base.flaky`, naming the tests and the head, and no `base.broken`. In every other case it journals
     `base.broken` as today. The rerun is run once.
 21. A `base.flaky` result is that head's `fullHealth` result: by itself it pauses nothing and holds nothing at the
     close, and "Needs you" lists the flaky tests as an item that does not hold. It is not a pass: it does not
-    journal `base.repaired`, so a `base.broken` that still stands from an earlier head keeps `serve` paused.
+    journal `base.repaired`, so a `base.broken` that still stands from an earlier head keeps `serve` paused. The
+    first run that passes after it journals `base.repaired` when a `fullHealth` break still stands, and
+    `base.verified` when none does.
 22. `lead-resolve full-health`, when the failed head is no longer the base head, says so and names what stands: a
     run running at the new head, a run due at the new head, a `base.broken` that still awaits `base.repaired`, or
     none of these.
@@ -113,7 +116,9 @@ For V26-3264:
     interpreter the argv ran, asked of the argv's first element in the detached checkout. Where that cannot be
     read, the line says so. The lead cites the line when marking a finish line; no finish line reads it by itself.
 26. The orchestration guide's integration steps name the command for the lead's own suite, and this repository's
-    `docs/own-deliveries.md` names it with `-- --budget tests/suite-budget.json`.
+    `docs/own-deliveries.md` names it with `-- --budget tests/suite-budget.json`. That file also gives the
+    `fullHealthRerun` member this repository will declare once a release holds it (Decision 7), which V26-3425
+    writes there.
 
 For V26-3320:
 
@@ -129,7 +134,8 @@ For V26-3320:
 29. A delivery claims shared files in its own record, with `lead-own --claim PATTERN`, as whole files only; a
     region or a line range is refused. A claim makes a peer's `lead-assign` and `lead-accept` warn when the story
     or candidate touches a file the pattern matches, naming the claiming delivery, its stories on the file and
-    their stages. It refuses nothing, and sets no order between deliveries.
+    their stages. A claim of a peer that is stale, or has no supervisor, warns too, and says which. It refuses
+    nothing, and sets no order between deliveries.
 30. On each pass the supervisor reads its peers' journals through the registry. For a peer's `candidate.merged`
     that it has not handled and that touches a file one of this delivery's open stories names, it journals
     `peer.merged`, naming the peer, the story and the files. How far it has read each peer's journal is kept in the
@@ -158,7 +164,8 @@ two gates, and never the full suite. The lead selects each candidate's checks fr
 A row that asserts new behaviour is proven red against the code before its change. A row that asserts behaviour
 kept is proven red against an over-correcting mutant of the new code, reverted afterwards. The mutants include: a
 `fullHealth` failure always read as flaky; a flaky result that repairs a standing break; every base move carried;
-a check named by a plain readers entry carried; the slot never taken; the slot let go only when a candidate
+a check named by a plain readers entry carried; a read set taken from one of a check's entries; the slot never
+taken; the slot let go only when a candidate
 merges; the holder file read as the lock; a queue that waits while any waiter's file exists; a peer's warning
 given whatever file is claimed; a peer's warning turned into a refusal; and a stale registry entry read as live. A
 wording deliverable has a presence pin, proven by removing the phrase. A proof that mutates a file
@@ -240,10 +247,15 @@ Scenarios, each in `tests/test_merge_queue.py` unless it names another file:
   and `check.carried` names the others;
 - a check named only by a plain readers entry runs again when the base changes that check's own test module, and
   when the base changes any other file;
+- a check named by one complete entry and one plain entry runs again on a base move that touches neither entry's
+  paths;
+- a check named by two complete entries runs again when the base moves in a file only the second lists, and is
+  carried when the move touches neither;
 - a candidate with one check whose read set is known and untouched and one check no readers entry names runs only
   the second and the `alwaysRun` checks again;
-- a base move wholly inside `selection.unread` carries every check, the `alwaysRun` ones too; a move with one file
-  outside it does not;
+- a base move wholly inside `selection.unread` carries every check, the `alwaysRun` ones and one with an unknown
+  read set too; a move with one file outside it does not;
+- a `selection.unread` pattern that matches the binding file carries nothing when the base changes that file;
 - a complete entry with a `**` pattern and a base change to a nested file runs that check again;
 - a base move that renames a file out of a complete entry's path, and one that deletes a file under it, each run
   that check again;
@@ -289,7 +301,8 @@ Scenarios. The fixture's binding declares no readers, so V26-3319's carry cannot
   no `base.broken`, and takes it on a later turn;
 - a queue that just merged and finds a live waiter's file lets the waiter take the slot first;
 - a waiter's file whose writer was stopped by its pid delays a queue that just merged by no more than one poll, and
-  is removed;
+  is removed; a waiter's file whose live writer never takes the slot delays it by one poll and no more;
+- a queue command that gives up its wait removes its own waiter's file;
 - a `lead-push` in one delivery waits while the other delivery's check runs and lands after it ends, as do
   `lead-sync` and `lead-upgrade-writer`; each, when the slot stays held past its wait, refuses naming the holder
   and pushes nothing;
@@ -307,7 +320,8 @@ Scenarios. The fixture's binding declares no readers, so V26-3319's carry cannot
 Lane 2, tier 1, not blocked. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`,
 `skills/run-delivery/SKILL.md`, `skills/run-delivery/references/`,
 `skills/orchestrate-work/references/orchestration-guide.md`, `skills/orchestrate-work/references/schemas.json`,
-`tests/test_run_delivery_supervisor.py` and `tests/test_orchestration_state.py`.
+`tests/test_run_delivery_supervisor.py`, `tests/test_orchestration_state.py`, `tests/test_own_deliveries.py` and
+`docs/own-deliveries.md`.
 
 Found on `main`: `run_full_health` runs the binding's argv once, and `record_full_health` journals `base.broken`
 on any non-zero exit and `base.repaired` on the first pass after a failed run. `lead_resolve` reads only the base
@@ -321,26 +335,31 @@ Scenarios, each with a fixture binding:
 - a `fullHealth` whose one failing test passes alone journals `base.flaky` naming the test, no `base.broken`, and
   `serve` takes the next candidate;
 - one whose failing test fails again alone journals `base.broken` as today;
-- of two failing tests, one passes alone and one fails again: `base.broken`;
+- of two failing tests, the first the output names passes alone and the second fails again: `base.broken`;
 - the matched test passes alone, but the run's output also holds a failure `unrecheckedPattern` matches:
   `base.broken`, and no rerun is started;
 - a failed run in which `failurePattern` matches nothing journals `base.broken`;
-- a rerun that runs no test journals `base.broken`;
+- a rerun that exits 0 with output `ranPattern` does not match journals `base.broken`;
+- the rerun runs in the checkout the failed run used, not in the lead's;
 - a test that fails its one lone rerun journals `base.broken`, though a second rerun would pass;
 - a failure named only past the last 2000 characters of the output is still found;
 - a binding without `fullHealthRerun` journals `base.broken` and starts no second run;
-- binding validation refuses an `argv` without `{tests}`, a `failurePattern` with no group, and a pattern that does
-  not compile, each naming the member, in `tests/test_orchestration_state.py`;
+- binding validation refuses an `argv` without `{tests}`, a `failurePattern` with no group, a member with no
+  `ranPattern`, and a `failurePattern`, a `ranPattern` and an `unrecheckedPattern` that do not compile, each naming
+  the member, in `tests/test_orchestration_state.py`;
 - a `base.broken` from `fullHealth` at head A, then a run at head B whose failing test passes alone: `base.flaky`
-  at B, no `base.repaired`, and `serve` stays paused;
+  at B, no `base.repaired`, and `serve` stays paused; then a passing run at head C journals `base.repaired`, and
+  `serve` takes the next candidate;
+- a passing run after a `base.flaky` with no standing break journals `base.verified` and no `base.repaired`;
 - a `base.flaky` head with no standing break does not hold the close, and "Needs you" lists the flaky test without
   holding;
 - `lead-resolve full-health` with the failed head moved names, in turn: a run running at the new head; a run due
   there; a `base.broken` still standing, with `base.repaired`; and none of these. At the failed head itself it
   reruns as today;
-- the runner's own output, from a real `scripts/run-tests.py` run over a failing test, an erroring test, a unit
-  that crashes and a unit that times out, against the member `docs/own-deliveries.md` recommends for this
-  repository: each failure either yields a name the `argv` reruns, or matches `unrecheckedPattern`;
+- the runner's own output, from a real `scripts/run-tests.py` run over a failing test, an erroring test, a test
+  that passes unexpectedly, a unit that crashes and a unit that times out, against the member
+  `docs/own-deliveries.md` gives for this repository, read from that file: each failure either yields a name the
+  `argv` reruns, or matches `unrecheckedPattern`, and a rerun that ran a test matches `ranPattern`;
 - the line map shows `base.flaky`'s label, and the tracker publisher posts nothing for it.
 
 ### V26-3264. Run the lead's full suite in its own detached checkout of a commit
@@ -363,13 +382,14 @@ Scenarios:
 - the `prepare` steps ran in that checkout before the argv did;
 - the flow log's line holds the commit, the result, the argv with the extra arguments, the seconds, the output's
   tail and the platform;
-- with a fixture argv whose first element is a stub interpreter that reports another version than the one running
-  `lead-suite`, the line holds the stub's version; with one that reports none, the line says it could not be read;
+- with a fixture argv whose first element is a relative path to a stub interpreter that exists only in the detached
+  checkout and reports another version than the one running `lead-suite`, the line holds the stub's version; with
+  one that reports none, the line says it could not be read;
 - two runs leave two lines, the first unchanged;
 - `lead-suite -- --budget F` appends the arguments, and a run that exits 3 for its budget exits non-zero and writes
   its line with that result;
 - it runs under the `focused` posture, and journals no `base.verified`, `base.broken` or `base.repaired`;
-- a failing suite exits non-zero and still writes its line;
+- a failing suite exits non-zero, still writes its line, and its checkout is gone afterwards;
 - with no `--at`, it runs at the base head on the remote, not at the lead checkout's own head;
 - a commit that does not exist is refused before any checkout is made;
 - an interrupted run removes its checkout and stops what it started, by its own process group;
@@ -402,7 +422,8 @@ Scenarios, with two deliveries on one fixture base, each in its own linked workt
   and their stages, and still accepts; `lead-assign` warns likewise and still assigns;
 - with the peer claiming file X, `lead-accept` and `lead-assign` for work that touches only file Y warn of nothing;
 - `lead-own --claim` with a region or a line range is refused;
-- a peer on another base is not listed and warns of nothing;
+- a peer on another base is not listed, warns of nothing, and its merge journals no `peer.merged`;
+- a stale peer's claim still warns, and the warning says the peer is stale;
 - a peer's merge that touches a file one of this delivery's open stories names is journalled once as
   `peer.merged`, across two supervisor passes and across a supervisor restart between them;
 - a peer's merge that touches a file only a merged or closed story of this delivery names journals nothing, and so
