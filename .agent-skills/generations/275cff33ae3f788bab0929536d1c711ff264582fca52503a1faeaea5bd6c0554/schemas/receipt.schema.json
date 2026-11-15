@@ -1,0 +1,240 @@
+{
+  "$defs": {
+    "adoption": {
+      "additionalProperties": false,
+      "properties": {
+        "predecessorHosts": {
+          "contains": {
+            "const": "codex"
+          },
+          "items": {
+            "enum": [
+              "claude-code",
+              "codex"
+            ]
+          },
+          "maxItems": 2,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "predecessorSha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "skill": {
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "predecessorHosts",
+        "predecessorSha256",
+        "skill"
+      ],
+      "type": "object"
+    },
+    "claudeExposure": {
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "const": "claude-code"
+        },
+        "mode": {
+          "const": "relative-symlink"
+        },
+        "root": {
+          "const": ".claude/skills"
+        }
+      },
+      "required": [
+        "host",
+        "mode",
+        "root"
+      ],
+      "type": "object"
+    },
+    "codexExposure": {
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "const": "codex"
+        },
+        "mode": {
+          "const": "relative-symlink"
+        },
+        "root": {
+          "const": ".agents/skills"
+        }
+      },
+      "required": [
+        "host",
+        "mode",
+        "root"
+      ],
+      "type": "object"
+    },
+    "createdDirectories": {
+      "items": {
+        "enum": [
+          ".agent-skills",
+          ".agent-skills/generations",
+          ".agents",
+          ".agents/skills",
+          ".claude",
+          ".claude/skills"
+        ]
+      },
+      "maxItems": 6,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "file": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "type": "object"
+    },
+    "files": {
+      "items": {
+        "$ref": "#/$defs/file"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "release": {
+      "additionalProperties": false,
+      "properties": {
+        "archiveSha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "metadataSha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "profile": {
+          "enum": [
+            "core",
+            "delivery-views",
+            "jira",
+            "linear",
+            "run-delivery"
+          ]
+        },
+        "releaseId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "archiveSha256",
+        "metadataSha256",
+        "profile",
+        "releaseId"
+      ],
+      "type": "object"
+    },
+    "version": {
+      "additionalProperties": false,
+      "properties": {
+        "files": {
+          "$ref": "#/$defs/files"
+        },
+        "generation": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "release": {
+          "$ref": "#/$defs/release"
+        }
+      },
+      "required": [
+        "files",
+        "generation",
+        "release"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://agent-skills.dev/schemas/receipt/1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "dependentRequired": {
+    "adoption": [
+      "exposures"
+    ],
+    "createdDirectories": [
+      "exposures"
+    ]
+  },
+  "properties": {
+    "adoption": {
+      "$ref": "#/$defs/adoption"
+    },
+    "createdDirectories": {
+      "$ref": "#/$defs/createdDirectories"
+    },
+    "exposures": {
+      "items": false,
+      "maxItems": 2,
+      "minItems": 2,
+      "prefixItems": [
+        {
+          "$ref": "#/$defs/codexExposure"
+        },
+        {
+          "$ref": "#/$defs/claudeExposure"
+        }
+      ],
+      "type": "array"
+    },
+    "files": {
+      "$ref": "#/$defs/files"
+    },
+    "generation": {
+      "pattern": "^[a-f0-9]{64}$",
+      "type": "string"
+    },
+    "ownership": {
+      "const": "agent-skills-managed"
+    },
+    "previous": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/version"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "release": {
+      "$ref": "#/$defs/release"
+    },
+    "schemaVersion": {
+      "const": "agent-skills-receipt/1"
+    }
+  },
+  "required": [
+    "files",
+    "generation",
+    "ownership",
+    "previous",
+    "release",
+    "schemaVersion"
+  ],
+  "type": "object"
+}

@@ -1,5 +1,5 @@
 {
   "schemaVersion": "delivery-posture/1",
   "posture": "focused",
-  "reason": "V26-3305's delivery: the operator chose focused checks during the delivery, with the full local suite as the gate at final integration."
+  "reason": "V26-3406's close-out: the operator chose to skip the close-out full suite. The full local suite passed on b8a60a9 before the candidate was tagged, and the queue ran each candidate's selected checks."
 }
