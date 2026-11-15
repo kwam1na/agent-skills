@@ -1034,7 +1034,7 @@ def _tool():
     return _TOOL
 
 
-def _render(brief_template: str) -> list[str]:
+def _render(brief_template: str, no_deferrals: bool = False) -> list[str]:
     """run-delivery's brief as run_delivery.py renders it from `brief_template`, for every round it writes: a story's
     assessment, verification and grace rounds, and a plan review's assessment and verification rounds. Only what a
     delivery would read from its release, settings, review folder and git is stood in for."""
@@ -1046,7 +1046,8 @@ def _render(brief_template: str) -> list[str]:
         (root / "charter.md").write_text("<charter text, verbatim>\n", encoding="utf-8")
         (root / "context.md").write_text("<context refs>\n", encoding="utf-8")
         config = types.SimpleNamespace(lenses={"lens.example": ("example", str(root / "charter.md"))}, bound=4,
-                                       plan="docs/plans/example.md", delivery="EX-1", plan_store=None)
+                                       plan="docs/plans/example.md", delivery="EX-1", plan_store=None,
+                                       no_deferrals=no_deferrals)
         release = {name: "<value>" for name in ("releaseId", "profile", "archiveSha256", "metadataSha256")}
         prior = [{"binding": {"round": 1}, "state": "obtained", "result": {"outcome": "aligned"}}]
         story = ("EX-1", "lens.example", "<candidate>", "<tree>", "<merge base>", Path("<checkout>"))
@@ -1121,6 +1122,24 @@ class DeferralRecheckTests(unittest.TestCase):
                        "listing a deferral is optional", "deferrals may be left out", "one deferred earlier is exempt"):
             with self.subTest(excuse=excuse):
                 self.assertTrue(any(pattern.search(excuse) for pattern in DEFERRAL_EXCUSES))
+
+
+# Under noDeferrals each story round's brief asks a lens that left nothing unfixed to say so in these words.
+NO_DEFERRALS_EVIDENCE = (
+    'This delivery takes no deferrals: when you declined nothing, left nothing unfiled and left no mutant alive, say '
+    'so in `evidence` in the words "nothing left unfixed". Write "Declined", "not filed" or "surviving mutant" in '
+    "`evidence` only for something you left unfixed: the hand-off refuses a round whose evidence carries one."
+)
+
+
+class NoDeferralsBriefTests(unittest.TestCase):
+    def test_a_story_brief_under_no_deferrals_asks_for_nothing_left_unfixed_and_one_without_it_does_not(self) -> None:
+        template = (ROOT / RUN_DELIVERY_BRIEF).read_text(encoding="utf-8")
+        under = [" ".join(text.split()) for text in _render(template, no_deferrals=True)]
+        for text in under[:3]:  # a story's assessment, verification and grace rounds
+            self.assertIn(NO_DEFERRALS_EVIDENCE, text)
+        for text in [" ".join(text.split()) for text in _render(template)] + under[3:]:  # without it, or a plan review
+            self.assertNotIn("nothing left unfixed", text)
 
 
 class RoundBriefTemplateCorpusTests(unittest.TestCase):

@@ -242,6 +242,10 @@ checks may need no file at all.
   "noDeferrals": true,                        // optional: the delivery takes no deferrals. A finding still deferred
                                               // when its story merges is a blocker.recorded the lead resolves with
                                               // lead-resolve, never a follow-up; false or absent, it is filed as one
+                                              // It also has each round brief ask a lens to say "nothing left
+                                              // unfixed", refuses a hand-off whose last round's evidence holds a
+                                              // note ("Declined", "not filed" or "surviving mutant", in any case),
+                                              // and has lead-accept print the last round's notes
   "approvals": [                              // drafted by lead-setup --approvals-section; optional
     { "id": "approval-1", "text": "The Product Owner signs off the copy", "state": "waiting", "blocking": true }
   ],

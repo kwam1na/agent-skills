@@ -1287,6 +1287,111 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         self.assertIn(f"deferred P1 {short0}-r2-1", out)
         self.assertIn("-> follow-up: file a follow-up for the retry path", out)
 
+    def test_under_no_deferrals_a_hand_off_whose_last_round_holds_an_evidence_note_is_refused_naming_it(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        path = setup_delivery(fx)
+        d = json.loads(path.read_text())
+        d["noDeferrals"] = True
+        d["stories"]["FX-2"]["inApp"] = "none"
+        path.write_text(json.dumps(d, indent=2))
+        commit(m, "FX-1: no deferrals")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-assign", "FX-2", "--lane", "lane-1", "--title", "lane-1", cwd=m)
+        self.assertEqual(code, 0, out)
+        wt = fx.lane("FX-2")
+        review = wt / ".orchestration/review/FX-2"
+        lenses = fx.lenses(wt)
+        (lens0, (short0, _)), (lens1, (short1, _)) = lenses
+        clean = "Checked every change: nothing left unfixed."
+        instruction = ('This delivery takes no deferrals: when you declined nothing, left nothing unfiled and left no '
+                       'mutant alive, say so in `evidence` in the words "nothing left unfixed". Write "Declined", '
+                       '"not filed" or "surviving mutant" in `evidence` only for something you left unfixed: the '
+                       "hand-off refuses a round whose evidence carries one.")
+        for n in (1, 2):
+            (wt / "src/one.txt").write_text(f"one, round {n}\n")
+            commit(wt, f"FX-2: round {n}")
+            code, out = fx.flow("review-prepare", "FX-2", "--round", str(n), cwd=wt)
+            if code == 2 and "Evidence so far" in out:
+                context = review / "context.md"
+                context.write_text(context.read_text().replace(next(line for line in context.read_text().splitlines()
+                                                                    if line.startswith(CONTEXT_TODO)), "- evidence"))
+                code, out = fx.flow("review-prepare", "FX-2", "--round", str(n), cwd=wt)
+            self.assertEqual(code, 0, out)
+            for _, (short, _) in lenses:
+                self.assertIn(instruction, " ".join((review / f"brief-r{n}-{short}.md").read_text().split()))
+            write_results(review, n, "FX-2", lenses)
+            for i, (_, (short, _)) in enumerate(lenses):
+                result_path = review / f"result-r{n}-{short}.json"
+                result = json.loads(result_path.read_text())
+                # Round 1's note isn't repeated in round 2, the last: it refuses nothing.
+                result["evidence"].append("Declined: an earlier note, not filed" if n == 1 and i == 0 else clean)
+                result_path.write_text(json.dumps(result))
+            code, out = fx.flow("review-reduce", "FX-2", "--round", str(n), cwd=wt)
+            self.assertEqual(code, 0, out)
+        code, out = fx.flow("gate", "FX-2", cwd=wt)
+        self.assertEqual(code, 0, out)
+        sh("git", "push", "-q", "-u", "origin", "HEAD:feature/FX-2", cwd=wt)
+        body = fx.tmp / "body.md"
+        body.write_text("Summary\n")
+        code, out = fx.flow("open-pr", "FX-2", "--title", "FX-2: one", "--body-file", body, cwd=wt)
+        self.assertEqual(code, 0, out)
+        url = "https://forge.test/pr/1"
+        last = review / "round-2.json"
+        kept = last.read_text()
+
+        def noted(notes: dict[int, list[str]], first: bool = False) -> None:
+            """Round 2 with these evidence lines added, by entry: after its evidence, or `first`, before it."""
+            outcome = json.loads(kept)
+            for i, lines in notes.items():
+                evidence = outcome["entries"][i]["result"]["evidence"]
+                evidence[:0 if first else len(evidence)] = lines
+            last.write_text(json.dumps(outcome))
+
+        for name, notes, said, *first in (
+                ("before the lens's other evidence", {0: ["Declined: ahead of the tree line"]},
+                 [f"{lens0}: Declined: ahead of the tree line"], True),
+                ("two on one lens", {1: ["Declined: the first", "The second, not filed"]},
+                 [f"{lens1}: Declined: the first", f"{lens1}: The second, not filed"]),
+                ("Declined", {0: ["Declined: the stricter member rule"]}, [f"{lens0}: Declined: the stricter member rule"]),
+                ("not filed", {0: ["A redundant refusal call, not filed"]}, [f"{lens0}: A redundant refusal call, not filed"]),
+                ("surviving mutant", {1: ["One surviving mutant on the retry path"]},
+                 [f"{lens1}: One surviving mutant on the retry path"]),
+                ("lower case", {0: ["declined: a lower-case note"]}, [f"{lens0}: declined: a lower-case note"]),
+                ("two lenses", {0: ["Declined: one"], 1: ["Two, not filed"]}, [f"{lens0}: Declined: one", f"{lens1}: Two, not filed"]),
+                ("beside nothing left unfixed", {0: ["Declined: beside the clean line"]},
+                 [f"{lens0}: Declined: beside the clean line"])):
+            with self.subTest(name):
+                noted(notes, *first)
+                code, out = fx.flow("handoff", "FX-2", "--pr", url, cwd=wt)
+                self.assertEqual(code, 2, out)
+                self.assertIn("round 2's evidence holds notes, and this delivery takes no deferrals", out)
+                for line in said:
+                    self.assertIn(line, out)
+                self.assertNotIn("an earlier note", out)
+        last.write_text(kept)
+        code, out = fx.flow("handoff", "FX-2", "--pr", url, cwd=wt)
+        self.assertEqual(code, 0, out)
+        # lead-accept prints the last round's notes, each with its lens, and not round 1's: none for a clean round.
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertIn("round 2's evidence notes, under noDeferrals: none", out)
+        self.assertNotIn("an earlier note", out)
+        noted({0: ["Declined: a note the lead reads"], 1: ["One surviving mutant, for the lead", "A second, not filed"]},
+              first=True)
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertIn(f"round 2's evidence notes, under noDeferrals:\n  {lens0}: Declined: a note the lead reads\n"
+                      f"  {lens1}: One surviving mutant, for the lead\n  {lens1}: A second, not filed\n", out)
+        self.assertNotIn("an earlier note", out)
+        # A round file in none of the story's review folders is said to be unreadable, and nothing is printed for it.
+        last.rename(review / "round-2.kept")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertIn("round 2's evidence notes: its round file isn't in the story's review folders, so they can't be "
+                      "read", out)
+        self.assertNotIn("Traceback", out)
+
     def test_lead_assign_warns_of_files_outside_the_lane_before_it_starts(self) -> None:
         fx = self.fixture()
         m = fx.main
@@ -2148,6 +2253,13 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         code, out = flow_run("review-reduce", "FX-2", "--round", "2", cwd=wt)
         expect(code == 2 and "carried finding" in out, f"a dropped finding was reduced: {out}")
         write_results(review, 2, "FX-2", lenses, resolved=[{"id": f"{short0}-r1-1", "state": "fixed", "resolution": "fixed"}], only=0)
+        # Without noDeferrals an evidence note refuses nothing, and the brief asks for no "nothing left unfixed".
+        noted = review / f"result-r2-{short0}.json"
+        result = json.loads(noted.read_text())
+        result["evidence"].append("Declined: a stricter check, not filed")
+        noted.write_text(json.dumps(result))
+        expect("nothing left unfixed" not in (review / "brief-r2-adversarial-testing.md").read_text(),
+               "a brief without noDeferrals asks for no notes")
         code, out = flow_run("review-reduce", "FX-2", "--round", "2", cwd=wt)
         expect(code == 0 and "aligned" in out, out)
         # hand-off: stale gates and in-app evidence are refused until re-run at the new head
@@ -2213,7 +2325,7 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         forge_state["https://forge.test/pr/1"]["state"] = "open"
         (fx.tmp / "forge.json").write_text(json.dumps(forge_state))
         code, out = flow_run("lead-accept", "FX-2", "--accept-restarts", cwd=m)
-        expect(code == 0 and "accepted" in out, out)
+        expect(code == 0 and "accepted" in out and "Declined" not in out and "evidence notes" not in out, out)
         del fx.env["RUN_DELIVERY_CONFIG"], fx.env["FAKE_FORGE_REVIEWS"]
         # FX-3: blocked evidence needs the lead's decision; straying outside the lane is refused; the bound holds
         flow_run("lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2", cwd=m)
@@ -10759,6 +10871,24 @@ class NodeAndPythonMinimumTests(unittest.TestCase):
         code, out = fx.flow("lead-run", "--once", cwd=fx.main, env=env)
         self.assertNotIn("refuses", out)
         self.assertEqual(code, 0, out)
+
+
+class EvidenceNoteWordingTests(unittest.TestCase):
+    """Under noDeferrals, the hand-off's refusal of an evidence note and lead-accept's print of them, in the skill and
+    the delivery file's reference."""
+
+    def test_the_skill_and_the_reference_say_what_no_deferrals_does_with_evidence_notes(self) -> None:
+        normal = lambda path: " ".join((ROOT / path).read_text(encoding="utf-8").split())
+        skill, config = normal("skills/run-delivery/SKILL.md"), normal("skills/run-delivery/references/config.md")
+        for text, phrase in (
+                (skill, 'Under `noDeferrals` it refuses a last round whose evidence holds a note, a string with "Declined", '
+                        '"not filed" or "surviving mutant" in any case, naming each note and its lens. |'),
+                (skill, "Under `noDeferrals` it prints the last round's evidence notes in plain text, each with its lens. |"),
+                (config, '// It also has each round brief ask a lens to say "nothing left // unfixed", refuses a hand-off '
+                         "whose last round's evidence holds a // note (\"Declined\", \"not filed\" or \"surviving mutant\", "
+                         "in any case), // and has lead-accept print the last round's notes")):
+            with self.subTest(phrase=phrase[:50]):
+                self.assertIn(phrase, text)
 
 
 class FinishLineWordingTests(unittest.TestCase):
