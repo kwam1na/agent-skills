@@ -4713,8 +4713,9 @@ class CarriedBaseMoveTests(MergeQueueTestCase):
     APP = {"paths": ["src/app.txt"], "checks": ["app"], "complete": True}
 
     def carrying(self, readers: list[dict] | None, *, unread: list[str] | None = None, always: bool = False,
-                 base: dict[str, str] | None = None) -> Adopter:
-        selection = {"lead": True, "catalogue": self.CATALOGUE, **({"readers": readers} if readers is not None else {}),
+                 base: dict[str, str] | None = None, catalogue: list[dict] | None = None) -> Adopter:
+        selection = {"lead": True, "catalogue": catalogue or self.CATALOGUE,
+                     **({"readers": readers} if readers is not None else {}),
                      **({"unread": unread} if unread is not None else {})}
         adopter = self.adopter({"selection": selection, "alwaysRun": [check_entry("always")] if always else []})
         if base:
@@ -4781,6 +4782,8 @@ class CarriedBaseMoveTests(MergeQueueTestCase):
         run("fetch", "--quiet", "origin", cwd=adopter.lane)
         self.assertEqual(run("rev-parse", "origin/main^1", cwd=adopter.lane), moved)
         self.assertEqual(adopter.show("origin/main", "docs/other.txt"), "other")
+        # A run that carried checks is no whole run, so it doesn't shorten the run estimates.
+        self.assertEqual(len(state_tool.read_state(adopter.state)["meta"]["checkHistory"]["runs"]), 1)
 
     def test_a_move_in_a_file_one_complete_entry_lists_runs_that_check_and_the_always_run_ones_again(self) -> None:
         adopter = self.carrying([self.LIB, self.APP], always=True)
@@ -4793,11 +4796,13 @@ class CarriedBaseMoveTests(MergeQueueTestCase):
         self.assertNotIn("lib", carried["summary"].split(":")[0])
 
     def test_a_check_named_only_by_a_plain_entry_runs_again_on_any_move(self) -> None:
-        for name, files in (("its own test module", {"tests/test_loose.txt": "changed\n"}),
-                            ("any other file", {"docs/other.txt": "other\n"})):
+        plain = {"paths": ["tests/test_loose.txt"], "checks": ["loose"]}
+        for name, entry, files in (("its own test module", plain, {"tests/test_loose.txt": "changed\n"}),
+                                   ("any other file", plain, {"docs/other.txt": "other\n"}),
+                                   ("complete said false", {**plain, "complete": False}, {"docs/other.txt": "other\n"})):
             with self.subTest(name):
                 self.fresh()
-                adopter = self.carrying([{"paths": ["tests/test_loose.txt"], "checks": ["loose"]}])
+                adopter = self.carrying([entry])
                 self.candidate_with(adopter, ["loose"])
                 results, _ = self.moved(adopter, self.base_files(adopter, files))
                 self.merged(results)
@@ -4942,6 +4947,100 @@ class CarriedBaseMoveTests(MergeQueueTestCase):
                                 self.base_files(adopter, {"src/lib.txt": "lib two\n"}),
                                 self.base_files(adopter, {"src/lib.txt": "lib three\n"}))
         self.assertStopped(results, "base_moved")
+
+    def test_a_base_commit_landing_after_the_plan_carries_nothing(self) -> None:
+        adopter = self.carrying([self.LIB, self.APP])
+        self.candidate_with(adopter, ["lib", "app"])
+        real = queue.Runner.carry_plan
+        late: list[str] = []
+
+        def plan_then_move(runner, subject):
+            planned = real(runner, subject)
+            if not late:
+                # Another delivery lands a change lib reads between the plan and the re-sync.
+                late.append(adopter.advance_base({"src/lib.txt": "lib late\n"}))
+            return planned
+
+        with mock.patch.object(queue.Runner, "carry_plan", plan_then_move):
+            results, _ = self.moved(adopter, self.base_files(adopter, {"docs/other.txt": "other\n"}))
+        self.merged(results)
+        self.assertEqual(self.runs(adopter), {"lib": 2, "app": 2})
+        self.assertEqual(self.carried(adopter), [])
+        self.assertEqual(adopter.show("origin/main", "src/lib.txt"), "lib late")
+
+    def test_a_plan_that_cannot_be_made_carries_nothing_and_spends_the_retry(self) -> None:
+        adopter = self.carrying([self.LIB])
+        self.candidate_with(adopter, ["lib"])
+        real = queue.Runner.carry_plan
+        calls: list[int] = []
+
+        def second_fails(runner, subject):
+            calls.append(1)
+            if len(calls) == 2:
+                raise RuntimeError("git fetch failed")
+            return real(runner, subject)
+
+        with mock.patch.object(queue.Runner, "carry_plan", second_fails):
+            results, _ = self.moved(adopter, self.base_files(adopter, {"docs/other.txt": "other\n"}),
+                                    self.base_files(adopter, {"src/lib.txt": "lib two\n"}))
+        self.merged(results)
+        # The first move's plan is never reused for the second: lib runs again over src/lib.txt.
+        self.assertEqual(self.runs(adopter)["lib"], 2)
+        self.assertEqual(len(self.carried(adopter)), 1)
+
+    def test_a_re_sync_whose_carry_the_check_empties_spends_the_retry(self) -> None:
+        # app builds on lib, so a move in app's read set runs both again, and lib's carry comes to nothing.
+        catalogue = [check_entry("lib", "src/lib.txt"), check_entry("app", "src/app.txt", prerequisites=["lib"]),
+                     check_entry("loose")]
+        adopter = self.carrying([self.LIB, self.APP], catalogue=catalogue)
+        self.candidate_with(adopter, ["lib", "app"])
+        moves = [self.base_files(adopter, {"src/app.txt": f"app {number}\n"}) for number in range(3)]
+        results, made = self.moved(adopter, *moves)
+        self.assertStopped(results, "base_moved")
+        self.assertEqual(self.carried(adopter), [])
+        self.assertEqual(len(made), 3)
+        # lib ran again beside app each time: a check that runs again needs its prerequisites' output.
+        self.assertEqual(self.runs(adopter), {"lib": 3, "app": 3})
+
+    def test_a_move_in_the_old_path_of_a_file_the_candidate_renamed_carries_nothing(self) -> None:
+        adopter = self.carrying([self.LIB], base={"docs/a.txt": "".join(f"line {n}\n" for n in range(1, 9))})
+        run("fetch", "--quiet", "origin", cwd=adopter.lane)
+        run("checkout", "--quiet", "-b", "feature", "origin/main", cwd=adopter.lane)
+        run("mv", "docs/a.txt", "docs/b.txt", cwd=adopter.lane)
+        run("commit", "--quiet", "-m", "rename", cwd=adopter.lane)
+        run("push", "--quiet", "origin", "feature:feature", cwd=adopter.lane)
+        adopter.enqueue("feature", run("rev-parse", "HEAD", cwd=adopter.lane))
+        run("fetch", "--quiet", "origin", cwd=adopter.operator)
+        state_tool.select_checks(adopter.state, "feature", binding=adopter.binding, head=adopter.item("feature")["head"],
+                                 checks=["lib"], reason="the lead's reason", repo=adopter.operator,
+                                 base_head=adopter.tip("main"))
+        edited = "".join(f"line {n}\n" for n in range(1, 8)) + "base\n"
+        results, _ = self.moved(adopter, self.base_files(adopter, {"docs/a.txt": edited}))
+        self.merged(results)
+        self.assertEqual(self.runs(adopter)["lib"], 2)
+        self.assertEqual(self.carried(adopter), [])
+
+    def test_a_move_found_at_the_check_step_spends_the_retry(self) -> None:
+        adopter = self.carrying([self.LIB])
+        self.candidate_with(adopter, ["lib"])
+        syncs: list[str] = []
+        merges: list[str] = []
+
+        def merge_moves(runner, subject):
+            if not merges:
+                merges.append(adopter.advance_base({"docs/first.txt": "first\n"}))
+
+        def sync_moves(runner, subject):
+            # The re-syncs after the carried move: the base moves before each check starts.
+            syncs.append(subject)
+            if len(syncs) in (2, 3):
+                adopter.advance_base({f"docs/sync-{len(syncs)}.txt": "moved\n"})
+
+        results = self.run_queue(adopter, "feature", seams={"before_merge": merge_moves, "after_sync": sync_moves})
+        # The carried move spent nothing, the first check-stage move spent the retry, and the second stopped it.
+        self.assertStopped(results, "base_moved")
+        self.assertEqual(results[-1].document()["subcommand"], "check")
+        self.assertEqual(len(syncs), 3)
 
 
 class ServeTests(MergeQueueTestCase):

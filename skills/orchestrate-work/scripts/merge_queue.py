@@ -859,6 +859,8 @@ class Runner:
         # Candidates whose merge began in this runner: the forge may have them, so they are never put back.
         self.merging: set[str] = set()
         self.checkouts: list[Path] = []
+        # The checks the last check step carried over a base move, so run can tell a re-sync that carried nothing.
+        self.carried_now: list[str] = []
         self._counter = 0
         self._logs = 0
 
@@ -1859,7 +1861,8 @@ class Runner:
             if changes:
                 raise Stop("no_checks", "nothing would check this candidate's changes")
             result.notes.append("the candidate changes nothing, so no check was selected")
-        carry = self.carry(subject, checks, carried, result)
+        # A plan made for another base head says nothing of the commits after it: then every check runs again.
+        carry = self.carry(subject, checks, carried if carried and carried["to"] == base_head else None, result)
         self.write_progress([subject], [{"id": check["id"], "state": "pending", **check_title(check)} for check in checks])
         reused = self.reusable([(subject, item)], checks, self.tree(synced))
         outcomes = self.run_checks([subject], checks, checkout, context.with_values(treeSha=self.tree(synced)), result,
@@ -1876,6 +1879,7 @@ class Runner:
     def carry(self, subject: str, checks: list[dict], carried: dict | None, result: Result) -> dict[str, dict]:
         """Of the checks selected now, those the base move carries, journaled once; a check that runs again needs its
         prerequisites' output, so they run again too."""
+        self.carried_now = []
         if not carried:
             return {}
         carry = {check["id"]: carried["checks"][check["id"]] for check in checks if check["id"] in carried["checks"]}
@@ -1896,6 +1900,7 @@ class Runner:
                      + (f"ran again: {', '.join(again)}" if again else "nothing ran again"))
             self.journal("check.carried", words, subject)
             result.notes.append(words)
+        self.carried_now = list(carry)
         return carry
 
     def assert_clean(self, checkout: Path, what: str) -> None:
@@ -3084,7 +3089,8 @@ class Runner:
         """Sync, check and merge one candidate; a base that moves once is re-synced.
 
         A move after the checks passed that carries at least one of them to the new base (see carry_plan) is re-synced
-        too, running only what it doesn't carry, and doesn't spend that one retry.
+        too, running only what it doesn't carry, and doesn't spend that one retry. A re-sync begun for a carry that the
+        check then carried nothing of spends it after all, so a candidate the base keeps moving under still stops.
         """
         retries = 1
         carried: dict | None = None
@@ -3092,16 +3098,21 @@ class Runner:
             for name, step in (("sync", self.sync), ("check", self.check), ("merge", self.merge)):
                 if name == "check" and carried:
                     step = functools.partial(self.check, carried=carried)
+                self.carried_now = []
                 result = self.prepared(name, subject, lambda result, step=step: step(subject, result))
                 results.append(result)
+                if name == "check" and carried and result.outcome == "checked" and not self.carried_now:
+                    retries -= 1
                 if result.outcome == "stopped" or result.outcome == "refused":
                     if result.stop and result.stop["reason"] == "base_moved":
+                        # A plan that can't be made carries nothing: the move spends the retry as before.
+                        carried = None
                         with contextlib.suppress(Stop, RuntimeError, delivery_state.StateError):
                             carried = self.carry_plan(subject) if name == "merge" else None
-                        if name == "merge" and carried:
+                        if name == "merge" and carried and retries >= 0:
                             break
                         carried = None
-                        if retries:
+                        if retries > 0:
                             retries -= 1
                             break
                     return "stopped"
