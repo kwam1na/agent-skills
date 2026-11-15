@@ -161,6 +161,10 @@
         {
           "id": "v26-3513-1",
           "text": "A queue row with the slot wait unset and a small non-zero checkTimeoutSeconds shows the command's waiter file before it returns queue_locked, and fails when the wait is read as 0."
+        },
+        {
+          "id": "v26-3513-2",
+          "text": "A row holds a delivery's queue.lock, runs a real queue command, and shows the holder file naming that delivery while the command waits; it fails when the queue lock is taken first."
         }
       ],
       "after": [
