@@ -165,6 +165,10 @@
         {
           "id": "v26-3513-2",
           "text": "A row holds a delivery's queue.lock, runs a real queue command, and shows the holder file naming that delivery while the command waits; it fails when the queue lock is taken first."
+        },
+        {
+          "id": "v26-3513-3",
+          "text": "A row shows lead-sync taking the merge slot before queue.lock, and fails when the order is swapped."
         }
       ],
       "after": [
