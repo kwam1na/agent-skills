@@ -10902,9 +10902,12 @@ class SquashCleanupWordingTests(unittest.TestCase):
                     "But a squashed story's branch never reaches the base, so the supervisor's cleanup reports it unmerged"):
             with self.subTest(old=old[:50]):
                 self.assertNotIn(old, text)
-        # Nowhere does a squashed story read unmerged without the condition that makes it so.
-        self.assertIsNone(re.search(r"squash\w*[^.;]{0,80}\breports? (?:it|the story|a story) unmerged(?! [^.;]*\bwhen)",
-                                    text, re.IGNORECASE))
+        # No sentence of the guide joins a squash and "unmerged" without the condition, a "when", that makes it so.
+        for sentence in re.split(r"(?<=[.!?])\s+", text):
+            lowered = sentence.lower()
+            if "squash" in lowered and "unmerged" in lowered:
+                with self.subTest(sentence=sentence[:60]):
+                    self.assertRegex(lowered, r"\bwhen\b")
 
 
 class EvidenceNoteWordingTests(unittest.TestCase):

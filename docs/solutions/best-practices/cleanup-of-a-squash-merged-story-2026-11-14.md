@@ -17,13 +17,13 @@ Cleanup used to count a story as merged only when every tip of the story was an 
 the checkout's HEAD, its local branch and its remote branch. A forge that squash-merges lands the story as a new commit
 of its own, so none of the story's commits ever reaches the base.
 
-At V26-3265's close, cleanup left all 13 lane checkouts. For each one it logged
+At the close of a delivery whose forge squash-merged every story, cleanup left all 13 lane checkouts. For each one it logged
 `unmerged; not on origin/main: the checkout's HEAD (…), local claude/<KEY> (…)`. The close stayed held on
 `not cleaned up: <story>`, although every change request was merged and every checkout was clean.
 
 ## Solution
 
-Since V26-3358, cleanup asks the forge about a story whose tips are off the base. It removes the checkout, and deletes
+Cleanup now asks the forge about a story whose tips are off the base. It removes the checkout, and deletes
 the local branch, when both of these hold:
 
 - the story's recorded change request is merged;
@@ -37,7 +37,7 @@ still reports a story unmerged, and leaves its checkout, in two cases:
 
 The adoption guide's "Merge strategy" paragraph says so.
 
-A lead on a generation without that change, or on a forge or row cleanup can't read, recovers by hand:
+A lead on a generation whose cleanup doesn't ask the forge, or on a forge or row cleanup can't read, recovers by hand:
 
 1. For each story the close waits on, check on the forge that its change request is merged.
 2. Check that its checkout is clean: `git -C <checkout> status --porcelain` prints nothing.
