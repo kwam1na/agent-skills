@@ -473,7 +473,7 @@
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "edb012bd250b0dfa86a095d12eafbcd8932259a75cc408da5b736c7d80e5b212"
+          "sha256": "ac6c1dce0cad0c9871ede6d57ad22a1747db1d4e4933284e585fafad8a995aa0"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
@@ -997,7 +997,7 @@
       "outputs": [
         {
           "path": "skills/review-work/SKILL.md",
-          "sha256": "24ab712cbee42f033fa7e0348a7f8e7f11468b9b1cd405f14c1f7da28fa393f0"
+          "sha256": "a54da94befcab3056a7d15bd6dd6d79a9a6721edc294fff858a70d15942f7493"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -1054,7 +1054,7 @@
         },
         {
           "path": "skills/run-delivery/references/config.md",
-          "sha256": "44c9581c6ad64fced8092d70430a917f26340fda053028d1bf1f3e1b633159aa"
+          "sha256": "028b2cd11d85c15731fe74fff439d08f57a8169fac772fc5e329d4f62bef5bf0"
         },
         {
           "path": "skills/run-delivery/scripts/pr_review_gates.py",
@@ -1062,7 +1062,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "70ce44c59ec358cbe9bd01e94b6a3b7530030369dc665246f377d58d69acf02b"
+          "sha256": "bcb11febf63bdff9b18ee73b8611d2eda77a4d398eede035093823b5dea9209a"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",

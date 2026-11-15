@@ -34,6 +34,13 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "Where no tracker is configured, those follow-up items are the actionable"
         " tracking handoff in the executor's delivery result rather than a"
         " blocker",
+        "A deferral is fixed only when a later round of the lens that filed it lists it"
+        " in `resolvedFindings` with the state `closed`, `fixed` or `withdrawn`.",
+        "In each verification round a lens re-checks every finding it deferred in an"
+        " earlier round and lists each one it finds fixed.",
+        "A deferral listed as `deferred` or `open`, listed only by another lens, or not"
+        " listed is still deferred, and the close-out files its follow-up item; a result"
+        " that leaves a deferral out is still a valid result.",
         "The review is bound to the release installed when the delivery's first"
         " round is acquired: a release installed mid-review is recorded and does"
         " not invalidate rounds already carried, and the delivery's closing record"
@@ -388,6 +395,25 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "Where no tracker is configured, those follow-up items are the actionable"
         " tracking handoff in the executor's delivery result rather than a"
         " blocker",
+    ),
+    "skills/orchestrate-work/references/orchestration-guide.md": (
+        "then files a follow-up for each finding still deferred at its story's last"
+        " captured round, journals `delivery.closed`",
+        "A deferral is fixed only when a later round of the lens that filed it lists it"
+        " in `resolvedFindings` as `closed`, `fixed` or `withdrawn`; one listed as"
+        " `deferred` or `open`, listed by another lens, or not listed stays deferred, and"
+        " the close-out files its follow-up.",
+        "A delivery file that declares `\"noDeferrals\": true` takes no deferrals: a"
+        " finding still deferred when its story merges is journalled as a"
+        " `blocker.recorded` on the story, shown in \"Needs you\" and holding the close"
+        " until the lead resolves it with `lead-resolve`, and no follow-up is filed for"
+        " it.",
+    ),
+    "skills/run-delivery/references/config.md": (
+        '"noDeferrals": true, // optional: the delivery takes no deferrals. A finding'
+        " still deferred // when its story merges is a blocker.recorded the lead"
+        " resolves with // lead-resolve, never a follow-up; false or absent, it is"
+        " filed as one",
     ),
 }
 

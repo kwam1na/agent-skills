@@ -821,6 +821,8 @@ class Config:
         self.lanes = d["lanes"]
         self.stories = d["stories"]
         self.finish = d.get("finish", [])
+        # A delivery that takes no deferrals: a finding still deferred when its story merges is a blocker, not a follow-up.
+        self.no_deferrals = d.get("noDeferrals") is True
         self.ship = d.get("ship")
         self.brief_notes = d.get("brief", {}).get("notes")
         for k in self.stories:
@@ -1310,9 +1312,11 @@ def brief(key: str, round_no: int, lens: str, candidate: str, tree: str, merge_b
                  "your previous round); omit when none.\n"
                  "- `resolvedFindings`: required. One entry per finding, "
                  '`{"id", "state": "closed|fixed|withdrawn|deferred|open", "resolution": "..."}`. Every finding this '
-                 "lens raised in an earlier round that is still open must appear (one deferred earlier needn't); one "
-                 "closed in an earlier round may be listed again or left out. A deferral (P2/P3 only) also carries "
-                 "`deferredIssue`.")
+                 "lens raised in an earlier round that is still open must appear; one closed in an earlier round may be "
+                 "listed again or left out. Re-check each finding this lens deferred in an earlier round, and list each "
+                 "one you find fixed as `closed`, `fixed` or `withdrawn`: only that listing records a deferral as fixed, "
+                 "and one listed as `deferred` or `open`, or not listed, stays deferred and is filed as a follow-up at "
+                 "close. A deferral (P2/P3 only) also carries `deferredIssue`.")
     span = f"{merge_base}..{candidate}" if round_no == 1 else f"{prior_candidate}..{candidate}"
     if round_no <= c.bound:
         bound_text = f"`ordinary counted`: round {round_no} of {c.bound}, counted against the declared bound."
@@ -9586,20 +9590,58 @@ def stop_full_health_run(c) -> str | None:
             + ("it had recorded its result" if recorded_first else "it recorded no result"))
 
 
+# The states in which a later round of the lens that deferred a finding records it fixed.
+DEFERRAL_FIXED = ("closed", "fixed", "withdrawn")
+
+
 def deferred_findings(c) -> list[dict]:
-    """Every finding a story's review deferred, {story, finding, title}: from the lane's review folder, or the
-    evidence kept beside the record once its checkout is gone."""
+    """Every finding a story's review deferred and still holds deferred, {story, finding, title}: from the lane's review
+    folder, or the evidence kept beside the record once its checkout is gone. A deferral is fixed only when a later
+    round of the lens that filed it lists it in `resolvedFindings` as closed, fixed or withdrawn; one listed as open or
+    deferred, listed by another lens, or not listed stays deferred."""
     found: dict[tuple[str, str], dict] = {}
     for key in c.stories:
+        rounds: dict[int, dict] = {}
         for folder in (c.lane_checkout(key) / c.work / "review" / key, evidence_dir(key)):
             for path in round_files(folder) if folder.is_dir() else []:
-                outcome = json.loads(path.read_text())
-                for entry in outcome.get("entries", []):
-                    for finding in (entry.get("result") or {}).get("findings", []):
-                        if finding.get("state") == "deferred":
-                            found[(key, finding["id"])] = {"story": key, "finding": finding["id"],
-                                                           "title": str(finding.get("deferredIssue", ""))[:200]}
+                rounds[int(path.stem.split("-")[1])] = json.loads(path.read_text())
+        held: dict[str, tuple[str, dict]] = {}  # finding id: (the lens that deferred it, the finding)
+        for n in sorted(rounds):
+            for entry in rounds[n].get("entries", []):
+                result = entry.get("result") or {}
+                lens = entry.get("lens") or result.get("lensId")
+                for listed in result.get("resolvedFindings", []):
+                    if listed.get("state") in DEFERRAL_FIXED and held.get(listed.get("id"), ("",))[0] == lens:
+                        del held[listed["id"]]
+                for finding in result.get("findings", []):
+                    if finding.get("state") == "deferred":
+                        held[finding["id"]] = (lens, finding)
+        for ident, (_, finding) in held.items():
+            found[(key, ident)] = {"story": key, "finding": ident, "title": str(finding.get("deferredIssue", ""))[:200]}
     return list(found.values())
+
+
+BREACH = "Deferred finding {finding} of {story} is still deferred at merge, and this delivery takes no deferrals: {title}"
+
+
+def deferral_breaches(c, doc: dict) -> list[str]:
+    """Under noDeferrals, journal a blocker for each finding a merged story's review still holds deferred, once each:
+    the lead resolves it with lead-resolve, and no follow-up is filed for it."""
+    if not c.no_deferrals:
+        return []
+    merged = {item["subject"] for item in doc["state"]["queue"] if item["stage"] == "merged"}
+    said = []
+    for finding in deferred_findings(c):
+        if finding["story"] not in merged:
+            continue
+        opening = BREACH.format(**finding).split(" is still deferred")[0] + " is still deferred"
+        if any(e["kind"] == "blocker.recorded" and e.get("subject") == finding["story"]
+               and e.get("summary", "").startswith(opening) for e in doc["journal"]):
+            continue
+        state_tool("journal", "--kind", "blocker.recorded", "--subject", finding["story"], "--summary",
+                   BREACH.format(**finding))
+        said.append(f"blocker: deferred finding {finding['finding']} of {finding['story']}")
+    return said
 
 
 FOLLOWUP = "Deferred finding {finding} of {story} becomes follow-up {story}-{finding}: {title}"
@@ -9611,7 +9653,8 @@ def followups_step(c, doc: dict) -> tuple[bool, str]:
     ledger covers every one: a transient failure is retried by its next run, and a permanent one is shown. By hand,
     the record's followups are all there is."""
     have = {item["id"] for item in doc["state"]["followups"]}
-    missing = [f for f in deferred_findings(c) if f"{f['story']}-{f['finding']}" not in have]
+    # Under noDeferrals a finding still deferred is a blocker the lead resolved, never a follow-up.
+    missing = [] if c.no_deferrals else [f for f in deferred_findings(c) if f"{f['story']}-{f['finding']}" not in have]
     for finding in missing:
         with marked_decision(c, followup=finding) as written:
             written.append(journal_id(state_tool("journal", "--kind", "decision.recorded", "--subject",
@@ -10069,6 +10112,7 @@ class Supervisor:
 
         steps = (("reconcile", reconcile_once), ("cleanup", cleanup), ("fullHealth", lambda: post_merge_step(c, self.once)),
                  ("finish", lambda: journal_finish_met(c, load_state())),
+                 ("deferrals", lambda: deferral_breaches(c, load_state())),
                  ("publish", lambda: render_views(c, only="publishers")), ("needs", derive),
                  ("render", lambda: render_views(c, only="renderers")), ("latest", lambda: str(copy_latest(c))))
         for name, step in steps:

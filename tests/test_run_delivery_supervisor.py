@@ -332,6 +332,96 @@ class ModuleUnitsTests(unittest.TestCase):
             self.assertIs(units.get(f"{__name__}.{name}"), True, f"{name} isn't a quiet or serial unit of its own: {listed}")
 
 
+def loaded_run_delivery(case: unittest.TestCase, name: str) -> types.ModuleType:
+    """run_delivery.py, loaded in this process under its own name, and unloaded when the case ends."""
+    path = Path(__file__).resolve().parents[1] / "skills" / "run-delivery" / "scripts" / "run_delivery.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    case.addCleanup(sys.modules.pop, spec.name, None)
+    spec.loader.exec_module(module)
+    return module
+
+
+class DeferredFindingTests(unittest.TestCase):
+    """A deferred finding is fixed only when a later round of the lens that filed it lists it in `resolvedFindings`
+    as closed, fixed or withdrawn; any other deferral is still deferred, and is filed once, or is a breach under
+    noDeferrals."""
+
+    def setUp(self) -> None:
+        self.tool = loaded_run_delivery(self, "run_delivery_for_deferred_findings")
+        self.tmp = Path(tempfile.mkdtemp(prefix="deferred-findings-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def config(self, *rounds: dict, no_deferrals: bool = False) -> types.SimpleNamespace:
+        """One story, S-1, whose kept evidence holds these rounds, each {lens: (findings, resolvedFindings)}."""
+        folder = self.tmp / "evidence" / "S-1"
+        shutil.rmtree(folder, ignore_errors=True)
+        folder.mkdir(parents=True)
+        for n, lenses in enumerate(rounds, 1):
+            entries = [{"lens": lens, "state": "obtained", "result": {"lensId": lens, "round": n, "findings": found,
+                                                                       **({"resolvedFindings": resolved} if n > 1 else {})}}
+                       for lens, (found, resolved) in lenses.items()]
+            (folder / f"round-{n}.json").write_text(json.dumps({"round": n, "entries": entries}))
+        self.enterContext(mock.patch.object(self.tool, "evidence_dir", lambda key: self.tmp / "evidence" / key))
+        return types.SimpleNamespace(stories={"S-1": {}}, lane_checkout=lambda key: self.tmp / "gone", work="work",
+                                     no_deferrals=no_deferrals)
+
+    @staticmethod
+    def deferred(ident: str) -> dict:
+        return {"id": ident, "severity": "P3", "summary": "later", "state": "deferred", "deferredIssue": f"Follow {ident}"}
+
+    def found(self, *rounds: dict) -> list[str]:
+        return [f["finding"] for f in self.tool.deferred_findings(self.config(*rounds))]
+
+    def test_a_deferral_the_same_lens_lists_closed_fixed_or_withdrawn_later_is_fixed(self) -> None:
+        for state in ("closed", "fixed", "withdrawn"):
+            with self.subTest(state=state):
+                self.assertEqual(self.found({"lens.a": ([self.deferred("a-r1-1")], [])},
+                                            {"lens.a": ([], [{"id": "a-r1-1", "state": state, "resolution": "done"}])}), [])
+
+    def test_a_deferral_still_deferred_at_the_last_round_is_found_once(self) -> None:
+        listed = lambda state: [{"id": "a-r1-1", "state": state, "resolution": "not yet"}]
+        for name, rounds in (
+                ("deferred in the last round", ({"lens.a": ([self.deferred("a-r1-1")], [])},)),
+                ("raised in round 2, the last", ({"lens.a": ([], [])}, {"lens.a": ([self.deferred("a-r1-1")], [])})),
+                ("left out of round 2", ({"lens.a": ([self.deferred("a-r1-1")], [])}, {"lens.a": ([], [])})),
+                ("listed deferred in round 2", ({"lens.a": ([self.deferred("a-r1-1")], [])},
+                                                {"lens.a": ([], listed("deferred"))})),
+                ("listed open in round 2", ({"lens.a": ([self.deferred("a-r1-1")], [])}, {"lens.a": ([], listed("open"))})),
+                ("listed fixed by another lens only", ({"lens.a": ([self.deferred("a-r1-1")], []), "lens.b": ([], [])},
+                                                       {"lens.a": ([], []), "lens.b": ([], listed("fixed"))}))):
+            with self.subTest(name):
+                self.assertEqual(self.found(*rounds), ["a-r1-1"])
+
+    def test_under_no_deferrals_a_merged_storys_deferral_is_journalled_as_a_blocker_once(self) -> None:
+        c = self.config({"lens.a": ([self.deferred("a-r1-1"), self.deferred("a-r1-2"), self.deferred("a-r1-3")], [])},
+                        {"lens.a": ([], [{"id": "a-r1-1", "state": "fixed", "resolution": "fixed"},
+                                         {"id": "a-r1-2", "state": "withdrawn", "resolution": "not a defect"}])},
+                        no_deferrals=True)
+        doc = {"state": {"queue": [{"subject": "S-1", "stage": "merged"}]}, "journal": []}
+        calls = []
+
+        def journal(*argv, **_):
+            calls.append(argv)
+            doc["journal"].append({"id": len(doc["journal"]) + 1, "kind": argv[argv.index("--kind") + 1],
+                                   "subject": argv[argv.index("--subject") + 1], "summary": argv[argv.index("--summary") + 1]})
+        with mock.patch.object(self.tool, "state_tool", journal):
+            said = self.tool.deferral_breaches(c, doc)
+            self.assertEqual(self.tool.deferral_breaches(c, doc), [])
+        self.assertEqual(len(calls), 1, calls)
+        self.assertEqual(said, ["blocker: deferred finding a-r1-3 of S-1"])
+        self.assertEqual([(e["kind"], e["subject"], e["summary"]) for e in doc["journal"]],
+                         [("blocker.recorded", "S-1", "Deferred finding a-r1-3 of S-1 is still deferred at merge, and "
+                           "this delivery takes no deferrals: Follow a-r1-3")])
+        # A story not yet merged, or a delivery that takes deferrals, journals none.
+        for c_, doc_ in ((c, {"state": {"queue": [{"subject": "S-1", "stage": "queued"}]}, "journal": []}),
+                         (types.SimpleNamespace(**{**vars(c), "no_deferrals": False}), {**doc, "journal": []})):
+            with mock.patch.object(self.tool, "state_tool", journal):
+                self.assertEqual(self.tool.deferral_breaches(c_, doc_), [])
+        self.assertEqual(len(calls), 1, calls)
+
+
 class FinishMarkOrderTests(unittest.TestCase):
     def test_a_pass_whose_journal_fails_leaves_the_line_for_the_next_pass_to_journal_once(self) -> None:
         path = Path(__file__).resolve().parents[1] / "skills" / "run-delivery" / "scripts" / "run_delivery.py"
@@ -3032,7 +3122,8 @@ class SupervisorTrackerTests(unittest.TestCase):
         for name, value in vars(installed_release()).items():
             setattr(cls, name, value)
 
-    def fixture(self, backend_class=FileBackend, updates: str | None = None) -> tuple[Fixture, object]:
+    def fixture(self, backend_class=FileBackend, updates: str | None = None, **declared) -> tuple[Fixture, object]:
+        """The tracked delivery with no finish lines; `declared` adds keys to its delivery file, as noDeferrals."""
         fx = Fixture(self.generation, self.receipt)
         self.addCleanup(fx.close)
         self.addCleanup(stop_supervisors, fx.tmp)
@@ -3042,6 +3133,7 @@ class SupervisorTrackerTests(unittest.TestCase):
         path = fx.main / ".agents/deliveries/FX-1.json"
         d = json.loads(path.read_text())
         d["finish"] = []
+        d.update(declared)
         path.write_text(json.dumps(d, indent=2))
         commit(fx.main, "FX-1: no finish lines")
         sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
@@ -3153,7 +3245,8 @@ class SupervisorTrackerTests(unittest.TestCase):
         self.assertFalse(self.embedded_needs((latest / "line-map.html").read_text())["running"])
 
     def test_a_follow_up_whose_filing_fails_once_holds_the_close_and_is_filed_once(self) -> None:
-        fx, backend = self.fixture()
+        # `"noDeferrals": false` is a delivery without the key: the deferred finding is filed as a follow-up.
+        fx, backend = self.fixture(noDeferrals=False)
         self.closable(fx, deferred=True)
         with backend.edit() as store:
             store["failures"].append({"op": "create", "ticket": None, "status": 409, "times": 1})
@@ -3171,6 +3264,33 @@ class SupervisorTrackerTests(unittest.TestCase):
         followups = [f["id"] for f in record(fx)["state"]["followups"]]
         self.assertEqual(len(followups), 1, followups)
         self.assertTrue(followups[0].startswith("FX-2-"), followups)
+
+    def test_under_no_deferrals_a_finding_still_deferred_at_merge_is_a_blocker_and_never_a_follow_up(self) -> None:
+        fx, backend = self.fixture(noDeferrals=True)
+        self.closable(fx, deferred=True)
+        for _ in range(2):
+            last = self.once(fx)
+        # Journalled once across two passes, as a blocker on the story, naming the finding.
+        [blocker] = kinds(fx, "blocker.recorded")
+        self.assertEqual(blocker["subject"], "FX-2", blocker)
+        self.assertRegex(blocker["summary"], r"^Deferred finding \S+-r1-1 of FX-2 is still deferred at merge, and this "
+                                             r"delivery takes no deferrals: Tidy the one copy")
+        source = f"journal entry {blocker['id']} (blocker.recorded)"
+        [item] = [item for item in last["needsYou"] if item["source"] == source]
+        self.assertTrue(item["holding"], item)
+        self.assertIn(item["text"], last["closeHeldBy"])
+        self.assertEqual(kinds(fx, "delivery.closed"), [])
+        self.assertEqual(record(fx)["state"]["followups"], [])
+        code, out = fx.flow("lead-resolve", str(blocker["id"]), "--why", "Fixed in FX-9.", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        for _ in range(3):
+            last = self.once(fx)
+            if (fx.tmp / "flow-log/FX-1.closed.json").exists():
+                break
+        self.assertTrue((fx.tmp / "flow-log/FX-1.closed.json").exists(), last)
+        self.assertEqual(len(kinds(fx, "blocker.recorded")), 1)
+        self.assertEqual(record(fx)["state"]["followups"], [])
+        self.assertEqual([call for call in backend.read()["calls"] if call[0] == "create"], [])
 
     def test_a_follow_up_refused_for_good_is_shown_not_retried_and_doesnt_hold_the_close(self) -> None:
         fx, backend = self.fixture()

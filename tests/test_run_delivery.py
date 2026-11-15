@@ -1267,6 +1267,12 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
             self.assertEqual(code, 0, out)
             if n == 1:
                 write_results(review, 1, "FX-2", lenses)
+                # A P3 deferred in round 1, which round 2 leaves out of resolvedFindings: still a valid result.
+                path = review / f"result-r1-{short0}.json"
+                first = json.loads(path.read_text())
+                first["findings"] = [{"id": f"{short0}-r1-1", "severity": "P3", "summary": "a copy could be shared",
+                                      "state": "deferred", "deferredIssue": "share the one copy"}]
+                path.write_text(json.dumps(first))
             else:
                 write_results(review, 2, "FX-2", lenses, resolved=[])
                 path = review / f"result-r2-{short0}.json"
