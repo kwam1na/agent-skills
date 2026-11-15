@@ -1,0 +1,85 @@
+import { SELF } from 'cloudflare:test';
+import { describe, it, expect } from 'vitest';
+import { cases } from './fixtures.generated';
+import { id, session, request, route, sql, upload, current, OTHER_TOKEN, TOKEN, fixture } from './helpers';
+import { MAX_BYTES, RENDERER, digest } from '../src/protocol';
+
+describe('ingestion boundary', () => {
+  it('authenticates scope before any durable metadata and keeps public unknown reads empty', async () => {
+    const publicId = id();
+    for (const token of [null, 'wrong'.repeat(16), OTHER_TOKEN]) {
+      const response = await request(route(publicId, 'session'), { method: 'POST', body: '{}' }, token);
+      expect(response.status).toBe(401);
+    }
+    for (const path of [`/d/${publicId}/current`, `/d/${publicId}/snapshots/${'a'.repeat(64)}`, '/', '/d', '/api/v1/repos']) {
+      expect((await request(path, {}, null)).status).toBe(404);
+    }
+    expect(await sql(publicId, "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '_cf_%' AND name NOT LIKE 'sqlite_%'")).toEqual([]);
+    expect((await request(route('%61'.repeat(64), 'session'), { method: 'POST', body: '{}' })).status).toBe(404);
+    expect((await session(publicId)).status).toBe(200);
+    expect((await session(publicId, {}, 'repo-b', OTHER_TOKEN)).status).toBe(404);
+    expect((await session(publicId, { deliveryKey: 'OTHER' })).status).toBe(404);
+    expect((await session(publicId, { ownerId: 'd'.repeat(64) })).status).toBe(409);
+    expect((await request(route(publicId, 'status', 'repo-b'), {}, OTHER_TOKEN)).status).toBe(404);
+    const rows = await sql<{repo: string}>(publicId, 'SELECT repo FROM delivery');
+    expect(rows[0].repo).toBe('repo-a');
+  });
+  it.each(cases)('enforces shared schema and boundary fixture $file', async ({ body, valid }) => {
+    const publicId = id();
+    expect((await session(publicId)).status).toBe(200);
+    const response = await upload(publicId, 1, body);
+    expect(response.status).toBe(valid ? 200 : 400);
+    expect((await current(publicId)).status).toBe(valid ? 200 : 404);
+  });
+  it('serves the deployed entrypoint through local Worker, DO and R2 bindings', async () => {
+    const publicId=id();
+    const auth={'Authorization':`Bearer ${TOKEN}`,'Content-Type':'application/json'};
+    const acquired=await SELF.fetch(`https://service.test${route(publicId,'session')}`,{method:'POST',headers:auth,body:JSON.stringify({mode:'acquire',deliveryKey:'APP-1',ownerId:'c'.repeat(64)})});
+    expect(acquired.status).toBe(200);
+    const body=JSON.stringify(fixture());const hash=await digest(new TextEncoder().encode(body));
+    const accepted=await SELF.fetch(`https://service.test${route(publicId,'snapshots')}`,{method:'POST',headers:{...auth,'X-Writer-Epoch':'1','X-Snapshot-Sequence':'1','X-Snapshot-Digest':hash,'X-Renderer-Version':RENDERER},body});
+    expect(accepted.status).toBe(200);
+    const response=await SELF.fetch(`https://service.test/d/${publicId}/snapshots/${hash}`);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe(body);
+  });
+  it('hashes exact bytes and accepts data only with supported renderer and bounded headers', async () => {
+    const publicId = id(); await session(publicId);
+    const headers = { 'Content-Type': 'application/json', 'X-Renderer-Version': RENDERER,
+      'X-Writer-Epoch': '1', 'X-Snapshot-Sequence': '1', 'X-Snapshot-Digest': 'a'.repeat(64) };
+    expect((await request(route(publicId, 'snapshots'), { method: 'POST', headers, body: '{}' })).status).toBe(422);
+    expect((await request(route(publicId, 'snapshots'), { method: 'POST', headers: {...headers, 'Content-Type': 'text/html'}, body: '<html>' })).status).toBe(415);
+    expect((await request(route(publicId, 'snapshots'), { method: 'POST', headers: {...headers, 'X-Renderer-Version': 'future'}, body: '{}' })).status).toBe(422);
+    expect((await upload(publicId, 1, '[['.repeat(65))).status).toBe(400);
+    expect((await upload(publicId, 1, '{"bad":')).status).toBe(400);
+    expect((await current(publicId)).status).toBe(404);
+  });
+  it('counts streamed bytes despite absent or dishonest content length and cancels oversized input', async () => {
+    const publicId = id(); await session(publicId);
+    for (const length of [undefined, '2', String(MAX_BYTES + 1)]) {
+      let cancelled = false;
+      const stream = new ReadableStream<Uint8Array>({
+        pull(controller) { controller.enqueue(new Uint8Array(1024 * 1024)); },
+        cancel() { cancelled = true; }
+      });
+      const headers: Record<string,string> = { 'Content-Type':'application/json', 'X-Renderer-Version':RENDERER, 'X-Writer-Epoch':'1', 'X-Snapshot-Sequence':'1', 'X-Snapshot-Digest':'a'.repeat(64) };
+      if (length) headers['Content-Length'] = length;
+      const response = await request(route(publicId,'snapshots'), { method:'POST', headers, body:stream });
+      expect(response.status).toBe(413);
+      if (length !== String(MAX_BYTES + 1)) expect(cancelled).toBe(true);
+      await stream.cancel().catch(() => {});
+    }
+    expect((await current(publicId)).status).toBe(404);
+  });
+  it('returns safe fixed errors and exposes only a committed object, never bucket paths', async () => {
+    const publicId = id(); await session(publicId);
+    const receipt = await (await upload(publicId)).json() as {digest:string};
+    const response = await request(`/d/${publicId}/snapshots/${receipt.digest}`, {}, null);
+    expect(response.status).toBe(200);
+    expect(await digest(new Uint8Array(await response.arrayBuffer()))).toBe(receipt.digest);
+    for (const path of [`/d/${publicId}/snapshots/${'0'.repeat(64)}`, `/d/${publicId}/history`, `/d/${publicId}/1/1/${receipt.digest}`]) expect((await request(path, {}, null)).status).toBe(404);
+    expect((await request(`/d/${publicId}/current`, {method:'POST'}, null)).status).toBe(404);
+    expect(response.headers.get('referrer-policy')).toBe('no-referrer');
+    expect(response.headers.get('x-robots-tag')).toContain('noindex');
+  });
+});
