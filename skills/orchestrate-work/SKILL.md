@@ -258,7 +258,11 @@ Triage every review finding with
 
 When the runner reports `base_broken`, the queue stops. The lead fixes forward
 first, declares the missing provider membership or adds the check to
-`alwaysRun`, and records a decision.
+`alwaysRun`, and records a decision. Naming the fix as the repair
+(`delivery_state.py repair --subject <key>`) lets `serve` take it alone
+through the held queue; its merge journals `base.repaired`, and every
+`base.repaired` puts back the candidates the break stopped, with no
+`--requeue`.
 
 ## The merge queue
 

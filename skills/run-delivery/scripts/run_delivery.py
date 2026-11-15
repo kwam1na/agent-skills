@@ -9105,7 +9105,9 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
         else:
             items.append({"holding": True, "source": source,
                           "text": f"The delivery base is broken: {events[-1].get('summary', '')[:300]}. "
-                          "Repair it, then journal base.repaired",
+                          "Repair it: name a queued candidate as its repair with delivery_state.py repair --subject KEY, "
+                          "which serve takes first and alone, or land the fix by hand and journal base.repaired; the "
+                          "candidates the break stopped resume on base.repaired, with no --requeue",
                           "clears": ("a fullHealth pass at a later base head, or " if found else "")
                           + "journalling base.repaired"})
     for lane in doc["state"]["lanes"]:

@@ -4517,6 +4517,194 @@ class StoppedBaseRerunTests(MergeQueueTestCase):
         self.assertEqual(self.journal(adopter, "base.broken"), [])
 
 
+class BaseRepairTests(MergeQueueTestCase):
+    """While the base awaits repair, serve takes the lead's named repair alone, and base.repaired puts back what broke."""
+
+    BROKEN = {"src/app.txt": "FAIL on base\n", "gen/generated.txt": "FAIL on base\nlib one\n"}
+
+    def adopter(self, binding_changes: dict | None = None, mode: str = "normal") -> Adopter:
+        # No post-sync output: candidates the break stopped were synced already, and would conflict on it in a batch.
+        return super().adopter({"postSync": [], **(binding_changes or {})}, mode)
+
+    def serve(self, adopter: Adopter) -> list:
+        return queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True, poll=0)
+
+    def journal(self, adopter: Adopter, kind: str, subject: str | None = None) -> list[dict]:
+        return [entry for entry in state_tool.read_journal(adopter.state)
+                if entry["kind"] == kind and (subject is None or entry["subject"] == subject)]
+
+    def awaits_repair(self, adopter: Adopter) -> bool:
+        return state_tool.base_awaits_repair(state_tool.read_journal(adopter.state))
+
+    def stopped_as(self, adopter: Adopter, subject: str) -> str:
+        """The reason the candidate's latest stop names."""
+        return self.journal(adopter, "candidate.stopped", subject)[-1]["summary"].split(":")[0]
+
+    def break_with(self, adopter: Adopter, *subjects: str) -> None:
+        """Each candidate, run on the broken base, stops as base_broken."""
+        for subject in subjects:
+            self.candidate(adopter, {f"src/{subject}.txt": f"{subject}\n"}, name=subject)
+            self.assertStopped(self.run_queue(adopter, subject), "base_broken")
+
+    def test_serve_takes_the_named_repair_alone_and_its_merge_puts_back_what_the_break_stopped(self) -> None:
+        adopter = self.adopter()
+        # Stopped for its own failing check while the base was healthy.
+        self.candidate(adopter, {"tests/test_own.txt": "FAIL\n"}, name="own")
+        self.assertStopped(self.run_queue(adopter, "own"), "check_failed")
+        # Stopped by a break at an earlier base head.
+        adopter.advance_base(self.BROKEN)
+        self.break_with(adopter, "earlier")
+        # Two stopped by the break at the base head the repair answers.
+        broken_head = adopter.advance_base({"notes/more.txt": "more\n"})
+        self.break_with(adopter, "first", "second")
+        # A queued candidate ahead of the repair, which would batch with it.
+        self.candidate(adopter, {"src/ahead.txt": "ahead\n"}, name="ahead")
+        self.candidate(adopter, {"src/app.txt": "app fixed\n"}, name="repair")
+        state_tool.name_repair(adopter.state, "repair")
+        self.assertIn("repair", adopter.item("repair"))
+        through = max(entry["id"] for entry in state_tool.read_journal(adopter.state))
+        served = self.serve(adopter)
+        later = [entry for entry in state_tool.read_journal(adopter.state) if entry["id"] > through]
+        started = [(entry["subject"], entry["id"]) for entry in later if entry["kind"] == "check.started"]
+        [repaired] = self.journal(adopter, "base.repaired")
+        self.assertEqual(repaired["subject"], "repair")
+        self.assertIn("repair", repaired["summary"])
+        # The repair ran first and alone: nothing else started before its merge repaired the base.
+        self.assertEqual(started[0][0], "repair")
+        self.assertTrue(all(at > repaired["id"] for subject, at in started if subject != "repair"), started)
+        self.assertEqual([subject for subject, _ in started].count("repair"), 1)
+        self.assertNotIn("repair", adopter.item("repair"))
+        self.assertEqual(adopter.item("repair")["stage"], "merged")
+        # The other three were taken once the base was repaired; the earlier break's and the own failure's are not.
+        for subject in ("ahead", "first", "second"):
+            self.assertEqual(adopter.item(subject)["stage"], "merged", subject)
+        self.assertEqual((adopter.item("own")["stage"], self.stopped_as(adopter, "own")), ("stopped", "check_failed"))
+        self.assertEqual((adopter.item("earlier")["stage"], self.stopped_as(adopter, "earlier")), ("stopped", "base_broken"))
+        self.assertEqual(len(self.journal(adopter, "candidate.stopped", "earlier")), 1)
+        self.assertFalse(self.awaits_repair(adopter))
+        self.assertNotIn("refused", [result.document()["outcome"] for result in served])
+        # The break's stop said it may be cross-talk rather than the base itself.
+        [stop] = self.journal(adopter, "candidate.stopped", "first")
+        self.assertIn(broken_head, stop["summary"])
+        self.assertIn("could also be cross-talk with another run on the same machine", stop["summary"])
+
+    def test_naming_a_repair_is_refused_on_a_healthy_base_for_a_second_repair_and_for_a_row_not_queued(self) -> None:
+        adopter = self.adopter()
+        for subject in ("a", "b", "c"):
+            adopter.enqueue(subject, subject[0] * 40)
+        with self.assertRaises(state_tool.StateError) as healthy:
+            state_tool.name_repair(adopter.state, "a")
+        self.assertEqual(healthy.exception.code, "repair_invalid")
+        self.assertIn("not broken", str(healthy.exception))
+        state_tool.append_journal(adopter.state, kind="base.broken", summary="base_broken: lint also fails on main")
+        state_tool.name_repair(adopter.state, "a")
+        with self.assertRaises(state_tool.StateError) as second:
+            state_tool.name_repair(adopter.state, "b")
+        self.assertIn("a is already", str(second.exception))
+        current = state_tool.read_state(adopter.state)
+        state_tool.patch(adopter.state, writer="runner", version=current["version"], selector="queue[subject=c]",
+                         changes={"stage": "stopped"})
+        with self.assertRaises(state_tool.StateError) as stopped:
+            state_tool.name_repair(adopter.state, "c")
+        self.assertIn("only a queued", str(stopped.exception))
+        # A withdrawn mark lets another row be named.
+        state_tool.name_repair(adopter.state, "a", withdraw=True)
+        self.assertNotIn("repair", adopter.item("a"))
+        state_tool.name_repair(adopter.state, "b")
+        self.assertIn("repair", adopter.item("b"))
+        with self.assertRaises(state_tool.StateError):
+            state_tool.name_repair(adopter.state, "a", withdraw=True)
+        # A refusal of the named repair attempted nothing, so it says nothing of the base still waiting on it.
+        [refused] = adopter.runner().run_command("merge", ["b"])
+        self.assertEqual((refused.document()["outcome"], refused.document()["stop"]["reason"]), ("refused", "not_synced"))
+        self.assertNotIn("named repair", refused.document()["stop"]["detail"])
+        # The mark is the repair command's alone: no patch sets it.
+        current = state_tool.read_state(adopter.state)
+        with self.assertRaises(state_tool.StateError):
+            state_tool.patch(adopter.state, writer="lead", version=current["version"], selector="queue[subject=a]",
+                             changes={"repair": {"namedAt": state_tool.now()}})
+        # A base.repaired journalled by hand clears it.
+        state_tool.append_journal(adopter.state, kind="base.repaired", summary="fixed by hand")
+        self.assertEqual([item["subject"] for item in state_tool.read_state(adopter.state)["queue"] if "repair" in item], [])
+
+    def test_only_a_base_broken_break_names_the_head_a_repair_puts_back_at(self) -> None:
+        adopter = self.adopter()
+        adopter.enqueue("c", "c" * 40)
+        current = state_tool.read_state(adopter.state)
+        state_tool.patch(adopter.state, writer="runner", version=current["version"], selector="queue[subject=c]",
+                         changes={"stage": "stopped"})
+        broke, other = "a" * 40, "e" * 40
+        stopped = f"base_broken: lint also fails on main at {broke}"
+        state_tool.append_journal(adopter.state, kind="base.broken", summary=stopped, subject="c")
+        state_tool.append_journal(adopter.state, kind="candidate.stopped", summary=stopped, subject="c")
+        # A later break of another kind names another commit; it does not move the head the repair answers.
+        state_tool.append_journal(adopter.state, kind="base.broken",
+                                  summary=f"merged_unverified: main at {other} is not the checked tree on top of {broke}")
+        state_tool.append_journal(adopter.state, kind="base.repaired", summary="fixed by hand")
+        self.assertEqual(adopter.item("c")["stage"], "queued")
+
+    def test_the_repair_command_names_and_withdraws_on_the_command_line(self) -> None:
+        adopter = self.adopter()
+        adopter.enqueue("a", "a" * 40)
+        state_tool.append_journal(adopter.state, kind="base.broken", summary="base_broken: lint also fails on main")
+        tool = [PY, "-B", str(SCRIPTS / "delivery_state.py"), "--dir", str(adopter.state), "repair", "--subject", "a"]
+        named = subprocess.run(tool, capture_output=True, text=True, check=False)
+        self.assertEqual(named.returncode, 0, named.stdout + named.stderr)
+        self.assertIn("namedAt", json.loads(named.stdout)["item"]["repair"])
+        withdrawn = subprocess.run([*tool, "--withdraw"], capture_output=True, text=True, check=False)
+        self.assertEqual(withdrawn.returncode, 0, withdrawn.stdout + withdrawn.stderr)
+        self.assertNotIn("repair", adopter.item("a"))
+
+    def test_a_repair_that_fails_its_own_checks_leaves_the_base_awaiting_repair_and_names_itself(self) -> None:
+        adopter = self.adopter()
+        adopter.advance_base(self.BROKEN)
+        self.break_with(adopter, "first")
+        self.candidate(adopter, {"src/app.txt": "FAIL still\n"}, name="repair")
+        state_tool.name_repair(adopter.state, "repair")
+        served = self.serve(adopter)
+        last = served[-1].document()
+        self.assertEqual((last["candidate"], last["stop"]["reason"]), ("repair", "check_failed"), last["stop"])
+        self.assertIn("repair is the base's named repair, so the base still awaits repair", last["stop"]["detail"])
+        self.assertIn("named repair", self.journal(adopter, "candidate.stopped", "repair")[-1]["summary"])
+        self.assertTrue(self.awaits_repair(adopter))
+        self.assertEqual(self.journal(adopter, "base.repaired"), [])
+        self.assertEqual(adopter.item("first")["stage"], "stopped")
+
+    def test_a_base_repaired_by_hand_puts_back_what_the_break_stopped_and_serve_takes_them(self) -> None:
+        adopter = self.adopter()
+        current = state_tool.read_state(adopter.state)
+        state_tool.patch(adopter.state, writer="lead", version=current["version"], changes={"lanes": [
+            {"id": lane, "title": lane, "focus": "", "state": "working", "waitingOn": None, "since": state_tool.now()}
+            for lane in ("lane-1", "lane-2")]})
+        # lane-1 holds only the two the break stops, so its row reads what the requeue does to them.
+        self.candidate(adopter, {"tests/test_own.txt": "FAIL\n"}, name="own")
+        adopter.lead_set("own", lane="lane-2")
+        self.assertStopped(self.run_queue(adopter, "own"), "check_failed")
+        adopter.advance_base(self.BROKEN)
+        self.break_with(adopter, "first", "second")
+        self.assertTrue(adopter.item("second")["checks"])
+        # The fix lands through the queue, from another lane, without being named: its merge says nothing of the base.
+        self.candidate(adopter, {"src/app.txt": "app fixed\n"}, name="fix")
+        adopter.lead_set("fix", lane="lane-2")
+        self.assertEqual(self.run_queue(adopter, "fix")[-1].document()["outcome"], "merged")
+        self.assertEqual(self.journal(adopter, "base.repaired"), [])
+        self.assertTrue(self.awaits_repair(adopter))
+        self.assertEqual((adopter.item("first")["stage"], adopter.item("second")["stage"]), ("stopped", "stopped"))
+        lane = next(row for row in state_tool.read_state(adopter.state)["lanes"] if row["id"] == "lane-1")
+        self.assertTrue(lane["focus"].startswith(("first stopped:", "second stopped:")), lane)
+        # The lead says so.
+        state_tool.append_journal(adopter.state, kind="base.repaired", summary="app fixed by hand")
+        for subject in ("first", "second"):
+            self.assertEqual((adopter.item(subject)["stage"], adopter.item(subject)["checks"]), ("queued", []), subject)
+        lane = next(row for row in state_tool.read_state(adopter.state)["lanes"] if row["id"] == "lane-1")
+        self.assertFalse(lane["focus"].startswith(("first stopped:", "second stopped:")), lane)
+        self.assertEqual(adopter.item("own")["stage"], "stopped")
+        self.serve(adopter)
+        self.assertEqual((adopter.item("first")["stage"], adopter.item("second")["stage"]), ("merged", "merged"))
+        self.assertEqual((adopter.item("own")["stage"], self.stopped_as(adopter, "own")), ("stopped", "check_failed"))
+        self.assertEqual(len(self.journal(adopter, "candidate.stopped", "own")), 1)
+
+
 class ServeTests(MergeQueueTestCase):
     """serve takes what is queued, in order, as a batch or alone, until the queue is idle or the lead holds it."""
 
@@ -5852,6 +6040,19 @@ class ContractTests(unittest.TestCase):
         self.assertIn("base_rerun_stopped", reasons)
         self.assertNotIn("base_rerun_stopped", queue.QUEUE_STOPPING)
 
+    def test_the_guide_says_how_a_repair_goes_first_and_that_a_base_failure_may_be_cross_talk(self) -> None:
+        guide = " ".join((SCRIPTS.parent / "references" / "orchestration-guide.md").read_text(encoding="utf-8").split())
+        for phrase in (
+            "Name the fix as the base's repair: `delivery_state.py repair --subject <key>` marks a queued candidate, "
+            "and while the base awaits repair `serve` takes only that candidate, alone.",
+            "Every candidate the break stopped, with `base_broken` at the base head that broke, goes back to `queued` "
+            "on `base.repaired`, with no `--requeue`.",
+            "A check that fails on the base re-run could also be cross-talk with another run on the same machine",
+            "Keep the queue's checks apart from lanes' own runs:",
+        ):
+            with self.subTest(phrase=phrase[:40]):
+                self.assertIn(phrase, guide)
+
     def test_no_bytecode_is_written_beside_the_scripts(self) -> None:
         self.assertEqual(list(SCRIPTS.rglob("__pycache__")), [])
         self.assertEqual(list(SCRIPTS.rglob("*.pyc")), [])
@@ -6368,6 +6569,76 @@ class LeadSelectionTests(MergeQueueTestCase):
         reasons = {result.document()["stop"]["reason"] for result in results if result.document()["stop"]}
         self.assertIn("selection_invalid", reasons)
         self.assertNotEqual(adopter.item("first")["stage"], "merged")
+
+    def test_batch_members_whose_check_differs_only_in_reasons_or_title_batch_together(self) -> None:
+        adopter = self.adopter(self.LEAD)
+        self.candidate(adopter, {"src/lib.txt": "lib two\n"}, name="first")
+        self.candidate(adopter, {"src/extra.txt": "extra\n"}, name="second")
+        self.select(adopter, "first", [check_entry("shared", title="The first's title")])
+        self.select(adopter, "second", [{**check_entry("shared", title="The second's title"), "reasons": ["its own words"]}])
+        results = self.batch(adopter, "first", "second")
+        self.assertEqual({result.document()["outcome"] for result in results}, {"merged"})
+        self.assertEqual(self.ran(adopter).count("shared"), 1)
+        for subject in ("first", "second"):
+            row = next(check for check in adopter.item(subject)["checks"] if check["id"] == "shared")
+            self.assertEqual(row["title"], "The first's title", subject)
+
+    def lead_checks(self, adopter: Adopter, first: dict, second: dict) -> list[dict]:
+        """The batch's checks for two members' selections, as the runner settles them."""
+        runner = adopter.runner()
+        self.addCleanup(shutil.rmtree, runner._bootstrap_hooks, True)
+        runner.binding = adopter.binding
+        return runner.lead_checks([{"subject": "first", "checks": [first]}, {"subject": "second", "checks": [second]}],
+                                  adopter.operator)
+
+    def test_a_batched_check_is_one_by_what_it_runs_and_keeps_the_first_members_reasons_and_title(self) -> None:
+        adopter = self.adopter(self.LEAD)
+        first = check_entry("shared", title="The first's title")
+        for name, second in (("reasons", {**first, "reasons": ["its own words"]}),
+                             ("title", {**first, "title": "The second's title"}),
+                             ("both", {**first, "reasons": ["its own words"], "title": "Another"})):
+            with self.subTest(name):
+                [chosen] = self.lead_checks(adopter, first, second)
+                self.assertEqual((chosen["reasons"], chosen["title"]), (first["reasons"], first["title"]))
+        for name, second in (("argv", {**first, "argv": [*first["argv"], "src/extra.txt"]}),
+                             ("timeout", {**first, "timeoutSeconds": 5})):
+            with self.subTest(name):
+                with self.assertRaises(queue.Stop) as refused:
+                    self.lead_checks(adopter, first, second)
+                self.assertEqual(refused.exception.reason, "selection_invalid")
+                self.assertIn("define shared differently", refused.exception.detail)
+
+    def select_on_the_command_line(self, adopter: Adopter, subject: str, checks: list[dict]) -> dict:
+        binding = adopter.root / "binding.json"
+        binding.write_text(json.dumps(adopter.binding), encoding="utf-8")
+        completed = subprocess.run(
+            [PY, "-B", str(SCRIPTS / "delivery_state.py"), "--dir", str(adopter.state), "select", "--subject", subject,
+             "--binding", str(binding), "--head", adopter.item(subject)["head"], "--checks", json.dumps(checks),
+             "--reason", "the lead's reason", "--repo", str(adopter.operator), "--base-head", "b" * 40],
+            capture_output=True, text=True, check=False)
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        return json.loads(completed.stdout)
+
+    def test_select_warns_when_another_queued_selection_runs_the_same_check_id_differently(self) -> None:
+        adopter = self.adopter(self.LEAD)
+        adopter.enqueue("first", "1" * 40)
+        adopter.enqueue("second", "2" * 40)
+        first = check_entry("shared", title="The first's title")
+        self.select_on_the_command_line(adopter, "first", [first])
+        # Reasons and title alone do not change what runs: no warning.
+        quiet = self.select_on_the_command_line(adopter, "second", [{**first, "reasons": ["its own"], "title": "Other"}])
+        self.assertEqual(quiet["warnings"], [])
+        warned = self.select_on_the_command_line(adopter, "second", [{**first, "timeoutSeconds": 5}])
+        [warning] = warned["warnings"]
+        self.assertIn("first's queued selection runs shared differently", warning)
+        self.assertIn("selection_invalid", warning)
+        # The selection is still recorded.
+        self.assertEqual(adopter.item("second")["leadSelection"]["checks"][0]["timeoutSeconds"], 5)
+        # A selection on a row that is not queued can't batch with it, so it says nothing.
+        current = state_tool.read_state(adopter.state)
+        state_tool.patch(adopter.state, writer="runner", version=current["version"], selector="queue[subject=first]",
+                         changes={"stage": "stopped"})
+        self.assertEqual(self.select_on_the_command_line(adopter, "second", [{**first, "timeoutSeconds": 7}])["warnings"], [])
 
 
 class CheckCatalogueQueueTests(MergeQueueTestCase):

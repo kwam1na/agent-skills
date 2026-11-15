@@ -24,7 +24,6 @@ import concurrent.futures
 import contextlib
 import copy
 import datetime
-import hashlib
 import json
 import os
 import re
@@ -528,32 +527,8 @@ def check_title(check: dict) -> dict:
     return {"title": title if len(title) <= TITLE_LIMIT else title[:TITLE_LIMIT - 1] + "…"}
 
 
-def check_definition(check: dict, binding: dict) -> str:
-    """How a check runs, as one digest: its argv, cwd, prerequisites, timeout and environment.
-
-    The argv is digested before its placeholders are filled in, so the same
-    definition digests alike on every tree; a reusable check may use only
-    ``{treeSha}``, which the tree determines. The binding's prepare steps,
-    which set up every check's checkout, are part of it. A change to the
-    binding that changes how the check runs changes the digest; its reasons,
-    title and ``parallelSafe`` do not.
-    """
-    profile = check.get("environmentProfile")
-    described = {
-        "id": check["id"],
-        "argv": check["argv"],
-        "cwd": check["cwd"],
-        "prerequisites": check["prerequisites"],
-        "timeoutSeconds": check.get("timeoutSeconds", binding["checkTimeoutSeconds"]),
-        "environmentProfile": profile,
-        "profileEnvironment": binding["profiles"].get(profile, {"environment": {}})["environment"] if profile else {},
-        "environment": binding["environment"],
-        # Every check runs in a checkout the prepare steps set up, with or without its hooks.
-        "prepare": binding["prepare"],
-        "hooks": binding["hooks"],
-    }
-    text = json.dumps(described, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    return "sha256:" + hashlib.sha256(text.encode("ascii")).hexdigest()
+# How a check runs, as one digest; the state tool's select compares selections by it too.
+check_definition = delivery_state.check_definition
 
 
 def selection_errors(checks: list[dict], binding: dict, check_cwd: Path | None) -> list[str]:
@@ -1994,11 +1969,16 @@ class Runner:
         return [{"subject": item["subject"], **copy.deepcopy(item["leadSelection"])} for item in current]
 
     def lead_checks(self, members: list[dict], checkout: Path) -> list[dict]:
-        """The union of the members' selections, in member order, refused when two disagree on a check."""
+        """The union of the members' selections, in member order, refused when two run a check differently.
+
+        Two members define a check alike when it runs alike, by its definition's digest: reasons and title don't
+        count, and the first member's are the ones kept.
+        """
         chosen: dict[str, dict] = {}
         for member in members:
             for check in member["checks"]:
-                if check["id"] in chosen and chosen[check["id"]] != check:
+                if (check["id"] in chosen
+                        and check_definition(chosen[check["id"]], self.binding) != check_definition(check, self.binding)):
                     raise Stop("selection_invalid", f"the lead's selections for the batch define {check['id']} differently")
                 chosen.setdefault(check["id"], check)
         checks = list(chosen.values())
@@ -2409,7 +2389,9 @@ class Runner:
                 if failed_run(completed):
                     named = failure_words(check["id"], [failure["id"] for failure in failures], log)
                     verdicts.append(f"{check['id']} also fails{named[len(check['id']):]}")
-                    broken = Stop("base_broken", f"{named} also fails on {self.base} at {base_head}")
+                    broken = Stop("base_broken", f"{named} also fails on {self.base} at {base_head}; it could also be "
+                                                 "cross-talk with another run on the same machine (a shared port, "
+                                                 "file or service), so confirm on a quiet machine")
                     break
                 verdicts.append(f"{check['id']} passed{' after a flake retry' if retried else ''} (log {log})")
         except KeyboardInterrupt:
@@ -2570,6 +2552,9 @@ class Runner:
         self.finish_item(subject, "merged")
         self.write(assignments={"/meta/baseHead": merged})
         self.journal("candidate.merged", f"Merged {item['title']} at {synced}", subject)
+        if item.get("repair") and delivery_state.base_awaits_repair(delivery_state.read_journal(self.state_directory)):
+            # The named repair landed: the base is repaired, which clears the mark and puts back what the break stopped.
+            self.journal("base.repaired", f"{subject}, the named repair, merged at {merged}", subject)
         result.outcome = "merged"
 
     def review_gate(self, subject: str, synced: str, anchor: Path, context: Context) -> None:
@@ -2941,6 +2926,11 @@ class Runner:
         result.outcome = "refused" if refused else "stopped"
         if stop.reason == "queue_locked":
             return
+        with contextlib.suppress(Stop, delivery_state.StateError):
+            if subject is not None and self.item(subject).get("repair") and stop.reason not in REFUSALS:
+                # The named repair did not land, so the base still waits on it, and the stop says so.
+                stop.detail += f"; {subject} is the base's named repair, so the base still awaits repair"
+                result.stop["detail"] = stop.detail
         if stop.requeued:
             # Nothing was at fault: the candidate is queued again, and neither a stop nor a broken base is journaled.
             if subject is not None:
@@ -3218,7 +3208,8 @@ def serve(
     Two or more queued candidates run as one batch; one runs alone. A
     candidate waiting for the lead to accept its hand-off is left alone. The
     lead's meta.hold pauses serving, and so does a stop that stopped the queue
-    until the lead journals base.repaired; a stopped candidate waits for its
+    until base.repaired is journaled, except for the candidate the lead named
+    as the repair, which serve takes alone; a stopped candidate waits for its
     lane to hand it off again, and so does a refused one, which serve would
     otherwise take again every turn. Before each turn that takes work, and
     after any stop or refusal other than queue_locked, serve checks its
@@ -3275,7 +3266,11 @@ def serve(
             item["subject"] for item in sorted(state["queue"], key=lambda entry: (entry["order"], entry["subject"]))
             if item["stage"] == "queued" and not item.get("pending")
         ]
-        if state["meta"].get("hold") or delivery_state.base_awaits_repair(journal) or not waiting:
+        if delivery_state.base_awaits_repair(journal):
+            # Only the lead's named repair goes through a held queue, alone and first; nothing else while the base waits.
+            waiting = [subject for subject in waiting
+                       if next(item for item in state["queue"] if item["subject"] == subject).get("repair")][:1]
+        if state["meta"].get("hold") or not waiting:
             if until_idle:
                 return results
             pause()

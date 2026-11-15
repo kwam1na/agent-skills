@@ -113,6 +113,10 @@ RUNNER_QUEUE = ("stage", "checks", "syncedHead", "checkSelection")
 HANDOFF_QUEUE = ("evidence", "acceptedRegionPaths")
 # Written only by the lead's select command, through the tool, so every selection is validated and journaled.
 SELECT_QUEUE = ("leadSelection",)
+# Written only by the lead's repair command, and cleared by the tool when base.repaired is journaled.
+REPAIR_QUEUE = ("repair",)
+# The base head a base_broken stop names: its detail ends "also fails on <base> at <head>".
+BROKEN_AT = re.compile(r" at ([0-9a-f]{40}(?:[0-9a-f]{24})?)\b")
 EVIDENCE_FIELDS = ("check", "definition", "head", "tree", "result")
 EVIDENCE_COMMIT = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
 EVIDENCE_DEFINITION = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -839,6 +843,9 @@ def ownership_violations(before: dict, after: dict, writer: str) -> list[str]:
         for field in SELECT_QUEUE:
             if item.get(field) != previous.get(field):
                 violations.append(f"/queue[subject={item.get('subject')}]/{field} is written only by the select command")
+        for field in REPAIR_QUEUE:
+            if item.get(field) != previous.get(field):
+                violations.append(f"/queue[subject={item.get('subject')}]/{field} is written only by the repair command")
     meta_before, meta_after = before.get("meta", {}), after.get("meta", {})
     if meta_before.get("baseMove") != meta_after.get("baseMove"):
         violations.append("/meta/baseMove is changed only by published base reconciliation")
@@ -1612,6 +1619,52 @@ def resolve_selection(checks: object, binding: dict, changed: Callable[[], list[
 BASE_RERUNS_KEPT = 100
 
 
+def check_definition(check: dict, binding: dict) -> str:
+    """How a check runs, as one digest: its argv, cwd, prerequisites, timeout and environment.
+
+    The argv is digested before its placeholders are filled in, so the same
+    definition digests alike on every tree; a reusable check may use only
+    ``{treeSha}``, which the tree determines. The binding's prepare steps,
+    which set up every check's checkout, are part of it. A change to the
+    binding that changes how the check runs changes the digest; its reasons,
+    title and ``parallelSafe`` do not.
+    """
+    profile = check.get("environmentProfile")
+    described = {
+        "id": check["id"],
+        "argv": check["argv"],
+        "cwd": check["cwd"],
+        "prerequisites": check["prerequisites"],
+        "timeoutSeconds": check.get("timeoutSeconds", binding["checkTimeoutSeconds"]),
+        "environmentProfile": profile,
+        "profileEnvironment": binding["profiles"].get(profile, {"environment": {}})["environment"] if profile else {},
+        "environment": binding["environment"],
+        # Every check runs in a checkout the prepare steps set up, with or without its hooks.
+        "prepare": binding["prepare"],
+        "hooks": binding["hooks"],
+    }
+    text = json.dumps(described, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return "sha256:" + hashlib.sha256(text.encode("ascii")).hexdigest()
+
+
+def selection_conflicts(state: dict, subject: str, checks: list[dict], binding: dict) -> list[str]:
+    """Another queued selection that runs one of these check ids differently, as a batch with both would refuse.
+
+    Checks that differ only in their reasons or title run alike, so they say nothing.
+    """
+    warnings = []
+    for item in state["queue"]:
+        if item["subject"] == subject or item["stage"] != "queued" or "leadSelection" not in item:
+            continue
+        theirs = {check["id"]: check for check in item["leadSelection"]["checks"]}
+        for check in checks:
+            other = theirs.get(check["id"])
+            if other is not None and check_definition(other, binding) != check_definition(check, binding):
+                warnings.append(f"{item['subject']}'s queued selection runs {check['id']} differently: a batch with "
+                                f"both stops as selection_invalid")
+    return warnings
+
+
 def base_rerun_notices(state: dict, check_ids: list[str], base_head: str | None) -> tuple[list[str], list[str]]:
     """What the record says of the selected checks at the current base head: warnings, then notes.
 
@@ -1686,6 +1739,65 @@ def select_checks(directory: Path, subject: str, *, binding: dict, head: str | N
             summary += ". Added: " + "; ".join(f"{entry['id']} ({entry['why']})" for entry in added)
     append_journal(directory, kind="check.selected", subject=subject, lane=item.get("lane"), summary=summary)  # type: ignore[union-attr]
     return item  # type: ignore[return-value]
+
+
+@writer_operation
+def name_repair(directory: Path, subject: str, *, withdraw: bool = False) -> dict:
+    """The lead names a queued candidate as the broken base's repair, or withdraws the mark.
+
+    While the base awaits repair, serve takes only the marked row, alone. Its merge journals base.repaired, and a
+    base.repaired journaled any way clears the mark. Refused on a base that is not broken, for a row that is not
+    queued, and while another row carries the mark.
+    """
+
+    def change(state: dict) -> dict:
+        item = next((entry for entry in state["queue"] if entry["subject"] == subject), None)
+        if item is None:
+            raise StateError("subject_unknown", f"{subject} is not queued")
+        # Read under the state lock every journal append holds, so no base.repaired lands between the check and the mark.
+        journal = read_journal(directory)
+        if withdraw:
+            if "repair" not in item:
+                raise StateError("repair_invalid", f"{subject} is not named as the repair")
+            item.pop("repair")
+            return copy.deepcopy(item)
+        if not base_awaits_repair(journal):
+            raise StateError("repair_invalid", "the base is not broken: there is nothing to repair")
+        if item["stage"] != "queued":
+            raise StateError("repair_invalid", f"{subject} is {item['stage']}: only a queued candidate is named as the repair")
+        named = [entry["subject"] for entry in state["queue"] if "repair" in entry]
+        if named:
+            raise StateError("repair_invalid", f"{named[0]} is already the named repair; withdraw it first")
+        item["repair"] = {"namedAt": now()}
+        return copy.deepcopy(item)
+
+    return _tool_write(directory, change)[1]  # type: ignore[return-value]
+
+
+def repaired_state(state: dict, journal: list[dict]) -> dict | None:
+    """The record once base.repaired is journaled after ``journal``, or None when nothing changes.
+
+    Every repair mark clears. A candidate the break stopped goes back to queued: one whose latest stop since the last
+    base.repaired is base_broken at the base head the latest base_broken entry names. Nothing else stopped moves.
+    """
+    since = max((entry["id"] for entry in journal if entry["kind"] == "base.repaired"), default=0)
+    breaks = [entry for entry in journal if entry["id"] > since and entry["kind"] == "base.broken"
+              and entry["summary"].startswith("base_broken:")]
+    found = BROKEN_AT.findall(breaks[-1]["summary"]) if breaks else []
+    head = found[-1] if found else None
+    latest = {entry["subject"]: entry for entry in journal if entry["kind"] == "candidate.stopped" and entry["subject"]}
+    updated = copy.deepcopy(state)
+    changed = False
+    for item in updated["queue"]:
+        if item.pop("repair", None) is not None:
+            changed = True
+        stop = latest.get(item["subject"])
+        if (head is not None and item["stage"] == "stopped" and stop is not None and stop["id"] > since
+                and stop["summary"].startswith("base_broken:") and head in BROKEN_AT.findall(stop["summary"])):
+            item.update(stage="queued", checks=[])
+            updated["lanes"] = lane_rows_put_back(updated, item["subject"])
+            changed = True
+    return updated if changed else None
 
 
 def set_focus(directory: Path, lane: str, text: str, *, state: str | None = None,
@@ -1897,6 +2009,12 @@ def _append_journal_locked(directory: Path, current: dict, entries: list[dict], 
         # The close's started mark goes in with the entry, so a close journaled by hand carries it too. It is
         # written first: a delivery.closed line never stands without its mark.
         current = _with_closing(directory, current, {"started": {"entry": entry["id"], "at": entry["at"]}})
+    if entry["kind"] == "base.repaired":
+        # However it is journaled, by the repair's merge, the lead or a fullHealth pass, the repair clears its mark and
+        # puts back what the break stopped, written first as the close's mark is.
+        repaired = repaired_state(current, entries)
+        if repaired is not None:
+            current = _with_state(directory, current, repaired)
     line = json.dumps(entry, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n"
     complete = _journal_text(directory)[1]
     with open(directory / JOURNAL_FILE, "ab") as stream:
@@ -1907,6 +2025,19 @@ def _append_journal_locked(directory: Path, current: dict, entries: list[dict], 
         os.fsync(stream.fileno())
     _note_change(directory, "journal", version=current["version"], journal=entry["id"])
     return entry
+
+
+def _with_state(directory: Path, current: dict, updated: dict) -> dict:
+    """Write ``updated`` as the next version, under the state lock the caller holds; returns the written state."""
+    updated = copy.deepcopy(updated)
+    updated["version"] = current["version"] + 1
+    updated["meta"]["updatedAt"] = now()
+    errors = state_errors(updated)
+    if errors:
+        raise StateError("patch_invalid", "; ".join(errors))
+    _write_atomically(directory / STATE_FILE, dumps(updated))
+    _note_change(directory, "patch", version=updated["version"])
+    return updated
 
 
 def _with_closing(directory: Path, current: dict, closing: dict) -> dict:
@@ -4412,8 +4543,10 @@ def _select_command(args: argparse.Namespace) -> dict:
     base_head = args.base_head or current_base_head(repo, binding)
     item = select_checks(args.dir, args.subject, binding=binding, head=args.head, checks=checks, reason=args.reason,
                          repo=repo, base_head=base_head)
+    state = read_state(args.dir)
     selected = [check["id"] for check in item["leadSelection"]["checks"]]
-    warnings, notes = base_rerun_notices(read_state(args.dir), selected, base_head)
+    warnings, notes = base_rerun_notices(state, selected, base_head)
+    warnings += selection_conflicts(state, args.subject, item["leadSelection"]["checks"], binding)
     return {"ok": True, "item": item, "baseHead": base_head, "warnings": warnings, "notes": notes}
 
 
@@ -4766,6 +4899,10 @@ def main(argv: list[str] | None = None) -> int:
                                                "current directory when left out")
     chosen.add_argument("--base-head", help="the base head to warn about and diff from, instead of the checkout's "
                                             "remote-tracking base")
+    repair = commands.add_parser("repair", help="the lead names a queued candidate as the broken base's repair, which "
+                                                "serve takes first and alone")
+    repair.add_argument("--subject", required=True)
+    repair.add_argument("--withdraw", action="store_true", help="drop the mark, so another candidate can be named")
     headline = commands.add_parser("headline", help="the lead's status line, shown until it expires")
     told = headline.add_mutually_exclusive_group(required=True)
     told.add_argument("--text", help="the status line")
@@ -4877,6 +5014,8 @@ def main(argv: list[str] | None = None) -> int:
             result = {"ok": True, "state": set_status_override(args.dir, None if args.clear else args.text, age)}
         elif args.command == "select":
             result = _select_command(args)
+        elif args.command == "repair":
+            result = {"ok": True, "item": name_repair(args.dir, args.subject, withdraw=args.withdraw)}
         elif args.command == "wait":
             # One run is one document: on stdout, and in --output when it is given, even when the wait fails.
             output = _wait_output(args)
