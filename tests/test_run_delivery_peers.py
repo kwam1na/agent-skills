@@ -103,6 +103,7 @@ class PeerDeliveryTests(unittest.TestCase):
         """A second delivery on `base`, its file on the base and its lead checkout a linked worktree of the
         repository, on lead/<key>, with a record of its own. Returns the checkout; not initialized."""
         m = fx.main
+        sh("git", "pull", "-q", "--ff-only", "origin", "feature/FX-1", cwd=m)  # past any peer's merge
         d = json.loads((m / ".agents/deliveries/FX-1.json").read_text())
         stories = {f"{key}{k.split('-')[1]}": story for k, story in d["stories"].items()}
         # Its own plan: FX-1's, with each story's key its own.
@@ -271,34 +272,50 @@ class PeerDeliveryTests(unittest.TestCase):
         self.flow(fx, "FX-1", "lead-init", "--no-supervisor", cwd=m)
         lead = self.peer(fx)
         self.flow(fx, "FX-9", "lead-init", "--no-supervisor", cwd=lead)
-        # Claims are of whole files: a region or a line range is refused, and nothing is recorded.
-        for argv in (("--claim", "src/one.txt", "--start", "1", "--end", "3"), ("--claim", "src/one.txt:1-3"),
-                     ("--claim", "src/one.txt#L1-L3")):
+        # Claims are of whole files, and the delivery's: a region, a line range, a lane, a path outside the repository
+        # and a second claim of the same pattern are each refused, and nothing is recorded.
+        whole = "a claim is of whole files"
+        for argv, said in ((("--claim", "src/one.txt", "--start", "1", "--end", "3"), whole),
+                           (("--claim", "src/one.txt:1-3"), whole), (("--claim", "src/one.txt#L1-L3"), whole),
+                           (("--claim", "src/one*", "--lane", "lane-1"), "--claim takes neither --lane nor --from"),
+                           (("--claim", "/abs/one.txt"), "name a repository-relative file or pattern"),
+                           (("--claim", "../one.txt"), "name a repository-relative file or pattern")):
             code, out = fx.flow("--delivery", "FX-9", "lead-own", *argv, cwd=lead)
             self.assertEqual(code, 2, out)
-            self.assertIn("a claim is of whole files", out)
+            self.assertIn(said, out)
         self.assertEqual(self.record(fx, fx.tmp / "record-FX-9")["state"]["extensions"], {})
         out = self.flow(fx, "FX-9", "lead-own", "--claim", "src/one*", cwd=lead)
         self.assertIn("FX-9 claims src/one*", out)
+        code, out = fx.flow("--delivery", "FX-9", "lead-own", "--claim", "src/one*", cwd=lead)
+        self.assertEqual(code, 2, out)
+        self.assertIn("FX-9 already claims src/one*", out)
         self.assertEqual(self.record(fx, fx.tmp / "record-FX-9")["state"]["extensions"]["claims"], ["src/one*"])
+        # FX-9's lane-1 holds src/one.txt through a region rather than a whole-file claim, and its FX-92 is queued.
+        record9 = fx.tmp / "record-FX-9"
+        self.patch(fx, record9, "lead", "--patch", json.dumps({"laneOwnership": {"lane-1": [], "lane-2": ["src/two*"]}}))
+        self.patch(fx, record9, "lead", "--patch", json.dumps({"laneRegions": [
+            {"lane": "lane-1", "path": "src/one.txt", "baseHead": "a" * 40, "start": 1, "end": 2}]}))
+        self.queued(fx, record9, "FX-92", "lane-1")
         # FX-2 names the claimed file: its assignment warns, naming the claim, FX-9's stories on the file and their
         # stages, and still assigns.
-        out = self.flow(fx, "FX-1", "lead-assign", "FX-2", "--lane", "lane-1", "--title",
-                        "one", cwd=m)
+        out = self.flow(fx, "FX-1", "lead-assign", "FX-2", "--lane", "lane-1", "--title", "one", cwd=m)
         self.assertIn("Files another delivery on feature/FX-1 claims (a warning; nothing is refused):", out)
         self.assertIn("src/one.txt is claimed by FX-9 (src/one*; FX-9 has no supervisor); its stories on it: "
-                      "FX-92 (planned)", out)
+                      "FX-92 (queued)", out)
         assigned = [e for e in self.record(fx, fx.tmp / "record")["journal"] if e["kind"] == "lane.assigned"]
         self.assertEqual([e["subject"] for e in assigned], ["FX-2"])
         # FX-3 names only src/two.txt, which nobody claims: no warning.
         out = self.flow(fx, "FX-1", "lead-assign", "FX-3", "--lane", "lane-2", "--title", "two", cwd=m)
         self.assertNotIn("claims", out)
-        # The candidate that changes the claimed file: its acceptance warns likewise, and accepts.
-        hand_off(fx, "FX-2", "lane-1", assign=False)
+        # The candidate changes the claimed file and another its story doesn't name: its acceptance warns of both, by
+        # what it changes, and accepts.
+        hand_off(fx, "FX-2", "lane-1", assign=False, files={"src/one-extra.txt": "extra\n"})
         code, out = fx.flow("--delivery", "FX-1", "lead-accept", "FX-2", cwd=m)
         self.assertEqual(code, 0, out)
         self.assertIn("src/one.txt is claimed by FX-9 (src/one*; FX-9 has no supervisor); its stories on it: "
-                      "FX-92 (planned)", out)
+                      "FX-92 (queued)", out)
+        self.assertIn("src/one-extra.txt is claimed by FX-9 (src/one*; FX-9 has no supervisor); its stories on it: "
+                      "none", out)
         self.assertIn("accepted FX-2", out)
         # A peer whose supervisor is gone still warns, and says it is stale.
         entry = self.entry(fx, "FX-9")
@@ -306,7 +323,7 @@ class PeerDeliveryTests(unittest.TestCase):
         (self.registry(fx) / "FX-9.json").write_text(json.dumps({**entry, "pid": dead}))
         out = self.flow(fx, "FX-1", "lead-assign", "FX-2", "--lane", "lane-1", "--title", "one", cwd=m)
         self.assertIn(f"src/one.txt is claimed by FX-9 (src/one*; FX-9 is stale: its supervisor, pid {dead}, isn't "
-                      "running); its stories on it: FX-92 (planned)", out)
+                      "running); its stories on it: FX-92 (queued)", out)
 
     def test_a_peers_supervisor_is_listed_live_then_stale_then_live_again_and_close_removes_its_entry(self) -> None:
         fx = self.fixture()
@@ -324,6 +341,12 @@ class PeerDeliveryTests(unittest.TestCase):
         first = wait_until(lambda: self.entry(fx, "FX-1").get("pid"), "FX-1's supervisor to register")
         self.assertTrue(pid_alive(first))
         self.assertIn(f"FX-1 (live, pid {first}; led from", self.doctor(fx, "FX-9", lead)["deliveries on this base"][1])
+        # The live view the supervisor started lists its peer, with nothing but what the supervisor gave it.
+        address = json.loads((fx.tmp / "record/live.json").read_text())["address"]
+        with urllib.request.urlopen(address, timeout=10) as served:
+            page = served.read().decode("utf-8")
+        self.assertIn("Deliveries on feature/FX-1", page)
+        self.assertIn(f"FX-9 (no supervisor; led from {lead.resolve()}): checking nothing; queued nothing", page)
         # Stopped by its pid, it is stale.
         os.kill(first, signal.SIGTERM)
         wait_until(lambda: not pid_alive(first), "FX-1's supervisor to stop")
@@ -344,9 +367,11 @@ class PeerDeliveryTests(unittest.TestCase):
     def test_a_peers_merge_of_an_open_storys_file_is_journalled_once_and_no_other_merge_is(self) -> None:
         fx = self.fixture()
         m = fx.main
-        self.flow(fx, "FX-1", "lead-init", "--no-supervisor", cwd=m)
         lead = self.peer(fx)
         self.flow(fx, "FX-9", "lead-init", "--no-supervisor", cwd=lead)
+        # A merge of FX-2's file from before FX-1's record began is never FX-1's to hear of.
+        self.merged_on_base(fx, lead, "FX-9", "FX-90", "src/one.txt", "one, before FX-1\n")
+        self.flow(fx, "FX-1", "lead-init", "--no-supervisor", cwd=m)
         other = self.peer(fx, "FX-7", base="feature/FX-7")
         sh("git", "push", "-q", "origin", "origin/feature/FX-1:refs/heads/feature/FX-7", cwd=m)
         self.flow(fx, "FX-7", "lead-init", "--no-supervisor", cwd=other, env={**fx.env, "RUN_DELIVERY_BASE": "feature/FX-7"})
@@ -356,6 +381,16 @@ class PeerDeliveryTests(unittest.TestCase):
         touched = self.merged_on_base(fx, lead, "FX-9", "FX-92", "src/one.txt", "one, by FX-9\n")
         self.merged_on_base(fx, lead, "FX-9", "FX-93", "src/two.txt", "two, by FX-9\n")
         self.merged_on_base(fx, lead, "FX-9", "FX-94", "docs/notes.md", "notes\n")
+        # One merged on the forge, recorded from a snapshot: its head isn't on the base, its summary goes on past it.
+        sh("git", "checkout", "-q", "--detach", "origin/feature/FX-1~3", cwd=lead)
+        (lead / "src/one.txt").write_text("one, on the forge\n")
+        commit(lead, "FX-95: one")
+        recovered = sh("git", "rev-parse", "HEAD", cwd=lead).stdout.strip()
+        sh("git", "checkout", "-q", "lead/FX-9", cwd=lead)
+        sh(sys.executable, "-B", "-c", RUNNER_ENTRY, fx.release / "skills/orchestrate-work/scripts",
+           fx.tmp / "record-FX-9", "candidate.merged",
+           f"Recorded from a forge snapshot: merged as change request https://forge.test/pr/5 at {recovered}, "
+           "not recorded by the runner", "FX-95")
         # FX-7, on another base, merges a story touching FX-2's file there: not this delivery's peer.
         sh("git", "fetch", "-q", "origin", cwd=other)
         sh("git", "checkout", "-q", "--detach", "origin/feature/FX-7", cwd=other)
@@ -365,20 +400,49 @@ class PeerDeliveryTests(unittest.TestCase):
         sh("git", "push", "-q", "origin", "HEAD:feature/FX-7", cwd=other)
         sh(sys.executable, "-B", "-c", RUNNER_ENTRY, fx.release / "skills/orchestrate-work/scripts",
            fx.tmp / "record-FX-7", "candidate.merged", f"Merged FX-72 at {seven}", "FX-72")
-        # One pass journals FX-92's merge once; a second, by a supervisor started again, journals nothing more.
+        # One pass journals FX-92's and FX-95's merges once each; a second, by a supervisor started again, journals
+        # nothing more.
         for _ in range(2):
             self.flow(fx, "FX-1", "lead-run", "--once", cwd=m)
             entries = self.peer_merged(fx)
-            self.assertEqual(len(entries), 1, entries)
-        self.assertEqual(entries[0]["subject"], "FX-2")
-        self.assertEqual(entries[0]["summary"],
-                         f"FX-9, a delivery on feature/FX-1, merged FX-92 at {touched[:10]}, changing src/one.txt, "
-                         "which FX-2 names")
+            self.assertEqual(len(entries), 2, entries)
+        self.assertEqual([e["subject"] for e in entries], ["FX-2", "FX-2"])
+        self.assertEqual([e["summary"] for e in entries], [
+            f"FX-9, a delivery on feature/FX-1, merged FX-92 at {touched[:10]}, changing src/one.txt, which FX-2 names",
+            f"FX-9, a delivery on feature/FX-1, merged FX-95 at {recovered[:10]}, changing src/one.txt, which FX-2 names"])
         log = [json.loads(line) for line in (fx.tmp / "flow-log/FX-1.supervisor.jsonl").read_text().splitlines()]
         self.assertEqual(log[-1]["peerReads"]["FX-9"], max(e["id"] for e in self.record(fx, fx.tmp / "record-FX-9")["journal"]))
         self.assertNotIn("FX-7", log[-1]["peerReads"])
         reads = [json.loads(line) for line in (fx.tmp / "flow-log/FX-1.peers.jsonl").read_text().splitlines()]
         self.assertEqual({read["peer"] for read in reads}, {"FX-9"})
+        # A merge journalled before its commit reaches the base, from a clone that shares nothing with this checkout,
+        # holds the read there; once it is pushed, a later pass fetches it and journals it once.
+        clone = fx.tmp / "clone"
+        sh("git", "clone", "-q", "-b", "feature/FX-1", fx.origin, clone)
+        sh("git", "config", "user.email", "fx@example.test", cwd=clone)
+        sh("git", "config", "user.name", "fx", cwd=clone)
+        (clone / "src/one.txt").write_text("one, from a clone\n")
+        commit(clone, "FX-96: one")
+        late = sh("git", "rev-parse", "HEAD", cwd=clone).stdout.strip()
+        sh(sys.executable, "-B", "-c", RUNNER_ENTRY, fx.release / "skills/orchestrate-work/scripts",
+           fx.tmp / "record-FX-9", "candidate.merged", f"Merged FX-96 at {late}", "FX-96")
+        held = max(e["id"] for e in self.record(fx, fx.tmp / "record-FX-9")["journal"])
+        self.state(fx, fx.tmp / "record-FX-9", "journal", "--kind", "decision.recorded", "--summary", "after FX-96")
+        self.flow(fx, "FX-1", "lead-run", "--once", cwd=m)
+        self.assertEqual(len(self.peer_merged(fx)), 2)
+        reads = [json.loads(line) for line in (fx.tmp / "flow-log/FX-1.peers.jsonl").read_text().splitlines()]
+        self.assertLess(max(read["through"] for read in reads), held)
+        sh("git", "push", "-q", "origin", "HEAD:feature/FX-1", cwd=clone)
+        self.flow(fx, "FX-1", "lead-run", "--once", cwd=m)
+        self.assertEqual([e["summary"] for e in self.peer_merged(fx)][2:],
+                         [f"FX-9, a delivery on feature/FX-1, merged FX-96 at {late[:10]}, changing src/one.txt, "
+                          "which FX-2 names"])
+        # Once FX-2 is settled, a peer's merge of its file is no open story's.
+        self.patch(fx, fx.tmp / "record", "lead", "--element", "planned[subject=FX-2]", "--set",
+                   json.dumps({"/stage": "settled"}))
+        self.merged_on_base(fx, lead, "FX-9", "FX-97", "src/one.txt", "one, after FX-2 settled\n")
+        self.flow(fx, "FX-1", "lead-run", "--once", cwd=m)
+        self.assertEqual(len(self.peer_merged(fx)), 3)
         # The tracker publisher posts nothing for it.
         self.assertIsNone(tracker_publisher.UPDATES["peer.merged"])
 

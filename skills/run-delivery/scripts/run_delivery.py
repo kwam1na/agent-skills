@@ -10484,22 +10484,28 @@ class Supervisor:
         return "; ".join(said) or "nothing new"
 
     def peer_merge_files(self, peer: dict, merged: dict) -> tuple[str, set[str]] | None:
-        """The commit on the base a peer's merge made and the files it changed: the base's first-parent commit whose
-        tree is the merged head's, named by the runner's entry or the peer's queue. None while it isn't there."""
+        """The commit a peer's merge made and the files it changed. The head comes from the entry, the runner's or one
+        recovered from a forge snapshot ("at <head>"), else from the peer's queue. The commit is the base's
+        first-parent commit whose tree is that head's, diffed against its first parent. For a merge no such commit
+        matches (a merge commit, a squash of a head behind the base, or one too far back), it is the head, diffed
+        against its merge base with the base. An entry that names no head changed nothing this can see. None while
+        the head isn't in this repository: a later pass, whose post-merge step fetches the base, reads it again."""
         c = self.c
-        head = re.search(r" at ([0-9a-f]{40})$", merged.get("summary") or "")
+        head = re.search(r"\bat ([0-9a-f]{40})\b", merged.get("summary") or "")
         item = next((q for q in json_object(Path(peer["state"]) / "state.json").get("queue") or []
                      if isinstance(q, dict) and q.get("subject") == merged.get("subject")), {})
         synced = head.group(1) if head else item.get("syncedHead") or item.get("head")
-        for attempt in range(2):
-            tree = git("rev-parse", "--verify", "-q", f"{synced}^{{tree}}", check=False) if synced else ""
-            rows = git("log", "--first-parent", "-n", "500", "--format=%H %T", c.base_ref, check=False).splitlines()
-            commit = next((row.split()[0] for row in rows if tree and row.endswith(f" {tree}")), None)
-            if commit:
-                return commit, set(git("diff", "--name-only", f"{commit}^1", commit, check=False).splitlines())
-            if attempt == 0:
-                git("fetch", "-q", c.remote, c.base_branch, check=False)
-        return None
+        if not isinstance(synced, str) or not synced:
+            return "", set()
+        if not git("rev-parse", "--verify", "-q", f"{synced}^{{commit}}", check=False):
+            return None
+        tree = git("rev-parse", f"{synced}^{{tree}}", check=False)
+        rows = git("log", "--first-parent", "-n", "500", "--format=%H %T", c.base_ref, check=False).splitlines()
+        commit = next((row.split()[0] for row in rows if tree and row.endswith(f" {tree}")), None)
+        if commit:
+            return commit, set(git("diff", "--name-only", f"{commit}^1", commit, check=False).splitlines())
+        since = git("merge-base", c.base_ref, synced, check=False)
+        return synced, set(git("diff", "--name-only", since, synced, check=False).splitlines()) if since else set()
 
     def run(self) -> None:
         c = self.c
