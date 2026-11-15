@@ -4446,7 +4446,8 @@ class StoppedBaseRerunTests(MergeQueueTestCase):
         self.assert_checked_again(adopter, self.serve(adopter))
 
     def test_a_rerun_that_fails_by_itself_still_breaks_the_base(self) -> None:
-        for code in (1, 128, 255):
+        # 128 plus signal.NSIG is the first status past the platform's highest signal, so the range's edge is pinned.
+        for code in (1, 128, 128 + signal.NSIG, 255):
             with self.subTest(code=code):
                 self.fresh()
                 adopter = self.stoppable(f"exit:{code}")
@@ -4457,6 +4458,22 @@ class StoppedBaseRerunTests(MergeQueueTestCase):
                 self.assertEqual(adopter.item("feature")["stage"], "stopped")
                 [entry] = state_tool.read_state(adopter.state)["meta"]["baseReruns"]
                 self.assertEqual(entry["result"], "failed")
+
+    def test_a_batch_culprit_whose_rerun_is_stopped_goes_back_to_queued_and_the_rest_goes_on(self) -> None:
+        adopter = self.stoppable("die")
+        self.candidate(adopter, {"src/other.txt": "other\n"}, name="other")
+        with self.stopping(adopter) as signalled:
+            results = adopter.runner().run_command("batch", ["feature", "other"])
+        self.assertEqual(len(signalled), 1)
+        culprit = next(result.document() for result in results if result.document()["candidate"] == "feature")
+        self.assertEqual(culprit["stop"]["reason"], "base_rerun_stopped", culprit["stop"])
+        self.assertIn("queued again", culprit["stop"]["detail"])
+        self.assertFalse(culprit["stop"]["queueStopped"])
+        # The queue is not held: the member after the culprit is carried on, alone, and lands.
+        self.assertEqual((adopter.item("feature")["stage"], adopter.item("other")["stage"]), ("queued", "merged"))
+        self.assertEqual(len(self.journal(adopter, "base.rerun.stopped")), 1)
+        self.assertEqual([entry for entry in self.journal(adopter, "candidate.stopped") if entry["subject"] == "feature"], [])
+        self.assertEqual(self.journal(adopter, "base.broken"), [])
 
     def test_a_second_stop_at_the_same_heads_stops_the_candidate_and_new_heads_put_it_back_once_more(self) -> None:
         adopter = self.stoppable("die", armed=2)
