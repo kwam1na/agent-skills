@@ -169,6 +169,10 @@
         {
           "id": "v26-3513-3",
           "text": "A row shows lead-sync taking the merge slot before queue.lock, and fails when the order is swapped."
+        },
+        {
+          "id": "v26-3513-4",
+          "text": "The lead-upgrade-writer row uses a small non-zero checkTimeoutSeconds and shows the waiter file before the refusal, and one lead row reads the holder file and finds the fixture delivery named."
         }
       ],
       "after": [
