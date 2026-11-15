@@ -846,7 +846,10 @@ class Runner:
         lock_wait: float = 0.0,
         seams: dict[str, Seam] | None = None,
         renderer: list[str] | None = None,
-        # ``renderer`` is the interpreter prefix the wrapper runs under.
+        slot_wait: float | None = None,
+        after_merge: bool = False,
+        # ``renderer`` is the interpreter prefix the wrapper runs under. ``slot_wait`` bounds the wait for the base's
+        # merge slot, the binding's checkTimeoutSeconds when None; ``after_merge`` says this queue's last command merged.
     ) -> None:
         self.repository = repository.resolve()
         self.state_directory = state_directory.resolve()
@@ -854,6 +857,8 @@ class Runner:
         self.base = base
         self.lead = lead
         self.lock_wait = lock_wait
+        self.slot_wait = slot_wait
+        self.after_merge = after_merge
         self.seams = seams or {}
         self.renderer = renderer or [sys.executable, "-B"]
         # Notes collected while a subcommand runs, such as a failed render.
@@ -3067,9 +3072,34 @@ class Runner:
         finally:
             shutil.rmtree(self._bootstrap_hooks, ignore_errors=True)
 
+    @contextlib.contextmanager
+    def slot(self) -> Iterator[None]:
+        """Hold the base's merge slot, which every delivery's queue and lead commands on this machine share, for the
+        whole command; held past the wait, the command attempts nothing, as when another runner holds the queue."""
+        wait = self.slot_wait
+        if wait is None:
+            wait = 0.0
+            # The binding as this checkout last fetched it: fetching now would race a peer's fetch outside the slot.
+            for ref in (f"{PRIVATE_REF}/base", f"refs/remotes/{self.remote}/{self.base}"):
+                shown = self.git("show", f"{ref}:{BINDING_PATH}", check=False)
+                with contextlib.suppress(ValueError, TypeError, AttributeError):
+                    wait = float(json.loads(shown.stdout)["checkTimeoutSeconds"])
+                    break
+        delivery = self.state_directory.name
+        with contextlib.suppress(delivery_state.StateError, OSError, KeyError):
+            delivery = delivery_state.read_state(self.state_directory)["meta"]["headline"]
+        try:
+            with delivery_state.merge_slot(self.repository, self.base, delivery=delivery, timeout=wait,
+                                           after_merge=self.after_merge):
+                yield
+        except delivery_state.StateError as error:
+            if error.code == "slot_held":
+                raise Stop("queue_locked", f"{error}; nothing was attempted, and serve tries again") from None
+            raise
+
     def run_command(self, subcommand: str, subjects: list[str], approved_by: str | None = None) -> list[Result]:
         try:
-            with self.locked():
+            with self.slot(), self.locked():
                 # A state that cannot be read or written is reported by the subcommand itself, as before.
                 with contextlib.suppress(delivery_state.StateError, OSError):
                     self.recover_interrupted()
@@ -3321,6 +3351,7 @@ def serve(
     on_result: Callable[[Result], None] | None = None,
     clock: Callable[[], float] = time.monotonic,
     before_turn: Callable[[], None] = lambda: None,
+    slot_wait: float | None = None,
 ) -> list[Result]:
     """Take what is queued, in order, whenever the merge slot is free.
 
@@ -3367,6 +3398,8 @@ def serve(
     member = (binding or {}).get("state", {})
     interval = delivery_state.refresh_interval(member)
     due = clock()
+    # A turn that merged lets a command waiting for the base's merge slot go first on the next.
+    merged_last = False
 
     def pause() -> None:
         # An idle wait ends when the next read of the sources is due, so it is never late by a poll.
@@ -3406,10 +3439,12 @@ def serve(
             pause()
             continue
         heads = {item["subject"]: item["head"] for item in state["queue"]}
-        runner = Runner(repository, state_directory, remote=remote, base=base, lead=lead, seams=seams)
+        runner = Runner(repository, state_directory, remote=remote, base=base, lead=lead, seams=seams,
+                        slot_wait=slot_wait, after_merge=merged_last)
         # Last, since dropping the previous runner above runs its finalizer, where a stop can land.
         before_turn()
         taken = runner.run_command("batch" if len(waiting) > 1 else "run", waiting)
+        merged_last = any(result.outcome == "merged" for result in taken)
         if all(result.stop is not None and result.stop["reason"] == "queue_locked" for result in taken):
             # Another runner holds the queue: nothing was attempted, so nothing is recorded.
             if until_idle:

@@ -285,6 +285,12 @@ python3 -B <skill>/scripts/merge_queue.py [--repo <checkout top level>] --state 
   `lead`. A lease counts as the lead's only when its holder equals it.
 - One runner works the queue at a time. `--wait` sets how long to wait for the
   queue lock before stopping with `queue_locked`.
+- Every delivery on the machine that merges into one base shares that base's
+  merge slot, a lock beside the repository's git common directory. Each queue
+  command takes it before the queue lock and holds it until the command ends,
+  as `lead-push`, `lead-sync` and `lead-upgrade-writer` do. A queue command
+  that can't take it within the binding's `checkTimeoutSeconds` attempts
+  nothing and reads `queue_locked`, naming the delivery that holds it.
 
 - `sync <candidate>` merges the base into the reviewed head, runs the named
   lead inputs, the regenerators and the post-sync steps, proves the result

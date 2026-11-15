@@ -79,6 +79,30 @@ it through the state tool, then render the views.
   while `merging`, the entry says to check the forge, since the merge may have
   landed. A run that still holds the lock is never reset: no other run can
   take the lock while it lives.
+- **Deliveries that share a base share its merge slot.** Every delivery on a
+  machine whose queue or lead merges into one base takes one lock for that
+  base, at `<git-common-dir>/agent-skills/merge-slot/<base>.lock`, resolved
+  to an absolute path, so every checkout and linked worktree of the
+  repository names the same file. In the base's name `%` is written `%25` and
+  then `/` is written `%2F`. Each queue command takes the slot before the
+  delivery's own `queue.lock` and holds it until the command ends, however it
+  ends; `serve` lets it go between turns. `lead-push`, `lead-sync` and
+  `lead-upgrade-writer` take it the same way, so no delivery's merge or push
+  moves the base under another's running check. A post-merge `fullHealth`
+  run holds no slot.
+- **Waiting for the slot.** A queue command that finds the slot held waits
+  within the binding's `checkTimeoutSeconds`, its pid in a file in the
+  slot's `waiting` folder, and removes the file when it takes the slot or
+  gives up. Past the wait it attempts nothing, as with `queue_locked`: its
+  candidate stays `queued`, nothing is journaled or stopped, and `serve`
+  tries on a later turn. A lead command waits for its own `--wait-seconds`,
+  or for `lead-upgrade-writer` the check timeout, and then refuses with
+  `slot_held`, naming the delivery that holds it. A queue that has just
+  merged waits one poll, and never more, when a live command waits, so the
+  waiter goes first; a waiter's file whose pid is dead is removed by whoever
+  reads it. Only the lock says whether the slot is held, and the operating
+  system lets a dead holder's go; the holder file beside it, naming the
+  holder's delivery, pid and start, is for display only.
 
 ### Before the repository has the runner
 
@@ -326,7 +350,7 @@ supervisor's.
   | `merged_unverified` | Stop the queue and confirm the base by hand before anything else merges. |
   | `batch_tree_mismatch` | The base's tree is no longer the one the batch recorded, so something landed that the batch did not check. Stop the queue, confirm the base by hand, then batch the members that did not land again; they are back at `queued`. |
   | `binding_invalid` | Fix the binding on the base branch. |
-  | `queue_locked` | Another runner holds the queue. Wait for it, or raise `--wait`. |
+  | `queue_locked` | Another runner holds the queue, or another delivery holds the base's merge slot past the wait, and the detail names it. Nothing was attempted. Wait for it, or raise `--wait`; `serve` tries again on its own. |
   | `runner_error` | Read the result document and the runner's output; investigate before retrying. |
 
 - When a candidate merges, move its ticket to its review or completed state

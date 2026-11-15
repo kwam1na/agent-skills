@@ -5054,6 +5054,206 @@ class CarriedBaseMoveTests(MergeQueueTestCase):
         self.assertEqual(len(syncs), 3)
 
 
+# Another delivery's command holding a base's merge slot until the test lets it go, by its pid or its release file.
+HOLD_SLOT = """
+import pathlib, sys, time
+sys.path.insert(0, sys.argv[1])
+import delivery_state
+repository, base, delivery, ready, release = sys.argv[2:7]
+with delivery_state.merge_slot(pathlib.Path(repository), base, delivery=delivery, timeout=30):
+    pathlib.Path(ready).write_text("held")
+    while not pathlib.Path(release).exists():
+        time.sleep(0.02)
+"""
+
+
+class MergeSlotQueueTests(MergeQueueTestCase):
+    """Two deliveries' queues on one base share its merge slot, so neither moves the base under the other's check."""
+
+    run_quietly = True
+
+    def second_delivery(self, adopter: Adopter) -> tuple[Path, Path]:
+        """Delivery B: a linked worktree of the operator's repository, with a state folder of its own."""
+        checkout = self.directory / "operator-b"
+        run("worktree", "add", "-q", "--detach", str(checkout), "origin/main", cwd=adopter.operator)
+        state = self.directory / "state-b"
+        state_tool.init(state, "Delivery B")
+        return checkout, state
+
+    @staticmethod
+    def enqueue_in(state: Path, subject: str, head: str) -> None:
+        current = state_tool.read_state(state)
+        item = {"order": len(current["queue"]) + 1, "subject": subject, "title": f"Candidate {subject}",
+                "lane": "lane-1", "stage": "queued", "head": head, "syncedHead": None, "leadInputs": [],
+                "reportedRounds": 2, "runId": None, "checks": []}
+        state_tool.patch(state, writer="lead", version=current["version"], changes={"queue": [*current["queue"], item]})
+
+    def journal_kinds(self, state: Path) -> list[str]:
+        return [entry["kind"] for entry in state_tool.read_journal(state)]
+
+    def waiters(self, adopter: Adopter) -> list[str]:
+        waiting = state_tool.merge_slot_path(adopter.operator, "main").parent / "waiting" / "main"
+        return sorted(entry.name for entry in waiting.iterdir()) if waiting.is_dir() else []
+
+    def holder(self, adopter: Adopter) -> dict | None:
+        return state_tool.slot_holder(state_tool.merge_slot_path(adopter.operator, "main"))
+
+    def hold(self, adopter: Adopter, delivery: str = "Delivery C") -> subprocess.Popen:
+        """Another delivery's command holding the slot, stopped by its pid when the test lets it go."""
+        ready = self.directory / "held"
+        holder = subprocess.Popen([PY, "-B", "-c", HOLD_SLOT, str(SCRIPTS), str(adopter.operator), "main", delivery,
+                                   str(ready), str(self.directory / "never")])
+        self.addCleanup(lambda: (holder.poll() is None and holder.kill(), holder.wait(30)))
+        deadline = time.monotonic() + 30
+        while not ready.exists():
+            self.assertIsNone(holder.poll())
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.02)
+        return holder
+
+    def test_one_deliverys_check_holds_the_slot_and_the_other_merges_after_it_on_its_merged_head(self) -> None:
+        adopter = self.adopter({"alwaysRun": [check_entry("hang", "--hang-once")]})
+        checkout_b, state_b = self.second_delivery(adopter)
+        self.candidate(adopter, {"src/a.txt": "a\n"}, name="a")
+        b_head = adopter.lane_commit("b", {"src/b.txt": "b\n"})
+        self.enqueue_in(state_b, "b", b_head)
+        hang, started = Path(str(adopter.log) + ".hang"), Path(str(adopter.log) + ".started")
+        hang.write_text("")
+        self.addCleanup(hang.unlink, True)
+        a_results: list = []
+        b_results: list = []
+        a_turn = threading.Thread(target=lambda: a_results.extend(self.run_queue(adopter, "a")))
+        a_turn.start()
+        deadline = time.monotonic() + 60
+        while not started.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        b_runner = queue.Runner(checkout_b, state_b, remote="origin", base="main", slot_wait=60)
+        b_turn = threading.Thread(target=lambda: b_results.extend(b_runner.run_command("run", ["b"])))
+        b_turn.start()
+        try:
+            # While A's check waits, B waits for the slot: the holder file names A, and B has checked nothing.
+            while not self.waiters(adopter) and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue(self.waiters(adopter), "delivery B never waited for the slot")
+            self.assertEqual(self.holder(adopter)["delivery"], "Fixture delivery")
+            self.assertNotIn("check.started", self.journal_kinds(state_b))
+        finally:
+            hang.unlink()
+            a_turn.join(120)
+            b_turn.join(120)
+        self.assertEqual(a_results[-1].document()["outcome"], "merged", a_results[-1].document()["stop"])
+        self.assertEqual(b_results[-1].document()["outcome"], "merged", b_results[-1].document()["stop"])
+        merged_a = a_results[-1].document()["mergedHead"]
+        [b_sync] = [result.document() for result in b_results if result.document()["subcommand"] == "sync"]
+        self.assertEqual(b_sync["baseHead"], merged_a)
+        self.assertEqual([result.document()["stop"] for result in b_results if result.document()["stop"]], [])
+        for kind in ("check.retried", "check.carried", "candidate.stopped"):
+            self.assertNotIn(kind, self.journal_kinds(state_b))
+        self.assertEqual(self.waiters(adopter), [])
+
+    def test_a_failed_and_a_timed_out_check_let_the_slot_go_to_the_other_deliverys_next_turn(self) -> None:
+        adopter = self.adopter({"alwaysRun": [check_entry("hang", "--hang-once", timeoutSeconds=2)]})
+        checkout_b, state_b = self.second_delivery(adopter)
+        self.candidate(adopter, {"src/app.txt": "FAIL here\n"}, name="failing")
+        self.assertStopped(self.run_queue(adopter, "failing"), "check_failed")
+        hang = Path(str(adopter.log) + ".hang")
+        hang.write_text("")
+        self.candidate(adopter, {"src/slow.txt": "slow\n"}, name="slow")
+        stopped = self.run_queue(adopter, "slow")[-1].document()
+        self.assertIn(stopped["outcome"], ("stopped", "refused"))
+        hang.unlink()
+        b_head = adopter.lane_commit("b", {"src/b.txt": "b\n"})
+        self.enqueue_in(state_b, "b", b_head)
+        held_by: list = []
+        b_runner = queue.Runner(checkout_b, state_b, remote="origin", base="main", slot_wait=0,
+                                seams={"before_merge": lambda runner, subject: held_by.append(self.holder(adopter))})
+        results = b_runner.run_command("run", ["b"])
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        self.assertEqual(held_by[0]["delivery"], "Delivery B")
+
+    def test_a_slot_held_past_the_wait_leaves_the_candidate_queued_and_a_later_turn_takes_it(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        holder = self.hold(adopter)
+        through = len(state_tool.read_journal(adopter.state))
+        results = queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True, poll=0,
+                              slot_wait=0.3)
+        self.assertEqual(results, [])
+        self.assertEqual(adopter.item("feature")["stage"], "queued")
+        self.assertEqual(state_tool.read_journal(adopter.state)[through:], [])
+        self.assertEqual(self.waiters(adopter), [])
+        # The holder is stopped by its pid; the operating system lets its lock go, and the next turn takes it.
+        holder.kill()
+        holder.wait(30)
+        self.assertEqual(self.holder(adopter)["delivery"], "Delivery C")
+        seen: list = []
+        results = queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True, poll=0,
+                              slot_wait=0, seams={"before_merge": lambda runner, subject: seen.append(self.holder(adopter))})
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        self.assertEqual(seen[0]["delivery"], "Fixture delivery")
+        kinds = self.journal_kinds(adopter.state)
+        self.assertNotIn("candidate.stopped", kinds)
+        self.assertNotIn("base.broken", kinds)
+
+    def test_a_free_slot_whose_holder_file_names_a_live_process_is_taken_at_once_and_rewritten(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        sleeper = subprocess.Popen([PY, "-c", "import time; time.sleep(60)"])
+        self.addCleanup(lambda: (sleeper.kill(), sleeper.wait(30)))
+        lock = state_tool.merge_slot_path(adopter.operator, "main")
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        (lock.parent / "main.holder").write_text(json.dumps({"delivery": "Delivery C", "pid": sleeper.pid,
+                                                             "since": "2026-11-15T00:00:00Z"}))
+        seen: list = []
+        results = self.run_queue(adopter, "feature", slot_wait=0,
+                                 seams={"before_merge": lambda runner, subject: seen.append(self.holder(adopter))})
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        self.assertEqual((seen[0]["delivery"], seen[0]["pid"]), ("Fixture delivery", os.getpid()))
+
+    def test_with_one_delivery_the_queue_still_takes_its_own_lock_and_journals_as_before(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        held: list = []
+
+        def probe(runner, subject):
+            for lock in (adopter.state / state_tool.QUEUE_LOCK, state_tool.merge_slot_path(adopter.operator, "main")):
+                with self.assertRaises(state_tool.StateError) as taken:
+                    with state_tool.file_lock(lock, timeout=0):
+                        pass
+                held.append(taken.exception.code)
+
+        results = self.run_queue(adopter, "feature", seams={"before_merge": probe})
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        self.assertEqual(held, ["lock_timeout", "lock_timeout"])
+        # The command let the slot go as it ended: a post-merge fullHealth, which runs after it, holds nothing.
+        self.assertIsNone(self.holder(adopter))
+        with state_tool.merge_slot(adopter.operator, "main", delivery="Delivery C", timeout=0):
+            pass
+        self.assertEqual([kind for kind in self.journal_kinds(adopter.state) if kind not in ("decision.recorded",)],
+                         ["check.started", "check.finished", "candidate.merged"])
+
+    def test_a_turn_that_merged_lets_a_waiter_go_first_on_the_next(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter, name="first")
+        asked: list[bool] = []
+        real = state_tool.merge_slot
+
+        def recording(*args, **kwargs):
+            asked.append(kwargs.get("after_merge", False))
+            return real(*args, **kwargs)
+
+        def hand_in_another(runner, subject):
+            if subject == "first":
+                self.candidate(adopter, {"src/second.txt": "second\n"}, name="second")
+
+        with mock.patch.object(queue.delivery_state, "merge_slot", recording):
+            results = queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True,
+                                  poll=0, seams={"before_merge": hand_in_another})
+        self.assertEqual([result.document()["outcome"] for result in results if result.document()["subcommand"] == "merge"],
+                         ["merged", "merged"])
+        self.assertEqual(asked, [False, True])
+
+
 class ServeTests(MergeQueueTestCase):
     """serve takes what is queued, in order, as a batch or alone, until the queue is idle or the lead holds it."""
 
@@ -6413,6 +6613,19 @@ class ContractTests(unittest.TestCase):
             "When the base moves after a candidate's checks passed, a selected check is carried to the new base, with "
             "no run again, when no file the move changed is in the candidate's diff and either every such file matches "
             "`selection.unread` or the check's read set is known and no such file is in it.",
+        ):
+            with self.subTest(phrase=phrase[:40]):
+                self.assertIn(phrase, guide)
+
+    def test_the_guide_says_deliveries_on_one_base_share_its_merge_slot(self) -> None:
+        guide = " ".join((SCRIPTS.parent / "references" / "orchestration-guide.md").read_text(encoding="utf-8").split())
+        for phrase in (
+            "Every delivery on a machine whose queue or lead merges into one base takes one lock for that base, at "
+            "`<git-common-dir>/agent-skills/merge-slot/<base>.lock`",
+            "Each queue command takes the slot before the delivery's own `queue.lock` and holds it until the command "
+            "ends, however it ends;",
+            "A post-merge `fullHealth` run holds no slot.",
+            "Only the lock says whether the slot is held, and the operating system lets a dead holder's go;",
         ):
             with self.subTest(phrase=phrase[:40]):
                 self.assertIn(phrase, guide)
