@@ -2438,6 +2438,10 @@ class SupervisorPassTests(unittest.TestCase):
             state_tool(fx, "patch", "--writer", "lead", "--version", str(doc["state"]["version"]), "--patch",
                        json.dumps({"finish": [{**line, "met": False} if line["id"] == ident else line
                                               for line in doc["state"]["finish"]]}))
+        # A record an older generation kept has no flow log: the supervisor's own journal of `all` is its mark.
+        marks = fx.tmp / "flow-log/FX-1.finish.jsonl"
+        marks.write_text("".join(line + "\n" for line in marks.read_text().splitlines()
+                                 if json.loads(line)["line"] != "all"))
         for _ in range(2):
             held = self.holds(fx)
         self.assertEqual(met(), {"empty": False, "null": False, "nothing": False, "merged": True, "every": False,

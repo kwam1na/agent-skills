@@ -8453,11 +8453,12 @@ def journal_finish_met(c, doc: dict) -> list[str]:
             patch_from(lambda fresh, line=line: {"finish": [{**entry, "met": True} if entry["id"] == line["id"] else entry
                                                             for entry in fresh["state"]["finish"]]},
                        f"finish line {line['id']} met")
-        append_log("finish", c.delivery, {"line": line["id"]})
         if not journalled:
             state_tool("journal", "--kind", "finish.met", "--subject", line["id"], "--summary",
                        f"{line['id']}: {line['text']} {FINISH_MET_SAID}")
             said.append(f"finish line {line['id']} met")
+        # Logged last, so a pass whose journal failed leaves the line for the next pass to journal.
+        append_log("finish", c.delivery, {"line": line["id"]})
     return said
 
 

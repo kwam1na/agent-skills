@@ -7494,6 +7494,15 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         self.assertEqual(doctor_lines(out)["plan chapter"],
                          ("ok", "3 criteria across 2 stories; the plan they make passes delivery-views check-plan"), out)
         self.assertEqual(failing(out), {}, out)
+        # Lines the lead checks, declared `{}` or null, declare their covers: no warning, and they are counted.
+        d["finish"] += [{"id": "suite", "text": "The suite passes", "covers": {}},
+                        {"id": "main", "text": "It reaches main", "covers": None}]
+        path.write_text(json.dumps(d, indent=2))
+        out = self.doctor(fx, "--offline")
+        self.assertEqual(doctor_lines(out)["finish lines"],
+                         ("ok", "each of the 3 finish lines declares its `covers`; 2 are yours to check and mark"), out)
+        self.assertEqual(failing(out), {}, out)
+        d["finish"] = d["finish"][:1]
         d["finish"][0]["covers"]["criteria"].append("no-such-criterion")
         path.write_text(json.dumps(d, indent=2))
         out = self.doctor(fx, "--offline")
