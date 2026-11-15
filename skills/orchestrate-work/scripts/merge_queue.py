@@ -3089,6 +3089,14 @@ class Runner:
         with contextlib.suppress(delivery_state.StateError, OSError, KeyError):
             delivery = delivery_state.read_state(self.state_directory)["meta"]["headline"]
         try:
+            delivery_state.merge_slot_path(self.repository, self.base)
+        except delivery_state.StateError as error:
+            if error.code != "slot_unavailable":
+                raise
+            # Not a checkout, so the command can move no base: it refuses on its own, as before, with no slot.
+            yield
+            return
+        try:
             with delivery_state.merge_slot(self.repository, self.base, delivery=delivery, timeout=wait,
                                            after_merge=self.after_merge):
                 yield
