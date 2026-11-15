@@ -1284,6 +1284,7 @@
           "base.rerun.started",
           "base.rerun.finished",
           "base.rerun.stopped",
+          "base.flaky",
           "lease.granted",
           "lease.released",
           "release.started",
@@ -2570,6 +2571,33 @@
         "description": "Optional. The seconds a fullHealth run may take, after each merge and at close-out: a positive integer of at most 2147483 (the most a process wait takes, which the runner checks), not bound by checkTimeoutCeiling, which bounds the queue's checks. checkTimeoutSeconds when absent.",
         "type": "integer",
         "minimum": 1
+      },
+      "fullHealthRerun": {
+        "description": "Optional. How a failed fullHealth is re-checked once, in the checkout it ran in, before it breaks the base: failurePattern's first group names a failing test, at every match in the run's whole output; argv runs those tests, {tests} becoming one argument for each; a rerun that exits 0 with output ranPattern matches makes the run flaky, journalled as base.flaky. A run whose output unrecheckedPattern matches, such as a crashed or timed-out unit, is not re-checked. Absent, a failure breaks the base.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "argv",
+          "failurePattern",
+          "ranPattern"
+        ],
+        "properties": {
+          "argv": {
+            "$ref": "#/$defs/argv"
+          },
+          "failurePattern": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ranPattern": {
+            "type": "string",
+            "minLength": 1
+          },
+          "unrecheckedPattern": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
       },
       "leases": {
         "type": "array",

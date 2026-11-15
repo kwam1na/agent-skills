@@ -5726,7 +5726,7 @@ VALID_FIXTURES = {
 JOURNAL_KINDS = [
     "lane.assigned", "review.round", "candidate.handed", "check.started", "check.finished",
     "check.failed", "check.retried", "check.reused", "candidate.merged", "candidate.stopped", "base.verified", "base.broken",
-    "base.repaired", "base.rerun.started", "base.rerun.finished", "base.rerun.stopped",
+    "base.repaired", "base.rerun.started", "base.rerun.finished", "base.rerun.stopped", "base.flaky",
     "lease.granted", "lease.released", "release.started", "release.finished",
     "finish.met", "decision.recorded", "blocker.recorded", "delivery.closed", "review.evidence", "check.selected",
     "selection.refused", "hook.held", "base.moved",
@@ -6833,6 +6833,28 @@ class CheckCatalogueTests(unittest.TestCase):
         self.assertEqual([error.message for error in validator.iter_errors(self.binding["selection"])], [])
         self.assertNotEqual(list(validator.iter_errors({**self.binding["selection"], "aliases": []})), [])
         self.assertNotEqual(list(validator.iter_errors({**self.binding["selection"], "readers": [{"paths": ["a"]}]})), [])
+
+    def test_binding_validation_refuses_a_full_health_rerun_it_could_not_run_naming_the_member(self) -> None:
+        runner = _load("merge_queue")
+        # This repository's own binding, which is whole and valid, with the member added.
+        binding = json.loads((ROOT / ".agents/orchestration.json").read_text(encoding="utf-8"))
+        rerun = {"argv": ["python3", "-m", "unittest", "{tests}"], "failurePattern": r"(?m)^FAIL: (\S+)$",
+                 "ranPattern": r"(?m)^Ran [1-9]", "unrecheckedPattern": r"(?m)^CRASHED: "}
+        self.assertEqual(runner.binding_errors({**binding, "fullHealthRerun": rerun}), [])
+        for name, change, said in (
+                ("no {tests}", {"argv": ["python3", "-m", "unittest"]}, "/fullHealthRerun/argv: must use {tests}"),
+                ("{tests} in a longer element", {"argv": ["python3", "--tests={tests}"]},
+                 "/fullHealthRerun/argv: must use {tests}"),
+                ("no group", {"failurePattern": r"(?m)^FAIL: \S+$"}, "/fullHealthRerun/failurePattern: needs a group"),
+                ("no ranPattern", {"ranPattern": None}, "ranPattern"),
+                ("failurePattern", {"failurePattern": "(unclosed"}, "/fullHealthRerun/failurePattern: doesn't compile"),
+                ("ranPattern", {"ranPattern": "[unclosed"}, "/fullHealthRerun/ranPattern: doesn't compile"),
+                ("unrecheckedPattern", {"unrecheckedPattern": "(?P<"}, "/fullHealthRerun/unrecheckedPattern: doesn't compile")):
+            with self.subTest(name):
+                member = {key: value for key, value in {**rerun, **change}.items() if value is not None}
+                errors = runner.binding_errors({**binding, "fullHealthRerun": member})
+                self.assertTrue(any(said in error for error in errors), errors)
+                self.assertTrue(all("fullHealthRerun" in error for error in errors), errors)
 
     # -- the base head warning -------------------------------------------------------------------------------------
 

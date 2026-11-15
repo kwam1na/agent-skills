@@ -489,6 +489,93 @@ class StandingBinding(unittest.TestCase):
             self.assertEqual(done.returncode, 0, path)
 
 
+# Each way scripts/run-tests.py can report a unit as failed, and one that passes.
+RUNNER_KINDS = """
+import os, time, unittest
+
+class Fails(unittest.TestCase):
+    def test_fails(self):
+        self.assertEqual(1, 2)
+
+class Errors(unittest.TestCase):
+    def test_errors(self):
+        raise RuntimeError("boom")
+
+class Unexpected(unittest.TestCase):
+    @unittest.expectedFailure
+    def test_passes_unexpectedly(self):
+        pass
+
+class Crashes(unittest.TestCase):
+    def test_crashes(self):
+        os._exit(9)
+
+class Hangs(unittest.TestCase):
+    def test_hangs(self):
+        time.sleep(120)
+
+class SubTests(unittest.TestCase):
+    def test_sub(self):
+        with self.subTest(i=1):
+            self.fail("always")
+
+class Fixture(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        raise RuntimeError("fixture")
+
+    def test_under_fixture(self):
+        pass
+
+class Passes(unittest.TestCase):
+    def test_passes(self):
+        pass
+"""
+
+
+class FullHealthRerunMember(unittest.TestCase):
+    """The fullHealthRerun member this file gives, against the runner's own output for every kind of failure."""
+
+    def test_each_failure_the_runner_reports_is_named_for_a_rerun_or_left_unrechecked(self) -> None:
+        import re
+        text = (ROOT / "docs/own-deliveries.md").read_text(encoding="utf-8")
+        member = json.loads(re.search(r"```json fullHealthRerun\n(.*?)\n```", text, re.S).group(1))
+        tmp = Path(tempfile.mkdtemp(prefix="full-health-rerun-member-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        (tmp / "probe").mkdir()
+        (tmp / "probe/__init__.py").write_text("")
+        (tmp / "probe/test_kinds.py").write_text(RUNNER_KINDS)
+        run = subprocess.run([sys.executable, "-B", str(ROOT / "scripts/run-tests.py"), "-s", "probe", "-t", ".",
+                              "--workers", "2", "--unit-timeout", "5"], cwd=tmp, capture_output=True, text=True,
+                             timeout=120)
+        out = run.stdout + run.stderr
+        self.assertEqual(run.returncode, 1, out)
+        named = [match.group(1) for match in re.finditer(member["failurePattern"], out)]
+        self.assertEqual(sorted(named), ["probe.test_kinds.Errors.test_errors", "probe.test_kinds.Fails.test_fails",
+                                         "probe.test_kinds.Unexpected.test_passes_unexpectedly"], out)
+        # Each failure line the runner prints is either named for a rerun or matched as unrechecked, line by line.
+        lines = re.findall(r"(?m)^(?:FAIL|ERROR|UNEXPECTED SUCCESS|CRASHED|TIMED OUT): .*$", out)
+        self.assertEqual(len(lines), 7, out)
+        unrechecked = [line for line in lines if re.search(member["unrecheckedPattern"], line)]
+        self.assertEqual(len(unrechecked), 4, out)
+        for line in lines:
+            with self.subTest(line=line):
+                self.assertTrue(re.fullmatch(member["failurePattern"].replace("(?m)", ""), line)
+                                or line in unrechecked, line)
+                self.assertFalse(re.fullmatch(member["failurePattern"].replace("(?m)", ""), line) and line in unrechecked,
+                                 f"named and unrechecked at once: {line}")
+        # The member's argv, its interpreter this one since the probe has no .venv: a test that ran is matched, and
+        # the named failures fail again.
+        rerun = lambda tests: subprocess.run(
+            [sys.executable, *[arg for element in member["argv"][1:]
+                               for arg in (tests if element == "{tests}" else [element])]],
+            cwd=tmp, capture_output=True, text=True, timeout=60)
+        passed = rerun(["probe.test_kinds.Passes.test_passes"])
+        self.assertEqual(passed.returncode, 0, passed.stdout + passed.stderr)
+        self.assertRegex(passed.stdout + passed.stderr, member["ranPattern"])
+        self.assertNotEqual(rerun(named).returncode, 0)
+
+
 class TrackerUpdatesAndCredentials(unittest.TestCase):
     """The document says what the switched binding does: the tracker publisher posts with LINEAR_API_KEY, and an agent
     shell gets the key the way the operator's never reaches it."""
