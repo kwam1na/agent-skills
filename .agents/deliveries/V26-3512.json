@@ -249,7 +249,8 @@
     {
       "id": "approval-2",
       "text": "The operator approves the final integration's change request to `main`.",
-      "state": "waiting"
+      "state": "done",
+      "who": "Kwamina"
     }
   ],
   "outOfScope": [
