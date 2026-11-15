@@ -431,3 +431,7 @@ Scenarios, with two deliveries on one fixture base, each in its own linked workt
 - a registry entry that cannot be read is shown as unreadable and stops no command;
 - the merge slot's holder and since when show in `doctor --delivery` and the live view while a peer's check runs;
 - the line map shows `peer.merged`'s label, and the tracker publisher posts nothing for it.
+
+### V26-3513. Pin the merge slot's order and its wait, and say what to do when the slot is held
+
+Lane 1, tier 1, after V26-3318. Added mid-delivery: V26-3318's review aligned with three P2 and two P3 notes open: four missing rows for the slot's order and wait, and one guide sentence. The lead accepted V26-3318 so the peer story could start, and this story closes all five before integration.

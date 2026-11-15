@@ -214,7 +214,7 @@
         },
         {
           "path": "skills/delivery-views/assets/line-map.js",
-          "sha256": "2d7a4a1e6f52428876c24ab4ee9d763884cae557aafbc9af6624f489e9c2108f"
+          "sha256": "627ebdfaec6df85381c3e30c7eba19ec061a328fe0124fa6384e9b4db5017fd7"
         },
         {
           "path": "skills/delivery-views/assets/run-summary.css",
@@ -469,23 +469,23 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "da2e6d2e0cfba763be3ad69b45f66c8c36bd5295245bed969dd3e99beef9cc46"
+          "sha256": "817b04dfc514f7e42ac21be341e75bce9407bce55afc4ef4f411678a189d5f46"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "c42a6cbaae55b5800a80378036655a34690c99ae53b523f841a05f5dd61f0d5b"
+          "sha256": "0aa6d60814419241e19a2579c2f678841e7e30495598987cffc32de1bf2e52f6"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
-          "sha256": "ca2005857eaeeec3bed0f1c521c69715346c07f22cc59f7c136c5bf26cc5c1c0"
+          "sha256": "a1a764ea3596af94d65503253a53ec177db7aaf130a9fd69360864dc2ce1bf97"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "2a675b71a6c2b1f63f7d58595fe51feb40150da423d03df90c7f65b7456e761d"
+          "sha256": "c77b473121d89c064ed32d8be88ea15c41dd96f05a151b2a6b0966a9dfe7c0c5"
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",
-          "sha256": "865e32c70022f87671edecceab654f87d0626f9397893c5a6b7f4d0fab54c7e3"
+          "sha256": "50ed23c8128b84cf88a4c56c59fe1871c84f40fd3a935e04cda23c3f1579591f"
         },
         {
           "path": "skills/orchestrate-work/scripts/region_ownership.py",
@@ -1062,11 +1062,11 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "f711c7066c4a428d15e986724cc74cd2d98dcf99e31286df31fd0f68907f5a73"
+          "sha256": "e213471b53d62bf79b149fe9cdea9a1e6686d4ebbecc20b46038827f03a3371f"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
-          "sha256": "8f3faea5154550d8dea5300a18d14b56935d939f86610616e125f5664df5f3c9"
+          "sha256": "350121ed0de372bdd588932194e1f28125f5844769e395b76fdabeccf8280bee"
         },
         {
           "path": "skills/run-delivery/templates/evidence.html",

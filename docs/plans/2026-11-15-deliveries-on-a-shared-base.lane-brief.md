@@ -38,8 +38,8 @@ assemble briefs, round files or records by hand, and don't edit what they write.
 
 | Lane | Stories | Owns |
 | --- | --- | --- |
-| lane-1 | V26-3319, V26-3318 | `skills/orchestrate-work/scripts/merge_queue.py`, `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/references/schemas.json`, `skills/orchestrate-work/SKILL.md`, `skills/run-delivery/scripts/tracker_publisher.py`, `skills/delivery-views/assets/line-map.js`, `tests/test_merge_queue.py`, `tests/test_orchestration_state.py`, `tests/test_orchestration_adopter.py`, `tests/test_lane_rows.py`, `tests/test_run_delivery_tracker.py`, `tests/delivery_views_page/line-map-kinds.test.mjs`, `docs/solutions/best-practices/select-by-what-reads-a-change-2026-11-08.md`, `docs/solutions/best-practices/one-merge-slot-for-each-base-2026-11-15.md` |
-| lane-2 | V26-3425, V26-3264 | `skills/run-delivery/SKILL.md`, `skills/run-delivery/references/*`, `tests/test_run_delivery_supervisor.py`, `tests/test_own_deliveries.py`, `docs/own-deliveries.md` |
+| lane-1 | V26-3319, V26-3318, V26-3513 | `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/SKILL.md`, `tests/test_merge_queue.py`, `tests/test_orchestration_adopter.py`, `tests/test_lane_rows.py`, `tests/test_run_delivery_tracker.py`, `docs/solutions/best-practices/select-by-what-reads-a-change-2026-11-08.md`, `docs/solutions/best-practices/one-merge-slot-for-each-base-2026-11-15.md`, `tests/delivery_views_page/line-map-kinds.test.mjs`, `skills/orchestrate-work/references/schemas.json`, `skills/orchestrate-work/scripts/merge_queue.py`, `skills/run-delivery/scripts/tracker_publisher.py`, `skills/delivery-views/assets/line-map.js` |
+| lane-2 | V26-3425, V26-3264 | `skills/run-delivery/SKILL.md`, `skills/run-delivery/references/*`, `tests/test_run_delivery_supervisor.py`, `tests/test_own_deliveries.py`, `docs/own-deliveries.md`, `tests/delivery_views_page/line-map-flaky-kind.test.mjs` |
 | lane-3 | V26-3320 | `skills/orchestrate-work/scripts/render_state.py`, `tests/test_orchestration_render.py`, `tests/test_run_delivery_peers.py` |
 
 | Story | Label | Pinned request patterns | In-app checks its hand-off needs |
@@ -49,6 +49,7 @@ assemble briefs, round files or records by hand, and don't edit what they write.
 | V26-3425 | V26-3425 | - | none |
 | V26-3264 | V26-3264 | - | none |
 | V26-3320 | V26-3320 | - | none |
+| V26-3513 | V26-3513 | - | none |
 
 ## The focused lane profile
 

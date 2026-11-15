@@ -152,6 +152,36 @@
           "text": "A delivery alone on its base shows no peers and no warnings."
         }
       ]
+    },
+    "V26-3513": {
+      "title": "Pin the merge slot's order and its wait, and say what to do when the slot is held",
+      "lane": "lane-1",
+      "why": "V26-3318's review aligned with three P2 and two P3 notes open: four missing rows for the slot's order and wait, and one guide sentence. The lead accepted V26-3318 so the peer story could start, and this story closes all five before integration.",
+      "criteria": [
+        {
+          "id": "v26-3513-1",
+          "text": "A queue row with the slot wait unset and a small non-zero checkTimeoutSeconds shows the command's waiter file before it returns queue_locked, and fails when the wait is read as 0."
+        },
+        {
+          "id": "v26-3513-2",
+          "text": "A row holds a delivery's queue.lock, runs a real queue command, and shows the holder file naming that delivery while the command waits; it fails when the queue lock is taken first."
+        },
+        {
+          "id": "v26-3513-3",
+          "text": "A row shows lead-sync taking the merge slot before queue.lock, and fails when the order is swapped."
+        },
+        {
+          "id": "v26-3513-4",
+          "text": "The lead-upgrade-writer row uses a small non-zero checkTimeoutSeconds and shows the waiter file before the refusal, and one lead row reads the holder file and finds the fixture delivery named."
+        },
+        {
+          "id": "v26-3513-5",
+          "text": "The guide queue_locked row says what to do for each cause, the queue lock and a held slot, and the sentence is pinned. No behaviour changes, and the suite stays inside tests/suite-budget.json."
+        }
+      ],
+      "after": [
+        "V26-3318"
+      ]
     }
   },
   "finish": [

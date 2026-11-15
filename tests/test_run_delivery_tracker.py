@@ -2986,5 +2986,13 @@ class LinearWordingTests(unittest.TestCase):
                           "oauth-flow", "credential-token-env", "fallback-transport"})
 
 
+class CarriedCheckUpdateTests(unittest.TestCase):
+    def test_a_carried_check_posts_nothing_as_a_reused_one_posts_nothing(self) -> None:
+        # The candidate's ticket already says it is being checked; what was carried shows in the record and the views.
+        self.assertIn("check.carried", tp.UPDATES)
+        self.assertIsNone(tp.UPDATES["check.carried"])
+        self.assertIsNone(tp.UPDATES["check.reused"])
+
+
 if __name__ == "__main__":
     unittest.main()

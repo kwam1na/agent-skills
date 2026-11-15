@@ -285,6 +285,12 @@ python3 -B <skill>/scripts/merge_queue.py [--repo <checkout top level>] --state 
   `lead`. A lease counts as the lead's only when its holder equals it.
 - One runner works the queue at a time. `--wait` sets how long to wait for the
   queue lock before stopping with `queue_locked`.
+- Every delivery on the machine that merges into one base shares that base's
+  merge slot, a lock beside the repository's git common directory. Each queue
+  command takes it before the queue lock and holds it until the command ends,
+  as `lead-push`, `lead-sync` and `lead-upgrade-writer` do. A queue command
+  that can't take it within the binding's `checkTimeoutSeconds` attempts
+  nothing and reads `queue_locked`, naming the delivery that holds it.
 
 - `sync <candidate>` merges the base into the reviewed head, runs the named
   lead inputs, the regenerators and the post-sync steps, proves the result
@@ -325,7 +331,10 @@ python3 -B <skill>/scripts/merge_queue.py [--repo <checkout top level>] --state 
 - `run <candidate>...` does sync, check and merge in order for each candidate,
   stopping at the first failure. When the base moves after a sync, `run`
   re-syncs and re-checks once; a second move stops with `base_moved`. A
-  candidate is merged only onto the exact base it was checked against.
+  candidate is merged only onto the exact base it was checked against. A move
+  after the checks passed that changed nothing a check reads, by the binding's
+  complete `readers` entries and its `unread` paths, carries that check: the
+  re-sync runs only the rest, journals `check.carried`, and spends no retry.
 - `batch <candidate> <candidate>...` checks two or more candidates once, as
   one combined tree, then lands each in order with exactly the tree the batch
   recorded for it. A member that conflicts drops out and the rest continue.

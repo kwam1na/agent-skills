@@ -262,7 +262,7 @@
   }
   var KIND_WORDS = table({
     "lane.assigned": "Assigned", "review.round": "Review round", "candidate.handed": "Handed over", "check.started": "Check started",
-    "check.finished": "Check finished", "check.failed": "Check failed", "check.retried": "Check retried", "check.reused": "Check reused", "candidate.merged": "Landed",
+    "check.finished": "Check finished", "check.failed": "Check failed", "check.retried": "Check retried", "check.reused": "Check reused", "check.carried": "Check carried", "candidate.merged": "Landed",
     "candidate.stopped": "Stopped", "base.broken": "Base broken", "base.repaired": "Base repaired", "base.rerun.started": "Rerun on the main line", "base.rerun.finished": "Rerun verdict", "base.rerun.stopped": "Rerun stopped", "base.flaky": "Flaky on the main line", "base.verified": "Base verified",
     "selection.refused": "Checks refused", "hook.held": "Stop flagged", "lease.granted": "Lease granted",
     "lease.released": "Lease released", "release.started": "Release started", "release.finished": "Release finished",
@@ -1664,7 +1664,7 @@
     return box;
   }
 
-  var HISTORY = table({ "candidate.handed": "Handed over", "check.started": "Check started", "check.finished": "Check finished", "check.failed": "Check failed", "check.retried": "Retried", "check.reused": "Reused", "base.rerun.started": "Rerun on the main line", "base.rerun.finished": "Rerun verdict", "base.rerun.stopped": "Rerun stopped", "candidate.stopped": "Stopped", "candidate.merged": "Landed" });
+  var HISTORY = table({ "candidate.handed": "Handed over", "check.started": "Check started", "check.finished": "Check finished", "check.failed": "Check failed", "check.retried": "Retried", "check.reused": "Reused", "check.carried": "Check carried", "base.rerun.started": "Rerun on the main line", "base.rerun.finished": "Rerun verdict", "base.rerun.stopped": "Rerun stopped", "candidate.stopped": "Stopped", "candidate.merged": "Landed" });
   var historyOpen = Object.create(null);
   function historyFor(doc, item) {
     var rows = journalFor(doc, item.subject, HISTORY);

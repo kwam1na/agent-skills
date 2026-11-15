@@ -23,6 +23,7 @@ import fnmatch
 import concurrent.futures
 import contextlib
 import copy
+import functools
 import datetime
 import json
 import os
@@ -845,7 +846,10 @@ class Runner:
         lock_wait: float = 0.0,
         seams: dict[str, Seam] | None = None,
         renderer: list[str] | None = None,
-        # ``renderer`` is the interpreter prefix the wrapper runs under.
+        slot_wait: float | None = None,
+        after_merge: bool = False,
+        # ``renderer`` is the interpreter prefix the wrapper runs under. ``slot_wait`` bounds the wait for the base's
+        # merge slot, the binding's checkTimeoutSeconds when None; ``after_merge`` says this queue's last command merged.
     ) -> None:
         self.repository = repository.resolve()
         self.state_directory = state_directory.resolve()
@@ -853,6 +857,8 @@ class Runner:
         self.base = base
         self.lead = lead
         self.lock_wait = lock_wait
+        self.slot_wait = slot_wait
+        self.after_merge = after_merge
         self.seams = seams or {}
         self.renderer = renderer or [sys.executable, "-B"]
         # Notes collected while a subcommand runs, such as a failed render.
@@ -869,6 +875,8 @@ class Runner:
         # Candidates whose merge began in this runner: the forge may have them, so they are never put back.
         self.merging: set[str] = set()
         self.checkouts: list[Path] = []
+        # The checks the last check step carried over a base move, so run can tell a re-sync that carried nothing.
+        self.carried_now: list[str] = []
         self._counter = 0
         self._logs = 0
 
@@ -1841,7 +1849,7 @@ class Runner:
 
     # -- check -------------------------------------------------------------
 
-    def check(self, subject: str, result: Result) -> None:
+    def check(self, subject: str, result: Result, carried: dict | None = None) -> None:
         item = self.item(subject)
         synced = item["syncedHead"]
         if synced is None or item["stage"] not in ("synced", "checking", "checked", "stopped"):
@@ -1869,10 +1877,12 @@ class Runner:
             if changes:
                 raise Stop("no_checks", "nothing would check this candidate's changes")
             result.notes.append("the candidate changes nothing, so no check was selected")
+        # A plan made for another base head says nothing of the commits after it: then every check runs again.
+        carry = self.carry(subject, checks, carried if carried and carried["to"] == base_head else None, result)
         self.write_progress([subject], [{"id": check["id"], "state": "pending", **check_title(check)} for check in checks])
         reused = self.reusable([(subject, item)], checks, self.tree(synced))
         outcomes = self.run_checks([subject], checks, checkout, context.with_values(treeSha=self.tree(synced)), result,
-                                   reused=reused)
+                                   reused=reused, carried=carry)
         self.assert_clean(checkout, "the checkout after the checks")
         failed = [check for check in checks if outcomes[check["id"]] in ("failed", "timed_out")]
         if failed:
@@ -1882,10 +1892,82 @@ class Runner:
         self.journal("check.finished", f"Checks passed for {item['title']}", subject)
         result.outcome = "checked"
 
+    def carry(self, subject: str, checks: list[dict], carried: dict | None, result: Result) -> dict[str, dict]:
+        """Of the checks selected now, those the base move carries, journaled once; a check that runs again needs its
+        prerequisites' output, so they run again too."""
+        self.carried_now = []
+        if not carried:
+            return {}
+        carry = {check["id"]: carried["checks"][check["id"]] for check in checks if check["id"] in carried["checks"]}
+        dropped = True
+        while dropped:
+            dropped = False
+            for check in checks:
+                if check["id"] not in carry:
+                    for name in check["prerequisites"]:
+                        if carry.pop(name, None) is not None:
+                            dropped = True
+        if carry:
+            commits = carried["commits"]
+            again = [check["id"] for check in checks if check["id"] not in carry]
+            words = (f"Carried {', '.join(carry)} to {self.base} at {carried['to']}: {len(commits)} base "
+                     f"commit{'' if len(commits) == 1 else 's'} ({', '.join(commits)}) changed nothing "
+                     f"{'it reads' if len(carry) == 1 else 'they read'} or {subject} changes; "
+                     + (f"ran again: {', '.join(again)}" if again else "nothing ran again"))
+            self.journal("check.carried", words, subject)
+            result.notes.append(words)
+        self.carried_now = list(carry)
+        return carry
+
     def assert_clean(self, checkout: Path, what: str) -> None:
         changed = self.changed_paths(checkout)
         if changed:
             raise Stop("dirty_checkout", f"{what} is not clean", changed)
+
+    def carry_plan(self, subject: str) -> dict | None:
+        """The passed checks a base move carries to the new base with no run again, or None when it carries none.
+
+        The move is the base's commits since the base the synced head was checked on, its files listed without rename
+        detection, so a rename is a path removed and a path added. Nothing carries when one of them is in the
+        candidate's own diff. Otherwise every passed check carries when every file matches ``selection.unread``;
+        failing that, a check carries when its read set is known, every readers entry naming it being complete, and no
+        file is in it. The binding file is read by every check and matches no unread pattern. An alwaysRun check
+        carries only on a move wholly unread.
+        """
+        selection = self.binding.get("selection") or {}
+        readers = selection.get("readers") or []
+        unread = selection.get("unread") or []
+        item = self.item(subject)
+        synced = item["syncedHead"]
+        if synced is None:
+            return None
+        moved_to = self.fetch(self.base, "base")
+        checked_on = self.git("merge-base", synced, moved_to, check=False).stdout.strip()
+        if not checked_on or checked_on == moved_to:
+            return None
+        moved = sorted({path for path in self.git("diff", "--name-only", "--no-renames", "-z", checked_on, moved_to)
+                       .stdout.split("\0") if path})
+        own = {path for change in self.changes(checked_on, synced) for path in (change["path"], change.get("oldPath"))
+               if path}
+        if not moved or own.intersection(moved):
+            return None
+        unread_only = all(path != BINDING_PATH and matches_any(path, unread) for path in moved)
+        # Readers name catalogue ids only, so an alwaysRun check's read set is never known; the rule says so anyway.
+        always = {check["id"] for check in self.binding["alwaysRun"]}
+        carried = {}
+        for row in item["checks"]:
+            if row["state"] not in ("passed", "reused"):
+                continue
+            entries = [entry for entry in readers if row["id"] in entry["checks"]]
+            known = bool(entries) and all(entry.get("complete") is True for entry in entries)
+            read = [pattern for entry in entries for pattern in entry["paths"]]
+            if unread_only or (row["id"] not in always and known and BINDING_PATH not in moved
+                               and not any(matches_any(path, read) for path in moved)):
+                carried[row["id"]] = row
+        if not carried:
+            return None
+        commits = self.git("rev-list", "--reverse", f"{checked_on}..{moved_to}").stdout.split()
+        return {"checks": carried, "to": moved_to, "commits": commits}
 
     def changes(self, base_head: str, head: str) -> list[dict]:
         listed = self.git("diff", "--name-status", "-z", "-M", "-C", base_head, head).stdout.split("\0")
@@ -2178,10 +2260,14 @@ class Runner:
 
     def run_checks(
         self, subjects: list[str], checks: list[dict], checkout: Path, context: Context, result: Result,
-        whole_run: bool = True, reused: dict[str, dict] | None = None,
+        whole_run: bool = True, reused: dict[str, dict] | None = None, carried: dict[str, dict] | None = None,
     ) -> dict[str, str]:
-        """Run the checks in order, and record each one the lane's evidence lets this run reuse instead."""
+        """Run the checks in order, and record each one the lane's evidence lets this run reuse instead.
+
+        A check a base move carried keeps the record of its passed run before the move, and does not run.
+        """
         reused = reused or {}
+        carried = carried or {}
         outcomes: dict[str, str] = {}
         records = {check["id"]: {"id": check["id"], "state": "pending", **check_title(check)} for check in checks}
         history = self.history()["checks"]
@@ -2238,6 +2324,13 @@ class Runner:
                         outcomes[check["id"]] = "skipped"
                         records[check["id"]]["state"] = "skipped"
                         result.checks.append({"id": check["id"], "state": "skipped", "exitCode": None, "seconds": 0})
+                        show()
+                        continue
+                    if check["id"] in carried:
+                        # Its run before the base move stands: the move changed nothing it reads.
+                        pending.pop(0)
+                        outcomes[check["id"]] = "passed"
+                        records[check["id"]] = {**carried[check["id"]], "id": check["id"], "state": "passed"}
                         show()
                         continue
                     if check["id"] in reused:
@@ -2306,7 +2399,7 @@ class Runner:
                     for subject in subjects:
                         self.journal("check.failed", said + self.failure_text(entry["id"], result), subject)
         # A run that reused a check is not a whole run, so it does not shorten the run estimates.
-        whole = checks and whole_run and not reused
+        whole = checks and whole_run and not reused and not carried
         self.record_history(passed, flaked, int(round(time.monotonic() - began)) if whole else None)
         return outcomes
 
@@ -2979,9 +3072,42 @@ class Runner:
         finally:
             shutil.rmtree(self._bootstrap_hooks, ignore_errors=True)
 
+    @contextlib.contextmanager
+    def slot(self) -> Iterator[None]:
+        """Hold the base's merge slot, which every delivery's queue and lead commands on this machine share, for the
+        whole command; held past the wait, the command attempts nothing, as when another runner holds the queue."""
+        wait = self.slot_wait
+        if wait is None:
+            wait = 0.0
+            # The binding as this checkout last fetched it: fetching now would race a peer's fetch outside the slot.
+            for ref in (f"{PRIVATE_REF}/base", f"refs/remotes/{self.remote}/{self.base}"):
+                shown = self.git("show", f"{ref}:{BINDING_PATH}", check=False)
+                with contextlib.suppress(ValueError, TypeError, AttributeError):
+                    wait = float(json.loads(shown.stdout)["checkTimeoutSeconds"])
+                    break
+        delivery = self.state_directory.name
+        with contextlib.suppress(delivery_state.StateError, OSError, KeyError):
+            delivery = delivery_state.read_state(self.state_directory)["meta"]["headline"]
+        try:
+            delivery_state.merge_slot_path(self.repository, self.base)
+        except delivery_state.StateError as error:
+            if error.code != "slot_unavailable":
+                raise
+            # Not a checkout, so the command can move no base: it refuses on its own, as before, with no slot.
+            yield
+            return
+        try:
+            with delivery_state.merge_slot(self.repository, self.base, delivery=delivery, timeout=wait,
+                                           after_merge=self.after_merge):
+                yield
+        except delivery_state.StateError as error:
+            if error.code == "slot_held":
+                raise Stop("queue_locked", f"{error}; nothing was attempted, and serve tries again") from None
+            raise
+
     def run_command(self, subcommand: str, subjects: list[str], approved_by: str | None = None) -> list[Result]:
         try:
-            with self.locked():
+            with self.slot(), self.locked():
                 # A state that cannot be read or written is reported by the subcommand itself, as before.
                 with contextlib.suppress(delivery_state.StateError, OSError):
                     self.recover_interrupted()
@@ -3009,18 +3135,38 @@ class Runner:
         return results
 
     def _run_one(self, subject: str, results: list[Result]) -> str:
-        """Sync, check and merge one candidate; a base that moves once is re-synced."""
-        for attempt in (1, 2):
+        """Sync, check and merge one candidate; a base that moves once is re-synced.
+
+        A move after the checks passed that carries at least one of them to the new base (see carry_plan) is re-synced
+        too, running only what it doesn't carry, and doesn't spend that one retry. A re-sync begun for a carry that the
+        check then carried nothing of spends it after all, so a candidate the base keeps moving under still stops.
+        """
+        retries = 1
+        carried: dict | None = None
+        while True:
             for name, step in (("sync", self.sync), ("check", self.check), ("merge", self.merge)):
+                if name == "check" and carried:
+                    step = functools.partial(self.check, carried=carried)
+                self.carried_now = []
                 result = self.prepared(name, subject, lambda result, step=step: step(subject, result))
                 results.append(result)
+                if name == "check" and carried and result.outcome == "checked" and not self.carried_now:
+                    retries -= 1
                 if result.outcome == "stopped" or result.outcome == "refused":
-                    if result.stop and result.stop["reason"] == "base_moved" and attempt == 1:
-                        break
+                    if result.stop and result.stop["reason"] == "base_moved":
+                        # A plan that can't be made carries nothing: the move spends the retry as before.
+                        carried = None
+                        with contextlib.suppress(Stop, RuntimeError, delivery_state.StateError):
+                            carried = self.carry_plan(subject) if name == "merge" else None
+                        if name == "merge" and carried and retries >= 0:
+                            break
+                        carried = None
+                        if retries > 0:
+                            retries -= 1
+                            break
                     return "stopped"
             else:
                 return "merged"
-        return "stopped"
 
 
 # ---------------------------------------------------------------------------
@@ -3213,6 +3359,7 @@ def serve(
     on_result: Callable[[Result], None] | None = None,
     clock: Callable[[], float] = time.monotonic,
     before_turn: Callable[[], None] = lambda: None,
+    slot_wait: float | None = None,
 ) -> list[Result]:
     """Take what is queued, in order, whenever the merge slot is free.
 
@@ -3259,6 +3406,8 @@ def serve(
     member = (binding or {}).get("state", {})
     interval = delivery_state.refresh_interval(member)
     due = clock()
+    # A turn that merged lets a command waiting for the base's merge slot go first on the next.
+    merged_last = False
 
     def pause() -> None:
         # An idle wait ends when the next read of the sources is due, so it is never late by a poll.
@@ -3298,10 +3447,12 @@ def serve(
             pause()
             continue
         heads = {item["subject"]: item["head"] for item in state["queue"]}
-        runner = Runner(repository, state_directory, remote=remote, base=base, lead=lead, seams=seams)
+        runner = Runner(repository, state_directory, remote=remote, base=base, lead=lead, seams=seams,
+                        slot_wait=slot_wait, after_merge=merged_last)
         # Last, since dropping the previous runner above runs its finalizer, where a stop can land.
         before_turn()
         taken = runner.run_command("batch" if len(waiting) > 1 else "run", waiting)
+        merged_last = any(result.outcome == "merged" for result in taken)
         if all(result.stop is not None and result.stop["reason"] == "queue_locked" for result in taken):
             # Another runner holds the queue: nothing was attempted, so nothing is recorded.
             if until_idle:
