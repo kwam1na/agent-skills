@@ -1342,14 +1342,19 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         last = review / "round-2.json"
         kept = last.read_text()
 
-        def noted(notes: dict[int, list[str]]) -> None:
-            """Round 2 with these evidence lines added, by entry."""
+        def noted(notes: dict[int, list[str]], first: bool = False) -> None:
+            """Round 2 with these evidence lines added, by entry: after its evidence, or `first`, before it."""
             outcome = json.loads(kept)
             for i, lines in notes.items():
-                outcome["entries"][i]["result"]["evidence"] += lines
+                evidence = outcome["entries"][i]["result"]["evidence"]
+                evidence[:0 if first else len(evidence)] = lines
             last.write_text(json.dumps(outcome))
 
-        for name, notes, said in (
+        for name, notes, said, *first in (
+                ("before the lens's other evidence", {0: ["Declined: ahead of the tree line"]},
+                 [f"{lens0}: Declined: ahead of the tree line"], True),
+                ("two on one lens", {1: ["Declined: the first", "The second, not filed"]},
+                 [f"{lens1}: Declined: the first", f"{lens1}: The second, not filed"]),
                 ("Declined", {0: ["Declined: the stricter member rule"]}, [f"{lens0}: Declined: the stricter member rule"]),
                 ("not filed", {0: ["A redundant refusal call, not filed"]}, [f"{lens0}: A redundant refusal call, not filed"]),
                 ("surviving mutant", {1: ["One surviving mutant on the retry path"]},
@@ -1359,7 +1364,7 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
                 ("beside nothing left unfixed", {0: ["Declined: beside the clean line"]},
                  [f"{lens0}: Declined: beside the clean line"])):
             with self.subTest(name):
-                noted(notes)
+                noted(notes, *first)
                 code, out = fx.flow("handoff", "FX-2", "--pr", url, cwd=wt)
                 self.assertEqual(code, 2, out)
                 self.assertIn("round 2's evidence holds notes, and this delivery takes no deferrals", out)
@@ -1369,12 +1374,23 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         last.write_text(kept)
         code, out = fx.flow("handoff", "FX-2", "--pr", url, cwd=wt)
         self.assertEqual(code, 0, out)
-        # lead-accept prints the last round's notes, each with its lens, and not round 1's.
-        noted({0: ["Declined: a note the lead reads"], 1: ["One surviving mutant, for the lead"]})
+        # lead-accept prints the last round's notes, each with its lens, and not round 1's: none for a clean round.
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertIn("round 2's evidence notes, under noDeferrals: none", out)
+        self.assertNotIn("an earlier note", out)
+        noted({0: ["Declined: a note the lead reads"], 1: ["One surviving mutant, for the lead", "A second, not filed"]},
+              first=True)
         code, out = fx.flow("lead-accept", "FX-2", cwd=m)
         self.assertIn(f"round 2's evidence notes, under noDeferrals:\n  {lens0}: Declined: a note the lead reads\n"
-                      f"  {lens1}: One surviving mutant, for the lead", out)
+                      f"  {lens1}: One surviving mutant, for the lead\n  {lens1}: A second, not filed\n", out)
         self.assertNotIn("an earlier note", out)
+        # A round file in none of the story's review folders is said to be unreadable, and nothing is printed for it.
+        last.rename(review / "round-2.kept")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertIn("round 2's evidence notes: its round file isn't in the story's review folders, so they can't be "
+                      "read", out)
+        self.assertNotIn("Traceback", out)
 
     def test_lead_assign_warns_of_files_outside_the_lane_before_it_starts(self) -> None:
         fx = self.fixture()
