@@ -4614,6 +4614,10 @@ class BaseRepairTests(MergeQueueTestCase):
         self.assertIn("repair", adopter.item("b"))
         with self.assertRaises(state_tool.StateError):
             state_tool.name_repair(adopter.state, "a", withdraw=True)
+        # A refusal of the named repair attempted nothing, so it says nothing of the base still waiting on it.
+        [refused] = adopter.runner().run_command("merge", ["b"])
+        self.assertEqual((refused.document()["outcome"], refused.document()["stop"]["reason"]), ("refused", "not_synced"))
+        self.assertNotIn("named repair", refused.document()["stop"]["detail"])
         # The mark is the repair command's alone: no patch sets it.
         current = state_tool.read_state(adopter.state)
         with self.assertRaises(state_tool.StateError):
@@ -4622,6 +4626,22 @@ class BaseRepairTests(MergeQueueTestCase):
         # A base.repaired journalled by hand clears it.
         state_tool.append_journal(adopter.state, kind="base.repaired", summary="fixed by hand")
         self.assertEqual([item["subject"] for item in state_tool.read_state(adopter.state)["queue"] if "repair" in item], [])
+
+    def test_only_a_base_broken_break_names_the_head_a_repair_puts_back_at(self) -> None:
+        adopter = self.adopter()
+        adopter.enqueue("c", "c" * 40)
+        current = state_tool.read_state(adopter.state)
+        state_tool.patch(adopter.state, writer="runner", version=current["version"], selector="queue[subject=c]",
+                         changes={"stage": "stopped"})
+        broke, other = "a" * 40, "e" * 40
+        stopped = f"base_broken: lint also fails on main at {broke}"
+        state_tool.append_journal(adopter.state, kind="base.broken", summary=stopped, subject="c")
+        state_tool.append_journal(adopter.state, kind="candidate.stopped", summary=stopped, subject="c")
+        # A later break of another kind names another commit; it does not move the head the repair answers.
+        state_tool.append_journal(adopter.state, kind="base.broken",
+                                  summary=f"merged_unverified: main at {other} is not the checked tree on top of {broke}")
+        state_tool.append_journal(adopter.state, kind="base.repaired", summary="fixed by hand")
+        self.assertEqual(adopter.item("c")["stage"], "queued")
 
     def test_the_repair_command_names_and_withdraws_on_the_command_line(self) -> None:
         adopter = self.adopter()
@@ -4652,14 +4672,32 @@ class BaseRepairTests(MergeQueueTestCase):
 
     def test_a_base_repaired_by_hand_puts_back_what_the_break_stopped_and_serve_takes_them(self) -> None:
         adopter = self.adopter()
+        current = state_tool.read_state(adopter.state)
+        state_tool.patch(adopter.state, writer="lead", version=current["version"], changes={"lanes": [
+            {"id": lane, "title": lane, "focus": "", "state": "working", "waitingOn": None, "since": state_tool.now()}
+            for lane in ("lane-1", "lane-2")]})
+        # lane-1 holds only the two the break stops, so its row reads what the requeue does to them.
         self.candidate(adopter, {"tests/test_own.txt": "FAIL\n"}, name="own")
+        adopter.lead_set("own", lane="lane-2")
         self.assertStopped(self.run_queue(adopter, "own"), "check_failed")
         adopter.advance_base(self.BROKEN)
         self.break_with(adopter, "first", "second")
-        # The fix lands by hand, then the lead says so.
-        adopter.advance_base({"src/app.txt": "app fixed\n", "gen/generated.txt": "app fixed\nlib one\n"})
+        self.assertTrue(adopter.item("second")["checks"])
+        # The fix lands through the queue, from another lane, without being named: its merge says nothing of the base.
+        self.candidate(adopter, {"src/app.txt": "app fixed\n"}, name="fix")
+        adopter.lead_set("fix", lane="lane-2")
+        self.assertEqual(self.run_queue(adopter, "fix")[-1].document()["outcome"], "merged")
+        self.assertEqual(self.journal(adopter, "base.repaired"), [])
+        self.assertTrue(self.awaits_repair(adopter))
+        self.assertEqual((adopter.item("first")["stage"], adopter.item("second")["stage"]), ("stopped", "stopped"))
+        lane = next(row for row in state_tool.read_state(adopter.state)["lanes"] if row["id"] == "lane-1")
+        self.assertTrue(lane["focus"].startswith(("first stopped:", "second stopped:")), lane)
+        # The lead says so.
         state_tool.append_journal(adopter.state, kind="base.repaired", summary="app fixed by hand")
-        self.assertEqual((adopter.item("first")["stage"], adopter.item("second")["stage"]), ("queued", "queued"))
+        for subject in ("first", "second"):
+            self.assertEqual((adopter.item(subject)["stage"], adopter.item(subject)["checks"]), ("queued", []), subject)
+        lane = next(row for row in state_tool.read_state(adopter.state)["lanes"] if row["id"] == "lane-1")
+        self.assertFalse(lane["focus"].startswith(("first stopped:", "second stopped:")), lane)
         self.assertEqual(adopter.item("own")["stage"], "stopped")
         self.serve(adopter)
         self.assertEqual((adopter.item("first")["stage"], adopter.item("second")["stage"]), ("merged", "merged"))
@@ -6596,6 +6634,11 @@ class LeadSelectionTests(MergeQueueTestCase):
         self.assertIn("selection_invalid", warning)
         # The selection is still recorded.
         self.assertEqual(adopter.item("second")["leadSelection"]["checks"][0]["timeoutSeconds"], 5)
+        # A selection on a row that is not queued can't batch with it, so it says nothing.
+        current = state_tool.read_state(adopter.state)
+        state_tool.patch(adopter.state, writer="runner", version=current["version"], selector="queue[subject=first]",
+                         changes={"stage": "stopped"})
+        self.assertEqual(self.select_on_the_command_line(adopter, "second", [{**first, "timeoutSeconds": 7}])["warnings"], [])
 
 
 class CheckCatalogueQueueTests(MergeQueueTestCase):

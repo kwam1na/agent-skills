@@ -1749,12 +1749,13 @@ def name_repair(directory: Path, subject: str, *, withdraw: bool = False) -> dic
     base.repaired journaled any way clears the mark. Refused on a base that is not broken, for a row that is not
     queued, and while another row carries the mark.
     """
-    journal = read_journal(directory)
 
     def change(state: dict) -> dict:
         item = next((entry for entry in state["queue"] if entry["subject"] == subject), None)
         if item is None:
             raise StateError("subject_unknown", f"{subject} is not queued")
+        # Read under the state lock every journal append holds, so no base.repaired lands between the check and the mark.
+        journal = read_journal(directory)
         if withdraw:
             if "repair" not in item:
                 raise StateError("repair_invalid", f"{subject} is not named as the repair")
