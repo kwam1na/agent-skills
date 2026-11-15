@@ -340,8 +340,10 @@ def _raised(report: dict, states: dict[str, str]) -> list[dict]:
         if not (identifier and lens and severity and said):
             continue
         state = states.get(identifier) or RAISED_STATES.get(_text(note.get("state")) or "") or "unresolved"
+        # How the report filed it stays beside the state the run last observed.
         raised.append({"id": _clip(identifier), "lens": _clip(lens), "severity": severity,
                        "summary": _plain(said)[:SUMMARY_LENGTH], "state": _clip(state),
+                       "filed": "deferred" if note.get("state") == "deferred" else "open",
                        "deferredIssue": _issue(note.get("deferredIssue"))})
     return raised[:REPORT_NOTES_KEPT]
 

@@ -94,6 +94,13 @@ result a report names. A run that cannot be read shows as unavailable; without
 `runs` there is no run section at all. All of a render's run commands share the
 deadline under "Runs, cache and storage" below; `--deadline-seconds` sets it.
 
+A round card's raised finding keeps how its lens filed it, as `filed` (`deferred`
+or `open`) beside the `state` later rounds give it. A round every lens approved
+while filing deferrable findings reads "Approved with N deferrable notes", or
+"Approved with 1 deferrable note", whether or not a later round fixed them; each
+such row reads "Deferred" with its severity's word. A round that filed none reads
+"Approved", and one with notes still open "Approved, notes open".
+
 A round whose report names a `briefs` member retains each reviewer's brief and
 result in its embedded evidence. The Brief / Result control row is hidden;
 reviewer verdicts, findings and fix closures remain visible. Stored evidence is

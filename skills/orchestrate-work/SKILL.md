@@ -294,7 +294,10 @@ python3 -B <skill>/scripts/merge_queue.py [--repo <checkout top level>] --state 
   the base, the checking panel's `baseRerun` says the candidate failed and
   waits on that re-run; its start and its verdict are journaled as
   `base.rerun.started` and `base.rerun.finished`, so the journal reads failure,
-  re-run start, verdict, stop. A failure made only of the binding's
+  re-run start, verdict, stop. A re-run that was stopped, not failed, is no
+  verdict: it journals `base.rerun.stopped`, breaks no base and puts the
+  candidate back to `queued`, once for each pair of candidate and base heads;
+  a second stop at the same pair stops it as `base_rerun_stopped`. A failure made only of the binding's
   declared flakes is retried once and journaled as `check.retried`; any other
   failure is never retried. A check the binding lists in `reusableChecks` is
   not run again when the synced tree is exactly the tree the lane's hand-off

@@ -356,7 +356,11 @@ function runSummaryNode(summary, options) {
       box.appendChild(candidate);
     }
     head.appendChild(node("b", null, nameOf(round, index)));
-    var pill = outcome === "approve" ? "Approved" : outcome === "changes" ? "Changes requested" : outcome === "notes-open" ? "Approved, notes open" : outcomeWords(round);
+    // An approval that came with findings its lenses filed as deferred counts them, whatever later rounds made of them.
+    var deferrable = Array.isArray(round.raised) && !isFold(round)
+      ? round.raised.filter(function (entry) { return isNote(entry) && entry.filed === "deferred"; }).length : 0;
+    var pill = outcome === "approve" ? (deferrable ? "Approved with " + deferrable + (deferrable === 1 ? " deferrable note" : " deferrable notes") : "Approved")
+      : outcome === "changes" ? "Changes requested" : outcome === "notes-open" ? "Approved, notes open" : outcomeWords(round);
     head.appendChild(node("span", "run-card-outcome", pill.charAt(0).toUpperCase() + pill.slice(1)));
     box.appendChild(head);
     var verdicts = round.verdicts && typeof round.verdicts === "object" ? round.verdicts : {};
@@ -405,7 +409,13 @@ function runSummaryNode(summary, options) {
             // Summaries are sentences; one stored without its full stop gets one here.
             var said = node("span", "run-finding-text", entry.summary + (/[.!?\u2026:)"'\u201D]$/.test(entry.summary) ? "" : "."));
             item.appendChild(said);
-            if (!uniform) { item.appendChild(stateNode(entry, known[entry.id])); }
+            // A finding its lens filed as deferred says so beside its fate, the two sharing the row's second cell.
+            var marks = item;
+            if (entry.filed === "deferred") {
+              marks = item.appendChild(node("span", "run-marks"));
+              marks.appendChild(node("span", "run-filed", "Deferred · " + WORDS[severity]));
+            }
+            if (!uniform) { marks.appendChild(stateNode(entry, known[entry.id])); }
             list.appendChild(item);
           });
           group.appendChild(list);

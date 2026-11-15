@@ -220,6 +220,7 @@
                 "severity": "P3",
                 "summary": "A changed-file rerun that changes a severity prints two warnings, and the second wrongly says the run lacks review.round.closed",
                 "state": "resolved",
+                "filed": "open",
                 "deferredIssue": null
               },
               {
@@ -228,6 +229,7 @@
                 "severity": "P2",
                 "summary": "The fixed-without-a-commit refusal test passes on the unknown-id check, so removing the fixCommit rule goes undetected",
                 "state": "resolved",
+                "filed": "open",
                 "deferredIssue": null
               },
               {
@@ -236,6 +238,7 @@
                 "severity": "P3",
                 "summary": "The duplicate resolution id refusal has no test",
                 "state": "resolved",
+                "filed": "open",
                 "deferredIssue": null
               },
               {
@@ -244,6 +247,7 @@
                 "severity": "P3",
                 "summary": "The 280-code-point summary limit is only tested from above, so counting UTF-16 units goes undetected",
                 "state": "resolved",
+                "filed": "open",
                 "deferredIssue": null
               },
               {
@@ -252,6 +256,7 @@
                 "severity": "P3",
                 "summary": "mkdtemp runs outside the try, so a temp-directory failure escapes and can change harness:review-outcome's exit code",
                 "state": "resolved",
+                "filed": "open",
                 "deferredIssue": null
               }
             ],

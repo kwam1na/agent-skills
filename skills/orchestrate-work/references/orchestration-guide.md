@@ -133,6 +133,7 @@ the lead and the lanes make them instead, as the commands print them.
 | `base.moved` | On the epic, record the previous and published base heads and the default branch commit. |
 | `base.rerun.started` | None: the candidate's failure already reached the lead as `check.failed`, and the record and the views show the re-run in progress. |
 | `base.rerun.finished` | None: its verdict posts with `candidate.stopped`, or with `base.broken` when the base fails the check too. |
+| `base.rerun.stopped` | None: a stopped re-run has no verdict, the candidate is queued again and checked once more, and a second stop at the same heads posts with `candidate.stopped`. |
 | `lease.granted` | On the ticket whose work needs the lease: the lease, its holder and when it will be released. |
 | `lease.released` | On the same ticket: the lease is released. |
 | `release.started` | None: the release posts once it finishes. |
@@ -316,6 +317,7 @@ supervisor's.
   | `provider_refused` | Under `selection.refusalStops`, the provider exited non-zero, so no check ran and the candidate is held. Its words are in `checkSelection.detail` and in `selection.refused`. Select its checks for its reviewed head, then re-queue it. |
   | `check_failed` | Return the failing check's output to the lane. |
   | `base_broken` | Stop and follow the base-broken rules. |
+  | `base_rerun_stopped` | The base re-run of the candidate's failing check was stopped twice at the same candidate and base heads, so its failure is neither the base's nor known to be its own. Find what stopped the re-run, then re-queue. |
   | `base_moved` | The base moved after the candidate was synced. `run` re-syncs and re-checks once and stops on a second move; a standalone `check` or `merge` stops at once. Re-queue. |
   | `not_synced` | Run `sync` before `check` or `merge`. |
   | `push_refused`, `ready_refused`, `merge_refused` | The forge refused the push, the `ready` gate, or the merge. Read the output, resolve it, and re-queue. |
@@ -990,7 +992,9 @@ round. A lane's own judgement does not close another lens's finding.
 The runner classifies a failing check as `base_broken`, not `check_failed`,
 only when every path the check names exists unchanged at the base head, and
 the same check also fails on a fresh checkout of the base head. A broken base
-stops the whole queue, because no candidate can be checked against it.
+stops the whole queue, because no candidate can be checked against it. A
+re-run that was stopped before its verdict fails nothing, and journals
+`base.rerun.stopped`, not `base.broken` (see "A stopped base re-run").
 
 When the runner reports `base_broken`:
 
@@ -1394,6 +1398,19 @@ binding declares may change.
   `base_broken` stop and its `base.broken` entry name the check, its failing
   tests and the re-run's log, in the words `check.failed` uses for the
   candidate's run, and `base.rerun.finished` links each re-run's log.
+- **A stopped base re-run.** A re-run whose check was stopped is no verdict on
+  the base: one that died by a signal, one that exited 129 up to 128 plus the
+  platform's highest signal number (130 or 143 from a runner that was
+  interrupted or terminated), or one that ended because the runner itself was
+  interrupted. A check that exits in that range with no signal sent cannot be
+  told from a stopped one and reads as stopped. An exit of 128, one above the
+  range, and a timeout are failures, as before. A stopped re-run journals
+  `base.rerun.stopped` in place of `base.rerun.finished`, joins no
+  `meta.baseReruns`, journals no `base.broken`, and leaves the queue free: the
+  candidate goes back to `queued` and is checked again without the lead, once
+  for each pair of candidate head and base head, and the lead's wait does not
+  wake for it. A second stopped re-run at the same pair stops the candidate as
+  `base_rerun_stopped`, journaled as `candidate.stopped`.
 - **Queue estimates.** The state tool's `show` adds a position and an expected
   start for each candidate waiting at `queued`. The start counts what remains
   of the run in progress once (a batch is one run), then one median run for

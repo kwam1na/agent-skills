@@ -198,7 +198,7 @@
       "outputs": [
         {
           "path": "skills/delivery-views/SKILL.md",
-          "sha256": "8cb773f676b9b8eeea1e243eab789f097f795e2c2262cc32aae89726fa719239"
+          "sha256": "2a7ae66cf40cf9d6154c62282468b85ccb364ac5ef41cbf0151232808f16aa15"
         },
         {
           "path": "skills/delivery-views/assets/history.css",
@@ -214,15 +214,15 @@
         },
         {
           "path": "skills/delivery-views/assets/line-map.js",
-          "sha256": "856ca266373bc7c6869748993fa85075cda847a7471089665161efb2ec65432f"
+          "sha256": "3c78d1bab419ab1e36523a897748d72c51bf03412c927c3015d35dfc2d9de112"
         },
         {
           "path": "skills/delivery-views/assets/run-summary.css",
-          "sha256": "ec3a04c25d5f2a22f30a4aedce43262c834bfaa75191c2748fc21ceae8b67611"
+          "sha256": "6028c227833a2d0292bd54cfb4e797d742338877fb2aba396d00706a069ddbb8"
         },
         {
           "path": "skills/delivery-views/assets/run-summary.js",
-          "sha256": "3dbf64b44491812b680b6316bbbe095c6a69115f362f5a5cd2c624bf5309b6b5"
+          "sha256": "5d8ff15abaf6d1de04ed5d8102e763d4daa5caf10bee4c1fb4ca1fcfa883b605"
         },
         {
           "path": "skills/delivery-views/references/delivery-plan.schema.json",
@@ -230,11 +230,11 @@
         },
         {
           "path": "skills/delivery-views/scripts/render.py",
-          "sha256": "410726390f37005abc9c16c64e362047d05c3b2d1f0dd7606c49e5734bfd1858"
+          "sha256": "f57337a8da5d5dbb315edaf6c68365fd19970fc9172495a229c99d419456dbf3"
         },
         {
           "path": "skills/delivery-views/scripts/review_projection.py",
-          "sha256": "4f5a7ffe717fc5db4fa4a414e748cfc1df86fdfb852d036ce8f089becf934983"
+          "sha256": "31970f3cc1ca30b32338f32dc3754fa125d8b24e64c6b530742aed264e5dea85"
         },
         {
           "path": "skills/delivery-views/scripts/snapshot.py",
@@ -469,15 +469,15 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "6e7d062a466f89ed4e3837725daffbfc5073491856cadee0f70ed8bee9040032"
+          "sha256": "7675ae82e097b08863b742cf63dc6fc283989d1d7de1d82df9f838f6ae43aa97"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "96301d48ec7fbb852e700d50655e317b1f04d84e2463d261da34774caa8fa7c9"
+          "sha256": "2cdd9c99ac616744323512930525ae0394c4d4785f888c8d4c57fc61427510f0"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
-          "sha256": "84d1333b519ee381ec535a44b6fadaf5ce2af6ade867dce6e355f1537a11773d"
+          "sha256": "b48f8fbb36760c0774ecb04fa0ad1fa6ad9a1963662ca14610df829cea7febd7"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
@@ -485,7 +485,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",
-          "sha256": "74d969dbca860038351d1316c08364211f0c6d4eb51daeaaf5e9ddd0c1cfc4d9"
+          "sha256": "296253caa6ebd4947944d7105d6df6b8b400df2c691c4425c554346ddc6df52c"
         },
         {
           "path": "skills/orchestrate-work/scripts/region_ownership.py",
@@ -1050,7 +1050,7 @@
         },
         {
           "path": "skills/run-delivery/references/adopting.md",
-          "sha256": "ebc35b229388876fabae2679c6328494b44769e4a90aa4fbd815c43c2affb650"
+          "sha256": "382c87aee57fd7b10346d31cfa2cbe608d5769c7392f62cd4aa93afc96d97663"
         },
         {
           "path": "skills/run-delivery/references/config.md",
@@ -1062,11 +1062,11 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "70ce44c59ec358cbe9bd01e94b6a3b7530030369dc665246f377d58d69acf02b"
+          "sha256": "f7cb24c6200e845b3540e10f039e9b437bf8be107879b4e8a1d8e583d7e2d5bb"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
-          "sha256": "31b6363f5d89f1a8e45ed24f197ff49d00c38df0ca6174cb973edc51668767a0"
+          "sha256": "7366da80ffb437892f7bff905f715851330d14bb02ac7c3a349d4d392fb346ef"
         },
         {
           "path": "skills/run-delivery/templates/evidence.html",
