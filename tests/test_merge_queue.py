@@ -129,6 +129,39 @@ if args[:1] == ["--base-flake"]:
         print("FAIL: test_launcher_cancel flaked on the base")
         sys.exit(1)
     sys.exit(0)
+if args[:1] == ["--stoppable"]:
+    # Fails for real on a tree carrying the candidate's file. On the base, while armed, a run ends as `how` says:
+    # it waits for the test to signal its pid (die, or trap and exit 143 or 130), or exits with a code on its own.
+    # With `flake`, the first base run fails on a declared flake first. A run past the arming passes.
+    if pathlib.Path("src/candidate.txt").exists():
+        print("FAIL: test_real boom")
+        sys.exit(1)
+    how = args[1]
+    runs = pathlib.Path(os.environ["MQ_LOG"] + ".base-runs")
+    count = int(runs.read_text()) + 1 if runs.exists() else 1
+    runs.write_text(str(count))
+    if how == "flake" and count == 1:
+        print("FAIL: test_launcher_cancel flaked on the base")
+        sys.exit(1)
+    armed = pathlib.Path(os.environ["MQ_LOG"] + ".armed")
+    left = int(armed.read_text()) if armed.exists() else 0
+    if left < 1:
+        sys.exit(0)
+    armed.write_text(str(left - 1))
+    if how.startswith("exit:"):
+        sys.exit(int(how[5:]))
+    import signal
+    if how == "term143":
+        signal.signal(signal.SIGTERM, lambda *_: os._exit(143))
+    if how == "int130":
+        signal.signal(signal.SIGINT, lambda *_: os._exit(130))
+    pid = os.environ["MQ_LOG"] + ".pid-" + str(count)
+    pathlib.Path(pid + ".tmp").write_text(str(os.getpid()))
+    os.replace(pid + ".tmp", pid)
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        time.sleep(0.05)
+    sys.exit(0)
 if args[:1] == ["--flaky-once"]:
     # Fails the first time only, naming its tests; a flag file remembers the first run.
     flag = pathlib.Path(os.environ["MQ_LOG"] + ".flaked-" + name)
@@ -4018,6 +4051,9 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.candidate(adopter, {"src/candidate.txt": "candidate\n"})
         document = self.assertStopped(self.run_queue(adopter, "feature"), "base_broken")
         self.assertIn("hang", document["stop"]["detail"])
+        # A timeout is a failure, never a stop: the base is broken.
+        self.assertEqual(len(self.journal(adopter, "base.broken")), 1)
+        self.assertEqual(self.journal(adopter, "base.rerun.stopped"), [])
         self.assertEqual(self.journal(adopter, "check.retried"), [])
         history = state_tool.read_state(adopter.state)["meta"]["checkHistory"]["checks"]
         self.assertEqual(history.get("hang", {}).get("flakes", 0), 0)
@@ -4255,6 +4291,213 @@ class CheckVisibilityTests(MergeQueueTestCase):
                 adopter = self.adopter(changes)
                 self.candidate(adopter)
                 self.assertStopped(self.run_queue(adopter, "feature"), "binding_invalid")
+
+
+class StoppedBaseRerunTests(MergeQueueTestCase):
+    """A base re-run that was stopped says nothing of the base: the candidate is checked again, once a pair of heads."""
+
+    FLAKES = [{"check": "stop", "tests": ["test_launcher_.*"], "ref": "FLAKE-9"}]
+
+    def stoppable(self, how: str, armed: int = 1) -> Adopter:
+        adopter = self.adopter({"alwaysRun": [check_entry("stop", "--stoppable", how)], "checkOutput": FAILURE_OUTPUT,
+                                **({"flakes": self.FLAKES} if how == "flake" else {})})
+        self.candidate(adopter, {"src/candidate.txt": "candidate\n"})
+        self.arm(adopter, armed)
+        return adopter
+
+    @staticmethod
+    def arm(adopter: Adopter, stops: int) -> None:
+        Path(str(adopter.log) + ".armed").write_text(str(stops))
+
+    @contextlib.contextmanager
+    def stopping(self, adopter: Adopter, signum: int = signal.SIGTERM, stops: int = 1) -> Iterator[list[int]]:
+        """Signal each armed base run by the pid it wrote, from beside the queue, as a lead stopping a check does."""
+        done = threading.Event()
+        signalled: list[int] = []
+
+        # A run stopped before this one wrote its file already: only the runs from here on are signalled.
+        seen = {path.name for path in adopter.log.parent.glob(adopter.log.name + ".pid-*")}
+
+        def watch() -> None:
+            while not done.is_set() and len(signalled) < stops:
+                for path in sorted(adopter.log.parent.glob(adopter.log.name + ".pid-*")):
+                    if path.name.endswith(".tmp") or path.name in seen:
+                        continue
+                    seen.add(path.name)
+                    pid = int(path.read_text())
+                    os.kill(pid, signum)
+                    signalled.append(pid)
+                time.sleep(0.02)
+
+        watcher = threading.Thread(target=watch)
+        watcher.start()
+        try:
+            yield signalled
+        finally:
+            done.set()
+            watcher.join(30)
+
+    def serve(self, adopter: Adopter) -> list:
+        return queue.serve(adopter.operator, adopter.state, remote="origin", base="main", until_idle=True, poll=0)
+
+    @staticmethod
+    def hand_off_again(adopter: Adopter, head: str) -> None:
+        """The lane hands the candidate off again through the tool, which puts it back at queued."""
+        state = state_tool.read_state(adopter.state)
+        if not state["lanes"]:
+            lanes = [{"id": "lane-1", "title": "Lane 1", "focus": "", "state": "working", "waitingOn": None,
+                      "since": state_tool.now()}]
+            state_tool.patch(adopter.state, writer="lead", version=state["version"], changes={"lanes": lanes})
+        state_tool.handoff(adopter.state, lane="lane-1", subject="feature", head=head, change_request="cr")
+
+    def journal(self, adopter: Adopter, kind: str) -> list[dict]:
+        return [entry for entry in state_tool.read_journal(adopter.state) if entry["kind"] == kind]
+
+    def assert_put_back(self, adopter: Adopter, document: dict) -> None:
+        """The stop said nothing of the base: no verdict on the record, no broken base, the candidate queued again."""
+        self.assertEqual(document["stop"]["reason"], "base_rerun_stopped", document["stop"])
+        self.assertFalse(document["stop"]["queueStopped"])
+        self.assertIn("queued again", document["stop"]["detail"])
+        [stopped] = self.journal(adopter, "base.rerun.stopped")
+        self.assertEqual(stopped["subject"], "feature")
+        self.assertIn(adopter.item("feature")["head"], stopped["summary"])
+        self.assertEqual(self.journal(adopter, "base.broken"), [])
+        self.assertEqual(self.journal(adopter, "candidate.stopped"), [])
+        self.assertEqual(self.journal(adopter, "base.rerun.finished"), [])
+        state = state_tool.read_state(adopter.state)
+        self.assertEqual(state["meta"].get("baseReruns") or [], [])
+        self.assertEqual(state_tool.base_rerun_notices(state, ["stop"], adopter.tip("main"))[0], [])
+        self.assertIsNone(state["meta"]["checking"]["now"])
+        self.assertFalse(state_tool.base_awaits_repair(state_tool.read_journal(adopter.state)))
+
+    def assert_checked_again(self, adopter: Adopter, served: list) -> None:
+        """Serve takes the candidate again, without the lead, and this time the base's verdict is the candidate's."""
+        last = served[-1].document()
+        self.assertEqual((last["candidate"], last["stop"]["reason"]), ("feature", "check_failed"), last["stop"])
+        self.assertEqual(adopter.item("feature")["stage"], "stopped")
+        self.assertEqual(len(self.journal(adopter, "base.rerun.stopped")), 1)
+        [finished] = self.journal(adopter, "base.rerun.finished")
+        self.assertIn("the failure is the candidate's", finished["summary"])
+        self.assertEqual(self.journal(adopter, "base.broken"), [])
+        [entry] = state_tool.read_state(adopter.state)["meta"]["baseReruns"]
+        self.assertEqual(entry["result"], "passed")
+
+    def put_back_then_checked_again(self, adopter: Adopter, **stopping: object) -> None:
+        """One serve: its first turn's re-run is stopped and puts the candidate back, its next checks it again."""
+        with self.stopping(adopter, **stopping) as signalled:
+            served = self.serve(adopter)
+        if stopping.get("stops", 1):
+            self.assertEqual(len(signalled), 1)
+        first = next(result.document() for result in served if result.document()["stop"] is not None)
+        self.assertEqual(first["stop"]["reason"], "base_rerun_stopped", first["stop"])
+        self.assertFalse(first["stop"]["queueStopped"])
+        self.assertIn("queued again", first["stop"]["detail"])
+        [stopped] = self.journal(adopter, "base.rerun.stopped")
+        self.assertLess(self.journal(adopter, "base.rerun.started")[0]["id"], stopped["id"])
+        # Serve took the candidate again after the stop, and the only stop it journaled is the later check's.
+        self.assertEqual(len([entry for entry in self.journal(adopter, "check.started") if entry["id"] > stopped["id"]]), 1)
+        self.assertGreater(self.journal(adopter, "candidate.stopped")[0]["id"], stopped["id"])
+        self.assert_checked_again(adopter, served)
+
+    def test_a_rerun_whose_check_dies_from_the_signal_puts_the_candidate_back(self) -> None:
+        adopter = self.stoppable("die")
+        with self.stopping(adopter) as signalled:
+            results = self.run_queue(adopter, "feature")
+        self.assertEqual(len(signalled), 1)
+        self.assert_put_back(adopter, results[-1].document())
+        self.assertEqual(adopter.item("feature")["stage"], "queued")
+        self.assert_checked_again(adopter, self.serve(adopter))
+
+    def test_a_rerun_whose_check_traps_the_signal_and_exits_as_stopped_puts_the_candidate_back(self) -> None:
+        for how, signum in (("term143", signal.SIGTERM), ("int130", signal.SIGINT)):
+            with self.subTest(how):
+                self.fresh()
+                self.put_back_then_checked_again(self.stoppable(how), signum=signum)
+
+    def test_a_rerun_stopped_during_its_flake_retry_puts_the_candidate_back(self) -> None:
+        adopter = self.stoppable("flake")
+        self.put_back_then_checked_again(adopter)
+        [retried] = self.journal(adopter, "check.retried")
+        self.assertLess(retried["id"], self.journal(adopter, "base.rerun.stopped")[0]["id"])
+
+    def test_a_rerun_whose_check_exits_137_with_no_signal_sent_reads_as_stopped(self) -> None:
+        self.put_back_then_checked_again(self.stoppable("exit:137"), stops=0)
+
+    def test_a_rerun_that_ends_without_a_verdict_because_the_runner_is_interrupted_puts_the_candidate_back(self) -> None:
+        adopter = self.stoppable("die", armed=0)
+        real = queue.Runner.run_one
+
+        def run_one(runner, check, checkout, context):
+            if "base-rerun" in checkout.name:
+                # As serve's own handler does when the lead stops the runner.
+                raise KeyboardInterrupt
+            return real(runner, check, checkout, context)
+
+        with mock.patch.object(queue.Runner, "run_one", run_one), self.assertRaises(KeyboardInterrupt):
+            self.serve(adopter)
+        [stopped] = self.journal(adopter, "base.rerun.stopped")
+        self.assertIn("interrupted", stopped["summary"])
+        self.assertEqual(adopter.item("feature")["stage"], "queued")
+        self.assertEqual(self.journal(adopter, "base.broken"), [])
+        self.assertEqual(self.journal(adopter, "candidate.stopped"), [])
+        self.assertEqual(state_tool.read_state(adopter.state)["meta"].get("baseReruns") or [], [])
+        self.assertIsNone(state_tool.read_state(adopter.state)["meta"]["checking"]["now"])
+        # The next serve clears nothing as interrupted, and takes the candidate again.
+        self.assert_checked_again(adopter, self.serve(adopter))
+
+    def test_a_rerun_that_fails_by_itself_still_breaks_the_base(self) -> None:
+        for code in (1, 128, 255):
+            with self.subTest(code=code):
+                self.fresh()
+                adopter = self.stoppable(f"exit:{code}")
+                document = self.assertStopped(self.run_queue(adopter, "feature"), "base_broken")
+                self.assertTrue(document["stop"]["queueStopped"])
+                self.assertEqual(len(self.journal(adopter, "base.broken")), 1)
+                self.assertEqual(self.journal(adopter, "base.rerun.stopped"), [])
+                self.assertEqual(adopter.item("feature")["stage"], "stopped")
+                [entry] = state_tool.read_state(adopter.state)["meta"]["baseReruns"]
+                self.assertEqual(entry["result"], "failed")
+
+    def test_a_second_stop_at_the_same_heads_stops_the_candidate_and_new_heads_put_it_back_once_more(self) -> None:
+        adopter = self.stoppable("die", armed=2)
+        first_head = adopter.item("feature")["head"]
+        with self.stopping(adopter, stops=2) as signalled:
+            served = self.serve(adopter)
+        self.assertEqual(len(signalled), 2)
+        last = served[-1].document()
+        self.assertEqual(last["stop"]["reason"], "base_rerun_stopped", last["stop"])
+        self.assertFalse(last["stop"]["queueStopped"])
+        self.assertEqual(adopter.item("feature")["stage"], "stopped")
+        self.assertEqual(len(self.journal(adopter, "base.rerun.stopped")), 2)
+        [stopped] = self.journal(adopter, "candidate.stopped")
+        self.assertTrue(stopped["summary"].startswith("base_rerun_stopped: "), stopped["summary"])
+        self.assertEqual(self.journal(adopter, "base.broken"), [])
+        self.assertFalse(state_tool.base_awaits_repair(state_tool.read_journal(adopter.state)))
+        # The queue is free: serve takes the next candidate and lands it.
+        self.candidate(adopter, {"src/other.txt": "other\n"}, name="other")
+        self.assertEqual(self.serve(adopter)[-1].document()["outcome"], "merged")
+        # A new base head lets the same candidate head be put back once more. Queued again as the runner puts a
+        # candidate back, its reviewed head stays the one the two stops were at.
+        current = state_tool.read_state(adopter.state)
+        state_tool.patch(adopter.state, writer="runner", version=current["version"],
+                         selector="queue[subject=feature]", changes={"stage": "queued"})
+        self.arm(adopter, 1)
+        with self.stopping(adopter):
+            put_back = self.run_queue(adopter, "feature")[-1].document()
+        self.assertEqual(put_back["stop"]["reason"], "base_rerun_stopped", put_back["stop"])
+        self.assertIn("queued again", put_back["stop"]["detail"])
+        self.assertEqual((adopter.item("feature")["stage"], adopter.item("feature")["head"]), ("queued", first_head))
+        # So does a new candidate head on that same base head.
+        new_head = adopter.lane_commit("feature", {"src/candidate.txt": "candidate two\n"})
+        self.hand_off_again(adopter, new_head)
+        self.arm(adopter, 1)
+        with self.stopping(adopter):
+            put_back = self.run_queue(adopter, "feature")[-1].document()
+        self.assertIn("queued again", put_back["stop"]["detail"])
+        self.assertEqual(adopter.item("feature")["stage"], "queued")
+        self.assertEqual(len(self.journal(adopter, "candidate.stopped")), 1)
+        self.assertEqual(len(self.journal(adopter, "base.rerun.stopped")), 4)
+        self.assertEqual(self.journal(adopter, "base.broken"), [])
 
 
 class ServeTests(MergeQueueTestCase):
@@ -5582,6 +5825,15 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(context.argv(["x", "{head}", "--at={head}", "{head}x"]), ["x", "h" * 40, "--at={head}", "{head}x"])
         with self.assertRaises(queue.Stop):
             context.argv(["{baseHead}"])
+
+    def test_the_guide_says_what_the_lead_does_when_a_base_rerun_is_stopped_twice(self) -> None:
+        guide = " ".join((SCRIPTS.parent / "references" / "orchestration-guide.md").read_text(encoding="utf-8").split())
+        self.assertIn("| `base_rerun_stopped` | The base re-run of the candidate's failing check was stopped twice at the "
+                      "same candidate and base heads, so its failure is neither the base's nor known to be its own. "
+                      "Find what stopped the re-run, then re-queue. |", guide)
+        reasons = json.loads(SCHEMA_FILE.read_text(encoding="utf-8"))["merge-queue-result/1"]["$defs"]["reason"]["enum"]
+        self.assertIn("base_rerun_stopped", reasons)
+        self.assertNotIn("base_rerun_stopped", queue.QUEUE_STOPPING)
 
     def test_no_bytecode_is_written_beside_the_scripts(self) -> None:
         self.assertEqual(list(SCRIPTS.rglob("__pycache__")), [])

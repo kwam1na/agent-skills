@@ -59,6 +59,8 @@ PLACEHOLDER = re.compile(r"^\{([A-Za-z]+)\}$")
 FULL_HEALTH_TIMEOUT_MOST = 2147483
 # Reasons that stop the whole queue rather than one candidate.
 QUEUE_STOPPING = frozenset({"base_broken", "merged_unverified", "batch_tree_mismatch"})
+# The highest signal number: an exit of 128 plus one up to this reports a run stopped by that signal.
+HIGHEST_SIGNAL = signal.NSIG - 1
 # Reasons for which the runner attempted nothing and leaves the queue as it was.
 REFUSALS = frozenset({
     "queue_locked", "candidate_unknown", "already_merged", "binding_invalid", "not_synced",
@@ -267,11 +269,13 @@ def now() -> str:
 class Stop(Exception):
     """The runner stopped with one of the result schema's reasons."""
 
-    def __init__(self, reason: str, detail: str, paths: Iterable[str] = ()) -> None:
+    def __init__(self, reason: str, detail: str, paths: Iterable[str] = (), requeued: bool = False) -> None:
         super().__init__(f"{reason}: {detail}")
         self.reason = reason
         self.detail = detail
         self.paths = sorted(set(paths))
+        # The candidate goes back to queued rather than stopping, and no stop is journaled for it.
+        self.requeued = requeued
 
 
 # ---------------------------------------------------------------------------
@@ -486,6 +490,20 @@ def started_run(completed: Completed | None) -> bool:
 
 def failed_run(completed: Completed) -> bool:
     return completed.timed_out or completed.returncode != 0
+
+
+def stopped_run(completed: Completed) -> bool:
+    """Whether a run was stopped rather than failed: killed by a signal, or exiting as a stopped run reports one, 128
+    plus the signal's number (130 or 143 from a runner interrupted or terminated). Such an exit with no signal sent
+    reads as stopped too; 128 itself, or anything above the range, is a failure, and so is a timeout."""
+    code = completed.returncode
+    return not completed.timed_out and code is not None and (code < 0 or 128 < code <= 128 + HIGHEST_SIGNAL)
+
+
+def stopped_words(check_id: str, completed: Completed) -> str:
+    """How a stopped run ended, as the journal names it."""
+    code = completed.returncode
+    return f"{check_id} ended by signal {-code}" if code is not None and code < 0 else f"{check_id} exited {code}"
 
 
 def failure_words(check_id: str, failures: list[str], log: str | None) -> str:
@@ -2329,7 +2347,9 @@ class Runner:
 
         The candidate already failed, so the checking panel says it waits on the
         re-run, and the journal reads failure, re-run start, verdict, stop.
-        Raises base_broken when a check also fails on the base.
+        Raises base_broken when a check also fails on the base. A re-run that was
+        stopped, or that the runner's own interruption ended, has no verdict and
+        raises base_rerun_stopped instead (see rerun_stopped).
         """
         names = ", ".join(check["id"] for check in candidates)
         began = time.monotonic()
@@ -2344,6 +2364,7 @@ class Runner:
                      f"Rerunning {names} on {self.base} at {base_head}, to tell whether the failure is the base's own", subject)
         verdicts: list[str] = []
         broken: Stop | None = None
+        stopped: str | None = None
         try:
             base_checkout = self.checkout(base_head, "base-rerun", context=context.with_values(treeSha=self.tree(base_head)))
             base_context = context.with_values(head=base_head, treeSha=self.tree(base_head))
@@ -2359,6 +2380,10 @@ class Runner:
                     verdicts.append(f"{check['id']} could not start there")
                     continue
                 failures, log = self.rerun_outcome(check["id"], completed)
+                if stopped_run(completed):
+                    self.record_rerun(subject, check["id"], failures, log)
+                    stopped = f"{stopped_words(check['id'], completed)} (log {log})"
+                    break
                 retried = False
                 flake = (self.flake_for(check["id"], failures, base_head)
                          if failed_run(completed) and not completed.timed_out else None)
@@ -2375,6 +2400,10 @@ class Runner:
                         verdicts.append(f"{check['id']} could not start there on its flake retry")
                         continue
                     failures, log = self.rerun_outcome(check["id"], completed)
+                    if stopped_run(completed):
+                        self.record_rerun(subject, check["id"], failures, log)
+                        stopped = f"{stopped_words(check['id'], completed)} on its flake retry (log {log})"
+                        break
                 self.record_rerun(subject, check["id"], failures, log,
                                   verdict=("failed" if failed_run(completed) else "passed", base_head))
                 if failed_run(completed):
@@ -2383,14 +2412,48 @@ class Runner:
                     broken = Stop("base_broken", f"{named} also fails on {self.base} at {base_head}")
                     break
                 verdicts.append(f"{check['id']} passed{' after a flake retry' if retried else ''} (log {log})")
+        except KeyboardInterrupt:
+            # The runner itself was stopped mid-re-run, which says nothing of the base either: the candidate's row is
+            # settled here, since the interruption ends the turn before any stop is.
+            with contextlib.suppress(Exception):
+                stop = self.rerun_stopped(subject, base_head, began, "the runner was interrupted")
+                self.stopped(Result("check", subject), stop, subject)
+            raise
         except BaseException as error:
             self.end_rerun(subject, base_head, began, f"ended without a verdict ({type(error).__name__})")
             raise
+        if stopped is not None:
+            raise self.rerun_stopped(subject, base_head, began, stopped)
         verdict = "; ".join(verdicts)
         if broken is not None:
             self.end_rerun(subject, base_head, began, f"{verdict}: the base is broken")
             raise broken
         self.end_rerun(subject, base_head, began, f"{verdict}: the failure is the candidate's")
+
+    def rerun_stopped(self, subject: str, base_head: str, began: float, why: str) -> Stop:
+        """A base re-run stopped before its verdict: journal base.rerun.stopped, record no verdict, and say what follows.
+
+        The stop says nothing of the base, so the queue stays free and the candidate goes back to queued, to be
+        checked again without the lead, once for each pair of its head and the base head. A second stop at the same
+        pair stops the candidate as base_rerun_stopped, which the lead's wait wakes on as candidate.stopped.
+        """
+        head = ""
+        with contextlib.suppress(Stop, delivery_state.StateError):
+            head = self.item(subject)["head"] or ""
+        pair = f"{subject} at {head or 'an unknown head'}, {self.base} at {base_head}"
+        again = bool(head) and any(
+            entry["kind"] == "base.rerun.stopped" and entry.get("subject") == subject
+            and head in entry["summary"] and base_head in entry["summary"]
+            for entry in delivery_state.read_journal(self.state_directory)
+        )
+        self.end_rerun(subject, base_head, began, f"stopped before its verdict ({why}), which says nothing of the base; "
+                                                  f"heads {pair}", kind="base.rerun.stopped")
+        if again:
+            return Stop("base_rerun_stopped", f"the base re-run was stopped again at the same heads, {pair} ({why}); "
+                                              "the lead finds what stopped it")
+        return Stop("base_rerun_stopped", f"the base re-run was stopped before its verdict ({why}), which says nothing "
+                                          f"of the base; {subject} is queued again, to be checked once more at {pair}",
+                    requeued=True)
 
     def rerun_outcome(self, check_id: str, completed: Completed) -> tuple[list[dict], str]:
         """A base re-run's failing tests, as the binding's failure pattern finds them, and its kept log."""
@@ -2421,8 +2484,8 @@ class Runner:
         with contextlib.suppress(Stop, delivery_state.StateError):
             self.write(build=build)
 
-    def end_rerun(self, subject: str, base_head: str, began: float, verdict: str) -> None:
-        """Journal the base re-run's verdict and how long the candidate waited on it, and end the waiting state."""
+    def end_rerun(self, subject: str, base_head: str, began: float, verdict: str, kind: str = "base.rerun.finished") -> None:
+        """Journal the base re-run's verdict, or its stop, and how long the candidate waited on it, and end the waiting state."""
 
         def build(current: dict) -> tuple[dict, dict]:
             checking = current["meta"]["checking"]["now"]
@@ -2432,7 +2495,7 @@ class Runner:
 
         with contextlib.suppress(Stop, delivery_state.StateError):
             self.write(build=build)
-        self.journal("base.rerun.finished",
+        self.journal(kind,
                      f"Base re-run on {self.base} at {base_head} after {int(round(time.monotonic() - began))}s: {verdict}", subject)
 
     @staticmethod
@@ -2719,7 +2782,7 @@ class Runner:
                         self.classify(culprit.subject, failing.failed, failing.checks, failing.checkout, base_head, failing.changes,
                                       self.context(culprit.subject, base_head), failing.result)
                     except Stop as classified:
-                        if classified.reason == "base_broken":
+                        if classified.reason in ("base_broken", "base_rerun_stopped"):
                             stop = classified
                 documents[culprit.subject].selection = failing.result.selection
                 documents[culprit.subject].checks = failing.result.checks
@@ -2877,6 +2940,12 @@ class Runner:
         refused = stop.reason in REFUSALS
         result.outcome = "refused" if refused else "stopped"
         if stop.reason == "queue_locked":
+            return
+        if stop.requeued:
+            # Nothing was at fault: the candidate is queued again, and neither a stop nor a broken base is journaled.
+            if subject is not None:
+                with contextlib.suppress(Stop, delivery_state.StateError):
+                    self.write(build=_put_back(subject))
             return
         with contextlib.suppress(Stop, delivery_state.StateError):
             # A refusal leaves the queue as it was, but never a stage mid-step.
@@ -3262,7 +3331,9 @@ def serve(
         if until_idle:
             results += taken
         after = delivery_state.read_state(state_directory)
-        moved = any(item["subject"] in waiting and item["stage"] != "queued" for item in after["queue"])
+        # A candidate a stopped base re-run put back moved too: it is checked again, and a second stop stops it.
+        moved = any(item["subject"] in waiting and item["stage"] != "queued" for item in after["queue"]) or any(
+            result.stop is not None and result.stop["reason"] == "base_rerun_stopped" for result in taken)
         if not moved:
             # Nothing it took left queued (another runner held the lock): wait rather than spin.
             if until_idle:
