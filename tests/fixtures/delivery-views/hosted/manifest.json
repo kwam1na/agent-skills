@@ -1,0 +1,65 @@
+{
+  "schemaVersion": "hosted-projection-fixtures/1",
+  "cases": [
+    {
+      "file": "valid-dissent-markup.json",
+      "valid": true,
+      "layer": "schema"
+    },
+    {
+      "file": "valid-plan-review.json",
+      "valid": true,
+      "layer": "schema"
+    },
+    {
+      "file": "valid-clipped-plan.json",
+      "valid": true,
+      "layer": "schema"
+    },
+    {
+      "file": "invalid-version.json",
+      "valid": false,
+      "layer": "schema"
+    },
+    {
+      "file": "invalid-unknown-top.json",
+      "valid": false,
+      "layer": "schema"
+    },
+    {
+      "file": "invalid-raw-review.json",
+      "valid": false,
+      "layer": "schema"
+    },
+    {
+      "file": "invalid-command.json",
+      "valid": false,
+      "layer": "schema"
+    },
+    {
+      "file": "invalid-history.json",
+      "valid": false,
+      "layer": "schema"
+    },
+    {
+      "file": "invalid-unsafe-link.json",
+      "valid": false,
+      "layer": "boundary"
+    },
+    {
+      "file": "invalid-local-path.json",
+      "valid": false,
+      "layer": "boundary"
+    },
+    {
+      "file": "invalid-unrelated-run.json",
+      "valid": false,
+      "layer": "boundary"
+    },
+    {
+      "file": "invalid-fingerprint.json",
+      "valid": false,
+      "layer": "schema"
+    }
+  ]
+}

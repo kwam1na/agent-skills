@@ -1040,8 +1040,9 @@ def read_needs_block(state_directory: Path) -> dict | None:
 # The page
 
 
-def render_line_map(document: object, runs: dict, config: dict, *, theme_key: str, history: str | None,
-                    plan: dict | None = None, needs: dict | None = None) -> str:
+def line_map_data(document: object, runs: dict, config: dict, *, theme_key: str, history: str | None,
+                  plan: dict | None = None, needs: dict | None = None) -> dict:
+    """The shared bounded view data; local HTML and public projection consume the same cut."""
     reviews = native_review_summaries(document)
     # One review payload budget, in stop order, regardless of its backing store.
     combined = {**{"run:" + key: value for key, value in runs.items()},
@@ -1071,6 +1072,14 @@ def render_line_map(document: object, runs: dict, config: dict, *, theme_key: st
         "runs": config["runs"] is not None,
         "lenses": config["lenses"],
     }
+    return {"document": document, "runs": runs, "reviews": reviews, "view": view,
+            "links": page_links(document, runs, config), "plan": plan, "needs": needs}
+
+
+def render_line_map(document: object, runs: dict, config: dict, *, theme_key: str, history: str | None,
+                    plan: dict | None = None, needs: dict | None = None) -> str:
+    data = line_map_data(document, runs, config, theme_key=theme_key, history=history, plan=plan, needs=needs)
+    document, runs, reviews, view = (data[key] for key in ("document", "runs", "reviews", "view"))
     return "\n".join([
         "<!doctype html>",
         '<html lang="en">',
@@ -1089,7 +1098,7 @@ def render_line_map(document: object, runs: dict, config: dict, *, theme_key: st
         f'<script type="application/json" id="delivery-state">{embed(document)}</script>',
         f'<script type="application/json" id="delivery-runs">{embed(runs)}</script>',
         f'<script type="application/json" id="delivery-reviews">{embed(reviews)}</script>',
-        f'<script type="application/json" id="delivery-links">{embed(page_links(document, runs, config))}</script>',
+        f'<script type="application/json" id="delivery-links">{embed(data["links"])}</script>',
         f'<script type="application/json" id="delivery-view">{embed(view)}</script>',
         *([f'<script type="application/json" id="delivery-plan">{embed(plan)}</script>'] if plan is not None else []),
         *([f'<script type="application/json" id="delivery-needs">{embed(needs)}</script>'] if needs is not None else []),
