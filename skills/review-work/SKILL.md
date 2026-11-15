@@ -59,6 +59,14 @@ outcome. Where no tracker is configured, those follow-up items are the
 actionable tracking handoff in the executor's delivery result rather than a
 blocker.
 
+A deferral is fixed only when a later round of the lens that filed it lists it
+in `resolvedFindings` with the state `closed`, `fixed` or `withdrawn`. In each
+verification round a lens re-checks every finding it deferred in an earlier
+round and lists each one it finds fixed. A deferral listed as `deferred` or
+`open`, listed only by another lens, or not listed is still deferred, and the
+close-out files its follow-up item; a result that leaves a deferral out is still
+a valid result.
+
 - `aligned` means every required lens in the latest round has evidence and no
   actionable findings, each lens having discharged every carried finding of its
   own by that lens's closure report, by that lens's withdrawal with its reason,
