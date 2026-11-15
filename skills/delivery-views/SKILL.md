@@ -166,7 +166,7 @@ any value.
 | `requiredLenses` | Lens ids every approving review round must include. |
 | `proofKinds` | Ordered `{id, label, source}`, with `source` either `record` or `producer`. Columns follow this order. |
 | `units` | Ordered `{subject, label?, title, removed?, criteria: [{id, text}], proofs: [kind ids owed]}`. |
-| `finish` | Ordered `{id, label, text, at, covers: {criteria: [ids] \| "all" \| [], proofs: [kind ids]}}`. `id` is the record's finish line id; `[]` covers no criteria by design. |
+| `finish` | Ordered `{id, label, text, at, covers: {criteria: [ids] \| "all" \| [], proofs: [kind ids]}}`. `id` is the record's finish line id; `[]` covers no criteria by design, and a line with `[]` and no proofs is the lead's: the supervisor never marks it met. |
 | `approved` | `{at, review?, snapshot: {units, finish}}`, frozen once at the start of the delivery. |
 | `changes` | Ordered `{id, at, kind, subjects, criteria?, by, why?, title?, source?, ref?, before?, after?}`, `kind` one of `added`, `removed`, `relaxed`, `changed` or `finish`; `by` may be `unrecorded`. |
 | `evidence` | `{<subject>: {<producer kind>: {state, head?, at?, reason?, items?}}}`, `state` one of `done`, `todo` or `waived`. `done` and `waived` need `head`; `waived` also needs `reason`. |
@@ -297,7 +297,8 @@ counts at face value, and the unit's open row says "before hand-off".
   doesn't owe is settled for it. `"all"` covers every criterion; `[]` covers
   proofs only, over every unit. Its count names the proofs it counts, or
   "Proven" when it names none. A line with `[]` and no proofs has nothing to
-  count, so it shows no bar and says so. Whether the line is met comes only from
+  count, so it shows no bar and says so: it is the lead's line, which the
+  supervisor never marks met. Whether the line is met comes only from
   the record's finish line with the same id; when the record says met while
   covered proofs are open, the meter says both, and a waived proof counts as
   settled there. With every covered proof settled and the record not saying met, it

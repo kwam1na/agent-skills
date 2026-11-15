@@ -198,7 +198,7 @@
       "outputs": [
         {
           "path": "skills/delivery-views/SKILL.md",
-          "sha256": "2a7ae66cf40cf9d6154c62282468b85ccb364ac5ef41cbf0151232808f16aa15"
+          "sha256": "4e6a2e34315cf4326a998bc7bb6022d6c2366350ffff9fae7b8753e8f0d0a9cd"
         },
         {
           "path": "skills/delivery-views/assets/history.css",
@@ -469,23 +469,23 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "da2e6d2e0cfba763be3ad69b45f66c8c36bd5295245bed969dd3e99beef9cc46"
+          "sha256": "7675ae82e097b08863b742cf63dc6fc283989d1d7de1d82df9f838f6ae43aa97"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "16fc9676b6444b4aa8ac52cbcc905fdadf607c57af96353294c2fdd4d1f90913"
+          "sha256": "ac6c1dce0cad0c9871ede6d57ad22a1747db1d4e4933284e585fafad8a995aa0"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
-          "sha256": "b509fd3420973b03d4d8569b51bf470d5c56440f62a44b14dbc2c2d4ab6475fb"
+          "sha256": "b48f8fbb36760c0774ecb04fa0ad1fa6ad9a1963662ca14610df829cea7febd7"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "2a675b71a6c2b1f63f7d58595fe51feb40150da423d03df90c7f65b7456e761d"
+          "sha256": "b213b3d4b993a98195930d207ff4fa4aa81f0b9d7064d9ce57d82b50344afa56"
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",
-          "sha256": "a69fffbb384d327dd6214947b0478a2efd41763e018949d062e0ae98b07cc7a2"
+          "sha256": "296253caa6ebd4947944d7105d6df6b8b400df2c691c4425c554346ddc6df52c"
         },
         {
           "path": "skills/orchestrate-work/scripts/region_ownership.py",
@@ -997,7 +997,7 @@
       "outputs": [
         {
           "path": "skills/review-work/SKILL.md",
-          "sha256": "24ab712cbee42f033fa7e0348a7f8e7f11468b9b1cd405f14c1f7da28fa393f0"
+          "sha256": "a54da94befcab3056a7d15bd6dd6d79a9a6721edc294fff858a70d15942f7493"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -1050,11 +1050,11 @@
         },
         {
           "path": "skills/run-delivery/references/adopting.md",
-          "sha256": "382c87aee57fd7b10346d31cfa2cbe608d5769c7392f62cd4aa93afc96d97663"
+          "sha256": "ebc35b229388876fabae2679c6328494b44769e4a90aa4fbd815c43c2affb650"
         },
         {
           "path": "skills/run-delivery/references/config.md",
-          "sha256": "44c9581c6ad64fced8092d70430a917f26340fda053028d1bf1f3e1b633159aa"
+          "sha256": "028b2cd11d85c15731fe74fff439d08f57a8169fac772fc5e329d4f62bef5bf0"
         },
         {
           "path": "skills/run-delivery/scripts/pr_review_gates.py",
@@ -1062,7 +1062,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "f5b99d0a1c2789d43993ca4e78a2aca754006a21d292c67d976185945b75886f"
+          "sha256": "dc18e3c45a5febd2be14f8071c2c3ce2fe8ef3134c18de418ced47328c20d989"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",

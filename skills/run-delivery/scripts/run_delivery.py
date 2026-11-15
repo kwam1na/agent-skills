@@ -821,6 +821,8 @@ class Config:
         self.lanes = d["lanes"]
         self.stories = d["stories"]
         self.finish = d.get("finish", [])
+        # A delivery that takes no deferrals: a finding still deferred when its story merges is a blocker, not a follow-up.
+        self.no_deferrals = d.get("noDeferrals") is True
         self.ship = d.get("ship")
         self.brief_notes = d.get("brief", {}).get("notes")
         for k in self.stories:
@@ -1310,9 +1312,11 @@ def brief(key: str, round_no: int, lens: str, candidate: str, tree: str, merge_b
                  "your previous round); omit when none.\n"
                  "- `resolvedFindings`: required. One entry per finding, "
                  '`{"id", "state": "closed|fixed|withdrawn|deferred|open", "resolution": "..."}`. Every finding this '
-                 "lens raised in an earlier round that is still open must appear (one deferred earlier needn't); one "
-                 "closed in an earlier round may be listed again or left out. A deferral (P2/P3 only) also carries "
-                 "`deferredIssue`.")
+                 "lens raised in an earlier round that is still open must appear; one closed in an earlier round may be "
+                 "listed again or left out. Re-check each finding this lens deferred in an earlier round, and list each "
+                 "one you find fixed as `closed`, `fixed` or `withdrawn`: only that listing records a deferral as fixed, "
+                 "and one listed as `deferred` or `open`, or not listed, stays deferred and is filed as a follow-up at "
+                 "close. A deferral (P2/P3 only) also carries `deferredIssue`.")
     span = f"{merge_base}..{candidate}" if round_no == 1 else f"{prior_candidate}..{candidate}"
     if round_no <= c.bound:
         bound_text = f"`ordinary counted`: round {round_no} of {c.bound}, counted against the declared bound."
@@ -4598,8 +4602,17 @@ def plan_unit(c, key: str) -> dict:
 
 
 def plan_covers(line: dict) -> dict:
-    """A finish line's covers; a line that declares none covers every criterion, by every proof its units owe."""
-    return line.get("covers", {"criteria": "all", "proofs": []})
+    """A finish line's covers; a line that declares none covers every criterion, by every proof its units owe. One
+    declared empty, `{}` or null, covers no criteria and names no proofs, so the line is the lead's to check."""
+    if "covers" not in line:
+        return {"criteria": "all", "proofs": []}
+    return {"criteria": [], "proofs": []} if line["covers"] in (None, {}) else line["covers"]
+
+
+def leads_line(line: dict) -> bool:
+    """A finish line that names no criteria and no proofs: nothing the record proves, so only the lead marks it."""
+    covers = plan_covers(line)
+    return not isinstance(covers, dict) or not (covers.get("criteria") or covers.get("proofs"))
 
 
 def plan_finish(c, at: str) -> list[dict]:
@@ -8391,12 +8404,15 @@ def proof_state(c, plan: dict, doc: dict, unit: dict, kind: str) -> str:
 
 
 def finished_lines(c, plan: dict, doc: dict) -> list[str]:
-    """The finish lines whose covered criteria have every covered proof done (a waiver isn't done)."""
+    """The finish lines whose covered criteria have every covered proof done (a waiver isn't done). A line that names
+    no criteria and no proofs has nothing the record proves: it is the lead's, and never among them."""
     units = [unit for unit in plan.get("units", []) if not unit.get("removed")]
     criteria = [(item["id"], unit) for unit in units for item in unit.get("criteria", [])]
     ready = []
     for line in plan.get("finish", []):
-        covers = line.get("covers") or {"criteria": "all", "proofs": []}
+        if leads_line(line):
+            continue
+        covers = plan_covers(line)
         named = covers.get("criteria")
         if named == "all":
             rows = [unit for _, unit in criteria]
@@ -8415,27 +8431,38 @@ def finished_lines(c, plan: dict, doc: dict) -> list[str]:
     return ready
 
 
+FINISH_MET_SAID = "Every criterion it covers has its proofs done."
+
+
 def journal_finish_met(c, doc: dict) -> list[str]:
     """Mark and journal each finish line whose criteria and proofs are all done, once: a line the lead already
-    marked or journalled by hand is left as it is."""
+    marked or journalled by hand is left as it is, and so is one the supervisor marked before and finds unmarked,
+    which the lead unmarked. Its marks are kept in the flow log; a line it journalled is one it marked, as an older
+    generation kept no log."""
     plan = load_json(c.state / PLAN_FILE)
     if not plan:
         return []
     ready = set(finished_lines(c, plan, doc))
+    marked = {entry["line"] for entry in read_log("finish", c.delivery)}
     said = []
     for line in doc["state"]["finish"]:
         if line["id"] not in ready:
             continue
-        journalled = any(e["kind"] == "finish.met" and (e.get("subject") == line["id"] or re.search(
-            rf"(?<![\w-]){re.escape(line['id'])}(?![\w-])", e.get("summary", ""))) for e in doc["journal"])
+        journalled = [e for e in doc["journal"] if e["kind"] == "finish.met" and (e.get("subject") == line["id"] or re.search(
+            rf"(?<![\w-]){re.escape(line['id'])}(?![\w-])", e.get("summary", "")))]
+        if line["id"] in marked or any(e.get("subject") == line["id"] and e.get("summary", "").endswith(FINISH_MET_SAID)
+                                       for e in journalled):
+            continue
         if not line.get("met"):
             patch_from(lambda fresh, line=line: {"finish": [{**entry, "met": True} if entry["id"] == line["id"] else entry
                                                             for entry in fresh["state"]["finish"]]},
                        f"finish line {line['id']} met")
         if not journalled:
             state_tool("journal", "--kind", "finish.met", "--subject", line["id"], "--summary",
-                       f"{line['id']}: {line['text']} Every criterion it covers has its proofs done.")
+                       f"{line['id']}: {line['text']} {FINISH_MET_SAID}")
             said.append(f"finish line {line['id']} met")
+        # Logged last, so a pass whose journal failed leaves the line for the next pass to journal.
+        append_log("finish", c.delivery, {"line": line["id"]})
     return said
 
 
@@ -9565,20 +9592,58 @@ def stop_full_health_run(c) -> str | None:
             + ("it had recorded its result" if recorded_first else "it recorded no result"))
 
 
+# The states in which a later round of the lens that deferred a finding records it fixed.
+DEFERRAL_FIXED = ("closed", "fixed", "withdrawn")
+
+
 def deferred_findings(c) -> list[dict]:
-    """Every finding a story's review deferred, {story, finding, title}: from the lane's review folder, or the
-    evidence kept beside the record once its checkout is gone."""
+    """Every finding a story's review deferred and still holds deferred, {story, finding, title}: from the lane's review
+    folder, or the evidence kept beside the record once its checkout is gone. A deferral is fixed only when a later
+    round of the lens that filed it lists it in `resolvedFindings` as closed, fixed or withdrawn; one listed as open or
+    deferred, listed by another lens, or not listed stays deferred."""
     found: dict[tuple[str, str], dict] = {}
     for key in c.stories:
+        rounds: dict[int, dict] = {}
         for folder in (c.lane_checkout(key) / c.work / "review" / key, evidence_dir(key)):
             for path in round_files(folder) if folder.is_dir() else []:
-                outcome = json.loads(path.read_text())
-                for entry in outcome.get("entries", []):
-                    for finding in (entry.get("result") or {}).get("findings", []):
-                        if finding.get("state") == "deferred":
-                            found[(key, finding["id"])] = {"story": key, "finding": finding["id"],
-                                                           "title": str(finding.get("deferredIssue", ""))[:200]}
+                rounds[int(path.stem.split("-")[1])] = json.loads(path.read_text())
+        held: dict[str, tuple[str, dict]] = {}  # finding id: (the lens that deferred it, the finding)
+        for n in sorted(rounds):
+            for entry in rounds[n].get("entries", []):
+                result = entry.get("result") or {}
+                lens = entry.get("lens") or result.get("lensId")
+                for listed in result.get("resolvedFindings", []):
+                    if listed.get("state") in DEFERRAL_FIXED and held.get(listed.get("id"), ("",))[0] == lens:
+                        del held[listed["id"]]
+                for finding in result.get("findings", []):
+                    if finding.get("state") == "deferred":
+                        held[finding["id"]] = (lens, finding)
+        for ident, (_, finding) in held.items():
+            found[(key, ident)] = {"story": key, "finding": ident, "title": str(finding.get("deferredIssue", ""))[:200]}
     return list(found.values())
+
+
+BREACH = "Deferred finding {finding} of {story} is still deferred at merge, and this delivery takes no deferrals: {title}"
+
+
+def deferral_breaches(c, doc: dict) -> list[str]:
+    """Under noDeferrals, journal a blocker for each finding a merged story's review still holds deferred, once each:
+    the lead resolves it with lead-resolve, and no follow-up is filed for it."""
+    if not c.no_deferrals:
+        return []
+    merged = {item["subject"] for item in doc["state"]["queue"] if item["stage"] == "merged"}
+    said = []
+    for finding in deferred_findings(c):
+        if finding["story"] not in merged:
+            continue
+        opening = BREACH.format(**finding).split(" is still deferred")[0] + " is still deferred"
+        if any(e["kind"] == "blocker.recorded" and e.get("subject") == finding["story"]
+               and e.get("summary", "").startswith(opening) for e in doc["journal"]):
+            continue
+        state_tool("journal", "--kind", "blocker.recorded", "--subject", finding["story"], "--summary",
+                   BREACH.format(**finding))
+        said.append(f"blocker: deferred finding {finding['finding']} of {finding['story']}")
+    return said
 
 
 FOLLOWUP = "Deferred finding {finding} of {story} becomes follow-up {story}-{finding}: {title}"
@@ -9590,7 +9655,15 @@ def followups_step(c, doc: dict) -> tuple[bool, str]:
     ledger covers every one: a transient failure is retried by its next run, and a permanent one is shown. By hand,
     the record's followups are all there is."""
     have = {item["id"] for item in doc["state"]["followups"]}
-    missing = [f for f in deferred_findings(c) if f"{f['story']}-{f['finding']}" not in have]
+    if c.no_deferrals:
+        # A finding still deferred is a blocker, never a follow-up. The close-out journals any the pass step missed,
+        # by a failure or a merge after it read the queue, and holds the close for it.
+        said = deferral_breaches(c, doc)
+        if said:
+            return False, f"{'; '.join(said)} (the close waits for lead-resolve)"
+        missing = []
+    else:
+        missing = [f for f in deferred_findings(c) if f"{f['story']}-{f['finding']}" not in have]
     for finding in missing:
         with marked_decision(c, followup=finding) as written:
             written.append(journal_id(state_tool("journal", "--kind", "decision.recorded", "--subject",
@@ -10048,6 +10121,7 @@ class Supervisor:
 
         steps = (("reconcile", reconcile_once), ("cleanup", cleanup), ("fullHealth", lambda: post_merge_step(c, self.once)),
                  ("finish", lambda: journal_finish_met(c, load_state())),
+                 ("deferrals", lambda: deferral_breaches(c, load_state())),
                  ("publish", lambda: render_views(c, only="publishers")), ("needs", derive),
                  ("render", lambda: render_views(c, only="renderers")), ("latest", lambda: str(copy_latest(c))))
         for name, step in steps:
@@ -10604,6 +10678,7 @@ class Doctor:
             ("story-files", "story files", ("plan-sections",), self.story_files),
             ("readiness", "story readiness", ("delivery",), self.story_readiness),
             ("context-sections", "context sections", ("delivery",), self.context_planned),
+            ("finish-lines", "finish lines", ("delivery",), self.finish_lines),
             ("remote-base", "configuration on the remote base", ("delivery",), self.remote_base),
             ("ready", "pull requests marked ready", ("delivery",), self.ready),
             ("supervisor", "delivery supervisor", ("delivery",), self.supervisor),
@@ -11143,6 +11218,21 @@ class Doctor:
             return self.not_applicable("no context.sections declared")
         problems = context_problems(d)
         return ("wrong", problems[0]) if problems else ("ok", f"{d.plan} has each of {', '.join(map(repr, d.context_sections))}")
+
+    def finish_lines(self):
+        d = self.delivery
+        if not d.finish:
+            return self.not_applicable("no finish lines declared")
+        bare = [line.get("id", "?") for line in d.finish if "covers" not in line]
+        if bare:
+            # A warning, not a failure: a line with no `covers` is still read as covering every criterion.
+            return "warn", (f"{', '.join(bare)} {'declares' if len(bare) == 1 else 'declare'} no `covers`, so the "
+                            "supervisor reads each as covering every criterion and marks it met once every story's "
+                            "proofs are done; fix: give each its `covers`, `{\"criteria\": [], \"proofs\": []}` for a "
+                            "line you check and mark yourself")
+        lead = sum(1 for line in d.finish if leads_line(line))
+        return "ok", (f"each of the {len(d.finish)} finish lines declares its `covers`; "
+                      f"{lead} {'is' if lead == 1 else 'are'} yours to check and mark")
 
     def remote_base(self):
         d = self.delivery

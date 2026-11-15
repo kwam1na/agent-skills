@@ -362,9 +362,13 @@ renders, publishers included, after each of its own writes.
 With run-delivery's supervisor running, the supervisor judges `finish.met` by
 the record's covers and proofs: a line whose covered criteria have every proof
 it names done is marked met and journalled once, and an entry the lead
-journalled by hand is skipped. Only a finish line the record can't prove is
-the lead's: a finish line the record can't prove holds the close until the
-lead checks it as below, marks it met and journals it.
+journalled by hand is skipped. The supervisor marks a line met once: a line it
+marked that the lead then unmarks stays unmarked. Only a finish line the record
+can't prove is the lead's: a finish line the record can't prove holds the close
+until the lead checks it as below, marks it met and journals it. A line whose
+`covers` names no criteria and no proofs is the lead's: the supervisor never
+marks it met, and it holds the close until the lead marks it. A line with no
+`covers` key covers every criterion, and `doctor --delivery` warns of one.
 
 - For each finish line, run the observable check the plan names, against the
   merged base, not against a lane's checkout.
@@ -415,8 +419,9 @@ for one head, and a run that outlives a killed supervisor is adopted by the next
 one rather than started again; `lead-close` stops it, and it records no result.
 Once nothing holds the close, the supervisor runs
 `fullHealth` at the final head only when no run at that head has happened, as
-in a delivery that merged nothing, then files a follow-up for each deferred
-finding, journals `delivery.closed` and waits until the tracker has every
+in a delivery that merged nothing, then files a follow-up for each finding
+still deferred at its story's last captured round, journals `delivery.closed`
+and waits until the tracker has every
 update, archives the record, aligns the operator's checkout when it is clean,
 and writes a friction note stub for `$compound-learning`, in that order. The lead's part is what holds the close,
 which every lead command names from the supervisor's last pass, and the
@@ -655,6 +660,14 @@ naming its follow-up item. A P0 is never deferred, and a P2 or P3 can be. A P1
 can be deferred only when a verification round files it new against lines
 outside the delta: its id is listed in `lateFindings` and it carries
 `deferredIssue`. Closing a carried finding as `deferred` stays a P2 or P3 move.
+A deferral is fixed only when a later round of the lens that filed it lists it
+in `resolvedFindings` as `closed`, `fixed` or `withdrawn`; one listed as
+`deferred` or `open`, listed by another lens, or not listed stays deferred, and
+the close-out files its follow-up. A delivery file that declares
+`"noDeferrals": true` takes no deferrals: a finding still deferred when its
+story merges is journalled as a `blocker.recorded` on the story, shown in
+"Needs you" and holding the close until the lead resolves it with
+`lead-resolve`, and no follow-up is filed for it.
 
 Save every lens's result for every round, one outcome file per round, as the lens
 returned it, outside your checkout, and keep the files until close-out:
