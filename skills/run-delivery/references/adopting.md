@@ -733,10 +733,14 @@ refused, naming Bitbucket as the forge that has them.
   live view outlives the stop: the resumed supervisor replaces a view of the old release on the same port, and keeps
   one of the same release, so the address the operator has open stays the same.
 - **Merge strategy.** Merge with merge commits. After each merge, the queue checks that the base holds the checked
-  head's tree on top of the base it checked against, and a squash passes that too. But a squashed story's branch never
-  reaches the base, so the supervisor's cleanup reports it unmerged and leaves its checkout and branches for you, and
-  the supervisor's close waits on "not cleaned up: <story>" until you remove that checkout.
-  Squash, with the adapter's `--strategy squash`, only where the forge requires it.
+  head's tree on top of the base it checked against, and a squash passes that too. A squashed story's branch never
+  reaches the base, so cleanup asks the forge instead: it removes a squash-merged story's checkout, and deletes its local
+  branch, when the story's recorded change request is merged and every tip of the story, the checkout's HEAD, its local
+  branch and its remote branch, is at or below the merged head. A tip past the merged head, or uncommitted or untracked
+  files, keeps the checkout, and cleanup names what it found. Cleanup still reports a story unmerged, and leaves its
+  checkout for you, when the forge adapter has no `get` or the queue row has no recorded change request; the
+  supervisor's close then waits on "not cleaned up: <story>" until you remove that checkout. Squash, with the
+  adapter's `--strategy squash`, only where the forge requires it.
 - **A test account that allows one session at a time.** The in-app lease serializes every lane's checks of the running
   app, so one account signs in for one check at a time. Give the lease's lock a path every checkout shares.
 - **Lanes create their own worktrees.** `lane-start` makes each story's checkout from the delivery's base, so a lane

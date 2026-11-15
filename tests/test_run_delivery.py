@@ -10873,6 +10873,40 @@ class NodeAndPythonMinimumTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
 
 
+class SquashCleanupWordingTests(unittest.TestCase):
+    """The adoption guide's "Merge strategy" paragraph says what cleanup does for a squash-merged story, and no longer
+    that it reports every squashed story unmerged."""
+
+    def paragraph(self) -> str:
+        text = " ".join((ROOT / "skills/run-delivery/references/adopting.md").read_text(encoding="utf-8").split())
+        start = text.index("- **Merge strategy.**")
+        return text[start:text.index("- **", start + 1)]
+
+    def test_the_merge_strategy_paragraph_says_cleanup_takes_a_squash_merged_story(self) -> None:
+        paragraph = self.paragraph()
+        for phrase in (
+                "A squashed story's branch never reaches the base, so cleanup asks the forge instead: it removes a "
+                "squash-merged story's checkout, and deletes its local branch, when the story's recorded change request "
+                "is merged and every tip of the story, the checkout's HEAD, its local branch and its remote branch, is "
+                "at or below the merged head.",
+                "A tip past the merged head, or uncommitted or untracked files, keeps the checkout, and cleanup names "
+                "what it found.",
+                "Cleanup still reports a story unmerged, and leaves its checkout for you, when the forge adapter has no "
+                "`get` or the queue row has no recorded change request;"):
+            with self.subTest(phrase=phrase[:50]):
+                self.assertIn(phrase, paragraph)
+
+    def test_the_old_sentence_that_every_squashed_story_reads_unmerged_is_gone(self) -> None:
+        text = " ".join((ROOT / "skills/run-delivery/references/adopting.md").read_text(encoding="utf-8").split())
+        for old in ("so the supervisor's cleanup reports it unmerged and leaves its checkout and branches for you",
+                    "But a squashed story's branch never reaches the base, so the supervisor's cleanup reports it unmerged"):
+            with self.subTest(old=old[:50]):
+                self.assertNotIn(old, text)
+        # Nowhere does a squashed story read unmerged without the condition that makes it so.
+        self.assertIsNone(re.search(r"squash\w*[^.;]{0,80}\breports? (?:it|the story|a story) unmerged(?! [^.;]*\bwhen)",
+                                    text, re.IGNORECASE))
+
+
 class EvidenceNoteWordingTests(unittest.TestCase):
     """Under noDeferrals, the hand-off's refusal of an evidence note and lead-accept's print of them, in the skill and
     the delivery file's reference."""
