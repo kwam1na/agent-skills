@@ -9653,8 +9653,15 @@ def followups_step(c, doc: dict) -> tuple[bool, str]:
     ledger covers every one: a transient failure is retried by its next run, and a permanent one is shown. By hand,
     the record's followups are all there is."""
     have = {item["id"] for item in doc["state"]["followups"]}
-    # Under noDeferrals a finding still deferred is a blocker the lead resolved, never a follow-up.
-    missing = [] if c.no_deferrals else [f for f in deferred_findings(c) if f"{f['story']}-{f['finding']}" not in have]
+    if c.no_deferrals:
+        # A finding still deferred is a blocker, never a follow-up. The close-out journals any the pass step missed,
+        # by a failure or a merge after it read the queue, and holds the close for it.
+        said = deferral_breaches(c, doc)
+        if said:
+            return False, f"{'; '.join(said)} (the close waits for lead-resolve)"
+        missing = []
+    else:
+        missing = [f for f in deferred_findings(c) if f"{f['story']}-{f['finding']}" not in have]
     for finding in missing:
         with marked_decision(c, followup=finding) as written:
             written.append(journal_id(state_tool("journal", "--kind", "decision.recorded", "--subject",

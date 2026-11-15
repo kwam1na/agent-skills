@@ -394,32 +394,56 @@ class DeferredFindingTests(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual(self.found(*rounds), ["a-r1-1"])
 
-    def test_under_no_deferrals_a_merged_storys_deferral_is_journalled_as_a_blocker_once(self) -> None:
-        c = self.config({"lens.a": ([self.deferred("a-r1-1"), self.deferred("a-r1-2"), self.deferred("a-r1-3")], [])},
+    def breached(self) -> tuple[types.SimpleNamespace, dict, list]:
+        """S-1 merged with a-r1-3 and b-r1-1 still deferred (a-r1-1 fixed, a-r1-2 withdrawn), an unrelated blocker
+        already on S-1, and a state tool that journals into the doc."""
+        c = self.config({"lens.a": ([self.deferred("a-r1-1"), self.deferred("a-r1-2"), self.deferred("a-r1-3")], []),
+                         "lens.b": ([self.deferred("b-r1-1")], [])},
                         {"lens.a": ([], [{"id": "a-r1-1", "state": "fixed", "resolution": "fixed"},
-                                         {"id": "a-r1-2", "state": "withdrawn", "resolution": "not a defect"}])},
+                                         {"id": "a-r1-2", "state": "withdrawn", "resolution": "not a defect"}]),
+                         "lens.b": ([], [])},
                         no_deferrals=True)
-        doc = {"state": {"queue": [{"subject": "S-1", "stage": "merged"}]}, "journal": []}
+        doc = {"state": {"queue": [{"subject": "S-1", "stage": "merged"}], "followups": []},
+               "journal": [{"id": 1, "kind": "blocker.recorded", "subject": "S-1", "summary": "lane-1 is blocked on the fixture"}]}
         calls = []
 
         def journal(*argv, **_):
             calls.append(argv)
             doc["journal"].append({"id": len(doc["journal"]) + 1, "kind": argv[argv.index("--kind") + 1],
                                    "subject": argv[argv.index("--subject") + 1], "summary": argv[argv.index("--summary") + 1]})
-        with mock.patch.object(self.tool, "state_tool", journal):
-            said = self.tool.deferral_breaches(c, doc)
-            self.assertEqual(self.tool.deferral_breaches(c, doc), [])
-        self.assertEqual(len(calls), 1, calls)
-        self.assertEqual(said, ["blocker: deferred finding a-r1-3 of S-1"])
-        self.assertEqual([(e["kind"], e["subject"], e["summary"]) for e in doc["journal"]],
-                         [("blocker.recorded", "S-1", "Deferred finding a-r1-3 of S-1 is still deferred at merge, and "
-                           "this delivery takes no deferrals: Follow a-r1-3")])
-        # A story not yet merged, or a delivery that takes deferrals, journals none.
-        for c_, doc_ in ((c, {"state": {"queue": [{"subject": "S-1", "stage": "queued"}]}, "journal": []}),
-                         (types.SimpleNamespace(**{**vars(c), "no_deferrals": False}), {**doc, "journal": []})):
-            with mock.patch.object(self.tool, "state_tool", journal):
-                self.assertEqual(self.tool.deferral_breaches(c_, doc_), [])
-        self.assertEqual(len(calls), 1, calls)
+        self.enterContext(mock.patch.object(self.tool, "state_tool", journal))
+        return c, doc, calls
+
+    def test_under_no_deferrals_a_merged_storys_deferral_is_journalled_as_a_blocker_once(self) -> None:
+        c, doc, calls = self.breached()
+        said = self.tool.deferral_breaches(c, doc)
+        self.assertEqual(self.tool.deferral_breaches(c, doc), [])
+        self.assertEqual(len(calls), 2, calls)
+        self.assertEqual(sorted(said), ["blocker: deferred finding a-r1-3 of S-1", "blocker: deferred finding b-r1-1 of S-1"])
+        self.assertEqual(sorted((e["kind"], e["subject"], e["summary"]) for e in doc["journal"][1:]),
+                         [("blocker.recorded", "S-1", f"Deferred finding {ident} of S-1 is still deferred at merge, and "
+                           f"this delivery takes no deferrals: Follow {ident}") for ident in ("a-r1-3", "b-r1-1")])
+        # A story not yet merged, at any stage short of it, or a delivery that takes deferrals, journals none.
+        for stage in ("queued", "checking", "stopped"):
+            with self.subTest(stage=stage):
+                self.assertEqual(self.tool.deferral_breaches(c, {"state": {"queue": [{"subject": "S-1", "stage": stage}]},
+                                                                 "journal": []}), [])
+        self.assertEqual(self.tool.deferral_breaches(types.SimpleNamespace(**{**vars(c), "no_deferrals": False}),
+                                                     {**doc, "journal": []}), [])
+        self.assertEqual(len(calls), 2, calls)
+
+    def test_under_no_deferrals_the_close_out_journals_a_breach_the_pass_missed_and_holds(self) -> None:
+        c, doc, calls = self.breached()
+        self.enterContext(mock.patch.object(self.tool, "tracker_conf", lambda c: {"mode": "hand"}))
+        done, said = self.tool.followups_step(c, doc)
+        self.assertFalse(done, said)
+        self.assertIn("blocker: deferred finding a-r1-3 of S-1", said)
+        self.assertIn("(the close waits for lead-resolve)", said)
+        self.assertEqual(len(calls), 2, calls)
+        # Journalled, the breaches are the blocker loop's to hold; the step files no follow-up and lets the close go on.
+        self.assertEqual(self.tool.followups_step(c, doc), (True, "follow-ups: 0 recorded"))
+        self.assertEqual(len(calls), 2, calls)
+        self.assertEqual(doc["state"]["followups"], [])
 
 
 class FinishMarkOrderTests(unittest.TestCase):
