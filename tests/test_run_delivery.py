@@ -5890,7 +5890,7 @@ DOCTOR_LABELS = ["host and tools", "orchestration binding", "merge queue candida
                  "snapshots and publishers", "in-app adapters", "in-app adapter contract", "video evidence tools",
                  "Node", "harness configuration", "delivery file", "plan chapter", "added stories' reasons",
                  "plan sections", "story files", "story readiness", "context sections", "finish lines",
-                 "configuration on the remote base", "pull requests marked ready", "delivery supervisor",
+                 "configuration on the remote base", "pull requests marked ready", "delivery supervisor", "deliveries on this base", "merge slot",
                  "gates on the base"]
 
 

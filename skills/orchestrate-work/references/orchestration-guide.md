@@ -160,6 +160,7 @@ the lead and the lanes make them instead, as the commands print them.
 | `base.rerun.finished` | None: its verdict posts with `candidate.stopped`, or with `base.broken` when the base fails the check too. |
 | `base.rerun.stopped` | None: a stopped re-run has no verdict, the candidate is queued again and checked once more, and a second stop at the same heads posts with `candidate.stopped`. |
 | `base.flaky` | None: the post-merge `fullHealth` failed and its failing tests passed when re-run alone, so the base isn't broken; the flaky tests show in the record, the views and "Needs you". |
+| `peer.merged` | None: the supervisor journals a merge by another delivery on the base that changed a file one of this delivery's open stories names, and the entry shows in the record and the views. |
 | `lease.granted` | On the ticket whose work needs the lease: the lease, its holder and when it will be released. |
 | `lease.released` | On the same ticket: the lease is released. |
 | `release.started` | None: the release posts once it finishes. |
@@ -375,6 +376,27 @@ renders, publishers included, after each of its own writes.
   recording why. Each names the file's `restart` command, and an open page
   follows the file without a reload. Without the option the view renders as
   it always has.
+- `render_state.py live --repo PATH` lists, on every built-in page it
+  serves, the other deliveries registered on this record's base beside the
+  repository's git common directory, each with its supervisor (live, stale
+  once its pid no longer runs, or none), its lead checkout, and what its queue
+  is checking and has queued, and who holds the base's merge slot and since
+  when. A delivery alone on its base, with the slot free, shows no section.
+  `doctor --delivery` lists the same, in its `deliveries on this base` and
+  `merge slot` rows; a registry entry that can't be read is named there as
+  unreadable and fails nothing. run-delivery registers each delivery in
+  `<git-common-dir>/agent-skills/deliveries/`, one JSON file named for its
+  key: lead-init with no pid
+  when it starts no supervisor, each supervisor with its pid as it takes its
+  lock, and lead-close removes it.
+- `lead-own --claim PATTERN` claims whole files on the base, in the
+  delivery's own record; a region or a line range is refused. A peer's
+  `lead-assign` and `lead-accept` then warn of a story or candidate that
+  touches a claimed file, naming the claim, the claiming delivery's stories on
+  the file and their stages, and whether it is stale or has no supervisor,
+  and refuse nothing. Each supervisor pass reads its peers' journals and
+  journals `peer.merged`, once, for a peer's merge that changed a file one of
+  this delivery's open stories names.
 - The live view is sized for a handful of pages on this machine. Each open
   page holds one connection and one thread, and each update carries the
   whole record. A page that reconnects gets the whole current record at
