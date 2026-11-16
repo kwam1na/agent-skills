@@ -91,6 +91,13 @@ test("a beat opens to its kind's explanation and its entries' facts, with commit
   expect(closed.app.querySelector("#happened .beat-explain:not(details:not([open]) *)")).toBeNull();
 });
 
+test("a ticket the story's words name is a link to it, as anywhere else on the page", async () => {
+  const document = storied("break-stops-a-piece");
+  const [, shown] = await open(document, { steps: [{ click: '#happened [data-depth="story"]' }] });
+  const stopped = [...shown.app.querySelectorAll("#happened .beat-said")].find((said) => said.textContent === "A was stopped");
+  expect(stopped.querySelector('[data-ticket="A"]').getAttribute("href")).toBe("https://tracker.example/issue/A");
+});
+
 test("a kind no page script names draws its label, mark and tab from the story alone", async () => {
   const document = storied("standing-break");
   const story = structuredClone(document.story);
