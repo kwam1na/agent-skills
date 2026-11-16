@@ -114,6 +114,7 @@ class TerminalTests(unittest.TestCase):
         self.assertEqual(hosted.archive_status(self.archive)['state'],'final-published')
 
 class LifecycleTests(unittest.TestCase):
+    run_quietly=True
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         self.root=Path(self.tmp.name).resolve();self.state=self.root/'state';self.state.mkdir()
@@ -123,11 +124,15 @@ class LifecycleTests(unittest.TestCase):
             flow_log=self.root/'flow',flow_raw={'cleanup':{'archive':str(self.root/'archives')}},
             shelf=SimpleNamespace(json=lambda name:self.views if name=='.agents/delivery-views.json' else {'state':{'directory':'state'}}))
     def test_binding_shelf_config_is_materialized_and_only_uploader_receives_token(self):
+        applied=self.root/'.agent-skills';applied.mkdir();other=self.root/'other-generation';other.mkdir()
+        (applied/'current').symlink_to(other)
         with mock.patch.dict(os.environ,{'FIXTURE_PUBLISH_TOKEN':TOKEN}),mock.patch.object(flow,'run') as run:
             run.return_value=subprocess.CompletedProcess([],0,json.dumps({'state':'pending'}),'')
             flow.start_hosted(self.c,resume=True)
             command=run.call_args.args[0];environment=run.call_args.kwargs['env']
             self.assertIn('start',command);self.assertIn('--resume',command)
+            self.assertEqual(command[command.index('--generation')+1],str(ROOT))
+            self.assertEqual(command[command.index('--generation-target')+1],str(ROOT.resolve()))
             self.assertEqual(environment['FIXTURE_PUBLISH_TOKEN'],TOKEN)
             self.assertNotIn('FIXTURE_PUBLISH_TOKEN',os.environ)
             self.assertNotIn(TOKEN,''.join(p.read_text() for p in self.state.glob('*.json')))
@@ -139,6 +144,29 @@ class LifecycleTests(unittest.TestCase):
         with mock.patch.object(flow,'start_hosted',return_value={'state':'failed'}),mock.patch.object(flow,'hosted_info',return_value={'state':'final-publication-pending'}):
             result=flow.finalize_hosted(self.c,self.archive.parent,{'id':10},seconds=0)
         self.assertEqual(result['state'],'final-publication-pending')
+        self.assertTrue((self.archive/hosted.TERMINAL).exists())
+    def test_held_archive_mirror_lock_cannot_extend_close_budget(self):
+        document={'state':{'meta':{'closing':{'started':{'entry':10},'finished':{'entry':10}}}},
+                  'journal':[{'id':10,'kind':'delivery.closed'}]}
+        (self.archive/'state.json').write_text(json.dumps(document['state']))
+        (self.archive/'journal.jsonl').write_text(json.dumps(document['journal'][0])+'\n')
+        ready=self.root/'lock-held'
+        child=subprocess.Popen([sys.executable,'-c',
+            'import fcntl,pathlib,sys,time;f=open(sys.argv[1],"a");fcntl.flock(f,fcntl.LOCK_EX);pathlib.Path(sys.argv[2]).touch();time.sleep(60)',
+            str(self.archive/'hosted-mirror.lock'),str(ready)],start_new_session=True)
+        def cleanup():
+            if child.poll() is None:child.terminate()
+            child.wait(timeout=5)
+        self.addCleanup(cleanup)
+        deadline=time.monotonic()+5
+        while not ready.exists() and time.monotonic()<deadline:time.sleep(.02)
+        self.assertTrue(ready.exists());result=[]
+        with mock.patch.object(flow,'start_hosted',return_value={'state':'pending'}):
+            thread=threading.Thread(target=lambda:result.append(flow.finalize_hosted(self.c,self.archive.parent,{'id':10},seconds=.2)))
+            thread.start();thread.join(2);finished=not thread.is_alive()
+            cleanup();thread.join(5)
+        self.assertTrue(finished,'close waited for the archive mirror lock')
+        self.assertEqual(result[0]['state'],'final-publication-pending')
         self.assertTrue((self.archive/hosted.TERMINAL).exists())
     def test_archive_status_needs_no_token_and_never_starts_uploader(self):
         hosted.Publisher(self.archive,self.views['hosted'],'APP-1')
@@ -190,15 +218,22 @@ class LifecycleTests(unittest.TestCase):
         git('add','.agents');git('commit','-qm','Shared shelf');git('clone','-q','--bare',str(root),str(root/'origin.git'))
         git('remote','add','origin',str(root/'origin.git'));git('fetch','-q','origin');git('checkout','-qb','feature/lane')
         views.write_text(json.dumps(CFG))
-        (wrapper/'git').write_text(f'#!{sys.executable}\nimport os,sys,json\nwith open({str(observed)!r},"a") as out:out.write(json.dumps([sys.argv[1:],"SHELF_PUBLISH_TOKEN" in os.environ])+"\\n")\nos.execv({real_git!r},[{real_git!r},*sys.argv[1:]])\n')
+        (wrapper/'git').write_text(f'#!{sys.executable}\nimport os,sys,json,re\nwith open({str(observed)!r},"a") as out:out.write(json.dumps([sys.argv[1:],"SHELF_PUBLISH_TOKEN" in os.environ,bool(re.fullmatch("[A-Za-z0-9_-]{{43,128}}",os.environ.get("LOGNAME","")))])+"\\n")\nos.execv({real_git!r},[{real_git!r},*sys.argv[1:]])\n')
         (wrapper/'git').chmod(0o755)
         with mock.patch.dict(os.environ,{'PATH':str(wrapper)+os.pathsep+os.environ['PATH'],'SHELF_PUBLISH_TOKEN':TOKEN,'FIXTURE_PUBLISH_TOKEN':TOKEN}):
             c=flow.Config(root,need_delivery=False,pick=False)
             self.assertEqual(c.shelf.ref,'origin/main')
             result=flow.run([sys.executable,'-c','import os;print("SHELF_PUBLISH_TOKEN" in os.environ)'],cwd=root)
             self.assertEqual(result.stdout.strip(),'False')
+        git('checkout','-fq','main');remote['hosted']['tokenEnv']='LOGNAME';views.write_text(json.dumps(remote))
+        git('add','.agents/delivery-views.json');git('commit','-qm','Baseline variable token');git('push','-q','origin','main')
+        git('checkout','-fq','feature/lane');views.write_text(json.dumps(CFG))
+        with mock.patch.dict(os.environ,{'PATH':str(wrapper)+os.pathsep+os.environ['PATH'],'LOGNAME':TOKEN,'FIXTURE_PUBLISH_TOKEN':TOKEN}):
+            c=flow.Config(root,need_delivery=False,pick=False)
+            self.assertEqual(c.shelf.json('.agents/delivery-views.json')['hosted']['tokenEnv'],'LOGNAME')
         rows=[json.loads(line) for line in observed.read_text().splitlines()]
-        self.assertTrue(any(argv[:1]==['fetch'] for argv,_ in rows));self.assertFalse(any(present for _,present in rows))
+        self.assertTrue(any(argv[:1]==['fetch'] for argv,_,_ in rows))
+        self.assertFalse(any(present or baseline for _,present,baseline in rows))
 
 class OwnedProcessTests(unittest.TestCase):
     run_quietly=True
@@ -278,6 +313,20 @@ class OwnedProcessTests(unittest.TestCase):
         self.wait_for(lambda:any(body and b'Reopened delivery' in body for op,_,body in self.observed if op=='snapshots'))
         self.assertEqual(hosted.read_json(self.state/hosted.IDENTITY)['publicId'],before)
         self.assertFalse((self.state/hosted.TERMINAL).exists());self.assertEqual(hosted.archive_status(self.archive)['state'],'final-published')
+    def test_generation_flip_in_spawn_window_creates_no_obsolete_owner(self):
+        target=self.gen;alias=self.root/'current';alias.symlink_to(target)
+        other=self.root/'new-generation';other.mkdir();children=[]
+        arguments=SimpleNamespace(config='views.json',binding='binding.json',key='APP-1',generation=str(alias),
+            generation_target=str(target),archive_root=str(self.archives),resume=False)
+        inputs=views_common.Inputs(self.root,self.config,{},self.state)
+        popen=subprocess.Popen
+        def switch(command,**kwargs):
+            alias.unlink();alias.symlink_to(other)
+            child=popen(command,**kwargs);children.append(child);return child
+        with mock.patch.object(hosted.subprocess,'Popen',side_effect=switch):
+            with self.assertRaisesRegex(hosted.PublishError,'owner_start_failed'):hosted.start(arguments,inputs)
+        self.assertEqual(len(children),1);children[0].wait(timeout=5)
+        self.assertFalse((self.state/hosted.IDENTITY).exists());self.assertFalse(hosted.locked(self.state/hosted.LOCK))
     def test_expired_terminal_self_exit_and_separate_fixture_cleanup_proof(self):
         self.environment.pop('FIXTURE_PUBLISH_TOKEN');self.command('start')
         intent=self.finished();intent.update(requestedAt=1,retryUntil=600001);hosted.atomic(self.state/hosted.TERMINAL,intent)
@@ -417,7 +466,10 @@ class InstalledLifecycleTests(unittest.TestCase):
         self.wait_for(lambda:hosted.locked(self.state/hosted.LOCK))
         public_id=hosted.read_json(self.state/hosted.IDENTITY)['publicId']
         self.wait_for(lambda:any(op=='snapshots' for op,_,_ in self.observed))
-        hosted.stop(self.state)
+        pointer=self.fx.main/'.agent-skills/current';old_target=pointer.resolve()
+        replacement=self.fx.tmp/'new-generation';replacement.mkdir();pointer.unlink();pointer.symlink_to(replacement)
+        try:self.wait_for(lambda:not hosted.locked(self.state/hosted.LOCK))
+        finally:pointer.unlink();pointer.symlink_to(old_target)
         self.isolate_supervisor_start('lead_run')
         self.command('lead-run','--resume',supervised=True)
         self.wait_for(lambda:hosted.locked(self.state/hosted.LOCK))

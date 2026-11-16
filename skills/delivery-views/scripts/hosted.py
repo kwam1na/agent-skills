@@ -122,12 +122,19 @@ def atomic(path, value):
 
 
 @contextlib.contextmanager
-def lock(path, *, blocking=True):
+def lock(path, *, blocking=True, timeout=None):
     try:descriptor=os.open(path,os.O_RDWR|os.O_CREAT|os.O_NOFOLLOW,0o600)
     except OSError:raise PublishError('owner_lock_unsafe') from None
     try:
-        try:fcntl.flock(descriptor,fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
-        except BlockingIOError:raise PublishError('owner_busy') from None
+        deadline=None if timeout is None else time.monotonic()+max(0,timeout)
+        while True:
+            try:
+                fcntl.flock(descriptor,fcntl.LOCK_EX | (0 if blocking and deadline is None else fcntl.LOCK_NB))
+                break
+            except BlockingIOError:
+                if not blocking or deadline is not None and time.monotonic()>=deadline:
+                    raise PublishError('owner_busy',transient=True) from None
+                time.sleep(min(.02,max(0,deadline-time.monotonic())))
         yield
     finally:os.close(descriptor)
 
@@ -425,14 +432,16 @@ def request_terminal(directory,source,approved_root,entry,document):
         # durable capture request survives even when every API read is offline.
         atomic(source/TERMINAL,{**intent,'source':'.'})
         atomic(directory/TERMINAL,intent)
-        mirror_hosted(directory,source)
+        # The archive already has the immutable core and this durable intent.
+        # The independent owner mirrors receipts and referenced bytes later;
+        # local close never waits for an archive-side publication lock.
         return intent
 
 
-def mirror_hosted(source,destination):
+def mirror_hosted(source,destination,*,timeout=1):
     # Capture after acquiring the destination lock: a delayed older caller
     # must observe the latest acknowledged identity when it finally installs.
-    with lock(destination/'hosted-mirror.lock'):
+    with lock(destination/'hosted-mirror.lock',timeout=timeout):
         return mirror_locked(source,destination)
 
 
@@ -785,6 +794,7 @@ def monitor_liveness(alive,stop):
 def watch(arguments,inputs):
     directory=inputs.state_directory;config=inputs.config
     generation_path=generation(arguments);resolved=generation_path.resolve()
+    expected=Path(arguments.generation_target).resolve() if getattr(arguments,'generation_target',None) else resolved
     script_digest=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     prior_retry=read_json(directory/RETRY,optional=True)
     retry_seen=prior_retry.get('nonce') if isinstance(prior_retry,dict) else None
@@ -793,7 +803,7 @@ def watch(arguments,inputs):
     schedule=Schedule(time.monotonic());previous=None;running=True
     def alive():
         return ((directory/'state.json').is_file() and (directory/'journal.jsonl').is_file()
-                and generation_path.exists() and generation_path.resolve()==resolved and Path(__file__).is_file())
+                and generation_path.exists() and generation_path.resolve()==resolved==expected and Path(__file__).is_file())
     def within_window():
         if not alive():return False
         try:
@@ -883,6 +893,8 @@ def watch(arguments,inputs):
 def start(arguments,inputs):
     directory=inputs.state_directory
     with lock(directory/CONTROL):
+        if getattr(arguments,'generation_target',None) and generation(arguments).resolve()!=Path(arguments.generation_target).resolve():
+            raise PublishError('source_missing')
         owner=read_json(directory/OWNER,optional=True)
         approved=Path(arguments.archive_root).resolve() if getattr(arguments,'archive_root',None) else directory
         intent=read_terminal(directory,approved)
@@ -907,6 +919,7 @@ def start(arguments,inputs):
         command=[sys.executable,'-B',str(Path(__file__).resolve()),'watch','--config',arguments.config,'--binding',arguments.binding,
                  '--state-dir',str(directory),'--key',arguments.key,'--generation',str(generation(arguments))]
         if arguments.resume:command.append('--resume')
+        if getattr(arguments,'generation_target',None):command.extend(['--generation-target',arguments.generation_target])
         if getattr(arguments,'archive_root',None):command.extend(['--archive-root',arguments.archive_root])
         if getattr(arguments,'record_root',None):command.extend(['--record-root',arguments.record_root])
         environment={k:v for k,v in os.environ.items() if k not in inputs.config['scrubEnv'] or k==inputs.config['hosted']['tokenEnv']}
@@ -930,6 +943,7 @@ def main(argv=None):
     views.add_input_arguments(parser)
     parser.add_argument('--key',required=True)
     parser.add_argument('--generation')
+    parser.add_argument('--generation-target')
     parser.add_argument('--archive-root')
     parser.add_argument('--record-root')
     parser.add_argument('--resume',action='store_true')

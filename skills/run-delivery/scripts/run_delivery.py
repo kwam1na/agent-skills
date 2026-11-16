@@ -220,9 +220,12 @@ def hosted_call(c,operation,*,resume=False,timeout=5):
     environment=dict(os.environ)
     token=HOSTED_TOKENS.get((member['tokenEnv'],member['origin'],member['repositoryId']))
     if token is not None:environment[member['tokenEnv']]=token
+    pointer=c.root/'.agent-skills/current'
+    watched=pointer if pointer.exists() and pointer.resolve()==c.release.resolve() else c.release
     command=[sys.executable,'-B',str(c.release/'skills/delivery-views/scripts/hosted.py'),operation,
              '--config',str(config),'--binding',str(binding),'--state-dir',str(c.state),'--key',c.delivery,
-             '--generation',str(c.release),'--archive-root',str(archive_root(c)),'--record-root',str(c.state)]
+             '--generation',str(watched),'--generation-target',str(c.release.resolve()),
+             '--archive-root',str(archive_root(c)),'--record-root',str(c.state)]
     if resume:command.append('--resume')
     done=run(command,cwd=c.root,check=False,timeout=timeout,env=environment,_publishing=True)
     try:answer=json.loads(done.stdout)
@@ -264,7 +267,7 @@ def hosted_line(c,*,archive=None):
 
 def copy_hosted(c,target):
     if not any((c.state/name).exists() for name in ('hosted-identity.json','hosted-terminal.json')):return
-    try:hosted_module(c.release).mirror_hosted(c.state,target)
+    try:hosted_module(c.release).mirror_hosted(c.state,target,timeout=0)
     except (OSError,ValueError,RuntimeError,ImportError,Stop):
         # Core archives remain usable; corrupt optional sidecars never become
         # trusted recovery material. Doctor/status reports the source failure.
@@ -379,7 +382,8 @@ def run(argv: list[str], cwd: Path | None = None, check: bool = True, **kw) -> s
         environment=dict(kw.pop('env',os.environ))
         for name,_,_ in HOSTED_TOKENS:environment.pop(name,None)
         if HOSTED_BOOTSTRAPPING and argv and str(argv[0])=='git':
-            environment={name:value for name,value in environment.items() if name in HOSTED_BOOTSTRAP_ENV}
+            environment={name:value for name,value in environment.items() if name in HOSTED_BOOTSTRAP_ENV
+                         and not re.fullmatch(r'[A-Za-z0-9_-]{43,128}',value)}
         kw['env']=environment
     done = subprocess.run(argv, cwd=cwd, text=True, capture_output=True, **kw)
     if check and done.returncode != 0:

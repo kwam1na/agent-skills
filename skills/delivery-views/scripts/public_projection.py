@@ -32,6 +32,7 @@ MAX_SOURCE_BYTES = 128 * 1024 * 1024
 LOCAL_PATH = re.compile(r'(?:file://|(?:^|[\s"\'(])(?:/[A-Za-z0-9_.-]+/|[A-Za-z]:[\\/]|\\\\)|(?:^|\s)~[/\\]|(?:^|[\s"\'(])(?:\.?agents|\.orchestration|docs|scripts|skills|tests)/)')
 CREDENTIAL_KEY = re.compile(r'^(?:password|token|secret|api[_-]?key|credential|authorization|cookie)$', re.I)
 OMITTED_LOCAL_REFERENCE = '[Local reference omitted]'
+PROSE_FIELDS = frozenset(('headline title text summary label description detail reason why waitingOn clears').split())
 
 
 class ProjectionError(ValueError):
@@ -142,7 +143,7 @@ def _strings(value):
             yield from _strings(entry)
 
 
-def _omit_local_prose(value, schema):
+def _omit_local_prose(value, schema, path=()):
     """Omit whole sensitive fields only where ordinary prose is schema-valid.
 
     Identifiers, enums and links retain their constraints: a marker that cannot
@@ -154,16 +155,19 @@ def _omit_local_prose(value, schema):
             for branch in schema[keyword]:
                 try:_check(value,branch)
                 except ProjectionError:continue
-                return _omit_local_prose(value,branch)
+                return _omit_local_prose(value,branch,path)
             return value
-    if isinstance(value,str) and LOCAL_PATH.search(value):
+    prose=(bool(path) and path[-1] in PROSE_FIELDS
+           or len(path)>1 and isinstance(path[-1],int) and path[-2] in PROSE_FIELDS
+           or len(path)==3 and path[:2]==('document','focus'))
+    if prose and isinstance(value,str) and LOCAL_PATH.search(value):
         try:_check(OMITTED_LOCAL_REFERENCE,schema)
         except ProjectionError:return value
         return OMITTED_LOCAL_REFERENCE
     if isinstance(value,dict):
-        return {key:_omit_local_prose(entry,schema.get('properties',{}).get(key,schema.get('additionalProperties',{})))
+        return {key:_omit_local_prose(entry,schema.get('properties',{}).get(key,schema.get('additionalProperties',{})),(*path,key))
                 for key,entry in value.items()}
-    if isinstance(value,list):return [_omit_local_prose(entry,schema.get('items',{})) for entry in value]
+    if isinstance(value,list):return [_omit_local_prose(entry,schema.get('items',{}),(*path,index)) for index,entry in enumerate(value)]
     return value
 
 

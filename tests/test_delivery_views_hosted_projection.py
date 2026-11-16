@@ -122,6 +122,16 @@ class ProjectionTests(unittest.TestCase):
         linked = public.project(doc, runs, cfg, source_fingerprint='1' * 64)
         self.assertEqual(linked['links']['changes']['https://github.com/example/app/pull/12']['label'], '#12')
 
+    def test_local_structural_references_fail_closed_instead_of_becoming_prose_markers(self):
+        for key in ('candidateRef','runId'):
+            doc,runs=source()
+            if key=='candidateRef':runs['run-1']['roundDetail'][0][key]='docs/candidates/reviewed-tree'
+            else:
+                doc['state']['queue'][0]['runId']='docs/runs/current'
+                runs={'docs/runs/current':{**runs['run-1'],'runId':'docs/runs/current'}}
+            with self.subTest(key=key),self.assertRaises(public.ProjectionError):
+                public.project(doc,runs,config(),source_fingerprint='1'*64)
+
     def test_byte_bound_and_credential_shaped_map_fields_are_refused(self):
         value = self.project()
         self.assertEqual(public.MAX_BYTES, 16 * 1024 * 1024)

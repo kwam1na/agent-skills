@@ -234,11 +234,11 @@
         },
         {
           "path": "skills/delivery-views/scripts/hosted.py",
-          "sha256": "8fc08435f43c3d578d950085bda24bfa315006606623c904a2fac76ec62415da"
+          "sha256": "71bffb48cc092833ea53204a3a720750795baee01db0f3740cb0787c2b78371b"
         },
         {
           "path": "skills/delivery-views/scripts/public_projection.py",
-          "sha256": "170c729b215bb87fe6add23a133d46fc395f4647f86dd8d2124c3973c1ef66f2"
+          "sha256": "70c44f89ae4b666a8dbbdbc0b23e52e04464ab6a6de61529c305300e20e1f32b"
         },
         {
           "path": "skills/delivery-views/scripts/render.py",
@@ -1074,7 +1074,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "e6c285e4575db7b01973578973f89afa6b7af796315da3284928ef9f5b7bb6a6"
+          "sha256": "bc83b05d64b3030ee2ff0d982e86f34fdbb82b145ff8ecf2aca8fa2b6d940f9c"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
