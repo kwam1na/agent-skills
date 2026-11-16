@@ -2,8 +2,8 @@
   "schemaVersion": "plan-review-evidence/1",
   "writtenBy": "run-delivery plan-review",
   "plan": "docs/plans/2026-11-16-knowledge-library-read-side.md",
-  "planSha256": "043ad6493a4b2a9e75593c39834bd2bc87bdeb554de7e932333cbdc42dd3712a",
-  "planCommit": "7d2f84cf7ccba5a6c4193f50ea94f675645bc537",
+  "planSha256": "50e81600fb5726e05b2f3d77957c03f07a994c44c9cc597408f5764bacb91170",
+  "planCommit": "dee970c97493ddab45ed4edd8cdab7539a2fd463",
   "outcome": "unanimous-alignment",
   "requiredLenses": [
     "lens.outcome-correctness",
@@ -45,72 +45,90 @@
       "startedAt": "2026-11-16T15:38:04.434713Z",
       "finishedAt": "2026-11-16T15:39:01.677804Z",
       "open": []
+    },
+    {
+      "round": 4,
+      "candidate": "ceb7c482dcdd2088f5b5a5f02eaf2502542e1156",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-16T15:45:46.130570Z",
+      "finishedAt": "2026-11-16T15:46:51.594658Z",
+      "open": [
+        "adversarial-testing-r4-1"
+      ]
+    },
+    {
+      "round": 5,
+      "candidate": "dee970c97493ddab45ed4edd8cdab7539a2fd463",
+      "outcome": "aligned",
+      "startedAt": "2026-11-16T15:47:21.136058Z",
+      "finishedAt": "2026-11-16T15:47:56.317174Z",
+      "open": []
     }
   ],
   "reviews": [
     {
       "lens": "lens.outcome-correctness",
-      "round": 3,
+      "round": 5,
       "findings": [],
       "result": {
         "schemaVersion": "review-lens-result/1",
         "lensId": "lens.outcome-correctness",
         "subjectRef": "knowledge-library-read-side.plan",
-        "candidateRef": "7d2f84cf7ccba5a6c4193f50ea94f675645bc537",
-        "round": 3,
+        "candidateRef": "dee970c97493ddab45ed4edd8cdab7539a2fd463",
+        "round": 5,
         "outcome": "aligned",
         "findings": [],
         "resolvedFindings": [],
         "evidence": [
-          "Reviewed tree SHA 9dcdd9eb9d50734f0a64dad343305b9b7d6baeb1. The start identity check passed: `git rev-parse HEAD^{tree}` matched and `git status --porcelain` was empty. The end identity check passed with the same tree and an empty status. No probes or mutants were made.",
-          "Carried findings: none are open. outcome-correctness-r1-1 to r1-4 closed as fixed in round 2, and round 2 raised none. The round-3 delta does not touch their fixes: the adapter's catalog `profiles: [\"jira\", \"linear\", \"run-delivery\"]`, the hive, hive-mined and qmd provider-boundary additions with red-proven test copies, the lane exception in the diagnose-work and compound-learning edits with its pins, and the budget-gated finish line all stand.",
-          "Delta derived with `git diff 3bef31bec0cb1126ae4c630b5bb2e5c88c3d1f53..7d2f84cf7ccba5a6c4193f50ea94f675645bc537`. It touches only docs/plans/2026-11-16-knowledge-library-read-side.md: Decision 3's wording, the doctor in-scope bullet, and the Core boundary, Transport boundary, Properties and Doctor scenarios.",
-          "Round-2 deferrable note on the doctor status vocabulary is resolved. A missing properties document is now an `ok` row saying the library is not consulted, 'never doctor's failing `missing` status', and doctor exits 0. That is consistent with Doctor.run in skills/run-delivery/scripts/run_delivery.py, where only `missing` and `wrong` set failed. A malformed document stays a failing row with exit 1. Nothing gates a workflow on doctor, since Doctor( is constructed only in the doctor command, so Decision 4 holds.",
-          "I reviewed the delta and found no new P0 or P1 issue. The new absence pins on `item_id`, `projects.txt`, `tags.txt` and `how-to` start green: a case-insensitive grep over skills/deliver-work/references/capability-contract.md and the deliver-work, plan-work, diagnose-work and compound-learning SKILL.md files found no match at this tree. They are paired with positive pins on itemRef, kind and scope, and one pin is proven red by planting `item_id` with its digest refreshed, which AGENTS.md requires. The Transport boundary scenario now has one subtest per other server tool (draft, push, sessions, plugins).",
+          "Reviewed tree SHA d1b39ae1fe3ef6a1b9a3e0e4368663c492ea8acc. The start identity check passed: `git rev-parse HEAD^{tree}` matched and `git status --porcelain` was empty. The end identity check passed with the same tree and an empty status. No probes or mutants were made.",
+          "Carried findings: none are open. outcome-correctness-r1-1 to r1-4 closed in round 2, and rounds 2 to 4 raised none. As the coordinator directed, resolvedFindings is empty.",
+          "Delta derived with `git diff ceb7c482dcdd2088f5b5a5f02eaf2502542e1156..dee970c97493ddab45ed4edd8cdab7539a2fd463`. It touches only docs/plans/2026-11-16-knowledge-library-read-side.md: hand-off routing sentences in the diagnose-work and compound-learning consult edits, the Lanes scenario, and the Risks refuse_folders bullet.",
+          "Delta review: no new P0 or P1 issue. Decision 7 is now carried into the two workflows a lane actually runs, diagnose-work and compound-learning. Each gets an 'In a lane, ... goes to the lead as a hand-off finding ... cited in the hand-off' sentence pinned beside its consult sentence, so a lane following either skill alone gets the routing. The Lanes scenario follows the AGENTS.md rule for withdrawing a fallback-like instruction: a search by meaning across the core and run-delivery closures, recorded in evidence, then absence pins on synonyms, with one pin proven red by planting a skip sentence in diagnose-work with its digest refreshed.",
+          "Absence pins start green. A whitespace-normalized, case-insensitive grep of skills/deliver-work/SKILL.md, skills/plan-work/SKILL.md, skills/diagnose-work/SKILL.md and skills/compound-learning/SKILL.md for all eight named synonyms ('never calls the capability', 'except in a lane', 'lanes do not', 'not in a lane', 'skips this step', 'does not consult', 'never consult', 'relies on the approved plan') found no match at this tree. None of the planned new sentences contains any of them either.",
+          "Deferrable note (P3, not a finding). The Risks bullet now asserts as fact that hive-mined's `refuse_folders` stops drafting but leaves `search` and `read` working. I couldn't verify hive-mined's semantics from this machine. If it is wrong, lanes in delivery worktrees take the core path, which is harmless to the outcome. The adopting guide's 'run one search to confirm' step would show it from inside a lane worktree.",
           "Model class: Claude Opus-class model (claude-opus-5-5), run as a native subagent. Realization basis: host-convention. Host limitation: no progress or permission signals were exposed to this lens, and no run-event command is declared (Run ID none).",
-          "Scoped checks: none, since a plan review runs no sensors. Additional evidence was the grep above and a re-read of Doctor.run and its row statuses in skills/run-delivery/scripts/run_delivery.py.",
+          "Scoped checks: none, since a plan review runs no sensors. The only additional evidence was the synonym grep above over the four named SKILL.md files.",
           "Approval conditions: no findings are raised this round, so none are pending."
         ]
       },
-      "resultSha256": "bc4a069eaf637168b8c5cfe0202e5cf35aaac726abe91a287070ff62b9d170a3"
+      "resultSha256": "d7fa0bfa7d38cdca135e78585e50ea7ca66eab06d69b4328129417e974523220"
     },
     {
       "lens": "lens.adversarial-testing",
-      "round": 3,
+      "round": 5,
       "findings": [],
       "result": {
         "schemaVersion": "review-lens-result/1",
         "lensId": "lens.adversarial-testing",
         "subjectRef": "knowledge-library-read-side.plan",
-        "candidateRef": "7d2f84cf7ccba5a6c4193f50ea94f675645bc537",
-        "round": 3,
+        "candidateRef": "dee970c97493ddab45ed4edd8cdab7539a2fd463",
+        "round": 5,
         "outcome": "aligned",
         "findings": [],
         "resolvedFindings": [
           {
-            "id": "adversarial-testing-r2-1",
+            "id": "adversarial-testing-r4-1",
             "state": "fixed",
-            "resolution": "Fixed through alternative (a), as written. Decision 3 now rests on two guards: the provider-boundary rule for the provider's names, and absence pins for its field, type and list names. The Core boundary row adds those absence pins for `item_id`, `projects.txt`, `tags.txt` and `how-to` in capability-contract.md and in the deliver-work, plan-work, diagnose-work and compound-learning SKILL.md files. It pairs them with positive pins on `itemRef`, `kind` and `scope` in capability-contract.md, and proves one absence pin red by planting `item_id` with the digest refreshed. A grep at this tree confirms none of the five files holds any of the four literals, so the absence pins start green and can fail. The mutation from round 2 (planting `item_id`, the type enumeration with `how-to`, or `projects.txt` in capability-contract.md) now fails the suite."
+            "resolution": "Fixed as written. The Lanes row now adds the three things the approval condition asked for. First, a search by meaning across every skill in the core and run-delivery closures for text keeping a lane from the library, recorded in the change's evidence. Second, absence pins in deliver-work, plan-work, diagnose-work and compound-learning on 'never calls the capability', 'except in a lane', 'lanes do not', 'not in a lane', 'skips this step', 'does not consult', 'never consult' and 'relies on the approved plan'. Third, one pin proven red by planting the round-4 mutation sentence beside diagnose-work's consult sentence with its digest refreshed. That sentence trips both 'skips this step' and 'relies on the approved plan', so the round-4 surviving mutation now fails the suite. The pins also cover diagnose-work and compound-learning, the files a lane runs, which the approval condition required. A whitespace-normalized, case-insensitive grep at this tree finds none of the eight phrases in any of the four files, so every absence pin starts green and can fail."
           }
         ],
         "evidence": [
-          "Reviewed tree 9dcdd9eb9d50734f0a64dad343305b9b7d6baeb1 at HEAD 7d2f84cf7ccba5a6c4193f50ea94f675645bc537. The start identity check passed (HEAD^{tree} matched, git status --porcelain empty), and so did the end check (same tree, status empty). Candidate reference resolutions matched by exact text: 3bef31bec0cb1126ae4c630b5bb2e5c88c3d1f53 and 7d2f84cf7ccba5a6c4193f50ea94f675645bc537 each resolve to the git commit of the same text.",
-          "Delta derived as git diff 3bef31bec0cb1126ae4c630b5bb2e5c88c3d1f53..7d2f84cf7ccba5a6c4193f50ea94f675645bc537. It touches only docs/plans/2026-11-16-knowledge-library-read-side.md: decision 3's enforcement sentence, doctor's handling of an absent properties document, the Core boundary absence pins, transport hostile strings for each other server tool, and the Doctor and Properties rows.",
-          "Re-check of carried findings: r1-1 through r1-5 were fixed in round 2 and are unchanged by this delta. r2-1 is fixed as recorded in resolvedFindings.",
-          "Delta review, transport boundary: the transport row now needs a hostile subtest that produces a finding for a call to each of `draft`, `push`, `sessions` and `plugins`. That closes the round-2 P2 note, where a single-marker category would let a call to another tool through. The adapter's own files must still scan clean, so the allow side holds.",
-          "Delta review, doctor: an absent properties document is now an `ok` row saying the library is not consulted, and the row asserts it is never doctor's failing `missing` status. This matches run_delivery.py, where a `missing` status sets failed (line 11446). So a mutation reusing that status for an absent document fails the row. Malformed subtests still each name the field and exit 1, and both valid documents report valid.",
-          "Delta review: no new surviving mutation found in the changed lines. The type-enumeration absence pin relies on `how-to` alone, because `rule` and `decision` are ordinary words in those files. Planting the full enumeration still trips the `how-to` pin, so I filed nothing on that.",
+          "Reviewed tree d1b39ae1fe3ef6a1b9a3e0e4368663c492ea8acc at HEAD dee970c97493ddab45ed4edd8cdab7539a2fd463. The start identity check passed (HEAD^{tree} matched, git status --porcelain empty), and so did the end check (same tree, status empty). Candidate reference resolutions matched by exact text: ceb7c482dcdd2088f5b5a5f02eaf2502542e1156 and dee970c97493ddab45ed4edd8cdab7539a2fd463 each resolve to the git commit of the same text.",
+          "Delta derived as git diff ceb7c482dcdd2088f5b5a5f02eaf2502542e1156..dee970c97493ddab45ed4edd8cdab7539a2fd463. It touches only docs/plans/2026-11-16-knowledge-library-read-side.md (+16/-6). It adds the in-lane hand-off routing sentence to the diagnose-work and compound-learning bullets, rewrites the Lanes test row, and adds a clarification to the Risks entry on duplicate learnings from delivery sessions.",
+          "Re-check of the one carried finding: adversarial-testing-r4-1 is fixed, as recorded in resolvedFindings. No other finding of this lens was open after round 4.",
+          "Delta review: the Lanes row now also pins the hand-off routing phrase beside each consult sentence in diagnose-work and compound-learning. That closes the round-4 P2 note that the routing was pinned only in orchestrate-work. The orchestrate-work one-phrase pin is unchanged. Deleting the routing from a file a lane runs now fails a pin.",
+          "Delta review: the Risks clarification says refuse_folders stops only drafting and leaves search and read working. It makes no testable claim and contradicts no row, so I filed nothing on it.",
+          "P3 notes, carried: the Optional path row pins 'report that the library was not consulted' only in deliver-work. And the review.json added in round 4 records an earlier planCommit; this lies outside this lens's charter.",
           "Model class: Opus-class model (claude-opus-5-5), run as a native subagent. Realization basis: host-convention. The host exposes no progress or permission signals; recorded as a limitation.",
-          "Scoped checks: the brief names no sensor commands and no test files, and none were run. No mutants were planted in the checkout. Mutations were reasoned only against the plan's changed lines and the mechanisms they rely on: the run_delivery.py doctor status handling, and grep of the five pinned core files.",
-          "P3 note, carried: the Optional path row pins 'report that the library was not consulted' only in deliver-work. Unchanged and marginal.",
+          "Scoped checks: the brief names no sensor commands and no test files, and none were run. No mutants were planted in the checkout. Mutations were reasoned only against the plan's changed lines and the four skill files its absence pins name. The only additional evidence is the grep above.",
           "No late findings.",
-          "Approval conditions: this round raises no findings. r2-1's approval condition (alternative (a), with paired positive pins and one absence pin proven red with its digest refreshed) is met as written."
+          "Approval conditions: this round raises no findings. r4-1's approval condition is met as written: synonym pins cover the files a lane runs, and one is proven red with its digest refreshed."
         ]
       },
-      "resultSha256": "70034e31e45297a70193de5bbb99d2c9fd75a67b940fd44e5db08e73a4099fce"
+      "resultSha256": "53fc3299dddcba1e8d9396ce513c83615ec45aba4d27632d123c30dddd5f717a"
     }
   ],
   "residualRisks": [
-    "3 review rounds; findings open after each round: 9, 1, 0."
+    "5 review rounds; findings open after each round: 9, 1, 0, 1, 0."
   ]
 }
