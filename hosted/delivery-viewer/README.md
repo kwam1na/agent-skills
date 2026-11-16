@@ -213,3 +213,15 @@ or production service is involved. Screenshots/traces stay under ignored test
 outputs. Node/jsdom tests cover adapter/DOM behavior separately and are not
 browser-security proof. This remains local browser evidence, not deployment or
 off-machine adopter qualification.
+
+## Packaging and production preparation
+
+The portable publisher is qualified from exact built archives in two isolated
+adopters; this service and its package/dependencies are excluded. Its independent
+CI runs locked typecheck, dry-run build, Worker/DOM and Chromium checks when the
+service or shared schema/assets/theme/fixtures change. Corpus CI does not replace
+this job. See [the operator guide](../../docs/hosted-deliveries.md) for the reviewed
+non-secret `deliveries.v26technologies.com` custom domain configuration, private
+storage and scoped-secret procedure, exact-byte evidence and release/adoption
+sequence. These files prepare deployment; no production action or live acceptance
+is claimed here.

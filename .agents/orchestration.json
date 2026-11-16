@@ -1631,6 +1631,104 @@
         ],
         "prerequisites": [],
         "timeoutSeconds": 3600
+      },
+      {
+        "id": "hosted.install",
+        "argv": [
+          "npm",
+          "ci",
+          "--ignore-scripts",
+          "--no-audit",
+          "--no-fund",
+          "--engine-strict"
+        ],
+        "cwd": "hosted/delivery-viewer",
+        "reasons": [
+          "The separate hosted service and its trusted schema, assets and fixtures."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 1200
+      },
+      {
+        "id": "hosted.typecheck",
+        "argv": [
+          "npm",
+          "run",
+          "typecheck"
+        ],
+        "cwd": "hosted/delivery-viewer",
+        "reasons": [
+          "The separate hosted service and its trusted schema, assets and fixtures."
+        ],
+        "prerequisites": [
+          "hosted.install"
+        ],
+        "timeoutSeconds": 1200
+      },
+      {
+        "id": "hosted.build",
+        "argv": [
+          "npm",
+          "run",
+          "build"
+        ],
+        "cwd": "hosted/delivery-viewer",
+        "reasons": [
+          "The separate hosted service and its trusted schema, assets and fixtures."
+        ],
+        "prerequisites": [
+          "hosted.install"
+        ],
+        "timeoutSeconds": 1200
+      },
+      {
+        "id": "hosted.test",
+        "argv": [
+          "npm",
+          "test"
+        ],
+        "cwd": "hosted/delivery-viewer",
+        "reasons": [
+          "The separate hosted service and its trusted schema, assets and fixtures."
+        ],
+        "prerequisites": [
+          "hosted.install"
+        ],
+        "timeoutSeconds": 1200
+      },
+      {
+        "id": "hosted.browser-install",
+        "argv": [
+          "npx",
+          "playwright",
+          "install",
+          "chromium"
+        ],
+        "cwd": "hosted/delivery-viewer",
+        "reasons": [
+          "The separate hosted service and its trusted schema, assets and fixtures."
+        ],
+        "prerequisites": [
+          "hosted.install"
+        ],
+        "timeoutSeconds": 1200
+      },
+      {
+        "id": "hosted.browser",
+        "argv": [
+          "npm",
+          "run",
+          "test:browser"
+        ],
+        "cwd": "hosted/delivery-viewer",
+        "reasons": [
+          "The separate hosted service and its trusted schema, assets and fixtures."
+        ],
+        "prerequisites": [
+          "hosted.build",
+          "hosted.browser-install"
+        ],
+        "timeoutSeconds": 1200
       }
     ],
     "guards": [
@@ -1653,6 +1751,24 @@
         ],
         "checks": [
           "tests.test_compound_learning_corpus"
+        ]
+      },
+      {
+        "paths": [
+          "hosted/delivery-viewer/**",
+          "skills/delivery-views/assets/**",
+          "skills/delivery-views/scripts/render.py",
+          "skills/delivery-views/references/hosted-snapshot.schema.json",
+          "tests/fixtures/delivery-views/hosted/**",
+          ".github/workflows/hosted-delivery-viewer.yml"
+        ],
+        "checks": [
+          "hosted.install",
+          "hosted.typecheck",
+          "hosted.build",
+          "hosted.test",
+          "hosted.browser-install",
+          "hosted.browser"
         ]
       }
     ]

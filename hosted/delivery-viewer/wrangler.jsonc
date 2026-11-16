@@ -37,5 +37,11 @@
     "required": [
       "PUBLISHERS"
     ]
-  }
+  },
+  "routes": [
+    {
+      "pattern": "deliveries.v26technologies.com",
+      "custom_domain": true
+    }
+  ]
 }

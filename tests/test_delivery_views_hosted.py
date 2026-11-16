@@ -338,7 +338,35 @@ class CollectionTests(unittest.TestCase):
         self.write_state();(self.state/'journal.jsonl').write_text('')
         self.inputs=views_common.Inputs(self.root,self.config,{'state':{'publishers':[{'argv':['should-never-run']}] }},self.state)
     def write_state(self):
-        (self.state/'state.json').write_text(json.dumps(self.document))
+        render.review_state._write_atomically(self.state/'state.json',json.dumps(self.document))
+    def test_continuous_fixture_writes_are_valid_at_concurrent_read_boundaries(self):
+        """Read while a writer is open and before each rename, without a timing race."""
+        target=self.state/'state.json';observed=[];errors=[]
+        original_write=Path.write_text;original_replace=os.replace
+        def read_concurrently():
+            def read():
+                try:observed.append(hosted.record_document(self.state)['state']['meta']['headline'])
+                except Exception as error:errors.append(error)
+            thread=threading.Thread(target=read);thread.start();thread.join(2)
+            self.assertFalse(thread.is_alive())
+        def write(path,text,*args,**kwargs):
+            if path==target:
+                with path.open('w') as stream:
+                    read_concurrently()
+                    return stream.write(text)
+            return original_write(path,text,*args,**kwargs)
+        def replace(source,destination,*args,**kwargs):
+            if Path(destination)==target:read_concurrently()
+            return original_replace(source,destination,*args,**kwargs)
+        with mock.patch.object(Path,'write_text',write),mock.patch.object(os,'replace',replace):
+            for number in range(3):
+                self.document['meta']['headline']=f'Concurrent update {number}';self.write_state()
+                read_concurrently()
+        self.assertEqual(errors,[])
+        self.assertEqual(observed,['Portable delivery','Concurrent update 0','Concurrent update 0',
+                                   'Concurrent update 1','Concurrent update 1','Concurrent update 2'])
+        target.write_text('{')
+        with self.assertRaisesRegex(hosted.PublishError,'source_invalid'):hosted.record_document(self.state)
     def test_full_source_cut_observes_optional_inputs_and_review_artifact_content(self):
         first=hosted.collect(self.inputs)
         self.document['meta']['headline']='State changed';self.write_state()
