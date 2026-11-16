@@ -192,6 +192,10 @@
         {
           "id": "v26-3527-1",
           "text": "Meet the retained U5 lifecycle and privacy obligations, deliver terminal intent under live CONTROL contention within the close budget, prove truthful live pending status, and preserve stable same-ID archive recovery under bounded transitional polling."
+        },
+        {
+          "id": "v26-3527-2",
+          "text": "CONTROL contention cannot prevent bounded terminal notification to an existing owner; close stays within 30 seconds, the owner exits by its ten-minute terminal deadline if pending, and same-ID archive recovery remains possible."
         }
       ],
       "after": [
