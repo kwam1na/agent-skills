@@ -2811,6 +2811,34 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertEqual(code, 2, out)
         self.assertIn("still waits for acceptance", out)
 
+    def test_a_stop_the_lead_requeues_narrates_to_one_setback_closed_at_the_requeue(self) -> None:
+        fx = self.fixture(grant_ready=False, merge_needs_ready=False)
+        hand_off(fx, "FX-2", "lane-1")
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        queue_run(fx, "FX-2")
+        forge = json.loads((fx.tmp / "forge.json").read_text())
+        forge["https://forge.test/pr/1"]["draft"] = False  # the lead marks it ready by hand
+        (fx.tmp / "forge.json").write_text(json.dumps(forge))
+        code, out = fx.flow("lead-accept", "--requeue", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        queue_run(fx, "FX-2")
+        self.assertTrue(kinds(fx, "candidate.merged"))
+        [stop], [requeued] = kinds(fx, "candidate.stopped"), kinds(fx, "handoff.requeued")
+        self.assertIn("merge_refused", stop["summary"])
+        path = Path(__file__).resolve().parents[1] / "skills" / "orchestrate-work" / "scripts" / "narrator.py"
+        spec = importlib.util.spec_from_file_location("narrator_for_requeue", path)
+        narrator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(narrator)
+        story = narrator.narrate(record(fx)["journal"])
+        # One setback, opened by the stop and closed by the re-queue that answers it, costing the time between them.
+        instant = {entry["id"]: datetime.datetime.fromisoformat(entry.get("occurredAt") or entry["at"])
+                   for entry in (stop, requeued)}
+        cost = round((instant[requeued["id"]] - instant[stop["id"]]).total_seconds())
+        self.assertEqual([(t["opening"], t["closing"], t["state"], t["cost"]) for t in story["threads"]],
+                         [(stop["id"], requeued["id"], "closed", cost)])
+        self.assertEqual(story["digest"]["setbacks"], {"closed": 1, "cost": cost, "standing": []})
+
     def test_each_finish_line_is_journalled_once_when_its_proofs_are_done(self) -> None:
         fx = self.fixture()
         path = fx.main / ".agents/deliveries/FX-1.json"
