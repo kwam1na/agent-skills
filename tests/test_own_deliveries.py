@@ -714,9 +714,13 @@ class HostedServiceBoundaryTests(unittest.TestCase):
     def test_integration_recipe_carries_only_named_checks_and_refuses_collisions(self):
         import copy
         text=(ROOT/'docs/own-deliveries.md').read_text()
+        self.assertIn("PYTHONOPTIMIZE=0 python3 - <<'PY'",text)
         start=text.index('python3 - <<\'PY\'\n',text.index('Preserve only the reviewed hosted check additions'))
         recipe=text[start+len('python3 - <<\'PY\'\n'):text.index('\nPY\n',start)]
         source=json.loads((ROOT/'.agents/orchestration.json').read_text())
+        source['selection']['catalogue'].sort(key=lambda row:
+            (row['id'] in SERVICE_IDS,SERVICE_IDS.index(row['id'])
+             if row['id'] in SERVICE_IDS else row['id']))
         allowed=['tests.test_delivery_views_hosted','tests.test_delivery_views_hosted_projection',
                  'tests.test_run_delivery_hosted',*SERVICE_IDS]
         target=copy.deepcopy(source)
@@ -724,14 +728,24 @@ class HostedServiceBoundaryTests(unittest.TestCase):
         target['prepare']=[['standing-only']]
         target['selection']['catalogue']=[r for r in target['selection']['catalogue'] if r['id'] not in allowed]
         reader=target['selection']['readers'].pop()
-        for mode in ('add','already-identical','collision','reader-collision','missing-reader','not-restored','missing-source-check','duplicate-source-check'):
+        for mode in ('add','already-identical','target-extension','target-python-order','target-service-order','collision','reader-collision','missing-reader','not-restored','missing-source-check','duplicate-source-check'):
             with self.subTest(mode=mode),tempfile.TemporaryDirectory() as directory:
                 path=Path(directory)/'.agents/orchestration.json';path.parent.mkdir()
                 old=copy.deepcopy(target);candidate=copy.deepcopy(source)
+                if mode=='target-python-order':old['selection']['catalogue'][:2]=reversed(old['selection']['catalogue'][:2])
+                if mode=='target-service-order':
+                    old['selection']['catalogue'].extend(copy.deepcopy(next(r for r in source['selection']['catalogue'] if r['id']==key))
+                                                        for key in reversed(SERVICE_IDS[:2]))
                 if mode in ('already-identical','collision'):
                     row=copy.deepcopy(next(r for r in source['selection']['catalogue'] if r['id']==allowed[0]))
                     if mode=='collision':row['argv']=['unreviewed']
-                    old['selection']['catalogue'].append(row)
+                    at=next((i for i,r in enumerate(old['selection']['catalogue']) if r['id']>row['id']),len(old['selection']['catalogue']))
+                    old['selection']['catalogue'].insert(at,row)
+                if mode=='target-extension':
+                    row=copy.deepcopy(old['selection']['catalogue'][0])
+                    row['id']='tests.test_delivery_views_hosted_extra'
+                    at=next(i for i,r in enumerate(old['selection']['catalogue']) if r['id']>row['id'])
+                    old['selection']['catalogue'].insert(at,row)
                 if mode=='reader-collision':old['selection']['readers'].append({**reader,'checks':['unreviewed']})
                 if mode=='missing-reader':candidate['selection']['readers'].remove(reader)
                 if mode=='missing-source-check':
@@ -744,17 +758,21 @@ class HostedServiceBoundaryTests(unittest.TestCase):
                 answers={'origin/main:.agents/orchestration.json':old,
                          'origin/integrate/<name>:.agents/orchestration.json':candidate}
                 prefix='import subprocess,json\nanswers='+repr(answers)+'\nsubprocess.check_output=lambda args:json.dumps(answers[args[2]]).encode()\n'
-                done=subprocess.run([sys.executable,'-B','-c',prefix+recipe],cwd=directory,capture_output=True,text=True,timeout=10)
-                if mode not in ('add','already-identical'):
+                done=subprocess.run([sys.executable,'-B','-c',prefix+recipe],cwd=directory,
+                                    env={**os.environ,'PYTHONOPTIMIZE':'0'},capture_output=True,text=True,timeout=10)
+                if mode not in ('add','already-identical','target-extension'):
                     self.assertNotEqual(done.returncode,0,mode)
                     self.assertIn('AssertionError',done.stderr)
                     self.assertEqual(path.read_bytes(),before)
                     continue
                 self.assertEqual(done.returncode,0,done.stderr)
                 merged=json.loads(path.read_text())
+                expected=sorted([*CATALOGUE_IDS,*(['tests.test_delivery_views_hosted_extra'] if mode=='target-extension' else [])])
+                self.assertEqual([r['id'] for r in merged['selection']['catalogue']],[*expected,*SERVICE_IDS])
                 self.assertEqual([r['id'] for r in merged['selection']['catalogue'] if r['id'] in allowed],allowed)
                 self.assertEqual(merged['selection']['readers'],[*old['selection']['readers'],reader])
-                self.assertEqual(merged['selection']['catalogue'][:len(old['selection']['catalogue'])],old['selection']['catalogue'])
+                old_ids={r['id'] for r in old['selection']['catalogue']}
+                self.assertEqual([r for r in merged['selection']['catalogue'] if r['id'] in old_ids],old['selection']['catalogue'])
                 merged['selection']['catalogue']=old['selection']['catalogue']
                 merged['selection']['readers']=old['selection']['readers']
                 self.assertEqual(merged,old)
