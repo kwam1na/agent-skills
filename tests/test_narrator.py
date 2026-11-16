@@ -233,14 +233,27 @@ class FixtureTests(unittest.TestCase):
                         self.assertTrue(set(beat["entries"]) <= set(next(t for t in story["threads"] if t["id"] == beat["thread"])["entries"]))
 
     def test_the_schema_refuses_a_story_with_a_missing_or_an_unknown_member(self) -> None:
-        story, _ = told("stop-then-handoff")
-        for change in (lambda s: s.pop("digest"), lambda s: s.update(extra=1), lambda s: s["beats"][0].pop("altitudes"),
-                       lambda s: s["beats"][0].update(summary="A sentence"), lambda s: s["threads"][0].update(cost="38m"),
-                       lambda s: s["chapters"][0]["words"].pop("standing"), lambda s: s["digest"]["setbacks"].update(open=1),
-                       lambda s: s["beats"][0].update(altitudes=["headlines"])):
+        story, _ = told("standing-break")
+        self.assertTrue(story["digest"]["setbacks"]["standing"])
+        objects = {"story": lambda s: s, "digest": lambda s: s["digest"], "digest words": lambda s: s["digest"]["words"],
+                   "setbacks": lambda s: s["digest"]["setbacks"], "standing": lambda s: s["digest"]["setbacks"]["standing"][0],
+                   "chapter": lambda s: s["chapters"][0], "chapter words": lambda s: s["chapters"][0]["words"],
+                   "beat": lambda s: s["beats"][0], "beat words": lambda s: s["beats"][0]["words"], "thread": lambda s: s["threads"][0],
+                   "thread words": lambda s: s["threads"][0]["words"]}
+        changes = []
+        for name, reach in objects.items():
+            changes.append((f"{name} with an unknown member", lambda s, reach=reach: reach(s).update(summary="A sentence")))
+            changes.append((f"{name} missing a member", lambda s, reach=reach: reach(s).pop(next(iter(reach(s))))))
+        changes += [("a beat of an unknown form", lambda s: s["beats"][0].update(form="card")),
+                    ("an unknown altitude", lambda s: s["beats"][0].update(altitudes=["headlines"])),
+                    ("a thread of an unknown state", lambda s: s["threads"][0].update(state="stuck")),
+                    ("a cost in words", lambda s: s["threads"][0].update(cost="38m")),
+                    ("a story of an unknown state", lambda s: s.update(state="paused"))]
+        self.assertEqual(sum(1 for name, _ in changes if "missing" in name), len(objects))
+        for name, change in changes:
             broken = copy.deepcopy(story)
             change(broken)
-            with self.subTest(story=json.dumps(broken)[:80]):
+            with self.subTest(change=name):
                 self.assertTrue(list(SCHEMA.iter_errors(broken)))
 
 
@@ -418,6 +431,178 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual((last["form"], last["words"]["head"], last["notLanded"]), ("finish", "Finished", ["B"]))
         self.assertIn("B never landed.", last["words"]["line"])
         self.assertEqual(story["digest"]["words"]["head"], "One of two pieces landed in 45m.")
+
+
+class Journal:
+    """A journal written inline, for a case no named scenario holds: each step at a minute after nine."""
+
+    def __init__(self) -> None:
+        self.entries: list[dict] = []
+
+    def add(self, minute: int, kind: str, data: dict | None = None, lane: str | None = "lane-1", subject: str | None = None,
+            because: list[int] | None = None, answers: list[int] | None = None) -> int:
+        entry = {"id": len(self.entries) + 1, "at": f"2026-11-16T{9 + minute // 60:02d}:{minute % 60:02d}:00Z", "kind": kind,
+                 "lane": lane, "subject": subject, "data": data or {}}
+        if because:
+            entry["because"] = because
+        if answers:
+            entry["answers"] = answers
+        self.entries.append(entry)
+        return entry["id"]
+
+    def started(self) -> int:
+        return self.add(0, "record.started", {"base": {"ref": "main", "head": "a" * 40}}, lane=None)
+
+    def failed(self, minute: int, subject: str, start: int) -> int:
+        return self.add(minute, "check.failed", {"check": "tests.test_one", "timedOut": False, "failing": ["tests.test_one.Case.test_it"],
+                                                 "more": 0, "log": "logs/one.log"}, subject=subject, because=[start])
+
+    def stopped(self, minute: int, subject: str, because: list[int]) -> int:
+        return self.add(minute, "candidate.stopped", {"reason": "check_failed", "detail": "Its checks failed."}, subject=subject, because=because)
+
+    def handed(self, minute: int, subject: str, answers: list[int] | None = None) -> int:
+        return self.add(minute, "candidate.handed", {"head": "b" * 40, "changeRequest": "https://example.test/pull/1", "rounds": 1,
+                                                     "checks": ["tests.test_one"]}, subject=subject, answers=answers)
+
+    def told(self, state: dict | None = None, plan: dict | None = None) -> dict:
+        self.assertValid()
+        return narrator.narrate(self.entries, state=state, plan=plan)
+
+    def assertValid(self) -> None:
+        errors = state_tool.journal_errors(self.entries)
+        if errors:
+            raise AssertionError(errors)
+
+
+class BoundaryTests(unittest.TestCase):
+    """Where a batch, a run of bookkeeping or a thread meets another, and the narrator's other inputs and words."""
+
+    def assertWhole(self, story: dict, journal: Journal) -> None:
+        self.assertEqual([error.message for error in SCHEMA.iter_errors(story)], [])
+        told_once = sorted(entry for beat in beats_at(story, "everything") for entry in beat["entries"])
+        self.assertEqual(told_once, [entry["id"] for entry in journal.entries])
+        for thread in story["threads"]:
+            for entry in thread["entries"]:
+                self.assertEqual(beat_of(story, entry)["thread"], thread["id"])
+
+    def test_bookkeeping_beside_a_thread_is_not_run_together_with_the_threads_own(self) -> None:
+        journal = Journal()
+        journal.started()
+        start = journal.add(1, "check.started", subject="A")
+        stop = journal.stopped(3, "A", [journal.failed(2, "A", start)])
+        loose = journal.add(4, "plan.updated", {"updated": "2026-11-16T09:04:00Z", "changed": ["units"]}, lane=None)
+        held = journal.add(5, "ownership.granted", {"path": "src/fix.py"}, subject="A", because=[stop])
+        story = journal.told()
+        self.assertWhole(story, journal)
+        [thread] = story["threads"]
+        self.assertEqual((beat_of(story, loose)["entries"], beat_of(story, loose)["thread"]), ([loose], None))
+        self.assertEqual((beat_of(story, held)["entries"], beat_of(story, held)["thread"]), ([held], thread["id"]))
+
+    def test_a_batch_stays_one_beat_when_a_member_fails_and_that_members_start_joins_its_thread(self) -> None:
+        for failing in ("A", "B", "C"):
+            with self.subTest(failing=failing):
+                journal = Journal()
+                journal.started()
+                starts = {subject: journal.add(10, "check.started", {"batch": ["A", "B", "C"]}, subject=subject) for subject in "ABC"}
+                journal.stopped(12, failing, [journal.failed(11, failing, starts[failing])])
+                story = journal.told()
+                self.assertWhole(story, journal)
+                [thread] = story["threads"]
+                together = beat_of(story, starts["A" if failing != "A" else "B"])
+                self.assertEqual((together["form"], together["thread"]), ("batch", None))
+                self.assertEqual(together["entries"], [starts[subject] for subject in "ABC" if subject != failing])
+                self.assertEqual(together["words"], {"head": "Checks started on three pieces together", "line": "In one batch: A, B and C"})
+                alone = beat_of(story, starts[failing])
+                self.assertEqual((alone["entries"], alone["thread"]), ([starts[failing]], thread["id"]))
+
+    def test_two_batches_side_by_side_are_two_beats(self) -> None:
+        journal = Journal()
+        journal.started()
+        first = [journal.add(10, "check.started", {"batch": ["A", "B"]}, subject=subject) for subject in "AB"]
+        second = [journal.add(11, "check.started", {"batch": ["C", "D"]}, subject=subject) for subject in "CD"]
+        story = journal.told()
+        self.assertEqual([beat["entries"] for beat in story["beats"] if beat["form"] == "batch"], [first, second])
+
+    def test_a_stop_with_no_problem_behind_it_is_caused_by_what_it_names(self) -> None:
+        journal = Journal()
+        journal.started()
+        start = journal.add(1, "check.started", subject="A")
+        stop = journal.stopped(2, "A", [start])
+        [thread] = journal.told()["threads"]
+        self.assertEqual((thread["opening"], thread["cause"]), (stop, [start]))
+
+    def test_a_blocker_opens_a_thread_its_resolution_closes(self) -> None:
+        journal = Journal()
+        journal.started()
+        blocker = journal.add(5, "blocker.recorded", {"text": "The dev backend is down."}, lane=None)
+        resolved = journal.add(25, "blocker.resolved", {"why": "It came back."}, lane=None, answers=[blocker])
+        story = journal.told()
+        self.assertEqual([(thread["opening"], thread["closing"], thread["cost"]) for thread in story["threads"]], [(blocker, resolved, 20 * 60)])
+        self.assertEqual(story["digest"]["words"]["line"], "One setback cost 20m.")
+
+    def test_work_after_the_close_reopens_the_delivery(self) -> None:
+        journal = Journal()
+        journal.started()
+        journal.add(5, "delivery.closed")
+        journal.add(6, "lane.assigned", {"title": "Work A"}, subject="A")
+        story = journal.told()
+        self.assertEqual((story["state"], story["digest"]["closedAt"], story["digest"]["took"]), ("open", None, None))
+        self.assertEqual(story["chapters"][-1]["words"]["head"], "Getting started")
+
+    def test_a_piece_is_timed_from_its_first_pick_up_and_a_setback_closed_as_a_chapter_begins_does_not_stand(self) -> None:
+        journal = Journal()
+        journal.started()
+        journal.add(1, "lane.assigned", {"title": "Work A"}, subject="A")
+        journal.add(30, "lane.assigned", {"title": "Work A"}, lane="lane-2", subject="A")
+        start = journal.add(31, "check.started", subject="B")
+        stop = journal.stopped(40, "B", [journal.failed(35, "B", start)])
+        journal.add(61, "candidate.merged", {"head": "c" * 40}, subject="A")
+        journal.handed(61, "B", answers=[stop])
+        journal.add(70, "candidate.merged", {"head": "d" * 40}, subject="B")
+        story = journal.told()
+        landing_a, landing_b = story["chapters"][1:3]
+        self.assertEqual(landing_a["words"]["line"], "1h after it was picked up.")
+        self.assertEqual(landing_b["standing"], [])
+
+    def test_the_plan_adds_pieces_and_titles_and_leaves_out_what_it_removed(self) -> None:
+        journal = Journal()
+        journal.started()
+        journal.add(1, "lane.assigned", {"title": "Work A"}, subject="A")
+        journal.add(30, "candidate.merged", {"head": "c" * 40}, subject="A")
+        plan = {"units": [{"subject": "A", "title": "Retry card payments once"}, {"subject": "C", "title": "Work C"},
+                          {"subject": "D", "title": "Work D", "removed": True}]}
+        story = journal.told(plan=plan)
+        self.assertEqual((story["digest"]["landed"], story["digest"]["pieces"]), (1, 2))
+        self.assertEqual(story["chapters"][1]["pieceTitle"], "Retry card payments once")
+        self.assertEqual(story["digest"]["words"]["head"], "One of two pieces landed so far.")
+        self.assertEqual(journal.told()["chapters"][1]["pieceTitle"], "Work A")
+
+    def test_the_narrators_own_words_for_the_start_the_finish_and_the_digest(self) -> None:
+        story, _ = told("just-started")
+        self.assertEqual(story["digest"]["words"], {"head": "Nothing has landed yet.", "line": "No setbacks."})
+        self.assertEqual(story["chapters"][0]["words"], {"head": "Getting started", "line": "", "standing": []})
+        story, _ = told("never-landed")
+        self.assertEqual(story["chapters"][-1]["words"], {"head": "Finished", "line": "Every finish line was met. B never landed.", "standing": []})
+        self.assertEqual(story["chapters"][0]["words"]["line"], "Lane 1 picked up A and B.")
+        story, _ = told("standing-break")
+        self.assertEqual(story["chapters"][-1]["words"], {"head": "Finishing", "line": "C is still to land.",
+                                                          "standing": ["A setback still stands: the main line broke."]})
+        self.assertEqual(story["digest"]["words"], {"head": "Two of three pieces landed so far.", "line": "One setback still stands."})
+        journal, state = fixture("never-landed")
+        state["finish"].append({"id": "release", "met": False, "text": "It is released"})
+        self.assertEqual(narrator.narrate(journal, state=state)["chapters"][-1]["words"]["line"],
+                         "One of two finish lines were met. B never landed.")
+
+    def test_a_record_the_story_cannot_be_told_from_is_refused(self) -> None:
+        journal = Journal()
+        journal.started()
+        for change in (lambda entries: entries[0].update(kind="nothing.known"), lambda entries: entries[0].update(data=["not", "facts"]),
+                       lambda entries: entries[0].update(at="yesterday"), lambda entries: entries[0].pop("id")):
+            broken = copy.deepcopy(journal.entries)
+            change(broken)
+            with self.subTest(entry=json.dumps(broken[0])[:60]):
+                with self.assertRaises(narrator.NarratorError):
+                    narrator.narrate(broken)
 
 
 class RegistryTests(unittest.TestCase):
