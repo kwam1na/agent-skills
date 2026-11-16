@@ -309,6 +309,18 @@ class OwnedProcessTests(unittest.TestCase):
         self.gen=self.root/'generation-two';self.gen.mkdir();self.command('start')
         replacement=hosted.read_json(self.state/hosted.OWNER)
         self.assertNotEqual(replacement['pid'],owner['pid']);self.assertFalse(hosted.process_matches(owner))
+    def test_ps_children_do_not_inherit_a_bearer_valued_home_variable(self):
+        views=copy.deepcopy(CFG);views['hosted']['tokenEnv']='HOME'
+        (self.root/'views.json').write_text(json.dumps(views))
+        wrapper=self.root/'bin';wrapper.mkdir();observed=self.root/'ps-environment.jsonl';real_ps=shutil.which('ps')
+        (wrapper/'ps').write_text(f'#!{sys.executable}\nimport os,sys,re,json\nwith open({str(observed)!r},"a") as out:out.write(json.dumps(bool(re.fullmatch("[A-Za-z0-9_-]{{43,128}}",os.environ.get("HOME",""))))+"\\n")\nos.execv({real_ps!r},[{real_ps!r},*sys.argv[1:]])\n')
+        (wrapper/'ps').chmod(0o755)
+        self.environment.update(HOME=TOKEN,PATH=str(wrapper)+os.pathsep+self.environment['PATH'])
+        self.environment.pop('FIXTURE_PUBLISH_TOKEN',None)
+        self.command('start');self.wait_for(lambda:any(op=='snapshots' for op,_,_ in self.observed))
+        rows=[json.loads(line) for line in observed.read_text().splitlines()]
+        self.assertTrue(rows);self.assertFalse(any(rows))
+        self.assertTrue(any(auth=='Bearer '+TOKEN for _,auth,_ in self.observed))
     def test_terminal_ack_archives_finished_cut_and_owner_exits_without_cleanup(self):
         self.command('start');self.finished()
         self.wait_for(lambda:hosted.archive_status(self.archive)['state']=='final-published')

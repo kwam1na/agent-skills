@@ -56,7 +56,8 @@ DEBOUNCE, MAX_DEFERRAL, CONFIRM_SECONDS = 2, 10, 30
 MAX_RESPONSE = 64 * 1024
 CHILDREN = set()
 CANCELLED = threading.Event()
-PS_ENV = {key:value for key,value in os.environ.items() if key in ('PATH','HOME')} | {'LC_ALL':'C','TZ':'UTC'}
+PS_ENV = {key:value for key,value in os.environ.items() if key in ('PATH','HOME')
+          and not re.fullmatch(r'[A-Za-z0-9_-]{43,128}',value)} | {'LC_ALL':'C','TZ':'UTC'}
 ERRORS = frozenset(('invalid_identifier invalid_sequence invalid_envelope invalid_json invalid_projection unauthorized '
  'not_found method_not_allowed lease_held resume_required writer_fenced lease_expired sequence_conflict '
  'sequence_superseded confirmation_conflict body_too_large unsupported_content_type unsupported_encoding '
