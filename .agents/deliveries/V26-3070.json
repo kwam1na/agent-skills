@@ -155,7 +155,7 @@
         },
         {
           "id": "v26-3518-3",
-          "text": "Lifecycle fixtures independently prove production self-exit and fixture cleanup; the existing no-publisher live regression remains intact."
+          "text": "Lifecycle fixtures independently prove owned-process exit, cleanup, and bounded terminal/archive behavior. A realistic workflow record with path-bearing prose projects successfully with explicit redaction markers; strict receiver path validation and the existing live no-publisher behavior remain intact."
         }
       ]
     },
