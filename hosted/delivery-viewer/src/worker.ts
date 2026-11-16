@@ -1,3 +1,4 @@
+import {assets,shell} from './generated-assets';
 import { timingSafeEqual } from 'node:crypto';
 import { unwrap, digest, identifier, integer, object, exact, parse, projection, readBytes, MAX_BYTES, KEY, REPOSITORY, RENDERER, fail, json, errorResponse, headers, type Commit } from './protocol';
 import { DeliveryObject, type Session } from './delivery-object';
@@ -55,6 +56,16 @@ export default {
         if (await digest(bytes) !== commit.digest) fail('digest_mismatch', 422);
         const { sourceFingerprint } = projection(parse(bytes));
         return json(unwrap(await env.DELIVERIES.getByName(publicId).commit(repo, publicId, commit, sourceFingerprint, bytes)));
+      }
+      if (request.method === 'GET' && Object.hasOwn(assets,url.pathname)) {
+        const asset=assets[url.pathname];
+        return new Response(asset.body,{headers:{...headers,'Content-Type':asset.type,'Cache-Control':'public, max-age=31536000, immutable'}});
+      }
+      const page=/^\/d\/([a-f0-9]{64})$/.exec(url.pathname);
+      if(page&&request.method==='GET'){
+        unwrap(await env.DELIVERIES.getByName(page[1]).current());
+        return new Response(shell,{headers:{...headers,'Content-Type':'text/html; charset=utf-8',
+          'Content-Security-Policy':"default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'none'; connect-src 'self'; img-src 'none'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"}});
       }
       const read = /^\/d\/([a-f0-9]{64})\/(current|snapshots\/([a-f0-9]{64}))$/.exec(url.pathname);
       if (read && request.method === 'GET') {

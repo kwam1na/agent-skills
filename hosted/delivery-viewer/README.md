@@ -1,10 +1,10 @@
 # Hosted delivery ingestion
 
 Private Worker + SQLite Durable Object + private R2 snapshot storage. This package
-implements ingestion and read APIs; the trusted browser viewer is a later unit.
+implements ingestion, committed read APIs and the trusted read-only browser viewer.
 Local runtime tests are not production or installed-adopter evidence.
 
-Use Node 22.12+ or 24+ (an even, supported Node release), then `npm ci`.
+Use Node 22.22.2+ or 24.15+ (an even, supported Node release), then `npm ci`.
 Run `npm test`, `npm run typecheck`, and `npm run build`. The build is a Wrangler
 dry run and deploys nothing. `generate` compiles the corpus's fixed JSON Schema
 2020-12 with Ajv standalone at build time and generates bindings from
@@ -108,7 +108,7 @@ Response: `protocolVersion`, `sourceConfirmedAt`, `leaseUntil`, original `receip
 ## Anonymous viewer API
 
 `GET /d/{id}/current` returns the committed receipt fields, current
-`sourceConfirmedAt`, `staleAfterMs: 120000`, and `stale` computed by the server.
+`sourceConfirmedAt`, `serverNow`, `staleAfterMs: 120000`, and `stale` computed by the server.
 Poll every 5s. Keep the existing readable view on failures. Metadata has no-store.
 The UI may exempt an acknowledged terminal cut from stale presentation by reading
 its delivery outcome; server freshness never changes the recorded outcome.
@@ -119,7 +119,7 @@ produce 404; poll metadata again and retain the previously rendered view. Old
 committed or staged object paths are not routable. This version uses no-store for
 snapshot responses as well, keeping capability content out of shared caches.
 All routes (including errors) set no-referrer, noindex/nofollow/noarchive,
-nosniff, restrictive CSP and no-store. The later trusted HTML shell will use its
+nosniff, restrictive CSP and no-store. The trusted HTML shell uses its
 own narrow asset CSP. No CORS/write/viewer controls are offered.
 
 ## Errors and retry advice
@@ -160,3 +160,54 @@ eviction helper and retain session/receipt/binding state. Shared schema and
 boundary fixtures run through HTTP handling. These checks prove local runtime
 behavior only. No hosted CI, deployment, DNS, live browser or installed-archive
 qualification is claimed by this package.
+
+
+## Trusted browser viewer
+
+`GET /d/{id}` serves a fixed shell only after a committed snapshot exists. The
+shell embeds no publisher data and loads content-addressed external JS/CSS. The
+build consumes `line-map.js`, `run-summary.js` and their styles directly from the
+corpus. Checked narrow store hooks replace the local HTML refresh mechanism with
+one coherent projection push; drift in those anchors refuses the build. No
+corpus asset is modified or copied into an independently maintained renderer.
+Plan presence changes update its chapter; native subject selection, review/plan
+folds, focus and horizontal line position remain with the existing UI. The host
+preserves the viewport across a pushed revision. System font fallbacks need no
+external request.
+
+The store polls every five seconds, with one request in flight and a ten-second
+request deadline. It checks schema, body bounds, exact digest, fingerprint,
+renderer contract and monotonic epoch/sequence. A missing pointer, failed fetch,
+incompatible schema/renderer or bad digest keeps the prior projection readable.
+Freshness uses server source age plus monotonic elapsed time, including download
+time; transport failure never resets it. A confirmed terminal journal cut is
+retained rather than labeled stale, while work that reopens it and an unresolved
+newer pointer do not receive that exemption. A failed renderer asset remains an
+explicit failure across otherwise successful data polls. The page resumes its
+observer when restored from the back/forward cache.
+
+All untrusted text enters JSON data blocks through DOM textContent and the
+trusted renderer's text nodes. The shell has no inline executable script or
+style, arbitrary uploaded asset or raw review artifact. CSP permits only fixed
+same-origin scripts, styles and data connections, with no eval/inline script,
+frames, forms or external resource loads. Native external links retain
+noopener/noreferrer; presentation removes addresses containing this capability,
+including percent-encoded forms. Public asset routes match only exact build
+hashes and use immutable caching; shell/current/data/errors retain no-store.
+There is no directory, history page, control action or authenticated viewer.
+
+Run `PLAYWRIGHT_SKIP_BROWSER_GC=1 npx playwright install chromium` to install the
+locked browser without removing other shared browser versions. Then run
+`npm run test:browser` under the supported Node version. This dry-run builds the
+actual Worker and starts a local Miniflare5 Worker/SQLite DO/R2 runtime on a free
+loopback port with synthetic repository credentials. The harness disables request
+logging and telemetry and disposes only its own runtime. Desktop and mobile
+Chromium tests assert signed-out access, hostile text remaining text, browser
+CSP/MIME rejection, external request Referer absence and null opener, live update
+state preservation, pointer/fetch/compatibility failure retention, stale/terminal
+truthfulness and explicit asset failure. External navigation and fault responses
+are intercepted in the browser for deterministic assertions; no remote account
+or production service is involved. Screenshots/traces stay under ignored test
+outputs. Node/jsdom tests cover adapter/DOM behavior separately and are not
+browser-security proof. This remains local browser evidence, not deployment or
+off-machine adopter qualification.

@@ -116,7 +116,8 @@ export class DeliveryObject extends DurableObject<Env> {
     const row = this.row();
     if (!row?.receipt) fail('not_found', 404);
     const receipt = JSON.parse(row.receipt) as Receipt;
-    return { ...receipt, sourceConfirmedAt: row.confirmedAt, staleAfterMs: STALE_MS, stale: Date.now() - (row.confirmedAt || 0) >= STALE_MS };
+    const now=Date.now();
+    return { ...receipt, serverNow: now, sourceConfirmedAt: row.confirmedAt, staleAfterMs: STALE_MS, stale: now - (row.confirmedAt || 0) >= STALE_MS };
   }
   private async snapshotImpl(digest: string) {
     const row = this.row();
