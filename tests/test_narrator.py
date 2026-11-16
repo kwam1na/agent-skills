@@ -515,6 +515,32 @@ class BoundaryTests(unittest.TestCase):
                 alone = beat_of(story, starts[failing])
                 self.assertEqual((alone["entries"], alone["thread"]), ([starts[failing]], thread["id"]))
 
+    def test_a_batch_run_again_is_a_beat_of_its_own_at_its_own_instant(self) -> None:
+        journal = Journal()
+        journal.started()
+        first = [journal.add(10, "check.started", {"batch": ["A", "B"]}, subject=subject) for subject in "AB"]
+        finished = journal.add(20, "check.finished", {"batch": ["A", "B"]}, subject="A", because=[first[0]])
+        again = [journal.add(50, "check.started", {"batch": ["A", "B"]}, subject=subject) for subject in "AB"]
+        story = journal.told()
+        self.assertWhole(story, journal)
+        self.assertEqual([beat["entries"] for beat in story["beats"] if beat["entries"][0] != 1], [first, [finished], again])
+        self.assertEqual([beat["at"] for beat in story["beats"] if beat["form"] == "batch"], ["2026-11-16T09:10:00Z", "2026-11-16T09:50:00Z"])
+
+    def test_a_batch_held_whole_by_one_thread_is_one_beat_naming_it(self) -> None:
+        journal = Journal()
+        journal.started()
+        starts = [journal.add(10, "check.started", {"batch": ["A", "B", "C"]}, subject=subject) for subject in "ABC"]
+        failed = journal.add(11, "check.failed", {"check": "tests.test_one", "timedOut": False, "failing": ["tests.test_one.Case.test_it"],
+                                                  "more": 0, "log": "logs/one.log"}, subject="A", because=starts)
+        stop = journal.stopped(12, "A", [failed])
+        later = journal.add(20, "check.started", {"batch": ["A", "B", "C"]}, subject="A", because=[stop])
+        story = journal.told()
+        self.assertWhole(story, journal)
+        [thread] = story["threads"]
+        together = beat_of(story, starts[0])
+        self.assertEqual((together["form"], together["entries"], together["thread"]), ("batch", starts, thread["id"]))
+        self.assertEqual((beat_of(story, later)["entries"], beat_of(story, later)["thread"]), ([later], thread["id"]))
+
     def test_two_batches_side_by_side_are_two_beats(self) -> None:
         journal = Journal()
         journal.started()
