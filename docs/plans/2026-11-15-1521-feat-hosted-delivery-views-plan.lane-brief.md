@@ -38,8 +38,8 @@ assemble briefs, round files or records by hand, and don't edit what they write.
 
 | Lane | Stories | Owns |
 | --- | --- | --- |
-| lane-1 | V26-3514, V26-3517, V26-3518 | `.github/workflows/hosted-delivery-viewer.yml`, `catalog.json`, `docs/hosted-deliveries.md`, `docs/own-deliveries.md`, `profiles/delivery-views.json`, `profiles/jira.json`, `profiles/linear.json`, `profiles/run-delivery.json`, `provenance.lock.json`, `skills/delivery-views/SKILL.md`, `skills/delivery-views/references/hosted-snapshot.schema.json`, `skills/delivery-views/scripts/hosted.py`, `skills/delivery-views/scripts/public_projection.py`, `skills/delivery-views/scripts/render.py`, `skills/delivery-views/scripts/views_common.py`, `skills/run-delivery/SKILL.md`, `skills/run-delivery/references/adopting.md`, `skills/run-delivery/references/config.md`, `skills/run-delivery/scripts/run_delivery.py`, `tests/fixtures/delivery-views/hosted/`, `tests/test_delivery_views_adopter.py`, `tests/test_delivery_views_hosted.py`, `tests/test_delivery_views_hosted_projection.py`, `tests/test_own_deliveries.py`, `tests/test_registry.py`, `tests/test_release_integration.py`, `tests/test_run_delivery_hosted.py`, `tests/test_run_delivery_supervisor.py` |
-| lane-2 | V26-3515, V26-3516, V26-3519, V26-3520 | `hosted/delivery-viewer/` |
+| lane-1 | V26-3514, V26-3517, V26-3527 | `.github/workflows/hosted-delivery-viewer.yml`, `catalog.json`, `docs/hosted-deliveries.md`, `docs/own-deliveries.md`, `profiles/delivery-views.json`, `profiles/jira.json`, `profiles/linear.json`, `profiles/run-delivery.json`, `provenance.lock.json`, `skills/delivery-views/SKILL.md`, `skills/delivery-views/references/hosted-snapshot.schema.json`, `skills/delivery-views/scripts/hosted.py`, `skills/delivery-views/scripts/public_projection.py`, `skills/delivery-views/scripts/render.py`, `skills/delivery-views/scripts/views_common.py`, `skills/run-delivery/SKILL.md`, `skills/run-delivery/references/adopting.md`, `skills/run-delivery/references/config.md`, `skills/run-delivery/scripts/run_delivery.py`, `tests/fixtures/delivery-views/hosted/`, `tests/test_delivery_views_adopter.py`, `tests/test_delivery_views_hosted.py`, `tests/test_delivery_views_hosted_projection.py`, `tests/test_own_deliveries.py`, `tests/test_registry.py`, `tests/test_release_integration.py`, `tests/test_run_delivery_hosted.py`, `tests/test_run_delivery_supervisor.py`, `tests/fixtures/delivery-views/hosted/**`, `.agents/orchestration.json` |
+| lane-2 | V26-3515, V26-3516, V26-3519, V26-3520 | `hosted/delivery-viewer/`, `hosted/delivery-viewer/**` |
 
 | Story | Label | Pinned request patterns | In-app checks its hand-off needs |
 | --- | --- | --- | --- |
@@ -47,9 +47,9 @@ assemble briefs, round files or records by hand, and don't edit what they write.
 | V26-3515 | V26-3515 | - | none |
 | V26-3516 | V26-3516 | - | none |
 | V26-3517 | V26-3517 | - | none |
-| V26-3518 | V26-3518 | - | none |
 | V26-3519 | V26-3519 | - | none |
 | V26-3520 | V26-3520 | - | none |
+| V26-3527 | V26-3527 | - | none |
 
 ## The focused lane profile
 
@@ -167,6 +167,13 @@ Each releasable corpus change includes its catalog/profile/output-list edits and
 Reviews: declare the standard four-round delivery bound, run the two mandated lenses, and add risk-relevant security/API/reliability reviewers as needed; do not manufacture review evidence. Review prepared checkouts independently and reduce actual results. Aim to close all actionable in-contract notes rather than defer. Collect findings before fixing and rerun affected proof once.
 
 Push/open draft PR/handoff only through run-delivery; no lane merges, tags a release, deploys production, rewrites the delivery file, or changes final tracking state. Product deployment and release are lead-owned after evidence. Give the lead head, PR, owned files, proving checks, risks and complete review result.
+
+
+## Authorized remediation follow-up
+
+Kwamina authorized V26-3527 after the original V26-3518 terminal four-round result. Preserve that original partial unit and all review artifacts. V26-3527 adopts its retained source candidate, resolves the three open findings and owns the complete lifecycle/c1 outcome. It is a distinct tracked follow-up with a two-round maximum declared before review, not a fifth or grace round of V26-3518.
+
+For every run-delivery command for V26-3527, including prepare/reduce/gate/handoff and lead acceptance, set RUN_DELIVERY_CONFIG to the lead's explicit .orchestration/flow-log/V26-3527.run-delivery.json. That file copies the standing configuration with review.bound=2; ordinary repository and other story review limits remain unchanged. The lead verified the resolved limit before assignment. Retain the original four reviewer results as related context and honor their approval conditions in the follow-up's full assessment.
 
 
 ## Record writer generation
