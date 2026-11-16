@@ -32,8 +32,7 @@ LENSES = ("lens.outcome-correctness", "lens.adversarial-testing")
 def review(adopter: harness.Adopter, subject: str, lane: str, number: int, verdict: str) -> None:
     at = state_tool.now()
     state_tool.append_journal(adopter.state, kind="review.round", subject=subject, lane=lane,
-                              summary=f"{subject}: review round {number}",
-                              review={"round": number, "startedAt": at, "finishedAt": at,
+                              data={"round": number, "startedAt": at, "finishedAt": at,
                                       "verdicts": {lens: verdict for lens in LENSES},
                                       "findings": {"P0": 0, "P1": 0 if verdict == "approve" else 1, "P2": 0, "P3": 0}})
 

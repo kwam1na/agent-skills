@@ -71,8 +71,8 @@ class MergeOccurrenceTests(unittest.TestCase):
         self.assertIsNone(stats["totalSeconds"])
 
     def test_latest_landing_uses_occurrence_order_and_journal_times_are_validated(self):
-        earlier = entry(1, "2026-10-20T12:00:00Z", "candidate.merged", "work-a")
-        recovered = entry(2, "2026-10-20T13:00:00Z", "candidate.merged", "work-b",
+        earlier = entry(1, "2026-10-20T12:00:00Z", "candidate.merged", "work-a", data={"head": HEAD_A})
+        recovered = entry(2, "2026-10-20T13:00:00Z", "candidate.merged", "work-b", data={"head": HEAD_A},
                           occurredAt="2026-10-20T10:00:00Z")
         self.assertEqual(state_tool.latest_merge([earlier, recovered]), earlier)
         self.assertEqual(state_tool.journal_errors([earlier, recovered]), [])
