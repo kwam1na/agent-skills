@@ -53,8 +53,9 @@ test("the plan counts every proof of a unit settled with no change done, and say
   const cell = [...shown.app.querySelectorAll("#plan .plan-all .plan-unit")]
     .find((entry) => entry.querySelector("[data-ticket]").getAttribute("data-ticket") === "S");
   expect(cell.querySelector(".pu-standing").textContent).toBe("Closed, no change needed");
-  expect([...cell.querySelectorAll(".plan-proof")].map((proof) => proof.className)).toEqual(
-    ["plan-proof done", "plan-proof done", "plan-proof done"]);
+  // Every proof it owes is done: a proven unit's finished proofs read as one line, naming each.
+  expect([...cell.querySelectorAll(".plan-proof")].map((proof) => [proof.className, proof.textContent])).toEqual(
+    [["plan-proof done", "Review · Handed off · Merged"]]);
   expect(cell.classList.contains("proven")).toBe(true);
   // While it waits for the lead, it is not yet proven.
   const waiting = record({ queue: [item("A", "merged")], planned: [noChange("S", "review")], journal: journal(landed("A")) });

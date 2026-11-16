@@ -66,16 +66,18 @@ test("opts in to the live server and loads nothing but its three faces", async (
   const head = page.slice(0, page.indexOf("</head>"));
   expect(head).toContain('<meta name="delivery-state-live">');
   expect(page.indexOf('<meta name="delivery-state-live">')).toBeLessThan(page.indexOf("<script"));
-  expect(page).not.toMatch(/\ssrc=|@import|url\(/);
+  // A url() names a part of the page itself, such as the gradient a checked stop's stream is drawn with, never an address.
+  expect(page).not.toMatch(/\ssrc=|@import|url\((?!#)/);
   const hrefs = page.match(/\shref="[^"]*"/g);
   expect(hrefs).toHaveLength(1);
   expect(hrefs[0]).toMatch(/^ href="https:\/\/fonts\.googleapis\.com\/css2\?/);
-  // The only other addresses are the links the renderer worked out from the configuration, for ticket ids and
-  // change requests, each the configured tracker's or forge's template filled in.
+  // The only other addresses are the links the renderer worked out from the configuration, for ticket ids, change
+  // requests and commits such as the base head, each the configured tracker's or forge's template filled in.
   const links = block(page, "delivery-links");
   const linked = [...Object.values(links.issues), ...Object.values(links.changes).map((change) => change.href), ...Object.values(links.commits)];
   expect(linked.length).toBeGreaterThan(10);
-  expect(linked.every((href) => /^https:\/\/(tracker\.example\/issue\/PAY-[0-9]+|github\.com\/acme\/shop\/pull\/[0-9]+)$/.test(href))).toBe(true);
+  expect(Object.keys(links.commits)).toContain(fixtureDocument().state.meta.baseHead);
+  expect(linked.every((href) => /^https:\/\/(tracker\.example\/issue\/PAY-[0-9]+|github\.com\/acme\/shop\/(pull\/[0-9]+|commit\/[0-9a-f]{40}))$/.test(href))).toBe(true);
   const addresses = [...new Set(page.match(/https:\/\/[a-z.]+\/[^"\s]*/g))];
   expect(addresses.filter((address) => !address.startsWith("https://fonts.googleapis.com/css2?")).sort())
     .toEqual([...new Set(linked)].sort());
@@ -93,9 +95,10 @@ test("draws the run as a line map, chapter by chapter", async () => {
   // The tracker item the delivery is listed under opens in the tracker.
   expect(now.querySelector(".kicker a")?.getAttribute("href")).toBe("https://tracker.example/issue/PAY-2354");
   expect(now.querySelector("h1")?.textContent).toBe("1 of 8 pieces have landed.");
-  expect(now.querySelector(".say")?.textContent).toBe("Last landed: Hold the cart through a payment redirect, 44m ago.");
+  // What landed last is one of the chapter's facts: its title, then its ticket and how long ago.
+  expect(now.querySelector(".fact")?.textContent).toBe("Last landedHold the cart through a payment redirectPAY-2358 · 44 minutes ago");
   const checking = now.querySelector(".checking").textContent;
-  expect(checking).toContain("Being checked now");
+  expect(now.querySelector(".checking .ck-h-words")?.textContent).toBe("Checking · PAY-2361");
   expect(checking).toContain("Retry card payments once on a dropped connection");
   // Up to twelve checks read in groups: the running one in its own row, then those waiting, then those completed.
   expect(now.querySelector(".ck-run .sr")?.textContent).toContain("Running storefront build");
@@ -103,7 +106,8 @@ test("draws the run as a line map, chapter by chapter", async () => {
     ["pending", "pending", "passed", "passed", "reused"]);
   expect(checking).toContain("Running storefront build · 2m 30s of about 4m");
   expect(checking).not.toContain("longer than usual");
-  expect(checking).toContain("3 of 6 checks done · started 6m ago");
+  expect(now.querySelector(".checking .ck-count")?.textContent).toBe("3/6");
+  expect(now.querySelector(".checking .ck-chosen > summary")?.textContent).toBe("3 done, 2 waiting · started 6m ago");
   expect(checking).toContain("Up next: Keep the order number on the receipt page · Record the payment provider's reference");
   const attention = now.querySelector(".attention").textContent;
   expect(attention).toContain("Show a calm message when the card is declined stopped");
@@ -112,7 +116,7 @@ test("draws the run as a line map, chapter by chapter", async () => {
   expect(attention).toContain("Waiting on the dev backend lease");
   expect(attention).toContain("its change request closed without merging");
   expect(attention).toContain("The forge is not answering");
-  expect(now.querySelector(".since")?.textContent).toContain("Saved view · updated just now · base aaaaaaa");
+  expect(now.querySelector(".since")?.textContent).toBe("Saved viewUpdated just nowbase aaaaaaa");
 
   // The line: one row per lane, a stop per piece, drawn by where the piece stands.
   const line = chapter("line");
@@ -152,14 +156,14 @@ test("draws the run as a line map, chapter by chapter", async () => {
     "ThenThe webhook replay recovers a missed payment",
   ]);
 
-  // What happened: newest first, marked by kind, eight at a time.
+  // What happened: newest first, marked by kind, eight at a time. Its words are the story chapter's, so only that it
+  // draws is pinned: eight entries, the landing among them marked as a merge, and the rest behind a button.
   const happened = chapter("happened");
-  const entries = [...happened.querySelectorAll(".feed li")];
+  const entries = [...happened.querySelectorAll(".feed > li")];
   expect(entries).toHaveLength(8);
-  expect(entries[0].textContent).toContain("Checking Retry card payments once on a dropped connection");
-  const landed = entries.find((entry) => entry.textContent?.includes("Merged PAY-2358"));
-  expect(landed.querySelector(".g")?.className).toBe("g merge");
-  expect(landed.textContent).toContain("Landed · Payments · PAY-2358");
+  expect(entries.map((entry) => entry.querySelector("time")?.getAttribute("datetime")))
+    .toEqual([...entries.map((entry) => entry.querySelector("time")?.getAttribute("datetime"))].sort().reverse());
+  expect(entries.filter((entry) => entry.querySelector(".g")?.className === "g merge")).toHaveLength(1);
   expect(happened.querySelector(".more")?.textContent).toBe("Show all 10");
 
   // Parked: the follow-ups.
@@ -227,7 +231,7 @@ test("shows a ticket's own title and summary when its id is hovered, wherever th
     steps: [
       { hover: '#line .stop-label [data-ticket="PAY-2361"]' },
       { leave: '#line .stop-label [data-ticket="PAY-2361"]' },
-      { hover: '#happened .who [data-ticket="PAY-2358"]' },
+      { hover: '#happened .feed [data-ticket="PAY-2358"]' },
       { hover: '#parked [data-ticket="PAY-2370"]' },
       { hover: '#line .stop-label [data-ticket="PAY-2360"]' },
     ],
@@ -409,7 +413,7 @@ test("names each check by the title its provider gave, by its id where none was 
   expect(pushed.app.querySelector(".ck-run.settled .ck-run-name")?.textContent).toBe("Storefront build <img src=x onerror=alert(1)> passed");
 });
 
-test("words a passed post-merge fullHealth and a provider's refused selection in the history, not as raw kinds", async () => {
+test("draws a passed post-merge fullHealth and a provider's refused selection in the history, never as raw kinds", async () => {
   const document = fixtureDocument();
   document.journal.push(
     { at: "2026-10-22T05:08:00Z", id: 45, kind: "base.verified", summary: "fullHealth passed at the base head PAY-2358's merge reached" },
@@ -417,11 +421,13 @@ test("words a passed post-merge fullHealth and a provider's refused selection in
       summary: "The provider refused PAY-2361's checks: no checks match the diff" },
   );
   const [shown] = await open(document);
-  const words = [...shown.app.querySelectorAll("#happened .who")].map((who) => who.textContent);
-  expect(words).toContain("Base verified");
-  expect(words).toContain("Checks refused · Payments · PAY-2361");
+  // The feed's words are the story chapter's: only that it draws both entries is pinned, and that neither is a raw kind.
+  for (const at of ["2026-10-22T05:08:00Z", "2026-10-22T05:09:00Z"]) {
+    expect(shown.app.querySelector(`#happened .feed time[datetime="${at}"]`) !== null).toBe(true);
+  }
+  const words = shown.app.querySelector("#happened .feed").textContent;
   for (const raw of ["base.verified", "selection.refused"]) {
-    expect(words.some((word) => word.includes(raw))).toBe(false);
+    expect(words.includes(raw)).toBe(false);
   }
 });
 
@@ -438,7 +444,7 @@ test("says a piece whose check failed is waiting on the main line's rerun, on th
   const steps = [{ click: '.stop-btn[data-subject="PAY-2361"]' }];
   const [first, shown] = await open(document, { steps });
   const checking = first.app.querySelector(".checking");
-  expect(checking.querySelector(".ck-h-words")?.textContent).toBe("Failed, waiting on the main line's rerun");
+  expect(checking.querySelector(".ck-h-words")?.textContent).toBe("Failed, waiting on the main line's rerun · PAY-2361");
   expect(checking.querySelector(".ck-rerun")?.textContent)
     .toBe("Rerunning storefront build on the main line, to tell whether it fails there too · started 3 minutes ago");
   expect(checking.querySelector(".ck-verdict")?.textContent).toMatch(/^Won't merge from this run\./);
@@ -452,12 +458,12 @@ test("says a piece whose check failed is waiting on the main line's rerun, on th
   expect(history.querySelector("summary .mh-sub").textContent).toMatch(/^ · Rerun on the main line 3 minutes ago · /);
   expect([...history.querySelectorAll("li span")].map((row) => row.textContent).slice(-2))
     .toEqual(["Check failed: storefront build", "Rerunning storefront build on main"]);
-  // Its verdict reads as one in the feed and as the merge check's last step.
+  // Its verdict is drawn in the feed and reads as the merge check's last step.
   const verdict = JSON.parse(JSON.stringify(document));
   verdict.journal.push({ at: "2026-10-22T05:09:00Z", id: 42, kind: "base.rerun.finished", lane: "payments", subject: "PAY-2361",
     summary: "Base re-run on main after 120s: storefront build passed: the failure is the candidate's" });
   const [, verdictShown] = await open(verdict, { steps });
-  expect([...verdictShown.app.querySelectorAll(".who")].map((who) => who.textContent)).toContain("Rerun verdict · Payments · PAY-2361");
+  expect(verdictShown.app.querySelector('#happened .feed time[datetime="2026-10-22T05:09:00Z"]') !== null).toBe(true);
   expect(verdictShown.app.querySelector("#detail .mh summary .mh-sub").textContent).toMatch(/^ · Rerun verdict a minute ago · /);
   // Rendered between the panel's write and the started entry, the wait's time comes from the panel.
   const unjournaled = JSON.parse(JSON.stringify(document));
@@ -485,7 +491,7 @@ test("says a piece whose check failed is waiting on the main line's rerun, on th
   // The same failure before the rerun starts, or once it is over, is a check that failed, not a wait on the main line.
   delete document.state.meta.checking.now.baseRerun;
   const [before] = await open(document);
-  expect(before.app.querySelector(".checking .ck-h-words")?.textContent).toBe("Being checked now");
+  expect(before.app.querySelector(".checking .ck-h-words")?.textContent).toBe("Checking · PAY-2361");
   expect(before.app.querySelector(".checking .ck-rerun")).toBeNull();
   expect(before.app.querySelector('.stop-btn[data-subject="PAY-2361"]').getAttribute("aria-label"))
     .toBe("Retry card payments once on a dropped connection, Being checked before merge");
@@ -661,7 +667,7 @@ test("lists each reviewer's findings on its round, and on the confirming round t
   ]);
   // Each severity is said once, as a band over its findings.
   expect([...one.querySelectorAll(".run-band")].map((band) => band.textContent)).toEqual(["Serious", "Moderate", "Moderate"]);
-  expect(one.querySelector(".run-settled")?.textContent).toBe("1 of 3 fixed in abc1234 · confirmed round 2 · 1 open");
+  expect(one.querySelector(".run-settled")?.textContent).toBe("1 of this round's 3 notes was fixed in abc1234, and round 2 confirmed it. 1 is still open.");
   // Counts are the findings' own, so the card does not repeat them.
   expect(one.querySelector(".run-card-notes")).toBeNull();
   // Round 2, the confirming round, names the fix it confirmed, linked to its commit.
@@ -672,7 +678,7 @@ test("lists each reviewer's findings on its round, and on the confirming round t
     ["Correctness", [["run-finding is-p3", "The retry log line repeats the order id.", null]]],
   ]);
   expect(two.querySelector(".run-reviewer .run-quiet")?.textContent).toBe("nothing raised");
-  expect(two.querySelector(".run-settled")?.textContent).toBe("Confirmed 1 earlier note fixed in abc1234, 1 earlier note settled otherwise");
+  expect(two.querySelector(".run-settled")?.textContent).toBe("This round confirmed 1 earlier note fixed in abc1234, and 1 settled another way.");
   const link = two.querySelector(".run-settled a.run-commit");
   expect(link.getAttribute("href")).toBe(`https://github.com/acme/shop/commit/${FIX}`);
   expect(link.getAttribute("rel")).toBe("noopener noreferrer");
@@ -870,9 +876,9 @@ test("marks what changed since the last update, as the earlier map did", async (
   expect(app.querySelector(".left-number")?.textContent).toBe("6pieces to go");
   expect(app.querySelectorAll(".dots i.closing")).toHaveLength(1);
   expect([...app.querySelectorAll(".person.changed h3")].map((name) => name.textContent)).toEqual(["Storefront"]);
-  expect(app.querySelector("#happened .feed li.fresh")?.textContent).toContain("Merged PAY-2361");
+  expect([...app.querySelectorAll("#happened .feed > li.fresh time")].map((time) => time.getAttribute("datetime"))).toEqual(["2026-10-22T05:09:00Z"]);
   expect([...app.querySelectorAll(".parked li.fresh")].map((item) => item.textContent)).toEqual(["PAY-2399Show the retry count to support"]);
-  expect(app.querySelector(".say")?.textContent).toBe("Last landed: Retry card payments once on a dropped connection, 1m ago.");
+  expect(app.querySelector("#now .fact")?.textContent).toBe("Last landedRetry card payments once on a dropped connectionPAY-2361 · a minute ago");
 });
 
 test("shows pieces checked as one batch together, each with its change request", async () => {
@@ -908,7 +914,7 @@ test("shows pieces checked as one batch together, each with its change request",
   const split = batch();
   split.state.queue[3].stage = "queued";
   const [{ app: splitApp }] = await open(split);
-  expect(splitApp.querySelector(".ck-h .ck-h-words")?.textContent).toBe("Being checked now");
+  expect(splitApp.querySelector(".ck-h .ck-h-words")?.textContent).toBe("Checking · PAY-2361");
   // A failed batch still lands the pieces ahead of the one that broke it; the failures carry every member's logs.
   const failing = batch();
   failing.state.meta.checking.now.steps = [{ label: "shop.check.aa", state: "failed" }, { label: "shop.check.bb", state: "running" }];
@@ -926,7 +932,7 @@ test("shows pieces checked as one batch together, each with its change request",
   carried.state.meta.checking.now = { subject: "PAY-2362", title: "Keep the order number on the receipt page", startedAt: "2026-10-22T05:09:00Z", steps: [] };
   carried.journal.push({ at: "2026-10-22T05:09:00.004211Z", id: 13, kind: "check.started", lane: "storefront", subject: "PAY-2362", summary: "Checking Keep the order number on the receipt page" });
   const [{ app: carriedApp }] = await open(carried);
-  expect(carriedApp.querySelector(".ck-h .ck-h-words")?.textContent).toBe("Being checked now");
+  expect(carriedApp.querySelector(".ck-h .ck-h-words")?.textContent).toBe("Checking · PAY-2362");
   expect(carriedApp.querySelector("#detail .d-batch")).toBeNull();
   // The same batch started twice in a row counts each member once, and a lane's note between the starts
   // does not split the batch.
@@ -938,7 +944,7 @@ test("shows pieces checked as one batch together, each with its change request",
   expect(twiceApp.querySelector(".ck-h .ck-h-words")?.textContent).toBe("Being checked together · 2 pieces");
   // Pieces in checks that the latest batch start does not cover are not a batch either.
   const [{ app: solo }] = await open(fixtureDocument());
-  expect(solo.querySelector(".ck-h .ck-h-words")?.textContent).toBe("Being checked now");
+  expect(solo.querySelector(".ck-h .ck-h-words")?.textContent).toBe("Checking · PAY-2361");
 });
 
 test("keeps a hand-over the lead has not accepted apart from the work ready to check", async () => {
@@ -1136,7 +1142,9 @@ test("reads unreadable times as unknown, never as the start of time", async () =
   document.state.lanes[3].since = "a while back";
   document.state.leases[0].since = null;
   const [{ app }] = await open(document);
-  expect(app.querySelector(".since")?.textContent).toBe("Saved view · base aaaaaaa");
+  // With no readable update time, the base head is the fact's value and nothing says when.
+  expect(app.querySelector(".since .fact-value")?.textContent).toBe("base aaaaaaa");
+  expect(app.querySelector(".since .fact-detail")).toBeNull();
   expect(app.querySelector(".ck-run .sr")?.textContent).toBe("Running storefront build");
   expect(app.querySelector(".leases")?.textContent).toBe("dev-backend held by lead");
   expect(app.querySelectorAll(".person")[3]?.querySelector(".on")).toBeNull();
@@ -1151,13 +1159,13 @@ test("draws checks as chips up to twelve, says a run is stale after ninety minut
   document.state.meta.checking.now.steps = steps(13);
   expect((await open(document))[0].app.querySelector(".ck-bar")).not.toBeNull();
   document.state.meta.updatedAt = "2026-10-22T03:40:00Z";
-  expect((await open(document))[0].app.querySelector(".since")?.className.trim()).toBe("since");
+  expect((await open(document))[0].app.querySelector(".since")?.className.trim()).toBe("fact since");
   document.state.meta.updatedAt = "2026-10-22T03:41:00Z";
-  expect((await open(document))[0].app.querySelector(".since")?.className.trim()).toBe("since");
+  expect((await open(document))[0].app.querySelector(".since")?.className.trim()).toBe("fact since");
   document.state.meta.updatedAt = "2026-10-22T03:39:00Z";
   const stale = (await open(document))[0].app.querySelector(".since");
-  expect(stale.className).toBe("since stale");
-  expect(stale.textContent).toContain("no update for 1h 31m");
+  expect(stale.className).toBe("fact since stale");
+  expect(stale.querySelector(".fact-value").textContent).toBe("No update for 1h 31m");
 });
 
 test("follows the live server through the adapter it injects into the page", async () => {

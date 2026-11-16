@@ -143,7 +143,7 @@ test("finding ids and lenses named like built-in properties draw as any other", 
   const shown = card(first);
   expect([...shown.querySelectorAll(".run-finding-text")].map((text) => text.textContent)).toEqual(["Finding 2.", "Finding 0.", "Finding 1."]);
   expect(first.text).not.toContain("native code");
-  expect(shown.textContent).toContain("1 of 3 fixed");
+  expect(shown.textContent).toContain("1 of this round's 3 notes was fixed");
 });
 
 test("a history output in a folder keeps its slash in the link", async () => {

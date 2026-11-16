@@ -90,9 +90,9 @@ test("a closed delivery's plan says a unit was never handed off, not that it is 
     const [shown] = await open(render(shape(entries), plan));
     return [...shown.app.querySelectorAll("#plan .plan-open li")].map((li) => li.querySelector(".po-next").textContent);
   };
-  expect(await row(landed("A"))).toEqual(["Review: not recorded · before hand-off"]);
+  expect(await row(landed("A"))).toEqual(["3 proofs left · No review is recorded for it. It hasn't been handed off yet."]);
   const closed = await row([...landed("A"), close]);
-  expect(closed).toEqual(["Review: not recorded · never handed off"]);
+  expect(closed).toEqual(["3 proofs left · No review is recorded for it. It was never handed off."]);
 });
 
 test("a closed delivery names a piece with no lane as having none, and a stop names its lane as a name", async () => {
