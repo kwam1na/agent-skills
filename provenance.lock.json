@@ -66,7 +66,7 @@
       "outputs": [
         {
           "path": "skills/compound-learning/SKILL.md",
-          "sha256": "266698753b1ec7f3eab6098b0e1f3cf88744ca0d132c2cac5802ba7108f3a25a"
+          "sha256": "0848c45ff0f9fd6b08d5601cfde5f60565b97a3f657e79c71270bea6ad51d01a"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -279,7 +279,7 @@
       "outputs": [
         {
           "path": "skills/diagnose-work/SKILL.md",
-          "sha256": "1e1ac2dba414784f6af0b68cd4eca2db89fdd5d7b03d4056391880ad7283e77b"
+          "sha256": "bce0c487747c0920e9a069770340e2f5ebd16efadd18326b0646f9cf9dae9355"
         }
       ],
       "owner": "delivery-agent/user-delegated",
@@ -481,7 +481,7 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "817b04dfc514f7e42ac21be341e75bce9407bce55afc4ef4f411678a189d5f46"
+          "sha256": "84950f149363f6755e42755837b7c0de051aa4508ce8687e70d826e2798f9f75"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
@@ -984,7 +984,7 @@
       "outputs": [
         {
           "path": "skills/plan-work/SKILL.md",
-          "sha256": "da928f915c8c2e24663eaf0b997f3b1b133df60f196c3ed2c4609e12586fc821"
+          "sha256": "f12d2b382f3a03b05bb35cff1393a9b0308f419216fbdb0e4a08d82382d8e3fe"
         }
       ],
       "owner": "agent-skills-corpus",
