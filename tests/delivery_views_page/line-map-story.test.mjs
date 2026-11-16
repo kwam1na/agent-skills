@@ -212,6 +212,14 @@ test("the legend says what each mark on the page means, for exactly the tones th
       });
     });
   }
+  // Under a tab, only the tones of the beats it draws.
+  const document = storied("standing-break");
+  const story = structuredClone(document.story);
+  const decided = story.beats.find((each) => each.form === "entry" && each.altitudes.includes("story") && each.tone === "note");
+  decided.tone = "decision";
+  document.story = story;
+  const [, , decisions] = await open(document, { steps: [{ click: '#happened [data-depth="story"]' }, { click: '#happened [data-tab="decisions"]' }] });
+  expect(legendOf(decisions).map((entry) => entry.word)).toEqual(["Decision"]);
   // One quiet row between the digest line and the switches.
   const [shown] = await open(storied("standing-break"));
   const legend = shown.app.querySelector("#happened .story-legend");
@@ -228,6 +236,8 @@ test("a tone no page script names gets its mark and its word in the legend from 
   const [, headline] = await open(document, { steps: [{ click: '#happened [data-depth="headline"]' }] });
   const calm = legendOf(headline).find((entry) => entry.word === "Calm");
   expect(calm.mark).toBe(headline.app.querySelector(`#happened [data-beat="${beat.id}"] > .g`).outerHTML);
+  // Drawn as a note, the mark of an ordinary update.
+  expect(headline.app.querySelector(`#happened [data-beat="${beat.id}"] > .g`).className).toBe("g ");
 });
 
 test("a story told before it carried its tones' words draws no legend, and nothing in its place", async () => {
