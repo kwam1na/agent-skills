@@ -327,6 +327,42 @@ class OwnedProcessTests(unittest.TestCase):
             with self.assertRaisesRegex(hosted.PublishError,'owner_start_failed'):hosted.start(arguments,inputs)
         self.assertEqual(len(children),1);children[0].wait(timeout=5)
         self.assertFalse((self.state/hosted.IDENTITY).exists());self.assertFalse(hosted.locked(self.state/hosted.LOCK))
+    def test_recreated_record_path_does_not_keep_the_previous_owner_alive(self):
+        self.command('start');prior=self.root/'previous-record'
+        self.state.rename(prior);self.state.mkdir();self.write_record(self.state)
+        OWNED.add(prior);self.addCleanup(OWNED.discard,prior);self.addCleanup(hosted.stop,prior)
+        self.wait_for(lambda:not hosted.locked(prior/hosted.LOCK))
+        self.assertFalse((self.state/hosted.IDENTITY).exists())
+    def test_control_contention_retains_finished_archive_and_later_retry_uses_same_identity(self):
+        self.command('start');self.wait_for(lambda:hosted.read_json(self.state/hosted.IDENTITY)['receipt'] is not None)
+        hosted.stop(self.state)
+        identity=hosted.read_json(self.state/hosted.IDENTITY)
+        self.finished();(self.state/hosted.TERMINAL).unlink();(self.archive/hosted.TERMINAL).unlink()
+        hosted.mirror_hosted(self.state,self.archive)
+        c=SimpleNamespace(root=self.root,main=self.root,state=self.state,release=ROOT,delivery='APP-1',
+            flow_raw={'cleanup':{'archive':str(self.archives)}},shelf=SimpleNamespace(json=lambda _:CFG))
+        ready=self.root/'control-held'
+        child=subprocess.Popen([sys.executable,'-c',
+            'import fcntl,pathlib,sys,time;f=open(sys.argv[1],"a");fcntl.flock(f,fcntl.LOCK_EX);pathlib.Path(sys.argv[2]).touch();time.sleep(60)',
+            str(self.state/hosted.CONTROL),str(ready)],start_new_session=True)
+        def cleanup():
+            if child.poll() is None:child.terminate()
+            child.wait(timeout=5)
+        self.addCleanup(cleanup);self.wait_for(ready.exists)
+        before=(self.archive/hosted.IDENTITY).read_bytes();began=time.monotonic()
+        with mock.patch.dict(os.environ,self.environment):
+            result=flow.finalize_hosted(c,self.archive.parent,{'id':1},seconds=.2)
+        self.assertLess(time.monotonic()-began,2);self.assertEqual(result['state'],'final-publication-pending')
+        self.assertEqual((self.archive/hosted.IDENTITY).read_bytes(),before)
+        self.assertFalse((self.archive/hosted.TERMINAL).exists())
+        self.assertEqual(hosted.archive_status(self.archive)['state'],'final-publication-pending')
+        cleanup();OWNED.add(self.archive);self.addCleanup(OWNED.discard,self.archive);self.addCleanup(hosted.stop,self.archive)
+        with mock.patch.object(flow,'Config',return_value=c),mock.patch.object(flow,'repo',return_value=self.root),mock.patch.dict(os.environ,self.environment),contextlib.redirect_stdout(io.StringIO()):
+            flow.hosted_retry(SimpleNamespace(archive=self.archive,resume=False))
+        self.wait_for(lambda:hosted.archive_status(self.archive)['state']=='final-published')
+        accepted=hosted.read_json(self.archive/hosted.IDENTITY)
+        self.assertEqual(accepted['publicId'],identity['publicId'])
+        self.assertGreater(accepted['receipt']['sequence'],identity['receipt']['sequence'])
     def test_expired_terminal_self_exit_and_separate_fixture_cleanup_proof(self):
         self.environment.pop('FIXTURE_PUBLISH_TOKEN');self.command('start')
         intent=self.finished();intent.update(requestedAt=1,retryUntil=600001);hosted.atomic(self.state/hosted.TERMINAL,intent)

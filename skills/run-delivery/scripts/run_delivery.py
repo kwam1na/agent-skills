@@ -252,8 +252,11 @@ def hosted_info(c,*,archive=None):
             accepted=module.read_json(c.state/module.IDENTITY,optional=True)
             receipt=(accepted or {}).get('receipt')
             done=(intent['state']=='published' and receipt and receipt['digest']==intent['digest']
-                  and receipt['sourceFingerprint']==intent['sourceFingerprint'])
+                  and receipt['sourceFingerprint']==intent['sourceFingerprint']
+                  and module.finished_entry(module.record_document(c.state))==intent['entry'])
             info['state']='final-published' if done else 'final-publication-pending'
+        elif (c.state/'state.json').exists() and module.finished_entry(module.record_document(c.state)) is not None:
+            info['state']='final-publication-pending'
         return info
     except (ValueError,OSError,RuntimeError,Stop):return {'state':'failed','code':'hosted_status_unavailable'}
 
@@ -307,7 +310,13 @@ def hosted_retry(args):
     if settings is None:raise Stop('hosted: not_configured')
     module.Publisher(record,settings[1],identity['deliveryKey'])
     intent=module.read_terminal(record,record)
-    if intent is None:raise Stop('hosted: no terminal request in this archive')
+    if intent is None:
+        document=module.record_document(record);entry=module.finished_entry(document)
+        if entry is None:raise Stop('hosted: archive has no finished terminal cut')
+        # Close can exhaust its budget waiting for the live control lock. The
+        # already-finished archived core and its existing identity are the cut;
+        # materialize the request here without inventing a replacement identity.
+        intent=module.request_terminal(record,record,record,entry,document,timeout=5)
     if intent['state']=='published':
         print(json.dumps(module.archive_status(record)));return
     at=int(time.time()*1000)
@@ -326,7 +335,8 @@ def finalize_hosted(c,archive,closed,*,seconds=HOSTED_CLOSE_SECONDS):
         if settings is None:return {'state':'disabled'}
         module=hosted_module(c.release);record=Path(archive)/c.state.name
         document=module.record_document(record)
-        module.request_terminal(c.state,record,archive_root(c),closed['id'],document)
+        module.request_terminal(c.state,record,archive_root(c),closed['id'],document,
+                                timeout=max(0,deadline-time.monotonic()))
         if time.monotonic()<deadline:start_hosted(c,timeout=min(5,deadline-time.monotonic()))
         while time.monotonic()<deadline:
             info=hosted_info(c)

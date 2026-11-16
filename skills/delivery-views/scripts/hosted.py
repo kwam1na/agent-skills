@@ -417,11 +417,11 @@ def read_terminal(directory,approved_root):
     terminal_source(value,approved_root)
     return value
 
-def request_terminal(directory,source,approved_root,entry,document):
+def request_terminal(directory,source,approved_root,entry,document,*,timeout=None):
     if finished_entry(document)!=entry:raise PublishError('terminal_unfinished')
     root=Path(approved_root).resolve(strict=True);source=Path(source).resolve(strict=True)
     if not source.is_relative_to(root):raise PublishError('source_path')
-    with lock(directory/CONTROL):
+    with lock(directory/CONTROL,timeout=timeout):
         prior=read_terminal(directory,root)
         if prior and prior['entry']==entry and prior['recordDigest']==record_digest(document):return prior
         at=int(time.time()*1000)
@@ -793,6 +793,7 @@ def monitor_liveness(alive,stop):
 
 def watch(arguments,inputs):
     directory=inputs.state_directory;config=inputs.config
+    owned_directory=directory.stat()
     generation_path=generation(arguments);resolved=generation_path.resolve()
     expected=Path(arguments.generation_target).resolve() if getattr(arguments,'generation_target',None) else resolved
     script_digest=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
@@ -802,8 +803,12 @@ def watch(arguments,inputs):
     approved=Path(arguments.archive_root).resolve() if getattr(arguments,'archive_root',None) else directory
     schedule=Schedule(time.monotonic());previous=None;running=True
     def alive():
-        return ((directory/'state.json').is_file() and (directory/'journal.jsonl').is_file()
-                and generation_path.exists() and generation_path.resolve()==resolved==expected and Path(__file__).is_file())
+        try:
+            current=directory.stat()
+            return ((current.st_dev,current.st_ino)==(owned_directory.st_dev,owned_directory.st_ino)
+                    and (directory/'state.json').is_file() and (directory/'journal.jsonl').is_file()
+                    and generation_path.exists() and generation_path.resolve()==resolved==expected and Path(__file__).is_file())
+        except OSError:return False
     def within_window():
         if not alive():return False
         try:
