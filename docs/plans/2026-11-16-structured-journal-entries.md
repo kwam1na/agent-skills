@@ -79,6 +79,24 @@ and counts here are illustrative; the story's exact words are settled in JF-2, f
 The same record at the `story` altitude adds each round, hand-off, acceptance and check run under its chapter. At
 `everything` it adds the 190 entries of bookkeeping.
 
+## Design direction
+
+The lead sets the story chapter's look, and holds every story to it: subtle, and nothing without a reason.
+
+- The story is typography first. A chapter is a heading and a time. A landing is a line, not a card. Colour appears
+  only where something went wrong or landed, as on the rest of the page.
+- A setback is the one thing that gets a surface: a single quiet sheet with its cause, what it held up and how it
+  ended, and its cost as the only number in view.
+- Altitude changes density, not layout. Switching altitude adds or removes rows in place, on the shared fold's
+  motion, so a reader keeps their place and sees what the extra depth added.
+- Cause is shown lightly: at the story altitude a thin line in the margin ties a thread's entries together. No
+  arrows and no graph.
+- An explanation waits to be asked for. It appears when a row is opened, never as standing text.
+- Motion only where state changes, on the page's one tempo. A new beat arrives as a new row does. An open setback
+  has the page's single slow pulse, and a closed one is still.
+- Words stay plain: short sentences in the page's voice, past tense for what happened, no jargon and no
+  celebration.
+
 ## Finish line
 
 - Both plan lenses align.
@@ -136,8 +154,8 @@ The registry:
    decision, problem or note), its `label`, its `head` and `line` words, its `explain` sentence, and its tracker
    update: where it posts (`ticket`, `epic`, `ticket-or-epic` or nowhere) and under what heading. It is the only
    place a kind is described. The journal schema's kind list, the guide's tracker table, the tracker publisher, the
-   page's labels, marks and tabs, and the narrator all take it from there. A kind of `bookkeeping` altitude may not
-   have the `problem` tone, and the registry's own test refuses one that does.
+   page's labels, marks and tabs, and the narrator all take it from there. A kind of `bookkeeping` altitude may have
+   neither the `problem` tone nor a tracker update, and the registry's own test refuses one that has either.
 9. Words are templates with named fields and a closed set of forms: a short commit, a lane's name, a count with its
    noun, a list, a duration, a ticket. A part in square brackets is left out when a field it uses is absent. A kind
    may give variants chosen by a field's value. There is no other logic in a template.
@@ -157,7 +175,9 @@ The narrator:
 14. A chapter ends at each `candidate.merged` and is named for the piece that landed. The entries before the first
     landing are "Getting started", and those after the last are "Finishing" while open and "Finished" once closed.
 15. A thread opens at an entry of a kind the registry marks as opening one, when no thread already holds it. Three
-    kinds open a thread: `candidate.stopped`, `base.broken` and `blocker.recorded`. The thread gathers every entry
+    kinds open a thread: `candidate.stopped`, `base.broken` and `blocker.recorded`. A stop opens one only when it
+    leaves the piece stopped; one whose `requeued` is true left the piece in the queue, opens none, and reads at the
+    story altitude. The thread gathers every entry
     linked to its opening through `because` and `answers`, in either direction and at any distance. An entry that
     could open a thread but is reached this way from an earlier opening joins that thread and opens none. The
     thread closes at the first entry that answers its opening. An entry that answers another member joins and
@@ -192,15 +212,27 @@ The delivery:
 
 25. The break is made in one pass with a bridge that never ships. From JF-1 to JF-7 the schema still allows
     `summary`, the old top-level members and the old kind `review.evidence`, and `append_journal` still takes a
-    sentence; an entry written that way skips the `data` and link checks. JF-7 removes all of it.
+    sentence. An entry with `data` is checked in full whether or not it also has a sentence; an entry with only a
+    sentence is not checked beyond today's rules. Until JF-7 a writer moved to facts still passes its sentence as
+    well, so its entries carry both and no reader that has not yet moved breaks. A reader moved to fields reads them
+    when the entry has `data` and the sentence otherwise. JF-7 removes the sentence from every writer and the
+    second path from every reader, in all three scripts, along with the schema's allowances.
 26. What replaces "no sentence" as an assertion is a mechanism, not a search for a word, since review findings and
-    tickets rightly have summaries. One test walks every call that writes an entry in `delivery_state.py`,
-    `merge_queue.py` and `run_delivery.py`. It fails on a call that passes a sentence, on a kind that is not a
-    literal the registry lists, and when the number of calls in a script differs from the inventory below.
+    tickets rightly have summaries. One test, added by JF-7, walks every call that writes an entry. It knows three
+    shapes: `append_journal(…)` in `delivery_state.py` and in `merge_queue.py`'s one direct use,
+    `Runner.journal(…)` in `merge_queue.py`, and `state_tool("journal", "--kind", …)` in `run_delivery.py`. It
+    counts call expressions. At each, the kind must be a string literal the registry lists, or, at a call the
+    inventory marks as choosing, a value that can only be one of a set of literals at that call, each registered.
+    Two things are exempt and named in the test: the `journal` command's own call, whose kind the state tool checks
+    at run time, and a helper that passes on a kind it was given, such as `Runner.journal`; every call to such a
+    helper is walked and counted as a write. The walk fails on a call that passes a sentence, on a kind outside
+    those rules, and when a script's count differs from the inventory's. It also fails on a test under `tests/`
+    that passes `--summary` to the `journal` command or a sentence to `append_journal`.
 27. A sentence pin is replaced by an assertion at least as strong: the entry's kind, the exact value of every field,
-    and its links. Wording is asserted in the registry's vectors: for every kind, each bracketed part both present
-    and absent, each variant, and each form at its edges. No story adds a fixture that starts a process. The suite
-    ran at 1,702s of 1,740s on 2026-11-15.
+    and its links. When a writer's story hands off, no test among its files journals a sentence, whether it
+    asserted it or only wrote it. Wording is asserted in the registry's vectors: for every kind, each bracketed
+    part both present and absent, each variant, and each form at its edges. No story adds a fixture that starts a
+    process. The suite ran at 1,702s of 1,740s on 2026-11-15.
 28. This delivery ends merge-ready, on the integration branch `integrate/delivery-story` with `main` as its target.
     It does not merge into `main`, tag or release. When the operator merges it, the release is a major version: an
     adopter's tool that journals with `--summary`, or reads `summary`, must change. It goes out as a candidate
@@ -226,7 +258,7 @@ posts nothing.
 | `review.carried` | S | decision | `from`, `to`, `digest`, `baseCommits?`, *`why`* | | ticket: Review carried |
 | `candidate.handed` | S | ready | `head`, `changeRequest`, `rounds`, `checks`, `evidence?`, `noChange?` | answers the stop standing for its subject, when one does | ticket: Handed off and queued |
 | `handoff.checked` | S | decision | `head`, `rounds`, `afterMerge`, `noChange`, *`notes`* | cause: the hand-off | - |
-| `handoff.accepted` | S | decision | `settled` | cause: the `handoff.checked` | ticket: Accepted |
+| `handoff.accepted` | S | decision | `settled` | cause: the `handoff.checked` for this hand-off, when one was journaled; the state tool finds it | ticket: Accepted |
 | `handoff.rejected` | H | problem | *`why`* | cause: the hand-off | ticket: Hand-off rejected |
 | `handoff.requeued` | S | decision | `head` | answers the stop | ticket: Back in the queue |
 | `check.selected` | S | note | `head`, `checks`, *`why`*, `added` | | - |
@@ -239,7 +271,7 @@ posts nothing.
 | `check.reused` | S | note | `check`, `head`, `from` | | - |
 | `check.carried` | S | note | `checks`, `ranAgain`, `base`, `commits` | | - |
 | `candidate.merged` | H | landed | `head`, `recovery?` | | ticket: Merged |
-| `candidate.stopped` | H | problem | `reason`, *`detail`*, `requeued?`, `stage?` | cause: the failed check, when the reason is `check_failed`; the break, when it is `base_broken`; none otherwise. Opens a thread | ticket: Stopped |
+| `candidate.stopped` | H | problem | `reason`, *`detail`*, `requeued?`, `stage?` | cause: the failed check, when the reason is `check_failed`; the break, when it is `base_broken`; none otherwise. Opens a thread unless `requeued` | ticket: Stopped |
 | `base.rerun.started` | S | note | `checks`, `base` | cause: the failure | - |
 | `base.rerun.finished` | S | note | `base`, `seconds`, `verdict`, `results` | cause: its start | - |
 | `base.rerun.stopped` | S | problem | `base`, `seconds`, *`why`* | cause: its start | - |
@@ -265,10 +297,10 @@ posts nothing.
 | `serving.held` | H | problem | *`why`* | | epic: Serving is held |
 | `deferral.breached` | H | problem | `finding`, *`title`* | | ticket: Deferred note still open |
 | `blocker.recorded` | H | problem | *`text`* | opens a thread | ticket-or-epic: Blocked |
-| `blocker.resolved` | H | landed | *`why`* | answers the blocker | ticket-or-epic: Blocker resolved |
+| `blocker.resolved` | H | landed | *`why`* | answers the blocker or the deferral breach | ticket-or-epic: Blocker resolved |
 | `decision.recorded` | H | decision | *`text`*, *`why`* | | ticket-or-epic: Decision |
-| `lease.granted` | B | note | `lease`, `holder` | | ticket-or-epic: Lease granted |
-| `lease.released` | B | note | `lease`, `holder` | answers the grant | ticket-or-epic: Lease released |
+| `lease.granted` | S | note | `lease`, `holder` | | ticket-or-epic: Lease granted |
+| `lease.released` | S | note | `lease`, `holder` | answers the grant | ticket-or-epic: Lease released |
 | `release.started` | H | note | `head` | | - |
 | `release.finished` | H | landed | `head`, `failedAt?` | cause: its start | epic: Released |
 | `finish.met` | H | landed | `finish` | | epic: Finish line met |
@@ -277,7 +309,7 @@ posts nothing.
 | `delivery.closed` | H | landed | `skipped?` | | epic: Delivery closed |
 
 The pairs `answers` allows are exactly those in the Links column: a hand-off or a re-queue answers a stop, a repair
-answers a break, a resolution answers a blocker, a retaken snapshot answers a stale one, and a released lease
+answers a break, a resolution answers a blocker or a deferral breach, a retaken snapshot answers a stale one, and a released lease
 answers its grant. Only the first three close a thread, since only their targets open one.
 
 A kind's row in the registry also carries its words and its explanation. Two, as they will read:
@@ -290,7 +322,9 @@ A kind's row in the registry also carries its words and its explanation. Two, as
 ## Where entries are written
 
 The inventory Decision 26 holds the writers to. Each line is one call that writes an entry, by the function or
-command it sits in, with the kind it writes after this delivery.
+command it sits in, with the kind it writes after this delivery. A line marked "chooses" is one call whose kind is
+one of those listed. `lease.granted` and `lease.released` have no call: the lead journals them by hand through the
+`journal` command.
 
 `delivery_state.py`, 11 calls:
 
@@ -299,12 +333,12 @@ command it sits in, with the kind it writes after this delivery.
 - `handoff`, no change: `candidate.handed`
 - `handoff --accept`: `handoff.accepted`
 - `handoff --reject`: `handoff.rejected`
-- `select`: `check.selected` or `check.selection.cleared`
+- `select`, chooses: `check.selected` or `check.selection.cleared`
 - `capture-review`: `review.recorded`
 - `carry-review`: `review.carried`
 - `reconcile`, the recovered merge: `candidate.merged`
-- the snapshot note: `snapshot.stale` or `snapshot.retaken`
-- the `journal` command: the kind it is given
+- the snapshot note, chooses: `snapshot.stale` or `snapshot.retaken`
+- the `journal` command, exempt: the kind it is given
 
 `merge_queue.py`, 23 calls:
 
@@ -313,14 +347,14 @@ command it sits in, with the kind it writes after this delivery.
 - `carry`: `check.carried`
 - `run_checks`: `check.reused`, `check.retried`, `check.failed`
 - `rerun_on_base`: `base.rerun.started`, `check.retried`
-- `end_rerun`: `base.rerun.finished` or `base.rerun.stopped`
+- `end_rerun`, chooses: `base.rerun.finished` or `base.rerun.stopped`
 - `merge`: `candidate.merged`, `base.repaired`
 - `batch_round`: `candidate.stopped` for a member queued again, `check.started`, `check.finished`, `base.broken`
 - `release`: `release.started`, `release.finished` when it stops, `release.finished` when it ends
 - `stopped`: `base.broken`, `selection.refused`, `candidate.stopped`
 - `hold_for_setup`: `serving.held`
 
-`run_delivery.py`, 30 calls:
+`run_delivery.py`, 31 calls:
 
 - `review-reduce`: `review.round`
 - `lead-evidence`: `evidence.published`
@@ -330,8 +364,8 @@ command it sits in, with the kind it writes after this delivery.
 - `lead-init`: `record.started`
 - `lead-push`: `base.published`
 - `lead-flake`: `flake.declared`
-- `lead-own`, a region: `ownership.granted` or `ownership.revoked`
-- `lead-own`, a whole file: `ownership.granted` or `ownership.revoked`
+- `lead-own`, a region, chooses: `ownership.granted` or `ownership.revoked`
+- `lead-own`, a whole file, chooses: `ownership.granted` or `ownership.revoked`
 - `lead-own --claim`: `ownership.claimed`
 - `lead-assign`: `lane.assigned`
 - `lead-accept`, no change: `handoff.checked`
@@ -342,13 +376,13 @@ command it sits in, with the kind it writes after this delivery.
 - `hook lead.may-stop`: `hook.held`
 - the close-out's posture note: `posture.changed`, two calls
 - the close-out's skipped run: `fullhealth.skipped`
-- `record_full_health`: `base.broken`, `base.flaky`, `base.repaired`, `base.verified`, one call
+- `record_full_health`, chooses: `base.broken`, `base.flaky`, `base.repaired` or `base.verified`
 - the supervisor's `deferrals` step: `deferral.breached`
 - the close-out's follow-ups: `followup.filed`
 - the close-out's `closed` step: `delivery.closed`
 - the supervisor's `peers` step: `peer.merged`
 - `lead-resolve full-health`: `fullhealth.rerun`
-- `lead-resolve`, a blocker: `blocker.resolved`
+- `lead-resolve`, a blocker or a deferral breach: `blocker.resolved`
 - `lead-decide`, new: `decision.recorded`
 - `lead-block`, new: `blocker.recorded`
 
@@ -402,7 +436,7 @@ Pins that go stale and are re-derived by the story named:
 - The guide's tracker table and the two tests that hold it to the schema's kinds and to the publisher's table, in
   `tests/test_orchestration_state.py`: by JF-1, which derives the guide's table from the registry and holds the
   publisher's table to the bridge's kinds only, until JF-5 replaces that table with a read of the registry.
-- Every exact `summary` asserted in `tests/test_orchestration_state.py`, `tests/test_merge_occurrence.py`,
+- Every sentence a test journals or asserts in `tests/test_orchestration_state.py`, `tests/test_merge_occurrence.py`,
   `tests/test_orchestration_adopter.py`, `tests/test_lane_rows.py` and `tests/test_runless_reviews.py`: by JF-3.
   Those in `tests/test_merge_queue.py`: by JF-4. Those in `tests/test_run_delivery.py`,
   `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_peers.py`, `tests/test_run_delivery_hooks.py`
@@ -429,6 +463,9 @@ For the record and its writers. Each refusal appends nothing and names what is w
   does a re-queue.
 - A candidate stopped because the base broke names the break and no check.
 - An interrupted stop, and a break `fullHealth` found, name no cause.
+- A batch member that did not land and is queued again, and a piece a refusal leaves queued, carry `requeued`.
+- An acceptance names the `handoff.checked` journaled for its hand-off, and with none journaled names nothing and
+  is appended.
 - A base broken after a rerun names the rerun's verdict. Its repair answers the break. A request to run
   `fullHealth` again names the break and answers nothing.
 - A batch of three journals three starts whose `batch` lists the same three subjects.
@@ -456,6 +493,13 @@ For the narrator, each from a named fixture journal under `tests/fixtures/narrat
 - `decision-on-a-break`: a lead's decision whose `because` names a break is its own beat, with its reason, at every
   altitude, and is counted in the digest.
 - `answered-bookkeeping`: a released lease and a retaken snapshot answer their pairs and open no thread.
+- `requeued-stop`: a stop whose `requeued` is true opens no thread and is a beat at the story altitude.
+- `batch-of-three`: three starts whose `batch` lists the same subjects are one beat naming all three entries, and
+  a single candidate's start is its own beat.
+- `bookkeeping-run`: consecutive bookkeeping entries are one beat at `everything`; a story-altitude entry between
+  them splits the run in two; neither part appears above `everything`.
+- `thread-at-story`: at the story altitude each entry of a thread is its own beat in its own place, and each names
+  the thread.
 - `never-landed`: a closed delivery in which one piece never landed says so in its last chapter.
 
 For the views:
@@ -463,7 +507,8 @@ For the views:
 - The page shows the beats the story holds at each altitude, and a thread once.
 - Opening a beat shows its entries' fields and the kind's explanation.
 - A live write moves the story without a reload.
-- The tracker posts a landing and a stop under the registry's headings, in the registry's words.
+- The tracker posts a landing and a stop under the registry's headings, in the registry's words, and each kind
+  where the registry says: its ticket, the epic, either, or nowhere.
 
 ## Units and order
 
@@ -472,7 +517,7 @@ For the views:
 | 1 | 1 | JF-1, JF-3 | `skills/orchestrate-work/references/schemas.json`, `skills/orchestrate-work/references/journal-kinds.json`, `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/scripts/journal_words.py`, `skills/orchestrate-work/references/orchestration-guide.md`, `skills/orchestrate-work/SKILL.md`, `tests/test_orchestration_state.py`, `tests/test_merge_occurrence.py`, `tests/test_orchestration_adopter.py`, `tests/test_lane_rows.py`, `tests/test_runless_reviews.py`, `tests/test_lead_wait.py`, `tests/test_journal_kinds.py`, `tests/fixtures/journal-kinds/` |
 | 1 | 2 | JF-0, JF-2, JF-6 | `skills/delivery-views/`, `tests/delivery_views_page/`, `tests/fixtures/delivery-views/`, `tests/test_delivery_views_page.py`, `tests/test_delivery_views_render.py`, `tests/test_delivery_views_history.py`, `tests/test_delivery_views_plan.py`, `skills/orchestrate-work/scripts/narrator.py`, `skills/orchestrate-work/references/story.schema.json`, `tests/test_narrator.py`, `tests/fixtures/narrator/`, `skills/orchestrate-work/scripts/render_state.py`, `tests/test_orchestration_render.py` |
 | 2 | 3 | JF-4, JF-5 | `skills/orchestrate-work/scripts/merge_queue.py`, `tests/test_merge_queue.py`, `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/scripts/tracker_publisher.py`, `skills/run-delivery/SKILL.md`, `skills/run-delivery/references/`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_peers.py`, `tests/test_run_delivery_hooks.py`, `tests/test_run_delivery_tracker.py` |
-| 3 | 1 | JF-7 | `tests/test_journal_shape.py` |
+| 3 | 1 | JF-7 | `tests/test_journal_shape.py`, `skills/orchestrate-work/scripts/merge_queue.py`, `skills/run-delivery/scripts/run_delivery.py`, `skills/delivery-views/assets/`, `skills/orchestrate-work/scripts/render_state.py`, `tests/` |
 
 The keys are placeholders. Tracker items are filed once the plan is approved, each with its criteria below, and the
 headings take their keys then. `provenance.lock.json` is shared; each story takes the lock side that lists its new
@@ -481,8 +526,9 @@ files and runs the writer, as `AGENTS.md` describes.
 Lane 2 starts at once with JF-0, which touches only the page. JF-1 writes the whole registry and the journal's
 schema, so no later story edits either until JF-7. The story's own schema is a separate file, lane 2's. Lane 3
 starts, and lane 2 goes on to JF-2, when JF-1 has merged. The narrator is built against fixture
-journals in the new shape, so it does not wait for the writers. JF-5 waits for both JF-4, which is its lane's, and
-JF-2, whose module it does not need but whose merge settles the registry's words it posts.
+journals in the new shape, so it does not wait for the writers. By Decision 25 the writers' and readers' stories
+may merge in any order. JF-7 runs when every other story has merged and lanes 2 and 3 have none left, so lane 1
+gains their files for it.
 
 ## Stories
 
@@ -502,7 +548,10 @@ and is replaced whole by JF-6, so this story pins only that the timeline draws, 
 
 Acceptance criteria:
 
-- `c1` The page looks and behaves as it does on `claude/live-view-ui`: no change of design is made here.
+- `c1` The goldens and re-derived pins are captured from the committed `claude/live-view-ui` tree in a commit of
+  their own, before any page source changes. Every later change to page source in the story is a named defect fix
+  with a test that was red before it. The hand-off lists those fixes, and the captured goldens change only where a
+  listed fix says so.
 - `c2` Every test under `tests/delivery_views_page/` and every `tests/test_delivery_views_*.py` module passes, with
   each changed pin's reason given in the hand-off as deliberate or as a defect fixed.
 - `c3` The registry and provenance checks pass.
@@ -522,7 +571,8 @@ checks them. The `journal` command takes `--data`, `--because` and `--answers`, 
 `--text` and `--why`. `journal_words.py` turns one entry into its head and line from the registry. The guide's
 tracker table is derived from the registry, and the two tests that pin it follow by the stale-pin list above.
 
-The bridge of Decision 25 is in place when this story merges: the old shape still validates and nothing new uses it.
+The bridge of Decision 25 is in place when this story merges: an entry may carry a sentence, facts, or both, and
+one with facts is checked in full.
 
 Acceptance criteria:
 
@@ -556,7 +606,8 @@ Acceptance criteria:
   record's story holds no duration measured to now.
 - `c4` Every story the narrator writes in its tests validates against `story.schema.json`, and a story with a
   missing or unknown member is refused by that schema.
-- `c5` Every beat names the entries it tells, and every entry is in exactly one beat at the `everything` altitude.
+- `c5` Every beat names the entries it tells, every entry is in exactly one beat at the `everything` altitude, and
+  every entry a thread holds names that thread.
 - `c6` With the registry's path pointed at a copy in which a fourth kind opens a thread, an entry of that kind opens
   one.
 
@@ -574,11 +625,12 @@ entry's facts and its words.
 Acceptance criteria:
 
 - `c1` For each of the state tool's calls in the inventory, a test appends through that call and asserts the
-  entry's kind, the exact value of every field, and its links.
+  entry's kind, the exact value of every field, and its links. An acceptance with no `handoff.checked` journaled
+  is appended with no cause, and one with it names it.
 - `c2` A hand-off for a subject with a stop standing answers that stop, and one for a subject with none answers
   nothing.
-- `c3` Each of the five readers gives the same result when every prose field of the entries it reads is replaced by
-  other text.
+- `c3` Each of the five readers, in a case where it finds what it looks for, gives the same result when every prose
+  field of the entries it reads is replaced by other text, and reads an entry that has only a sentence as before.
 - `c4` A `wait` event carries `data` and the entry's head and line, and with the registry's path pointed at a copy
   with a changed head, carries the changed words.
 
@@ -588,8 +640,9 @@ Lane 3, tier 2, after JF-1. Test-first. Files: `skills/orchestrate-work/scripts/
 `tests/test_merge_queue.py`.
 
 `Runner.journal` takes `data` and links, and returns the entry's id so a later entry can name it. Every call in the
-inventory moves to its kind, with the links the table gives. The queue's one reader of a sentence, for a stopped
-rerun's heads, reads fields.
+inventory moves to its kind, with the links the table gives. The queue sets `requeued` on every stop that leaves
+the piece in the queue: a batch member that did not land, and a refusal. The queue's one reader of a sentence, for
+a stopped rerun's heads, reads fields.
 
 Acceptance criteria:
 
@@ -597,21 +650,22 @@ Acceptance criteria:
   kind, the exact value of every field, and its links.
 - `c2` For a candidate stopped by a failed check, and for a base broken after a rerun, following `because` from the
   stop or the break reaches the check's start. A stop for `base_broken` names the break. An interrupted stop and a
-  break no rerun declared name no cause. A named repair's merge answers the break.
+  break no rerun declared name no cause. A named repair's merge answers the break. A batch member queued again and
+  a refused piece left queued carry `requeued`, and a piece left stopped does not.
 - `c3` Every stop carries a `reason` from the queue's enum, the interrupted stop included.
 - `c4` A batch's entries list its subjects in `batch`; a single candidate's carry none.
-- `c5` The rerun's reader gives the same result when every prose field of the entries it reads is replaced by other
-  text.
+- `c5` The rerun's reader, in a case where it finds what it looks for, gives the same result when every prose field
+  of the entries it reads is replaced by other text.
 
 ### JF-5. Write run-delivery's entries as facts, and let the lead say why
 
-Lane 3, tier 2, after JF-4 and JF-2. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`,
+Lane 3, tier 2, after JF-4. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`,
 `skills/run-delivery/scripts/tracker_publisher.py`, `skills/run-delivery/SKILL.md`,
 `skills/run-delivery/references/`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`,
 `tests/test_run_delivery_peers.py`, `tests/test_run_delivery_hooks.py` and `tests/test_run_delivery_tracker.py`.
 
 Every call in the inventory moves to its kind, with the links the table gives. `lead-accept --requeue` answers the
-stop it resolves, `lead-resolve` answers the blocker it names, a request to run `fullHealth` again names the break
+stop it resolves, `lead-resolve` answers the blocker or the deferral breach it names, a request to run `fullHealth` again names the break
 and answers nothing, and the acceptance names its `handoff.checked`. Two commands are new: `lead-decide --text T
 --why W [--because N]` records a decision, and `lead-block --text T [--because N]` a blocker; the guide names them
 as the way to record either. Its seven readers of sentences read fields: the base ref at start, the merge that
@@ -626,10 +680,13 @@ Acceptance criteria:
 - `c2` A re-queue answers its stop, a resolution answers its blocker, and a `fullHealth` rerun request names the
   standing break and answers nothing.
 - `c3` `lead-decide` refuses a decision whose reason is absent, empty or only spaces.
-- `c4` Each of the seven readers gives the same result when every prose field of the entries it reads is replaced
-  by other text.
+- `c4` Each of the seven readers, in a case where it finds what it looks for, gives the same result when every
+  prose field of the entries it reads is replaced by other text, and reads an entry that has only a sentence as
+  before.
 - `c5` A tracker post for a landing and for a stop is under the registry's heading and in its words, and with the
-  registry's path pointed at a copy that changes both, the post changes with them.
+  registry's path pointed at a copy that changes both, the post changes with them. One kind for each destination
+  posts where the registry says: its ticket; the epic; either, both with a subject and without; and a kind with
+  none posts nothing. With the copy moving a kind from its ticket to nowhere, that kind's post stops.
 
 ### JF-6. Show the story on every view
 
@@ -639,7 +696,7 @@ Lane 2, tier 1, after JF-2, JF-3, JF-4 and JF-5. Test-first. Files:
 `tests/test_delivery_views_render.py`, `tests/test_delivery_views_history.py` and
 `tests/test_delivery_views_plan.py`.
 
-Builds on JF-0's layout, shared fold and motion. The renderers run the narrator and embed its story; the live stream sends it with the
+Builds on JF-0's layout, shared fold and motion, and follows the design direction above. The renderers run the narrator and embed its story; the live stream sends it with the
 record, by Decision 20. "What happened" is rebuilt by Decisions 21 to 24. The page's own labels, marks, tab rules
 and every pattern it matches against an entry's text are removed in favour of the story; the checking sheet finds a
 batch from `batch`, and the plan chapter finds a plan update by its kind. The Markdown view and the built-in page
@@ -658,6 +715,10 @@ Acceptance criteria:
   declared then its repair, each narrate to one closed thread with the expected cost. The journals come from
   records existing test classes already build.
 - `c6` A write to a live record changes the story on an open page without a reload.
+- `c8` Each view's reader of an entry, in a case where it finds what it looks for, gives the same result when every
+  prose field of the entries it reads is replaced by other text: the checking sheet's batch, the plan chapter's
+  plan update, a stop's notes, and any other the story finds in `skills/delivery-views/` and `render_state.py`,
+  listed in its hand-off.
 - `c7` The Markdown view and the built-in page show the story's beats, and with the registry's path pointed at a
   copy with a changed head, show the changed words. The history page reads a new-shape archive and names an
   old-shape one, in one test.
@@ -665,21 +726,27 @@ Acceptance criteria:
 ### JF-7. Remove the sentence
 
 Lane 1, tier 3, after JF-6. Test-first. Files: `skills/orchestrate-work/references/schemas.json`,
-`skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/references/orchestration-guide.md`,
-`tests/test_orchestration_state.py` and `tests/test_journal_shape.py`.
+`skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/scripts/merge_queue.py`,
+`skills/run-delivery/scripts/run_delivery.py`, `skills/delivery-views/assets/`,
+`skills/orchestrate-work/scripts/render_state.py`, `skills/orchestrate-work/references/orchestration-guide.md`,
+`tests/` and `tests/test_journal_shape.py`.
 
-Remove the bridge of Decision 25: `append_journal` no longer takes a sentence, the schema no longer allows
-`summary`, the old top-level members or `review.evidence`, and the `journal` command no longer takes `--summary`.
-Add the test of Decision 26.
+Remove the bridge of Decision 25. Every writer stops passing a sentence and every reader loses its second path, in
+all three scripts and the views. `append_journal` no longer takes a sentence, the schema no longer allows `summary`,
+the old top-level members or `review.evidence`, and the `journal` command no longer takes `--summary`. Add the walk
+of Decision 26.
 
 Acceptance criteria:
 
 - `c1` An entry with a `summary` or without `data` is refused, naming the release that reads it, and a record with
   an empty journal is accepted.
 - `c2` Neither `delivery-journal/2` nor any registry shape has a `summary` member.
-- `c3` The walk of Decision 26 passes on the three scripts, and fails when a call is given a sentence, when a call
-  is given a kind the registry does not list, and when a call is added that the inventory does not hold.
-- `c4` The guide names no sentence on an entry.
+- `c3` The walk of Decision 26 passes on the three scripts and on `tests/`. Planted in each of the three call
+  shapes, and once through a helper that passes a kind on, it fails for a call given a sentence, for a kind outside
+  its rules, and for a call the inventory does not hold. It fails for a test that journals a sentence.
+- `c4` No reader keeps a path for an entry without `data`: each reader's sentence-only case from JF-3 and JF-5 is
+  now a refusal at the journal.
+- `c5` The guide names no sentence on an entry.
 
 ## Calls made, and one left
 
@@ -694,8 +761,9 @@ records each in the delivery's journal at the start.
    shown as "why" without reading prose, which is what this delivery ends.
 4. Archived deliveries in the old shape appear on the history page by name only.
 5. The page rework lands as JF-0, by Decision 29.
-6. The tracker column stands as written. Bookkeeping posts nothing, and what a stakeholder would want to hear of
-   posts under its own heading.
+6. The tracker column stands as written. Bookkeeping posts nothing, which the registry's test holds, and what a
+   stakeholder would want to hear of posts under its own heading. A lease is story, not bookkeeping, and posts as
+   it does today.
 
 Left to the operator, because only the operator may decide it: suite headroom is 38 seconds. Replacing sentence pins
 should not add time, and the narrator's tests start no process. If a unit still goes over, the lead makes other
