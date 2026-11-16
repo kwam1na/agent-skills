@@ -196,6 +196,10 @@
         {
           "id": "v26-3527-2",
           "text": "CONTROL contention cannot prevent bounded terminal notification to an existing owner; close stays within 30 seconds, the owner exits by its ten-minute terminal deadline if pending, and same-ID archive recovery remains possible."
+        },
+        {
+          "id": "v26-3527-3",
+          "text": "Live hosted_info and hosted_line report final-publication-pending with the existing URL and preceding receipt; deleting that fallback fails its regression."
         }
       ],
       "after": [
