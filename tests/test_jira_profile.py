@@ -21,6 +21,10 @@ ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = ROOT / "skills/jira-tracker-adapter/references/adapter-contract.json"
 ADAPTER = ROOT / "skills/jira-tracker-adapter/SKILL.md"
 PROPERTIES_DOCUMENT = ".agents/tracker-properties.json"
+HIVE_ADAPTER_FILES = (
+    "skills/hive-knowledge-adapter/SKILL.md",
+    "skills/hive-knowledge-adapter/references/adapter-contract.json",
+)
 TRACKING_WORKFLOWS = ("create-jira-ticket", "execute-jira-ticket")
 # Resolution that belongs to the adapter must not reappear as a native call in
 # a tracking workflow body.
@@ -283,6 +287,10 @@ class JiraProfileTests(unittest.TestCase):
                 ).is_file()
             )
             self.assertFalse((extracted / "agent_skills/jira_mcp.py").exists())
+            # The knowledge adapter rides in the run-delivery closure this profile builds on.
+            for shipped in HIVE_ADAPTER_FILES:
+                with self.subTest(shipped=shipped):
+                    self.assertTrue((extracted / shipped).is_file())
 
             repository = initialize_repository(directory)
             with mock.patch.dict(
@@ -303,6 +311,7 @@ class JiraProfileTests(unittest.TestCase):
                 self.assertTrue(
                     (repository / root / "jira-tracker-adapter").is_symlink()
                 )
+                self.assertTrue((repository / root / "hive-knowledge-adapter").is_symlink())
 
     def test_supported_profile_identity_mismatch_rejects(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

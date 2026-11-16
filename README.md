@@ -134,7 +134,9 @@ The default `core` profile contains the portable delivery posture, normalized
 router, neutral tracker capability contract, bounded planning and execution
 workflows, evidence-first diagnosis, exact caller-selected review acquisition,
 bounded multi-lens review convergence, and a compounding decision with a default home for solution notes.
-Bootstrap guidance is opt-in. The optional Linear profile adds a
+Workflows may consult an optional, read-only knowledge library after the
+repository's own solution notes, and report that it was not consulted when none
+is configured. Bootstrap guidance is opt-in. The optional Linear profile adds a
 host-native MCP adapter plus the decomposition and tracked-execution workflows
 that reach the tracker only through it, without changing core behavior when
 tracking is unavailable. The optional Jira profile does the same through the
@@ -153,8 +155,15 @@ Its product archive is the one an adopter with no supported tracker installs to 
 deliveries, and an adopter on a tracker gets the same commands from their tracker's
 archive and keeps installing that one, because a generation holds one profile. The
 adoption guide is `skills/run-delivery/references/adopting.md`, and
-`run_delivery.py doctor` checks a repository's setup. Build either profile like
-the others:
+`run_delivery.py doctor` checks a repository's setup. It also ships
+`hive-knowledge-adapter`, which maps that knowledge library to the host's
+hive-mined server, configured by the repository's
+`.agents/knowledge-properties.json`; without that file, or on a host other than
+macOS, where hive-mined does not run, the library is not consulted. The
+`run-delivery`, Linear and Jira archives carry the adapter; `core`, `bootstrap`
+and `delivery-views` do not, so there the library is absent. The adoption
+guide's [knowledge library section](skills/run-delivery/references/adopting.md#a-knowledge-library-optional)
+sets it up. Build either profile like the others:
 
 ```bash
 python3 scripts/build-release.py build \

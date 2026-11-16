@@ -121,6 +121,7 @@
     },
     {
       "capabilities": [
+        "knowledge-library",
         "tracker-operations",
         "workflow-routing"
       ],
@@ -350,6 +351,33 @@
         "run-delivery"
       ],
       "provenanceId": "execute-work"
+    },
+    {
+      "capabilities": [
+        "knowledge-library-adapter"
+      ],
+      "degradedBehavior": "Core delivery remains complete and reports that the knowledge library was not consulted when the host's hive-mined server is unavailable or the repository declares no knowledge properties. The adapter is read-only; the properties document is a read-only input and is never guessed.",
+      "dependencies": [
+        {
+          "id": "deliver-work",
+          "requirement": "required"
+        }
+      ],
+      "externalTools": [
+        "hive-mined-mcp"
+      ],
+      "hosts": [
+        "claude-code",
+        "codex"
+      ],
+      "id": "hive-knowledge-adapter",
+      "path": "skills/hive-knowledge-adapter/SKILL.md",
+      "profiles": [
+        "jira",
+        "linear",
+        "run-delivery"
+      ],
+      "provenanceId": "hive-knowledge-adapter"
     },
     {
       "capabilities": [

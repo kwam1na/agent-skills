@@ -42,6 +42,13 @@ NEW_PAYLOAD = frozenset({
 })
 
 
+# The read-only knowledge adapter rides in the run-delivery closure, never in core.
+KNOWLEDGE_ADAPTER_FILES = (
+    "skills/hive-knowledge-adapter/SKILL.md",
+    "skills/hive-knowledge-adapter/references/adapter-contract.json",
+)
+
+
 class ReleaseIntegrationTests(unittest.TestCase):
     def test_hosted_outputs_reach_every_selected_profile_without_service_payload(self) -> None:
         profiles={path.stem:json.loads(path.read_text()) for path in (ROOT/'profiles').glob('*.json')}
@@ -89,6 +96,7 @@ class ReleaseIntegrationTests(unittest.TestCase):
                 "create-linear-ticket",
                 "delivery-views",
                 "execute-linear-ticket",
+                "hive-knowledge-adapter",
                 "linear-tracker-adapter",
                 "run-delivery",
             ]),
@@ -139,6 +147,7 @@ class ReleaseIntegrationTests(unittest.TestCase):
             "skills/execute-linear-ticket/agents/openai.yaml",
             "skills/linear-tracker-adapter/SKILL.md",
             "skills/linear-tracker-adapter/references/adapter-contract.json",
+            *KNOWLEDGE_ADAPTER_FILES,
         })
         for path in set(core) - {"catalog.json", "provenance.lock.json", "validation-inventory.json"}:
             self.assertEqual(core[path], linear[path], path)
@@ -152,27 +161,28 @@ class ReleaseIntegrationTests(unittest.TestCase):
         self.assertEqual({row["profile"] for row in linear_scenarios}, {"core", "delivery-views", "linear", "run-delivery"})
         self.assertEqual(
             {row["skill"] for row in linear_scenarios if row["profile"] == "linear"},
-            set(resolve_profile("linear", profiles)) - set(core_members) - {"delivery-views", "run-delivery"},
+            set(resolve_profile("linear", profiles)) - set(core_members)
+            - {"delivery-views", "run-delivery", "hive-knowledge-adapter"},
         )
         for path in NEW_PAYLOAD:
             self.assertEqual(core[path], (ROOT / path).read_bytes(), path)
         self.assertFalse(any(path.startswith(("qualifications/", "docs/delivery/")) for path in linear))
 
-    def test_run_delivery_profile_adds_only_its_own_skill_to_delivery_views(self) -> None:
+    def test_run_delivery_profile_adds_its_own_skill_and_the_knowledge_adapter_to_delivery_views(self) -> None:
         profiles = {
             name: json.loads((ROOT / f"profiles/{name}.json").read_text())
             for name in ("core", "delivery-views", "linear", "run-delivery")
         }
         self.assertEqual(
             resolve_profile("run-delivery", profiles),
-            sorted([*resolve_profile("delivery-views", profiles), "run-delivery"]),
+            sorted([*resolve_profile("delivery-views", profiles), "hive-knowledge-adapter", "run-delivery"]),
         )
         self.assertIn("run-delivery", resolve_profile("linear", profiles))
         views = _release_view(ROOT, "delivery-views")
         run_delivery = _release_view(ROOT, "run-delivery")
         own = {path for path in run_delivery if path.startswith("skills/run-delivery/")}
         self.assertIn("skills/run-delivery/SKILL.md", own)
-        self.assertEqual(set(run_delivery) - set(views), {"profiles/run-delivery.json", *own})
+        self.assertEqual(set(run_delivery) - set(views), {"profiles/run-delivery.json", *own, *KNOWLEDGE_ADAPTER_FILES})
         for path in set(views) - {"catalog.json", "provenance.lock.json", "validation-inventory.json"}:
             self.assertEqual(views[path], run_delivery[path], path)
         catalog = {skill["id"]: skill for skill in json.loads((ROOT / "catalog.json").read_text())["skills"]}
