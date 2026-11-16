@@ -60,6 +60,9 @@ file that is malformed or can't be read runs `fullHealth` and holds the close on
 - **Lane.** A session of its own, always: never a subagent, and never the lead
   working in its own session. A lane delivers one assigned ticket at a time,
   and leaves merges into the delivery base and releases to the lead. It holds only granted leases.
+  A lane may consult the knowledge library when it is configured, as it consults `docs/solutions/`; an
+  item that conflicts with the approved plan goes to the lead as a hand-off finding and the lane never
+  acts on it alone, and an item the lane relied on is cited in its hand-off.
 - **State writers.** The lead writes every state field except the
   runner-owned and lane-owned ones. The runner writes only its result
   documents, journal entries, and its own fields: `queue[i].stage`,
