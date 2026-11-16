@@ -1098,8 +1098,8 @@ test("what a closed delivery claims holds in every state the record can leave it
   expect(lost.app.querySelector("#now .since").textContent).toContain("Reconnecting. Showing the last update.");
   const future = closing([...landed], [item("A", "merged")]);
   future.journal.push({ id: 90, at: "2999-01-01T00:00:00Z", kind: "delivery.closed", lane: null, subject: "A", summary: "closed" });
-  // Ahead of the clock it has no "ago", and no total either: nothing is measured from a time not yet reached.
-  expect((await first(future)).querySelector("#now .since").textContent).toBe("ClosedNothing more will land");
+  // Ahead of the clock it has no "ago"; its total is still the record's own, between two times it holds.
+  expect((await first(future)).querySelector("#now .since .fact-value").textContent).toMatch(/^took \d+ days$/);
   const timeless = closing([...landed], [item("A", "merged")]);
   timeless.journal.push({ id: 90, at: null, kind: "delivery.closed", lane: null, subject: "A", summary: "closed" });
   expect((await first(timeless)).querySelector("#now .since").textContent).toBe("ClosedNothing more will land");
