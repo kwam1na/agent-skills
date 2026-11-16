@@ -562,6 +562,17 @@ class Adopter:
         return run("show", f"{revision}:{path}", cwd=self.lane)
 
 
+def sentence_lines(adopter: "Adopter", *entries: tuple[str, str, str | None]) -> None:
+    """Entries as a writer journaled them before it wrote facts: only a sentence, written as journal lines directly."""
+    path = adopter.state / state_tool.JOURNAL_FILE
+    number = len(state_tool.read_journal(adopter.state))
+    with path.open("a", encoding="utf-8") as stream:
+        for number, (kind, words, subject) in enumerate(entries, start=number + 1):
+            entry = {"at": state_tool.now(), "id": number, "kind": kind, "lane": None, "subject": subject,
+                     "summary": words}
+            stream.write(json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n")
+
+
 def journaled(adopter: Adopter, kind: str, subject: str | None = None) -> list[dict]:
     """The record's entries of one kind, on one subject when one is named, in order."""
     return [entry for entry in state_tool.read_journal(adopter.state)
@@ -4810,6 +4821,13 @@ class BaseRepairTests(MergeQueueTestCase):
         self.assertEqual([item["subject"] for item in state_tool.read_state(adopter.state)["queue"] if "repair" in item], [])
 
     def test_only_a_base_broken_break_names_the_head_a_repair_puts_back_at(self) -> None:
+        for facts in (True, False):
+            with self.subTest(facts=facts):
+                self.fresh()
+                self.only_a_base_broken_break_names_the_head(facts)
+
+    def only_a_base_broken_break_names_the_head(self, facts: bool) -> None:
+        """The break and the stop as facts, and as sentences alone, the shape the record's repair still reads."""
         adopter = self.adopter()
         adopter.enqueue("c", "c" * 40)
         current = state_tool.read_state(adopter.state)
@@ -4817,12 +4835,19 @@ class BaseRepairTests(MergeQueueTestCase):
                          changes={"stage": "stopped"})
         broke, other = "a" * 40, "e" * 40
         stopped = f"base_broken: lint also fails on main at {broke}"
-        state_tool.append_journal(adopter.state, kind="base.broken", summary=stopped, subject="c")
-        state_tool.append_journal(adopter.state, kind="candidate.stopped", summary=stopped, subject="c")
-        # A later break of another kind names another commit; it does not move the head the repair answers.
-        state_tool.append_journal(adopter.state, kind="base.broken",
-                                  summary=f"merged_unverified: main at {other} is not the checked tree on top of {broke}")
-        state_tool.append_journal(adopter.state, kind="base.repaired", summary="fixed by hand")
+        if facts:
+            detail = f"lint also fails on main at {broke}"
+            break_id = state_tool.append_journal(adopter.state, kind="base.broken", subject="c", data={
+                "source": "queue", "reason": "base_broken", "detail": detail, "head": broke})["id"]
+            state_tool.append_journal(adopter.state, kind="candidate.stopped", subject="c", because=[break_id],
+                                      data={"reason": "base_broken", "detail": detail})
+            # A later break of another kind names another commit; it does not move the head the repair answers.
+            state_tool.append_journal(adopter.state, kind="base.broken", data={
+                "source": "queue", "reason": "merged_unverified", "detail": f"main at {other}"})
+        else:
+            sentence_lines(adopter, ("base.broken", stopped, "c"), ("candidate.stopped", stopped, "c"), (
+                "base.broken", f"merged_unverified: main at {other} is not the checked tree on top of {broke}", None))
+        state_tool.append_journal(adopter.state, kind="base.repaired", data={"source": "lead", "head": other})
         self.assertEqual(adopter.item("c")["stage"], "queued")
 
     def test_the_repair_command_names_and_withdraws_on_the_command_line(self) -> None:
