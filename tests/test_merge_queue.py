@@ -5626,7 +5626,10 @@ class ServeTests(MergeQueueTestCase):
         self.assertEqual(results, [])
         hold = state_tool.read_state(adopter.state)["meta"]["hold"]
         self.assertIn("top level of a checkout", hold["reason"])
-        self.assertEqual(len(self.blockers(adopter)), 1)
+        [blocker] = self.blockers(adopter)
+        self.assertFacts(blocker, "blocker.recorded",
+                         {"text": f"Serving is held: {hold['reason']}. Repair it, then clear meta.hold."})
+        self.assertIsNone(blocker["subject"])
         self.assertEqual([adopter.item(name)["stage"] for name in ("first", "second")], ["queued", "queued"])
         self.assertNotIn("candidate.stopped", [entry["kind"] for entry in state_tool.read_journal(adopter.state)])
         self.assertTrue(state_tool.show(adopter.state)["status"]["text"].startswith("Serving is paused: "))
@@ -5775,7 +5778,9 @@ class ServeTests(MergeQueueTestCase):
         self.assertEqual(adopter.item("feature")["stage"], "queued")
         self.assertIsNotNone(state_tool.read_state(adopter.state)["meta"]["hold"])
         [blocker] = self.blockers(adopter)
-        self.assertIn("Put back to queued, to be taken again: feature.", blocker["summary"])
+        hold = state_tool.read_state(adopter.state)["meta"]["hold"]
+        self.assertFacts(blocker, "blocker.recorded", {"text": f"Serving is held: {hold['reason']}. Repair it, then clear "
+                                                               "meta.hold. Put back to queued, to be taken again: feature."})
 
     def test_a_candidate_the_lead_moved_during_the_turn_is_not_put_back(self) -> None:
         adopter = self.adopter()
@@ -5834,7 +5839,10 @@ class ServeTests(MergeQueueTestCase):
         self.assertEqual(adopter.item("feature")["stage"], "stopped")
         self.assertIsNotNone(state_tool.read_state(adopter.state)["meta"]["hold"])
         [blocker] = self.blockers(adopter)
-        self.assertIn("feature", blocker["summary"])
+        hold = state_tool.read_state(adopter.state)["meta"]["hold"]
+        self.assertFacts(blocker, "blocker.recorded", {"text": f"Serving is held: {hold['reason']}. Repair it, then clear "
+                                                               "meta.hold. Stopped while it broke, after their merge began, so "
+                                                               "check the forge before handing them off again: feature."})
 
     def test_a_check_that_meets_another_runner_holds_nothing_and_stops_nothing(self) -> None:
         adopter = self.adopter()

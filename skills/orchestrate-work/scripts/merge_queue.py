@@ -3394,8 +3394,10 @@ def hold_for_setup(state_directory: Path, detail: str, kept: Iterable[str] = (),
             if error.code != "version_stale":
                 raise
             continue
-        delivery_state.append_journal(state_directory, kind="blocker.recorded", writer="runner",
-                                      summary=f"Serving is held: {reason}. Repair it, then clear meta.hold.{stopped}")
+        # Still a blocker until every reader that wakes or holds on one reads the held kind as well.
+        held = f"Serving is held: {reason}. Repair it, then clear meta.hold.{stopped}"
+        delivery_state.append_journal(state_directory, kind="blocker.recorded", writer="runner", summary=held,
+                                      data={"text": held})
         return True
     return False
 
