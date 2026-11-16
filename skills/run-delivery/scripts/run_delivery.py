@@ -145,6 +145,217 @@ def _terminate(signum, _frame):
 
 
 
+
+# Hosted publishing has its own process and private credential handoff. Generic
+# subprocesses inherit no publishing token, including bootstrap git/node calls.
+HOSTED_CLOSE_SECONDS = 30
+HOSTED_TOKENS: dict[tuple[str, str, str], str] = {}
+HOSTED_MODULES = {}
+
+
+def remember_hosted(raw):
+    member=raw.get('hosted') if isinstance(raw,dict) else None
+    if not isinstance(member,dict):return
+    name=member.get('tokenEnv')
+    if not isinstance(name,str) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*',name):return
+    value=os.environ.pop(name,None)
+    if value is not None:
+        HOSTED_TOKENS[(name,str(member.get('origin','')).rstrip('/'),str(member.get('repositoryId','')))]=value
+
+
+def quarantine_hosted_checkout(cwd=None):
+    here=Path(cwd or os.getcwd()).resolve()
+    root=next((p for p in (here,*here.parents) if (p/'.git').exists()),None)
+    path=root/'.agents/delivery-views.json' if root else None
+    if path and path.is_file() and path.stat().st_size<=1024*1024:
+        try:remember_hosted(json.loads(path.read_text()))
+        except (ValueError,OSError):pass
+
+
+def hosted_module(release):
+    path=Path(release)/'skills/delivery-views/scripts/hosted.py'
+    key=str(path.resolve())
+    if key not in HOSTED_MODULES:
+        # The hosted script owns its imports and is run as a child for I/O. Its
+        # pure sidecar helpers are used here without starting a publisher.
+        spec=importlib.util.spec_from_file_location('flow_hosted_'+hashlib.sha256(key.encode()).hexdigest()[:16],path)
+        module=importlib.util.module_from_spec(spec);sys.modules[spec.name]=module;spec.loader.exec_module(module)
+        HOSTED_MODULES[key]=module
+    return HOSTED_MODULES[key]
+
+
+def hosted_settings(c):
+    raw=c.shelf.json('.agents/delivery-views.json') or {}
+    remember_hosted(raw)
+    if raw.get('hosted') is None:return None
+    try:
+        module=hosted_module(c.release)
+        validated=module.views.validate_config(raw)
+    except (ValueError,OSError,ImportError):raise Stop('hosted: configuration_invalid') from None
+    return raw,validated['hosted']
+
+
+def hosted_files(c):
+    settings=hosted_settings(c)
+    if settings is None:return None
+    raw,member=settings;module=hosted_module(c.release)
+    c.state.mkdir(parents=True,exist_ok=True)
+    config=c.state/'hosted-view-config.json';binding=c.state/'hosted-view-binding.json'
+    module.atomic(config,raw)
+    module.atomic(binding,{'state':{'directory':str(c.state)}})
+    return module,member,config,binding
+
+
+def hosted_call(c,operation,*,resume=False,timeout=5):
+    files=hosted_files(c)
+    if files is None:return {'state':'disabled'}
+    module,member,config,binding=files
+    environment=dict(os.environ)
+    token=HOSTED_TOKENS.get((member['tokenEnv'],member['origin'],member['repositoryId']))
+    if token is not None:environment[member['tokenEnv']]=token
+    command=[sys.executable,'-B',str(c.release/'skills/delivery-views/scripts/hosted.py'),operation,
+             '--config',str(config),'--binding',str(binding),'--state-dir',str(c.state),'--key',c.delivery,
+             '--generation',str(c.release),'--archive-root',str(archive_root(c))]
+    if resume:command.append('--resume')
+    done=run(command,cwd=c.root,check=False,timeout=timeout,env=environment,_publishing=True)
+    try:answer=json.loads(done.stdout)
+    except ValueError:return {'state':'failed','code':'publisher_unavailable'}
+    if done.returncode or not isinstance(answer,dict):return {'state':'failed','code':'publisher_unavailable'}
+    return answer
+
+
+def start_hosted(c,*,resume=False,timeout=5):
+    try:return hosted_call(c,'start',resume=resume,timeout=timeout)
+    except (Stop,OSError,ValueError,subprocess.SubprocessError):return {'state':'failed','code':'publisher_unavailable'}
+
+
+def hosted_info(c,*,archive=None):
+    try:
+        if archive is not None:return hosted_module(GENERATION).archive_status(Path(archive))
+        settings=hosted_settings(c)
+        if settings is None:return {'state':'disabled'}
+        module=hosted_module(c.release)
+        # This is read-only and needs no environment credential.
+        info=module.status(c.state,settings[1],c.delivery)
+        intent=module.read_terminal(c.state,archive_root(c))
+        if intent:
+            accepted=module.read_json(c.state/module.IDENTITY,optional=True)
+            receipt=(accepted or {}).get('receipt')
+            done=(intent['state']=='published' and receipt and receipt['digest']==intent['digest']
+                  and receipt['sourceFingerprint']==intent['sourceFingerprint'])
+            info['state']='final-published' if done else 'final-publication-pending'
+        return info
+    except (ValueError,OSError,RuntimeError,Stop):return {'state':'failed','code':'hosted_status_unavailable'}
+
+
+def hosted_line(c,*,archive=None):
+    info=hosted_info(c,archive=archive)
+    if info.get('state') in ('disabled','unpublished') and not info.get('url'):return None
+    # Called only by explicit status/view/doctor output, never supervisor logs.
+    return 'hosted: '+str(info.get('state','unavailable'))+(' '+info['url'] if info.get('url') else '')
+
+
+def copy_hosted(c,target):
+    if hosted_settings(c) is None:return
+    module=hosted_module(c.release)
+    module.mirror_hosted(c.state,target)
+
+
+def owned_hosted_processes(c):
+    """Protect the recorded independent owner and its descendants from close's sweep."""
+    try:
+        module=hosted_module(c.release)
+        owner=module.read_json(c.state/module.OWNER,optional=True)
+        if not module.process_matches(owner):return set()
+        kept={owner['pid']}
+        result=run(['ps','-axo','pid=,ppid='],cwd=c.root,check=False)
+        pairs=[tuple(map(int,line.split())) for line in result.stdout.splitlines() if len(line.split())==2]
+        while True:
+            extra={pid for pid,parent in pairs if parent in kept}
+            if extra<=kept:return kept
+            kept|=extra
+    except (ValueError,OSError,RuntimeError,Stop):return set()
+
+
+def hosted_retry(args):
+    if not args.archive:
+        print(json.dumps(hosted_call(cfg(),'retry',resume=args.resume)))
+        return
+    # The current checkout supplies trusted collection configuration. An archive
+    # supplies only its bounded record and identity, never executable commands.
+    c=Config(repo(),need_delivery=False,pick=False)
+    record=archived_record(args.archive).resolve()
+    module=hosted_module(c.release)
+    owner=module.read_json(record/module.OWNER,optional=True)
+    if module.process_matches(owner) and not module.locked(record/module.LOCK):
+        raise Stop('hosted: owner_elsewhere; retry after the recorded watcher exits')
+    identity=module.read_json(record/module.IDENTITY)
+    settings=hosted_settings(c)
+    if settings is None:raise Stop('hosted: not_configured')
+    module.Publisher(record,settings[1],identity['deliveryKey'])
+    intent=module.read_terminal(record,record)
+    if intent is None:raise Stop('hosted: no terminal request in this archive')
+    if intent['state']=='published':
+        print(json.dumps(module.archive_status(record)));return
+    at=int(time.time()*1000)
+    intent.update(requestedAt=at,retryUntil=at+module.FINAL_RETRY_SECONDS*1000,state='publication-pending' if intent['digest'] else 'capture-pending')
+    module.atomic(record/module.TERMINAL,intent)
+    from types import SimpleNamespace
+    proxy=SimpleNamespace(root=c.root,state=record,release=c.release,shelf=c.shelf,
+                          delivery=identity['deliveryKey'],flow_raw={'cleanup':{'archive':str(record)}},main=c.main)
+    print(json.dumps(hosted_call(proxy,'retry',resume=args.resume)))
+
+
+def finalize_hosted(c,archive,closed,*,seconds=HOSTED_CLOSE_SECONDS):
+    settings=hosted_settings(c)
+    if settings is None:return {'state':'disabled'}
+    module=hosted_module(c.release);record=Path(archive)/c.state.name
+    began=time.monotonic();deadline=began+min(HOSTED_CLOSE_SECONDS,max(0,seconds))
+    try:
+        document=module.record_document(record)
+        module.request_terminal(c.state,record,archive_root(c),closed['id'],document)
+        if time.monotonic()<deadline:start_hosted(c,timeout=min(5,deadline-time.monotonic()))
+        while time.monotonic()<deadline:
+            info=hosted_info(c)
+            if info.get('state')=='final-published':return info
+            if info.get('code') in ('credential_invalid','writer_fenced','unauthorized'):break
+            time.sleep(min(.1,max(0,deadline-time.monotonic())))
+        return {'state':'final-publication-pending'}
+    except (OSError,ValueError,RuntimeError):return {'state':'final-publication-pending'}
+
+
+def hosted_credentials_pipe(c):
+    settings=hosted_settings(c)
+    if settings is None:return None
+    _,member=settings
+    token=HOSTED_TOKENS.get((member['tokenEnv'],member['origin'],member['repositoryId']))
+    if token is None:return None
+    if not re.fullmatch(r'[A-Za-z0-9_-]{43,128}',token):return None
+    read,write=os.pipe()
+    data=json.dumps({'name':member['tokenEnv'],'origin':member['origin'],'repositoryId':member['repositoryId'],'token':token}).encode()
+    try:os.write(write,data)
+    finally:os.close(write)
+    return read
+
+
+def receive_hosted_credentials():
+    given=os.environ.pop('RUN_DELIVERY_HOSTED_FD',None)
+    if given is None:return
+    try:
+        descriptor=int(given)
+        if descriptor<=2:raise ValueError()
+        os.set_blocking(descriptor,False)
+        try:data=os.read(descriptor,4097)
+        finally:os.close(descriptor)
+        value=json.loads(data)
+        if (len(data)>4096 or set(value)!={'name','origin','repositoryId','token'}
+            or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*',value['name'])
+            or not re.fullmatch(r'[A-Za-z0-9_-]{43,128}',value['token'])):raise ValueError()
+        HOSTED_TOKENS[(value['name'],value['origin'],value['repositoryId'])]=value['token']
+    except (OSError,ValueError,TypeError,KeyError):raise Stop('hosted: credential_handoff_invalid') from None
+
+
+
 # -- process and git ----------------------------------------------------------------------
 
 def now() -> str:
@@ -152,6 +363,12 @@ def now() -> str:
 
 
 def run(argv: list[str], cwd: Path | None = None, check: bool = True, **kw) -> subprocess.CompletedProcess:
+    publishing=kw.pop('_publishing',False)
+    quarantine_hosted_checkout(cwd)
+    if not publishing:
+        environment=dict(kw.pop('env',os.environ))
+        for name,_,_ in HOSTED_TOKENS:environment.pop(name,None)
+        kw['env']=environment
     done = subprocess.run(argv, cwd=cwd, text=True, capture_output=True, **kw)
     if check and done.returncode != 0:
         raise Stop(f"{' '.join(map(str, argv[:4]))} ... failed: {(done.stderr or done.stdout).strip()[-600:]}")
@@ -535,6 +752,7 @@ class Config:
         self.binding_path = root / ".agents/orchestration.json"
         b = self.shelf.json(".agents/orchestration.json") or {}
         views = self.shelf.json(".agents/delivery-views.json") or {}
+        remember_hosted(views)
         self.release = root / os.path.expanduser(f["release"]) if f.get("release") else GENERATION
         self.release_override = f.get("release")
         if f.get("harness") == "ignore":
@@ -6262,6 +6480,8 @@ def lead_init(args) -> None:
             rebuild_plan(c)
     print(f"initialized {c.state} with {len(planned)} planned stories across {len(c.lanes)} lanes"
           + (f"; wrote {c.state / PLAN_FILE}" if (c.state / PLAN_FILE).exists() else ""))
+    start_hosted(c)
+    if (line:=hosted_line(c)):print(line)
     if args.no_supervisor or supervisor_off():
         register_delivery(c, None)
         print(f"supervisor: not started; start it with {flow_command()} lead-run --resume")
@@ -7901,6 +8121,7 @@ def view(args) -> None:
 
     def announce(address: str) -> None:
         print(f"http://{address}/", flush=True)
+        if (line:=hosted_line(None,archive=record) if args.archive else hosted_line(c)):print(line,flush=True)
         print(f"serving {record}" + (", an archived copy: it changes only when its writer copies the record again"
                                      if args.archive else "") + "; stop with Ctrl-C", flush=True)
 
@@ -8035,7 +8256,7 @@ def lead_close(args) -> None:
     render("rendered the views again, with the close marked finished")
     view = recorded_live(c.state).get("pid")
     for pid, command in delivery_processes(lead, c.state, c.delivery, c.main):
-        if pid == view:
+        if pid == view or pid in owned_hosted_processes(c):
             continue  # the live view is stopped last, below, by its recorded pid
         try:
             os.kill(pid, signal.SIGTERM)
@@ -8080,6 +8301,10 @@ def lead_close(args) -> None:
     said = unregister_delivery(c)
     if said:
         done.append(said)
+    # The final request is durable before the local view stops. The detached
+    # watcher owns retries after this command's bounded wait.
+    final=finalize_hosted(c,archive,closed)
+    if final.get('state')!='disabled':done.append('hosted: '+final['state'])
     # The live view last, by the pid live.json records: it served the close until now.
     try:
         said = stop_view(c.state)
@@ -8430,9 +8655,16 @@ def start_supervisor(c) -> str:
     log = lead_file(c, "supervisor.log")
     log.parent.mkdir(parents=True, exist_ok=True)
     argv = [sys.executable, "-B", str(Path(__file__).resolve()), "--delivery", c.delivery, "lead-run"]
-    with open(log, "a") as out:
-        proc = subprocess.Popen(argv, cwd=c.root, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
-                                start_new_session=True)
+    descriptor=hosted_credentials_pipe(c)
+    environment=dict(os.environ)
+    if descriptor is not None:environment['RUN_DELIVERY_HOSTED_FD']=str(descriptor)
+    try:
+        with open(log, "a") as out:
+            proc = subprocess.Popen(argv, cwd=c.root, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
+                                    start_new_session=True,env=environment,
+                                    pass_fds=() if descriptor is None else (descriptor,))
+    finally:
+        if descriptor is not None:os.close(descriptor)
     deadline = time.monotonic() + SUPERVISOR_WAIT_SECONDS
     try:
         while time.monotonic() < deadline:
@@ -8716,11 +8948,12 @@ def copy_latest(c) -> Path:
     with open(c.state / "state.lock", "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
-            shutil.copytree(c.state, staging / c.state.name, ignore=shutil.ignore_patterns("*.lock"))
+            shutil.copytree(c.state, staging / c.state.name, ignore=shutil.ignore_patterns("*.lock","hosted-*"))
             if c.flow_log.exists():
                 shutil.copytree(c.flow_log, staging / "flow-log", ignore=shutil.ignore_patterns("*.lock"))
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)
+    copy_hosted(c,staging/c.state.name)
     old = target.with_name(f".latest.{os.getpid()}.old")
     if target.exists():
         os.replace(target, old)
@@ -10045,7 +10278,9 @@ def archive_delivery(c) -> tuple[Path, list[str]]:
     archive = new_archive_folder(archive_root(c))
     for source in (c.state, c.flow_log, c.flow_log.parent / "evidence"):
         if source.exists():
-            shutil.copytree(source, archive / source.name)
+            shutil.copytree(source, archive / source.name,
+                            ignore=shutil.ignore_patterns('hosted-*') if source==c.state else None)
+    copy_hosted(c,archive/c.state.name)
     state = load_json(archive / c.state.name / "state.json") or {}
     archived = copy.deepcopy(c.raw)
     for lane, owns in c.effective_ownership(state).items():
@@ -10564,6 +10799,7 @@ class Supervisor:
             self.write_lock()
             with contextlib.suppress(OSError, Stop, subprocess.SubprocessError):
                 register_delivery(c, os.getpid())
+            start_hosted(c)
             if not self.once:
                 # Who stops it says why in supervisor.json; a signal nobody explained is recorded by the supervisor.
                 write_supervisor_status(c.state, os.getpid(), True)
@@ -10603,6 +10839,11 @@ class Supervisor:
                     if closed:
                         print(f"{now()} supervisor: drew the views and copied the record one last time", flush=True)
             if closed and not self.lost:
+                closing=last_close(load_state()['journal'])
+                kept=kept_close(c,closing)
+                if kept and closing:
+                    final=finalize_hosted(c,Path(kept['archive']),closing)
+                    if final.get('state')!='disabled':self.say('hosted: '+final['state'])
                 # The delivery's own close: recorded, then the view stopped last, by its recorded pid.
                 with contextlib.suppress(OSError):
                     write_supervisor_status(c.state, os.getpid(), False, "close")
@@ -10639,6 +10880,7 @@ def lead_run(args) -> None:
     if args.resume:
         for line in stop_orphans(c):
             print(line)
+        start_hosted(c,resume=True)
         address = start_supervisor(c)
         print(f"supervisor: running; live view {address}{live_fallback(c.state)}" + listener_words(c))
         return
@@ -11130,6 +11372,7 @@ class Doctor:
             ("forge-write", "forge write access", ("config",), self.forge_write),
             ("tracker-token", "tracker snapshot token", ("binding",), self.tracker_token),
             ("publishing", "snapshots and publishers", ("config", "binding"), self.publishing),
+            ("hosted", "hosted delivery", ("config",), self.hosted),
             ("in-app", "in-app adapters", ("config",), self.in_app),
             ("adapters", "in-app adapter contract", ("in-app",), self.adapters),
             ("video", "video evidence tools", ("config",), self.video),
@@ -11491,6 +11734,17 @@ class Doctor:
                                f"{', '.join(unset)}")
         return "ok", f"{', '.join(names) or 'no variables'} set"
 
+    def hosted(self):
+        try:
+            settings=hosted_settings(self.c)
+            if settings is None:return self.not_applicable('hosted publishing is disabled')
+            _,member=settings
+            token=HOSTED_TOKENS.get((member['tokenEnv'],member['origin'],member['repositoryId']))
+            said=hosted_line(self.c) or 'hosted: pending'
+            if not token:return 'warn',said+'; '+member['tokenEnv']+' is unset; export it to start or retry publishing'
+            return 'ok',said
+        except (Stop,ValueError,OSError):return 'wrong','hosted configuration is invalid; correct .agents/delivery-views.json'
+
     def publishing(self):
         problems = publishing_problems(self.c, self.binding)
         if problems:
@@ -11812,6 +12066,7 @@ def main(argv: list[str] | None = None) -> None:
     # Each call resolves its own configuration: none an earlier call in this process left, for another repository or
     # delivery, is this one's.
     CFG = None
+    receive_hosted_credentials()
     parser = argparse.ArgumentParser(prog="run_delivery.py", description=__doc__.split("\n\n")[0], allow_abbrev=False)
     parser.add_argument("--delivery", help="the delivery key, when the repository has several")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -12018,6 +12273,10 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--archive", type=Path, help="a copy of the record, such as the supervisor's latest")
     p.add_argument("--port", type=int, default=0, help="the port; 0 picks a free one")
     p.set_defaults(fn=view)
+    p = command(sub, "hosted-retry", help="retry the owned publisher, or a frozen archived terminal cut")
+    p.add_argument('--archive',type=Path)
+    p.add_argument('--resume',action='store_true',help='explicitly resume this owner after lease expiry')
+    p.set_defaults(fn=hosted_retry)
     p = command(sub, "ship"); p.add_argument("--no-gates", action="store_true", help="stage only; run the gates yourself")
     p.set_defaults(fn=ship)
     p = command(sub, "adapter-test"); p.set_defaults(fn=adapter_test)
@@ -12054,6 +12313,7 @@ def main(argv: list[str] | None = None) -> None:
     for _signal in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(_signal, _terminate)
     try:
+        if not (args.command=='view' and args.archive):quarantine_hosted_checkout()
         args.fn(args)
     except Stop as error:
         print(f"run-delivery: {error}", file=sys.stderr)
@@ -12067,6 +12327,7 @@ def main(argv: list[str] | None = None) -> None:
             line = supervisor_line(cfg())
             if line:
                 print(line)
+            if (line:=hosted_line(cfg())):print(line)
 
 
 if __name__ == "__main__":

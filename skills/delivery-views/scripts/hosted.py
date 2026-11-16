@@ -46,6 +46,9 @@ LOCK = 'hosted-owner.lock'
 CONTROL = 'hosted-control.lock'
 PENDING_PREFIX = 'hosted-pending-'
 RETRY = 'hosted-retry.json'
+TERMINAL = 'hosted-terminal.json'
+TERMINAL_BODY_PREFIX = 'hosted-terminal-body-'
+FINAL_RETRY_SECONDS = 600
 HEX = re.compile(r'^[a-f0-9]{64}$')
 KEY = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$')
 CAPTURE_SECONDS, UPLOAD_SECONDS = 60, 30
@@ -64,7 +67,8 @@ SAFE_ERRORS = ERRORS | frozenset(('sidecar_unsafe sidecar_unreadable sidecar_ove
  'delivery_key_invalid identity_missing identity_mismatch session_regressed receipt_regressed receipt_conflict '
  'source_unavailable source_path capture_deadline source_invalid source_changed owner_identity_mismatch '
  'owner_stop_timeout status_corrupt source_missing retry_corrupt owner_start_failed owner_start_timeout '
- 'not_configured request_oversize configuration_or_source_invalid confirmation_invalid receipt_mismatch configuration_changed sequence_reconcile').split())
+ 'not_configured request_oversize configuration_or_source_invalid confirmation_invalid receipt_mismatch configuration_changed sequence_reconcile '
+ 'terminal_corrupt terminal_unfinished terminal_source_changed terminal_expired final_publication_pending owner_elsewhere').split())
 
 class PublishError(RuntimeError):
     def __init__(self, code, *, transient=False):
@@ -350,6 +354,182 @@ class Publisher:
         return {'state':'current','sourceConfirmedAt':accepted['sourceConfirmedAt'],'receipt':accepted}
 
 
+def finished_entry(document):
+    closed=None
+    for row in document.get('journal',[]):
+        if row.get('kind')=='delivery.closed':closed=row.get('id')
+        elif row.get('kind') in ('lane.assigned','candidate.handed','check.started'):closed=None
+    marks=document.get('state',{}).get('meta',{}).get('closing',{})
+    return closed if integer(closed,1) and all(isinstance(marks.get(name),dict) and marks[name].get('entry')==closed
+                                            for name in ('started','finished')) else None
+
+
+def record_document(directory):
+    state=regular(directory/'state.json',public.MAX_SOURCE_BYTES)
+    journal=regular(directory/'journal.jsonl',public.MAX_SOURCE_BYTES)
+    if state is None or journal is None:raise PublishError('source_missing')
+    try:return {'state':json.loads(state),'journal':[json.loads(line) for line in journal.splitlines() if line.strip()]}
+    except (ValueError,UnicodeError,RecursionError):raise PublishError('source_invalid') from None
+
+
+def record_digest(document):
+    return hashlib.sha256(public.encode({'state':document['state'],'journal':document['journal']})).hexdigest()
+
+
+def terminal_source(intent,approved_root):
+    if approved_root is None:raise PublishError('source_path')
+    root=Path(approved_root).resolve(strict=True)
+    relative=Path(intent['source'])
+    if relative.is_absolute() or '..' in relative.parts or '\\' in str(relative):raise PublishError('source_path')
+    source=(root/relative).resolve()
+    if not source.is_relative_to(root) or not source.is_dir():raise PublishError('source_path')
+    return source
+
+
+def terminal_shape(value):
+    fields={'spec','entry','source','recordDigest','requestedAt','retryUntil','state','digest','sourceFingerprint'}
+    if (set(value)!=fields or value['spec']!='hosted-terminal/1' or not integer(value['entry'],1)
+        or not isinstance(value['source'],str) or len(value['source'])>1000
+        or not isinstance(value['recordDigest'],str) or not HEX.fullmatch(value['recordDigest'])
+        or not integer(value['requestedAt']) or not integer(value['retryUntil'])
+        or not 0<=value['retryUntil']-value['requestedAt']<=FINAL_RETRY_SECONDS*1000
+        or value['state'] not in ('capture-pending','publication-pending','published','final-publication-pending','superseded')
+        or any(value[k] is not None and (not isinstance(value[k],str) or not HEX.fullmatch(value[k]))
+               for k in ('digest','sourceFingerprint'))
+        or (value['digest'] is None)!=(value['sourceFingerprint'] is None)):
+        raise PublishError('terminal_corrupt')
+    relative=Path(value['source'])
+    if relative.is_absolute() or '..' in relative.parts or '\\' in str(relative):raise PublishError('source_path')
+    return value
+
+
+def read_terminal(directory,approved_root):
+    value=read_json(directory/TERMINAL,optional=True)
+    if value is None:return None
+    terminal_shape(value)
+    terminal_source(value,approved_root)
+    return value
+
+def request_terminal(directory,source,approved_root,entry,document):
+    if finished_entry(document)!=entry:raise PublishError('terminal_unfinished')
+    root=Path(approved_root).resolve(strict=True);source=Path(source).resolve(strict=True)
+    if not source.is_relative_to(root):raise PublishError('source_path')
+    with lock(directory/CONTROL):
+        prior=read_terminal(directory,root)
+        if prior and prior['entry']==entry and prior['recordDigest']==record_digest(document):return prior
+        at=int(time.time()*1000)
+        intent={'spec':'hosted-terminal/1','entry':entry,'source':str(source.relative_to(root)),
+                'recordDigest':record_digest(document),'requestedAt':at,'retryUntil':at+FINAL_RETRY_SECONDS*1000,
+                'state':'capture-pending','digest':None,'sourceFingerprint':None}
+        # The archive's canonical files already carry close-finished. This
+        # durable capture request survives even when every API read is offline.
+        atomic(source/TERMINAL,{**intent,'source':'.'})
+        atomic(directory/TERMINAL,intent)
+        mirror_hosted(directory,source)
+        return intent
+
+
+def mirror_hosted(source,destination):
+    """Copy only a coherent identity, referenced bodies and bounded status, never orphan inventory."""
+    source,destination=Path(source),Path(destination)
+    for _ in range(4):
+        identity_raw=regular(source/IDENTITY)
+        identity=json.loads(identity_raw) if identity_raw is not None else None
+        bodies={}
+        if identity_raw is not None:
+            if not isinstance(identity,dict):raise PublishError('identity_corrupt')
+            config={'origin':identity.get('origin'),'repositoryId':identity.get('repositoryId'),'tokenEnv':'ARCHIVE_TOKEN'}
+            checked=views.validate_config({'spec':views.CONFIG_SPEC,'hosted':config})['hosted']
+            Publisher(source,checked,identity.get('deliveryKey')).check_identity()
+            status(source,checked,identity['deliveryKey'])
+            pending=identity.get('pending')
+            if pending:
+                name=PENDING_PREFIX+pending['digest']+'.json';data=regular(source/name,public.MAX_BYTES)
+                if data is None:
+                    if regular(source/IDENTITY)!=identity_raw:continue
+                    raise PublishError('identity_corrupt')
+                bodies[name]=data
+        terminal=read_json(source/TERMINAL,optional=True)
+        if terminal:terminal_shape(terminal)
+        if terminal and terminal.get('digest'):
+            name=TERMINAL_BODY_PREFIX+terminal['digest']+'.json';data=regular(source/name,public.MAX_BYTES)
+            if data is None or hashlib.sha256(data).hexdigest()!=terminal['digest']:raise PublishError('terminal_corrupt')
+            public.validate(json.loads(data));bodies[name]=data
+        status_raw=regular(source/STATUS)
+        owner_raw=regular(source/OWNER)
+        if owner_raw is not None and not owner_shape(json.loads(owner_raw)):raise PublishError('owner_identity_mismatch')
+        if regular(source/IDENTITY)!=identity_raw:continue
+        for name,data in bodies.items():atomic(destination/name,data)
+        if identity_raw is not None:atomic(destination/IDENTITY,identity_raw)
+        if status_raw is not None:atomic(destination/STATUS,status_raw)
+        if owner_raw is not None:atomic(destination/OWNER,owner_raw)
+        if terminal:atomic(destination/TERMINAL,{**terminal,'source':'.'})
+        return
+    raise PublishError('source_changed',transient=True)
+
+
+def archive_status(directory):
+    identity=read_json(directory/IDENTITY,optional=True)
+    terminal=read_terminal(directory,directory)
+    if identity is None:return {'state':'final-publication-pending' if terminal else 'unpublished'}
+    config={'origin':identity.get('origin'),'repositoryId':identity.get('repositoryId'),'tokenEnv':'ARCHIVE_TOKEN'}
+    checked=views.validate_config({'spec':views.CONFIG_SPEC,'hosted':config})['hosted']
+    publisher=Publisher(directory,checked,identity.get('deliveryKey'))
+    value=status(directory,checked,identity['deliveryKey'])
+    if terminal:
+        accepted=publisher.identity['receipt']
+        complete=(terminal['state']=='published' and accepted and accepted['digest']==terminal['digest']
+                  and accepted['sourceFingerprint']==terminal['sourceFingerprint']
+                  and finished_entry(record_document(directory))==terminal['entry'])
+        value['state']='final-published' if complete else 'final-publication-pending'
+    elif (directory/'state.json').exists() and (directory/'journal.jsonl').exists() and finished_entry(record_document(directory)) is not None:
+        value['state']='final-publication-pending'
+    return value
+
+
+def terminal_step(publisher,collect_terminal,approved_root,*,resume=False):
+    directory=publisher.state;intent=read_terminal(directory,approved_root)
+    if intent is None:raise PublishError('terminal_corrupt')
+    source=terminal_source(intent,approved_root)
+    if (finished_entry(record_document(source))!=intent['entry']
+        or record_digest(record_document(source))!=intent['recordDigest']):raise PublishError('terminal_source_changed')
+    if int(time.time()*1000)>=intent['retryUntil']:
+        intent['state']='final-publication-pending';atomic(directory/TERMINAL,intent)
+        result={'state':'final-publication-pending','code':'final_publication_pending'}
+        atomic(directory/STATUS,{'spec':'hosted-delivery-status/1',**result});mirror_hosted(directory,source)
+        return result
+    try:
+        if intent['digest'] is None:
+            value=collect_terminal();public.validate(value,secret_values=publisher.secrets)
+            if finished_entry(value['document'])!=intent['entry']:raise PublishError('terminal_unfinished')
+            if record_digest(record_document(source))!=intent['recordDigest']:raise PublishError('source_changed',transient=True)
+            data=public.encode(value);sha=hashlib.sha256(data).hexdigest()
+            atomic(directory/(TERMINAL_BODY_PREFIX+sha+'.json'),data)
+            intent.update(digest=sha,sourceFingerprint=value['sourceFingerprint'],state='publication-pending')
+            atomic(directory/TERMINAL,intent)
+        data=regular(directory/(TERMINAL_BODY_PREFIX+intent['digest']+'.json'),public.MAX_BYTES)
+        if data is None or hashlib.sha256(data).hexdigest()!=intent['digest']:raise PublishError('terminal_corrupt')
+        value=json.loads(data)
+        previous=copy.deepcopy(publisher.identity)
+        def frozen():
+            accepted=publisher.identity['receipt']
+            allowed={intent['digest']}
+            for prior in (previous['receipt'],previous['pending']):
+                if prior:allowed.add(prior['digest'])
+            if accepted and accepted['digest'] not in allowed:
+                raise PublishError('terminal_source_changed')
+            return value
+        result=publisher.step(frozen,resume=resume)
+        accepted=publisher.identity['receipt']
+        if accepted['digest']!=intent['digest'] or accepted['sourceFingerprint']!=intent['sourceFingerprint']:
+            raise PublishError('receipt_mismatch')
+        intent['state']='published';atomic(directory/TERMINAL,intent)
+        result={**result,'state':'final-published'}
+        atomic(directory/STATUS,{'spec':'hosted-delivery-status/1',**result})
+        return result
+    finally:mirror_hosted(directory,source)
+
+
 class Schedule:
     def __init__(self,now):self.first=None;self.last=None;self.next=now
     def changed(self,now):
@@ -386,10 +566,12 @@ def load_inputs(arguments):
     here=Path.cwd().resolve()
     root=next((path for path in (here,*here.parents) if (path/'.git').exists()),None)
     if root is None:raise PublishError('source_path')
+    approved=Path(arguments.archive_root).resolve() if getattr(arguments,'archive_root',None) else None
+    allowed=lambda path:path.is_relative_to(root) or approved is not None and path.is_relative_to(approved)
     def source(given):
         if not given:raise PublishError('configuration_or_source_invalid')
         path=root/given
-        if not path.resolve().is_relative_to(root):raise PublishError('source_path')
+        if not allowed(path.resolve()):raise PublishError('source_path')
         data=regular(path,1024*1024)
         if data is None:raise PublishError('configuration_or_source_invalid')
         return json.loads(data)
@@ -397,13 +579,15 @@ def load_inputs(arguments):
     directory=(binding.get('state') or {}).get('directory')
     if not isinstance(directory,str):raise PublishError('source_path')
     state=(root/(arguments.state_dir or directory)).resolve()
-    if not state.is_relative_to(root):raise PublishError('source_path')
+    if not allowed(state):raise PublishError('source_path')
     return views.Inputs(root,config,binding,state)
 
 
 def collect(inputs,arguments=None):
     directory,root,config=inputs.state_directory,inputs.root,inputs.config
-    if not directory.is_relative_to(root):raise PublishError('source_path')
+    approved=Path(arguments.archive_root).resolve() if arguments is not None and getattr(arguments,'archive_root',None) else None
+    if not directory.is_relative_to(root) and (approved is None or not directory.is_relative_to(approved)):raise PublishError('source_path')
+    capture_root=Path(os.path.commonpath((root,directory)))
     deadline=time.monotonic()+CAPTURE_SECONDS-5
     trace={}
     argv=views.runs_argv(config,root)
@@ -443,23 +627,26 @@ def collect(inputs,arguments=None):
             if public.encode(run(*args))!=public.encode(answer):raise PublishError('source_changed',transient=True)
         return value
     def inventory():
-        names=[str((directory/name).relative_to(root)) for name in selected_files(directory)]
+        names=[str((directory/name).relative_to(capture_root)) for name in selected_files(directory)]
         if arguments is not None:
             for given in (arguments.config,arguments.binding):
                 path=root/given
-                if path.is_symlink() or not path.resolve().is_relative_to(root):raise PublishError('source_path')
-                names.append(str(path.relative_to(root)))
+                resolved=path.resolve()
+                if path.is_symlink() or not (resolved.is_relative_to(root) or approved is not None and resolved.is_relative_to(approved)):
+                    raise PublishError('source_path')
+                names.append(str(path.relative_to(capture_root)))
         return names
-    value=public.capture(root,inventory,cut)
+    value=public.capture(capture_root,inventory,cut)
     value['sourceFingerprint']=hashlib.sha256(public.encode([value['sourceFingerprint'],
         [[list(args),answer] for args,answer in trace.items()]])).hexdigest()
     return value
 
 
-def child_collect(arguments,inputs):
+def child_collect(arguments,inputs,source=None):
     if CANCELLED.is_set():raise PublishError('source_missing')
     argv=[sys.executable,'-B',str(Path(__file__).resolve()),'collect','--config',arguments.config,
-          '--binding',arguments.binding,'--state-dir',str(inputs.state_directory),'--key',arguments.key]
+          '--binding',arguments.binding,'--state-dir',str(source or inputs.state_directory),'--key',arguments.key]
+    if getattr(arguments,'archive_root',None):argv.extend(['--archive-root',arguments.archive_root])
     scrub=set(inputs.config['scrubEnv'])|{inputs.config['hosted']['tokenEnv']}
     try:return views.run_json(argv,timeout=CAPTURE_SECONDS,scrub=list(scrub),cwd=inputs.root,limit=public.MAX_BYTES,process_registry=CHILDREN,cancelled=CANCELLED)
     except views.RunUnavailable:raise PublishError('source_unavailable',transient=True) from None
@@ -471,6 +658,7 @@ def child_transport(arguments,inputs):
         if CANCELLED.is_set():raise PublishError('source_missing')
         command=[sys.executable,'-B',str(Path(__file__).resolve()),'request','--config',arguments.config,
                  '--binding',arguments.binding,'--state-dir',str(inputs.state_directory),'--key',arguments.key]
+        if getattr(arguments,'archive_root',None):command.extend(['--archive-root',arguments.archive_root])
         environment={k:v for k,v in os.environ.items() if k not in inputs.config['scrubEnv'] or k==inputs.config['hosted']['tokenEnv']}
         envelope={'method':method,'operation':operation,'body':base64.b64encode(body).decode() if body is not None else None,'headers':headers}
         process=subprocess.Popen(command,cwd=inputs.root,env=environment,stdin=subprocess.PIPE,stdout=subprocess.PIPE,
@@ -507,8 +695,17 @@ def process_started(pid):
     except (OSError,subprocess.TimeoutExpired):return None
 
 
+def owner_shape(record):
+    fields={'pid','started','scriptDigest','generation'}
+    return (isinstance(record,dict) and fields<=set(record)<=fields|{'archiveRoot'}
+            and type(record['pid']) is int and record['pid']>1
+            and isinstance(record['started'],str) and 0<len(record['started'])<=120
+            and all(isinstance(record[k],str) and HEX.fullmatch(record[k]) for k in ('scriptDigest','generation'))
+            and ('archiveRoot' not in record or isinstance(record['archiveRoot'],str) and HEX.fullmatch(record['archiveRoot'])))
+
+
 def process_matches(record):
-    if not isinstance(record,dict) or set(record)!={'pid','started','scriptDigest','generation'}:return False
+    if not owner_shape(record):return False
     pid=record['pid']
     if type(pid) is not int or pid<=1 or not isinstance(record['started'],str):return False
     try:
@@ -543,10 +740,10 @@ def status(directory,config,key):
     value=read_json(directory/STATUS,optional=True)
     if value is None:value={'spec':'hosted-delivery-status/1','state':'disabled'}
     if (not isinstance(value,dict) or not set(value)<={'spec','state','code','sourceConfirmedAt','receipt'}
-        or value.get('spec')!='hosted-delivery-status/1' or value.get('state') not in ('pending','current','retrying','failed','stopped','disabled')
+        or value.get('spec')!='hosted-delivery-status/1' or value.get('state') not in ('pending','current','retrying','failed','stopped','disabled','final-published','final-publication-pending')
         or 'code' in value and (not isinstance(value['code'],str) or value['code'] not in SAFE_ERRORS)
         or 'sourceConfirmedAt' in value and not integer(value['sourceConfirmedAt'])):raise PublishError('status_corrupt')
-    if value['state']=='current' and not {'receipt','sourceConfirmedAt'}<=set(value):raise PublishError('status_corrupt')
+    if value['state'] in ('current','final-published') and not {'receipt','sourceConfirmedAt'}<=set(value):raise PublishError('status_corrupt')
     if value['state'] in ('failed','retrying') and 'code' not in value:raise PublishError('status_corrupt')
     if 'receipt' in value:receipt(value['receipt'])
     identity=read_json(directory/IDENTITY,optional=True)
@@ -579,11 +776,18 @@ def watch(arguments,inputs):
     script_digest=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     prior_retry=read_json(directory/RETRY,optional=True)
     retry_seen=prior_retry.get('nonce') if isinstance(prior_retry,dict) else None
-    halted=False;attempt=0;retry_at=0;resume=arguments.resume
+    halted=False;attempt=0;retry_at=0;resume=arguments.resume;terminal_done=False
+    approved=Path(arguments.archive_root).resolve() if getattr(arguments,'archive_root',None) else directory
     schedule=Schedule(time.monotonic());previous=None;running=True
     def alive():
         return ((directory/'state.json').is_file() and (directory/'journal.jsonl').is_file()
                 and generation_path.exists() and generation_path.resolve()==resolved and Path(__file__).is_file())
+    def within_window():
+        if not alive():return False
+        try:
+            intent=read_terminal(directory,approved)
+            return intent is None or int(time.time()*1000)<intent['retryUntil']
+        except (PublishError,OSError,ValueError):return False
     def signal_stop(signum,frame):
         nonlocal running
         running=False
@@ -600,13 +804,14 @@ def watch(arguments,inputs):
         status(directory,config['hosted'],arguments.key)
         if not (directory/STATUS).exists():atomic(directory/STATUS,{'spec':'hosted-delivery-status/1','state':'pending'})
         atomic(directory/OWNER,{'pid':os.getpid(),'started':process_started(os.getpid()),'scriptDigest':script_digest,
-                               'generation':hashlib.sha256(str(resolved).encode()).hexdigest()})
+                               'generation':hashlib.sha256(str(resolved).encode()).hexdigest(),
+                               'archiveRoot':hashlib.sha256(str(approved).encode()).hexdigest()})
         try:
             Transport(config['hosted']['origin'],config['hosted']['repositoryId'],publisher.identity['publicId'],token)
             publisher.api=child_transport(arguments,inputs)
         except PublishError as error:
             halted=True;atomic(directory/STATUS,{'spec':'hosted-delivery-status/1','state':'failed','code':error.code})
-        with monitor_liveness(alive,signal_stop):
+        with monitor_liveness(within_window,signal_stop):
             while running and alive():
                 now=time.monotonic()
                 request=read_json(directory/RETRY,optional=True)
@@ -625,6 +830,18 @@ def watch(arguments,inputs):
                         raise PublishError('configuration_changed')
                     publisher.secrets=tuple(value for name in set(fresh.config['scrubEnv'])|{config['hosted']['tokenEnv']}
                                             if (value:=os.environ.get(name)))
+                    intent=read_terminal(directory,approved)
+                    if intent is not None:
+                        # A reopened live record supersedes its old terminal request.
+                        if directory!=approved and finished_entry(record_document(directory))!=intent['entry']:
+                            (directory/TERMINAL).unlink();intent=None
+                        elif not halted and now>=retry_at:
+                            source=terminal_source(intent,approved)
+                            result=terminal_step(publisher,lambda:child_collect(arguments,fresh,source),approved,resume=resume)
+                            resume=False
+                            if result['state'] in ('final-published','final-publication-pending'):
+                                terminal_done=True;break
+                            continue
                     inventory=selected_files(directory)
                     signature=[(name,(directory/name).stat().st_mtime_ns,(directory/name).stat().st_size)
                                if (directory/name).exists() else (name,None) for name in inventory]
@@ -642,22 +859,41 @@ def watch(arguments,inputs):
                 # Fixed short sleeps keep record/generation disappearance independent
                 # of a long retry interval and fixture cleanup.
                 time.sleep(.25)
-        if directory.exists() and alive():atomic(directory/STATUS,{'spec':'hosted-delivery-status/1','state':'stopped'})
+        if directory.exists() and alive():
+            intent=read_terminal(directory,approved)
+            if intent and not terminal_done:
+                intent['state']='final-publication-pending';atomic(directory/TERMINAL,intent)
+                atomic(directory/STATUS,{'spec':'hosted-delivery-status/1','state':'final-publication-pending','code':'final_publication_pending'})
+                mirror_hosted(directory,terminal_source(intent,approved))
+            elif not terminal_done:atomic(directory/STATUS,{'spec':'hosted-delivery-status/1','state':'stopped'})
 
 
 def start(arguments,inputs):
     directory=inputs.state_directory
     with lock(directory/CONTROL):
         owner=read_json(directory/OWNER,optional=True)
+        approved=Path(arguments.archive_root).resolve() if getattr(arguments,'archive_root',None) else directory
+        intent=read_terminal(directory,approved)
+        if intent and intent['state']=='published':return status(directory,inputs.config['hosted'],arguments.key)
+        if intent and arguments.resume:
+            at=int(time.time()*1000)
+            intent.update(requestedAt=at,retryUntil=at+FINAL_RETRY_SECONDS*1000,
+                          state='publication-pending' if intent['digest'] else 'capture-pending')
+            atomic(directory/TERMINAL,intent)
         current_digest=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
         current_generation=hashlib.sha256(str(generation(arguments).resolve()).encode()).hexdigest()
         if locked(directory/LOCK):
             if not process_matches(owner):raise PublishError('owner_identity_mismatch')
-            if owner['scriptDigest']==current_digest and owner['generation']==current_generation:return status(directory,inputs.config['hosted'],arguments.key)
+            approved=Path(arguments.archive_root).resolve() if getattr(arguments,'archive_root',None) else directory
+            if (not arguments.resume and getattr(arguments,'operation',None)!='retry'
+                and owner['scriptDigest']==current_digest and owner['generation']==current_generation
+                and owner.get('archiveRoot')==hashlib.sha256(str(approved).encode()).hexdigest()):
+                return status(directory,inputs.config['hosted'],arguments.key)
             stop(directory)
         command=[sys.executable,'-B',str(Path(__file__).resolve()),'watch','--config',arguments.config,'--binding',arguments.binding,
                  '--state-dir',str(directory),'--key',arguments.key,'--generation',str(generation(arguments))]
         if arguments.resume:command.append('--resume')
+        if getattr(arguments,'archive_root',None):command.extend(['--archive-root',arguments.archive_root])
         environment={k:v for k,v in os.environ.items() if k not in inputs.config['scrubEnv'] or k==inputs.config['hosted']['tokenEnv']}
         child=subprocess.Popen(command,cwd=inputs.root,env=environment,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL,start_new_session=True)
@@ -679,12 +915,13 @@ def main(argv=None):
     views.add_input_arguments(parser)
     parser.add_argument('--key',required=True)
     parser.add_argument('--generation')
+    parser.add_argument('--archive-root')
     parser.add_argument('--resume',action='store_true')
     arguments=parser.parse_args(argv)
     try:
         inputs=load_inputs(arguments)
         directory=inputs.state_directory
-        if not directory.is_relative_to(inputs.root) or not directory.is_dir():raise PublishError('source_path')
+        if not directory.is_dir():raise PublishError('source_path')
         if inputs.config['hosted'] is None:raise PublishError('not_configured')
         if arguments.operation=='collect':answer=collect(inputs,arguments)
         elif arguments.operation=='request':

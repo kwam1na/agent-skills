@@ -1,0 +1,287 @@
+"""Owned hosted lifecycle and terminal/archive boundaries; local proof only."""
+from __future__ import annotations
+import copy
+import atexit
+import contextlib
+import hashlib
+import importlib.util
+import io
+import json
+import os
+import subprocess
+import signal
+import sys
+import tempfile
+import time
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
+
+from tests.test_delivery_views_hosted import hosted, CFG, TOKEN, VALID, FakeAPI
+from tests import test_delivery_views_hosted as publisher_fixtures
+from tests.delivery_views_fixtures import render, views_common
+
+ROOT=Path(__file__).resolve().parents[1]
+_spec=importlib.util.spec_from_file_location('run_delivery_hosted_flow',ROOT/'skills/run-delivery/scripts/run_delivery.py')
+flow=importlib.util.module_from_spec(_spec);sys.modules[_spec.name]=flow;_spec.loader.exec_module(flow)
+
+OWNED=set()
+def stop_owned():
+    for directory in tuple(OWNED):
+        with contextlib.suppress(OSError,hosted.PublishError):hosted.stop(directory)
+atexit.register(stop_owned)
+
+class TerminalTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
+        self.root=Path(self.tmp.name).resolve();self.live=self.root/'live';self.live.mkdir()
+        self.archives=self.root/'archives';self.archive=self.archives/'closed'/'state';self.archive.mkdir(parents=True)
+        self.config=views_common.validate_config(CFG);self.api=FakeAPI()
+        self.publisher=hosted.Publisher(self.live,self.config['hosted'],'APP-1',self.api,secret_values=[TOKEN])
+        self.document={'state':render.review_state.initial_state('Terminal delivery'),'journal':[]}
+        self.document['journal']=[{'id':10,'kind':'delivery.closed','at':'2026-11-15T00:00:00Z','subject':None,'lane':None,'summary':'Closed'}]
+        self.document['state'].setdefault('meta',{})['closing']={'started':{'entry':10,'at':'2026-11-15T00:00:00Z'},'finished':{'entry':10,'at':'2026-11-15T00:00:01Z'}}
+        (self.archive/'state.json').write_text(json.dumps(self.document['state']))
+        (self.archive/'journal.jsonl').write_text(json.dumps(self.document['journal'][0])+'\n')
+    def request(self):
+        return hosted.request_terminal(self.live,self.archive,self.archives,10,self.document)
+    def payload(self):
+        return hosted.public.project(self.document,{},self.config,source_fingerprint='f'*64)
+    def test_finished_close_mark_is_required_and_pending_cut_is_durable_before_transport(self):
+        unfinished=copy.deepcopy(self.document);unfinished['state']['meta']['closing'].pop('finished')
+        with self.assertRaises(hosted.PublishError):hosted.request_terminal(self.live,self.archive,self.archives,10,unfinished)
+        intent=self.request()
+        self.assertEqual(intent['state'],'capture-pending')
+        self.assertEqual(hosted.read_json(self.archive/hosted.TERMINAL)['entry'],10)
+        self.assertEqual(self.api.calls,[])
+        self.assertEqual(hosted.FINAL_RETRY_SECONDS,600)
+    def test_terminal_ack_is_bound_to_digest_and_finished_entry_and_mirrored_without_credentials(self):
+        self.request()
+        result=hosted.terminal_step(self.publisher,lambda:self.payload(),self.archives)
+        self.assertEqual(result['state'],'final-published')
+        info=hosted.archive_status(self.archive)
+        self.assertEqual(info['state'],'final-published');self.assertTrue(info['url'].endswith(self.publisher.identity['publicId']))
+        terminal=hosted.read_json(self.archive/hosted.TERMINAL)
+        self.assertEqual(terminal['state'],'published');self.assertEqual(terminal['digest'],self.publisher.identity['receipt']['digest'])
+        for path in self.archive.glob('hosted-*.json'):self.assertNotIn(TOKEN,path.read_text())
+    def test_lost_terminal_ack_and_archive_retry_preserve_exact_body_and_identity(self):
+        self.request();self.publisher.step(lambda:copy.deepcopy(VALID))
+        self.api.lose=True
+        with self.assertRaises(hosted.PublishError):hosted.terminal_step(self.publisher,lambda:self.payload(),self.archives)
+        self.assertEqual(hosted.archive_status(self.archive)['state'],'final-publication-pending')
+        identity=hosted.read_json(self.archive/hosted.IDENTITY);self.assertIsNotNone(identity['pending'])
+        path=self.archive/(hosted.PENDING_PREFIX+identity['pending']['digest']+'.json')
+        self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(),identity['pending']['digest'])
+        retry=hosted.Publisher(self.archive,self.config['hosted'],'APP-1',self.api,secret_values=[TOKEN])
+        result=hosted.terminal_step(retry,lambda:(_ for _ in ()).throw(AssertionError('frozen body must be reused')),self.archive)
+        self.assertEqual(result['state'],'final-published')
+        self.assertEqual(retry.identity['publicId'],identity['publicId'])
+    def test_corrupt_or_unreferenced_pending_material_is_not_archived_as_current(self):
+        self.request();(self.live/'hosted-pending-unrelated.json').write_text('unrelated')
+        hosted.mirror_hosted(self.live,self.archive)
+        self.assertFalse((self.archive/'hosted-pending-unrelated.json').exists())
+        (self.live/hosted.IDENTITY).write_text('null')
+        with self.assertRaises(hosted.PublishError):hosted.mirror_hosted(self.live,self.archive)
+    def test_final_retry_window_expires_without_renewing_or_relabelling_completion(self):
+        intent=self.request();intent['requestedAt']=1;intent['retryUntil']=600001
+        hosted.atomic(self.live/hosted.TERMINAL,intent)
+        with mock.patch.object(hosted.time,'time',return_value=601):
+            result=hosted.terminal_step(self.publisher,lambda:self.payload(),self.archives)
+        self.assertEqual(result['state'],'final-publication-pending');self.assertEqual(self.api.calls,[])
+        self.assertIsNone(self.publisher.identity['receipt'])
+
+class LifecycleTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
+        self.root=Path(self.tmp.name).resolve();self.state=self.root/'state';self.state.mkdir()
+        self.archive=self.root/'archives'/'one'/'state';self.archive.mkdir(parents=True)
+        self.views=copy.deepcopy(CFG)
+        self.c=SimpleNamespace(root=self.root,main=self.root,state=self.state,release=ROOT,delivery='APP-1',
+            flow_log=self.root/'flow',flow_raw={'cleanup':{'archive':str(self.root/'archives')}},
+            shelf=SimpleNamespace(json=lambda name:self.views if name=='.agents/delivery-views.json' else {'state':{'directory':'state'}}))
+    def test_binding_shelf_config_is_materialized_and_only_uploader_receives_token(self):
+        with mock.patch.dict(os.environ,{'FIXTURE_PUBLISH_TOKEN':TOKEN}),mock.patch.object(flow,'run') as run:
+            run.return_value=subprocess.CompletedProcess([],0,json.dumps({'state':'pending'}),'')
+            flow.start_hosted(self.c,resume=True)
+            command=run.call_args.args[0];environment=run.call_args.kwargs['env']
+            self.assertIn('start',command);self.assertIn('--resume',command)
+            self.assertEqual(environment['FIXTURE_PUBLISH_TOKEN'],TOKEN)
+            self.assertNotIn('FIXTURE_PUBLISH_TOKEN',os.environ)
+            self.assertNotIn(TOKEN,''.join(p.read_text() for p in self.state.glob('*.json')))
+    def test_close_budget_and_durable_request_survive_unavailable_capture_or_upload(self):
+        self.assertEqual(flow.HOSTED_CLOSE_SECONDS,30)
+        document={'state':{'meta':{'closing':{'started':{'entry':10},'finished':{'entry':10}}}},
+                  'journal':[{'id':10,'kind':'delivery.closed'}]}
+        (self.archive/'state.json').write_text(json.dumps(document['state']));(self.archive/'journal.jsonl').write_text(json.dumps(document['journal'][0])+'\n')
+        with mock.patch.object(flow,'start_hosted',return_value={'state':'failed'}),mock.patch.object(flow,'hosted_info',return_value={'state':'final-publication-pending'}):
+            result=flow.finalize_hosted(self.c,self.archive.parent,{'id':10},seconds=0)
+        self.assertEqual(result['state'],'final-publication-pending')
+        self.assertTrue((self.archive/hosted.TERMINAL).exists())
+    def test_archive_status_needs_no_token_and_never_starts_uploader(self):
+        hosted.Publisher(self.archive,self.views['hosted'],'APP-1')
+        with mock.patch.dict(os.environ,{},clear=True),mock.patch.object(flow,'start_hosted') as start:
+            info=flow.hosted_info(None,archive=self.archive)
+        self.assertIn('url',info);start.assert_not_called()
+        (self.archive/'state.json').write_text(json.dumps(render.review_state.initial_state('Archived')))
+        (self.archive/'journal.jsonl').write_text('')
+        info=flow.hosted_info(None,archive=self.archive)
+        fake=SimpleNamespace(parse_config=lambda _:None,show=lambda _:None,
+                             serve_live=lambda record,config,**kw:kw['announce']('127.0.0.1:1234'))
+        with mock.patch.dict(sys.modules,{'render_state':fake}),mock.patch.dict(os.environ,{},clear=True),mock.patch.object(flow,'start_hosted') as start,contextlib.redirect_stdout(io.StringIO()) as output:
+            flow.view(SimpleNamespace(archive=self.archive,port=0))
+        self.assertIn(info['url'],output.getvalue());start.assert_not_called()
+    def test_private_descriptor_transfers_token_without_environment_or_disk_copy(self):
+        with mock.patch.dict(os.environ,{'FIXTURE_PUBLISH_TOKEN':TOKEN}):
+            descriptor=flow.hosted_credentials_pipe(self.c)
+            self.assertNotIn('FIXTURE_PUBLISH_TOKEN',os.environ)
+            flow.HOSTED_TOKENS.clear()
+            os.environ['RUN_DELIVERY_HOSTED_FD']=str(descriptor)
+            flow.receive_hosted_credentials()
+            self.assertNotIn('RUN_DELIVERY_HOSTED_FD',os.environ)
+            self.assertEqual(flow.HOSTED_TOKENS[('FIXTURE_PUBLISH_TOKEN',CFG['hosted']['origin'],'repo_A')],TOKEN)
+        self.assertEqual(list(self.state.iterdir()),[])
+
+class OwnedProcessTests(unittest.TestCase):
+    run_quietly=True
+    def setUp(self):
+        publisher_fixtures.ReceiverTests.setUp(self)
+        self.root=self.state.resolve();(self.root/'.git').mkdir()
+        self.state=self.root/'state';self.state.mkdir();self.gen=self.root/'generation';self.gen.mkdir()
+        self.archives=self.root/'archives';self.archive=self.archives/'closed'/'state';self.archive.mkdir(parents=True)
+        self.config=views_common.validate_config(CFG)
+        self.document={'state':render.review_state.initial_state('Independent watcher'),'journal':[]}
+        self.write_record(self.state)
+        (self.root/'views.json').write_text(json.dumps(CFG))
+        (self.root/'binding.json').write_text(json.dumps({'state':{'directory':'state'}}))
+        (self.root/'sitecustomize.py').write_text(
+            'import http.client,os,sys,json\nReal=http.client.HTTPConnection\n'
+            f'def fixture(host,port=None,timeout=None,context=None):\n assert host=="deliveries.example.com"\n return Real("127.0.0.1",{self.server.server_port},timeout=timeout)\n'
+            'http.client.HTTPSConnection=fixture\n'
+            f'with open({str(self.root/"environment.jsonl")!r},"a") as out:out.write(json.dumps([sys.argv,"FIXTURE_PUBLISH_TOKEN" in os.environ])+"\\n")\n')
+        self.environment={**os.environ,'FIXTURE_PUBLISH_TOKEN':TOKEN,'PYTHONPATH':str(self.root)}
+        OWNED.add(self.state)
+        self.addCleanup(OWNED.discard,self.state);self.addCleanup(hosted.stop,self.state)
+        self.before={}
+        for number in (signal.SIGTERM,signal.SIGHUP):
+            prior=signal.getsignal(number);self.before[number]=prior
+            def interrupted(signum,frame,prior=prior):
+                stop_owned()
+                if callable(prior):return prior(signum,frame)
+                raise KeyboardInterrupt()
+            signal.signal(number,interrupted)
+        self.addCleanup(lambda:[signal.signal(number,prior) for number,prior in self.before.items()])
+    def write_record(self,directory):
+        (directory/'state.json').write_text(json.dumps(self.document['state']))
+        (directory/'journal.jsonl').write_text(''.join(json.dumps(entry)+'\n' for entry in self.document['journal']))
+    def command(self,operation,*extra):
+        argv=[sys.executable,'-B',str(ROOT/'skills/delivery-views/scripts/hosted.py'),operation,'--config','views.json',
+              '--binding','binding.json','--key','APP-1','--generation',str(self.gen),'--archive-root',str(self.archives),*extra]
+        done=subprocess.run(argv,cwd=self.root,env=self.environment,capture_output=True,text=True,timeout=8,start_new_session=True)
+        self.assertEqual(done.returncode,0,done.stdout+done.stderr)
+        return json.loads(done.stdout)
+    def wait_for(self,predicate,seconds=8):
+        deadline=time.monotonic()+seconds
+        while time.monotonic()<deadline:
+            if predicate():return
+            time.sleep(.05)
+        self.fail('owned watcher did not reach the expected state')
+    def finished(self):
+        self.document['journal']=[{'id':1,'kind':'delivery.closed','at':'2026-11-15T00:00:00Z','subject':None,'lane':None,'summary':'Closed'}]
+        self.document['state']['meta']['closing']={'started':{'entry':1,'at':'2026-11-15T00:00:00Z'},'finished':{'entry':1,'at':'2026-11-15T00:00:01Z'}}
+        self.write_record(self.state);self.write_record(self.archive)
+        return hosted.request_terminal(self.state,self.archive,self.archives,1,self.document)
+    def test_two_starts_adopt_one_owner_direct_mutations_publish_and_supervisor_stop_leaves_it(self):
+        first=self.command('start');owner=hosted.read_json(self.state/hosted.OWNER)
+        second=self.command('start')
+        self.assertEqual(first['url'],second['url']);self.assertEqual(hosted.read_json(self.state/hosted.OWNER)['pid'],owner['pid'])
+        self.wait_for(lambda:any(op=='snapshots' for op,_,_ in self.observed))
+        self.document['state']['meta']['headline']='Direct mutation';self.write_record(self.state)
+        self.wait_for(lambda:any(body and b'Direct mutation' in body for op,_,body in self.observed if op=='snapshots'))
+        supervisor=flow.Supervisor.__new__(flow.Supervisor);supervisor.children={}
+        supervisor.stop_children()
+        self.assertTrue(hosted.process_matches(owner));self.assertTrue(hosted.locked(self.state/hosted.LOCK))
+        rows=[json.loads(line) for line in (self.root/'environment.jsonl').read_text().splitlines()]
+        generic=[present for argv,present in rows if 'collect' in argv]
+        self.assertTrue(generic);self.assertFalse(any(generic));self.assertFalse((self.state/'tracker-ledger.json').exists())
+        self.gen=self.root/'generation-two';self.gen.mkdir();self.command('start')
+        replacement=hosted.read_json(self.state/hosted.OWNER)
+        self.assertNotEqual(replacement['pid'],owner['pid']);self.assertFalse(hosted.process_matches(owner))
+    def test_terminal_ack_archives_finished_cut_and_owner_exits_without_cleanup(self):
+        self.command('start');self.finished()
+        self.wait_for(lambda:hosted.archive_status(self.archive)['state']=='final-published')
+        self.wait_for(lambda:not hosted.locked(self.state/hosted.LOCK))
+        self.assertEqual(hosted.read_json(self.archive/hosted.TERMINAL)['state'],'published')
+        self.assertEqual(hosted.finished_entry(json.loads(next(body for op,_,body in reversed(self.observed) if op=='snapshots'))['document']),1)
+    def test_expired_terminal_self_exit_and_separate_fixture_cleanup_proof(self):
+        self.environment.pop('FIXTURE_PUBLISH_TOKEN');self.command('start')
+        intent=self.finished();intent.update(requestedAt=1,retryUntil=600001);hosted.atomic(self.state/hosted.TERMINAL,intent)
+        self.wait_for(lambda:not hosted.locked(self.state/hosted.LOCK))
+        self.assertEqual(hosted.archive_status(self.archive)['state'],'final-publication-pending')
+        # Keep the source intact: this independent cleanup path must stop the
+        # owner even though neither production disappearance guard fires.
+        (self.state/hosted.TERMINAL).unlink();self.command('start')
+        self.assertTrue(hosted.locked(self.state/hosted.LOCK));stop_owned()
+        self.assertFalse(hosted.locked(self.state/hosted.LOCK));self.assertTrue((self.state/'state.json').exists())
+    def test_terminal_deadline_cancels_hanging_collection_and_upload_processes(self):
+        custom=self.root/'sitecustomize.py';original=custom.read_text()
+        marker=self.root/'hanging-pid'
+        for operation in ('collect','snapshots'):
+            with self.subTest(operation=operation):
+                custom.write_text(original+
+                    'import time\n'+
+                    (f'if "collect" in sys.argv:\n open({str(marker)!r},"w").write(str(os.getpid()))\n time.sleep(60)\n'
+                     if operation=='collect' else
+                     'request=Real.request\n'+
+                     f'def hanging(self,method,url,*args,**kw):\n if url.endswith("/snapshots"):\n  open({str(marker)!r},"w").write(str(os.getpid()))\n  time.sleep(60)\n return request(self,method,url,*args,**kw)\nReal.request=hanging\n'))
+                self.command('start');self.finished()
+                self.wait_for(marker.exists)
+                pid=int(marker.read_text());intent=hosted.read_json(self.state/hosted.TERMINAL)
+                until=int(time.time()*1000)+500
+                intent.update(requestedAt=until-600000,retryUntil=until);hosted.atomic(self.state/hosted.TERMINAL,intent)
+                self.wait_for(lambda:not hosted.locked(self.state/hosted.LOCK),seconds=5)
+                self.assertIsNone(hosted.process_started(pid));self.assertEqual(hosted.archive_status(self.archive)['state'],'final-publication-pending')
+                marker.unlink();(self.state/hosted.TERMINAL).unlink()
+    def test_close_success_delay_unavailable_are_bounded_and_lost_ack_archive_retry_keeps_identity(self):
+        c=SimpleNamespace(root=self.root,main=self.root,state=self.state,release=ROOT,delivery='APP-1',
+            flow_raw={'cleanup':{'archive':str(self.archives)}},shelf=SimpleNamespace(json=lambda _:CFG))
+        # The receiver delays actual snapshot acknowledgements, rather than
+        # replacing the close function or its polling loop.
+        class Delayed(FakeAPI):
+            def __call__(self,method,operation,body=None,headers=None):
+                if operation=='snapshots':time.sleep(.3)
+                return super().__call__(method,operation,body,headers)
+        self.api=Delayed()
+        self.finished()
+        began=time.monotonic()
+        with mock.patch.dict(os.environ,self.environment):
+            result=flow.finalize_hosted(c,self.archive.parent,{'id':1},seconds=2)
+        self.assertLess(time.monotonic()-began,2.5);self.assertEqual(result['state'],'final-published')
+        self.wait_for(lambda:not hosted.locked(self.state/hosted.LOCK))
+        # A second close with no available credential still records its intent
+        # within the caller's remaining budget; its observer continues separately.
+        for path in self.state.glob('hosted-*'):
+            if path.is_file():path.unlink()
+        self.api=FakeAPI();self.api.code='unauthorized';self.finished()
+        began=time.monotonic()
+        with mock.patch.dict(os.environ,self.environment):
+            result=flow.finalize_hosted(c,self.archive.parent,{'id':1},seconds=.5)
+        self.assertLess(time.monotonic()-began,1);self.assertEqual(result['state'],'final-publication-pending')
+        stop_owned()
+        for path in self.state.glob('hosted-*'):
+            if path.is_file():path.unlink()
+        self.api=FakeAPI();self.mode='lost';self.command('start');self.finished()
+        self.wait_for(lambda:bool((hosted.read_json(self.state/hosted.IDENTITY,optional=True) or {}).get('pending')))
+        stop_owned();hosted.mirror_hosted(self.state,self.archive)
+        identity=hosted.read_json(self.archive/hosted.IDENTITY);pending=identity['pending']
+        self.assertIsNotNone(pending)
+        before=(self.archive/(hosted.PENDING_PREFIX+pending['digest']+'.json')).read_bytes()
+        OWNED.add(self.archive);self.addCleanup(OWNED.discard,self.archive);self.addCleanup(hosted.stop,self.archive)
+        with mock.patch.object(flow,'Config',return_value=c),mock.patch.object(flow,'repo',return_value=self.root),mock.patch.dict(os.environ,self.environment):
+            with contextlib.redirect_stdout(io.StringIO()):flow.hosted_retry(SimpleNamespace(archive=self.archive,resume=False))
+        self.wait_for(lambda:hosted.archive_status(self.archive)['state']=='final-published')
+        after=hosted.read_json(self.archive/hosted.IDENTITY)
+        self.assertEqual(identity['publicId'],after['publicId']);self.assertEqual(after['receipt']['digest'],hashlib.sha256(before).hexdigest())
+        self.assertEqual(sum(op=='snapshots' for op,_,_ in self.observed[-4:]),1)
+
+if __name__=='__main__':unittest.main()
