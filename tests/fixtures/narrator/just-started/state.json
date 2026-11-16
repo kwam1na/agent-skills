@@ -1,0 +1,16 @@
+{
+  "queue": [
+    {
+      "subject": "A",
+      "title": "Work A",
+      "stage": "queued"
+    },
+    {
+      "subject": "B",
+      "title": "Work B",
+      "stage": "queued"
+    }
+  ],
+  "planned": [],
+  "finish": []
+}
