@@ -138,27 +138,6 @@
         }
       ]
     },
-    "V26-3518": {
-      "title": "Integrate owned publishing into delivery lifecycle",
-      "lane": "lane-1",
-      "after": [
-        "V26-3517"
-      ],
-      "criteria": [
-        {
-          "id": "v26-3518-1",
-          "text": "Make hosted progress discoverable and reliable through ordinary start, resume and close."
-        },
-        {
-          "id": "v26-3518-2",
-          "text": "Meet the approved plan's R2, R4, R7\u2013R12, R14; F1/F3/F4; AE2\u2013AE4/AE6."
-        },
-        {
-          "id": "v26-3518-3",
-          "text": "Lifecycle fixtures independently prove owned-process exit, cleanup, and bounded terminal/archive behavior. A realistic workflow record with path-bearing prose projects successfully with explicit redaction markers; strict receiver path validation and the existing live no-publisher behavior remain intact."
-        }
-      ]
-    },
     "V26-3519": {
       "title": "Package, document and qualify the integration",
       "lane": "lane-2",
