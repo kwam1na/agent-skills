@@ -683,6 +683,50 @@ class BoundaryTests(unittest.TestCase):
                     narrator.narrate(broken)
 
 
+class BridgeTests(unittest.TestCase):
+    """Until the sentence is removed, a record may still hold entries that carry only a sentence: the narrator tells
+    each by its sentence, under its kind's label, and builds nothing on facts it doesn't have."""
+
+    def journal(self) -> list[dict]:
+        at = lambda minute: f"2026-11-16T09:{minute:02d}:00Z"
+        said = lambda id_, minute, kind, summary, subject=None, **extra: {
+            "id": id_, "at": at(minute), "kind": kind, "lane": "lane-1" if subject else None, "subject": subject, "summary": summary, **extra}
+        journal = [
+            said(1, 0, "decision.recorded", "Record starts at base 2e02f3e on origin/main."),
+            said(2, 1, "lane.assigned", "lane-1 assigned A: Work A", "A"),
+            said(3, 5, "candidate.stopped", "check_failed: failing checks: tests.test_one", "A"),
+            said(4, 6, "review.evidence", "Native review outcomes captured for display", "A",
+                 reviewArtifact={"candidateRef": "a" * 40, "digest": "d" * 64}),
+            said(5, 9, "candidate.merged", "Merged Work A at " + "b" * 40, "A"),
+            {**said(6, 10, "decision.recorded", "Held the queue for the release"), "data": {"text": "Held the queue", "why": "The release runs first."}},
+        ]
+        self.assertEqual(state_tool.journal_errors(journal), [])
+        return journal
+
+    def test_a_sentence_is_read_under_its_kinds_label_and_opens_nothing(self) -> None:
+        journal = self.journal()
+        story = narrator.narrate(journal)
+        self.assertEqual([error.message for error in SCHEMA.iter_errors(story)], [])
+        self.assertEqual(story["threads"], [])
+        words = {entry: beat_of(story, entry)["words"] for entry in (1, 3, 4, 5, 6)}
+        self.assertEqual(words[3], {"head": "Stopped", "line": "check_failed: failing checks: tests.test_one"})
+        self.assertEqual(words[5], {"head": "Landed", "line": "Merged Work A at " + "b" * 40})
+        self.assertEqual(words[6], {"head": "Held the queue", "line": "The release runs first."})
+        self.assertEqual(story["chapters"][1]["words"]["head"], "A landed")
+        # A sentence-only decision was the old record's catch-all: it reads at the story altitude and is no decision.
+        self.assertEqual(beat_of(story, 1)["altitudes"], ["story", "everything"])
+        self.assertEqual(beat_of(story, 6)["altitudes"], list(ALTITUDES))
+        self.assertEqual(story["digest"]["decisions"], 1)
+        # The sentence's own bridge kind is bookkeeping.
+        self.assertEqual((beat_of(story, 4)["altitudes"], beat_of(story, 4)["label"]), (["everything"], "Review evidence"))
+
+    def test_a_kind_neither_registered_nor_the_bridges_is_still_refused(self) -> None:
+        journal = self.journal()
+        journal[3]["kind"] = "review.unknown"
+        with self.assertRaises(narrator.NarratorError):
+            narrator.narrate(journal)
+
+
 class RegistryTests(unittest.TestCase):
     """The narrator takes what opens a thread from the registry, where a test may point it at a copy."""
 
