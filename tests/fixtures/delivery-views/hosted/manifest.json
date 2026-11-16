@@ -85,6 +85,11 @@
       "file": "invalid-option-path-relative.json",
       "valid": false,
       "layer": "boundary"
+    },
+    {
+      "file": "invalid-installed-executable-path.json",
+      "valid": false,
+      "layer": "boundary"
     }
   ]
 }

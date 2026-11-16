@@ -41,6 +41,8 @@ describe('ingestion boundary', () => {
     [String.raw`--output=.\wait.json`, false], [String.raw`--output=..\wait.json`, false],
     ['--output=.orchestration/wait.json', false], ['--output=docs/wait.json', false],
     [String.raw`--output=docs\wait.json`, false], ['--output=file:///tmp/wait.json', false],
+    ['--output=.agent-skills/current/wait.json', false],
+    ['python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py', false],
     ['--output=https://example.com/public/wait.json', true], ['--timeout=1800.0', true],
     ['--output=summary.json', true], ['--mode=public', true], ['Review https://example.com/docs/wait.json', true],
   ])('independently scans option-bearing public prose: %s', async (text, valid) => {

@@ -874,7 +874,8 @@ uploader scans all projected text for its configured secret values before writin
 pending bytes or sending them; collection and run-command children receive none
 of those credentials. Projection rejects recognizable local paths in structural
 references and raw uploads; named prose fields use a visible omission marker.
-This includes option-assigned Unix, Windows, home and explicit relative paths;
+This includes option-assigned Unix, Windows, home and explicit relative paths,
+and installed executable references under `.agent-skills/current/`;
 public HTTPS links and benign option values remain ordinary prose.
 It keeps the shared allowlist, candidate/review identity and unavailable/clipping indicators.
 No scanner claims to identify every secret someone types into public prose.

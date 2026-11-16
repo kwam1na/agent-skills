@@ -137,9 +137,15 @@ class ProjectionTests(unittest.TestCase):
             r'--output=.\wait.json', r'--output=..\wait.json',
             '--output=.orchestration/wait.json', '--output=docs/wait.json',
             r'--output=docs\wait.json', '--output=file:///tmp/wait.json',
+            '--output=.agent-skills/current/wait.json',
+            'python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py',
         ]
         benign_options = ['--output=https://example.com/public/wait.json', '--timeout=1800.0',
                           '--output=summary.json', '--mode=public', 'Review https://example.com/docs/wait.json']
+        # Exercise the actual private executable separately: it must not mask
+        # failures in option detection or turn harmless control rows into omissions.
+        actual_warning = prefix + '--timeout=1800.0'
+        prefix = prefix.replace('.agent-skills/current/skills/run-delivery/scripts/run_delivery.py', 'run-delivery')
         for option in local_options + benign_options:
             with self.subTest(option=option):
                 item = {'holding': False, 'source': 'lead-wait.json in the record', 'text': prefix + option,
@@ -158,6 +164,12 @@ class ProjectionTests(unittest.TestCase):
                         public.validate(raw)
                 else:
                     public.validate(raw)
+        needs['items'][0]['text'] = actual_warning
+        value = public.project(doc, {}, config(), source_fingerprint='1' * 64, needs=needs)
+        self.assertEqual(value['needs']['items'][0]['text'], public.OMITTED_LOCAL_REFERENCE)
+        raw = copy.deepcopy(value); raw['needs']['items'][0]['text'] = actual_warning
+        with self.assertRaisesRegex(public.ProjectionError, '^snapshot.local_path$'):
+            public.validate(raw)
 
     def test_local_structural_references_fail_closed_instead_of_becoming_prose_markers(self):
         for key in ('candidateRef','runId'):
