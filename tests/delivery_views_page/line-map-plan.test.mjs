@@ -339,6 +339,9 @@ test("record proofs follow the record's own shapes: hand-offs, stops, acceptance
   expect(openRows(app)).toEqual(["AWork A2 proofs left · Its approval is for an earlier commit."]);
   // A proof that can't move until someone acts marks its open row as stuck.
   expect([...app.querySelectorAll("#plan .plan-open li")].map((row) => row.className)).toEqual(["stuck"]);
+  // And so does its row in the all-units grid.
+  const cell = [...app.querySelectorAll("#plan .plan-all .plan-unit")].find((entry) => entry.querySelector("[data-ticket]")?.getAttribute("data-ticket") === "A");
+  expect(cell.classList.contains("stuck")).toBe(true);
   expect(title(app)).toBe("0 of 1 criteria proven.");
 });
 
