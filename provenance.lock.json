@@ -230,7 +230,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/render.py",
-          "sha256": "95ac7fd5a093269750c4f966406f844fc7d68597113bbc1ff1aa71ffaf2943c9"
+          "sha256": "f328d2fdf580bfb05234635057b4790c0d53dc0d5457a0427fb5eb53e0f3f45e"
         },
         {
           "path": "skills/delivery-views/scripts/review_projection.py",
@@ -485,7 +485,7 @@
         },
         {
           "path": "skills/orchestrate-work/references/story.schema.json",
-          "sha256": "6ddd091b30a54b1137f09e7de2a79153bd2a9d8d75d484509d693c1e47d8f4a6"
+          "sha256": "9b0eddde031b52b581eb92e9cb5244fd8cf33f9a18fef8766a5553ffebda2a62"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
@@ -501,7 +501,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/narrator.py",
-          "sha256": "a0927d63944ee4a34702c815497b1d4c16e1647a95ad1aad4a8f413475ce14f7"
+          "sha256": "142e9c3e79d455573b835efdacb9644c4d980cd30a546db67c74ad0c10ee6487"
         },
         {
           "path": "skills/orchestrate-work/scripts/region_ownership.py",

@@ -406,13 +406,16 @@ def _beat(beat: dict, registry: dict, finishes: dict) -> dict:
             counted[label_] = counted.get(label_, 0) + 1
         form, label, tone, kind_name = "bookkeeping", "Bookkeeping", "note", None
         words = {"head": "Bookkeeping", "line": journal_words.show([f"{name} ({count})" for name, count in counted.items()], "list")}
+        # A run folds; opened, it lists each of its entries in that entry's own words.
+        items = [{"entry": entry["id"], "words": _said(entry, registry)} for entry in held]
     else:
         form, label, tone, kind_name = "batch", kind["label"], kind["tone"], first["kind"]
         line = _said({**first, "subject": None}, registry)["line"]
         words = {"head": f"Checks started on {_number(len(beat['group'][1]))} pieces together", "line": line}
     return {"id": None, "chapter": None, "form": form, "altitudes": _altitudes(first, beat["thread"], registry), "at": _instant(first),
             "entries": [entry["id"] for entry in held], "thread": beat["thread"], "kind": kind_name, "tone": tone, "label": label,
-            "words": words, "first": first["id"]}
+            "words": words, "explain": kind.get("explain") if form != "bookkeeping" else None,
+            "items": items if form == "bookkeeping" else [], "first": first["id"]}
 
 
 def _thread_beat(thread: dict, by_id: dict, registry: dict) -> dict:
@@ -423,20 +426,18 @@ def _thread_beat(thread: dict, by_id: dict, registry: dict) -> dict:
     if thread["closing"] is not None:
         told.add(thread["closing"])
     said = _said(opening, registry)
-    line = [_sentence(_said(by_id[thread["cause"][0]], registry)["head"])] if thread["cause"] else []
-    if said["line"].strip():
-        line.append(_sentence(said["line"]))
-    if thread["heldUp"]:
-        line.append(f"It held up {journal_words.show(thread['heldUp'], 'list')}.")
-    if thread["closing"] is not None:
-        line.append(_sentence("It ended when " + _lower(_said(by_id[thread["closing"]], registry)["head"])))
-    else:
-        line.append("It still stands.")
+    # Its parts, each a sentence of its own, for a view to set apart; and the same parts as one line.
+    cause = _sentence(_said(by_id[thread["cause"][0]], registry)["head"]) if thread["cause"] else None
+    held_up = f"It held up {journal_words.show(thread['heldUp'], 'list')}." if thread["heldUp"] else None
+    ending = (_sentence("It ended when " + _lower(_said(by_id[thread["closing"]], registry)["head"])) if thread["closing"] is not None
+              else "It still stands.")
+    thread["told"] = {"cause": cause, "heldUp": held_up, "ending": ending}
+    line = [part for part in (cause, _sentence(said["line"]) if said["line"].strip() else None, held_up, ending) if part]
     thread["words"] = {"head": "A setback: " + _lower(said["head"]), "line": " ".join(line)}
     ordered = sorted(told, key=lambda name: (_seconds(_instant(by_id[name])), name))
     return {"id": None, "chapter": None, "form": "thread", "altitudes": ["headline"], "at": thread["openedAt"], "entries": ordered,
             "thread": thread["id"], "kind": opening["kind"], "tone": "problem", "label": "Setback", "words": dict(thread["words"]),
-            "first": opening["id"]}
+            "explain": _kind(opening, registry).get("explain"), "items": [], "first": opening["id"]}
 
 
 # Words

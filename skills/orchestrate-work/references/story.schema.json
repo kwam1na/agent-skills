@@ -106,7 +106,7 @@
       "description": "One thing a reader reads: an entry, a batch's starts, a run of bookkeeping, finish lines met together, or a setback told whole at the headline altitude.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "chapter", "form", "altitudes", "at", "entries", "thread", "kind", "tone", "label", "words"],
+      "required": ["id", "chapter", "form", "altitudes", "at", "entries", "thread", "kind", "tone", "label", "words", "explain", "items"],
       "properties": {
         "id": {"$ref": "#/$defs/beatId"},
         "chapter": {"$ref": "#/$defs/chapterId"},
@@ -124,14 +124,25 @@
         "kind": {"description": "Its entries' kind, or a thread's opening kind; none for a run of bookkeeping.", "anyOf": [{"type": "null"}, {"type": "string", "minLength": 1}]},
         "tone": {"enum": ["landed", "ready", "decision", "problem", "note"]},
         "label": {"type": "string", "minLength": 1},
-        "words": {"$ref": "#/$defs/words"}
+        "words": {"$ref": "#/$defs/words"},
+        "explain": {"description": "One sentence on what its kind of event is, shown when the beat is opened; none for a run of bookkeeping.", "anyOf": [{"type": "null"}, {"type": "string", "minLength": 1}]},
+        "items": {
+          "description": "For a run of bookkeeping, each of its entries in that entry's own words; empty otherwise.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["entry", "words"],
+            "properties": {"entry": {"type": "integer", "minimum": 1}, "words": {"$ref": "#/$defs/words"}}
+          }
+        }
       }
     },
     "thread": {
       "description": "A setback: its opening, every entry linked to it, the entry that answered it, and what it cost.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "chapter", "beat", "opening", "closing", "openedAt", "closedAt", "cost", "state", "entries", "cause", "heldUp", "words"],
+      "required": ["id", "chapter", "beat", "opening", "closing", "openedAt", "closedAt", "cost", "state", "entries", "cause", "heldUp", "words", "told"],
       "properties": {
         "id": {"$ref": "#/$defs/threadId"},
         "chapter": {"$ref": "#/$defs/chapterId"},
@@ -145,7 +156,18 @@
         "entries": {"$ref": "#/$defs/entryIds"},
         "cause": {"description": "What went wrong first: the problems its opening happened because of.", "$ref": "#/$defs/entryIds"},
         "heldUp": {"description": "The other pieces it stopped.", "$ref": "#/$defs/subjects"},
-        "words": {"$ref": "#/$defs/words"}
+        "words": {"$ref": "#/$defs/words"},
+        "told": {
+          "description": "Its parts, each a sentence of its own: what went wrong first, what it held up, and how it ended or that it still stands.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["cause", "heldUp", "ending"],
+          "properties": {
+            "cause": {"anyOf": [{"type": "null"}, {"type": "string", "minLength": 1}]},
+            "heldUp": {"anyOf": [{"type": "null"}, {"type": "string", "minLength": 1}]},
+            "ending": {"type": "string", "minLength": 1}
+          }
+        }
       }
     }
   }

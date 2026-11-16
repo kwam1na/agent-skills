@@ -61,6 +61,11 @@ _state_spec = importlib.util.spec_from_file_location(
     "delivery_review_state", Path(__file__).resolve().parents[2] / "orchestrate-work" / "scripts" / "delivery_state.py")
 review_state = importlib.util.module_from_spec(_state_spec)
 _state_spec.loader.exec_module(review_state)
+# And the narrator, which tells the record's story; the page draws that story and words no entry itself.
+_narrator_spec = importlib.util.spec_from_file_location(
+    "delivery_narrator", Path(__file__).resolve().parents[2] / "orchestrate-work" / "scripts" / "narrator.py")
+narrator = importlib.util.module_from_spec(_narrator_spec)
+_narrator_spec.loader.exec_module(narrator)
 
 
 SCRIPT = "render.py"
@@ -1043,6 +1048,17 @@ def read_needs_block(state_directory: Path) -> dict | None:
 # The page
 
 
+def with_story(document: dict, plan: object) -> dict:
+    """The record with its story: the one the wrapper told, or, for a record given without one, the narrator's now."""
+    if isinstance(document.get("story"), dict):
+        return document
+    try:
+        return {**document, "story": narrator.narrate(document.get("journal") or [], state=document.get("state"),
+                                                      plan=plan if isinstance(plan, dict) else None)}
+    except (ValueError, KeyError, TypeError):
+        return document
+
+
 def render_line_map(document: object, runs: dict, config: dict, *, theme_key: str, history: str | None,
                     plan: dict | None = None, needs: dict | None = None) -> str:
     reviews = native_review_summaries(document)
@@ -1067,6 +1083,7 @@ def render_line_map(document: object, runs: dict, config: dict, *, theme_key: st
     runs = {key: bounded["run:" + key] for key in runs}
     reviews = {key: bounded["native:" + key] for key in reviews}
     document = {key: value for key, value in document.items() if key != "reviewEvidence"}
+    document = with_story(document, plan.get("plan") if isinstance(plan, dict) else None)
     view = {
         "title": config["title"],
         "themeKey": theme_key,

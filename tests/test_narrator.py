@@ -245,7 +245,7 @@ class FixtureTests(unittest.TestCase):
                    "chapter": lambda s: s["chapters"][0], "chapter words": lambda s: s["chapters"][0]["words"],
                    "carried setback": lambda s: s["chapters"][1]["words"]["standing"][0],
                    "beat": lambda s: s["beats"][0], "beat words": lambda s: s["beats"][0]["words"], "thread": lambda s: s["threads"][0],
-                   "thread words": lambda s: s["threads"][0]["words"]}
+                   "thread words": lambda s: s["threads"][0]["words"], "thread parts": lambda s: s["threads"][0]["told"]}
         changes = []
         for name, reach in objects.items():
             changes.append((f"{name} with an unknown member", lambda s, reach=reach: reach(s).update(summary="A sentence")))
@@ -681,6 +681,46 @@ class BoundaryTests(unittest.TestCase):
             with self.subTest(entry=json.dumps(broken[0])[:60]):
                 with self.assertRaises(narrator.NarratorError):
                     narrator.narrate(broken)
+
+
+class ReadingTests(unittest.TestCase):
+    """What a view needs to draw a beat without wording it: each kind's explanation, a run of bookkeeping's own
+    entries in their words, and a setback's parts, each a sentence of its own."""
+
+    def test_each_beat_carries_its_kinds_explanation(self) -> None:
+        registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
+        for name in NAMES:
+            with self.subTest(name=name):
+                story, journal = told(name)
+                entries = {entry["id"]: entry for entry in journal}
+                for beat in story["beats"]:
+                    if beat["form"] == "bookkeeping":
+                        self.assertIsNone(beat["explain"])
+                    elif beat["form"] == "thread":
+                        opening = next(t for t in story["threads"] if t["id"] == beat["thread"])["opening"]
+                        self.assertEqual(beat["explain"], registry["kinds"][entries[opening]["kind"]]["explain"])
+                    else:
+                        self.assertEqual(beat["explain"], registry["kinds"][entries[beat["entries"][0]]["kind"]]["explain"])
+
+    def test_a_run_of_bookkeeping_lists_its_entries_in_their_own_words(self) -> None:
+        story, journal = told("bookkeeping-run")
+        first = next(beat for beat in story["beats"] if beat["form"] == "bookkeeping")
+        self.assertEqual(first["items"], [
+            {"entry": first["entries"][0], "words": {"head": "src/a.py was given to Lane 1", "line": ""}},
+            {"entry": first["entries"][1], "words": {"head": "src/b.py was given to Lane 2", "line": ""}},
+            {"entry": first["entries"][2], "words": {"head": "The plan was rebuilt", "line": "Changed: units"}}])
+        self.assertTrue(all(beat["items"] == [] for beat in story["beats"] if beat["form"] != "bookkeeping"))
+
+    def test_a_setback_is_told_in_its_parts(self) -> None:
+        story, _ = told("last-delivery")
+        stopped, broke = story["threads"]
+        self.assertEqual(stopped["told"], {"cause": "tests.test_orchestration_state failed.", "heldUp": None,
+                                           "ending": stopped["words"]["line"].rsplit(". ", 1)[-1]})
+        expected = json.loads((FIXTURES / "last-delivery/expected.json").read_text(encoding="utf-8"))
+        self.assertEqual(broke["told"]["heldUp"], f"It held up {expected['heldUp'][0]}.")
+        self.assertEqual(broke["told"]["ending"], "It ended when the main line was repaired.")
+        [standing] = told("standing-break")[0]["threads"]
+        self.assertEqual((standing["told"]["cause"], standing["told"]["ending"]), (None, "It still stands."))
 
 
 class BridgeTests(unittest.TestCase):
