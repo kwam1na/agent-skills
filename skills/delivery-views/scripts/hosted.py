@@ -95,7 +95,10 @@ def read_json(path, *, optional=False):
     if raw is None:
         if optional:return None
         raise PublishError('sidecar_missing')
-    try:return json.loads(raw)
+    try:
+        value=json.loads(raw)
+        if not isinstance(value,dict):raise PublishError('sidecar_corrupt')
+        return value
     except (ValueError, UnicodeError, RecursionError):raise PublishError('sidecar_corrupt') from None
 
 

@@ -109,6 +109,12 @@ class PublisherTests(unittest.TestCase):
         (self.state/hosted.IDENTITY).write_text('{}')
         with self.assertRaisesRegex(hosted.PublishError,'identity_corrupt'):hosted.Publisher(self.state,self.config['hosted'],'APP-1',self.api)
         self.assertEqual((self.state/hosted.IDENTITY).read_text(),'{}')
+        for raw in ('null','[]','true','0','""'):
+            (self.state/hosted.IDENTITY).write_text(raw)
+            with self.subTest(raw=raw):
+                with self.assertRaisesRegex(hosted.PublishError,'identity_corrupt'):
+                    hosted.Publisher(self.state,self.config['hosted'],'APP-1',self.api)
+                self.assertEqual((self.state/hosted.IDENTITY).read_text(),raw)
     def test_scheduler_bounded_debounce_backoff_and_one_inflight(self):
         schedule=hosted.Schedule(0)
         for at in range(11):schedule.changed(at)
@@ -516,6 +522,19 @@ class ProcessTests(unittest.TestCase):
         with self.assertRaisesRegex(hosted.PublishError,'status_corrupt'):hosted.status(self.state,CFG['hosted'],'APP-1')
         hosted.atomic(self.state/hosted.STATUS,{})
         with self.assertRaisesRegex(hosted.PublishError,'status_corrupt'):hosted.status(self.state,CFG['hosted'],'APP-1')
+        for raw in ('null','[]','true','0','""'):
+            (self.state/hosted.STATUS).write_text(raw)
+            with self.subTest(raw=raw):
+                with self.assertRaisesRegex(hosted.PublishError,'sidecar_corrupt'):
+                    hosted.status(self.state,CFG['hosted'],'APP-1')
+                self.assertEqual((self.state/hosted.STATUS).read_text(),raw)
+
+    def test_null_identity_in_an_otherwise_empty_record_is_not_an_absent_identity(self):
+        (self.state/hosted.IDENTITY).write_text('null')
+        calls=mock.Mock()
+        with self.assertRaisesRegex(hosted.PublishError,'identity_corrupt'):
+            hosted.Publisher(self.state,CFG['hosted'],'APP-1',calls)
+        self.assertEqual((self.state/hosted.IDENTITY).read_text(),'null');calls.assert_not_called()
 
     def test_whole_upload_process_deadline_stops_only_its_recorded_child(self):
         self.assertEqual((hosted.CAPTURE_SECONDS,hosted.UPLOAD_SECONDS),(60,30))
