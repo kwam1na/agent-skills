@@ -1156,7 +1156,7 @@ class Runner:
                 found.setdefault(match["id"], (match.groupdict().get("message") or "").strip())
         return [{"id": name, "message": message} for name, message in found.items()]
 
-    def flake_for(self, check_id: str, failures: list[dict], base_head: str | None) -> str | None:
+    def flake_refs(self, check_id: str, failures: list[dict], base_head: str | None) -> list[str] | None:
         """The references of the declared flakes that cover every failure of this check, or None.
 
         A declaration without test patterns covers the whole check; one with
@@ -1169,7 +1169,7 @@ class Runner:
                         if flake["baseHead"] == base_head and flake["check"] == check_id]
         whole = [flake["ref"] for flake in declared if "tests" not in flake]
         if whole:
-            return ", ".join(whole)
+            return whole
         if not failures:
             return None
         refs: list[str] = []
@@ -1178,7 +1178,7 @@ class Runner:
             if not covering:
                 return None
             refs += [flake["ref"] for flake in covering if flake["ref"] not in refs]
-        return ", ".join(refs)
+        return refs
 
     def finish_checking(self, subject: str) -> None:
         """Clear the checking panel; a check left running, by a stop mid-check, reads pending again.
@@ -2396,8 +2396,9 @@ class Runner:
                     completed = future.result()
                     assert completed is not None
                     entry = finish(check, completed)
-                    flake = (self.flake_for(check["id"], entry["failures"], context.values.get("baseHead"))
-                             if entry["state"] == "failed" else None)
+                    refs = (self.flake_refs(check["id"], entry["failures"], context.values.get("baseHead"))
+                            if entry["state"] == "failed" else None)
+                    flake = None if refs is None else ", ".join(refs)
                     if flake is not None:
                         # Every failure is a declared flake: one retry, on the record.
                         named = ", ".join(failure["id"] for failure in entry["failures"]) or "the whole check"
@@ -2406,7 +2407,7 @@ class Runner:
                             self.journal("check.retried",
                                          f"{check['id']} failed only on known flakes ({named}; {flake}); retrying once",
                                          subject, data={"check": check["id"], "failing": [failure["id"] for failure in entry["failures"]],
-                                                        "flake": flake.split(", "), "onBase": False},
+                                                        "flake": refs, "onBase": False},
                                          because=[self.started.get(subject)])
                         flaked[check["id"]] = flaked.get(check["id"], 0) + 1
                         first = {"flake": flake, "failures": entry["failures"], "log": entry["log"],
@@ -2513,15 +2514,16 @@ class Runner:
                     stopped = f"{stopped_words(check['id'], completed)} (log {log})"
                     break
                 retried = False
-                flake = (self.flake_for(check["id"], failures, base_head)
-                         if failed_run(completed) and not completed.timed_out else None)
+                refs = (self.flake_refs(check["id"], failures, base_head)
+                        if failed_run(completed) and not completed.timed_out else None)
+                flake = None if refs is None else ", ".join(refs)
                 if flake is not None:
                     # As on the candidate: a failure made only of declared flakes is retried once, on the record.
                     named = ", ".join(failure["id"] for failure in failures) or "the whole check"
                     self.journal("check.retried", f"{check['id']} failed on the base re-run only on known flakes "
                                                   f"({named}; {flake}); retrying once there", subject,
                                  data={"check": check["id"], "failing": [failure["id"] for failure in failures],
-                                       "flake": flake.split(", "), "onBase": True},
+                                       "flake": refs, "onBase": True},
                                  because=[failures_seen.get(check["id"], self.rerun_started[subject])])
                     self.record_history({}, {check["id"]: 1}, None)
                     completed = self.run_one(check, base_checkout, base_context)

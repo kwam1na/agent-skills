@@ -2233,6 +2233,9 @@ class HardeningTests(MergeQueueTestCase):
         document = self.assertStopped(self.run_queue(adopter, "feature"), "binding_invalid")
         self.assertEqual(document["outcome"], "refused")
         self.assertEqual(adopter.item("feature")["stage"], "stopped")
+        # The refusal left the piece stopped, so its stop does not say it is still in the queue.
+        self.assertFacts(journaled(adopter, "candidate.stopped", "feature")[-1], "candidate.stopped",
+                         {"reason": "binding_invalid", "detail": document["stop"]["detail"]})
 
     def test_a_tracked_or_git_owned_work_root_is_refused(self) -> None:
         for name, work_root, ignore in (
@@ -3807,7 +3810,8 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.assertLess(history["runs"][4], 500)
 
     def test_a_failed_check_records_its_failing_tests_and_log_everywhere(self) -> None:
-        adopter = self.visible_adopter([check_entry("suite", "--fail-with", "test_alpha", "test_beta")])
+        adopter = self.visible_adopter([check_entry("suite", "--fail-with", "test_alpha", "test_beta"),
+                                        check_entry("other", "--fail-with", "test_gamma")])
         self.candidate(adopter)
         results = self.run_queue(adopter, "feature")
         document = self.assertStopped(results, "check_failed")
@@ -3822,25 +3826,29 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.assertEqual(row["failures"], ["test_alpha", "test_beta"])
         self.assertEqual(row["log"], entry["log"])
         [started] = self.journal(adopter, "check.started")
-        [failed] = self.journal(adopter, "check.failed")
+        failed = self.journal(adopter, "check.failed")
         [stopped] = self.journal(adopter, "candidate.stopped")
         self.assertFacts(started, "check.started", {})
-        # The stop names the failure, and the failure the run it belongs to.
+        # The stop names every failure, in order, and each failure the run it belongs to.
+        self.assertEqual([entry["data"]["check"] for entry in failed], ["suite", "other"])
+        self.assertTrue(all(entry["because"] == [started["id"]] for entry in failed), failed)
         self.assertFacts(stopped, "candidate.stopped", {"reason": "check_failed", "detail": document["stop"]["detail"]},
-                         because=[failed])
+                         because=failed)
         self.assertEqual(self.causes(adopter, stopped)[-1], "check.started")
         self.assertEqual(self.journal(adopter, "check.retried"), [])
 
     def test_a_failing_check_journals_its_failing_tests_and_log_before_the_stop(self) -> None:
-        adopter = self.visible_adopter([check_entry("suite", "--fail-with", "test_alpha", "test_beta")])
+        # One more failing test than a stop names: the rest is counted.
+        names = [f"test_{number:02d}" for number in range(queue.STOP_FAILURES + 1)]
+        adopter = self.visible_adopter([check_entry("suite", "--fail-with", *names)])
         self.candidate(adopter)
         results = self.run_queue(adopter, "feature")
         entry = self.check_entry_of(results, "suite")
         [failed] = self.journal(adopter, "check.failed")
         [started] = self.journal(adopter, "check.started")
         self.assertEqual(failed["subject"], "feature")
-        self.assertFacts(failed, "check.failed", {"check": "suite", "timedOut": False, "failing": ["test_alpha", "test_beta"],
-                                                  "more": 0, "log": entry["log"]}, because=[started])
+        self.assertFacts(failed, "check.failed", {"check": "suite", "timedOut": False, "failing": names[:-1],
+                                                  "more": 1, "log": entry["log"]}, because=[started])
         [stopped] = self.journal(adopter, "candidate.stopped")
         self.assertLess(failed["id"], stopped["id"])
 
@@ -3981,9 +3989,10 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.assertEqual(self.causes(adopter, stopped), ["candidate.stopped", "base.broken", "base.rerun.finished",
                                                          "base.rerun.started", "check.failed", "check.started"])
 
-    def rerun_with(self, adopter: Adopter, *, judged: bool = True, starts: bool = True, raises: bool = False) -> tuple[list, list]:
+    def rerun_with(self, adopter: Adopter, *, judged: bool = True, starts: bool = True,
+                   raises_second: bool = False) -> tuple[list, list]:
         """Run the queue with the base re-run bent as asked; returns the results and the panel at each re-run entry."""
-        real_journal, real_run_one, real_checkout = queue.Runner.journal, queue.Runner.run_one, queue.Runner.checkout
+        real_journal, real_run_one = queue.Runner.journal, queue.Runner.run_one
         real_prerequisites = queue.Runner.base_prerequisites_pass
         seen: list = []
         rerunning = []
@@ -3998,17 +4007,19 @@ class CheckVisibilityTests(MergeQueueTestCase):
         def run_one(runner, check, checkout, context):
             return None if rerunning and not starts else real_run_one(runner, check, checkout, context)
 
+        asked: list[bool] = []
+
         def prerequisites(runner, *args):
+            # Bent to raise partway: the first check cannot be judged, and asking about the second raises.
+            asked.append(True)
+            if raises_second:
+                if len(asked) == 2:
+                    raise OSError("no room for the second check")
+                return False
             return real_prerequisites(runner, *args) if judged else False
 
-        def checkout(runner, commit, label, *args, **kwargs):
-            if raises and label == "base-rerun":
-                raise OSError("no room for the base checkout")
-            return real_checkout(runner, commit, label, *args, **kwargs)
-
         with mock.patch.object(queue.Runner, "journal", journal), mock.patch.object(queue.Runner, "run_one", run_one), \
-                mock.patch.object(queue.Runner, "base_prerequisites_pass", prerequisites), \
-                mock.patch.object(queue.Runner, "checkout", checkout):
+                mock.patch.object(queue.Runner, "base_prerequisites_pass", prerequisites):
             results = self.run_queue(adopter, "feature")
         return results, seen
 
@@ -4038,16 +4049,18 @@ class CheckVisibilityTests(MergeQueueTestCase):
                                  {"verdict": "candidate_failed", "results": [{"check": "implicit", "result": result}]})
 
     def test_a_base_rerun_that_raises_partway_still_journals_its_end_and_the_error(self) -> None:
-        adopter = self.adopter(mode="implicit")
-        self.candidate(adopter, {"src/app.txt": "FAIL here\n"})
-        results, seen = self.rerun_with(adopter, raises=True)
+        adopter = self.visible_adopter([check_entry("one", "--fail-with", "test_one"),
+                                        check_entry("two", "--fail-with", "test_two")])
+        self.candidate(adopter)
+        results, seen = self.rerun_with(adopter, raises_second=True)
         last = results[-1].document()
         self.assertEqual(last["outcome"], "stopped", last)
-        self.assertIn("no room for the base checkout", last["stop"]["detail"])
+        self.assertIn("no room for the second check", last["stop"]["detail"])
         self.assertEqual([kind for kind, _ in seen], ["base.rerun.started", "base.rerun.finished"])
+        # The verdict keeps what the re-run found before it raised.
         [finished] = self.journal(adopter, "base.rerun.finished")
         self.assertEqual({key: finished["data"][key] for key in ("verdict", "results")},
-                         {"verdict": "no_verdict", "results": []})
+                         {"verdict": "no_verdict", "results": [{"check": "one", "result": "not_judged"}]})
         self.assertNotIn("baseRerun", seen[1][1])
 
     def test_a_failure_with_no_check_to_rerun_on_the_base_journals_no_rerun(self) -> None:

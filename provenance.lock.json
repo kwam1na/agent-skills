@@ -493,7 +493,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/merge_queue.py",
-          "sha256": "d6dc0ddc9128e56eb643439a2ab46a3476907bc89e5d4d854bf5ffdbdf37d753"
+          "sha256": "9a38ef913e2c6f28e1341f43a5e405f32871fa1d1fed8e3f8a34c7fdb08fc432"
         },
         {
           "path": "skills/orchestrate-work/scripts/region_ownership.py",
