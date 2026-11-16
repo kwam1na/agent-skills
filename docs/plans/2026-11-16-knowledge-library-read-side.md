@@ -2,7 +2,7 @@
 reviewSlug: knowledge-library-read-side
 title: "feat: Consult a team knowledge library while planning, diagnosing and compounding"
 type: feat
-status: draft
+status: approved
 date: 2026-11-16
 execution_posture: test-first
 context: A team keeps reviewed, cross-repository lessons in a shared knowledge library (hive-mined, a Claude Code plugin backed by a git data repository with a local hybrid search). A delivery today searches only its own repository's docs/solutions/, so a lesson another repository already paid for is found only by luck. This plan adds the read side; publishing to the library is a later, separate plan.
