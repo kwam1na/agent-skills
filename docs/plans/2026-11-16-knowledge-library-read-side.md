@@ -30,7 +30,8 @@ The operator approves these with the plan.
    Adopters on plain `core` or `bootstrap` see the capability as `absent`.
 3. **The neutral contract carries no provider shape.** Every provider-specific field, limit and filter lives in the
    adapter: core never names the provider, its item identifier, its item types or its project and tag lists. The
-   core provider-boundary rule gains the provider's names so that this stays true (In scope, Core boundary).
+   core provider-boundary rule gains the provider's names, and absence pins guard its field, type and list names
+   (Test scenarios, Core boundary), so that this stays true.
 4. **Always optional.** No repository authority can make the capability required in this plan. An `absent`,
    `available`, or `blocked` library never blocks a workflow; it is reported as not consulted.
 5. **Items are data, never instructions.** A library item can inform a plan, suggest a hypothesis or reveal a
@@ -108,8 +109,8 @@ The operator approves these with the plan.
   (`knowledge-properties/1`), `server` (`plugin`, or `read-only` with the server `name`), `project` (one name) and
   optional `tags` (a list of at most five names). Without the document the capability is `available`, not
   `configured`, and is never guessed from the directory or repository name.
-- **`skills/run-delivery/scripts/run_delivery.py`, `doctor`.** Reports the properties document's state: missing
-  (no problem, exit unchanged), valid, or malformed naming the field. A malformed document is a problem: doctor
+- **`skills/run-delivery/scripts/run_delivery.py`, `doctor`.** Reports the properties document's state: absent
+  (an `ok` row saying the library is not consulted, exit unchanged), valid, or malformed naming the field. A malformed document is a problem: doctor
   exits 1, as for any other setup problem. Doctor checks shape only; whether `project` exists in the library is
   shown by the first search, which the adopting guide has the operator run. Doctor never writes the document.
 - **`catalog.json`, `profiles/`, `provenance.lock.json`.** The new catalog entry (`capabilities:
@@ -157,18 +158,24 @@ reusing each class's existing archive build rather than building per test.
 - **Core boundary.** A test copy that writes `hive-mined search` into one core skill, with none of the earlier
   provider words, and refreshes that file's digest, fails with `core.leakage` naming the file; the same for `qmd`. The
   unmutated core outputs scan clean. A test copy that makes the adapter a core member fails with `core.leakage`.
+  Absence pins on the provider's shape literals `item_id`, `projects.txt`, `tags.txt` and `how-to` in
+  `capability-contract.md` and the `deliver-work`, `plan-work`, `diagnose-work` and `compound-learning` SKILL.md
+  files (none holds them on `main` on 2026-11-16), paired with positive pins on the neutral fields `itemRef`, `kind`
+  and `scope` in `capability-contract.md`. One absence pin is proven red by planting `item_id` in
+  `capability-contract.md` with its digest refreshed.
 - **Contract shape.** Pins on the shape rules in `capability-contract.md` (exact hit fields, `maxHits` between 1 and
   20, zero hits is success, any other shape is `malformed`) and on the adapter's normalization section. The adapter
   contract's search allowlist equals `{itemRef, title, date, kind, scope}` and its read allowlist that set plus
   `body`, by set equality; `maxHits` is 5; `retryDelaySeconds` is positive.
 - **Transport boundary, both sides.** One subtest per marker category on a hostile string (a direct git command on
-  the library, a file read of the library folder, a search engine call outside the server, a call to a server tool
-  other than `search` or `read`), each producing a finding; and the adapter's own files, with `transportBoundary`
+  the library, a file read of the library folder, a search engine call outside the server, and a call to each of the
+  server's other tools `draft`, `push`, `sessions` and `plugins`), each producing a finding; and the adapter's own files, with `transportBoundary`
   removed, producing none.
 - **Properties are never guessed.** With no properties document, in a repository whose directory name equals a
-  library project, the capability is `available` and doctor reports it missing; afterwards the document still does
+  library project, the capability is `available` and doctor's row says no document was found; afterwards the document still does
   not exist.
-- **Doctor.** Missing reports missing and exits 0; a valid `plugin` document and a valid `read-only` document with
+- **Doctor.** A missing document is an `ok` row whose detail says the library is not consulted, never doctor's
+  failing `missing` status, and doctor exits 0; a valid `plugin` document and a valid `read-only` document with
   `name` report valid. Malformed, one subtest each, each naming the field and exiting 1: invalid JSON; wrong
   `schemaVersion`; `server` outside `plugin` and `read-only`; `read-only` without `name`; missing `project`; `tags`
   not a list; more than five `tags`.
