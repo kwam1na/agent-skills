@@ -11366,6 +11366,8 @@ def knowledge_properties_problem(document) -> str | None:
         if len(set(tags)) != len(tags):
             return "`tags` names a tag twice"
     return None
+
+
 # Filters and the encoder the before/after clips use; drawtext is optional (labels are burned in only where it exists).
 VIDEO_FILTERS = ("lutyuv", "cropdetect", "crop", "scale", "tpad", "pad", "hstack")
 
