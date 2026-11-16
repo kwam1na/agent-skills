@@ -201,6 +201,7 @@ It exits 0 when no check is `missing` or `wrong`, 1 when one is, and 2 on a usag
 | ffmpeg and ffprobe, with the filters video evidence uses | a story is marked for video evidence |
 | The first `node` on `PATH` meets the runtime's `nodeMinimum`: `wrong` below it, `missing` with none, even with an nvm Node that meets it, whose `bin` folder the line then names to put first | the generation carries a runtime |
 | Node 22.6 or newer reads the harness configuration, through the generation's runtime loader | `harness.config.ts` exists |
+| `.agents/knowledge-properties.json` is valid `knowledge-properties/1`, or absent: an `ok` line that says the optional knowledge library isn't consulted. Shape only; the first search shows whether the library holds the project | always |
 | The delivery file: every story has a lane, and lanes own disjoint files | `--delivery` |
 | The delivery supervisor is running, with the Node its lock records beside its pid and address (`wrong` below the runtime's `nodeMinimum`, `warn` when an older generation's supervisor recorded none), or the delivery is closed. A close with its `started` mark and no `finished` mark, and no supervisor running, is `wrong`: it stopped partway, and the row names what finishes it | `--delivery` |
 | Story files: each file a story's plan section names is its lane's. A file outside the lane is reported as `warn`, which doesn't fail the check, since a plan may move files between lanes as stories merge | `--delivery` |
