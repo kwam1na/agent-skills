@@ -6199,11 +6199,10 @@ class CarryReviewTests(unittest.TestCase):
         self.assertEqual(self.evidence()["evidence"], "unavailable", "a capture binds to the head it reviewed")
         before = state_tool.show(self.directory)
         entry = self.carry()
-        capture = next(item for item in before["journal"] if item["kind"] == "review.evidence")
-        self.assertEqual((entry["kind"], entry["subject"], entry["lane"]), ("review.carried", "work-a", "lane-1"))
-        self.assertEqual(entry["data"], {"from": HEAD_B, "to": HEAD_C, "digest": capture["reviewArtifact"]["digest"],
-                                         "why": "only a fixture changed"})
-        self.assertNotIn("reviewCarry", entry)
+        self.assertEqual((entry["kind"], entry["subject"]), ("decision.recorded", "work-a"))
+        self.assertEqual(entry["reviewCarry"]["from"], HEAD_B)
+        self.assertEqual(entry["reviewCarry"]["to"], HEAD_C)
+        self.assertIn("only a fixture changed", entry["summary"])
         found = self.evidence()
         self.assertEqual((found["evidence"], found["carriedFrom"], found["carriedTo"]), ("captured", HEAD_B, HEAD_C))
         after = state_tool.show(self.directory)
@@ -6211,7 +6210,7 @@ class CarryReviewTests(unittest.TestCase):
         # The evidence itself is unchanged: its rounds, its own reviewed head, its digest.
         self.assertEqual(observed["candidateRef"], HEAD_B)
         self.assertEqual(len(observed["outcomes"]), 2)
-        self.assertEqual(observed["carried"], {"from": HEAD_B, "to": HEAD_C, "note": "only a fixture changed"})
+        self.assertEqual(observed["carried"], {"from": HEAD_B, "to": HEAD_C, "note": entry["summary"]})
 
     def test_a_carry_is_no_run_no_round_and_no_admission_evidence(self) -> None:
         before = state_tool.show(self.directory)
@@ -6221,7 +6220,7 @@ class CarryReviewTests(unittest.TestCase):
         self.assertIsNone(after["state"]["queue"][0]["runId"])
         self.assertNotIn("evidence", after["state"]["queue"][0])
         self.assertEqual(after["stats"]["work-a"].get("rounds"), before["stats"]["work-a"].get("rounds"))
-        self.assertEqual([entry["kind"] for entry in after["journal"]][len(before["journal"]):], ["review.carried"])
+        self.assertEqual([entry["kind"] for entry in after["journal"]][len(before["journal"]):], ["decision.recorded"])
 
     def test_a_later_round_or_capture_ends_a_carry(self) -> None:
         self.carry()
@@ -6336,7 +6335,7 @@ class CarryReviewTests(unittest.TestCase):
         self.assertEqual((code, refused["code"]), (1, "writer_not_owned"))
         code, carried = run_tool(self.directory, *arguments, "--writer", "lead")
         self.assertEqual(code, 0, carried)
-        self.assertEqual(carried["entry"]["data"]["to"], HEAD_C)
+        self.assertEqual(carried["entry"]["reviewCarry"]["to"], HEAD_C)
         carry = {"from": HEAD_B, "to": HEAD_C, "digest": "0" * 64}
         for stray in ({**VALID_ENTRY, "kind": "candidate.merged", "reviewCarry": carry},
                       {**VALID_ENTRY, "kind": "decision.recorded", "subject": None, "reviewCarry": carry}):
@@ -6407,7 +6406,7 @@ class StateToolFactsTests(unittest.TestCase):
                          ("candidate.handed", "lane-1", "work-a", {"head": HEAD_B, "checks": [], "noChange": True}, False))
         self.assertIn("with no change needed", entry["summary"])
 
-    def test_a_selection_journals_its_checks_and_reason_and_a_clearing_its_own_kind(self) -> None:
+    def test_a_selection_journals_its_checks_and_reason_and_a_clearing_keeps_its_sentence(self) -> None:
         LeadSelectionTests.select(self, binding={**LeadSelectionTests.BINDING,
                                                   "selection": {"lead": True, "catalogue": [selected_check("guide")],
                                                                 "guards": ["guide"]}})
@@ -6417,8 +6416,9 @@ class StateToolFactsTests(unittest.TestCase):
                                          "added": [{"id": "guide", "why": "a guard"}]})
         state_tool.select_checks(self.directory, "work-q", binding=LeadSelectionTests.BINDING)
         cleared = self.last()
-        self.assertEqual((cleared["kind"], cleared["lane"], cleared["subject"], cleared["data"]),
-                         ("check.selection.cleared", "lane-1", "work-q", {}))
+        # The clearing keeps its old kind and sentence: readers outside the state tool key on check.selected.
+        self.assertEqual((cleared["kind"], "data" in cleared), ("check.selected", False))
+        self.assertIn("Cleared the lead's check selection for work-q", cleared["summary"])
 
     def test_wait_events_carry_each_entrys_facts_and_its_words_from_the_registry(self) -> None:
         handed = state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head=HEAD_A, change_request="cr-a",
@@ -6844,7 +6844,7 @@ class LeadSelectionTests(unittest.TestCase):
         code, result = run_tool(self.directory, "select", "--subject", "work-q", "--clear")
         self.assertEqual(code, 0, result)
         self.assertNotIn("leadSelection", result["item"])
-        self.assertEqual(state_tool.read_journal(self.directory)[-1]["kind"], "check.selection.cleared")
+        self.assertEqual(state_tool.read_journal(self.directory)[-1]["kind"], "check.selected")
         code, result = run_tool(self.directory, "select", "--subject", "work-q", "--head", HEAD_A)
         self.assertEqual((code, result["code"]), (1, "select_invalid"))
 

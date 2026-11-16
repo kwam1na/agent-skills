@@ -1981,8 +1981,8 @@ def select_checks(directory: Path, subject: str, *, binding: dict, head: str | N
         if added:
             summary += ". Added: " + "; ".join(f"{entry['id']} ({entry['why']})" for entry in added)
     if clearing:
-        append_journal(directory, kind="check.selection.cleared", subject=subject, lane=item.get("lane"),  # type: ignore[union-attr]
-                       summary=summary, data={})
+        # Still a check.selected sentence: readers outside the state tool key on that kind until the bridge goes.
+        append_journal(directory, kind="check.selected", subject=subject, lane=item.get("lane"), summary=summary)  # type: ignore[union-attr]
         return item  # type: ignore[return-value]
     facts = {"head": head, "checks": [check["id"] for check in checks], "why": reason,  # type: ignore[union-attr]
              "added": [{"id": entry["id"], "why": entry["why"]} for entry in added or []]}
@@ -2705,10 +2705,11 @@ def carry_review(directory: Path, *, subject: str, from_head: str, to_head: str,
             raise StateError("carry_invalid", f"the captured review leaves {', '.join(blocking)} open; a carry can't approve it")
         if outcomes[-1].get("outcome") != "aligned":
             raise StateError("carry_invalid", f"the captured review's last round, round {len(outcomes)}, is not aligned")
-        return append_journal(directory, kind="review.carried", subject=subject, lane=item.get("lane"),
+        # Still a decision with its old member: readers outside the state tool key on them until the bridge goes.
+        return append_journal(directory, kind="decision.recorded", subject=subject, lane=item.get("lane"),
                               summary=f"The lead carried {subject}'s review from {from_head} to {to_head}, "
                                       f"no new round needed: {reason.strip()}",
-                              data={"from": from_head, "to": to_head, "digest": reference["digest"], "why": reason.strip()})
+                              review_carry={"from": from_head, "to": to_head, "digest": reference["digest"]})
 
 
 def review_observations(directory: Path, state: dict, journal: list[dict]) -> dict:
