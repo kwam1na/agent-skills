@@ -321,9 +321,16 @@ def _entry_beats(ids: list[int], by_id: dict, member_of: dict, registry: dict) -
             last["held"].append(entry)
             continue
         if batch:
-            # A batch's starts are one beat, even when one member's start joined a thread and is its own beat between them.
-            joined = next((beat for beat in reversed(beats) if beat["group"] == ("batch", tuple(batch)) and beat["thread"] == thread), None)
-            if joined is not None and (thread is None or joined is last):
+            # A batch's starts are one beat. Looking back, the search passes over the same batch's starts that another
+            # thread holds, each its own beat, and stops at anything else, so a batch run again is a beat of its own.
+            joined = None
+            for earlier in reversed(beats):
+                if earlier["group"] != ("batch", tuple(batch)):
+                    break
+                if earlier["thread"] == thread:
+                    joined = earlier
+                    break
+            if joined is not None:
                 joined["held"].append(entry)
                 continue
         group = "bookkeeping" if kind["altitude"] == "bookkeeping" else ("batch", tuple(batch)) if batch else None
