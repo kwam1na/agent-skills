@@ -665,6 +665,12 @@ class HostedServiceBoundaryTests(unittest.TestCase):
         for event in ('push','pull_request'):
             self.assertEqual(workflow['on'][event]['paths'],required)
         job=workflow['jobs']['service']
+        for field in ('if','continue-on-error'):self.assertNotIn(field,job)
+        for step in job['steps']:
+            self.assertNotIn('continue-on-error',step)
+            if step.get('uses','').startswith('actions/upload-artifact@'):
+                self.assertEqual(step.get('if'),'always()')
+            else:self.assertNotIn('if',step)
         self.assertEqual(job['defaults']['run']['working-directory'],'hosted/delivery-viewer')
         self.assertEqual([step['with']['node-version'] for step in job['steps'] if step.get('uses','').startswith('actions/setup-node@')],['22.23.5'])
         commands=[step['run'] for step in job['steps'] if 'run' in step]
@@ -675,11 +681,14 @@ class HostedServiceBoundaryTests(unittest.TestCase):
         binding=json.loads((ROOT/'.agents/orchestration.json').read_text())
         rows={entry['id']:entry for entry in binding['selection']['catalogue']}
         for key in SERVICE_IDS:self.assertEqual(rows[key]['cwd'],'hosted/delivery-viewer')
-        self.assertEqual(rows['hosted.install']['argv'],commands[0].split())
+        expected=[commands[0].split(),['npm','run','typecheck'],['npm','run','build'],
+                  ['npm','test'],['npx','playwright','install','chromium'],['npm','run','test:browser']]
+        for key,argv in zip(SERVICE_IDS,expected):self.assertEqual(rows[key]['argv'],argv,key)
         self.assertEqual(rows['hosted.typecheck']['prerequisites'],['hosted.install'])
         self.assertEqual(rows['hosted.build']['prerequisites'],['hosted.install'])
         self.assertEqual(rows['hosted.test']['prerequisites'],['hosted.install'])
-        self.assertEqual(rows['hosted.browser-install']['argv'],['npx','playwright','install','chromium'])
+        self.assertEqual(rows['hosted.install']['prerequisites'],[])
+        self.assertEqual(rows['hosted.browser-install']['prerequisites'],['hosted.install'])
         self.assertEqual(rows['hosted.browser']['prerequisites'],['hosted.build','hosted.browser-install'])
         for path in required:
             matched=[entry for entry in binding['selection']['readers'] if path in entry['paths']]
@@ -715,7 +724,7 @@ class HostedServiceBoundaryTests(unittest.TestCase):
         target['prepare']=[['standing-only']]
         target['selection']['catalogue']=[r for r in target['selection']['catalogue'] if r['id'] not in allowed]
         reader=target['selection']['readers'].pop()
-        for mode in ('add','already-identical','collision','reader-collision','missing-reader','not-restored'):
+        for mode in ('add','already-identical','collision','reader-collision','missing-reader','not-restored','missing-source-check','duplicate-source-check'):
             with self.subTest(mode=mode),tempfile.TemporaryDirectory() as directory:
                 path=Path(directory)/'.agents/orchestration.json';path.parent.mkdir()
                 old=copy.deepcopy(target);candidate=copy.deepcopy(source)
@@ -725,6 +734,10 @@ class HostedServiceBoundaryTests(unittest.TestCase):
                     old['selection']['catalogue'].append(row)
                 if mode=='reader-collision':old['selection']['readers'].append({**reader,'checks':['unreviewed']})
                 if mode=='missing-reader':candidate['selection']['readers'].remove(reader)
+                if mode=='missing-source-check':
+                    candidate['selection']['catalogue']=[r for r in candidate['selection']['catalogue'] if r['id']!='hosted.test']
+                if mode=='duplicate-source-check':
+                    candidate['selection']['catalogue'].append(copy.deepcopy(next(r for r in candidate['selection']['catalogue'] if r['id']=='hosted.test')))
                 written=copy.deepcopy(old)
                 if mode=='not-restored':written['merge']=['branch-specific']
                 path.write_text(json.dumps(written,indent=2)+'\n');before=path.read_bytes()
