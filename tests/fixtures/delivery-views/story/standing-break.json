@@ -1,0 +1,377 @@
+{
+  "schemaVersion": "story/1",
+  "state": "open",
+  "digest": {
+    "landed": 2,
+    "pieces": 3,
+    "startedAt": "2026-11-16T09:00:00Z",
+    "closedAt": null,
+    "took": null,
+    "setbacks": {
+      "closed": 0,
+      "cost": 0,
+      "standing": [
+        {
+          "thread": "t1",
+          "openedAt": "2026-11-16T09:10:00Z"
+        }
+      ]
+    },
+    "decisions": 0,
+    "words": {
+      "head": "Two of three pieces landed so far.",
+      "line": "One setback still stands."
+    }
+  },
+  "chapters": [
+    {
+      "id": "c1",
+      "form": "start",
+      "subject": null,
+      "pieceTitle": null,
+      "at": "2026-11-16T09:00:00Z",
+      "entries": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "beats": [
+        "b1",
+        "b2",
+        "b3",
+        "b4",
+        "b5"
+      ],
+      "standing": [],
+      "notLanded": [],
+      "words": {
+        "head": "Getting started",
+        "line": "Lane 1 picked up A and B.",
+        "standing": []
+      }
+    },
+    {
+      "id": "c2",
+      "form": "landing",
+      "subject": "A",
+      "pieceTitle": "Work A",
+      "at": "2026-11-16T09:30:00Z",
+      "entries": [
+        5
+      ],
+      "beats": [
+        "b6"
+      ],
+      "standing": [
+        "t1"
+      ],
+      "notLanded": [],
+      "words": {
+        "head": "A landed",
+        "line": "29m after it was picked up.",
+        "standing": [
+          {
+            "thread": "t1",
+            "text": "A setback still stands: the main line broke.",
+            "until": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "c3",
+      "form": "landing",
+      "subject": "B",
+      "pieceTitle": "Work B",
+      "at": "2026-11-16T09:50:00Z",
+      "entries": [
+        6
+      ],
+      "beats": [
+        "b7"
+      ],
+      "standing": [
+        "t1"
+      ],
+      "notLanded": [],
+      "words": {
+        "head": "B landed",
+        "line": "48m after it was picked up.",
+        "standing": [
+          {
+            "thread": "t1",
+            "text": "A setback still stands: the main line broke.",
+            "until": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "c4",
+      "form": "finish",
+      "subject": null,
+      "pieceTitle": null,
+      "at": "2026-11-16T10:00:00Z",
+      "entries": [
+        7
+      ],
+      "beats": [
+        "b8"
+      ],
+      "standing": [
+        "t1"
+      ],
+      "notLanded": [],
+      "words": {
+        "head": "Finishing",
+        "line": "C is still to land.",
+        "standing": [
+          {
+            "thread": "t1",
+            "text": "A setback still stands: the main line broke.",
+            "until": null
+          }
+        ]
+      }
+    }
+  ],
+  "beats": [
+    {
+      "id": "b1",
+      "chapter": "c1",
+      "form": "entry",
+      "altitudes": [
+        "headline",
+        "story",
+        "everything"
+      ],
+      "at": "2026-11-16T09:00:00Z",
+      "entries": [
+        1
+      ],
+      "thread": null,
+      "kind": "record.started",
+      "tone": "note",
+      "label": "Started",
+      "words": {
+        "head": "The delivery started",
+        "line": "On integrate/delivery-story at 1405df6"
+      },
+      "explain": "The lead opened the record. Everything after it happened in this delivery.",
+      "items": []
+    },
+    {
+      "id": "b2",
+      "chapter": "c1",
+      "form": "entry",
+      "altitudes": [
+        "story",
+        "everything"
+      ],
+      "at": "2026-11-16T09:01:00Z",
+      "entries": [
+        2
+      ],
+      "thread": null,
+      "kind": "lane.assigned",
+      "tone": "note",
+      "label": "Picked up",
+      "words": {
+        "head": "Lane 1 picked up A",
+        "line": "Work A"
+      },
+      "explain": "The lead gave a piece to a lane, which starts work on it.",
+      "items": []
+    },
+    {
+      "id": "b3",
+      "chapter": "c1",
+      "form": "entry",
+      "altitudes": [
+        "story",
+        "everything"
+      ],
+      "at": "2026-11-16T09:02:00Z",
+      "entries": [
+        3
+      ],
+      "thread": null,
+      "kind": "lane.assigned",
+      "tone": "note",
+      "label": "Picked up",
+      "words": {
+        "head": "Lane 1 picked up B",
+        "line": "Work B"
+      },
+      "explain": "The lead gave a piece to a lane, which starts work on it.",
+      "items": []
+    },
+    {
+      "id": "b4",
+      "chapter": "c1",
+      "form": "thread",
+      "altitudes": [
+        "headline"
+      ],
+      "at": "2026-11-16T09:10:00Z",
+      "entries": [
+        4
+      ],
+      "thread": "t1",
+      "kind": "base.broken",
+      "tone": "problem",
+      "label": "Setback",
+      "words": {
+        "head": "A setback: the main line broke",
+        "line": "The full run failed at d7daad0: The full run failed on the main line. It still stands."
+      },
+      "explain": "A check failed on the main line itself, not only on a piece. Nothing lands until it is repaired.",
+      "items": []
+    },
+    {
+      "id": "b5",
+      "chapter": "c1",
+      "form": "entry",
+      "altitudes": [
+        "story",
+        "everything"
+      ],
+      "at": "2026-11-16T09:10:00Z",
+      "entries": [
+        4
+      ],
+      "thread": "t1",
+      "kind": "base.broken",
+      "tone": "problem",
+      "label": "Main line broke",
+      "words": {
+        "head": "The main line broke",
+        "line": "The full run failed at d7daad0: The full run failed on the main line."
+      },
+      "explain": "A check failed on the main line itself, not only on a piece. Nothing lands until it is repaired.",
+      "items": []
+    },
+    {
+      "id": "b6",
+      "chapter": "c2",
+      "form": "entry",
+      "altitudes": [
+        "headline",
+        "story",
+        "everything"
+      ],
+      "at": "2026-11-16T09:30:00Z",
+      "entries": [
+        5
+      ],
+      "thread": null,
+      "kind": "candidate.merged",
+      "tone": "landed",
+      "label": "Landed",
+      "words": {
+        "head": "A landed",
+        "line": "At c6379c2"
+      },
+      "explain": "A piece reached the main line.",
+      "items": []
+    },
+    {
+      "id": "b7",
+      "chapter": "c3",
+      "form": "entry",
+      "altitudes": [
+        "headline",
+        "story",
+        "everything"
+      ],
+      "at": "2026-11-16T09:50:00Z",
+      "entries": [
+        6
+      ],
+      "thread": null,
+      "kind": "candidate.merged",
+      "tone": "landed",
+      "label": "Landed",
+      "words": {
+        "head": "B landed",
+        "line": "At aaf28ca"
+      },
+      "explain": "A piece reached the main line.",
+      "items": []
+    },
+    {
+      "id": "b8",
+      "chapter": "c4",
+      "form": "entry",
+      "altitudes": [
+        "story",
+        "everything"
+      ],
+      "at": "2026-11-16T10:00:00Z",
+      "entries": [
+        7
+      ],
+      "thread": null,
+      "kind": "lane.assigned",
+      "tone": "note",
+      "label": "Picked up",
+      "words": {
+        "head": "Lane 1 picked up C",
+        "line": "Work C"
+      },
+      "explain": "The lead gave a piece to a lane, which starts work on it.",
+      "items": []
+    }
+  ],
+  "threads": [
+    {
+      "id": "t1",
+      "chapter": "c1",
+      "beat": "b4",
+      "opening": 4,
+      "closing": null,
+      "openedAt": "2026-11-16T09:10:00Z",
+      "closedAt": null,
+      "cost": null,
+      "state": "open",
+      "entries": [
+        4
+      ],
+      "cause": [],
+      "heldUp": [],
+      "told": {
+        "cause": null,
+        "said": "The full run failed at d7daad0: The full run failed on the main line.",
+        "heldUp": null,
+        "ending": "It still stands."
+      },
+      "words": {
+        "head": "A setback: the main line broke",
+        "line": "The full run failed at d7daad0: The full run failed on the main line. It still stands."
+      }
+    }
+  ],
+  "tones": [
+    {
+      "tone": "landed",
+      "word": "Landed"
+    },
+    {
+      "tone": "ready",
+      "word": "Ready to check"
+    },
+    {
+      "tone": "decision",
+      "word": "Decision"
+    },
+    {
+      "tone": "problem",
+      "word": "Setback"
+    },
+    {
+      "tone": "note",
+      "word": "Other update"
+    }
+  ]
+}

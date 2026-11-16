@@ -1743,7 +1743,10 @@ for every member.
 The delivery's views are rendered from its state, and a publisher puts the
 state where a live view reads it. Most repositories declare publishers in the
 binding's `state.publishers`, and the render wrapper, `render_state.py`, runs
-them after every state write, recording any failure without stopping.
+them after every state write, recording any failure without stopping. Each
+renderer and publisher receives the record with the delivery's story beside it,
+as `story`, the narrator's telling of the journal and the plan. A publisher that
+wrote the bare record before now writes that one member more.
 
 Some hosts store a live document only through their own tool, not through a
 command the binding can name. Then publishing is a lead step:

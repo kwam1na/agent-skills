@@ -114,15 +114,9 @@ export function renderHistoryPage(document, { config, runsCommands = null, expor
   }
 }
 
-/**
- * A snapshot's text with each entry of the timeline, the "What happened" feed, read as "[entry]": a golden pins that the
- * timeline draws and how many entries it shows, not what they say, since the story chapter replaces its wording whole.
- * An empty feed keeps its own words, so it never reads as holding an entry.
- */
+/** A snapshot's text, as a golden pins it: every chapter, the story's included, as the page draws it. */
 export function pageText(app) {
-  const copy = app.cloneNode(true);
-  for (const entry of copy.querySelectorAll("#happened .feed > li:not(.waiting)")) entry.textContent = "[entry]";
-  return copy.textContent ?? "";
+  return app.textContent ?? "";
 }
 
 /** One embedded JSON block of a page, parsed. */
@@ -337,6 +331,14 @@ export function pageWithRuns(document, runs = {}, { config = { spec: "delivery-v
 /** The renderer's summary of a run view and its inventory row, with round reports when readings are given. */
 export function summarize(view, listed, readings = null, reportSpecs = undefined) {
   return JSON.parse(tool({ summarize: { view, listed, readings, ...(reportSpecs ? { reportSpecs } : {}) } }));
+}
+/** orchestrate-work's built-in page for a record, its story told with the registry at `registry` when given. */
+export function builtinPage(document, registry = null) {
+  return tool({ builtin: { document, registry } });
+}
+/** A record as the live server sends it: with the story the narrator tells of it. */
+export function told(document) {
+  return JSON.parse(tool({ told: document }));
 }
 /** A value as the page embeds it. */
 export function embedded(value) {

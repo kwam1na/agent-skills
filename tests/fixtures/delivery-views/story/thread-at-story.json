@@ -1,0 +1,351 @@
+{
+  "schemaVersion": "story/1",
+  "state": "open",
+  "digest": {
+    "landed": 0,
+    "pieces": 1,
+    "startedAt": "2026-11-16T09:00:00Z",
+    "closedAt": null,
+    "took": null,
+    "setbacks": {
+      "closed": 1,
+      "cost": 720,
+      "standing": []
+    },
+    "decisions": 0,
+    "words": {
+      "head": "Nothing has landed yet.",
+      "line": "One setback cost 12m."
+    }
+  },
+  "chapters": [
+    {
+      "id": "c1",
+      "form": "start",
+      "subject": null,
+      "pieceTitle": null,
+      "at": "2026-11-16T09:00:00Z",
+      "entries": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "beats": [
+        "b1",
+        "b2",
+        "b3",
+        "b4",
+        "b5",
+        "b6",
+        "b7",
+        "b8",
+        "b9",
+        "b10"
+      ],
+      "standing": [],
+      "notLanded": [],
+      "words": {
+        "head": "Getting started",
+        "line": "Lane 1 picked up A.",
+        "standing": []
+      }
+    }
+  ],
+  "beats": [
+    {
+      "id": "b1",
+      "chapter": "c1",
+      "form": "entry",
+      "altitudes": [
+        "headline",
+        "story",
+        "everything"
+      ],
+      "at": "2026-11-16T09:00:00Z",
+      "entries": [
+        1
+      ],
+      "thread": null,
+      "kind": "record.started",
+      "tone": "note",
+      "label": "Started",
+      "words": {
+        "head": "The delivery started",
+        "line": "On integrate/delivery-story at 1405df6"
+      },
+      "explain": "The lead opened the record. Everything after it happened in this delivery.",
+      "items": []
+    },
+    {
+      "id": "b2",
+      "chapter": "c1",
+      "form": "entry",
+      "altitudes": [
+        "story",
+        "everything"
+      ],
+      "at": "2026-11-16T09:01:00Z",
+      "entries": [
+        2
+      ],
+      "thread": null,
+      "kind": "lane.assigned",
+      "tone": "note",
+      "label": "Picked up",
+      "words": {
+        "head": "Lane 1 picked up A",
+        "line": "Work A"
+      },
+      "explain": "The lead gave a piece to a lane, which starts work on it.",
+      "items": []
+    },
+    {
+      "id": "b3",
+      "chapter": "c1",
+      "form": "entry",
+      "altitudes": [
+        "story",
+        "everything"
+      ],
+      "at": "2026-11-16T09:05:00Z",
+      "entries": [
+        3
+      ],
+      "thread": null,
+      "kind": "candidate.handed",
+      "tone": "ready",
+      "label": "Handed off",
+      "words": {
+        "head": "Lane 1 handed off A",
+        "line": "Ready after 2 review rounds, with tests.test_one run by the lane"
+      },
+      "explain": "A lane says its piece is ready. The lead checks the claim before anything is run on it.",
+      "items": []
+    },
+    {
+      "id": "b4",
+      "chapter": "c1",
+      "form": "entry",
+      "altitudes": [
+        "story",
+        "everything"
+      ],
+      "at": "2026-11-16T09:06:00Z",
+      "entries": [
+        4
+      ],
+      "thread": "t1",
+      "kind": "check.started",
+      "tone": "note",
+      "label": "Checking",
+      "words": {
+        "head": "Checks started on A",
+        "line": ""
+      },
+      "explain": "The queue began running a piece's checks.",
+      "items": []
+    },
+    {
+      "id": "b5",
+      "chapter": "c1",
+      "form": "entry",
+      "altitudes": [
+        "story",
+        "everything"
+      ],
+      "at": "2026-11-16T09:07:00Z",
+      "entries": [
+        5
+      ],
+      "thread": "t1",
+      "kind": "check.failed",
+      "tone": "problem",
+      "label": "Check failed",
+      "words": {
+        "head": "tests.test_one failed",
+        "line": "Failing: tests.test_one.Case.test_it"
+      },
+      "explain": "A check failed on a piece. What happens next depends on whether the main line fails it too.",
+      "items": []
+    },
+    {
+      "id": "b6",
+      "chapter": "c1",
+      "form": "thread",
+      "altitudes": [
+        "headline"
+      ],
+      "at": "2026-11-16T09:08:00Z",
+      "entries": [
+        5,
+        6,
+        7
+      ],
+      "thread": "t1",
+      "kind": "candidate.stopped",
+      "tone": "problem",
+      "label": "Setback",
+      "words": {
+        "head": "A setback: A was stopped",
+        "line": "tests.test_one failed. Its checks failed. It ended when lane 1 handed off A."
+      },
+      "explain": "The queue stopped a piece before it landed. It stays stopped until a new hand-off or the lead answers it.",
+      "items": []
+    },
+    {
+      "id": "b7",
+      "chapter": "c1",
+      "form": "entry",
+      "altitudes": [
+        "story",
+        "everything"
+      ],
+      "at": "2026-11-16T09:08:00Z",
+      "entries": [
+        6
+      ],
+      "thread": "t1",
+      "kind": "candidate.stopped",
+      "tone": "problem",
+      "label": "Stopped",
+      "words": {
+        "head": "A was stopped",
+        "line": "Its checks failed."
+      },
+      "explain": "The queue stopped a piece before it landed. It stays stopped until a new hand-off or the lead answers it.",
+      "items": []
+    },
+    {
+      "id": "b8",
+      "chapter": "c1",
+      "form": "entry",
+      "altitudes": [
+        "story",
+        "everything"
+      ],
+      "at": "2026-11-16T09:20:00Z",
+      "entries": [
+        7
+      ],
+      "thread": "t1",
+      "kind": "candidate.handed",
+      "tone": "ready",
+      "label": "Handed off",
+      "words": {
+        "head": "Lane 1 handed off A",
+        "line": "Ready after 2 review rounds, with tests.test_one run by the lane"
+      },
+      "explain": "A lane says its piece is ready. The lead checks the claim before anything is run on it.",
+      "items": []
+    },
+    {
+      "id": "b9",
+      "chapter": "c1",
+      "form": "entry",
+      "altitudes": [
+        "story",
+        "everything"
+      ],
+      "at": "2026-11-16T09:21:00Z",
+      "entries": [
+        8
+      ],
+      "thread": "t1",
+      "kind": "handoff.checked",
+      "tone": "decision",
+      "label": "Hand-off checked",
+      "words": {
+        "head": "The lead checked the hand-off of A",
+        "line": "At e825ec5, after 2 review rounds. The fix is the one the stop asked for."
+      },
+      "explain": "The lead read the lane's claim against the record before accepting it.",
+      "items": []
+    },
+    {
+      "id": "b10",
+      "chapter": "c1",
+      "form": "entry",
+      "altitudes": [
+        "story",
+        "everything"
+      ],
+      "at": "2026-11-16T09:21:30Z",
+      "entries": [
+        9
+      ],
+      "thread": "t1",
+      "kind": "handoff.accepted",
+      "tone": "decision",
+      "label": "Accepted",
+      "words": {
+        "head": "The lead accepted A",
+        "line": "It went to the queue"
+      },
+      "explain": "The lead accepted the hand-off, so the queue can take the piece.",
+      "items": []
+    }
+  ],
+  "threads": [
+    {
+      "id": "t1",
+      "chapter": "c1",
+      "beat": "b6",
+      "opening": 6,
+      "closing": 7,
+      "openedAt": "2026-11-16T09:08:00Z",
+      "closedAt": "2026-11-16T09:20:00Z",
+      "cost": 720,
+      "state": "closed",
+      "entries": [
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "cause": [
+        5
+      ],
+      "heldUp": [],
+      "told": {
+        "cause": "tests.test_one failed.",
+        "said": "Its checks failed.",
+        "heldUp": null,
+        "ending": "It ended when lane 1 handed off A."
+      },
+      "words": {
+        "head": "A setback: A was stopped",
+        "line": "tests.test_one failed. Its checks failed. It ended when lane 1 handed off A."
+      }
+    }
+  ],
+  "tones": [
+    {
+      "tone": "landed",
+      "word": "Landed"
+    },
+    {
+      "tone": "ready",
+      "word": "Ready to check"
+    },
+    {
+      "tone": "decision",
+      "word": "Decision"
+    },
+    {
+      "tone": "problem",
+      "word": "Setback"
+    },
+    {
+      "tone": "note",
+      "word": "Other update"
+    }
+  ]
+}

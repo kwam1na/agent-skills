@@ -244,7 +244,423 @@
         "source": "derived",
         "text": ""
       },
-      "focus": {}
+      "focus": {},
+      "story": {
+        "schemaVersion": "story/1",
+        "state": "open",
+        "digest": {
+          "landed": 3,
+          "pieces": 4,
+          "startedAt": "2026-10-30T06:10:00Z",
+          "closedAt": null,
+          "took": null,
+          "setbacks": {
+            "closed": 0,
+            "cost": 0,
+            "standing": []
+          },
+          "decisions": 0,
+          "words": {
+            "head": "Three of four pieces landed so far.",
+            "line": "No setbacks."
+          }
+        },
+        "chapters": [
+          {
+            "id": "c1",
+            "form": "start",
+            "subject": null,
+            "pieceTitle": null,
+            "at": "2026-10-30T06:10:00Z",
+            "entries": [
+              1,
+              2
+            ],
+            "beats": [
+              "b1",
+              "b2"
+            ],
+            "standing": [],
+            "notLanded": [],
+            "words": {
+              "head": "Getting started",
+              "line": "",
+              "standing": []
+            }
+          },
+          {
+            "id": "c2",
+            "form": "landing",
+            "subject": "PAY-1",
+            "pieceTitle": "Work PAY-1",
+            "at": "2026-10-30T06:12:00Z",
+            "entries": [
+              3
+            ],
+            "beats": [
+              "b3"
+            ],
+            "standing": [],
+            "notLanded": [],
+            "words": {
+              "head": "PAY-1 landed",
+              "line": "",
+              "standing": []
+            }
+          },
+          {
+            "id": "c3",
+            "form": "landing",
+            "subject": "PAY-2",
+            "pieceTitle": "Work PAY-2",
+            "at": "2026-10-30T06:15:00Z",
+            "entries": [
+              4,
+              5,
+              6
+            ],
+            "beats": [
+              "b4",
+              "b5",
+              "b6"
+            ],
+            "standing": [],
+            "notLanded": [],
+            "words": {
+              "head": "PAY-2 landed",
+              "line": "",
+              "standing": []
+            }
+          },
+          {
+            "id": "c4",
+            "form": "landing",
+            "subject": "PAY-3",
+            "pieceTitle": "Work PAY-3",
+            "at": "2026-10-30T06:18:00Z",
+            "entries": [
+              7,
+              8,
+              9
+            ],
+            "beats": [
+              "b7",
+              "b8",
+              "b9"
+            ],
+            "standing": [],
+            "notLanded": [],
+            "words": {
+              "head": "PAY-3 landed",
+              "line": "",
+              "standing": []
+            }
+          },
+          {
+            "id": "c5",
+            "form": "finish",
+            "subject": null,
+            "pieceTitle": null,
+            "at": "2026-10-30T06:20:00Z",
+            "entries": [
+              10,
+              11
+            ],
+            "beats": [
+              "b10",
+              "b11"
+            ],
+            "standing": [],
+            "notLanded": [],
+            "words": {
+              "head": "Finishing",
+              "line": "PAY-4 is still to land.",
+              "standing": []
+            }
+          }
+        ],
+        "beats": [
+          {
+            "id": "b1",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:10:00Z",
+            "entries": [
+              1
+            ],
+            "thread": null,
+            "kind": "review.round",
+            "tone": "note",
+            "label": "Review round",
+            "words": {
+              "head": "Review round",
+              "line": "PAY-1: review round 1"
+            },
+            "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
+            "items": []
+          },
+          {
+            "id": "b2",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:11:00Z",
+            "entries": [
+              2
+            ],
+            "thread": null,
+            "kind": "candidate.handed",
+            "tone": "ready",
+            "label": "Handed off",
+            "words": {
+              "head": "Handed off",
+              "line": "candidate.handed PAY-1"
+            },
+            "explain": "A lane says its piece is ready. The lead checks the claim before anything is run on it.",
+            "items": []
+          },
+          {
+            "id": "b3",
+            "chapter": "c2",
+            "form": "entry",
+            "altitudes": [
+              "headline",
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:12:00Z",
+            "entries": [
+              3
+            ],
+            "thread": null,
+            "kind": "candidate.merged",
+            "tone": "landed",
+            "label": "Landed",
+            "words": {
+              "head": "Landed",
+              "line": "candidate.merged PAY-1"
+            },
+            "explain": "A piece reached the main line.",
+            "items": []
+          },
+          {
+            "id": "b4",
+            "chapter": "c3",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:13:00Z",
+            "entries": [
+              4
+            ],
+            "thread": null,
+            "kind": "review.round",
+            "tone": "note",
+            "label": "Review round",
+            "words": {
+              "head": "Review round",
+              "line": "PAY-2: review round 1"
+            },
+            "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
+            "items": []
+          },
+          {
+            "id": "b5",
+            "chapter": "c3",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:14:00Z",
+            "entries": [
+              5
+            ],
+            "thread": null,
+            "kind": "candidate.handed",
+            "tone": "ready",
+            "label": "Handed off",
+            "words": {
+              "head": "Handed off",
+              "line": "candidate.handed PAY-2"
+            },
+            "explain": "A lane says its piece is ready. The lead checks the claim before anything is run on it.",
+            "items": []
+          },
+          {
+            "id": "b6",
+            "chapter": "c3",
+            "form": "entry",
+            "altitudes": [
+              "headline",
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:15:00Z",
+            "entries": [
+              6
+            ],
+            "thread": null,
+            "kind": "candidate.merged",
+            "tone": "landed",
+            "label": "Landed",
+            "words": {
+              "head": "Landed",
+              "line": "candidate.merged PAY-2"
+            },
+            "explain": "A piece reached the main line.",
+            "items": []
+          },
+          {
+            "id": "b7",
+            "chapter": "c4",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:16:00Z",
+            "entries": [
+              7
+            ],
+            "thread": null,
+            "kind": "review.round",
+            "tone": "note",
+            "label": "Review round",
+            "words": {
+              "head": "Review round",
+              "line": "PAY-3: review round 1"
+            },
+            "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
+            "items": []
+          },
+          {
+            "id": "b8",
+            "chapter": "c4",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:17:00Z",
+            "entries": [
+              8
+            ],
+            "thread": null,
+            "kind": "candidate.handed",
+            "tone": "ready",
+            "label": "Handed off",
+            "words": {
+              "head": "Handed off",
+              "line": "candidate.handed PAY-3"
+            },
+            "explain": "A lane says its piece is ready. The lead checks the claim before anything is run on it.",
+            "items": []
+          },
+          {
+            "id": "b9",
+            "chapter": "c4",
+            "form": "entry",
+            "altitudes": [
+              "headline",
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:18:00Z",
+            "entries": [
+              9
+            ],
+            "thread": null,
+            "kind": "candidate.merged",
+            "tone": "landed",
+            "label": "Landed",
+            "words": {
+              "head": "Landed",
+              "line": "candidate.merged PAY-3"
+            },
+            "explain": "A piece reached the main line.",
+            "items": []
+          },
+          {
+            "id": "b10",
+            "chapter": "c5",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:19:00Z",
+            "entries": [
+              10
+            ],
+            "thread": null,
+            "kind": "review.round",
+            "tone": "note",
+            "label": "Review round",
+            "words": {
+              "head": "Review round",
+              "line": "PAY-4: review round 1"
+            },
+            "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
+            "items": []
+          },
+          {
+            "id": "b11",
+            "chapter": "c5",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-30T06:20:00Z",
+            "entries": [
+              11
+            ],
+            "thread": null,
+            "kind": "candidate.handed",
+            "tone": "ready",
+            "label": "Handed off",
+            "words": {
+              "head": "Handed off",
+              "line": "candidate.handed PAY-4"
+            },
+            "explain": "A lane says its piece is ready. The lead checks the claim before anything is run on it.",
+            "items": []
+          }
+        ],
+        "threads": [],
+        "tones": [
+          {
+            "tone": "landed",
+            "word": "Landed"
+          },
+          {
+            "tone": "ready",
+            "word": "Ready to check"
+          },
+          {
+            "tone": "decision",
+            "word": "Decision"
+          },
+          {
+            "tone": "problem",
+            "word": "Setback"
+          },
+          {
+            "tone": "note",
+            "word": "Other update"
+          }
+        ]
+      }
     },
     "delivery-runs": {},
     "delivery-plan": {
@@ -482,7 +898,7 @@
       }
     }
   },
-  "initialText": "NowThe lineWhoWhat's leftThe planWhat happenedParkedFixture delivery3 of 4 pieces have landed.Shoppers can pay again after a dropped connection.Ready to be checkedWork PAY-4Handed over; each is checked and merged in turn, in this order.StartPieces landedFinish line metLast landedWork PAY-3PAY-3 · 5 hours agoPlan4 of 6 criteria provenchanged 0 timesSaved viewUpdated a minute agoThe lineEvery piece of work merges into one main line.Each row is one lane's work, in the order it lands. Point at or tap a stop to see what it carries.Lane one3 of 4 landed1234Finish line3/4 landed0/2 metLane 1Work PAY-4PAY-4 · Ready, waiting to be checked · Handed over 5 hours ago2 proofs leftIts review isn't approved yet.See in the planReview evidence unavailable or stale for this candidate.Merge check · Handed over 5 hours ago · 1 step6:20 amcandidate.handed PAY-4LandedBeing checkedReady to checkIn progressNot startedWaiting for the lead to acceptStoppedBoth landedWho's doing what1 lane is working on this.Each lane is a separate session working in parallel on its own part of the work.Lane oneBuildingfor 6hWhat's left1piece to go3 of 4 pieces have landed.PAY-4Work PAY-4Ready, waiting to be checkedThe finish lineEvery piece landsNot yet3 of 4 units · mergedEvery criterion provenNot yet4 of 6 criteria · review, handed off, mergedThe plan4 of 6 criteria proven.Shoppers can pay again after a dropped connection.Nothing in the plan needs attention right now.PAY-4Payment audit2 proofs left · Its review isn't approved yet.All units4As amendedAs approvedApproved 6 hours agoUnitCriteriaStatusPAY-1Card retryCriterion 1 of PAY-1 PAY-1.1Criterion 2 of PAY-1 PAY-1.2ProvenReview · Handed off · MergedPAY-2Receipt emailCriterion 1 of PAY-2 PAY-2.1ProvenReview · Handed off · MergedPAY-3Refund screenCriterion 1 of PAY-3 PAY-3.1ProvenReview · Handed off · MergedPAY-4Payment auditCriterion 1 of PAY-4 PAY-4.1Criterion 2 of PAY-4 PAY-4.22 proofs leftIts review isn't approved yet.It still has to merge.Done: handed offChanges since approval0Nothing has changed since approval.Waived proofs0No proof was waived.The full outcomeShoppers can pay again after a dropped connection, and no payment is ever taken twice.What happenedThe story so far, newest first.LandedReady to checkDecisionProblemOther updateEverythingDecisionsLandedProblems[entry][entry][entry][entry][entry][entry][entry][entry]Show all 11Parked for laterNothing parked.Past deliveries and runs",
+  "initialText": "NowThe lineWhoWhat's leftThe planWhat happenedParkedFixture delivery3 of 4 pieces have landed.Shoppers can pay again after a dropped connection.Ready to be checkedWork PAY-4Handed over; each is checked and merged in turn, in this order.StartPieces landedFinish line metLast landedWork PAY-3PAY-3 · 5 hours agoPlan4 of 6 criteria provenchanged 0 timesSaved viewUpdated a minute agoThe lineEvery piece of work merges into one main line.Each row is one lane's work, in the order it lands. Point at or tap a stop to see what it carries.Lane one3 of 4 landed1234Finish line3/4 landed0/2 metLane 1Work PAY-4PAY-4 · Ready, waiting to be checked · Handed over 5 hours ago2 proofs leftIts review isn't approved yet.See in the planReview evidence unavailable or stale for this candidate.Merge check · Handed off 5 hours ago · 1 step6:20 amcandidate.handed PAY-4LandedBeing checkedReady to checkIn progressNot startedWaiting for the lead to acceptStoppedBoth landedWho's doing what1 lane is working on this.Each lane is a separate session working in parallel on its own part of the work.Lane oneBuildingfor 6hWhat's left1piece to go3 of 4 pieces have landed.PAY-4Work PAY-4Ready, waiting to be checkedThe finish lineEvery piece landsNot yet3 of 4 units · mergedEvery criterion provenNot yet4 of 6 criteria · review, handed off, mergedThe plan4 of 6 criteria proven.Shoppers can pay again after a dropped connection.Nothing in the plan needs attention right now.PAY-4Payment audit2 proofs left · Its review isn't approved yet.All units4As amendedAs approvedApproved 6 hours agoUnitCriteriaStatusPAY-1Card retryCriterion 1 of PAY-1 PAY-1.1Criterion 2 of PAY-1 PAY-1.2ProvenReview · Handed off · MergedPAY-2Receipt emailCriterion 1 of PAY-2 PAY-2.1ProvenReview · Handed off · MergedPAY-3Refund screenCriterion 1 of PAY-3 PAY-3.1ProvenReview · Handed off · MergedPAY-4Payment auditCriterion 1 of PAY-4 PAY-4.1Criterion 2 of PAY-4 PAY-4.22 proofs leftIts review isn't approved yet.It still has to merge.Done: handed offChanges since approval0Nothing has changed since approval.Waived proofs0No proof was waived.The full outcomeShoppers can pay again after a dropped connection, and no payment is ever taken twice.What happenedThree of four pieces landed so far.No setbacks.LandedReady to checkOther updateHeadlinesStoryEverythingAllDecisionsLandingsSetbacksFinishing6:20 amPAY-4 is still to land.6:20 amHanded offcandidate.handed PAY-4A lane says its piece is ready. The lead checks the claim before anything is run on it.piecePAY-4as writtencandidate.handed PAY-4Handed off6:19 amReview roundPAY-4: review round 1The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.piecePAY-4as writtenPAY-4: review round 1Review roundPAY-3 landed6:18 amWork PAY-36:18 amLandedcandidate.merged PAY-3A piece reached the main line.piecePAY-3as writtencandidate.merged PAY-3Landed6:17 amHanded offcandidate.handed PAY-3A lane says its piece is ready. The lead checks the claim before anything is run on it.piecePAY-3as writtencandidate.handed PAY-3Handed off6:16 amReview roundPAY-3: review round 1The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.piecePAY-3as writtenPAY-3: review round 1Review roundPAY-2 landed6:15 amWork PAY-26:15 amLandedcandidate.merged PAY-2A piece reached the main line.piecePAY-2as writtencandidate.merged PAY-2Landed6:14 amHanded offcandidate.handed PAY-2A lane says its piece is ready. The lead checks the claim before anything is run on it.piecePAY-2as writtencandidate.handed PAY-2Handed off6:13 amReview roundPAY-2: review round 1The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.piecePAY-2as writtenPAY-2: review round 1Review roundPAY-1 landed6:12 amWork PAY-16:12 amLandedcandidate.merged PAY-1A piece reached the main line.piecePAY-1as writtencandidate.merged PAY-1LandedGetting started6:10 am6:11 amHanded offcandidate.handed PAY-1A lane says its piece is ready. The lead checks the claim before anything is run on it.piecePAY-1as writtencandidate.handed PAY-1Handed off6:10 amReview roundPAY-1: review round 1The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.piecePAY-1as writtenPAY-1: review round 1Review roundParked for laterNothing parked.Past deliveries and runs",
   "folds": {
     "units": "All units4As amendedAs approvedApproved 6 hours agoUnitCriteriaStatusPAY-1Card retryCriterion 1 of PAY-1 PAY-1.1Criterion 2 of PAY-1 PAY-1.2ProvenReview · Handed off · MergedPAY-2Receipt emailCriterion 1 of PAY-2 PAY-2.1ProvenReview · Handed off · MergedPAY-3Refund screenCriterion 1 of PAY-3 PAY-3.1ProvenReview · Handed off · MergedPAY-4Payment auditCriterion 1 of PAY-4 PAY-4.1Criterion 2 of PAY-4 PAY-4.22 proofs leftIts review isn't approved yet.It still has to merge.Done: handed off",
     "changes": "Changes since approval0Nothing has changed since approval.",
@@ -494,7 +910,7 @@
       "detail": "Lane 1Work PAY-1PAY-1 · Landed 5 hours agoProvenSee in the planReview evidence unavailable or stale for this candidate.Merge check · Landed 5 hours ago · 2 steps6:11 amcandidate.handed PAY-16:12 amcandidate.merged PAY-1"
     },
     "PAY-4": {
-      "detail": "Lane 1Work PAY-4PAY-4 · Ready, waiting to be checked · Handed over 5 hours ago2 proofs leftIts review isn't approved yet.See in the planReview evidence unavailable or stale for this candidate.Merge check · Handed over 5 hours ago · 1 step6:20 amcandidate.handed PAY-4"
+      "detail": "Lane 1Work PAY-4PAY-4 · Ready, waiting to be checked · Handed over 5 hours ago2 proofs leftIts review isn't approved yet.See in the planReview evidence unavailable or stale for this candidate.Merge check · Handed off 5 hours ago · 1 step6:20 amcandidate.handed PAY-4"
     }
   }
 }

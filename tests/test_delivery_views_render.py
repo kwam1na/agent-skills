@@ -1006,5 +1006,33 @@ class NeedsBlockTests(unittest.TestCase):
                 self.write(self.listed([bad]))
                 self.assertEqual(render.read_needs_block(self.state), {"unreadable": True})
 
+STORIES = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "delivery-views" / "story"
+NARRATED = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "narrator"
+# The narrator's journals whose stories the page's tests draw, each kept beside them as the narrator tells it.
+# Each names only invented pieces, so the corpus keeps no ticket id.
+STORY_NAMES = ("standing-break", "thread-at-story", "bookkeeping-run", "batch-of-three", "decision-on-a-break", "break-stops-a-piece")
+
+
+def narrated(name: str) -> bytes:
+    """A named journal's story, as the narrator tells it, in the bytes its fixture holds."""
+    folder = NARRATED / name
+    journal = [json.loads(line) for line in (folder / "journal.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    state = json.loads((folder / "state.json").read_text(encoding="utf-8")) if (folder / "state.json").is_file() else None
+    plan = json.loads((folder / "plan.json").read_text(encoding="utf-8")) if (folder / "plan.json").is_file() else None
+    story = render.narrator.narrate(journal, state=state, plan=plan)
+    return (json.dumps(story, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+
+
+class StoryFixtureTests(unittest.TestCase):
+    """The stories the page's tests draw are the narrator's, byte for byte, for named journals of its own."""
+
+    def test_each_story_the_page_draws_is_the_narrators_for_its_journal(self) -> None:
+        self.assertEqual(sorted(path.name for path in STORIES.glob("*.json")), sorted(f"{name}.json" for name in STORY_NAMES))
+        for name in STORY_NAMES:
+            with self.subTest(name=name):
+                self.assertEqual((STORIES / f"{name}.json").read_bytes(), narrated(name),
+                                 f"tests/fixtures/delivery-views/story/{name}.json is not the narrator's story; write it again from its journal")
+
+
 if __name__ == "__main__":
     unittest.main()

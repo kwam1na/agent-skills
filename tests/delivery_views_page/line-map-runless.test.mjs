@@ -192,3 +192,16 @@ test('evidence the lead carried to a later head shows as carried, and only at th
     expect(refused.app.querySelector('.d-run-none').textContent).toContain('unavailable or stale');
   }
 });
+test('a review kept as facts holds its cards while it names the evidence, and leaves them stale when it names other', async()=>{
+  const kept=(digest, candidateRef)=>({id:1, at:'2026-01-01T00:05:00Z', kind:'review.recorded', lane:'lane-1', subject:'WORK-1',
+    data:{digest, candidateRef}});
+  const fresh=document(); fresh.journal=[kept('d'.repeat(64), B)];
+  const [shown]=await openPage(pageWithRuns(fresh,{}, {config}));
+  expect(shown.app.querySelector('.d-run-none')).toBeNull();
+  expect(shown.app.querySelector('.run-card-outcome').textContent).toBe('Approved');
+  for(const stale of [kept('e'.repeat(64), B), kept('d'.repeat(64), A)]){
+    const doc=document(); doc.journal=[stale];
+    const [old]=await openPage(pageWithRuns(doc,{}, {config}));
+    expect(old.app.querySelector('.d-run-none').textContent).toContain('unavailable or stale');
+  }
+});

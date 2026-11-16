@@ -399,10 +399,13 @@ python3 -B scripts/render_state.py --dir <state directory>
   invalid, nothing runs and it exits 2.
 - It reads only the binding's `state` member: `directory`, `renderers` and
   `publishers`. A renderer is any argv, or a built-in (`markdown` or
-  `static-page`), that reads the validated `{state, journal, stats}` on stdin and
-  writes one view on stdout to its `output` inside the state directory. A
-  publisher is any argv that puts the same document somewhere a view reads,
-  such as run-delivery's tracker publisher. A publisher with a `kind` and no
+  `static-page`), that reads the validated `{state, journal, stats}` on stdin,
+  with the delivery's `story` beside them, and writes one view on stdout to its
+  `output` inside the state directory. A publisher is any argv that puts the
+  same document somewhere a view reads, such as run-delivery's tracker
+  publisher. That document carries the story too: a publisher that once
+  received the bare record now receives it with `story`, the narrator's telling
+  of the journal and the plan, as one more member. A publisher with a `kind` and no
   `argv` runs nothing, and the wrapper refuses the configuration, naming the
   fix: name the tracker publisher instead.
 - With no configuration it renders both built-ins, `delivery.md` and

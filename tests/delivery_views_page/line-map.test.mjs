@@ -6,7 +6,7 @@ import { readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 
-import { CORPUS, RENDER, REPLAYED_RUNS, ROOT, block, embedded, expect, openPage, pageWithRuns, readJson, renderIn, repository, runSync, summarize } from "./support.mjs";
+import { CORPUS, RENDER, REPLAYED_RUNS, ROOT, block, embedded, expect, openPage, pageWithRuns, readJson, renderIn, repository, runSync, summarize, told } from "./support.mjs";
 import { FIX, readings, reportView } from "./round-reports.mjs";
 
 const SOURCE = path.join(CORPUS, "source");
@@ -156,15 +156,15 @@ test("draws the run as a line map, chapter by chapter", async () => {
     "ThenThe webhook replay recovers a missed payment",
   ]);
 
-  // What happened: newest first, marked by kind, eight at a time. Its words are the story chapter's, so only that it
-  // draws is pinned: eight entries, the landing among them marked as a merge, and the rest behind a button.
+  // What happened: the story, opening at its Story depth while the delivery runs, chapters newest first, each beat in
+  // full, and the landing marked as one.
   const happened = chapter("happened");
-  const entries = [...happened.querySelectorAll(".feed > li")];
-  expect(entries).toHaveLength(8);
-  expect(entries.map((entry) => entry.querySelector("time")?.getAttribute("datetime")))
-    .toEqual([...entries.map((entry) => entry.querySelector("time")?.getAttribute("datetime"))].sort().reverse());
-  expect(entries.filter((entry) => entry.querySelector(".g")?.className === "g merge")).toHaveLength(1);
-  expect(happened.querySelector(".more")?.textContent).toBe("Show all 10");
+  const story = block(render(fixtureDocument()), "delivery-state").story;
+  const beats = [...happened.querySelectorAll(".beat")];
+  expect(beats.map((beat) => beat.getAttribute("data-beat")).sort()).toEqual(story.beats.filter((beat) => beat.altitudes.includes("story")).map((beat) => beat.id).sort());
+  expect([...happened.querySelectorAll(".chapter-of")].map((chapter) => chapter.getAttribute("data-chapter"))).toEqual(story.chapters.map((chapter) => chapter.id).reverse());
+  expect(beats.filter((beat) => beat.querySelector(".g")?.className === "g merge")).toHaveLength(1);
+  expect(happened.querySelector(".title").textContent).toBe(story.digest.words.head);
 
   // Parked: the follow-ups.
   expect(chapter("parked").textContent).toContain("Measure checkout drop-off by payment state");
@@ -247,7 +247,7 @@ test("shows a ticket's own title and summary when its id is hovered, wherever th
     steps: [
       { hover: '#line .stop-label [data-ticket="PAY-2361"]' },
       { leave: '#line .stop-label [data-ticket="PAY-2361"]' },
-      { hover: '#happened .feed [data-ticket="PAY-2358"]' },
+      { hover: '#happened .beat [data-ticket="PAY-2358"]' },
       { hover: '#parked [data-ticket="PAY-2370"]' },
       { hover: '#line .stop-label [data-ticket="PAY-2360"]' },
     ],
@@ -439,9 +439,9 @@ test("draws a passed post-merge fullHealth and a provider's refused selection in
   const [shown] = await open(document);
   // The feed's words are the story chapter's: only that it draws both entries is pinned, and that neither is a raw kind.
   for (const at of ["2026-10-22T05:08:00Z", "2026-10-22T05:09:00Z"]) {
-    expect(shown.app.querySelector(`#happened .feed time[datetime="${at}"]`) !== null).toBe(true);
+    expect(shown.app.querySelector(`#happened .beat > time[datetime="${at}"]`) !== null).toBe(true);
   }
-  const words = shown.app.querySelector("#happened .feed").textContent;
+  const words = shown.app.querySelector("#happened .story").textContent;
   for (const raw of ["base.verified", "selection.refused"]) {
     expect(words.includes(raw)).toBe(false);
   }
@@ -471,7 +471,7 @@ test("says a piece whose check failed is waiting on the main line's rerun, on th
   expect(meta.querySelector(".d-stage-time").getAttribute("aria-label")).toBe("Recorded base rerun start: 2026-10-22T05:07:00Z");
   // The piece's merge check lists the rerun after the failure, and names it as the last step.
   const history = shown.app.querySelector("#detail .mh");
-  expect(history.querySelector("summary .mh-sub").textContent).toMatch(/^ · Rerun on the main line 3 minutes ago · /);
+  expect(history.querySelector("summary .mh-sub").textContent).toMatch(/^ · Trying the main line 3 minutes ago · /);
   expect([...history.querySelectorAll("li span")].map((row) => row.textContent).slice(-2))
     .toEqual(["Check failed: storefront build", "Rerunning storefront build on main"]);
   // Its verdict is drawn in the feed and reads as the merge check's last step.
@@ -479,8 +479,8 @@ test("says a piece whose check failed is waiting on the main line's rerun, on th
   verdict.journal.push({ at: "2026-10-22T05:09:00Z", id: 42, kind: "base.rerun.finished", lane: "payments", subject: "PAY-2361",
     summary: "Base re-run on main after 120s: storefront build passed: the failure is the candidate's" });
   const [, verdictShown] = await open(verdict, { steps });
-  expect(verdictShown.app.querySelector('#happened .feed time[datetime="2026-10-22T05:09:00Z"]') !== null).toBe(true);
-  expect(verdictShown.app.querySelector("#detail .mh summary .mh-sub").textContent).toMatch(/^ · Rerun verdict a minute ago · /);
+  expect(verdictShown.app.querySelector('#happened .beat > time[datetime="2026-10-22T05:09:00Z"]') !== null).toBe(true);
+  expect(verdictShown.app.querySelector("#detail .mh summary .mh-sub").textContent).toMatch(/^ · Main line tried a minute ago · /);
   // Rendered between the panel's write and the started entry, the wait's time comes from the panel.
   const unjournaled = JSON.parse(JSON.stringify(document));
   unjournaled.journal = unjournaled.journal.filter((entry) => entry.kind !== "base.rerun.started");
@@ -883,7 +883,8 @@ test("marks what changed since the last update, as the earlier map did", async (
   later.state.lanes[1].state = "handed";
   later.state.followups.push({ id: "f-new", title: "Show the retry count to support", reference: "PAY-2399" });
   later.journal.push({ at: "2026-10-22T05:09:00Z", id: 11, kind: "candidate.merged", lane: "payments", subject: "PAY-2361", summary: "Merged PAY-2361" });
-  const [, pushed] = await open(fixtureDocument(), { store: { read: "pending" }, steps: [{ push: later }] });
+  // Pushed as the live server sends a record: with the story the narrator tells of it.
+  const [, pushed] = await open(fixtureDocument(), { store: { read: "pending" }, steps: [{ push: told(later) }] });
   const app = pushed.app;
   // The stop that just landed lands, and the line between it and the one before draws itself in.
   expect(app.querySelector('.stop-btn[data-subject="PAY-2361"]')?.className).toContain("landing");
@@ -892,7 +893,8 @@ test("marks what changed since the last update, as the earlier map did", async (
   expect(app.querySelector(".left-number")?.textContent).toBe("6pieces to go");
   expect(app.querySelectorAll(".dots i.closing")).toHaveLength(1);
   expect([...app.querySelectorAll(".person.changed h3")].map((name) => name.textContent)).toEqual(["Storefront"]);
-  expect([...app.querySelectorAll("#happened .feed > li.fresh time")].map((time) => time.getAttribute("datetime"))).toEqual(["2026-10-22T05:09:00Z"]);
+  // The story's new beat arrives as a new row does; the beats it already held stay as they were.
+  expect([...app.querySelectorAll("#happened .beat.fresh > time")].map((time) => time.getAttribute("datetime"))).toEqual(["2026-10-22T05:09:00Z"]);
   expect([...app.querySelectorAll(".parked li.fresh")].map((item) => item.textContent)).toEqual(["PAY-2399Show the retry count to support"]);
   expect(app.querySelector("#now .fact")?.textContent).toBe("Last landedRetry card payments once on a dropped connectionPAY-2361 · a minute ago");
 });
@@ -1106,22 +1108,21 @@ test("leaves a pull request URL with a trailing slash, and a URL off the forge's
   ]);
 });
 
-test("filters the story by tab and shows all of it on request, keeping focus on the tab", async () => {
-  const [, everything, landed, problems, back] = await open(fixtureDocument(), {
-    steps: [{ click: "#happened .more" }, { click: '#happened [data-tab="landed"]' }, { click: '#happened [data-tab="problems"]' }, { click: '#happened [data-tab="all"]' }],
+test("filters the story by tab, each the beats of one tone, keeping focus on the tab", async () => {
+  const story = block(render(fixtureDocument()), "delivery-state").story;
+  const [, decisions, landed, problems, back] = await open(fixtureDocument(), {
+    steps: [{ click: '#happened [data-tab="decisions"]' }, { click: '#happened [data-tab="landed"]' }, { click: '#happened [data-tab="problems"]' },
+      { click: '#happened [data-tab="all"]' }],
   });
-  const [, decisions] = await open(fixtureDocument(), { steps: [{ click: '#happened [data-tab="decisions"]' }] });
-  expect([...decisions.app.querySelectorAll("#happened .feed li .g")].map((mark) => mark.className)).toEqual(["g decide"]);
-  const count = (snapshot) => snapshot.app.querySelectorAll("#happened .feed li").length;
-  expect(count(everything)).toBe(10);
-  // "Show all" removes itself; focus moves to the first entry it revealed.
-  expect(everything.focused).toBe("li");
-  expect(everything.app.querySelectorAll("#happened .feed li")[8]?.hasAttribute("data-revealed")).toBe(true);
-  expect(count(landed)).toBe(1);
+  const shown = (snapshot) => [...snapshot.app.querySelectorAll("#happened [data-beat]")].map((row) => row.getAttribute("data-beat")).sort();
+  const toned = (tone) => story.beats.filter((beat) => beat.altitudes.includes("story") && (!tone || beat.tone === tone)).map((beat) => beat.id).sort();
+  expect(shown(decisions)).toEqual(toned("decision"));
+  expect(shown(landed)).toEqual(toned("landed"));
+  expect(shown(problems)).toEqual(toned("problem"));
+  expect(shown(back)).toEqual(toned(null));
+  expect(toned("decision").length && toned("landed").length && toned("problem").length).toBeTruthy();
   expect(landed.focused).toBe("landed");
   expect(landed.app.querySelector('#happened [data-tab="landed"]')?.getAttribute("aria-pressed")).toBe("true");
-  expect(count(problems)).toBe(2);
-  expect(count(back)).toBe(8);
   expect(back.focused).toBe("all");
 });
 
@@ -1129,8 +1130,9 @@ test("names a failed check among the problems while its stop is still being work
   const document = fixtureDocument();
   document.journal.push({ id: 99, at: "2026-10-22T07:00:00Z", kind: "check.failed", lane: null, subject: null, summary: "Check failed: suite (failing test_alpha; log logs/suite.log)" });
   const [, problems] = await open(document, { steps: [{ click: '#happened [data-tab="problems"]' }] });
-  const entry = [...problems.app.querySelectorAll("#happened .feed li")].find((row) => row.textContent.includes("test_alpha"));
-  expect(entry?.textContent).toContain("Check failed");
+  const entry = [...problems.app.querySelectorAll("#happened .beat")].find((row) => row.textContent.includes("test_alpha"));
+  expect(entry?.querySelector(".beat-said").textContent).toBe("Check failed");
+  expect(entry?.querySelector(".g").className).toBe("g stop");
 });
 
 test("finds nothing for record values that name built-in properties, and keeps them out of class names", async () => {

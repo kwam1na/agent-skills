@@ -12,7 +12,7 @@
 - **A setback: V26-3264 was stopped** · 7:30 pm to 8:08 pm, 38m. tests.test_orchestration_state failed. The guide named a file the skill doesn't ship, and a test holds the guide to the files it names. It ended when lane 2 handed off V26-3264.
 
 **V26-3264 landed** · 8:28 pm. Run the lead's full suite in its own detached checkout of a commit. 3h 35m after it was picked up, after 5 review rounds.
-- A setback still stands: V26-3264 was stopped.
+- V26-3264 was stopped, until 8:08 pm.
 - **Replaced V26-3264's branch with the head its review approved** · 8:07 pm. The two commits it dropped were the merge queue's own sync of the stopped piece, and the approved head already held everything they did.
 
 **V26-3513 landed** · 8:41 pm. Pin the merge slot's order and its wait, and say what to do when the slot is held. 56m after it was picked up, after 2 review rounds.
@@ -22,10 +22,7 @@
 - **Reverted the lead's own catalogue entry that broke the main line** · 9:56 pm. The lead listed a test module in the binding before V26-3320, which adds it, had landed. From now on every change to the binding runs that test.
 
 **Finished** · 12:07 am, Nov 16. Every finish line was met.
-- **A finish line was met** · 10:18 pm. stories
-- **A finish line was met** · 10:18 pm. local-suite
-- **A finish line was met** · 10:18 pm. integration
-- **A finish line was met** · 10:18 pm. main-ci
+- **Every finish line was met** · 10:18 pm. Every story, Local suite, Integration and Main CI
 - **Reviewed the lead's own changes before taking them to main** · 10:23 pm. Two lenses read them. The first round raised two notes, both fixed; the second raised none.
 - **Merged the delivery into main, as 4eb258c** · 10:52 pm. The operator had approved the merge in advance, and the full local suite passed first, inside its time budget.
 - **Held the close for the operator** · 10:53 pm. The installed release would file a follow-up for every note ever deferred, though none was still open.

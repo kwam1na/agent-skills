@@ -26,9 +26,8 @@ Each case directory holds:
 The page has since been reworked on purpose, and its goldens follow it:
 `tests/delivery_views_page/recapture-goldens.mjs` re-derives each case's page text, detail panels, plan folds and the
 compared blocks from the page as it stands, with the clock, stops and folds its golden names. The links block is left as
-captured, since no row compares it. A recapture is committed apart from any page change. The page text reads each
-entry of the timeline, the "What happened" feed, as `[entry]`: the goldens pin that the timeline draws and how many
-entries it shows, not what they say, which the story chapter replaces whole.
+captured, since no row compares it. A recapture is committed apart from any page change. The page text is the whole
+page's, the story's "What happened" included: its words are the narrator's, told from each case's journal.
 
 The cases:
 
