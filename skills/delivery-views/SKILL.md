@@ -899,3 +899,21 @@ by the terminal deadline. Only the selected terminal metadata and referenced
 bodies enter archives. Live pending status retains the public URL and preceding
 receipt; active archive polling tolerates bounded unavailability before strict
 post-exit identity/status checks.
+
+### Installed archive qualification
+
+The publisher, public projection and snapshot schema ship together in every
+profile selecting delivery-views, including run-delivery and tracker profiles.
+Use the supported archive lifecycle; never copy scripts into an adopter or edit
+its installed generation. Each repository configures its own repository ID and
+publishing-token environment name. Matching local delivery names retain separate
+hosted identities. Preserve private identity/receipt sidecars with their record
+for archive viewing and same-link recovery; they are not reusable release files.
+
+Qualification uses two clean adopters and verifies their exact built archive and
+unchanged installed bytes. A local receiver or socket substitution remains a
+fixture seam even when the installed publisher and request child execute unchanged.
+Source tests, installed-archive qualification, service CI, published-candidate
+adoption and actual remote acceptance are separate evidence. Only the last proves
+off-machine progress and disconnect/catch-up. The deployable viewer and its Node
+dependencies never enter portable workflow archives.

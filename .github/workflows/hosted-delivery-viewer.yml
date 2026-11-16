@@ -1,0 +1,92 @@
+{
+  "name": "Hosted delivery viewer",
+  "on": {
+    "pull_request": {
+      "paths": [
+        "hosted/delivery-viewer/**",
+        "skills/delivery-views/assets/**",
+        "skills/delivery-views/scripts/render.py",
+        "skills/delivery-views/references/hosted-snapshot.schema.json",
+        "tests/fixtures/delivery-views/hosted/**",
+        ".github/workflows/hosted-delivery-viewer.yml"
+      ]
+    },
+    "push": {
+      "branches": [
+        "main",
+        "integrate/hosted-deliveries"
+      ],
+      "paths": [
+        "hosted/delivery-viewer/**",
+        "skills/delivery-views/assets/**",
+        "skills/delivery-views/scripts/render.py",
+        "skills/delivery-views/references/hosted-snapshot.schema.json",
+        "tests/fixtures/delivery-views/hosted/**",
+        ".github/workflows/hosted-delivery-viewer.yml"
+      ]
+    },
+    "workflow_dispatch": {}
+  },
+  "permissions": {
+    "contents": "read"
+  },
+  "concurrency": {
+    "group": "${{ github.event_name == 'pull_request' && format('hosted-{0}', github.event.pull_request.number) || github.run_id }}",
+    "cancel-in-progress": "${{ github.event_name == 'pull_request' }}"
+  },
+  "jobs": {
+    "service": {
+      "runs-on": "ubuntu-latest",
+      "timeout-minutes": 20,
+      "defaults": {
+        "run": {
+          "working-directory": "hosted/delivery-viewer"
+        }
+      },
+      "env": {
+        "WRANGLER_SEND_METRICS": "false",
+        "CI": "true"
+      },
+      "steps": [
+        {
+          "uses": "actions/checkout@v4"
+        },
+        {
+          "uses": "actions/setup-node@v4",
+          "with": {
+            "node-version": "22.23.5",
+            "cache": "npm",
+            "cache-dependency-path": "hosted/delivery-viewer/package-lock.json"
+          }
+        },
+        {
+          "run": "npm ci --ignore-scripts --no-audit --no-fund --engine-strict"
+        },
+        {
+          "run": "npm run typecheck"
+        },
+        {
+          "run": "npm run build"
+        },
+        {
+          "run": "npm test"
+        },
+        {
+          "run": "npx playwright install --with-deps chromium"
+        },
+        {
+          "run": "npm run test:browser"
+        },
+        {
+          "uses": "actions/upload-artifact@v4",
+          "if": "always()",
+          "with": {
+            "name": "hosted-browser-proof",
+            "path": "hosted/delivery-viewer/test-results/",
+            "if-no-files-found": "ignore"
+          }
+        }
+      ]
+    }
+  }
+}

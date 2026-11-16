@@ -37,6 +37,8 @@ CATALOGUE_MODULES = (
     "validate", "workflow_graph_contract", "workflow_observation", "workflows",
 )
 CATALOGUE_IDS = tuple("tests.test_" + name for name in CATALOGUE_MODULES)
+SERVICE_IDS = ('hosted.install', 'hosted.typecheck', 'hosted.build', 'hosted.test',
+               'hosted.browser-install', 'hosted.browser')
 GUARDS = ["tests.test_linear_qualification", "tests.test_registry"]
 # Modules that run as scripts, holding no unittest case.
 SCRIPT_MODULES = ("tests.test_registry",)
@@ -353,8 +355,8 @@ class StandingBinding(unittest.TestCase):
         selection = binding["selection"]
         self.assertTrue(selection["lead"])
         catalogue = selection["catalogue"]
-        self.assertEqual([entry["id"] for entry in catalogue], list(CATALOGUE_IDS))
-        for entry in catalogue:
+        self.assertEqual([entry["id"] for entry in catalogue], [*CATALOGUE_IDS,*SERVICE_IDS])
+        for entry in catalogue[:len(CATALOGUE_IDS)]:
             # Each id is a test module that exists, run on its own through the worktree's environment.
             module = entry["id"]
             source = ROOT / (module.replace(".", "/") + ".py")
@@ -374,7 +376,7 @@ class StandingBinding(unittest.TestCase):
             self.assertLessEqual(entry["timeoutSeconds"], binding["checkTimeoutCeiling"], module)
             self.assertTrue(entry["reasons"], module)
         self.assertEqual(selection["guards"], GUARDS)
-        self.assertEqual(selection["readers"], [{"paths": ["skills/delivery-views/scripts/snapshot.py"],
+        self.assertEqual(selection["readers"][:2], [{"paths": ["skills/delivery-views/scripts/snapshot.py"],
                                                  "checks": ["tests.test_delivery_views_adopter",
                                                             "tests.test_delivery_views_snapshots"]},
                                                 {"paths": ["docs/solutions/**"],
@@ -475,7 +477,7 @@ class StandingBinding(unittest.TestCase):
         self.assertIn(f"Two guards join every selection, named or not: `{first}`,", section)
         self.assertIn(f"and `{second}`.", section)
         self.assertEqual(len(selection["guards"]), 2)
-        snapshot, notes = selection["readers"]
+        snapshot, notes = selection["readers"][:2]
         (path,) = snapshot["paths"]
         adopter, snapshots = snapshot["checks"]
         self.assertIn(f"A change to `{path}` also brings `{adopter}` and `{snapshots}`,", section)
@@ -648,6 +650,69 @@ class LeadChoosesChecksAtAcceptance(unittest.TestCase):
         # The selection is made at acceptance, not by a separate call to the state tool.
         self.assertNotIn(" select --subject", section)
         self.assertNotIn("With no selection the queue runs the whole suite.", section)
+
+
+
+class HostedServiceBoundaryTests(unittest.TestCase):
+    def test_service_ci_and_catalogue_keep_dependencies_in_the_service(self):
+        workflow=json.loads((ROOT/'.github/workflows/hosted-delivery-viewer.yml').read_text())
+        self.assertEqual(workflow['permissions'],{'contents':'read'})
+        self.assertEqual(workflow['on']['push']['branches'],['main','integrate/hosted-deliveries'])
+        required=['hosted/delivery-viewer/**','skills/delivery-views/assets/**',
+                  'skills/delivery-views/scripts/render.py',
+                  'skills/delivery-views/references/hosted-snapshot.schema.json',
+                  'tests/fixtures/delivery-views/hosted/**','.github/workflows/hosted-delivery-viewer.yml']
+        for event in ('push','pull_request'):
+            self.assertEqual(workflow['on'][event]['paths'],required)
+        job=workflow['jobs']['service']
+        self.assertEqual(job['defaults']['run']['working-directory'],'hosted/delivery-viewer')
+        self.assertEqual([step['with']['node-version'] for step in job['steps'] if step.get('uses','').startswith('actions/setup-node@')],['22.23.5'])
+        commands=[step['run'] for step in job['steps'] if 'run' in step]
+        self.assertEqual(commands,['npm ci --ignore-scripts --no-audit --no-fund --engine-strict',
+                                   'npm run typecheck','npm run build','npm test',
+                                   'npx playwright install --with-deps chromium','npm run test:browser'])
+        self.assertNotIn('deploy', ' '.join(commands))
+        binding=json.loads((ROOT/'.agents/orchestration.json').read_text())
+        rows={entry['id']:entry for entry in binding['selection']['catalogue']}
+        for key in SERVICE_IDS:self.assertEqual(rows[key]['cwd'],'hosted/delivery-viewer')
+        self.assertEqual(rows['hosted.install']['argv'],commands[0].split())
+        self.assertEqual(rows['hosted.typecheck']['prerequisites'],['hosted.install'])
+        self.assertEqual(rows['hosted.build']['prerequisites'],['hosted.install'])
+        self.assertEqual(rows['hosted.test']['prerequisites'],['hosted.install'])
+        self.assertEqual(rows['hosted.browser-install']['argv'],['npx','playwright','install','chromium'])
+        self.assertEqual(rows['hosted.browser']['prerequisites'],['hosted.build','hosted.browser-install'])
+        for path in required:
+            matched=[entry for entry in binding['selection']['readers'] if path in entry['paths']]
+            self.assertTrue(any(entry['checks']==list(SERVICE_IDS) for entry in matched),path)
+        root=json.loads((ROOT/'package.json').read_text())
+        self.assertNotIn('wrangler',root.get('devDependencies',{}))
+        self.assertNotIn('playwright',root.get('devDependencies',{}))
+
+    def test_service_readers_resolve_dependencies_without_loading_service_for_other_changes(self):
+        tool=_generation_module('hosted_selection',STATE_TOOL)
+        binding=json.loads((ROOT/'.agents/orchestration.json').read_text())
+        for changed in ('hosted/delivery-viewer/src/worker.ts','skills/delivery-views/assets/line-map.js',
+                        'skills/delivery-views/scripts/render.py',
+                        'skills/delivery-views/references/hosted-snapshot.schema.json',
+                        'tests/fixtures/delivery-views/hosted/valid-plan-review.json',
+                        '.github/workflows/hosted-delivery-viewer.yml','docs/own-deliveries.md'):
+            with self.subTest(changed=changed):
+                checks,_=tool.resolve_selection([],binding,lambda:[changed])
+                ids={row['id'] for row in checks}
+                self.assertEqual(set(SERVICE_IDS).issubset(ids),changed!='docs/own-deliveries.md')
+                for row in checks:self.assertLessEqual(set(row['prerequisites']),ids)
+
+    def test_nonsecret_production_config_is_exact_and_live_proof_stays_separate(self):
+        config=json.loads((ROOT/'hosted/delivery-viewer/wrangler.jsonc').read_text())
+        self.assertEqual(config['routes'],[{'pattern':'deliveries.v26technologies.com','custom_domain':True}])
+        self.assertFalse(config['workers_dev']);self.assertFalse(config['preview_urls'])
+        self.assertFalse(config['observability']['enabled'])
+        self.assertNotIn('vars',config)
+        doc=(ROOT/'docs/hosted-deliveries.md').read_text()
+        for phrase in ('Published candidate','Exact deployed bytes','No live proof is claimed',
+                       'npx wrangler secret put PUBLISHERS','npx wrangler deploy',
+                       'same commit','two repositories','disconnect','catch-up'):
+            self.assertIn(phrase,doc)
 
 
 if __name__ == "__main__":

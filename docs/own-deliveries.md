@@ -286,3 +286,24 @@ python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py doc
 ```
 
 Fix the first line that isn't `ok` and run it again, until it exits 0.
+
+## Hosted service verification
+
+The deployable service has its own locked package and CI workflow, described in
+[hosted deliveries](hosted-deliveries.md). Shared schema, trusted assets/theme
+source and hosted fixture changes select the service checks through binding
+readers. The catalogue IDs are `hosted.install`, `hosted.typecheck`, `hosted.build`,
+`hosted.test`, `hosted.browser-install` and `hosted.browser`; their dependencies
+keep service installation out of unrelated Python checks. Use supported Node
+22.22.2+ or 24.15+ on the merge runner's PATH, and install Chromium's operating
+system prerequisites there. The separate Ubuntu service CI installs them itself.
+The lead must verify its exact main-push result alongside corpus Ubuntu and
+cut-release before publishing a candidate or deploying. An absent/red service
+job is not replaced by a green corpus job. The lead owns the budgeted macOS
+Python 3.11 full suite; packaging lanes run only focused checks.
+
+Installed-archive qualification from local builds is not published-candidate
+adoption. Record the authenticated released archive and active receipt separately
+from service build/deployment/asset identities, and leave actual remote acceptance
+open through the live scenarios. See the hosted guide for reviewed production
+configuration and the candidate/final sequence.
