@@ -102,6 +102,30 @@ class TerminalTests(unittest.TestCase):
             hosted.request_terminal(self.live,self.archive,self.archives,10,self.document,timeout=0)
             self.assertEqual((self.archive/hosted.TERMINAL).read_bytes(),accepted)
         self.assertFalse(list(self.archive.glob(hosted.TERMINAL_NOTICE_PREFIX+'*.json')))
+    def test_delayed_first_request_cannot_replace_a_newly_acknowledged_archive_cut(self):
+        (self.live/'state.json').write_text(json.dumps(self.document['state']))
+        (self.live/'journal.jsonl').write_text(json.dumps(self.document['journal'][0])+'\n')
+        paused=threading.Event();release=threading.Event();errors=[];original=hosted.atomic
+        def atomic(path,value,**kwargs):
+            if path==self.archive/hosted.TERMINAL and threading.current_thread().name=='delayed-close':
+                paused.set()
+                if not release.wait(5):raise AssertionError('close release missing')
+            return original(path,value,**kwargs)
+        def close():
+            try:hosted.request_terminal(self.live,self.archive,self.archives,10,self.document,timeout=0)
+            except Exception as error:errors.append(error)
+        with hosted.lock(self.live/hosted.CONTROL),mock.patch.object(hosted,'atomic',side_effect=atomic):
+            thread=threading.Thread(name='delayed-close',target=close);thread.start()
+            try:
+                self.assertTrue(paused.wait(3))
+                result=hosted.terminal_step(self.publisher,lambda:self.payload(),self.archives)
+                self.assertEqual(result['state'],'final-published')
+                accepted=(self.archive/hosted.TERMINAL).read_bytes()
+                self.assertEqual(hosted.archive_status(self.archive)['state'],'final-published')
+            finally:release.set();thread.join(5)
+        self.assertFalse(thread.is_alive());self.assertEqual(errors,[])
+        self.assertEqual((self.archive/hosted.TERMINAL).read_bytes(),accepted)
+        self.assertEqual(hosted.archive_status(self.archive)['state'],'final-published')
     def test_corrupt_notification_is_not_absence_and_unselected_notices_are_ignored(self):
         (self.live/'state.json').write_text(json.dumps(self.document['state']))
         (self.live/'journal.jsonl').write_text(json.dumps(self.document['journal'][0])+'\n')
