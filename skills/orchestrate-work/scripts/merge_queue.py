@@ -827,6 +827,12 @@ class Member:
     tree: str
 
 
+def breaks_since_repair(journal: list[dict]) -> list[dict]:
+    """The base.broken entries journaled since the last base.repaired, oldest first."""
+    since = max((entry["id"] for entry in journal if entry["kind"] == "base.repaired"), default=0)
+    return [entry for entry in journal if entry["id"] > since and entry["kind"] == "base.broken"]
+
+
 class Runner:
     """One runner invocation against one repository.
 
@@ -1268,10 +1274,8 @@ class Runner:
 
     def standing_breaks(self, head: str) -> list[int]:
         """The base_broken breaks journaled at ``head`` since the base was last repaired, oldest first."""
-        journal = delivery_state.read_journal(self.state_directory)
-        since = max((entry["id"] for entry in journal if entry["kind"] == "base.repaired"), default=0)
-        return [entry["id"] for entry in journal if entry["id"] > since and entry["kind"] == "base.broken"
-                and entry.get("data", {}).get("reason") == "base_broken" and entry["data"].get("head") == head]
+        return [entry["id"] for entry in breaks_since_repair(delivery_state.read_journal(self.state_directory))
+                if entry.get("data", {}).get("reason") == "base_broken" and entry["data"].get("head") == head]
 
     def cause(self, stop: Stop, subject: str | None) -> list[int]:
         """What a stop names as its cause: the failed checks when one failed, the break when the base broke, else nothing."""
@@ -2735,9 +2739,10 @@ class Runner:
         journal = delivery_state.read_journal(self.state_directory)
         if item.get("repair") and delivery_state.base_awaits_repair(journal):
             # The named repair landed: the base is repaired, which clears the mark and puts back what the break stopped.
-            standing = next(entry["id"] for entry in reversed(journal) if entry["kind"] == "base.broken")
+            # It answers every break since the last repair, so each setback they make closes here.
             self.journal("base.repaired", f"{subject}, the named repair, merged at {merged}", subject,
-                         data={"source": "queue", "head": merged, "repair": subject}, answers=[standing])
+                         data={"source": "queue", "head": merged, "repair": subject},
+                         answers=[entry["id"] for entry in breaks_since_repair(journal)])
         result.outcome = "merged"
 
     def review_gate(self, subject: str, synced: str, anchor: Path, context: Context) -> None:

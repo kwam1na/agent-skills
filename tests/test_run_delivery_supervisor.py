@@ -2643,7 +2643,15 @@ class SupervisorPassTests(unittest.TestCase):
         self.holds_alone(fx, "Serving is held: the base broke")
         runner = [item for item in passes(fx)[-1]["needsYou"] if "Serving is held" in item["text"]]
         self.assertTrue(runner and runner[0]["clears"].startswith("the runner's hold clearing"), runner)
-        state_tool(fx, "journal", "--kind", "base.repaired", "--summary", "repaired")
+        state_tool(fx, "journal", "--kind", "base.repaired", "--data", json.dumps({"source": "lead", "head": "a" * 40}))
+        self.assertFalse(any("Serving is held" in h for h in self.once(fx)["closeHeldBy"]))
+        # Resolved by the lead, as its needsYou item offers, with the hold still set and no repair after it.
+        self.assertTrue(record(fx)["state"]["meta"]["hold"])
+        held_by_the_queue(fx, "Serving is held: the base broke again.")
+        hold = kinds(fx, "serving.held")[-1]["id"]
+        self.assertTrue(any("Serving is held: the base broke again" in h for h in self.once(fx)["closeHeldBy"]))
+        code, out = fx.flow("lead-resolve", str(hold), "--why", "set up by hand", cwd=fx.main)
+        self.assertEqual(code, 0, out)
         self.assertFalse(any("Serving is held" in h for h in self.once(fx)["closeHeldBy"]))
 
     def test_a_merge_step_that_refuses_drafts_needs_the_grant(self) -> None:
@@ -2982,13 +2990,14 @@ class SupervisorPassTests(unittest.TestCase):
                 changes.write(json.dumps({"type": "change", "id": "c1", "kind": "removed", "subjects": ["FX-3"],
                                           "by": "lead", "why": "Out of scope.", "at": "2026-01-01T00:00:00Z"}) + "\n")
         # A lane's blocker holds it until lead-resolve resolves it.
-        state_tool(fx, "journal", "--kind", "blocker.recorded", "--summary", "the API is down")
+        state_tool(fx, "journal", "--kind", "blocker.recorded", "--data", json.dumps({"text": "the API is down"}))
         blocker = kinds(fx, "blocker.recorded")[-1]["id"]
         held = self.holds(fx)
         self.assertTrue(any(h.startswith(f"Blocker {blocker}") for h in held), held)
         # Only the runner's own blocker clears with its hold or base.repaired; this one clears with lead-resolve alone.
         mine = [item for item in passes(fx)[-1]["needsYou"] if item["text"].startswith(f"Blocker {blocker}")]
         self.assertEqual(len(mine), 1, passes(fx)[-1]["needsYou"])
+        self.assertIn("the API is down", mine[0]["text"])
         self.assertTrue(mine[0]["clears"].endswith(f"lead-resolve {blocker} --why TEXT"), mine)
         self.assertNotIn("runner's hold", mine[0]["clears"])
         self.assertFalse(any(h.startswith("not handed off") for h in held), held)

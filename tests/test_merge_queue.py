@@ -62,6 +62,7 @@ def _load(name: str):
 
 state_tool = _load("delivery_state")
 queue = _load("merge_queue")
+narrator = _load("narrator")
 
 
 # The fixture adopter's tools. Each is a small script committed to the base.
@@ -4742,14 +4743,19 @@ class BaseRepairTests(MergeQueueTestCase):
         started = [(entry["subject"], entry["id"]) for entry in later if entry["kind"] == "check.started"]
         [repaired] = self.journal(adopter, "base.repaired")
         self.assertEqual(repaired["subject"], "repair")
-        # The repair's merge answers the break standing when it landed.
+        # The repair's merge answers every break standing when it landed, oldest first: one setback, closed there.
         run("fetch", "--quiet", "origin", cwd=adopter.lane)
         tree = run("rev-parse", f"{adopter.item('repair')['syncedHead']}^{{tree}}", cwd=adopter.lane)
         merged = next(commit for commit in run("rev-list", "--first-parent", "origin/main", cwd=adopter.lane).split()
                       if run("rev-parse", f"{commit}^{{tree}}", cwd=adopter.lane) == tree)
-        standing = [entry for entry in self.journal(adopter, "base.broken") if entry["id"] < repaired["id"]][-1]
+        standing = [entry for entry in self.journal(adopter, "base.broken") if entry["id"] < repaired["id"]]
+        self.assertEqual([entry["subject"] for entry in standing], ["earlier", "first", "second"])
         self.assertFacts(repaired, "base.repaired", {"source": "queue", "head": merged, "repair": "repair"},
-                         answers=[standing])
+                         answers=standing)
+        threads = narrator.narrate(state_tool.read_journal(adopter.state))["threads"]
+        broken = {entry["id"] for entry in standing}
+        self.assertEqual([(thread["state"], thread["closing"]) for thread in threads if thread["opening"] in broken],
+                         [("closed", repaired["id"])])
         # The repair ran first and alone: nothing else started before its merge repaired the base.
         self.assertEqual(started[0][0], "repair")
         self.assertTrue(all(at > repaired["id"] for subject, at in started if subject != "repair"), started)
@@ -4859,6 +4865,13 @@ class BaseRepairTests(MergeQueueTestCase):
                 "base.broken", f"merged_unverified: main at {other} is not the checked tree on top of {broke}", None))
         state_tool.append_journal(adopter.state, kind="base.repaired", data={"source": "lead", "head": other})
         self.assertEqual(adopter.item("c")["stage"], "queued")
+        if facts:
+            # A break at the same head after the repair finds none standing: the repaired one closed with it.
+            runner = adopter.runner()
+            self.assertEqual(runner.standing_breaks(broke), [])
+            again = state_tool.append_journal(adopter.state, kind="base.broken", subject="c", data={
+                "source": "queue", "reason": "base_broken", "detail": detail, "head": broke})["id"]
+            self.assertEqual(runner.standing_breaks(broke), [again])
 
     def test_the_repair_command_names_and_withdraws_on_the_command_line(self) -> None:
         adopter = self.adopter()
