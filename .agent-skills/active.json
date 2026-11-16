@@ -136,7 +136,7 @@
     },
     {
       "path": "catalog.json",
-      "sha256": "c9c53b68ecde0ecd32e6d75a6944ec336146ae3783c09fd7df4ab0d8d848102a"
+      "sha256": "109b0034e6ddf26cc671b111351c04ec9081e465d5394907ac5e87fe0294d795"
     },
     {
       "path": "docs/agent-skills-provider.md",
@@ -232,23 +232,23 @@
     },
     {
       "path": "profiles/delivery-views.json",
-      "sha256": "97321942b7569e7f5d734da80ff609ac7bc564e0abe8930c6a59614953108d4e"
+      "sha256": "4afd7e5b3e0817c388ccaad5c9676b6c2b1b2cca72ccdc3d7fc87f39b11fc6db"
     },
     {
       "path": "profiles/linear.json",
-      "sha256": "3e5596061647dc47b65f9695a5605fb277de80cb9b1a2310c0ec529bc878f30b"
+      "sha256": "6332cd2caef09d4d0141c321fb94ccc1d5064e2ceffc08c0e50d08667f02a9fe"
     },
     {
       "path": "profiles/run-delivery.json",
-      "sha256": "3f51f0a0316b68b186b24cf26bfef14bb9a840c5c0a39ab614c8393329b1a1f9"
+      "sha256": "32ce5f9a732c1228060d7a3233ceeba23cf7f383d01c6afafc27243f70709901"
     },
     {
       "path": "provenance.lock.json",
-      "sha256": "34a9f835e37202f12ccf7a21008887ea1ae8a40c98072f1f2b25afc5340a3c91"
+      "sha256": "2c9b0d15072ff7619f921143ae4145709fbd97c4cdb162b26e21118cca84728d"
     },
     {
       "path": "release-manifest.json",
-      "sha256": "9ebe0d7b89d02ba974a8321d39d34f0ac8ca5b5530629c8692f0306002ee4761"
+      "sha256": "6eaa2ae96a68933182a2dfb8e2a5ba983bd2aca9c025f7db866c438954902600"
     },
     {
       "path": "runtime/LICENSE",
@@ -292,7 +292,7 @@
     },
     {
       "path": "runtime/runtime.json",
-      "sha256": "81b68746dc61de0c143fc69beb585322a15a31abeda8aa7f6da2dc0e7f86f92a"
+      "sha256": "254ba0d2081204ed5a7f0abf8d55a73a415a9b99b4a77306a72f28a63f902f40"
     },
     {
       "path": "schemas/catalog.schema.json",
@@ -368,7 +368,7 @@
     },
     {
       "path": "skills/delivery-views/SKILL.md",
-      "sha256": "7ba5a6bc1f2ecd7254e9f07ffffd8d3aa838a01eed81a2cdaaf6b4256d911bbb"
+      "sha256": "756b2c770e73d4f4213c672b809b290cf9fbd2dc19e2d705a46d5ff887d21860"
     },
     {
       "path": "skills/delivery-views/assets/history.css",
@@ -408,7 +408,7 @@
     },
     {
       "path": "skills/delivery-views/scripts/public_projection.py",
-      "sha256": "9b6a0d9067c760ed449462467837fc804464559960155b926e57d2dec6e5ac2a"
+      "sha256": "51791c095e3fb6ade264934e31b0964f20605b07f066d2c753dae11f46f6c9cd"
     },
     {
       "path": "skills/delivery-views/scripts/render.py",
@@ -655,7 +655,7 @@
       "sha256": "49630e23374f0375cb7d019ea024bcd5ea0c284feb8dc124b393b60f6e8d9aa7"
     }
   ],
-  "generation": "1ea6f84cf44dd40f0c4bb242dabcfbafa2ba673f3dd028dfcc5558552ba95f96",
+  "generation": "85766f57568c0db1588b0f8a90441cac7a3b71a671c668acca866a8afcfaa331",
   "hooks": {
     "created": true,
     "events": [
@@ -785,7 +785,7 @@
       },
       {
         "path": "catalog.json",
-        "sha256": "c9c53b68ecde0ecd32e6d75a6944ec336146ae3783c09fd7df4ab0d8d848102a"
+        "sha256": "109b0034e6ddf26cc671b111351c04ec9081e465d5394907ac5e87fe0294d795"
       },
       {
         "path": "docs/agent-skills-provider.md",
@@ -881,23 +881,23 @@
       },
       {
         "path": "profiles/delivery-views.json",
-        "sha256": "97321942b7569e7f5d734da80ff609ac7bc564e0abe8930c6a59614953108d4e"
+        "sha256": "4afd7e5b3e0817c388ccaad5c9676b6c2b1b2cca72ccdc3d7fc87f39b11fc6db"
       },
       {
         "path": "profiles/linear.json",
-        "sha256": "3e5596061647dc47b65f9695a5605fb277de80cb9b1a2310c0ec529bc878f30b"
+        "sha256": "6332cd2caef09d4d0141c321fb94ccc1d5064e2ceffc08c0e50d08667f02a9fe"
       },
       {
         "path": "profiles/run-delivery.json",
-        "sha256": "3f51f0a0316b68b186b24cf26bfef14bb9a840c5c0a39ab614c8393329b1a1f9"
+        "sha256": "32ce5f9a732c1228060d7a3233ceeba23cf7f383d01c6afafc27243f70709901"
       },
       {
         "path": "provenance.lock.json",
-        "sha256": "34a9f835e37202f12ccf7a21008887ea1ae8a40c98072f1f2b25afc5340a3c91"
+        "sha256": "2c9b0d15072ff7619f921143ae4145709fbd97c4cdb162b26e21118cca84728d"
       },
       {
         "path": "release-manifest.json",
-        "sha256": "9cf906b979d59968c7e390140a855eb44dd24b933b2a26819e4a210b33e53c9a"
+        "sha256": "ff7473ecd9bd56260b122ea8153fa5ea070cbc7a9d9013151ca16a1a211c0848"
       },
       {
         "path": "runtime/LICENSE",
@@ -941,7 +941,7 @@
       },
       {
         "path": "runtime/runtime.json",
-        "sha256": "81b68746dc61de0c143fc69beb585322a15a31abeda8aa7f6da2dc0e7f86f92a"
+        "sha256": "254ba0d2081204ed5a7f0abf8d55a73a415a9b99b4a77306a72f28a63f902f40"
       },
       {
         "path": "schemas/catalog.schema.json",
@@ -1017,7 +1017,7 @@
       },
       {
         "path": "skills/delivery-views/SKILL.md",
-        "sha256": "7ba5a6bc1f2ecd7254e9f07ffffd8d3aa838a01eed81a2cdaaf6b4256d911bbb"
+        "sha256": "756b2c770e73d4f4213c672b809b290cf9fbd2dc19e2d705a46d5ff887d21860"
       },
       {
         "path": "skills/delivery-views/assets/history.css",
@@ -1057,7 +1057,7 @@
       },
       {
         "path": "skills/delivery-views/scripts/public_projection.py",
-        "sha256": "9b6a0d9067c760ed449462467837fc804464559960155b926e57d2dec6e5ac2a"
+        "sha256": "51791c095e3fb6ade264934e31b0964f20605b07f066d2c753dae11f46f6c9cd"
       },
       {
         "path": "skills/delivery-views/scripts/render.py",
@@ -1304,19 +1304,19 @@
         "sha256": "49630e23374f0375cb7d019ea024bcd5ea0c284feb8dc124b393b60f6e8d9aa7"
       }
     ],
-    "generation": "781dcb94ef83d3fdd50a843a573179c820b9b1ee4f9ecc59bd2b56d22549c33f",
+    "generation": "a1d890352faecaaf8cfc8813b6246154c40c4577cb2d642e0cd9c45d6ffd09f4",
     "release": {
-      "archiveSha256": "781dcb94ef83d3fdd50a843a573179c820b9b1ee4f9ecc59bd2b56d22549c33f",
-      "metadataSha256": "436232b6f6a63eac32145f31c714cd499d3cc1dc3ee1fdaf4aeacde50a1a3ffa",
+      "archiveSha256": "a1d890352faecaaf8cfc8813b6246154c40c4577cb2d642e0cd9c45d6ffd09f4",
+      "metadataSha256": "b97c4f5333099ab0457c48c10a26dcee72a2674446f86c9202df6f49b6153cb4",
       "profile": "linear",
-      "releaseId": "linear-v2.5.1-rc.1"
+      "releaseId": "linear-v2.5.2-rc.1"
     }
   },
   "release": {
-    "archiveSha256": "1ea6f84cf44dd40f0c4bb242dabcfbafa2ba673f3dd028dfcc5558552ba95f96",
-    "metadataSha256": "e9bd0b37c22272133b2e369f2ff88ee61a57086dd767ea1681dd67200aea7a48",
+    "archiveSha256": "85766f57568c0db1588b0f8a90441cac7a3b71a671c668acca866a8afcfaa331",
+    "metadataSha256": "af79f473a9da4c62755f61199ef7255bf0c906e4ad4bd476d880a62cc1fdcf94",
     "profile": "linear",
-    "releaseId": "linear-v2.5.1"
+    "releaseId": "linear-v2.5.2"
   },
   "schemaVersion": "agent-skills-receipt/1"
 }
