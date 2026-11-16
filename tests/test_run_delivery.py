@@ -10361,7 +10361,7 @@ class LaneStartAndReadinessTests(unittest.TestCase):
 # set in the test runner's own environment would point the fixtures' commands somewhere other than the fixture.
 TOOL_SETTINGS = ("DELIVERY_STATE", "RUN_DELIVERY_BASE", "RUN_DELIVERY_SUPERVISOR", "RUN_DELIVERY_LIVE_PORT",
                  "RUN_DELIVERY_CONFIG", "DELIVERY_FLOW_CONFIG", "RUN_DELIVERY_DELIVERY", "DELIVERY_FLOW_DELIVERY", "RUN_DELIVERY_LOCAL",
-                 "DELIVERY_FLOW_LOCAL", "RUN_DELIVERY_CLOCK")
+                 "DELIVERY_FLOW_LOCAL", "RUN_DELIVERY_CLOCK", "RUN_DELIVERY_HOSTED_FD")
 PLANTED_KEY = "PLANTED-9"
 PLANTED_MARKER = "planted-live-delivery-7f3c"
 
@@ -10462,7 +10462,8 @@ class LiveDeliveryOutOfReachTests(unittest.TestCase):
                     "DELIVERY_FLOW_CONFIG": str(main / ".agents/run-delivery.json"),
                     "RUN_DELIVERY_DELIVERY": PLANTED_KEY, "DELIVERY_FLOW_DELIVERY": PLANTED_KEY,
                     "RUN_DELIVERY_LOCAL": "1", "DELIVERY_FLOW_LOCAL": "1", "RUN_DELIVERY_SUPERVISOR": "on",
-                    "RUN_DELIVERY_LIVE_PORT": "0", "RUN_DELIVERY_CLOCK": str(live / "clock.json")}
+                    "RUN_DELIVERY_LIVE_PORT": "0", "RUN_DELIVERY_CLOCK": str(live / "clock.json"),
+                    "RUN_DELIVERY_HOSTED_FD": PLANTED_MARKER}
         (live / "clock.json").write_text(json.dumps({"now": 0, "poll": 0}))  # a clock no case's wait may read
         self.assertEqual(set(settings), set(TOOL_SETTINGS))
         return main, worktree, settings
