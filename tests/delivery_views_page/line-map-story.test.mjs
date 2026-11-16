@@ -171,6 +171,10 @@ test("a run of bookkeeping is the one run that folds, and opened lists each entr
   const [, , opened] = await open(document, { steps: [{ click: '#happened [data-depth="everything"]' }, { click: `${row} summary` }] });
   expect([...opened.app.querySelectorAll(`${row} .beat-items li`)].map((line) => line.textContent)).toEqual(
     run.items.map((each) => each.words.head + (each.words.line ? " " + each.words.line : "")));
+  // Its facts are headed by each entry's own words, not the run's.
+  const heads = [...opened.app.querySelectorAll(`${row} .beat-entry-head`)].map((head) => head.textContent);
+  expect(heads.length).toBe(run.items.length);
+  heads.forEach((head, index) => expect(head.startsWith(run.items[index].words.head + " · ")).toBe(true));
   // Everything else shows its words in full, with nothing to open to read them.
   const lines = [...opened.app.querySelectorAll("#happened .beat:not(.setback) .beat-said")];
   expect(lines.length).toBeGreaterThan(1);
