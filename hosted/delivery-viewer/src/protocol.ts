@@ -70,11 +70,30 @@ export function parse(bytes: Uint8Array): unknown {
 // Keep the local-reference boundary aligned with public_projection.py, including option assignments.
 const localPath = /(?:file:\/\/|(?:^|[\s\x21-\x2f\x3a-\x40\x5b-\x60\x7b-\x7e“”‘’])(?:\/[A-Za-z0-9_.-]+\/|[A-Za-z]:[\\/]|\\\\|~[/\\]|\.{1,2}[/\\]|(?:\.?agents|\.agent-skills|\.orchestration|docs|scripts|skills|tests)[/\\]))/;
 function hasLocalPath(value: string): boolean {
-  const prose = value.replace(/https:\/\/(?!\/)[^\s<>"'`“”‘’\\]+/gi, token => {
+  const starts = /https:\/\/(?!\/)/gi;
+  const closing: Record<string, string> = { ')': '(', ']': '[', '}': '{' };
+  const pieces: string[] = []; let position = 0;
+  let match: RegExpExecArray | null;
+  while ((match = starts.exec(value)) !== null) {
+    let end = starts.lastIndex; const stack: string[] = [];
+    // An unmatched closing wrapper ends this URL; its suffix remains prose.
+    while (end < value.length) {
+      const character = value[end];
+      if (/[\s<>"'`“”‘’\\]/.test(character)) break;
+      if ('([{'.includes(character)) stack.push(character);
+      else if (character in closing) {
+        if (stack.at(-1) !== closing[character]) break;
+        stack.pop();
+      }
+      end++;
+    }
+    const token = value.slice(match.index, end);
     const unwrapped = token.replace(/[\x21-\x2f\x3a-\x40\x5b-\x60\x7b-\x7e“”‘’]+$/, '');
-    return safeUrl(token) || safeUrl(unwrapped) ? ' ' : token;
-  });
-  return localPath.test(prose);
+    pieces.push(value.slice(position, match.index), safeUrl(token) || safeUrl(unwrapped) ? ' ' : token);
+    position = end; starts.lastIndex = end;
+  }
+  pieces.push(value.slice(position));
+  return localPath.test(pieces.join(''));
 }
 const credentialKey = /^(?:password|token|secret|api[_-]?key|credential|authorization|cookie)$/i;
 function scan(value: unknown): void {

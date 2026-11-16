@@ -32,16 +32,33 @@ MAX_SOURCE_BYTES = 128 * 1024 * 1024
 # Option assignments use the same local-reference boundary as quoted prose.
 # Explicit relative paths are local too; validated HTTPS tokens are handled below.
 LOCAL_PATH = re.compile(r'(?:file://|(?:^|[\s\x21-\x2f\x3a-\x40\x5b-\x60\x7b-\x7e“”‘’])(?:/[A-Za-z0-9_.-]+/|[A-Za-z]:[\\/]|\\\\|~[/\\]|\.{1,2}[/\\]|(?:\.?agents|\.agent-skills|\.orchestration|docs|scripts|skills|tests)[/\\]))')
+HTTPS_START = re.compile(r'https://(?!/)', re.I)
+
+
 def _has_local_path(text):
     # HTTPS path components may themselves contain punctuation and names such as
     # docs/. They are public URL tokens, not local references. Secret scans still
     # inspect the original text independently.
-    def public_url(match):
-        token = match.group()
+    pieces=[];position=0
+    closing={')':'(',']':'[','}':'{'}
+    while match:=HTTPS_START.search(text,position):
+        end=match.end();stack=[]
+        # A URL can contain balanced punctuation, but an unmatched closing
+        # wrapper ends its span. Resume there so adjacent prose is still scanned.
+        while end<len(text):
+            character=text[end]
+            if character.isspace() or character in '<>"\'`“”‘’\\':break
+            if character in '([{':stack.append(character)
+            elif character in closing:
+                if not stack or stack[-1]!=closing[character]:break
+                stack.pop()
+            end+=1
+        token=text[match.start():end]
         unwrapped = re.sub(r'[\x21-\x2f\x3a-\x40\x5b-\x60\x7b-\x7e“”‘’]+$', '', token)
-        return ' ' if _url(token) or _url(unwrapped) else token
-    prose = re.sub(r'https://(?!/)[^\s<>"\'`“”‘’\\]+', public_url, text, flags=re.I)
-    return LOCAL_PATH.search(prose) is not None
+        pieces.extend((text[position:match.start()],' ' if _url(token) or _url(unwrapped) else token))
+        position=end
+    pieces.append(text[position:])
+    return LOCAL_PATH.search(''.join(pieces)) is not None
 
 
 CREDENTIAL_KEY = re.compile(r'^(?:password|token|secret|api[_-]?key|credential|authorization|cookie)$', re.I)

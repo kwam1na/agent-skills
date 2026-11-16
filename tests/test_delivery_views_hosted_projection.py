@@ -104,6 +104,12 @@ class ProjectionTests(unittest.TestCase):
         Draft202012Validator(public.SCHEMA).validate(value);public.validate(value)
         expected=json.loads((FIXTURES/'valid-omitted-workflow-prose.json').read_text())
         self.assertEqual(value,expected)
+        plan['plan']['approved']['review']='https://example.com/public_docs/review'
+        linked=public.project(doc,{},config(),source_fingerprint='1'*64,plan=plan)
+        self.assertEqual(linked['plan']['plan']['approved']['review'],'https://example.com/public_docs/review')
+        plan['plan']['approved']['review']='docs/private-review.md'
+        private=public.project(doc,{},config(),source_fingerprint='1'*64,plan=plan)
+        self.assertNotIn('review',private['plan']['plan']['approved'])
         doc['journal'][0]['summary']='KNOWN-CANARY in /tmp/run'
         with self.assertRaisesRegex(public.ProjectionError,'snapshot.configured_secret'):
             public.project(doc,{},config(),source_fingerprint='1'*64,plan=plan,secret_values=['KNOWN-CANARY'])
@@ -239,6 +245,34 @@ class ProjectionTests(unittest.TestCase):
         value['needs']['items'][0]['text'] = needs['items'][0]['text']
         with self.assertRaisesRegex(public.ProjectionError, '^snapshot.configured_secret$'):
             public.validate(value, secret_values=['KNOWN-CANARY'])
+
+    def test_completed_url_wrappers_leave_adjoining_local_prose_visible(self):
+        doc, _ = source()
+        private = ['[public](https://example.com/public_docs/file)/Users/operator/private/wait.json',
+                   '[public](https://example.com/public_docs/file)docs/private-plan.md',
+                   '(https://example.com/public_docs/file)/Users/operator/private/wait.json',
+                   '[public](https://example.com/public_docs/file)[docs/private-plan.md]',
+                   '[public](https://example.com/public_docs/file){docs/private-plan.md}',
+                   '[public](https://example.com/public_docs/file)**/Users/operator/private/wait.json**',
+                   '[public](https://example.com/(nested/(docs/file)))/Users/operator/private/wait.json',
+                   '[public](https://example.com/public_docs/file)_docs/private-plan.md_',
+                   '[public](https://example.com/public_docs/file)~~docs/private-plan.md~~']
+        benign = ['[public](https://example.com/public_docs/file)', '(https://example.com/public_docs/file)',
+                  'https://example.com/(docs/file)', 'https://example.com/(outer/(docs/file))',
+                  '[public](https://example.com/(outer/(docs/file)))', 'https://example.com/docs/file;more',
+                  'https://example.com/docs/file,more', '(https://example.com/docs/file)(https://example.com/docs/next)',
+                  '[public](https://example.com/public_docs/file)ready', 'https://[::1]/docs/file']
+        for text in private + benign:
+            with self.subTest(text=text):
+                needs = {'running': True, 'at': '2026-11-15T00:00:00Z', 'staleAfter': '2026-11-15T00:02:00Z',
+                         'items': [{'holding': False, 'source': 'listener', 'text': text, 'clears': 'listener restored'}]}
+                value = public.project(doc, {}, config(), source_fingerprint='1' * 64, needs=needs)
+                self.assertEqual(value['needs']['items'][0]['text'], public.OMITTED_LOCAL_REFERENCE if text in private else text)
+                self.assertEqual(needs['items'][0]['text'], text)
+                value['needs']['items'][0]['text'] = text
+                if text in private:
+                    with self.assertRaisesRegex(public.ProjectionError, '^snapshot.local_path$'): public.validate(value)
+                else: public.validate(value)
 
     def test_byte_bound_and_credential_shaped_map_fields_are_refused(self):
         value = self.project()
