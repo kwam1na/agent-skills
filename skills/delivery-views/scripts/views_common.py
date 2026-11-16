@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -143,7 +144,7 @@ def _list(value: object, where: str, *, non_empty: bool = False) -> list:
 def validate_config(value: object) -> dict:
     """The configuration with its defaults filled in, or a ConfigError naming the key path."""
     config = _object(value, "", {"spec", "title", "tracker", "forges", "runs", "findings", "lenses", "scrubEnv",
-                                 "exports"}, {"spec"})
+                                 "exports", "hosted"}, {"spec"})
     if config["spec"] != CONFIG_SPEC:
         raise ConfigError(f"spec: must be {CONFIG_SPEC}")
     result: dict = {"spec": CONFIG_SPEC, "title": _text(config.get("title", DEFAULT_TITLE), "title", MAX_TITLE)}
@@ -230,6 +231,36 @@ def validate_config(value: object) -> dict:
         exports = {"directory": _relative(raw["directory"], "exports.directory"),
                    "ignore": [_text(item, f"exports.ignore[{index}]", MAX_TEXT) for index, item in enumerate(ignore)]}
     result["exports"] = exports
+    hosted = None
+    if "hosted" in config:
+        raw = _object(config["hosted"], "hosted", {"origin", "repositoryId", "tokenEnv"},
+                      {"origin", "repositoryId", "tokenEnv"})
+        origin = _text(raw["origin"], "hosted.origin", 500)
+        try:
+            url = urllib.parse.urlsplit(origin)
+            host = url.hostname or ""
+            valid = (url.scheme == "https" and url.username is None and url.password is None
+                     and url.port in (None, 443) and not url.query and not url.fragment
+                     and url.path in ("", "/") and not re.search(r"[\s\\{}]", origin)
+                     and "." in host and all(re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", label)
+                                             for label in host.split(".")))
+            try:
+                ipaddress.ip_address(host)
+                valid = False
+            except ValueError:
+                pass
+        except ValueError:
+            valid = False
+        if not valid:
+            raise ConfigError("hosted.origin: must be an explicit HTTPS DNS origin without path or credentials")
+        repository = raw["repositoryId"]
+        if not isinstance(repository, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", repository):
+            raise ConfigError("hosted.repositoryId: must be a repository identifier")
+        token_env = raw["tokenEnv"]
+        if not isinstance(token_env, str) or not ENV_NAME.fullmatch(token_env) or len(token_env) > MAX_TEXT:
+            raise ConfigError("hosted.tokenEnv: must be an environment variable name")
+        hosted = {"origin": origin.rstrip("/"), "repositoryId": repository, "tokenEnv": token_env}
+    result["hosted"] = hosted
     return result
 
 
@@ -369,7 +400,7 @@ def _stop(process: subprocess.Popen) -> None:
 
 
 def run_json(argv: list[str], *, timeout: float, scrub: list[str] = (), cwd: Path | None = None,
-             limit: int = OUTPUT_LIMIT_BYTES) -> object:
+             limit: int = OUTPUT_LIMIT_BYTES, process_registry: set | None = None) -> object:
     """Run a command in its own process group with stdin closed and the scrubbed variables
     removed, and return its stdout as JSON; RunUnavailable for a timeout, oversize output,
     a non-zero exit or output that is not JSON."""
@@ -382,6 +413,8 @@ def run_json(argv: list[str], *, timeout: float, scrub: list[str] = (), cwd: Pat
                                    env=environment, cwd=cwd, **_process_group())
     except OSError as error:
         raise RunUnavailable(f"could not start: {error.strerror or error}") from None
+    if process_registry is not None:
+        process_registry.add(process)
     kept = bytearray()
     over = threading.Event()
 
@@ -420,6 +453,8 @@ def run_json(argv: list[str], *, timeout: float, scrub: list[str] = (), cwd: Pat
         if not reader.is_alive():
             with contextlib.suppress(OSError):
                 process.stdout.close()
+        if process_registry is not None:
+            process_registry.discard(process)
     if over.is_set():
         raise RunUnavailable("output over 16 MiB")
     if code != 0:

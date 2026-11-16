@@ -813,3 +813,73 @@ its synced head;
 missing, tampered, oversized or stale evidence says unavailable. Live candidate
 changes invalidate the displayed approval immediately. Brief / Result controls
 remain hidden. Run-backed cards continue to read the configured run store.
+
+## Hosted publishing
+
+Publishing is an opt-in, read-only projection, independent of generic publishers
+and tracker writes. Configure an explicit HTTPS DNS origin and repository scope
+in `.agents/delivery-views.json`; put the repository-scoped publishing token only
+in the named environment variable:
+
+```json
+"hosted": {
+  "origin": "https://deliveries.example.com",
+  "repositoryId": "provisioned-repository-id",
+  "tokenEnv": "DELIVERY_PUBLISH_TOKEN"
+}
+```
+
+The origin takes no credentials, query, fragment, non-default port or path other
+than `/`. Publishing is disabled without this member. Do not use a Cloudflare
+account-management credential. The transport follows no redirects and ignores
+proxy environment configuration. HTTP is available only through an injected
+loopback fixture transport, never production configuration or CLI.
+
+The owning lifecycle supplies the canonical delivery key and record directory:
+
+```bash
+python3 -B .agent-skills/current/skills/delivery-views/scripts/hosted.py start --config .agents/delivery-views.json --binding .agents/orchestration.json --state-dir .orchestration/state --key APP-1 --generation .agent-skills/current
+```
+
+The same arguments work with `status`, `retry` and `stop`. Status and command
+errors are JSON with bounded codes; status intentionally returns the shareable
+read-only URL. No bearer, raw response or payload is logged. Identity, status,
+pending public projection and ownership sidecars live beside the record, contain
+no credential, and must remain together when the lifecycle archives or resumes
+the record. A corrupt or mismatched identity is refused rather than replaced.
+Never delete an identity to work around a conflict: inspect status first.
+
+`start` adopts the same live owner or replaces a verified owner of another
+generation. The watcher holds its own exclusive lock and records its PID, process
+start identity, script digest and generation identity. Stop checks the held lock
+and exact process identity before signalling only that PID. The watcher stops its
+recorded collection/upload children on shutdown and exits when its source record
+or generation disappears. It never calls generic renderers or tracker publishers.
+
+Changes coalesce for 2 seconds with a 10-second maximum deferral. One collection
+or upload runs at a time; a full source check confirms unchanged content every
+30 seconds. Collection and upload child processes have total deadlines of 60
+and 30 seconds. Transient failures retry with jittered backoff from 2 to 60
+seconds. Permanent errors stop network retries until explicit `retry`; credential
+changes require `stop` then `start` so the uploader receives the new environment.
+An expired session requires explicit `retry --resume`. A fenced owner does not
+reacquire or take over another owner, even with that flag. Operator takeover is
+not offered by this command.
+
+Every send comes from a fresh coherent cut of canonical state/journal, optional
+plan/Needs you paths (including absence), selected native review artifacts and
+fresh run inventory/view/artifact reads checked again after collection. Never use
+previously rendered HTML or a cached run byte count as freshness proof. The
+uploader scans all projected text for its configured secret values before writing
+pending bytes or sending them; collection and run-command children receive none
+of those credentials. Projection rejects recognizable local paths and keeps the
+shared allowlist, candidate/review identity and unavailable/clipping indicators.
+No scanner claims to identify every secret someone types into public prose.
+
+Pending bytes and their exact digest/epoch/sequence persist before transport.
+After ambiguous acceptance, authenticated status reconciles the receipt and
+identity before any retry. A failed source collection never refreshes source
+freshness. Old receipt retries never masquerade as new confirmations. Lost
+contact leaves the last accepted remote copy readable; local completion alone
+does not establish remote completion. Lifecycle terminal-cut handling, service
+qualification and live deployment evidence remain distinct from fixture tests.
