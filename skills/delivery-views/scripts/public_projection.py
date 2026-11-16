@@ -29,7 +29,38 @@ SCHEMA = json.loads(SCHEMA_PATH.read_text(encoding='utf-8'))
 MAX_BYTES = 16 * 1024 * 1024
 MAX_SOURCE_BYTES = 128 * 1024 * 1024
 # Absolute workstation/temp paths and file URLs are never public view content.
-LOCAL_PATH = re.compile(r'(?:file://|(?:^|[\s"\'(])(?:/[A-Za-z0-9_.-]+/|[A-Za-z]:[\\/]|\\\\)|(?:^|\s)~[/\\]|(?:^|[\s"\'(])(?:\.?agents|\.orchestration|docs|scripts|skills|tests)/)')
+# Option assignments use the same local-reference boundary as quoted prose.
+# Explicit relative paths are local too; validated HTTPS tokens are handled below.
+LOCAL_PATH = re.compile(r'(?:file://|(?:^|[\s\x21-\x2f\x3a-\x40\x5b-\x60\x7b-\x7e“”‘’])(?:/[A-Za-z0-9_.-]+/|[A-Za-z]:[\\/]|\\\\|~[/\\]|\.{1,2}[/\\]|(?:\.?agents|\.agent-skills|\.orchestration|docs|scripts|skills|tests)[/\\]))')
+HTTPS_START = re.compile(r'https://(?!/)', re.I)
+
+
+def _has_local_path(text):
+    # HTTPS path components may themselves contain punctuation and names such as
+    # docs/. They are public URL tokens, not local references. Secret scans still
+    # inspect the original text independently.
+    pieces=[];position=0
+    closing={')':'(',']':'[','}':'{'}
+    while match:=HTTPS_START.search(text,position):
+        end=match.end();stack=[]
+        # A URL can contain balanced punctuation, but an unmatched closing
+        # wrapper ends its span. Resume there so adjacent prose is still scanned.
+        while end<len(text):
+            character=text[end]
+            if character.isspace() or character in '<>"\'`“”‘’\\':break
+            if character in '([{':stack.append(character)
+            elif character in closing:
+                if not stack or stack[-1]!=closing[character]:break
+                stack.pop()
+            end+=1
+        token=text[match.start():end]
+        unwrapped = re.sub(r'[\x21-\x2f\x3a-\x40\x5b-\x60\x7b-\x7e“”‘’]+$', '', token)
+        pieces.extend((text[position:match.start()],' ' if _url(token) or _url(unwrapped) else token))
+        position=end
+    pieces.append(text[position:])
+    return LOCAL_PATH.search(''.join(pieces)) is not None
+
+
 CREDENTIAL_KEY = re.compile(r'^(?:password|token|secret|api[_-]?key|credential|authorization|cookie)$', re.I)
 OMITTED_LOCAL_REFERENCE = '[Local reference omitted]'
 PROSE_FIELDS = frozenset(('headline title text summary label description detail reason why waitingOn clears').split())
@@ -160,7 +191,7 @@ def _omit_local_prose(value, schema, path=()):
     prose=(bool(path) and path[-1] in PROSE_FIELDS
            or len(path)>1 and isinstance(path[-1],int) and path[-2] in PROSE_FIELDS
            or len(path)==3 and path[:2]==('document','focus'))
-    if prose and isinstance(value,str) and LOCAL_PATH.search(value):
+    if prose and isinstance(value,str) and _has_local_path(value):
         try:_check(OMITTED_LOCAL_REFERENCE,schema)
         except ProjectionError:return value
         return OMITTED_LOCAL_REFERENCE
@@ -197,7 +228,7 @@ def validate(value: object, *, secret_values=()) -> None:
     try:
         _check(value, SCHEMA)
         for text in _strings(value):
-            if LOCAL_PATH.search(text):
+            if _has_local_path(text):
                 raise ProjectionError('snapshot.local_path')
             if any(secret and secret in text for secret in secret_values):
                 raise ProjectionError('snapshot.configured_secret')
@@ -265,7 +296,7 @@ def project(document: dict, runs: dict, config: dict, *, source_fingerprint: str
         holders = [(public_plan.get('approved', {}), 'review')]
         holders.extend((change, key) for change in public_plan.get('changes', []) for key in ('source', 'ref'))
         for holder, key in holders:
-            if isinstance(holder.get(key), str) and LOCAL_PATH.search(holder[key]):
+            if isinstance(holder.get(key), str) and _has_local_path(holder[key]):
                 del holder[key]
     subjects = {row['subject'] for name in ('queue', 'planned')
                 for row in value['document']['state'].get(name, [])}

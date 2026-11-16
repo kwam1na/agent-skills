@@ -104,6 +104,12 @@ class ProjectionTests(unittest.TestCase):
         Draft202012Validator(public.SCHEMA).validate(value);public.validate(value)
         expected=json.loads((FIXTURES/'valid-omitted-workflow-prose.json').read_text())
         self.assertEqual(value,expected)
+        plan['plan']['approved']['review']='https://example.com/public_docs/review'
+        linked=public.project(doc,{},config(),source_fingerprint='1'*64,plan=plan)
+        self.assertEqual(linked['plan']['plan']['approved']['review'],'https://example.com/public_docs/review')
+        plan['plan']['approved']['review']='docs/private-review.md'
+        private=public.project(doc,{},config(),source_fingerprint='1'*64,plan=plan)
+        self.assertNotIn('review',private['plan']['plan']['approved'])
         doc['journal'][0]['summary']='KNOWN-CANARY in /tmp/run'
         with self.assertRaisesRegex(public.ProjectionError,'snapshot.configured_secret'):
             public.project(doc,{},config(),source_fingerprint='1'*64,plan=plan,secret_values=['KNOWN-CANARY'])
@@ -122,6 +128,67 @@ class ProjectionTests(unittest.TestCase):
         linked = public.project(doc, runs, cfg, source_fingerprint='1' * 64)
         self.assertEqual(linked['links']['changes']['https://github.com/example/app/pull/12']['label'], '#12')
 
+    def test_lead_listener_warning_omits_option_paths_without_dropping_the_need(self):
+        doc, _ = source()
+        prefix = ("The lead isn't listening: no lead-wait runs while lane-2 (working). Start one in the "
+                  "background: python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py "
+                  "--delivery APP-1 lead-wait --after 187 --timeout 1800.0 --poll 15.0 ")
+        local_options = [
+            '--output=/Users/operator/work/.orchestration/flow-log/APP-1.wait.json',
+            '--output=/tmp/wait.json', '--output="/Users/operator/work/wait.json"',
+            "--output='/tmp/wait.json'", '--output /tmp/wait.json',
+            r'--output=C:\work\wait.json', '--output=C:/work/wait.json',
+            r'--output=\\server\share\wait.json', '--output=~/work/wait.json',
+            '--output="~/work/wait.json"', '--output=./wait.json', '--output=../wait.json',
+            r'--output=.\wait.json', r'--output=..\wait.json',
+            '--output=.orchestration/wait.json', '--output=docs/wait.json',
+            r'--output=docs\wait.json', '--output=file:///tmp/wait.json',
+            '--output=.agent-skills/current/wait.json',
+            'python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py',
+            'Read `/Users/operator/private/wait.json`', 'Inspect `docs/private-plan.md`',
+            '--output=`/Users/operator/private/wait.json`', '`--output=/Users/operator/private/wait.json`',
+            'Read “/Users/operator/private/wait.json”',
+            'Read ‘.agent-skills/current/run.py’', 'Output:/Users/operator/private/wait.json',
+            '[/Users/operator/private/wait.json]', '[docs/private-plan.md]',
+            r'Output:[C:\work\wait.json]', 'Read “~/work/wait.json”', 'Read `../wait.json`',
+            '{docs/private-plan.md}', '<./wait.json>', 'Output;/tmp/wait.json', 'Output,/tmp/wait.json',
+            'Read **/Users/operator/private/wait.json**', 'Inspect **docs/private-plan.md**',
+            'Read _/Users/operator/private/wait.json_', 'Read ~~/Users/operator/private/wait.json~~',
+        ]
+        benign_options = ['--output=https://example.com/public/wait.json', '--timeout=1800.0',
+                          '--output=summary.json', '--mode=public', 'Review https://example.com/docs/wait.json',
+                          '`https://example.com/docs/wait.json`', '“https://example.com/docs/wait.json”',
+                          '[https://example.com/docs/wait.json]', '‘https://example.com/docs/wait.json’',
+                          '<https://example.com/docs/wait.json>', 'Output:summary.json', '[ready]', '`--mode=public`']
+        # Exercise the actual private executable separately: it must not mask
+        # failures in option detection or turn harmless control rows into omissions.
+        actual_warning = prefix + '--timeout=1800.0'
+        prefix = prefix.replace('.agent-skills/current/skills/run-delivery/scripts/run_delivery.py', 'run-delivery')
+        for option in local_options + benign_options:
+            with self.subTest(option=option):
+                item = {'holding': False, 'source': 'lead-wait.json in the record', 'text': prefix + option,
+                        'clears': 'a running lead-wait, or nothing left working or queued'}
+                needs = {'running': True, 'at': '2026-11-15T00:00:00Z',
+                         'staleAfter': '2026-11-15T00:02:00Z', 'items': [item]}
+                value = public.project(doc, {}, config(), source_fingerprint='1' * 64, needs=needs)
+                projected = value['needs']['items'][0]
+                self.assertEqual(projected, {**item, 'text': public.OMITTED_LOCAL_REFERENCE}
+                                 if option in local_options else item)
+                self.assertEqual(needs['items'][0], item)  # private warning is retained
+                Draft202012Validator(public.SCHEMA).validate(value)
+                raw = copy.deepcopy(value); raw['needs']['items'][0]['text'] = item['text']
+                if option in local_options:
+                    with self.assertRaisesRegex(public.ProjectionError, '^snapshot.local_path$'):
+                        public.validate(raw)
+                else:
+                    public.validate(raw)
+        needs['items'][0]['text'] = actual_warning
+        value = public.project(doc, {}, config(), source_fingerprint='1' * 64, needs=needs)
+        self.assertEqual(value['needs']['items'][0]['text'], public.OMITTED_LOCAL_REFERENCE)
+        raw = copy.deepcopy(value); raw['needs']['items'][0]['text'] = actual_warning
+        with self.assertRaisesRegex(public.ProjectionError, '^snapshot.local_path$'):
+            public.validate(raw)
+
     def test_local_structural_references_fail_closed_instead_of_becoming_prose_markers(self):
         for key in ('candidateRef','runId'):
             doc,runs=source()
@@ -131,6 +198,100 @@ class ProjectionTests(unittest.TestCase):
                 runs={'docs/runs/current':{**runs['run-1'],'runId':'docs/runs/current'}}
             with self.subTest(key=key),self.assertRaises(public.ProjectionError):
                 public.project(doc,runs,config(),source_fingerprint='1'*64)
+
+    def test_punctuation_wrappers_preserve_privacy_and_public_url_components(self):
+        punctuation = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~“”‘’"
+        local = ['/Users/operator/private/wait.json', 'docs/private-plan.md', r'C:\work\wait.json',
+                 '.agent-skills/current/run.py', '~/work/wait.json', './wait.json', '../wait.json']
+        benign = ['https://public_docs.example.com/part_docs/file', 'https://example.com/public_docs/file',
+                  'HTTPS://example.com/public_docs/file', 'https://public-docs.example.com/.docs/file',
+                  '--mode=public', 'ready']
+        doc, _ = source()
+        for prefix in punctuation:
+            for text in local + benign:
+                with self.subTest(prefix=prefix, text=text):
+                    # These separators create actual UNC/absolute paths even
+                    # around a nominal control; they are not benign wrappers.
+                    private = text in local or prefix == '\\' or (prefix == '/' and text == 'ready')
+                    original = f'Read {prefix}{prefix}{text}{prefix}{prefix}'
+                    needs = {'running': True, 'at': '2026-11-15T00:00:00Z', 'staleAfter': '2026-11-15T00:02:00Z',
+                             'items': [{'holding': False, 'source': 'lead-wait.json in the record', 'text': original,
+                                        'clears': 'a running lead-wait'}]}
+                    value = public.project(doc, {}, config(), source_fingerprint='1' * 64, needs=needs)
+                    self.assertEqual(value['needs']['items'][0]['text'],
+                                     public.OMITTED_LOCAL_REFERENCE if private else original)
+                    self.assertEqual(needs['items'][0]['text'], original)
+                    raw = copy.deepcopy(value); raw['needs']['items'][0]['text'] = original
+                    if private:
+                        with self.assertRaisesRegex(public.ProjectionError, '^snapshot.local_path$'): public.validate(raw)
+                    else: public.validate(raw)
+
+    def test_url_exception_does_not_hide_malformed_urls_adjacent_paths_or_secrets(self):
+        doc, _ = source()
+        local = ['https:///Users/operator/private/wait.json', 'https://user:pass@example.com/docs/private.md',
+                 'Read "https://example.com/public_docs/file"/Users/operator/private/wait.json',
+                 'Read `https://example.com/public_docs/file`docs/private-plan.md']
+        for text in local:
+            with self.subTest(text=text):
+                needs = {'running': True, 'at': '2026-11-15T00:00:00Z', 'staleAfter': '2026-11-15T00:02:00Z',
+                         'items': [{'holding': False, 'source': 'listener', 'text': text, 'clears': 'listener restored'}]}
+                value = public.project(doc, {}, config(), source_fingerprint='1' * 64, needs=needs)
+                self.assertEqual(value['needs']['items'][0]['text'], public.OMITTED_LOCAL_REFERENCE)
+                value['needs']['items'][0]['text'] = text
+                with self.assertRaisesRegex(public.ProjectionError, '^snapshot.local_path$'): public.validate(value)
+        needs['items'][0]['text'] = 'https://example.com/public_docs/KNOWN-CANARY'
+        with self.assertRaisesRegex(public.ProjectionError, '^snapshot.configured_secret$'):
+            public.project(doc, {}, config(), source_fingerprint='1' * 64, needs=needs, secret_values=['KNOWN-CANARY'])
+        value['needs']['items'][0]['text'] = needs['items'][0]['text']
+        with self.assertRaisesRegex(public.ProjectionError, '^snapshot.configured_secret$'):
+            public.validate(value, secret_values=['KNOWN-CANARY'])
+
+    def test_url_wrapper_types_distinguish_public_paths_from_local_suffixes(self):
+        doc, _ = source()
+        pairs = {'(': ')', '[': ']', '{': '}'}
+        for opening, balanced_closing in pairs.items():
+            for closing in (')', ']', '}'):
+                with self.subTest(opening=opening, closing=closing):
+                    text = f'Read [public](https://example.com/{opening}nested{closing}/Users/operator/private/wait.json)'
+                    balanced = closing == balanced_closing
+                    needs = {'running': True, 'at': '2026-11-15T00:00:00Z', 'staleAfter': '2026-11-15T00:02:00Z',
+                             'items': [{'holding': False, 'source': 'listener', 'text': text, 'clears': 'listener restored'}]}
+                    value = public.project(doc, {}, config(), source_fingerprint='1' * 64, needs=needs)
+                    self.assertEqual(value['needs']['items'][0]['text'], text if balanced else public.OMITTED_LOCAL_REFERENCE)
+                    self.assertEqual(needs['items'][0]['text'], text)
+                    value['needs']['items'][0]['text'] = text
+                    if balanced:
+                        public.validate(value)
+                    else:
+                        with self.assertRaisesRegex(public.ProjectionError, '^snapshot.local_path$'): public.validate(value)
+
+    def test_completed_url_wrappers_leave_adjoining_local_prose_visible(self):
+        doc, _ = source()
+        private = ['[public](https://example.com/public_docs/file)/Users/operator/private/wait.json',
+                   '[public](https://example.com/public_docs/file)docs/private-plan.md',
+                   '(https://example.com/public_docs/file)/Users/operator/private/wait.json',
+                   '[public](https://example.com/public_docs/file)[docs/private-plan.md]',
+                   '[public](https://example.com/public_docs/file){docs/private-plan.md}',
+                   '[public](https://example.com/public_docs/file)**/Users/operator/private/wait.json**',
+                   '[public](https://example.com/(nested/(docs/file)))/Users/operator/private/wait.json',
+                   '[public](https://example.com/public_docs/file)_docs/private-plan.md_',
+                   '[public](https://example.com/public_docs/file)~~docs/private-plan.md~~']
+        benign = ['[public](https://example.com/public_docs/file)', '(https://example.com/public_docs/file)',
+                  'https://example.com/(docs/file)', 'https://example.com/(outer/(docs/file))',
+                  '[public](https://example.com/(outer/(docs/file)))', 'https://example.com/docs/file;more',
+                  'https://example.com/docs/file,more', '(https://example.com/docs/file)(https://example.com/docs/next)',
+                  '[public](https://example.com/public_docs/file)ready', 'https://[::1]/docs/file']
+        for text in private + benign:
+            with self.subTest(text=text):
+                needs = {'running': True, 'at': '2026-11-15T00:00:00Z', 'staleAfter': '2026-11-15T00:02:00Z',
+                         'items': [{'holding': False, 'source': 'listener', 'text': text, 'clears': 'listener restored'}]}
+                value = public.project(doc, {}, config(), source_fingerprint='1' * 64, needs=needs)
+                self.assertEqual(value['needs']['items'][0]['text'], public.OMITTED_LOCAL_REFERENCE if text in private else text)
+                self.assertEqual(needs['items'][0]['text'], text)
+                value['needs']['items'][0]['text'] = text
+                if text in private:
+                    with self.assertRaisesRegex(public.ProjectionError, '^snapshot.local_path$'): public.validate(value)
+                else: public.validate(value)
 
     def test_byte_bound_and_credential_shaped_map_fields_are_refused(self):
         value = self.project()

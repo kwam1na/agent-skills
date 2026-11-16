@@ -31,6 +31,82 @@ describe('ingestion boundary', () => {
     expect(response.status).toBe(valid ? 200 : 400);
     expect((await current(publicId)).status).toBe(valid ? 200 : 404);
   });
+  it.each([
+    ['--output=/Users/operator/work/wait.json', false], ['--output=/tmp/wait.json', false],
+    ['--output="/Users/operator/work/wait.json"', false], ["--output='/tmp/wait.json'", false],
+    ['--output /tmp/wait.json', false], [String.raw`--output=C:\work\wait.json`, false],
+    ['--output=C:/work/wait.json', false], [String.raw`--output=\\server\share\wait.json`, false],
+    ['--output=~/work/wait.json', false], ['--output="~/work/wait.json"', false],
+    ['--output=./wait.json', false], ['--output=../wait.json', false],
+    [String.raw`--output=.\wait.json`, false], [String.raw`--output=..\wait.json`, false],
+    ['--output=.orchestration/wait.json', false], ['--output=docs/wait.json', false],
+    [String.raw`--output=docs\wait.json`, false], ['--output=file:///tmp/wait.json', false],
+    ['--output=.agent-skills/current/wait.json', false],
+    ['python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py', false],
+    ['Read `/Users/operator/private/wait.json`', false], ['Inspect `docs/private-plan.md`', false],
+    ['--output=`/Users/operator/private/wait.json`', false], ['`--output=/Users/operator/private/wait.json`', false],
+    ['Read “/Users/operator/private/wait.json”', false],
+    ['Read ‘.agent-skills/current/run.py’', false], ['Output:/Users/operator/private/wait.json', false],
+    ['[/Users/operator/private/wait.json]', false], ['[docs/private-plan.md]', false],
+    [String.raw`Output:[C:\work\wait.json]`, false], ['Read “~/work/wait.json”', false], ['Read `../wait.json`', false],
+    ['{docs/private-plan.md}', false], ['<./wait.json>', false], ['Output;/tmp/wait.json', false], ['Output,/tmp/wait.json', false],
+    ['Read **/Users/operator/private/wait.json**', false], ['Inspect **docs/private-plan.md**', false],
+    ['Read _/Users/operator/private/wait.json_', false], ['Read ~~/Users/operator/private/wait.json~~', false],
+    ['https:///Users/operator/private/wait.json', false], ['https://user:pass@example.com/docs/private.md', false],
+    ['Read "https://example.com/public_docs/file"/Users/operator/private/wait.json', false],
+    ['Read `https://example.com/public_docs/file`docs/private-plan.md', false],
+    ['[public](https://example.com/public_docs/file)/Users/operator/private/wait.json', false],
+    ['[public](https://example.com/public_docs/file)docs/private-plan.md', false],
+    ['(https://example.com/public_docs/file)/Users/operator/private/wait.json', false],
+    ['[public](https://example.com/public_docs/file)[docs/private-plan.md]', false],
+    ['[public](https://example.com/public_docs/file){docs/private-plan.md}', false],
+    ['[public](https://example.com/public_docs/file)**/Users/operator/private/wait.json**', false],
+    ['[public](https://example.com/(nested/(docs/file)))/Users/operator/private/wait.json', false],
+    ['[public](https://example.com/public_docs/file)_docs/private-plan.md_', false],
+    ['[public](https://example.com/public_docs/file)~~docs/private-plan.md~~', false],
+    ['[public](https://example.com/public_docs/file)', true], ['(https://example.com/public_docs/file)', true],
+    ['https://example.com/(docs/file)', true], ['https://example.com/(outer/(docs/file))', true],
+    ['[public](https://example.com/(outer/(docs/file)))', true], ['https://example.com/docs/file;more', true],
+    ['https://example.com/docs/file,more', true], ['(https://example.com/docs/file)(https://example.com/docs/next)', true],
+    ['[public](https://example.com/public_docs/file)ready', true], ['https://[::1]/docs/file', true],
+    ['--output=https://example.com/public/wait.json', true], ['--timeout=1800.0', true],
+    ['--output=summary.json', true], ['--mode=public', true], ['Review https://example.com/docs/wait.json', true],
+    ['`https://example.com/docs/wait.json`', true], ['“https://example.com/docs/wait.json”', true],
+    ['[https://example.com/docs/wait.json]', true], ['‘https://example.com/docs/wait.json’', true],
+    ['<https://example.com/docs/wait.json>', true], ['Output:summary.json', true], ['[ready]', true], ['`--mode=public`', true],
+  ])('independently scans option-bearing public prose: %s', async (text, valid) => {
+    const publicId = id(); await session(publicId);
+    const body = fixture(); body.document.state.meta.headline = text;
+    expect((await upload(publicId, 1, body)).status).toBe(valid ? 200 : 400);
+    expect((await current(publicId)).status).toBe(valid ? 200 : 404);
+  });
+  it.each([..."!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~“”‘’"])(
+    'scans punctuation wrappers independently: %s', async (prefix) => {
+      const local = ['/Users/operator/private/wait.json', 'docs/private-plan.md', String.raw`C:\work\wait.json`,
+        '.agent-skills/current/run.py', '~/work/wait.json', './wait.json', '../wait.json'];
+      const benign = ['https://public_docs.example.com/part_docs/file', 'https://example.com/public_docs/file',
+        'HTTPS://example.com/public_docs/file', 'https://public-docs.example.com/.docs/file',
+        '--mode=public', 'ready'];
+      for (const text of [...local, ...benign]) {
+        // Slash controls that form UNC/absolute paths remain private.
+        const privateReference = local.includes(text) || prefix === '\\' || (prefix === '/' && text === 'ready');
+        const publicId = id(); await session(publicId);
+        const body = fixture(); body.document.state.meta.headline = `Read ${prefix}${prefix}${text}${prefix}${prefix}`;
+        expect((await upload(publicId, 1, body)).status).toBe(privateReference ? 400 : 200);
+        expect((await current(publicId)).status).toBe(privateReference ? 404 : 200);
+      }
+    });
+  it.each([['(', ')'], ['[', ']'], ['{', '}']].flatMap(([opening, balancedClosing]) =>
+    [')', ']', '}'].map(closing => ({ opening, closing, balanced: closing === balancedClosing }))))(
+    'distinguishes URL wrapper types $opening $closing', async ({ opening, closing, balanced }) => {
+      const publicId = id(); await session(publicId);
+      const body = fixture();
+      body.needs = { running: true, at: '2026-11-15T00:00:00Z', staleAfter: '2026-11-15T00:02:00Z',
+        items: [{ holding: false, source: 'listener', clears: 'listener restored',
+          text: `Read [public](https://example.com/${opening}nested${closing}/Users/operator/private/wait.json)` }] };
+      expect((await upload(publicId, 1, body)).status).toBe(balanced ? 200 : 400);
+      expect((await current(publicId)).status).toBe(balanced ? 200 : 404);
+    });
   it('serves the deployed entrypoint through local Worker, DO and R2 bindings', async () => {
     const publicId=id();
     const auth={'Authorization':`Bearer ${TOKEN}`,'Content-Type':'application/json'};
