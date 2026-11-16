@@ -337,12 +337,12 @@ you".
 The page embeds the validated plan and derives record proofs from each pushed
 record, so the chapter redraws as The line does. A producer writes `plan.json`
 only when its content, apart from `updated`, changed: atomically first, then a
-decision entry in the delivery journal whose summary starts "Plan updated:",
-names the new `updated` value and says what changed. That moves the record, so
+`plan.updated` entry in the delivery journal, whose facts name the new
+`updated` value and what changed. That moves the record, so
 the live server renders the page again from the new file.
 
 A page the live server serves follows that entry with no reload. When the latest
-"Plan updated:" entry names an `updated` value other than the plan in use, the
+`plan.updated` entry names an `updated` value other than the plan in use, the
 page fetches its own address and takes the plan from the block the renderer
 embedded there, so the renderer's validation is the only validation. It redraws
 with the reader's open folds and scroll position kept, and adds nothing to what

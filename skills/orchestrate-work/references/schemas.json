@@ -1254,19 +1254,8 @@
       "at",
       "kind",
       "lane",
-      "subject"
-    ],
-    "anyOf": [
-      {
-        "required": [
-          "data"
-        ]
-      },
-      {
-        "required": [
-          "summary"
-        ]
-      }
+      "subject",
+      "data"
     ],
     "properties": {
       "id": {
@@ -1278,7 +1267,7 @@
         "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
       },
       "kind": {
-        "description": "A kind journal-kinds.json lists, or review.evidence while the sentence's bridge stands. The state tool checks it against the registry, which also refuses a kind beginning x., reserved for an adopter's own registry.",
+        "description": "A kind journal-kinds.json lists. The state tool checks it against the registry, which also refuses a kind beginning x., reserved for an adopter's own registry.",
         "type": "string",
         "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)+$"
       },
@@ -1324,76 +1313,8 @@
         },
         "description": "Earlier entries in this journal this one answers, by id, only between the pairs of kinds the registry lists."
       },
-      "summary": {
-        "type": "string",
-        "minLength": 1,
-        "description": "The sentence's bridge: until it is removed, an entry may carry a sentence, facts in data, or both. An entry with data is checked in full."
-      },
-      "review": {
-        "description": "One review round of a candidate, on review.round entries only: when it ran, each lens's verdict, and the findings it raised by severity.",
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "round",
-          "startedAt",
-          "finishedAt",
-          "verdicts",
-          "findings"
-        ],
-        "properties": {
-          "round": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "startedAt": {
-            "type": "string",
-            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
-          },
-          "finishedAt": {
-            "type": "string",
-            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
-          },
-          "verdicts": {
-            "type": "object",
-            "additionalProperties": {
-              "enum": [
-                "approve",
-                "changes"
-              ]
-            }
-          },
-          "findings": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "P0",
-              "P1",
-              "P2",
-              "P3"
-            ],
-            "properties": {
-              "P0": {
-                "type": "integer",
-                "minimum": 0
-              },
-              "P1": {
-                "type": "integer",
-                "minimum": 0
-              },
-              "P2": {
-                "type": "integer",
-                "minimum": 0
-              },
-              "P3": {
-                "type": "integer",
-                "minimum": 0
-              }
-            }
-          }
-        }
-      },
       "occurredAt": {
-        "description": "When the event happened, where that is earlier than when it was journaled: an entry's instant is its occurredAt when it has one, and its at otherwise. Without data, only a recovered merge carries it, and null means unknown.",
+        "description": "When the event happened, where that is earlier than when it was journaled: an entry's instant is its occurredAt when it has one, and its at otherwise. A recovered merge carries it, and null means unknown.",
         "anyOf": [
           {
             "type": "string",
@@ -1403,123 +1324,19 @@
             "type": "null"
           }
         ]
-      },
-      "recovery": {
-        "description": "Recovered source identity, so a late hand-off append cannot duplicate this merge.",
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "head",
-          "changeRequest"
-        ],
-        "properties": {
-          "head": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
-          },
-          "changeRequest": {
-            "anyOf": [
-              {
-                "type": "null"
-              },
-              {
-                "type": "string",
-                "minLength": 1
-              }
-            ]
-          }
-        }
-      },
-      "baseMergeAuthorization": {
-        "description": "A lead decision authorizing the subject and lane to merge exact base commits from a reviewed head.",
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "reviewed",
-          "baseCommits",
-          "token"
-        ],
-        "properties": {
-          "reviewed": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
-          },
-          "token": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{32}$"
-          },
-          "baseCommits": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
-            }
-          }
-        }
-      },
-      "reviewCarry": {
-        "description": "Written by the lead's carry-review decision or a hand-off carrying across authorized base merges: the captured review evidence (digest) the lead judged still holds for the work after a commit that needs no new round, from the head it covered to the queued head. Display and acceptance evidence only: it creates no run, is no review round, and is no admission evidence. A later review round or capture for the subject ends it.",
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "from",
-          "to",
-          "digest"
-        ],
-        "properties": {
-          "from": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 2048
-          },
-          "to": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 2048
-          },
-          "digest": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
-          },
-          "baseCommits": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
-            }
-          }
-        }
-      },
-      "reviewArtifact": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "digest",
-          "candidateRef"
-        ],
-        "properties": {
-          "digest": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
-          },
-          "candidateRef": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 2048
-          }
-        }
       }
     }
   },
   "journal-kinds/1": {
     "$id": "urn:agent-skills:orchestrate-work:journal-kinds:1",
     "title": "journal-kinds/1",
-    "description": "The registry of journal kinds, references/journal-kinds.json: the only place a kind is described. Each kind gives its data's fields, typed or prose, its links, whether it opens a thread, its altitude and tone, its label, its words and explanation, and its tracker update.",
+    "description": "The registry of journal kinds, references/journal-kinds.json: the only place a kind or a tone is described. Each kind gives its data's fields, typed or prose, its links, whether it opens a thread, its altitude and tone, its label, its words and explanation, and its tracker update.",
     "type": "object",
     "additionalProperties": false,
     "required": [
       "schemaVersion",
       "prose",
+      "tones",
       "types",
       "kinds"
     ],
@@ -1533,6 +1350,40 @@
         "items": {
           "type": "string",
           "minLength": 1
+        }
+      },
+      "tones": {
+        "description": "What each tone means to a reader, by tone, in the order a legend lists them. A setback is named by the problem tone's word.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "landed",
+          "ready",
+          "decision",
+          "problem",
+          "note"
+        ],
+        "properties": {
+          "landed": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ready": {
+            "type": "string",
+            "minLength": 1
+          },
+          "decision": {
+            "type": "string",
+            "minLength": 1
+          },
+          "problem": {
+            "type": "string",
+            "minLength": 1
+          },
+          "note": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       },
       "types": {

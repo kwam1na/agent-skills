@@ -118,8 +118,8 @@ runner`:
    'queue[subject=<subject>]'`.
 3. Read the version, then write `meta.baseHead` as the runner; set
    `meta.checking` with `--set`.
-4. Journal a decision (`--kind decision.recorded`) saying where the record
-   starts, and validate.
+4. Journal where the record starts (`--kind record.started`, with its `base` in
+   `--data`), and validate.
 
 ### Journal entries
 
@@ -130,7 +130,7 @@ instant is its `occurredAt` when it has one, and its `at` otherwise.
 - **One registry describes every kind.** [The registry](journal-kinds.json),
   schema `journal-kinds/1`, lists each kind with its `data` fields, its links,
   whether it opens a thread, its altitude, tone and label, its `head` and
-  `line` words, a sentence that `explain`s it, and its tracker update. It is
+  `line` words, the words that `explain` it, and its tracker update. It is
   the only place a kind is described: the tools, the views and the tracker
   table below take each kind from there, and the skill's `journal_words.py`
   script turns an entry into its head and line from it.
@@ -163,8 +163,7 @@ instant is its `occurredAt` when it has one, and its `at` otherwise.
   opening closes it.
 - **A person's decision says why.** `decision.recorded` needs `data.text` and
   `data.why`, and `blocker.recorded` needs `data.text`; none may be empty or
-  only spaces. Give them with `--text` and `--why`, and, until the sentence is
-  removed, `--summary`.
+  only spaces. Give them with `--text` and `--why`.
 - **Every kind has an altitude.** `headline` is what a stakeholder reads: what
   landed, each setback and each decision. `story` adds each step an engineer
   follows: rounds, hand-offs, checks. `bookkeeping` is the rest, and a
@@ -174,10 +173,10 @@ instant is its `occurredAt` when it has one, and its `at` otherwise.
   add vectors for them beside the registry's own test. Kinds beginning `x.` are
   reserved for an adopter's own registry and are refused here.
 
-Until the sentence is removed, an entry may still carry a `summary` sentence,
-beside its `data` or instead of it, and an entry with `data` is checked in full.
-Give the sentence beside the facts, with `--summary`: the readers that still
-read it need it until they read the facts.
+An entry in the older journal shape, one without `data` or with a member this
+shape doesn't have, is refused, and the refusal names the release that reads
+it. A record whose journal is empty is valid in either shape. A delivery open
+under an older release closes there before this one is applied.
 
 ### Tracker updates
 

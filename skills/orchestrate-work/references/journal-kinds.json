@@ -8,6 +8,13 @@
     "notes",
     "title"
   ],
+  "tones": {
+    "landed": "Landed",
+    "ready": "Ready to check",
+    "decision": "Decision",
+    "problem": "Setback",
+    "note": "Other update"
+  },
   "types": {
     "prose": {
       "description": "A person's own words, never read to decide anything. It holds something other than spaces.",

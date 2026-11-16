@@ -483,28 +483,19 @@
   }
   /**
    * The pieces checked as one batch right now, or null. The runner journals one batch start per member,
-   * one after another with the same summary; that run is the batch while every piece in checks belongs to
+   * each naming the batch's members; that is the batch while every piece in checks belongs to
    * it. Members that already landed from it stay listed; a member sent back to the queue drops out, and so
    * does one checked again on its own since.
    */
   function batchNow(doc, all) {
-    // Only check starts decide: the latest must be a batch start, and the run is the starts before it with the
-    // same summary. Other entries between them, such as a lane's note, neither end nor break the run.
+    // Only check starts decide: the latest must be a batch start, which names its members. Other entries after it,
+    // such as a lane's note, change nothing.
     var starts = list(doc.journal).filter(function (entry) { return isObject(entry) && entry.kind === "check.started"; });
     var last = starts[starts.length - 1];
     if (!last) { return null; }
     var members = [];
-    if (isObject(last.data)) {
-      // A start with facts names its batch's members, in order; one with no batch is a piece checked alone.
-      list(last.data.batch).forEach(function (subject) { if (typeof subject === "string" && members.indexOf(subject) < 0) { members.push(subject); } });
-    } else {
-      // A start written only as a sentence: the batch is the run of starts before it with the same sentence.
-      if (!/ as one batch$/.test(text(last.summary))) { return null; }
-      for (var i = starts.length - 1; i >= 0 && starts[i].summary === last.summary; i -= 1) {
-        var subject = starts[i].subject === undefined || starts[i].subject === null ? "" : String(starts[i].subject);
-        if (members.indexOf(subject) < 0) { members.unshift(subject); }
-      }
-    }
+    // A start names its batch's members, in order; one with no batch is a piece checked alone.
+    list(isObject(last.data) ? last.data.batch : null).forEach(function (subject) { if (typeof subject === "string" && members.indexOf(subject) < 0) { members.push(subject); } });
     if (members.length < 2) { return null; }
     var queued = all.filter(function (piece) { return !piece.planned; }).map(function (piece) { return piece.item; });
     var inChecks = queued.filter(function (item) { return IN_CHECKS[item.stage]; });
@@ -543,16 +534,14 @@
     var missing = plan ? liveUnits().filter(function (unit) { return !all.some(function (piece) { return piece.item.subject === unit.subject; }); }).length : 0;
     return { landed: landed, total: meant.length + missing, placed: meant.length };
   }
-  // A review round's own record: its facts, or, for a round written before them, the review it carried beside it.
+  // A review round's own record: its facts.
   function roundOf(entry) {
-    if (isObject(entry.data) && entry.kind === "review.round") { return entry.data; }
-    return isObject(entry.review) ? entry.review : null;
+    return isObject(entry.data) && entry.kind === "review.round" ? entry.data : null;
   }
-  // The entry that says a review was kept, and what it names: its facts, or the sentence's own artifact beside it.
-  var KEPT = table({ "review.recorded": true, "review.evidence": true });
+  // The entry that says a review was kept, and what it names, from its facts.
+  var KEPT = table({ "review.recorded": true });
   function keptReview(entry) {
-    if (entry.kind === "review.recorded" && isObject(entry.data)) { return { digest: entry.data.digest, candidateRef: entry.data.candidateRef }; }
-    return isObject(entry.reviewArtifact) ? entry.reviewArtifact : null;
+    return entry.kind === "review.recorded" && isObject(entry.data) ? { digest: entry.data.digest, candidateRef: entry.data.candidateRef } : null;
   }
   function journalFor(doc, subject, kinds) {
     return list(doc.journal).filter(function (entry) { return isObject(entry) && entry.subject === subject && (!kinds || kinds[entry.kind]); });
@@ -1099,36 +1088,21 @@
       return startedAt === null || (at !== null && at >= startedAt);
     });
     var used = [];
-    // The words of a note, without the punctuation around them, so a check id matches only as a whole word.
-    function names(summary) {
-      var words = text(summary).split(/\s+/);
-      // Each word as written and without the punctuation around it, so a label that itself ends in punctuation still matches.
-      return words.concat(words.map(function (word) { return word.replace(/^[("'\x60\[]+/, "").replace(/[)"'\x60\],;:.!?]+$/, ""); }));
-    }
     // The failures journaled for each check, by the check they name, so a note with facts is found by what it was caused by.
     var failedBy = Object.create(null);
     list(doc.journal).forEach(function (entry) {
       if (isObject(entry) && entry.kind === "check.failed" && isObject(entry.data) && typeof entry.data.check === "string") { failedBy[String(entry.id)] = entry.data.check; }
     });
-    // Whether a note is about a check: a note with facts names the check's failure among its causes; one written only
-    // as a sentence names the check in its words.
+    // Whether a note is about a check: it names the check's failure among its causes.
     function about(entry, label) {
       if (!label) { return false; }
-      if (isObject(entry.data)) { return list(entry.because).some(function (id) { return failedBy[String(id)] === label; }); }
-      return names(entry.summary).indexOf(label) >= 0;
+      return list(entry.because).some(function (id) { return failedBy[String(id)] === label; });
     }
     function note(entry, label) {
       used.push(entry);
-      var words;
-      if (isObject(entry.data)) {
-        // In the story's words: what the lead said, and why.
-        var said = entryWords(doc, entry);
-        words = said.head + (said.line ? ". " + said.line : "");
-      } else {
-        // Under its own check a note need not name the check again, so a leading "check: " is dropped.
-        words = text(entry.summary);
-        if (label && words.indexOf(label + ": ") === 0) { words = words.slice(label.length + 2); }
-      }
+      // In the story's words: what the lead said, and why.
+      var said = entryWords(doc, entry);
+      var words = said.head + (said.line ? ". " + said.line : "");
       return add(el("div", "ck-note"), glyph(entry.kind === "blocker.recorded" ? "stop" : "decide"), add(el("span"), words));
     }
     var ul = el("ul", "ck-fails");
@@ -1594,8 +1568,9 @@
     } else if (item.stage === "merged") {
       label = "Landed"; basis = "Merge occurrence"; event = last("candidate.merged");
       if (!event) {
-        event = own.filter(function (entry) { return entry.kind === "candidate.merged" && isObject(entry.recovery)
-          && entry.recovery.head === (item.syncedHead || item.head) && entry.recovery.changeRequest === (item.changeRequest || null); }).pop();
+        event = own.filter(function (entry) {
+          var recovery = entry.kind === "candidate.merged" && isObject(entry.data) && isObject(entry.data.recovery) ? entry.data.recovery : null;
+          return recovery && recovery.head === (item.syncedHead || item.head) && recovery.changeRequest === (item.changeRequest || null); }).pop();
       }
     } else if (item.stage === "merging" || item.stage === "syncing" || item.stage === "synced") {
       label = "Time"; basis = "No durable transition time recorded";
@@ -1681,7 +1656,7 @@
 
   // The candidate a stop's review evidence must name. A handed stop's is its head. A planned stop has no head before
   // hand-off, so it is the candidate its latest capture names; the record keeps a capture only when it is of the
-  // lane's latest journaled round, and the stop's review.round and review.evidence boundary must still end on it.
+  // lane's latest journaled round, and the stop's review.round and review.recorded boundary must still end on it.
   function reviewedCandidate(doc, item, evidence) {
     var queued = list(doc.state.queue).some(function (entry) { return isObject(entry) && entry.subject === item.subject; });
     if (queued) { return item.head; }
@@ -1697,7 +1672,7 @@
   function runFor(doc, item) {
     if (typeof item.runId !== "string" || item.runId === "") {
       var native = Object.prototype.hasOwnProperty.call(nativeReviews, item.subject) ? nativeReviews[item.subject] : null;
-      var events = journalFor(doc, item.subject, { "review.round": true, "review.recorded": true, "review.evidence": true });
+      var events = journalFor(doc, item.subject, { "review.round": true, "review.recorded": true });
       var boundary = events.reduce(function (last, event) { return Math.max(last, event.id || 0); }, 0);
       var evidence = events.filter(function (event) { return KEPT[event.kind]; }).slice(-1)[0];
       var observation = isObject(doc.reviewEvidence) ? doc.reviewEvidence[item.subject] : undefined;
@@ -1805,10 +1780,9 @@
   var HISTORY = table({ "candidate.handed": true, "check.started": true, "check.finished": true, "check.failed": true, "check.retried": true,
     "check.reused": true, "check.carried": true, "base.rerun.started": true, "base.rerun.finished": true, "base.rerun.stopped": true,
     "candidate.stopped": true, "candidate.merged": true });
-  /** One step as the story tells it: its head and line, or, for a step written only as a sentence, that sentence. */
+  /** One step as the story tells it: its head and line. */
   function stepSaid(doc, entry) {
     var words = entryWords(doc, entry);
-    if (!isObject(entry.data)) { return words.line || words.head; }
     return words.head + (words.line ? ": " + words.line : "");
   }
   function historyFor(doc, item) {
@@ -2528,21 +2502,13 @@
   function servedLive() {
     return isObject(globalThis.deliveryStateStore) && typeof fetch === "function" && typeof location === "object" && /^https?:$/.test(location.protocol);
   }
-  /**
-   * The `updated` value of the latest plan update in a record, or null: a plan.updated entry names it as a fact, and
-   * one written only as a sentence, a "Plan updated:" decision, names it in its words.
-   */
+  /** The `updated` value of the latest plan update in a record, as its plan.updated entry names it, or null. */
   function planNamedBy(doc) {
     var updates = list(doc.journal).filter(function (entry) {
-      if (!isObject(entry)) { return false; }
-      if (isObject(entry.data)) { return entry.kind === "plan.updated" && typeof entry.data.updated === "string"; }
-      return entry.kind === "decision.recorded" && /^Plan updated:/.test(text(entry.summary));
+      return isObject(entry) && entry.kind === "plan.updated" && isObject(entry.data) && typeof entry.data.updated === "string";
     });
     var newest = updates[updates.length - 1];
-    if (!newest) { return null; }
-    if (isObject(newest.data)) { return newest.data.updated; }
-    var latest = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/.exec(text(newest.summary));
-    return latest ? latest[0] : null;
+    return newest ? newest.data.updated : null;
   }
   // Whether an answer holds the plan named, or one the record has yet to name: the file is written before its entry.
   function planMeets(held, named) { return isObject(held) && typeof held.updated === "string" && (held.updated === named || laterThan(held.updated, named)); }
@@ -2840,7 +2806,7 @@
   }
   /**
    * An entry's words, as the story tells them: its own beat's, or, in a beat that tells several, its own line among
-   * them. An entry the story doesn't hold, from a record told before it had one, keeps the sentence it was written with.
+   * them. An entry the story doesn't hold, from a record told before it had one, has no words yet.
    */
   function entryWords(doc, entry) {
     var beat = beatOf(doc, entry.id);
@@ -2848,7 +2814,7 @@
     var item = beat ? list(beat.items).filter(function (each) { return isObject(each) && each.entry === entry.id; })[0] : null;
     if (item) { return { head: text(item.words.head), line: text(item.words.line), label: text(beat.label) }; }
     if (beat) { return { head: text(beat.words.head), line: text(beat.words.line), label: text(beat.label) }; }
-    return { head: "", line: text(entry.summary), label: "" };
+    return { head: "", line: "", label: "" };
   }
   /** What an entry says, as one line: its story line, or its head when its line is empty. */
   function toldLine(doc, entry) { var words = entryWords(doc, entry); return words.line || words.head; }
@@ -2904,7 +2870,6 @@
       shownFacts.forEach(function (key) {
         facts.appendChild(add(el("div"), el("dt", null, factName(key)), add.apply(null, [el("dd")].concat(factValue(data[key])))));
       });
-      if (!data && text(entry.summary)) { facts.appendChild(add(el("div"), el("dt", null, "as written"), el("dd", null, text(entry.summary)))); }
       box.appendChild(facts);
     });
     return box;

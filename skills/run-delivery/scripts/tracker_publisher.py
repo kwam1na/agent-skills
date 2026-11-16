@@ -70,8 +70,8 @@ def kind_updates(registry: dict | None = None) -> dict[str, tuple[str, str] | No
 
 # Kinds the guide gives a move to; with no `lead` moves for one, its update says the move belongs to people.
 MOVING = ("candidate.merged", "delivery.closed")
-# The kinds whose mark may carry a follow-up to file: the follow-up's own entry, and a decision written as a sentence.
-FILING = ("followup.filed", "decision.recorded")
+# The kinds whose mark may carry a follow-up to file: the follow-up's own entry.
+FILING = ("followup.filed",)
 # What ends a story's wait for its start: its hand-off or its merge.
 PAST_START = ("candidate.handed", "candidate.merged")
 
@@ -458,14 +458,11 @@ def cut(text: str, limit: int) -> str:
 
 
 def said(entry: dict, registry: dict | None = None) -> str:
-    """What an update says of its entry: the kind's head and line in the registry's words when the entry carries
-    facts, and its sentence when it has only that."""
-    if "data" not in entry:
-        return entry.get("summary", "")
+    """What an update says of its entry: the kind's head and line in the registry's words."""
     try:
         made = journal_words.words(entry, registry)
     except journal_words.WordsError:
-        return entry.get("summary", "")
+        return entry["kind"]  # An entry whose words can't be made still posts, under its kind.
     return made["head"] + (f"\n\n{made['line']}" if made["line"] else "")
 
 
@@ -557,9 +554,6 @@ class Publisher:
         update = self.updates.get(entry["kind"])
         if update is None:
             return None, f"{entry['kind']} has no tracker update"
-        # A tool's decision written as a sentence posts only when it was marked; a person's decision has its facts.
-        if entry["kind"] == "decision.recorded" and "data" not in entry and entry["id"] not in self.marks:
-            return None, "an unmarked decision"
         if entry["kind"] == "lane.assigned":
             reason = self.start_decision(entry)
             if reason is not None:
