@@ -329,7 +329,7 @@ class FixtureAdopterTests(unittest.TestCase):
         self.assertQueueRow(view, "beta-copy", "stopped")
         self.assertQueueRow(view, "alpha-rewrite", "queued")
         self.assertIn(f"candidate{text('_')}moved", view)
-        self.assertIn(f"base{text('_')}moved", view)
+        self.assertIn(text("alpha-copy was stopped: trunk moved to"), view)
 
         # The lead reviews the new head and re-queues the second candidate on it.
         adopter.lead_patch({"head": unreviewed}, "queue[subject=beta-copy]")
@@ -410,7 +410,7 @@ class FixtureAdopterTests(unittest.TestCase):
         self.assertEqual(last["baseHead"], broken_base)
         self.assertEqual(adopter.item("alpha-rewrite")["stage"], "stopped")
         self.assertQueueRow(adopter.view(), "alpha-rewrite", "stopped")
-        self.assertIn(text("Main line broke"), adopter.view())
+        self.assertIn(text("The main line broke: lint"), adopter.view())
 
         # The lead fixes forward and makes lint run on every candidate from now on.
         binding = adopter.binding()
@@ -629,8 +629,7 @@ class FixtureAdopterTests(unittest.TestCase):
         view = adopter.view()
         self.assertIn(text("failing test_source_beta"), view)
         self.assertIn(text(f"log {suite_entry['log']}"), view)
-        self.assertIn(text("test_launcher_cancel"), view)
-        self.assertIn(text("Check retried"), view)
+        self.assertIn(text("suite ran again: Known as flaky: FLAKE-7"), view)
 
     def test_lanes_hand_off_through_the_tool_and_serve_lands_everything_without_the_lead(self) -> None:
         adopter = FixtureAdopter(self.root)
