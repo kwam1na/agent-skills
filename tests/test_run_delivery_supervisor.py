@@ -2650,8 +2650,11 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertFalse(wt.exists(), "the pass left the squash-merged story's checkout")
         self.assertEqual(last["closeHeldBy"], [], last)
         self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)
-        cleaned = [e for e in kinds(fx, "cleanup.done") if e.get("subject") == "FX-2"]
-        self.assertTrue(cleaned and cleaned[-1]["data"].get("changeRequest") == "https://forge.test/pr/1", cleaned)
+        [cleaned] = [e for e in kinds(fx, "cleanup.done") if e.get("subject") == "FX-2"]
+        sh("git", "fetch", "-q", "origin", cwd=fx.main)
+        base = sh("git", "rev-parse", "origin/feature/FX-1", cwd=fx.main).stdout.strip()
+        assert_facts(self, cleaned, "cleanup.done", {"base": {"ref": "origin/feature/FX-1", "head": base}, "head": head,
+                                                     "changeRequest": "https://forge.test/pr/1"})
 
     def test_only_the_delivery_s_merged_stories_hold_the_close_for_their_checkouts(self) -> None:
         fx = self.fixture()

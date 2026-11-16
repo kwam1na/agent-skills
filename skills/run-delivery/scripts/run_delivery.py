@@ -10909,6 +10909,9 @@ def lead_resolve(args) -> None:
     """Resolve the blocker a journal entry records, or ask the next pass to rerun a failed fullHealth, with the lead's
     reason. The resolution is the flow log's; the journal says so."""
     c = cfg()
+    # Refused before anything is written, so a reason the journal would refuse never leaves a resolution or a rerun in
+    # the flow log without its entry.
+    args.why = worded(args.why, "--why")
     doc = load_state()
     if args.id == "full-health":
         # The base head as the remote has it, so a failed head the base has moved past reads as moved.

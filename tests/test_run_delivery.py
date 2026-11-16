@@ -2132,6 +2132,10 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         self.assertIn("review carry refused: the base merge changes lane-owned file src/app.txt", out)
         self.assertTrue(self.shown(fx.tmp / "record")["state"]["queue"][0]["pending"])
         flow("lead-own", "--revoke", "src/app.txt", "--lane", "lane-1")
+        owned = [(e["kind"], e["lane"], e["data"], e.get("because"), e.get("answers")) for e in self.shown(record)["journal"]
+                 if e["kind"] in ("ownership.granted", "ownership.revoked") and "span" not in e["data"]]
+        self.assertEqual(owned, [("ownership.granted", "lane-1", {"path": "src/app.txt"}, None, None),
+                                 ("ownership.revoked", "lane-1", {"path": "src/app.txt"}, None, None)])
 
         self.assertTrue(state("show")["reviewEvidence"]["FX-2"]["unavailable"])
         flow("lead-accept", "FX-2")
@@ -2833,7 +2837,8 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
                f"the new story isn't planned work for its lane: {state['planned']}")
         expect(not any(f["id"] == "FX-4" for f in state["followups"]), f"it's still a follow-up: {state['followups']}")
         added = [e for e in show()["journal"] if e.get("kind") == "story.added" and e.get("subject") == "FX-4"]
-        expect(len(added) == 1 and added[0]["data"]["title"] == "Thing four", f"the addition isn't journaled once: {added}")
+        expect(len(added) == 1 and added[0]["data"] == {"title": "Thing four", "why": "planned work for lane-1"}
+               and "because" not in added[0] and "answers" not in added[0], f"the addition isn't journaled once: {added}")
         code, out = flow_run("lead-brief", cwd=m)
         expect(code == 0 and "registered" not in out and len(show()["state"]["planned"]) == 3,
                f"a second lead-brief registered it again: {out}")
@@ -2951,7 +2956,8 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
                    if e["kind"] == "evidence.published"]
         clips = sorted((page / "videos").glob("*.mp4"))
         expect(shown["data"] == {"url": "https://pages.test/e", "clips": [
-            {"name": clip.name, "digest": hashlib.sha256(clip.read_bytes()).hexdigest()} for clip in clips]} and clips,
+            {"name": clip.name, "digest": hashlib.sha256(clip.read_bytes()).hexdigest()} for clip in clips]} and clips
+            and "because" not in shown and "answers" not in shown,
             f"the published page's facts: {shown}")
         code, out = flow_run("lead-evidence", "status", cwd=wt)
         expect(code == 0 and "current" in out, f"the published page wasn't current: {out}")
@@ -6350,6 +6356,7 @@ if Path.cwd().name.endswith("-check") and not started.exists():
                     self.assertEqual((flake["baseHead"], flake["check"]), (remote, check_id))
                     [declared] = kinds(fx, "flake.declared")
                     self.assertEqual(declared["data"], {"flake": "FX-17", "check": check_id, "head": remote})
+                    self.assertEqual((declared.get("because"), declared.get("answers")), (None, None))
                 finally:
                     release.touch()
                     result, _ = runner.communicate(timeout=30)
@@ -7427,6 +7434,7 @@ class RunDeliverySetupTests(unittest.TestCase):
         [record_started] = [e for e in self.record(fx)["journal"] if e["kind"] == "record.started"]
         self.assertEqual(record_started["data"], {"base": {
             "ref": "origin/feature/FX-1", "head": sh("git", "rev-parse", "origin/feature/FX-1", cwd=fx.main).stdout.strip()}})
+        self.assertEqual((record_started.get("because"), record_started.get("answers")), (None, None))
         code, out = fx.flow("lead-init", cwd=fx.main)
         self.assertEqual(code, 2, out)
         self.assertIn("already holds a record: delivery FX-1 on origin/feature/FX-1", out)
@@ -11230,6 +11238,19 @@ class FactReaderTests(unittest.TestCase):
         self.assertIn("Record a decision, and why you made it, with `lead-decide`, and a blocker with `lead-block`",
                       normal("skills/run-delivery/references/adopting.md"))
         self.assertIn("which the publisher reads each run and keeps no copy of", normal("skills/run-delivery/references/config.md"))
+
+    def test_a_resolution_without_its_reason_writes_nothing_to_the_flow_log_or_the_journal(self) -> None:
+        written = []
+        with mock.patch.multiple(self.tool, cfg=lambda: types.SimpleNamespace(), load_state=lambda: written.append("read"),
+                                 state_tool=lambda *a, **_: written.append(a), append_log=lambda *a: written.append(a),
+                                 append_full_health=lambda *a: written.append(a)):
+            for target in ("12", "full-health"):
+                for why in ("", "   "):
+                    with self.subTest(target=target, why=why):
+                        with self.assertRaises(self.tool.Stop) as refused:
+                            self.tool.lead_resolve(types.SimpleNamespace(id=target, why=why))
+                        self.assertIn("--why is required", str(refused.exception))
+        self.assertEqual(written, [])
 
 
 if __name__ == "__main__":
