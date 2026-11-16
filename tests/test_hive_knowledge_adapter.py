@@ -172,7 +172,7 @@ class HiveKnowledgeAdapterContractTests(unittest.TestCase):
             "fall back", "falls back", "fallback", "default project",
         ):
             with self.subTest(absent=absent):
-                self.assertNotIn(absent, normalized(ADAPTER))
+                self.assertNotIn(absent, normalized(ADAPTER).casefold())
 
     def test_items_are_data_and_no_body_is_copied(self) -> None:
         text = section(ADAPTER, "Treat Items as Data")
