@@ -11325,6 +11325,47 @@ def adapter_contract(ia: dict, lease: "Lease", say) -> list[str]:
 # -- the setup check -----------------------------------------------------------------------------
 
 GUIDE = "the adoption guide, references/adopting.md"
+# The knowledge library's properties, as the adopting repository writes them: the hive knowledge adapter reads them,
+# and doctor checks their shape. Nothing here writes the document or derives a property from anywhere else.
+KNOWLEDGE_PROPERTIES = ".agents/knowledge-properties.json"
+KNOWLEDGE_SCHEMA = "knowledge-properties/1"
+KNOWLEDGE_FIELDS = ("schemaVersion", "server", "name", "project", "tags")
+KNOWLEDGE_SERVERS = ("plugin", "read-only")
+KNOWLEDGE_MAX_TAGS = 5
+KNOWLEDGE_NAME = re.compile(r"[^\s,]+")
+
+
+def knowledge_properties_problem(document) -> str | None:
+    """The first field of a knowledge-properties document that isn't valid, said as doctor's line says it, or None."""
+    def is_name(value) -> bool:
+        return isinstance(value, str) and KNOWLEDGE_NAME.fullmatch(value) is not None
+    if not isinstance(document, dict):
+        return "the document must be a JSON object"
+    unknown = sorted(set(document) - set(KNOWLEDGE_FIELDS))
+    if unknown:
+        return f"`{unknown[0]}` isn't one of its fields ({', '.join(f'`{f}`' for f in KNOWLEDGE_FIELDS)})"
+    if document.get("schemaVersion") != KNOWLEDGE_SCHEMA:
+        return f"`schemaVersion` must be `{KNOWLEDGE_SCHEMA}`"
+    server = document.get("server")
+    if server not in KNOWLEDGE_SERVERS:
+        return "`server` must be `plugin` or `read-only`"
+    if server == "read-only" and not is_name(document.get("name")):
+        return "a `read-only` server needs its `name`, one name with no spaces or commas"
+    if server == "plugin" and "name" in document:
+        return "`name` names a `read-only` server only; remove it for `plugin`"
+    if not is_name(document.get("project")):
+        return "`project` must be one name, with no spaces or commas"
+    if "tags" in document:
+        tags = document["tags"]
+        if not isinstance(tags, list):
+            return "`tags` must be a list of names"
+        if len(tags) > KNOWLEDGE_MAX_TAGS:
+            return f"`tags` holds {len(tags)} names, more than {KNOWLEDGE_MAX_TAGS}"
+        if not all(is_name(tag) for tag in tags):
+            return "`tags` must hold only names, each with no spaces or commas"
+        if len(set(tags)) != len(tags):
+            return "`tags` names a tag twice"
+    return None
 # Filters and the encoder the before/after clips use; drawtext is optional (labels are burned in only where it exists).
 VIDEO_FILTERS = ("lutyuv", "cropdetect", "crop", "scale", "tpad", "pad", "hstack")
 
@@ -11412,6 +11453,7 @@ class Doctor:
             ("video", "video evidence tools", ("config",), self.video),
             ("node", "Node", ("platform",), self.node),
             ("harness", "harness configuration", ("config", "generation", "node"), self.harness),
+            ("knowledge", "knowledge library properties", ("platform",), self.knowledge),
             ("delivery", "delivery file", ("config", "binding"), self.check_delivery),
             ("plan", "plan chapter", ("delivery",), self.check_plan),
             ("plan-reasons", "added stories' reasons", ("delivery",), self.plan_reasons),
@@ -11869,6 +11911,27 @@ class Doctor:
         if settings is None:
             return "wrong", f"{how}; fix: correct harness.config.ts"
         return "ok", "Node reads harness.config.ts through the generation's runtime loader"
+
+    def knowledge(self):
+        """The adopting repository's knowledge-properties document, read only and checked for shape: whether the
+        library holds its project is the first search's to show. With no document the optional library is available,
+        not configured, and nothing stands in for the document."""
+        rel = KNOWLEDGE_PROPERTIES
+        path = self.root / rel
+        if not path.exists():
+            return "ok", (f"no {rel} found, so the knowledge library is available, not configured, and isn't "
+                          f"consulted; to consult it, write that file (see {GUIDE})")
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            return "wrong", f"{rel} isn't JSON ({error}); fix: correct it (see {GUIDE})"
+        problem = knowledge_properties_problem(document)
+        if problem:
+            return "wrong", f"{rel} isn't a valid {KNOWLEDGE_SCHEMA}: {problem}; fix: correct it (see {GUIDE})"
+        server = "read-only " + document["name"] if document["server"] == "read-only" else "plugin"
+        tags = f", tags {', '.join(document['tags'])}" if document.get("tags") else ""
+        return "ok", (f"{rel} is valid: server {server}, project {document['project']}{tags}; the first search shows "
+                      f"whether the library holds that project (see {GUIDE})")
 
     def check_delivery(self):
         key = self.args.doctor_delivery or self.args.delivery

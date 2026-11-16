@@ -278,6 +278,35 @@ gate that fails there fails every candidate, and the queue reads it as a broken 
 narrow the gate as above to what candidates change, and say in the plan which old failure is out of scope. Never drop
 the gate.
 
+### A knowledge library (optional)
+
+A team that keeps reviewed lessons in a shared hive-mined library can have deliveries consult it: `plan-work`,
+`diagnose-work` and `compound-learning` search it after the repository's own `docs/solutions/`, read only, through the
+`hive-knowledge-adapter` this release ships. Skip this section and every workflow runs as before, saying the library
+was not consulted. hive-mined runs on macOS only; on any other host, leave the library unconfigured.
+
+1. Install hive-mined, or only its read-only server, where the delivery sessions run, and let it finish its first sync.
+2. Add the lane checkout folder (`.orchestration/lanes` by default) to hive-mined's `refuse_folders`, so it doesn't
+   draft a lesson from each lane's session. Its `search` and `read` keep working there, so lanes still consult it.
+3. Write the properties, naming the library's project for this repository. `server` is `plugin` for the plugin's own
+   server, or `read-only` with the read-only server's `name` beside it; `tags`, at most five, is optional. Nothing
+   guesses the project from the folder or repository name: without this file the library isn't consulted.
+
+```json example outline .agents/knowledge-properties.json
+{
+  "schemaVersion": "knowledge-properties/1",
+  "server": "plugin",
+  "project": "<library-project>"
+}
+```
+
+4. Run `doctor` (section 5). Its knowledge library line says the file is valid, or names the field to correct. It
+   checks the shape only, never the library.
+5. Run one search, in a session, for a lesson you know the project holds. A hit confirms the project; no hit means the
+   project is misspelt or the library hasn't synced yet.
+
+Commit the file with the configuration.
+
 ## 5. Run the setup check
 
 ```sh example repo
@@ -926,8 +955,8 @@ do. A line marked `skipped` names the check it waits on: fix that one first.
 - **`is the receipt's previous one`**: an older generation is still running after an update; its briefs carry the
   older release. Restart the command from `.agent-skills/current`.
 - **`no .agents/orchestration.json`**: write the orchestrate-work binding.
-- **`isn't JSON`**: the file the line names (the binding, the configuration, the receipt or the delivery file) has a
-  syntax error. Correct it; reinstall the release for a broken receipt.
+- **`isn't JSON`**: the file the line names (the binding, the configuration, the receipt, the delivery file or the
+  knowledge library's properties) has a syntax error. Correct it; reinstall the release for a broken receipt.
 - **`doesn't validate`**: correct the binding against `orchestration-binding/1`; the line names the first problems.
 - **`no delivery base`**: set `base.ref` (and `base.remote`) in the binding.
 - **`the delivery base`**: the base branch isn't on the remote (or, with `--offline`, isn't fetched yet). Push it.
@@ -975,6 +1004,9 @@ do. A line marked `skipped` names the check it waits on: fix that one first.
   anyway. Neither command moves the item. A snapshot that doesn't list a story's offered moves, or no snapshot at all,
   leaves readiness unchecked, and both commands say so.
 - **`fails on`**: a gate fails on the delivery base itself. Repair the base before any lane starts.
+- **`isn't a valid knowledge-properties/1`**: `.agents/knowledge-properties.json` has a field the knowledge library
+  can't use; the line names it. Correct it as [A knowledge library](#a-knowledge-library-optional) shows, or remove the
+  file to stop consulting the library.
 - **`isn't a valid delivery-plan/1`**: the stories' criteria and the finish lines' covers make a plan the view can't
   read. Correct the delivery file at the key path the line names.
 - **`the binding has no state.forgeSnapshot`**: the repository configures a forge, but nothing reads its pull requests
