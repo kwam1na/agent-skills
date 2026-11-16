@@ -123,7 +123,7 @@
       "label": "Handed off",
       "words": {
         "head": "Lane 1 handed off A",
-        "line": "After 2 review rounds, with tests.test_one run by the lane"
+        "line": "Ready after 2 review rounds, with tests.test_one run by the lane"
       },
       "explain": "A lane says its piece is ready. The lead checks the claim before anything is run on it.",
       "items": []
@@ -239,7 +239,7 @@
       "label": "Handed off",
       "words": {
         "head": "Lane 1 handed off A",
-        "line": "After 2 review rounds, with tests.test_one run by the lane"
+        "line": "Ready after 2 review rounds, with tests.test_one run by the lane"
       },
       "explain": "A lane says its piece is ready. The lead checks the claim before anything is run on it.",
       "items": []
