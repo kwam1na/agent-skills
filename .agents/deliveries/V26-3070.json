@@ -200,6 +200,10 @@
         {
           "id": "v26-3527-3",
           "text": "Live hosted_info and hosted_line report final-publication-pending with the existing URL and preceding receipt; deleting that fallback fails its regression."
+        },
+        {
+          "id": "v26-3527-4",
+          "text": "Active archive polling uses bounded production unavailability handling, then direct post-exit assertions verify stable identity, receipt and status while persistent corruption still fails."
         }
       ],
       "after": [
