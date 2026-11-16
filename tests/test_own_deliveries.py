@@ -115,7 +115,7 @@ class FreshClone(unittest.TestCase):
 
     def test_missing_publishing_credential_warns_without_selecting_a_delivery(self) -> None:
         done = self.doctor(without=("AGENT_SKILLS_DELIVERY_PUBLISH_TOKEN",))
-        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         warnings = [line for line in done.stdout.splitlines() if line.split()[0] not in ("ok", "skipped")]
         self.assertEqual(len(warnings), 1, done.stdout + done.stderr)
         self.assertRegex(warnings[0], r"^warn\s+hosted delivery: hosted: configured; no delivery selected; "
