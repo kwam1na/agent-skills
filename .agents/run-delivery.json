@@ -24,5 +24,12 @@
   ],
   "hooks": {
     "lead.may-stop": "enforce"
+  },
+  "baseMove": {
+    "provenanceWriter": [
+      "python3",
+      "-B",
+      "scripts/update-provenance.py"
+    ]
   }
 }
