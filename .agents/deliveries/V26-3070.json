@@ -204,6 +204,21 @@
           "text": "Preserve actual custom-domain HTTP/browser evidence, disconnect/reconnect results, exact deployed bytes and installed-archive identity; stop short of deployment completion if any prerequisite or live proof remains unavailable."
         }
       ]
+    },
+    "V26-3527": {
+      "title": "Complete bounded hosted publishing and archive recovery",
+      "lane": "lane-1",
+      "why": "Kwamina explicitly authorized a tracked remediation follow-up with a fresh two-round review limit after the original lifecycle review reached its terminal four-round bound; preserve all prior dissent and evidence.",
+      "criteria": [
+        {
+          "id": "v26-3527-1",
+          "text": "Meet the retained U5 lifecycle and privacy obligations, deliver terminal intent under live CONTROL contention within the close budget, prove truthful live pending status, and preserve stable same-ID archive recovery under bounded transitional polling."
+        }
+      ],
+      "after": [
+        "V26-3517",
+        "V26-3516"
+      ]
     }
   },
   "finish": [

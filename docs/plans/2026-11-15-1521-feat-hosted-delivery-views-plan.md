@@ -476,6 +476,10 @@ Lane 2, tier 5, after V26-3514, V26-3515, V26-3516, V26-3517, V26-3518. Implemen
 
 Lane 2, tier 6, after V26-3519. Implements U7 above, including its complete Requirements, Approach, Test scenarios and Verification. Files: `hosted/delivery-viewer/wrangler.jsonc`, `hosted/delivery-viewer/README.md`, `docs/hosted-deliveries.md`.
 
+### V26-3527. Complete bounded hosted publishing and archive recovery
+
+Lane 1, tier 1, after V26-3517 and V26-3516. Added mid-delivery: Kwamina explicitly authorized a tracked remediation follow-up with a fresh two-round review limit after the original lifecycle review reached its terminal four-round bound; preserve all prior dissent and evidence.
+
 ## Delivery Finish Line
 
 - Both installed plan-review lenses align at the exact committed candidate.
