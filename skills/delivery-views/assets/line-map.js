@@ -2947,9 +2947,10 @@
     return time;
   }
   /** One beat as a row: its time, its mark, its words in full, and, opened, its facts and what its kind of event is. */
-  function beatRow(doc, story, beat, fresh) {
+  function beatRow(doc, story, beat, fresh, depth) {
     var threads = story.threads.filter(function (thread) { return isObject(thread) && thread.id === beat.thread; });
-    var li = el("li", "beat is-" + text(beat.tone) + (beat.thread && beat.form !== "thread" ? " threaded" : "") + (fresh ? " fresh" : ""));
+    // Below the headline a setback's entries keep their places in time, tied by a thin line in the margin.
+    var li = el("li", "beat is-" + text(beat.tone) + (beat.thread && beat.form !== "thread" && depth !== "headline" ? " threaded" : "") + (fresh ? " fresh" : ""));
     li.setAttribute("data-beat", text(beat.id));
     if (beat.thread) { li.setAttribute("data-thread", text(beat.thread)); }
     if (beat.form === "thread" && threads.length) { return setbackSheet(doc, beat, threads[0], li); }
@@ -2981,8 +2982,9 @@
     var told = isObject(thread.told) ? thread.told : {};
     var sheet = el("div", "setback-sheet");
     var words = add(el("div", "setback-words"), add.apply(null, [el("div", "setback-head")].concat(linked(beat.words.head))));
-    [["Why", told.cause], ["Held up", told.heldUp], ["How it ended", told.ending]].forEach(function (part) {
-      if (text(part[1])) { words.appendChild(add.apply(null, [el("p", "setback-part"), el("span", "setback-k", part[0])].concat(linked(part[1])))); }
+    // Its cause, what it held up and how it ended, each a sentence that says which it is.
+    [told.cause, told.heldUp, told.ending].forEach(function (part) {
+      if (text(part)) { words.appendChild(add.apply(null, [el("p", "setback-part")].concat(linked(part)))); }
     });
     var cost = thread.state === "closed" && typeof thread.cost === "number"
       ? add(el("div", "setback-cost"), el("b", null, duration(thread.cost)), el("span", null, (clock(thread.openedAt) || "") + " to " + (clock(thread.closedAt) || "")))
@@ -3025,15 +3027,16 @@
       li.setAttribute("data-chapter", text(chapter.id));
       var heading = add(el("div", "chapter-head"), add.apply(null, [el("h3")].concat(linked(chapter.words.head))), timeOf(chapter.at));
       li.appendChild(heading);
-      var said = [text(chapter.pieceTitle), text(chapter.words.line)].filter(Boolean);
-      if (said.length) { li.appendChild(el("p", "chapter-line", said.join(" "))); }
+      // The piece that landed, by its title, then how long it took to land; each on its own line.
+      if (text(chapter.pieceTitle)) { li.appendChild(el("p", "chapter-line", text(chapter.pieceTitle))); }
+      if (text(chapter.words.line)) { li.appendChild(el("p", chapter.pieceTitle ? "chapter-when" : "chapter-line", text(chapter.words.line))); }
       standing.forEach(function (carried) {
         li.appendChild(add.apply(null, [el("p", "chapter-standing" + (carried.until ? " is-ended" : ""))].concat(linked(carried.text),
           [carried.until ? ", until " + (clock(carried.until) || "a time unknown") + "." : ""])));
       });
       if (shownBeats.length) {
         var ul = el("ul", "beats");
-        shownBeats.forEach(function (beat) { ul.appendChild(beatRow(doc, story, beat, prev.story && !prev.story[beatKey(beat)] && !reduced())); });
+        shownBeats.forEach(function (beat) { ul.appendChild(beatRow(doc, story, beat, prev.story && !prev.story[beatKey(beat)] && !reduced(), depth)); });
         li.appendChild(ul);
       }
       ol.appendChild(li);

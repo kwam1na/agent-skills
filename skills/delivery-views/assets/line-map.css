@@ -457,6 +457,7 @@ a.issue-link { color: inherit; cursor: pointer; }
 .chapter-head time { display: inline-flex; gap: 6px; }
 .chapter-of.is-landing .chapter-head h3 { color: var(--landed); }
 .chapter-line { margin: 0; color: var(--soft); max-width: 68ch; overflow-wrap: anywhere; }
+.chapter-when { margin: 0; font-size: 13px; color: var(--faint); }
 .chapter-standing { margin: 0; font-size: 13px; color: var(--held); overflow-wrap: anywhere; }
 .chapter-standing.is-ended { color: var(--faint); }
 .beats { margin-top: 6px; border-top: 1px solid var(--hair); }
@@ -499,7 +500,6 @@ a.fact-ref { text-decoration: underline; text-decoration-color: color-mix(in srg
 .setback-words { display: grid; gap: 6px; min-width: 0; }
 .setback-head { font-size: 15px; line-height: 22px; color: var(--ink); overflow-wrap: anywhere; }
 .setback-part { margin: 0; font-size: 13px; line-height: 19px; color: var(--soft); overflow-wrap: anywhere; }
-.setback-k { display: inline-block; min-width: 88px; color: var(--faint); }
 .setback-cost { display: grid; justify-items: end; align-content: start; gap: 2px; text-align: right; }
 .setback-cost b { font-family: var(--display); font-weight: 500; font-size: 28px; line-height: 1; color: var(--held); font-variant-numeric: tabular-nums; }
 .setback-cost span { font-size: 12px; color: var(--faint); white-space: nowrap; }

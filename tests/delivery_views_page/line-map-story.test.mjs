@@ -55,6 +55,9 @@ test("at the story altitude a setback's entries keep their places, each marked a
   const threaded = [...shown.app.querySelectorAll("#happened .beat.threaded")];
   expect(threaded.length).toBe(thread.entries.length);
   expect(threaded.every((row) => row.getAttribute("data-thread") === thread.id)).toBe(true);
+  // At the headline the setback is its sheet, and nothing carries the margin line.
+  const [, headline] = await open(document, { steps: [{ click: '#happened [data-depth="headline"]' }] });
+  expect(headline.app.querySelectorAll("#happened .beat.threaded").length).toBe(0);
 });
 
 test("the chapter opens on Story for an open delivery and on Headlines for a closed one, and keeps the reader's choice", async () => {
@@ -117,8 +120,7 @@ test("a setback is one quiet sheet: why, what it held up, how it ended, and its 
   const [thread] = document.story.threads;
   const [, shown] = await open(document, { steps: [{ click: '#happened [data-depth="headline"]' }] });
   const sheet = shown.app.querySelector(`#happened .setback[data-thread="${thread.id}"]`);
-  expect([...sheet.querySelectorAll(".setback-part")].map((part) => part.textContent)).toEqual(
-    ["Held up" + thread.told.heldUp, "How it ended" + thread.told.ending]);
+  expect([...sheet.querySelectorAll(".setback-part")].map((part) => part.textContent)).toEqual([thread.told.heldUp, thread.told.ending]);
   expect(sheet.querySelector(".setback-cost b").textContent).toBe("17m");
   expect(sheet.className).toContain("is-closed");
   const standing = storied("standing-break");
