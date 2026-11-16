@@ -6411,10 +6411,10 @@ class SkillTextTests(unittest.TestCase):
         posts = {"the ticket": "ticket", "the epic": "epic", "the ticket, or the epic": "ticket-or-epic"}
         # A kind added to the registry without its row, a row for a kind it does not list,
         # or a row whose place or heading differs from the registry's, fails here.
-        self.assertEqual([(cells[0].strip("`"), None if cells[1] == "nowhere" else {"posts": posts[cells[1]], "heading": cells[2]})
+        self.assertEqual([(cells[0].strip("`"), cells[1], None if cells[2] == "nowhere" else {"posts": posts[cells[2]], "heading": cells[3]})
                           for cells in rows],
-                         [(name, kind["tracker"]) for name, kind in registry.items()])
-        self.assertTrue(all(cells[2] == "-" for cells in rows if cells[1] == "nowhere"))
+                         [(name, kind["instruction"], kind["tracker"]) for name, kind in registry.items()])
+        self.assertTrue(all(cells[3] == "-" for cells in rows if cells[2] == "nowhere"))
 
     def test_the_guide_lists_the_answers_pairs_and_describes_an_entry(self) -> None:
         registry = json.loads((SKILL / "references/journal-kinds.json").read_text(encoding="utf-8"))["kinds"]

@@ -1596,7 +1596,8 @@
           "opensThread",
           "words",
           "explain",
-          "tracker"
+          "tracker",
+          "instruction"
         ],
         "properties": {
           "altitude": {
@@ -1728,6 +1729,11 @@
                 }
               }
             ]
+          },
+          "instruction": {
+            "description": "The kind's tracker instruction, as the guide's table prints it: what its update holds beyond where it posts and under what heading, or, beginning \"None: \", why it posts nothing.",
+            "type": "string",
+            "minLength": 1
           }
         }
       }

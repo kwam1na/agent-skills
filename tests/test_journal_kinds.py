@@ -258,6 +258,19 @@ class RegistryTests(unittest.TestCase):
                             with self.subTest(kind=name, part=part, required=field):
                                 self.assertFalse(data[top].get("optional"))
 
+    def test_every_kind_has_a_tracker_instruction_that_agrees_with_where_it_posts_and_never_gates(self) -> None:
+        for name, kind in registry()["kinds"].items():
+            with self.subTest(kind=name):
+                instruction = kind["instruction"]
+                # It says why the kind posts nothing, or what its update holds where it posts.
+                self.assertEqual(instruction.startswith("None: "), kind["tracker"] is None)
+                if kind["tracker"] is not None:
+                    self.assertTrue(instruction.startswith("On the "), instruction)
+                self.assertTrue(instruction.endswith("."), instruction)
+                # An update is never a gate: no instruction waits on, blocks or orders anything after itself.
+                self.assertIsNone(re.search(r"\b(?:wait(?:s|ing|ed)?|block(?:s|ing)?|until|till|before|after|gate[sd]?|hold(?:s|ing)?)\b",
+                                            instruction), instruction)
+
     def test_every_explanation_is_short_and_plain(self) -> None:
         for name, kind in registry()["kinds"].items():
             with self.subTest(kind=name):

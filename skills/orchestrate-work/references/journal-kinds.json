@@ -419,7 +419,8 @@
       "tracker": {
         "posts": "epic",
         "heading": "Delivery started"
-      }
+      },
+      "instruction": "On the epic: the delivery started, naming its base and the head it started from."
     },
     "story.added": {
       "altitude": "headline",
@@ -446,7 +447,8 @@
       "tracker": {
         "posts": "epic",
         "heading": "Story added"
-      }
+      },
+      "instruction": "On the epic: the piece the lead added to the plan, its title, and why."
     },
     "lane.assigned": {
       "altitude": "story",
@@ -474,7 +476,8 @@
       "tracker": {
         "posts": "ticket",
         "heading": "Started"
-      }
+      },
+      "instruction": "On the ticket: it moves to started, naming the lane and what it delivers."
     },
     "review.round": {
       "altitude": "story",
@@ -515,7 +518,8 @@
         "line": "Findings: {findings.P0} P0, {findings.P1} P1, {findings.P2} P2 and {findings.P3} P3[, after {refused:count:refused result}][, restarted {restarts:count:time}]"
       },
       "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
-      "tracker": null
+      "tracker": null,
+      "instruction": "None: a lane posts each round on its own ticket, as its brief says, and the lead posts the integration review's rounds on the epic."
     },
     "review.recorded": {
       "altitude": "bookkeeping",
@@ -539,7 +543,8 @@
         "line": "For {candidateRef}"
       },
       "explain": "The tool kept the review's own record, so the views can show it later.",
-      "tracker": null
+      "tracker": null,
+      "instruction": "None: the lane already posted each captured round on its own ticket; the evidence shows in the record and the views."
     },
     "review.carried": {
       "altitude": "story",
@@ -576,7 +581,8 @@
       "tracker": {
         "posts": "ticket",
         "heading": "Review carried"
-      }
+      },
+      "instruction": "On the ticket: the lead carried the review from the head it covered to the queued head, and why it still covers the piece."
     },
     "candidate.handed": {
       "altitude": "story",
@@ -625,7 +631,8 @@
       "tracker": {
         "posts": "ticket",
         "heading": "Handed off and queued"
-      }
+      },
+      "instruction": "On the ticket: the hand-off checked as a claim and queued, with its change request, reviewed head and review rounds."
     },
     "handoff.checked": {
       "altitude": "story",
@@ -664,7 +671,8 @@
         }
       },
       "explain": "The lead read the lane's claim against the record before accepting it.",
-      "tracker": null
+      "tracker": null,
+      "instruction": "None: the acceptance posts with `handoff.accepted`, and the lead's notes show in the record and the views."
     },
     "handoff.accepted": {
       "altitude": "story",
@@ -694,7 +702,8 @@
       "tracker": {
         "posts": "ticket",
         "heading": "Accepted"
-      }
+      },
+      "instruction": "On the ticket: the lead accepted the hand-off, and the queue takes the piece, or it settled with no change."
     },
     "handoff.rejected": {
       "altitude": "headline",
@@ -718,7 +727,8 @@
       "tracker": {
         "posts": "ticket",
         "heading": "Hand-off rejected"
-      }
+      },
+      "instruction": "On the ticket: the lead sent the hand-off back to its lane, and why."
     },
     "handoff.requeued": {
       "altitude": "story",
@@ -744,7 +754,8 @@
       "tracker": {
         "posts": "ticket",
         "heading": "Back in the queue"
-      }
+      },
+      "instruction": "On the ticket: the lead put the stopped piece back in the queue, at its head."
     },
     "check.selected": {
       "altitude": "story",
@@ -774,7 +785,8 @@
         "line": "Checks: {checks:list}, at {head:commit}[, {added:count:check} added]. {why}"
       },
       "explain": "The lead chose which checks a piece runs, from what it changes.",
-      "tracker": null
+      "tracker": null,
+      "instruction": "None: the lead's selection and its reason show in the record and the views, and the checks it ran post with `candidate.merged` or `candidate.stopped`."
     },
     "check.selection.cleared": {
       "altitude": "story",
@@ -791,7 +803,8 @@
         "line": "The usual checks ran"
       },
       "explain": "The lead stopped choosing a piece's checks, so the usual ones run.",
-      "tracker": null
+      "tracker": null,
+      "instruction": "None: the provider selects the candidate's checks again, and the checks it ran post with `candidate.merged` or `candidate.stopped`."
     },
     "selection.refused": {
       "altitude": "headline",
@@ -812,7 +825,8 @@
         "line": "{detail}"
       },
       "explain": "The tool that picks a piece's checks refused, so the piece waits for the lead.",
-      "tracker": null
+      "tracker": null,
+      "instruction": "None: the stop posts with `candidate.stopped`, and the provider's words show in the record and the views."
     },
     "check.started": {
       "altitude": "story",
@@ -834,7 +848,8 @@
         "line": "[In one batch: {batch:list}]"
       },
       "explain": "The queue began running a piece's checks.",
-      "tracker": null
+      "tracker": null,
+      "instruction": "None: checking is transient, and its outcome posts with `candidate.merged` or `candidate.stopped`."
     },
     "check.finished": {
       "altitude": "story",
@@ -856,7 +871,8 @@
         "line": "[In one batch: {batch:list}]"
       },
       "explain": "The queue finished running a piece's checks.",
-      "tracker": null
+      "tracker": null,
+      "instruction": "None: its outcome posts with `candidate.merged` or `candidate.stopped`."
     },
     "check.failed": {
       "altitude": "story",
@@ -895,7 +911,8 @@
         "line": "[Failing: {failing:list}][ and {more:count:more|more}]"
       },
       "explain": "A check failed on a piece. What happens next depends on whether the main line fails it too.",
-      "tracker": null
+      "tracker": null,
+      "instruction": "None: its outcome posts with `candidate.stopped` once the failure is classified."
     },
     "check.retried": {
       "altitude": "story",
@@ -934,7 +951,8 @@
       "tracker": {
         "posts": "ticket-or-epic",
         "heading": "Check retried"
-      }
+      },
+      "instruction": "On the flake's tracking reference: one more retry, naming the candidate and the failing tests, as evidence for fixing the flake."
     },
     "check.reused": {
       "altitude": "story",
@@ -961,7 +979,8 @@
         "line": "Its run for {from} at {head:commit} was used"
       },
       "explain": "A check's earlier run on the same code was used instead of running it again.",
-      "tracker": null
+      "tracker": null,
+      "instruction": "None: the candidate's work item already says it was handed off and is being checked; the reused check shows in the record and the views."
     },
     "check.carried": {
       "altitude": "story",
@@ -991,7 +1010,8 @@
         "line": "{checks:list} carried, {ranAgain:list} ran again, across {commits:count:commit}"
       },
       "explain": "The main line moved in ways a check never reads, so its run carried over instead of running again.",
-      "tracker": null
+      "tracker": null,
+      "instruction": "None: the candidate's work item already says it was handed off and is being checked; the carried checks and the base commits they were not run on show in the record and the views."
     },
     "candidate.merged": {
       "altitude": "headline",
@@ -1019,7 +1039,8 @@
       "tracker": {
         "posts": "ticket",
         "heading": "Merged"
-      }
+      },
+      "instruction": "On the ticket: the merge commit, the checks run, and any check reported but not awaited; the ticket moves to its review or completed state."
     },
     "candidate.stopped": {
       "altitude": "headline",
@@ -1062,7 +1083,8 @@
       "tracker": {
         "posts": "ticket",
         "heading": "Stopped"
-      }
+      },
+      "instruction": "On the ticket: the stop code and what happens next, whether returned to the lane, re-queued or pending a decision."
     },
     "base.rerun.started": {
       "altitude": "story",
@@ -1086,7 +1108,8 @@
         "line": "{checks:list}, at {base.head:commit}"
       },
       "explain": "A check failed on a piece, so it runs on the main line too, to see whose failure it is.",
-      "tracker": null
+      "tracker": null,
+      "instruction": "None: the candidate's failure already reached the lead as `check.failed`, and the record and the views show the re-run in progress."
     },
     "base.rerun.finished": {
       "altitude": "story",
@@ -1123,7 +1146,8 @@
         "line": "After {seconds:duration}"
       },
       "explain": "The run on the main line ended, and said whether the failure was the piece's or the main line's.",
-      "tracker": null
+      "tracker": null,
+      "instruction": "None: its verdict posts with `candidate.stopped`, or with `base.broken` when the base fails the check too."
     },
     "base.rerun.stopped": {
       "altitude": "story",
@@ -1150,7 +1174,8 @@
         "line": "After {seconds:duration}. {why}"
       },
       "explain": "The run on the main line ended without a verdict, so the piece is checked once more.",
-      "tracker": null
+      "tracker": null,
+      "instruction": "None: a stopped re-run has no verdict, the candidate is queued again and checked once more, and a second stop at the same heads posts with `candidate.stopped`."
     },
     "base.broken": {
       "altitude": "headline",
@@ -1196,7 +1221,8 @@
       "tracker": {
         "posts": "epic",
         "heading": "The delivery base is broken; the queue is stopped"
-      }
+      },
+      "instruction": "On the epic: the stop code and its detail (the failing check, an unverified merge, a base that moved under a batch, or a batch that landed in part), and that the queue is stopped; `base.repaired` reopens it."
     },
     "base.repaired": {
       "altitude": "headline",
@@ -1233,7 +1259,8 @@
       "tracker": {
         "posts": "epic",
         "heading": "The delivery base is repaired"
-      }
+      },
+      "instruction": "On the epic: the fix that landed and the gap it closed."
     },
     "base.verified": {
       "altitude": "story",
@@ -1261,7 +1288,8 @@
         "line": "At {head:commit}[, after {after} landed]"
       },
       "explain": "The full run on the main line passed after a piece landed.",
-      "tracker": null
+      "tracker": null,
+      "instruction": "None: the post-merge `fullHealth` passed at the base head the named merge reached, and the result shows in the record and the views."
     },
     "base.flaky": {
       "altitude": "story",
@@ -1292,7 +1320,8 @@
         "line": "{failing:list} failed and then passed[, after {after} landed]"
       },
       "explain": "The full run failed, but its failures passed when run alone, so the main line is not broken.",
-      "tracker": null
+      "tracker": null,
+      "instruction": "None: the post-merge `fullHealth` failed and its failing tests passed when re-run alone, so the base isn't broken; the flaky tests show in the record, the views and \"Needs you\"."
     },
     "base.moved": {
       "altitude": "story",
@@ -1325,7 +1354,8 @@
       "tracker": {
         "posts": "epic",
         "heading": "Delivery base updated"
-      }
+      },
+      "instruction": "On the epic, record the previous and published base heads and the default branch commit."
     },
     "base.published": {
       "altitude": "bookkeeping",
@@ -1349,7 +1379,8 @@
         "line": "{base.ref} from {from:commit} to {base.head:commit}"
       },
       "explain": "The lead pushed the main line to the shared remote.",
-      "tracker": null
+      "tracker": null,
+      "instruction": "None: the push shows in the record and the views; a base move posts with `base.moved`."
     },
     "base.merge.authorized": {
       "altitude": "story",
@@ -1376,7 +1407,8 @@
         "line": "{baseCommits:list:commit}, from {reviewed:commit}"
       },
       "explain": "The lead allowed a lane to bring exact commits from the main line into its piece.",
-      "tracker": null
+      "tracker": null,
+      "instruction": "None: the lane runs the merge the lead authorized, and its hand-off posts with `candidate.handed`."
     },
     "ownership.granted": {
       "altitude": "bookkeeping",
@@ -1409,7 +1441,8 @@
         "line": "[From {movedFrom:lane}][ at {base.head:commit}]"
       },
       "explain": "The lead changed which lane may edit a file.",
-      "tracker": null
+      "tracker": null,
+      "instruction": "None: which lane may edit a file shows in the record and the views."
     },
     "ownership.revoked": {
       "altitude": "bookkeeping",
@@ -1442,7 +1475,8 @@
         "line": "[From {movedFrom:lane}][ at {base.head:commit}]"
       },
       "explain": "The lead changed which lane may edit a file.",
-      "tracker": null
+      "tracker": null,
+      "instruction": "None: which lane may edit a file shows in the record and the views."
     },
     "ownership.claimed": {
       "altitude": "bookkeeping",
@@ -1465,8 +1499,9 @@
         "head": "{path} was claimed[ by {lane:lane}]",
         "line": "On {base.ref} at {base.head:commit}"
       },
-      "explain": "A lane claimed the part of a file the lead gave it.",
-      "tracker": null
+      "explain": "A delivery claimed a path on a shared base, so a peer delivery's lead is warned before changing it.",
+      "tracker": null,
+      "instruction": "None: the delivery's claim on a path of the shared base shows in the record and the views, and a peer delivery's lead is warned of it."
     },
     "plan.updated": {
       "altitude": "bookkeeping",
@@ -1490,7 +1525,8 @@
         "line": "[Changed: {changed:list}]"
       },
       "explain": "The plan's page was rebuilt from the plan file.",
-      "tracker": null
+      "tracker": null,
+      "instruction": "None: the plan chapter shows the rebuilt plan."
     },
     "cleanup.done": {
       "altitude": "bookkeeping",
@@ -1519,7 +1555,8 @@
         "line": "[Merged at {head:commit}][ from {changeRequest}]"
       },
       "explain": "The lead removed a landed piece's branch and checkout.",
-      "tracker": null
+      "tracker": null,
+      "instruction": "None: a landed piece's branch and checkout are gone, and its merge already posted with `candidate.merged`."
     },
     "followup.filed": {
       "altitude": "bookkeeping",
@@ -1546,7 +1583,8 @@
         "line": "{followup:ticket}: {title}"
       },
       "explain": "A note left open by a review became its own ticket.",
-      "tracker": null
+      "tracker": null,
+      "instruction": "None: the follow-up is its own ticket, and the decision that deferred its note posted with `decision.recorded`."
     },
     "snapshot.stale": {
       "altitude": "bookkeeping",
@@ -1567,7 +1605,8 @@
         "line": "The last one stood"
       },
       "explain": "The tracker or forge could not be read again, so the last reading stands.",
-      "tracker": null
+      "tracker": null,
+      "instruction": "None: the last snapshot stands, and the views say how old it is."
     },
     "snapshot.retaken": {
       "altitude": "bookkeeping",
@@ -1590,7 +1629,8 @@
         "line": "It was current again"
       },
       "explain": "The tracker or forge was read again after a gap.",
-      "tracker": null
+      "tracker": null,
+      "instruction": "None: the views read the fresh snapshot."
     },
     "evidence.published": {
       "altitude": "story",
@@ -1617,7 +1657,8 @@
       "tracker": {
         "posts": "epic",
         "heading": "Evidence published"
-      }
+      },
+      "instruction": "On the epic: where the recordings of the work running are, and what each shows."
     },
     "flake.declared": {
       "altitude": "story",
@@ -1647,7 +1688,8 @@
       "tracker": {
         "posts": "epic",
         "heading": "Flake declared"
-      }
+      },
+      "instruction": "On the epic: the check declared flaky, its known failure, the reference that tracks it, and the base head it applies to."
     },
     "fullhealth.skipped": {
       "altitude": "headline",
@@ -1680,7 +1722,8 @@
       "tracker": {
         "posts": "epic",
         "heading": "Full run skipped"
-      }
+      },
+      "instruction": "On the epic: the full run was skipped at the base head, under the delivery's posture, and why."
     },
     "fullhealth.rerun": {
       "altitude": "story",
@@ -1704,7 +1747,8 @@
         "line": "At {head:commit}. {why}"
       },
       "explain": "The lead asked for the main line's full run once more.",
-      "tracker": null
+      "tracker": null,
+      "instruction": "None: the full run's verdict posts with `base.verified`, `base.flaky`, `base.broken` or `base.repaired`."
     },
     "posture.changed": {
       "altitude": "headline",
@@ -1743,7 +1787,8 @@
       "tracker": {
         "posts": "epic",
         "heading": "Posture changed"
-      }
+      },
+      "instruction": "On the epic: the posture it left and the one it took, what set it, and why."
     },
     "serving.held": {
       "altitude": "headline",
@@ -1767,7 +1812,8 @@
       "tracker": {
         "posts": "epic",
         "heading": "Serving is held"
-      }
+      },
+      "instruction": "On the epic: the queue is held while its setup is fixed, and why."
     },
     "deferral.breached": {
       "altitude": "headline",
@@ -1794,7 +1840,8 @@
       "tracker": {
         "posts": "ticket",
         "heading": "Deferred note still open"
-      }
+      },
+      "instruction": "On the ticket: the deferred review note still open past its due point, with its follow-up."
     },
     "blocker.recorded": {
       "altitude": "headline",
@@ -1818,7 +1865,8 @@
       "tracker": {
         "posts": "ticket-or-epic",
         "heading": "Blocked"
-      }
+      },
+      "instruction": "On the blocked ticket, or the epic when every ticket is blocked: the blocker, and whose answer or work unblocks it."
     },
     "blocker.resolved": {
       "altitude": "headline",
@@ -1845,7 +1893,8 @@
       "tracker": {
         "posts": "ticket-or-epic",
         "heading": "Blocker resolved"
-      }
+      },
+      "instruction": "On the blocked ticket, or the epic: what unblocked it, and why."
     },
     "decision.recorded": {
       "altitude": "headline",
@@ -1872,7 +1921,8 @@
       "tracker": {
         "posts": "ticket-or-epic",
         "heading": "Decision"
-      }
+      },
+      "instruction": "On the ticket the decision concerns, or the epic: what, why, and who decided, the operator or the lead. A deferred finding links its follow-up item."
     },
     "lease.granted": {
       "altitude": "story",
@@ -1899,7 +1949,8 @@
       "tracker": {
         "posts": "ticket-or-epic",
         "heading": "Lease granted"
-      }
+      },
+      "instruction": "On the ticket whose work needs the lease: the lease, its holder and when it will be released."
     },
     "lease.released": {
       "altitude": "story",
@@ -1928,7 +1979,8 @@
       "tracker": {
         "posts": "ticket-or-epic",
         "heading": "Lease released"
-      }
+      },
+      "instruction": "On the same ticket: the lease is released."
     },
     "release.started": {
       "altitude": "headline",
@@ -1949,7 +2001,8 @@
         "line": "At {head:commit}"
       },
       "explain": "The release of the delivered work began.",
-      "tracker": null
+      "tracker": null,
+      "instruction": "None: the release posts once it finishes."
     },
     "release.finished": {
       "altitude": "headline",
@@ -1977,7 +2030,8 @@
       "tracker": {
         "posts": "epic",
         "heading": "Released"
-      }
+      },
+      "instruction": "On the epic: the release shipped, its commit and targets, and who approved it."
     },
     "finish.met": {
       "altitude": "headline",
@@ -2001,7 +2055,8 @@
       "tracker": {
         "posts": "epic",
         "heading": "Finish line met"
-      }
+      },
+      "instruction": "On the epic: the finish line and the evidence that met it."
     },
     "hook.held": {
       "altitude": "story",
@@ -2031,7 +2086,8 @@
         "line": "{hook}"
       },
       "explain": "A hook stopped the lead from ending its turn while work was still open.",
-      "tracker": null
+      "tracker": null,
+      "instruction": "None: a host hook held, or warned about, a lead's stop while no listener ran, and the entry shows in the record and the views."
     },
     "peer.merged": {
       "altitude": "story",
@@ -2058,7 +2114,8 @@
         "line": "At {head:commit}, touching {files:list}"
       },
       "explain": "Another delivery on the same main line changed a file a piece here names.",
-      "tracker": null
+      "tracker": null,
+      "instruction": "None: the supervisor journals a merge by another delivery on the base that changed a file one of this delivery's open stories names, and the entry shows in the record and the views."
     },
     "delivery.closed": {
       "altitude": "headline",
@@ -2089,7 +2146,8 @@
       "tracker": {
         "posts": "epic",
         "heading": "Delivery closed"
-      }
+      },
+      "instruction": "On the epic: the close-out summary; the epic moves to its final state."
     }
   }
 }
