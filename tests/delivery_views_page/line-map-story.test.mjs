@@ -229,3 +229,15 @@ test("a tone no page script names gets its mark and its word in the legend from 
   const calm = legendOf(headline).find((entry) => entry.word === "Calm");
   expect(calm.mark).toBe(headline.app.querySelector(`#happened [data-beat="${beat.id}"] > .g`).outerHTML);
 });
+
+test("a story told before it carried its tones' words draws no legend, and nothing in its place", async () => {
+  const document = storied("standing-break");
+  const story = structuredClone(document.story);
+  delete story.tones;
+  story.digest.words.line = "";
+  document.story = story;
+  const [shown] = await open(document);
+  const happened = shown.app.querySelector("#happened");
+  expect(happened.querySelector(".story-legend")).toBeNull();
+  expect(happened.textContent.includes("null")).toBe(false);
+});

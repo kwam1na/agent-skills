@@ -3056,7 +3056,9 @@
     if (!ol.childNodes.length) { ol.appendChild(el("li", "waiting", "Nothing here yet.")); }
     prev.story = seen;
     var digest = isObject(story.digest.words) ? story.digest.words : { head: "", line: "" };
-    inner.replaceChildren(el("div", "kicker", "What happened"), el("h2", "title", text(digest.head)),
+    // A part the story doesn't hold, a digest line or a legend, is left out rather than drawn as nothing.
+    inner.replaceChildren();
+    add(inner, el("div", "kicker", "What happened"), el("h2", "title", text(digest.head)),
       text(digest.line) ? el("p", "say", text(digest.line)) : null, storyLegend(story, depth), switches, ol);
     // Depth changes density in place: the chapter eases from the height it had, on the shared fold's motion.
     runEaseHeight(inner, from);
