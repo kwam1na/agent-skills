@@ -6817,14 +6817,20 @@ class SkillTextTests(unittest.TestCase):
             spec.loader.exec_module(publisher)
         finally:
             sys.dont_write_bytecode = previous
-        registry = json.loads((SKILL / "references/journal-kinds.json").read_text(encoding="utf-8"))["kinds"]
-        # Until the publisher reads the registry itself, its own table holds the kinds the bridge writes:
-        # each the registry lists posts where the registry says, and a bridge kind posts nothing.
-        self.assertEqual(sorted(set(publisher.UPDATES) - set(registry)), list(state_tool.BRIDGE_KINDS))
-        for kind, update in publisher.UPDATES.items():
+        registry = json.loads((SKILL / "references/journal-kinds.json").read_text(encoding="utf-8"))
+        # The publisher keeps no table of its own: each kind posts where the registry says, read through its path.
+        for kind, update in publisher.kind_updates().items():
             with self.subTest(kind=kind):
-                expected = registry[kind]["tracker"] if kind in registry else None
-                self.assertEqual(None if update is None else dict(zip(("posts", "heading"), update)), expected)
+                self.assertEqual(None if update is None else dict(zip(("posts", "heading"), update)),
+                                 registry["kinds"][kind]["tracker"])
+        self.assertEqual(sorted(publisher.kind_updates()), sorted(registry["kinds"]))
+        # A planted registry moves a kind's post, which a copy of the table would not follow.
+        registry["kinds"]["candidate.merged"]["tracker"] = None
+        planted = Path(tempfile.mkdtemp(prefix="planted-registry-")) / "journal-kinds.json"
+        self.addCleanup(shutil.rmtree, planted.parent, True)
+        planted.write_text(json.dumps(registry), encoding="utf-8")
+        with mock.patch.object(publisher.journal_words, "REGISTRY_FILE", planted):
+            self.assertIsNone(publisher.kind_updates()["candidate.merged"])
 
     def test_the_operator_escalation_list_is_closed_and_pinned(self) -> None:
         for path in (SKILL / "SKILL.md", GUIDE):
