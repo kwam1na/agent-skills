@@ -385,6 +385,35 @@
     {
       "classification": "optional-adapter",
       "distribution": "releasable",
+      "id": "hive-knowledge-adapter",
+      "license": "NOASSERTION",
+      "modification": {
+        "reason": "Independently authored read-only adapter that maps the neutral knowledge-library capability to the host's hive-mined server, kept out of the core workflow so core stays provider-neutral.",
+        "status": "independently-authored"
+      },
+      "outputs": [
+        {
+          "path": "skills/hive-knowledge-adapter/SKILL.md",
+          "sha256": "4455e746df4af3986c07ec82cb5c704bbf31863b538e0cc860946f2aa05831e9"
+        },
+        {
+          "path": "skills/hive-knowledge-adapter/references/adapter-contract.json",
+          "sha256": "f169dadd699be21c3a467832b3335a35d017a54520660edb350a0de02089707d"
+        }
+      ],
+      "owner": "delivery-agent/user-delegated",
+      "source": {
+        "kind": "independent-origin",
+        "ownerApproval": {
+          "owner": "delivery-agent/user-delegated",
+          "reference": "plan-review:the approved knowledge-library read-side plan"
+        },
+        "rationale": "Authored from the approved plan that adds a read-only knowledge library to core and maps it to the host's hive-mined server in the run-delivery closure; it copies no adopter source."
+      }
+    },
+    {
+      "classification": "optional-adapter",
+      "distribution": "releasable",
       "id": "jira-tracker-adapter",
       "license": "LicenseRef-Athena-internal",
       "modification": {
