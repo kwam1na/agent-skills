@@ -192,6 +192,72 @@ reusing each class's existing archive build rather than building per test.
 - **Profiles.** The `run-delivery`, `linear` and `jira` archives ship the adapter and its contract; `core` and
   `bootstrap` do not; each archive is deterministic and verifies.
 
+## Delivery
+
+Epic V26-3543, delivered on the integration base `integrate/knowledge-library` with `main` as its integration target.
+This section lays the work out for lanes. It changes no decision, scope item or test above; where it moves a piece of
+scope between stories, it says so.
+
+1. **Three lanes.** Lane 1 holds the core skills, lane 2 the adapter and the registry files, lane 3 `doctor` and the
+   adopting guide.
+2. **Lane 2 owns `catalog.json`, `profiles/` and the provenance listing.** A new skill's files, its catalog entry, every
+   selected profile and its provenance outputs land in one change, so the adapter's lane holds them. The catalog's
+   `knowledge-library` capability on `deliver-work` and the profile description sentences therefore move from
+   V26-3544 and V26-3548 into V26-3546.
+3. **`provenance.lock.json` is the binding's regenerable file.** Every story that changes a file under `skills/`
+   refreshes its digests with the provenance writer. Only V26-3546 adds listed outputs, the adapter's.
+4. **The adapter's rows have their own module.** The adapter's contract, transport and properties rows go in
+   `tests/test_hive_knowledge_adapter.py`, not `tests/test_knowledge_library.py`, so lanes 1 and 2 share no test file.
+
+## Units and order
+
+| Tier | Lane | Items, in order | Owns |
+| --- | --- | --- | --- |
+| 1 | 1 | V26-3544, V26-3545, V26-3548 | `skills/deliver-work/references/capability-contract.md`, `skills/deliver-work/SKILL.md`, `agent_skills/validate.py`, `skills/plan-work/SKILL.md`, `skills/diagnose-work/SKILL.md`, `skills/compound-learning/SKILL.md`, `skills/orchestrate-work/SKILL.md`, `README.md`, `tests/test_knowledge_library.py`, `tests/test_core_boundary.py`, `tests/test_readme.py` |
+| 1 | 3 | V26-3547 | `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/references/adopting.md`, `tests/test_run_delivery.py` |
+| 2 | 2 | V26-3546 | `skills/hive-knowledge-adapter/`, `catalog.json`, `profiles/`, `tests/test_hive_knowledge_adapter.py`, `tests/test_linear_profile.py`, `tests/test_jira_profile.py`, `tests/test_profile_inventory.py` |
+
+Lane 2 starts when V26-3544 has merged, since the adapter maps that contract. Lane 1 takes V26-3548 after V26-3546
+has merged.
+
+## Stories
+
+### V26-3544. Add the neutral knowledge-library capability to core, and keep the provider out of it
+
+Lane 1, tier 1, not blocked. Test-first. Files: `skills/deliver-work/references/capability-contract.md`,
+`skills/deliver-work/SKILL.md`, `agent_skills/validate.py`, `tests/test_knowledge_library.py` and
+`tests/test_core_boundary.py`. Scope: the capability contract, `deliver-work` and `agent_skills/validate.py` bullets
+under "Core: the neutral capability", and the Core boundary, Contract shape and Optional path scenarios. The catalog
+capability moves to V26-3546 (Delivery, item 2).
+
+### V26-3545. Consult the knowledge library in plan-work, diagnose-work and compound-learning, lanes included
+
+Lane 1, tier 1, after V26-3544. Test-first. Files: `skills/plan-work/SKILL.md`, `skills/diagnose-work/SKILL.md`,
+`skills/compound-learning/SKILL.md`, `skills/orchestrate-work/SKILL.md` and `tests/test_knowledge_library.py`.
+Scope: the `plan-work`, `diagnose-work`, `compound-learning` and `orchestrate-work` bullets under "Core: the neutral
+capability", and the Consult side, Lanes and Trust scenarios.
+
+### V26-3546. Ship a hive-mined knowledge adapter in the run-delivery closure
+
+Lane 2, tier 2, after V26-3544. Test-first. Files: `skills/hive-knowledge-adapter/SKILL.md`,
+`skills/hive-knowledge-adapter/references/adapter-contract.json`, `catalog.json`, `profiles/run-delivery.json`,
+`profiles/linear.json`, `profiles/jira.json`, `tests/test_hive_knowledge_adapter.py`, `tests/test_linear_profile.py`,
+`tests/test_jira_profile.py` and `tests/test_profile_inventory.py`. Scope: the adapter, adapter contract, properties
+and registry bullets under "`run-delivery` closure: the adapter", the Contract shape (adapter side), Transport
+boundary, Properties and Profiles scenarios, plus the catalog capability and the profile description sentences
+(Delivery, item 2).
+
+### V26-3547. Have doctor report the knowledge-library properties, and document adopting it
+
+Lane 3, tier 1, not blocked. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`,
+`skills/run-delivery/references/adopting.md` and `tests/test_run_delivery.py`. Scope: the `doctor` and `adopting.md`
+bullets under "`run-delivery` closure: the adapter", and the Doctor scenario.
+
+### V26-3548. Describe the knowledge library in the README and the profile descriptions
+
+Lane 1, tier 1, after V26-3545 and V26-3546. Sensor-only. Files: `README.md` and `tests/test_readme.py`. Scope: the
+README's core and `run-delivery` paragraphs. The profile description sentences move to V26-3546 (Delivery, item 2).
+
 ## Risks
 
 - **Library freshness.** Items have no revision field, so a stale item can mislead. Recording each item's `date`
