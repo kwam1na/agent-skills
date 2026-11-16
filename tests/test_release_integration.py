@@ -43,6 +43,25 @@ NEW_PAYLOAD = frozenset({
 
 
 class ReleaseIntegrationTests(unittest.TestCase):
+    def test_hosted_outputs_reach_every_selected_profile_without_service_payload(self) -> None:
+        profiles={path.stem:json.loads(path.read_text()) for path in (ROOT/'profiles').glob('*.json')}
+        lock=json.loads((ROOT/'provenance.lock.json').read_text())
+        outputs=[row['path'] for entry in lock['entries'] if entry['id']=='delivery-views' for row in entry['outputs']]
+        required={'skills/delivery-views/scripts/hosted.py',
+                  'skills/delivery-views/scripts/public_projection.py',
+                  'skills/delivery-views/references/hosted-snapshot.schema.json'}
+        self.assertLessEqual(required,set(outputs))
+        for profile in ('delivery-views','run-delivery','linear','jira'):
+            with self.subTest(profile=profile):
+                self.assertIn('delivery-views',resolve_profile(profile,profiles))
+                self.assertLessEqual(required,set(profiles[profile]['expectedFiles']))
+                payload=_release_view(ROOT,profile)
+                for name in outputs:self.assertEqual(payload[name],(ROOT/name).read_bytes(),name)
+                self.assertFalse(any(name.startswith(('hosted/','node_modules/','.orchestration/','.agent-skills/'))
+                                     or name.endswith(('.dev.vars','.env','package-lock.json')) for name in payload))
+                self.assertNotIn('package.json',payload)
+        self.assertIn('delivery-views',profiles)
+
     def test_diagnosis_has_released_target_without_replacing_entry_point(self) -> None:
         cases = (
             (WorkflowRequest("Diagnose the unknown failure"), "diagnose-work"),
@@ -99,6 +118,9 @@ class ReleaseIntegrationTests(unittest.TestCase):
             "skills/run-delivery/templates/round-brief.md",
             "skills/delivery-views/SKILL.md",
             "skills/delivery-views/scripts/snapshot.py",
+            "skills/delivery-views/scripts/hosted.py",
+            "skills/delivery-views/scripts/public_projection.py",
+            "skills/delivery-views/references/hosted-snapshot.schema.json",
             "skills/delivery-views/assets/history.css",
             "skills/delivery-views/assets/history.js",
             "skills/delivery-views/assets/line-map.css",

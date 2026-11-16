@@ -1,0 +1,111 @@
+{
+  "schemaVersion": "hosted-delivery-snapshot/1",
+  "sourceFingerprint": "1111111111111111111111111111111111111111111111111111111111111111",
+  "document": {
+    "state": {
+      "planned": [],
+      "queue": [
+        {
+          "subject": "APP-1",
+          "title": "</script><b>Work</b>",
+          "lane": "one",
+          "stage": "queued",
+          "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runId": "run-1"
+        }
+      ],
+      "meta": {
+        "headline": "Delivery",
+        "updatedAt": "2026-11-15T00:00:00Z"
+      }
+    },
+    "journal": [
+      {
+        "id": 1,
+        "at": "2026-11-15T00:00:00Z",
+        "kind": "review.round",
+        "lane": "one",
+        "subject": "APP-1",
+        "summary": "Dissent",
+        "review": {
+          "round": 1,
+          "verdicts": {
+            "lens.security": "changes"
+          },
+          "findings": {
+            "P0": 0,
+            "P1": 1,
+            "P2": 0,
+            "P3": 0
+          }
+        }
+      }
+    ]
+  },
+  "runs": {
+    "run-1": {
+      "runId": "run-1",
+      "roundDetail": [
+        {
+          "round": 1,
+          "candidateRef": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "at": "2026-11-15T00:00:00Z",
+          "outcome": "changes",
+          "detailsUnavailable": true,
+          "verdicts": {
+            "lens.security": "changes"
+          },
+          "findings": {
+            "P0": 0,
+            "P1": 1,
+            "P2": 0,
+            "P3": 0
+          },
+          "raised": [
+            {
+              "id": "f1",
+              "severity": "P1",
+              "lens": "lens.security",
+              "summary": "<img onerror=x>",
+              "state": "unresolved"
+            }
+          ],
+          "briefs": {
+            "lens.security": {
+              "brief": {
+                "unavailable": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    "other": {
+      "unavailable": true
+    }
+  },
+  "reviews": {},
+  "view": {
+    "title": "Delivery",
+    "themeKey": "hosted-delivery",
+    "history": null,
+    "runs": false,
+    "lenses": {
+      "lens.outcome-correctness": {
+        "name": "Outcome correctness",
+        "icon": "bullseye"
+      },
+      "lens.adversarial-testing": {
+        "name": "Adversarial testing",
+        "icon": "spy"
+      }
+    }
+  },
+  "links": {
+    "issues": {},
+    "changes": {},
+    "commits": {}
+  },
+  "plan": null,
+  "needs": null
+}

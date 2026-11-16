@@ -1,5 +1,25 @@
 # Adopting run-delivery
 
+For optional hosted progress, configure `hosted.origin`, `hosted.repositoryId`
+and `hosted.tokenEnv` in the binding shelf's `.agents/delivery-views.json`, then
+export that token variable before `lead-init` or `lead-run --resume`.
+`doctor` reports configuration and local publication status without uploading.
+The independent watcher survives supervisor stops and keeps one public URL;
+explicit lead status and `view` show the link. Treat it as public read access.
+Never add this watcher to generic `state.publishers`.
+
+Close leaves a durable terminal request after `close-finished`, adds at most
+30 seconds for publication, and lets the watcher retry for up to 10 minutes.
+An unavailable receiver leaves `final-publication-pending` in the archive.
+`view --archive PATH` shows the known link and status without a token or an
+uploader. From a configured checkout, `hosted-retry --archive PATH` retries
+the archived terminal cut with its existing public ID; use `--resume` for an
+expired writer lease. Wait until the recorded original watcher has exited.
+Lifecycle-lock contention does not prevent that owner receiving its terminal
+deadline. Repeated closes preserve the deadline and acknowledged cut. Pending
+live status retains the known URL and last receipt; concurrent archive reads can
+briefly be unavailable, then validate strictly after the writer exits.
+
 This guide takes a repository from nothing to a closed delivery. Read it once as the lead, and give its lane section
 to each lane. Every command and file below is in a marked example block. A first line such as
 `example repo` or `example file .agents/run-delivery.json` says what the block is:

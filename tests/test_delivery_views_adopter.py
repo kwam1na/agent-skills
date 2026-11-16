@@ -349,6 +349,130 @@ class OutsideAdopterTests(unittest.TestCase):
         self.assert_no_credential(adopter.state)
 
 
+    def test_two_installed_adopters_publish_isolated_cuts_and_archive_status_without_credentials(self):
+        """Exact installed bytes; only HTTPS socket connection is a loopback fixture seam."""
+        import hashlib
+        import threading
+        import zipfile
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from tests.test_delivery_views_hosted import FakeAPI, hosted as receiver_fixture
+        first=self.adopter
+        second_root=self.temporary/'second';second_root.mkdir()
+        second=OutsideAdopter(second_root,self.archive,self.metadata)
+        tokens={'repo_one':'SYNTHETIC_INSTALLED_ONE_'+'a'*40,'repo_two':'SYNTHETIC_INSTALLED_TWO_'+'b'*40}
+        apis={key:FakeAPI() for key in tokens};requests=[];errors=[]
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self,*args):pass
+            def do_GET(self):self.api()
+            def do_POST(self):self.api()
+            def api(self):
+                try:
+                    parts=self.path.split('/');repo=parts[4];operation=parts[-1]
+                    body=self.rfile.read(int(self.headers.get('Content-Length',0))) or None
+                    requests.append((self.path,dict(self.headers),body))
+                    if self.headers.get('Authorization')!='Bearer '+tokens[repo]:
+                        self.send_response(401);self.end_headers();self.wfile.write(b'{"error":"unauthorized"}');return
+                    try:answer=apis[repo](self.command,operation,body,self.headers)
+                    except receiver_fixture.PublishError as error:
+                        self.send_response(404);self.end_headers();self.wfile.write(json.dumps({'error':error.code}).encode());return
+                    self.send_response(200);self.send_header('Content-Type','application/json');self.end_headers()
+                    self.wfile.write(json.dumps(answer).encode())
+                except Exception as error:
+                    errors.append(error);self.send_error(500)
+        server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+        thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+        self.addCleanup(server.server_close);self.addCleanup(server.shutdown)
+        # External test harness, never an installed-file edit or adopter implementation.
+        seam=self.temporary/'socket-seam';seam.mkdir()
+        (seam/'sitecustomize.py').write_text(
+            'import http.client\nReal=http.client.HTTPConnection\n'
+            f'def fixture(host,port=None,timeout=None,context=None):\n assert host=="deliveries.example.com"\n return Real("127.0.0.1",{server.server_port},timeout=timeout)\n'
+            'http.client.HTTPSConnection=fixture\n')
+        driver='''import importlib.util,json,sys
+from pathlib import Path
+from types import SimpleNamespace
+path=Path(sys.argv[1]);spec=importlib.util.spec_from_file_location('installed_hosted',path)
+h=importlib.util.module_from_spec(spec);spec.loader.exec_module(h)
+a=SimpleNamespace(config='.agents/delivery-views.json',binding='.agents/orchestration.json',key='APP-1',state_dir=None)
+i=h.load_inputs(a)
+p=h.Publisher(i.state_directory,i.config['hosted'],a.key,secret_values=[__import__('os').environ['FIXTURE_PUBLISH_TOKEN']])
+p.api=h.child_transport(a,i)
+print(json.dumps(p.step(lambda:h.child_collect(a,i))))
+'''
+        identities=[];fingerprints=[];snapshots=[];receipts=[]
+        archive_sha=hashlib.sha256(self.archive.read_bytes()).hexdigest()
+        with zipfile.ZipFile(self.archive) as archive:
+            names=archive.namelist()
+            for name in ('hosted.py','public_projection.py'):
+                self.assertIn('skills/delivery-views/scripts/'+name,names)
+            self.assertIn('skills/delivery-views/references/hosted-snapshot.schema.json',names)
+            self.assertFalse(any(name.startswith(('hosted/','node_modules/','.orchestration/','.agent-skills/'))
+                                 or name.endswith(('.dev.vars','.env','package-lock.json','hosted-identity.json',
+                                                   'hosted-status.json')) for name in names))
+            for name in names:
+                for token in (*tokens.values(),*SECRETS):self.assertNotIn(token.encode(),archive.read(name),name)
+        for adopter,repo in ((first,'repo_one'),(second,'repo_two')):
+            config_path=adopter.repository/'.agents/delivery-views.json'
+            config=json.loads(config_path.read_text())
+            config['hosted']={'origin':'https://deliveries.example.com','repositoryId':repo,'tokenEnv':'FIXTURE_PUBLISH_TOKEN'}
+            config_path.write_text(json.dumps(config))
+            adopter.state_tool('init','--headline',repo)
+            env=dict(adopter.environment);env.update(FIXTURE_PUBLISH_TOKEN=tokens[repo],PYTHONPATH=str(seam))
+            before={p.relative_to(adopter.repository/'.agent-skills/current').as_posix():hashlib.sha256(p.read_bytes()).hexdigest()
+                    for p in (adopter.repository/'.agent-skills/current').rglob('*') if p.is_file()}
+            completed=subprocess.run([sys.executable,'-B','-c',driver,str(adopter.installed('delivery-views/scripts/hosted.py'))],
+                cwd=adopter.repository,env=env,capture_output=True,text=True,timeout=45)
+            self.assertEqual(completed.returncode,0,completed.stdout+completed.stderr)
+            answer=json.loads(completed.stdout)
+            self.assertEqual(answer['state'],'current')
+            identity=json.loads((adopter.state/'hosted-identity.json').read_text())
+            identities.append(identity['publicId'])
+            payload=next(call[2] for call in apis[repo].calls if call[1]=='snapshots')
+            snapshots.append(payload);fingerprints.append(json.loads(payload)['sourceFingerprint'])
+            self.assertEqual(answer['receipt']['digest'],hashlib.sha256(payload).hexdigest())
+            # Same identity survives a second exact collection, which confirms instead of uploading.
+            again=subprocess.run([sys.executable,'-B','-c',driver,str(adopter.installed('delivery-views/scripts/hosted.py'))],
+                cwd=adopter.repository,env=env,capture_output=True,text=True,timeout=45)
+            self.assertEqual(again.returncode,0,again.stdout+again.stderr)
+            self.assertEqual(apis[repo].calls[-1][1],'confirm')
+            archive=adopter.repository/'archived';shutil.copytree(adopter.state,archive)
+            # The ordinary installed status command reads copied archive sidecars and starts no owner.
+            adopter.environment={key:value for key,value in adopter.environment.items() if key not in CREDENTIALS}
+            before_status=len(requests)
+            status=adopter.run([sys.executable,'-B',str(adopter.installed('delivery-views/scripts/hosted.py')),'status',
+                '--config','.agents/delivery-views.json','--binding','.agents/orchestration.json',
+                '--state-dir',str(archive),'--key','APP-1'])
+            self.assertIn(identity['publicId'],status.stdout)
+            self.assertEqual(len(requests),before_status)
+            self.assertFalse((archive/'hosted-owner.json').exists())
+            for folder in (archive,adopter.repository/'.agents'):
+                for path in folder.rglob('*'):
+                    if path.is_file():
+                        for token in (*tokens.values(),*SECRETS):self.assertNotIn(token.encode(),path.read_bytes(),str(path))
+            after={p.relative_to(adopter.repository/'.agent-skills/current').as_posix():hashlib.sha256(p.read_bytes()).hexdigest()
+                   for p in (adopter.repository/'.agent-skills/current').rglob('*') if p.is_file()}
+            self.assertEqual(before,after)
+            self.assertEqual(Lifecycle(adopter.repository).status().blockers,())
+            receipt=json.loads((adopter.repository/'.agent-skills/active.json').read_text())
+            self.assertEqual(receipt['release']['archiveSha256'],archive_sha)
+            receipts.append({'repositoryId':repo,'archiveSha256':archive_sha,
+                             'installedFiles':len(before),'unchangedInstalledBytes':before==after,
+                             'generation':receipt['generation'],'publicId':identity['publicId'],
+                             'snapshotDigest':answer['receipt']['digest']})
+        self.assertNotEqual(*identities);self.assertNotEqual(*fingerprints)
+        self.assertEqual(errors,[])
+        self.assertTrue(requests)
+        for path,headers,body in requests:
+            for token in (*tokens.values(),*SECRETS):
+                self.assertNotIn(token,path)
+                self.assertNotIn(token,repr({k:v for k,v in headers.items() if k.lower()!='authorization'}))
+                self.assertNotIn(token.encode(),body or b'')
+        self.assertEqual(hashlib.sha256(self.archive.read_bytes()).hexdigest(),archive_sha)
+        self.qualification_evidence={'archiveSha256':archive_sha,'adopters':receipts,
+            'transportSeam':'external HTTPS socket substitution to loopback fixture receiver',
+            'installedFilesEdited':False,'productionOrOffMachineProof':False}
+
+
 class AdopterGuideTests(unittest.TestCase):
     """The skill's guide shows this adopter's configuration and commands as they are."""
 
