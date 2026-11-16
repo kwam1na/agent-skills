@@ -6417,11 +6417,11 @@ class StateToolFactsTests(unittest.TestCase):
         state_tool.patch(self.directory, writer="lead", version=version, changes={"meta": {"handoffsNeedAcceptance": True}})
         state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head=HEAD_A, change_request="cr-a", rounds=1)
         handed = self.last()
-        # A check journaled for an earlier hand-off, or another piece's, is not this acceptance's.
-        state_tool.append_journal(self.directory, kind="handoff.checked", subject="work-q", because=[handed["id"]],
-                                  data={"head": HEAD_A, "rounds": 1, "afterMerge": False, "noChange": False, "notes": []})
         checked = state_tool.append_journal(self.directory, kind="handoff.checked", subject="work-a", because=[handed["id"]],
                                             data={"head": HEAD_A, "rounds": 1, "afterMerge": False, "noChange": False, "notes": []})
+        # Another piece's check, journaled after, is not this acceptance's, whatever it names.
+        state_tool.append_journal(self.directory, kind="handoff.checked", subject="work-q", because=[handed["id"]],
+                                  data={"head": HEAD_A, "rounds": 1, "afterMerge": False, "noChange": False, "notes": []})
         state_tool.accept_handoff(self.directory, "work-a")
         accepted = self.last()
         self.assertEqual({key: accepted[key] for key in accepted if key not in ("id", "at")},
