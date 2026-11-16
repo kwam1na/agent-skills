@@ -40,10 +40,19 @@ if (match && statusNode && timesNode && app && entry) {
       needs: body.needs,
     };
     for (const [key, value] of Object.entries(fields)) {
-      if (value === undefined || value === null) continue;
+      const id = `delivery-${key}`;
+      const existing = document.getElementById(id);
+      if (value === undefined || value === null) {
+        existing?.remove();
+        continue;
+      }
+      if (existing) {
+        existing.textContent = JSON.stringify(value);
+        continue;
+      }
       const block = document.createElement("script");
       block.type = "application/json";
-      block.id = `delivery-${key}`;
+      block.id = id;
       block.textContent = JSON.stringify(value);
       document.body.appendChild(block);
     }
@@ -56,9 +65,11 @@ if (match && statusNode && timesNode && app && entry) {
     if (!body) return;
     document.title =
       typeof body.view.title === "string" ? body.view.title : "Hosted delivery";
+    // Keep inert blocks current even while the first renderer request is delayed.
+    // The active renderer still receives its coherent native subscription push.
+    seed(body);
     if (started) return;
     started = true;
-    seed(body);
     Object.assign(globalThis, { deliveryStateStore: store });
     const renderer = document.createElement("script");
     renderer.src = entry!.dataset.renderer!;

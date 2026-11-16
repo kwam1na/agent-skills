@@ -206,6 +206,35 @@ test("signed-out data-only view enforces CSP, headers, no-referrer and no opener
       Reflect.get(window, "__injected"),
     ]),
   ).toEqual([undefined, undefined, undefined]);
+  const foreignRequests: string[] = [];
+  await context.route("https://example.com/__forbidden/**", async (route) => {
+    foreignRequests.push(route.request().url());
+    await route.fulfill({
+      contentType: "text/javascript",
+      headers: { "Access-Control-Allow-Origin": "*" },
+      body: "window.__foreignRan=1;",
+    });
+  });
+  await page.evaluate(async () => {
+    const scriptDenied = new Promise<void>((resolve) => {
+      const script = document.createElement("script");
+      script.src = "https://example.com/__forbidden/payload.js";
+      script.onerror = () => resolve();
+      script.onload = () => resolve();
+      document.head.appendChild(script);
+    });
+    await Promise.all([
+      scriptDenied,
+      fetch("https://example.com/__forbidden/collect", {
+        method: "POST",
+        body: "synthetic fixture",
+      }).catch(() => {}),
+    ]);
+  });
+  expect(foreignRequests).toEqual([]);
+  expect(
+    await page.evaluate(() => Reflect.get(window, "__foreignRan")),
+  ).toBeUndefined();
   const popupPromise = page.waitForEvent("popup");
   await page
     .locator('a[href="https://example.com/issue/APP-1"]')
@@ -247,11 +276,9 @@ test("polling preserves keyboard selection, folds, viewport and mobile line posi
   await expect(page.locator("#detail")).toContainText("Second unit");
   await page.locator("#plan summary").filter({ hasText: "All units" }).click();
   await expect(
-    page
-      .locator("#plan details")
-      .filter({
-        has: page.locator("summary").filter({ hasText: "All units" }),
-      }),
+    page.locator("#plan details").filter({
+      has: page.locator("summary").filter({ hasText: "All units" }),
+    }),
   ).toHaveAttribute("open", "");
   await page.evaluate(() => {
     scrollTo(0, 500);
@@ -274,11 +301,9 @@ test("polling preserves keyboard selection, folds, viewport and mobile line posi
     "true",
   );
   await expect(
-    page
-      .locator("#plan details")
-      .filter({
-        has: page.locator("summary").filter({ hasText: "All units" }),
-      }),
+    page.locator("#plan details").filter({
+      has: page.locator("summary").filter({ hasText: "All units" }),
+    }),
   ).toHaveAttribute("open", "");
   const after = await page.evaluate(() => ({
     y: scrollY,
@@ -392,4 +417,65 @@ test("asset failure stays explicit across later successful data polls", async ({
   await expect(page.locator("#hosting-status")).toContainText(
     "Progress confirmed",
   );
+});
+
+test("first render uses the newest coherent projection after a delayed renderer asset", async ({
+  page,
+}) => {
+  const id = randomBytes(32).toString("hex");
+  const body = fixture();
+  body.view.runs = true;
+  body.plan = fixture("valid-plan-review.json").plan;
+  body.document.state.meta.headline = "Old startup document";
+  body.plan.plan.outcome.summary = "Old startup plan";
+  body.needs = {
+    running: true,
+    at: new Date().toISOString(),
+    staleAfter: new Date(Date.now() + 600000).toISOString(),
+    items: [
+      {
+        holding: true,
+        source: "operator",
+        text: "Old startup needs",
+        clears: "Recorded resolution",
+      },
+    ],
+  };
+  body.links.issues = { "APP-1": "https://example.com/old-startup" };
+  body.runs["run-1"].roundDetail[0].raised[0].summary =
+    "Old startup run finding";
+  await publish(id, body);
+  const built = JSON.parse(
+    readFileSync(new URL("../assets.generated.json", import.meta.url), "utf8"),
+  );
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route(`**${built.paths.rendererPath}`, async (route) => {
+    await held;
+    await route.continue();
+  });
+  try {
+    await page.goto(`${origin}/d/${id}`, { waitUntil: "domcontentloaded" });
+    await expect(page.locator("#hosting-times")).toContainText("Revision 1.1");
+    body.document.state.meta.headline = "Latest startup document";
+    body.plan.plan.outcome.summary = "Latest startup plan";
+    body.needs.items[0].text = "Latest startup needs";
+    body.links.issues["APP-1"] = "https://example.com/latest-startup";
+    body.runs["run-1"].roundDetail[0].raised[0].summary =
+      "Latest startup run finding";
+    await publish(id, body, 2);
+    await expect(page.locator("#hosting-times")).toContainText("Revision 1.2");
+    release();
+    await expect(page.locator("#app")).toContainText("Latest startup document");
+    await expect(page.locator("#plan")).toContainText("Latest startup plan");
+    await expect(page.locator("#now")).toContainText("Latest startup needs");
+    await expect(page.locator("#detail")).toContainText(
+      "Latest startup run finding",
+    );
+    expect(
+      await page.locator('a[data-ticket="APP-1"]').first().getAttribute("href"),
+    ).toBe("https://example.com/latest-startup");
+  } finally {
+    release();
+  }
 });

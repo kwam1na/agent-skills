@@ -168,7 +168,9 @@ qualification is claimed by this package.
 shell embeds no publisher data and loads content-addressed external JS/CSS. The
 build consumes `line-map.js`, `run-summary.js` and their styles directly from the
 corpus. Checked narrow store hooks replace the local HTML refresh mechanism with
-one coherent projection push; drift in those anchors refuses the build. No
+one coherent projection push; drift in those anchors refuses the build. Inert
+seed blocks are updated idempotently for every accepted cut, including optional
+block removal, so a delayed first renderer cannot combine revisions. No
 corpus asset is modified or copied into an independently maintained renderer.
 Plan presence changes update its chapter; native subject selection, review/plan
 folds, focus and horizontal line position remain with the existing UI. The host

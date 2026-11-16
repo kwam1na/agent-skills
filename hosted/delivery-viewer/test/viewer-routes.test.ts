@@ -18,6 +18,9 @@ describe("trusted hosted shell boundary", () => {
     const response = await request(`/d/${publicId}`, {}, null);
     expect(response.status).toBe(200);
     expect(response.headers.get("Content-Type")).toContain("text/html");
+    expect(response.headers.get("Content-Security-Policy")).toBe(
+      "default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'none'; connect-src 'self'; img-src 'none'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    );
     const text = await response.text();
     expect(text).toContain('id="hosting-status"');
     expect(text).toContain('src="/assets/');

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, it, expect, vi } from "vitest";
 import { createViewStore, type PublicProjection } from "../src/view-store";
 import { cases } from "./fixtures.generated";
-import { digest, RENDERER } from "../src/protocol";
+import { digest, RENDERER, projection } from "../src/protocol";
 const publicId = "a".repeat(64);
 const fixture = () =>
   structuredClone(cases.find((row) => row.valid)!.body) as PublicProjection;
@@ -458,5 +458,501 @@ describe("independent polling and byte budgets", () => {
     await store.poll();
     expect(store.projection()).toBe(before);
     expect(store.status().kind).toBe("incompatible");
+  });
+});
+
+function auxiliaryProjection(label: string): PublicProjection {
+  const body = fixture();
+  body.view.runs = true;
+  body.plan = structuredClone(
+    cases.find((row) => row.file === "valid-plan-review.json")!.body.plan,
+  );
+  body.view.lenses = {
+    "lens.security": { name: `${label} reviewer`, icon: "spy" },
+  };
+  (body.document.state.queue as Record<string, unknown>[]).push({
+    subject: "APP-2",
+    title: "Native evidence",
+    lane: "one",
+    stage: "queued",
+    head: "b".repeat(40),
+  });
+  body.document.journal.push({
+    id: 2,
+    at: "2026-11-15T00:01:00Z",
+    kind: "review.round",
+    lane: "one",
+    subject: "APP-2",
+    summary: "Native review",
+    review: {
+      round: 1,
+      verdicts: { "lens.security": "changes" },
+      findings: { P0: 0, P1: 1, P2: 0, P3: 0 },
+    },
+  });
+  const round = {
+    round: 1,
+    candidateRef: "a".repeat(40),
+    at: "2026-11-15T00:00:00Z",
+    outcome: "changes",
+    verdicts: { "lens.security": "changes" },
+    findings: { P0: 0, P1: 1, P2: 0, P3: 0 },
+    raised: [
+      {
+        id: "f1",
+        severity: "P1",
+        lens: "lens.security",
+        summary: `${label} run finding`,
+        state: "unresolved",
+      },
+    ],
+  };
+  const latestRound = {
+    ...round,
+    round: 2,
+    outcome: "approve",
+    verdicts: { "lens.security": "approve" },
+    findings: { P0: 0, P1: 0, P2: 1, P3: 0 },
+    raised: [
+      {
+        ...round.raised[0],
+        id: "f2",
+        severity: "P2",
+        filed: "deferred",
+        summary: `${label} run finding`,
+      },
+    ],
+  };
+  body.runs = {
+    "run-1": {
+      runId: "run-1",
+      open: false,
+      roundDetail: label === "new" ? [round, latestRound] : [round],
+    },
+  };
+  body.reviews = {
+    "APP-2": {
+      observational: true,
+      observationKey: "APP-2",
+      candidateRef: "b".repeat(40),
+      journalId: 2,
+      digest: "d".repeat(64),
+      roundDetail: [
+        {
+          ...round,
+          candidateRef: "b".repeat(40),
+          raised: [{ ...round.raised[0], summary: `${label} native finding` }],
+        },
+      ],
+    },
+  };
+  body.links = {
+    issues: { "APP-1": `https://example.com/${label}` },
+    changes: {},
+    commits: {},
+  };
+  body.needs = {
+    running: true,
+    at: new Date().toISOString(),
+    staleAfter: new Date(Date.now() + 600000).toISOString(),
+    items: [
+      {
+        holding: true,
+        source: "operator",
+        text: `${label} needs line`,
+        clears: "Recorded resolution",
+      },
+    ],
+  };
+  return body;
+}
+function seedDOM(window: JSDOM["window"], body: PublicProjection) {
+  for (const [key, value] of Object.entries({
+    state: body.document,
+    runs: body.runs,
+    reviews: body.reviews,
+    links: body.links,
+    view: body.view,
+    plan: body.plan,
+    needs: body.needs,
+  })) {
+    if (value === null || value === undefined) continue;
+    const block = window.document.createElement("script");
+    block.type = "application/json";
+    block.id = `delivery-${key}`;
+    block.textContent = JSON.stringify(value);
+    window.document.body.appendChild(block);
+  }
+}
+function testDOM() {
+  const dom = new JSDOM(
+    '<!doctype html><body><p id="hosting-status"></p><p id="hosting-times"></p><main id="app"></main><script data-renderer="/assets/renderer.js"></script></body>',
+    {
+      url: `https://service.test/d/${publicId}`,
+      runScripts: "outside-only",
+      pretendToBeVisual: true,
+    },
+  );
+  Object.assign(dom.window, {
+    matchMedia: () => ({ matches: true }),
+    scrollTo: () => {},
+    TextEncoder,
+    TextDecoder,
+    Response,
+    AbortController,
+    structuredClone,
+  });
+  Object.defineProperty(dom.window, "crypto", { value: globalThis.crypto });
+  return dom;
+}
+describe("initial and active coherent rendering", () => {
+  it("updates auxiliary-only run, native review, link, needs and lens data in the active DOM", () => {
+    const built = JSON.parse(
+      readFileSync(new URL("./assets.generated.json", import.meta.url), "utf8"),
+    ) as { renderer: string };
+    const initial = auxiliaryProjection("old");
+    projection(initial);
+    let held = initial;
+    let listener: (doc: PublicProjection["document"]) => void = () => {};
+    const dom = testDOM();
+    Object.assign(dom.window, {
+      deliveryStateStore: {
+        projection: () => held,
+        read: () => held.document,
+        subscribe: (cb: typeof listener) => {
+          listener = cb;
+        },
+        onStatus: () => {},
+      },
+    });
+    seedDOM(dom.window, initial);
+    try {
+      dom.window.eval(built.renderer);
+      expect(
+        dom.window.document.querySelector("#detail")!.textContent,
+      ).toContain("old run finding");
+      (
+        dom.window.document.querySelector(
+          '.stop-btn[data-subject="APP-2"]',
+        ) as HTMLButtonElement
+      ).click();
+      expect(
+        dom.window.document.querySelector("#detail")!.textContent,
+      ).toContain("old native finding");
+      const fold = Array.from(
+        dom.window.document.querySelectorAll("#plan summary"),
+      ).find((row) => row.textContent?.includes("All units"))!
+        .parentElement as HTMLDetailsElement;
+      fold.open = true;
+      fold.dispatchEvent(new dom.window.Event("toggle"));
+      held = auxiliaryProjection("new");
+      projection(held);
+      listener(held.document);
+      expect(
+        dom.window.document
+          .querySelector('.stop-btn[data-subject="APP-2"]')!
+          .getAttribute("aria-pressed"),
+      ).toBe("true");
+      expect(
+        dom.window.document.querySelector("#detail")!.textContent,
+      ).toContain("new native finding");
+      expect(
+        Array.from(dom.window.document.querySelectorAll("#plan summary"))
+          .find((row) => row.textContent?.includes("All units"))!
+          .parentElement!.hasAttribute("open"),
+      ).toBe(true);
+      expect(dom.window.document.querySelector("#now")!.textContent).toContain(
+        "new needs line",
+      );
+      expect(
+        dom.window.document
+          .querySelector('a[data-ticket="APP-1"]')!
+          .getAttribute("href"),
+      ).toBe("https://example.com/new");
+      (
+        dom.window.document.querySelector(
+          '.stop-btn[data-subject="APP-1"]',
+        ) as HTMLButtonElement
+      ).click();
+      expect(
+        dom.window.document.querySelector("#detail")!.textContent,
+      ).toContain("new run finding");
+      expect(
+        dom.window.document.querySelector("#detail")!.textContent,
+      ).toContain("Approved with 1 deferrable note");
+      expect(
+        dom.window.document.querySelector("#detail")!.textContent,
+      ).toContain("new reviewer");
+    } finally {
+      dom.window.close();
+    }
+  });
+  it.each([false, true])(
+    "seeds the latest coherent projection while renderer loading (remove optional plan: %s)",
+    async (removePlan) => {
+      const built = JSON.parse(
+        readFileSync(
+          new URL("./assets.generated.json", import.meta.url),
+          "utf8",
+        ),
+      ) as { renderer: string; viewer: string };
+      const initial = auxiliaryProjection("old");
+      initial.plan = structuredClone(
+        cases.find((row) => row.file === "valid-plan-review.json")!.body.plan,
+      );
+      let r = await revision(1, initial);
+      const dom = testDOM();
+      Object.assign(dom.window, {
+        fetch: async (url: string) =>
+          url.endsWith("/current")
+            ? Response.json(r.meta)
+            : new Response(r.bytes, {
+                headers: { "Content-Type": "application/json" },
+              }),
+      });
+      try {
+        dom.window.eval(built.viewer);
+        await vi.waitFor(() =>
+          expect(Reflect.get(dom.window, "deliveryStateStore")).toBeDefined(),
+        );
+        const store = Reflect.get(
+          dom.window,
+          "deliveryStateStore",
+        ) as ReturnType<typeof createViewStore>;
+        const next = auxiliaryProjection("new");
+        next.document.state.meta = { headline: "Latest startup document" };
+        next.plan = removePlan ? null : structuredClone(initial.plan);
+        if (next.plan)
+          (
+            next.plan as { plan: { outcome: { summary: string } } }
+          ).plan.outcome.summary = "Latest startup plan";
+        r = await revision(2, next);
+        await store.poll();
+        dom.window.eval(built.renderer);
+        await vi.waitFor(() =>
+          expect(
+            dom.window.document.querySelector("#app")!.textContent,
+          ).toContain("Latest startup document"),
+        );
+        expect(
+          dom.window.document.querySelectorAll("#delivery-state"),
+        ).toHaveLength(1);
+        expect(
+          dom.window.document.querySelector("#detail")!.textContent,
+        ).toContain("new run finding");
+        expect(
+          dom.window.document.querySelector("#now")!.textContent,
+        ).toContain("new needs line");
+        if (removePlan)
+          expect(dom.window.document.querySelector("#plan")).toBeNull();
+        else
+          expect(
+            dom.window.document.querySelector("#plan")!.textContent,
+          ).toContain("Latest startup plan");
+      } finally {
+        dom.window.dispatchEvent(new dom.window.Event("pagehide"));
+        dom.window.close();
+      }
+    },
+  );
+});
+
+describe("fenced presentation boundaries", () => {
+  it.each(["lane.assigned", "candidate.handed", "check.started"])(
+    "does not retain completion after %s reopens work",
+    async (kind) => {
+      const value = fixture();
+      value.document.journal.push({
+        id: 2,
+        at: "2026-11-15T00:01:00Z",
+        kind: "delivery.closed",
+        summary: "Closed",
+      });
+      let r = await revision(1, value, 9999999);
+      const store = createViewStore(publicId, {
+        fetcher: async (url) =>
+          url.endsWith("/current")
+            ? Response.json(r.meta)
+            : new Response(r.bytes, {
+                headers: { "Content-Type": "application/json" },
+              }),
+      });
+      await store.poll();
+      expect(store.status().kind).toBe("retained");
+      value.document.journal.push({
+        id: 3,
+        at: "2026-11-15T00:02:00Z",
+        kind,
+        summary: "Reopened",
+      });
+      r = await revision(2, value, 9999999);
+      await store.poll();
+      expect(store.status().kind).toBe("stale");
+    },
+  );
+  it("keeps a failed newer pointer explicit instead of exempting an old terminal cut", async () => {
+    const value = fixture();
+    value.document.journal.push({
+      id: 2,
+      at: "2026-11-15T00:01:00Z",
+      kind: "delivery.closed",
+      summary: "Closed",
+    });
+    let r = await revision(1, value);
+    let missing = false;
+    const store = createViewStore(publicId, {
+      fetcher: async (url) =>
+        url.endsWith("/current")
+          ? Response.json(r.meta)
+          : missing
+            ? new Response("", { status: 404 })
+            : new Response(r.bytes, {
+                headers: { "Content-Type": "application/json" },
+              }),
+    });
+    await store.poll();
+    const before = store.projection();
+    expect(store.status().kind).toBe("retained");
+    value.document.journal.push({
+      id: 3,
+      at: "2026-11-15T00:02:00Z",
+      kind: "check.started",
+      summary: "Reopened",
+    });
+    r = await revision(2, value);
+    missing = true;
+    await store.poll();
+    expect(store.projection()).toBe(before);
+    expect(store.status().kind).toBe("unavailable");
+    expect(store.status().receipt?.sequence).toBe(1);
+  });
+  it("rejects a changed digest at the same accepted epoch and sequence", async () => {
+    let r = await revision();
+    const store = createViewStore(publicId, {
+      fetcher: async (url) =>
+        url.endsWith("/current")
+          ? Response.json(r.meta)
+          : new Response(r.bytes, {
+              headers: { "Content-Type": "application/json" },
+            }),
+    });
+    await store.poll();
+    const before = store.projection(),
+      receipt = store.status().receipt;
+    const changed = fixture();
+    changed.document.state.meta = { headline: "Conflicting immutable tuple" };
+    r = await revision(1, changed);
+    await store.poll();
+    expect(store.projection()).toBe(before);
+    expect(store.status().kind).toBe("incompatible");
+    expect(store.status().receipt).toEqual(receipt);
+  });
+  it("does not publish a completed late request after the observer is stopped", async () => {
+    const r = await revision();
+    let release!: () => void, entered!: () => void;
+    const pending = new Promise<void>((resolve) => (release = resolve)),
+      hashing = new Promise<void>((resolve) => (entered = resolve));
+    const original = crypto.subtle.digest.bind(crypto.subtle);
+    const spy = vi
+      .spyOn(crypto.subtle, "digest")
+      .mockImplementationOnce(async (...args) => {
+        const value = await original(...args);
+        entered();
+        await pending;
+        return value;
+      });
+    const store = createViewStore(publicId, {
+      fetcher: async (url) =>
+        url.endsWith("/current")
+          ? Response.json(r.meta)
+          : new Response(r.bytes, {
+              headers: { "Content-Type": "application/json" },
+            }),
+    });
+    const pushed = vi.fn(),
+      statuses = vi.fn();
+    store.subscribe(pushed);
+    store.onHostingStatus(statuses);
+    const loading = store.poll();
+    try {
+      await hashing;
+      store.stop();
+      release();
+      await loading;
+      expect(pushed).not.toHaveBeenCalled();
+      expect(statuses).toHaveBeenCalledTimes(1);
+      expect(store.read()).toBeNull();
+      expect(store.status().receipt).toBeNull();
+      store.start();
+      await store.poll();
+      expect(pushed).toHaveBeenCalledTimes(1);
+      expect(store.read()).toEqual(r.body.document);
+      expect(store.status().receipt).toMatchObject({ epoch: 1, sequence: 1 });
+    } finally {
+      release();
+      await loading;
+      store.stop();
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("epoch-aware reader recovery", () => {
+  it("accepts the next epoch with a reset sequence and refuses a delayed lower epoch", async () => {
+    let r = await revision(10);
+    const store = createViewStore(publicId, {
+      fetcher: async (url) =>
+        url.endsWith("/current")
+          ? Response.json(r.meta)
+          : new Response(r.bytes, {
+              headers: { "Content-Type": "application/json" },
+            }),
+    });
+    await store.poll();
+    const next = fixture();
+    next.document.state.meta = { headline: "Recovered epoch two" };
+    r = await revision(1, next);
+    r.meta.epoch = 2;
+    await store.poll();
+    expect(store.read()).toEqual(next.document);
+    expect(store.status().receipt).toMatchObject({ epoch: 2, sequence: 1 });
+    expect(store.status().kind).toBe("current");
+    const before = store.projection();
+    r = await revision(11);
+    await store.poll();
+    expect(store.projection()).toBe(before);
+    expect(store.status().receipt).toMatchObject({ epoch: 2, sequence: 1 });
+    expect(store.status().kind).toBe("unavailable");
+  });
+});
+
+describe("immutable tuple confirmations", () => {
+  it("accepts a newer source confirmation on the exact revision without replacing its document", async () => {
+    const r = await revision();
+    const store = createViewStore(publicId, {
+      fetcher: async (url) =>
+        url.endsWith("/current")
+          ? Response.json(r.meta)
+          : new Response(r.bytes, {
+              headers: { "Content-Type": "application/json" },
+            }),
+    });
+    await store.poll();
+    const before = store.projection();
+    const pushed = vi.fn();
+    store.subscribe(pushed);
+    r.meta.sourceConfirmedAt += 100;
+    r.meta.serverNow += 100;
+    await store.poll();
+    expect(store.projection()).toBe(before);
+    expect(pushed).not.toHaveBeenCalled();
+    expect(store.status().kind).toBe("current");
+    expect(store.status().receipt).toMatchObject({
+      epoch: 1,
+      sequence: 1,
+      digest: r.meta.digest,
+      sourceConfirmedAt: 1000100,
+      serverNow: 1000100,
+    });
   });
 });
