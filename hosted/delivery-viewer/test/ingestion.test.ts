@@ -107,6 +107,19 @@ describe('ingestion boundary', () => {
       expect((await upload(publicId, 1, body)).status).toBe(balanced ? 200 : 400);
       expect((await current(publicId)).status).toBe(balanced ? 200 : 404);
     });
+  it.each([
+    ['Verified /Users/operator/private/proof.json', false], ['Verified docs/private-proof.md', false],
+    ['Verified --output=/tmp/private-proof.json', false], ['[Local reference omitted]', true],
+    ['Verified all acceptance criteria without a code change.', true],
+    ['Verified https://example.com/public_docs/proof', true],
+  ])('validates settled no-change evidence independently: %s', async (evidence, valid) => {
+    const publicId = id(); await session(publicId);
+    const body = fixture();
+    Object.assign(body.document.state, { planned: [{ subject: 'APP-2', title: 'No change needed', lane: null, stage: 'settled',
+      noChange: { evidence, baseHead: 'b'.repeat(40), handedAt: '2026-11-15T00:00:00Z', settledAt: '2026-11-15T00:01:00Z' } }] });
+    expect((await upload(publicId, 1, body)).status).toBe(valid ? 200 : 400);
+    expect((await current(publicId)).status).toBe(valid ? 200 : 404);
+  });
   it('serves the deployed entrypoint through local Worker, DO and R2 bindings', async () => {
     const publicId=id();
     const auth={'Authorization':`Bearer ${TOKEN}`,'Content-Type':'application/json'};

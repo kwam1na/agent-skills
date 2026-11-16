@@ -54,6 +54,39 @@ class ProjectionTests(unittest.TestCase):
         self.assertNotIn('SECRET', json.dumps(value))
         self.assertNotIn('unrelated', value['runs'])
 
+    def test_settled_nochange_evidence_omits_local_prose_and_preserves_settlement(self):
+        doc, _ = source()
+        local = ['Verified /Users/operator/private/proof.json', 'Verified docs/private-proof.md',
+                 'Verified --output=/tmp/private-proof.json', r'Verified C:\work\proof.json',
+                 'Verified .agent-skills/current/proof.json', 'Verified ../private-proof.json']
+        suffix = ' Verified /Users/operator/private/long-proof.json'
+        local.append(('Evidence. ' * 400)[:3985 - len(suffix)] + suffix)
+        self.assertEqual(len(local[-1]), 3985)
+        benign = ['Verified all acceptance criteria without a code change.',
+                  'Verified https://example.com/public_docs/proof']
+        for evidence in local + benign:
+            with self.subTest(evidence=evidence[:80]):
+                row = {'subject': 'APP-2', 'title': 'No change needed', 'lane': None, 'stage': 'settled',
+                       'noChange': {'evidence': evidence, 'baseHead': 'b' * 40,
+                                    'handedAt': '2026-11-15T00:00:00Z', 'settledAt': '2026-11-15T00:01:00Z'}}
+                doc['state']['planned'] = [row]
+                original = copy.deepcopy(doc)
+                value = public.project(doc, {}, config(), source_fingerprint='1' * 64)
+                expected = copy.deepcopy(row)
+                if evidence in local: expected['noChange']['evidence'] = public.OMITTED_LOCAL_REFERENCE
+                self.assertEqual(value['document']['state']['planned'], [expected])
+                self.assertEqual(doc, original)
+                Draft202012Validator(public.SCHEMA).validate(value); public.validate(value)
+                raw = copy.deepcopy(value); raw['document']['state']['planned'][0]['noChange']['evidence'] = evidence
+                if evidence in local:
+                    with self.assertRaisesRegex(public.ProjectionError, '^snapshot.local_path$'): public.validate(raw)
+                else: public.validate(raw)
+        doc['state']['planned'][0]['noChange']['evidence'] = 'KNOWN-CANARY beside /tmp/private-proof.json'
+        original = copy.deepcopy(doc)
+        with self.assertRaisesRegex(public.ProjectionError, '^snapshot.configured_secret$'):
+            public.project(doc, {}, config(), source_fingerprint='1' * 64, secret_values=['KNOWN-CANARY'])
+        self.assertEqual(doc, original)
+
     def test_local_render_payload_is_the_same_shared_construction(self):
         doc, runs = source()
         data = render.line_map_data(doc, runs, config(), theme_key='theme', history='history.html')

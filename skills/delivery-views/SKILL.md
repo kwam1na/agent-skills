@@ -874,6 +874,8 @@ uploader scans all projected text for its configured secret values before writin
 pending bytes or sending them; collection and run-command children receive none
 of those credentials. Projection rejects recognizable local paths in structural
 references and raw uploads; named prose fields use a visible omission marker.
+No-change settlement evidence is ordinary prose: local references use that marker
+without changing the private evidence or the recorded settlement identity and times.
 This includes option-assigned Unix, Windows, home and explicit relative paths,
 and installed executable references under `.agent-skills/current/`;
 All ASCII punctuation, whitespace and typographic quotes delimit local
