@@ -1440,7 +1440,8 @@ class LinearQualificationTests(unittest.TestCase):
             with self.subTest(loose=loose):
                 self.assertNotIn(loose, text)
 
-    def test_durable_corpus_contains_no_plan_or_ticket_ids(self) -> None:
+    @staticmethod
+    def _durable_paths() -> list[Path]:
         durable_paths = [ROOT / "README.md"]
         for root_name in (
             "agent_skills",
@@ -1460,7 +1461,24 @@ class LinearQualificationTests(unittest.TestCase):
                 and not path.is_relative_to(ROOT / "tests" / "fixtures" / "delivery-views" / "line-map")
                 # The history page's golden corpus is recorded delivery records, which keep their ticket ids.
                 and not path.is_relative_to(ROOT / "tests" / "fixtures" / "delivery-views" / "history")
+                # The narrator's last-delivery is a recorded delivery's record, which keeps its ticket ids.
+                and not path.is_relative_to(ROOT / "tests" / "fixtures" / "narrator" / "last-delivery")
             )
+        return durable_paths
+
+    def test_the_narrator_exemption_covers_only_the_recorded_delivery(self) -> None:
+        durable = set(self._durable_paths())
+        narrator = [path for path in (ROOT / "tests" / "fixtures" / "narrator").rglob("*")
+                    if path.is_file() and path.suffix in {".json", ".md", ".py"}]
+        recorded = [path for path in narrator if path.is_relative_to(ROOT / "tests" / "fixtures" / "narrator" / "last-delivery")]
+        self.assertTrue(recorded)
+        self.assertFalse(durable & set(recorded))
+        # Every other narrator fixture is still read, so a ticket id in one of them still fails.
+        self.assertTrue(set(narrator) - set(recorded))
+        self.assertLessEqual(set(narrator) - set(recorded), durable)
+
+    def test_durable_corpus_contains_no_plan_or_ticket_ids(self) -> None:
+        durable_paths = self._durable_paths()
         plan_unit = re.compile(r"\bU\d+[A-Za-z]?\b")
         ticket_id = re.compile(r"\b[A-Z]\d{2,}-\d+\b")
 
