@@ -1,0 +1,10 @@
+{"id": 1, "at": "2026-11-16T09:00:00Z", "kind": "record.started", "lane": null, "subject": null, "data": {"base": {"ref": "integrate/delivery-story", "head": "1405df66cbe219b0bf6355bc3d60361a8376b6b4"}}}
+{"id": 2, "at": "2026-11-16T09:01:00Z", "kind": "lane.assigned", "lane": "lane-1", "subject": "A", "data": {"title": "Work A"}}
+{"id": 3, "at": "2026-11-16T09:05:00Z", "kind": "candidate.handed", "lane": "lane-1", "subject": "A", "data": {"head": "c40e0e23516f1d6a0739aeebb738bbc8495a5e08", "changeRequest": "https://github.com/acme/shop/pull/102", "rounds": 2, "checks": ["tests.test_one"]}}
+{"id": 4, "at": "2026-11-16T09:06:00Z", "kind": "check.started", "lane": "lane-1", "subject": "A", "data": {}}
+{"id": 5, "at": "2026-11-16T09:08:00Z", "kind": "base.broken", "lane": null, "subject": null, "data": {"source": "queue", "detail": "A check failed on the main line too.", "head": "ff661ead414cece16e15eda1d0927b6b8293fcd6"}}
+{"id": 6, "at": "2026-11-16T09:09:00Z", "kind": "candidate.stopped", "lane": "lane-1", "subject": "A", "data": {"reason": "base_broken", "detail": "The main line broke under it."}, "because": [5]}
+{"id": 7, "at": "2026-11-16T09:15:00Z", "kind": "candidate.handed", "lane": "lane-1", "subject": "A", "data": {"head": "61ee20644def60e61c6ba273639cd29e5affcc02", "changeRequest": "https://github.com/acme/shop/pull/106", "rounds": 2, "checks": ["tests.test_one"]}, "answers": [6]}
+{"id": 8, "at": "2026-11-16T09:25:00Z", "kind": "base.repaired", "lane": null, "subject": null, "data": {"source": "lead", "head": "5166b91cad1c013abba21da48b11eda81a9d55ce", "why": "The lead reverted the commit that broke it."}, "answers": [5]}
+{"id": 9, "at": "2026-11-16T09:26:00Z", "kind": "check.started", "lane": "lane-1", "subject": "A", "data": {}}
+{"id": 10, "at": "2026-11-16T09:35:00Z", "kind": "candidate.merged", "lane": "lane-1", "subject": "A", "data": {"head": "c6379c21d950be5e8767c4c656ed1a04001d9bc5"}}

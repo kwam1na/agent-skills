@@ -1,0 +1,22 @@
+{
+  "queue": [
+    {
+      "subject": "A",
+      "title": "Work A",
+      "stage": "merged"
+    },
+    {
+      "subject": "B",
+      "title": "Work B",
+      "stage": "stopped"
+    }
+  ],
+  "planned": [],
+  "finish": [
+    {
+      "id": "stories",
+      "met": true,
+      "text": "Every story lands"
+    }
+  ]
+}

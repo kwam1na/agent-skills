@@ -1,5 +1,5 @@
-// Journal kinds the line map names. A base re-run that was stopped, not failed, reads as stopped in the feed and in
-// the piece's merge check, never as a verdict. A check carried over a base move reads as carried.
+// Journal kinds the line map names. A base re-run that was stopped, not failed, reads as stopped in the piece's merge
+// check, never as a verdict, and the feed draws it. A check carried over a base move reads as carried.
 import { test } from "node:test";
 
 import { REPLAYED_RUNS, expect, openPage, pageWithRuns } from "./support.mjs";
@@ -8,7 +8,7 @@ import { item, journal, record } from "./plan-fixtures.mjs";
 const NOW = "2026-10-30T12:00:00Z";
 const CONFIG = { spec: "delivery-views-config/1", runs: REPLAYED_RUNS };
 
-test("a stopped base rerun reads as stopped in the feed and in the piece's merge check", async () => {
+test("a stopped base rerun is drawn in the feed and reads as stopped in the piece's merge check", async () => {
   const summary = "Base re-run on main at aaaaaaaaaa after 4s was stopped before its verdict: stop exited 143";
   const document = record({
     queue: [item("A", "queued")],
@@ -17,15 +17,14 @@ test("a stopped base rerun reads as stopped in the feed and in the piece's merge
   });
   const [shown, card] = await openPage(pageWithRuns(document, {}, { config: CONFIG }),
     { now: NOW, store: false, steps: [{ click: '.stop-btn[data-subject="A"]' }] });
-  const feed = [...shown.app.querySelectorAll(".who")].map((who) => who.textContent);
-  expect(feed).toContain("Rerun stopped · Lane one · A");
-  expect(feed.some((words) => words.startsWith("Rerun verdict"))).toBe(false);
+  // The timeline draws the entry; what it says is the story chapter's, so only the merge check's words are pinned here.
+  expect(shown.app.querySelector(`#happened .feed time[datetime="${document.journal.at(-1).at}"]`) !== null).toBe(true);
   const history = card.app.querySelector("#detail .mh");
   expect(history.querySelector("summary .mh-sub").textContent).toMatch(/^ · Rerun stopped /);
   expect([...history.querySelectorAll("li span")].map((row) => row.textContent).at(-1)).toBe(summary);
 });
 
-test("a check carried over a base move reads as carried in the feed and in the piece's merge check", async () => {
+test("a check carried over a base move is drawn in the feed and reads as carried in the piece's merge check", async () => {
   const summary = "Carried lib to main at bbbbbbbbbb: 1 base commit changed nothing lib reads or A changes";
   const document = record({
     queue: [item("A", "checking")],
@@ -34,8 +33,8 @@ test("a check carried over a base move reads as carried in the feed and in the p
   });
   const [shown, card] = await openPage(pageWithRuns(document, {}, { config: CONFIG }),
     { now: NOW, store: false, steps: [{ click: '.stop-btn[data-subject="A"]' }] });
-  const feed = [...shown.app.querySelectorAll(".who")].map((who) => who.textContent);
-  expect(feed).toContain("Check carried · Lane one · A");
+  // The timeline draws the entry; what it says is the story chapter's, so only the merge check's words are pinned here.
+  expect(shown.app.querySelector(`#happened .feed time[datetime="${document.journal.at(-1).at}"]`) !== null).toBe(true);
   const history = card.app.querySelector("#detail .mh");
   expect(history.querySelector("summary .mh-sub").textContent).toMatch(/^ · Check carried /);
   expect([...history.querySelectorAll("li span")].map((row) => row.textContent).at(-1)).toBe(summary);

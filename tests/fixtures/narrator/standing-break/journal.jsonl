@@ -1,0 +1,7 @@
+{"id": 1, "at": "2026-11-16T09:00:00Z", "kind": "record.started", "lane": null, "subject": null, "data": {"base": {"ref": "integrate/delivery-story", "head": "1405df66cbe219b0bf6355bc3d60361a8376b6b4"}}}
+{"id": 2, "at": "2026-11-16T09:01:00Z", "kind": "lane.assigned", "lane": "lane-1", "subject": "A", "data": {"title": "Work A"}}
+{"id": 3, "at": "2026-11-16T09:02:00Z", "kind": "lane.assigned", "lane": "lane-1", "subject": "B", "data": {"title": "Work B"}}
+{"id": 4, "at": "2026-11-16T09:10:00Z", "kind": "base.broken", "lane": null, "subject": null, "data": {"source": "fullHealth", "detail": "The full run failed on the main line.", "head": "d7daad0b0d590aa07d7b48427bc4e6eb4f5e85ce"}}
+{"id": 5, "at": "2026-11-16T09:30:00Z", "kind": "candidate.merged", "lane": "lane-1", "subject": "A", "data": {"head": "c6379c21d950be5e8767c4c656ed1a04001d9bc5"}}
+{"id": 6, "at": "2026-11-16T09:50:00Z", "kind": "candidate.merged", "lane": "lane-1", "subject": "B", "data": {"head": "aaf28ca6e9bfe876ab391365b005bc62b8388d5c"}}
+{"id": 7, "at": "2026-11-16T10:00:00Z", "kind": "lane.assigned", "lane": "lane-1", "subject": "C", "data": {"title": "Work C"}}
