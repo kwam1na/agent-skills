@@ -469,7 +469,7 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "df60fa62037c4d7c5e77827511f98cc3b2a7bec406f2eeb24be13d213a2fa945"
+          "sha256": "7597a21ced792eba19d7b6a955227d66ad0cbe79abfed423902c0b2a883d9b05"
         },
         {
           "path": "skills/orchestrate-work/references/journal-kinds.json",
@@ -477,7 +477,7 @@
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "c8e3847b37038a5bb5cb1ec93002795754da8721bc36ac2fe642b59a4f37afb6"
+          "sha256": "e14da2906d9b79470d9cc6a71fc723fc72ed43f7a649c286b8031dd68c61a303"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
