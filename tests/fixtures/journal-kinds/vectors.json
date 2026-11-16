@@ -3,7 +3,7 @@
     {
       "kind": "record.started",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "base": {
           "ref": "integrate/delivery-story",
@@ -29,50 +29,50 @@
     {
       "kind": "story.added",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "title": "Keep facts in the journal",
         "why": "The guide named a file the skill does not ship."
       },
-      "head": "The lead added V26-3532",
+      "head": "The lead added APP-12",
       "line": "Keep facts in the journal. The guide named a file the skill does not ship."
     },
     {
       "kind": "story.added",
       "lane": null,
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "title": "Keep facts in the journal",
         "why": "The guide named a file the skill does not ship."
       },
-      "head": "The lead added V26-3532",
+      "head": "The lead added APP-12",
       "line": "Keep facts in the journal. The guide named a file the skill does not ship."
     },
     {
       "kind": "lane.assigned",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "title": "Keep facts in the journal",
-        "note": "Starts after V26-3532 lands"
+        "note": "Starts after APP-12 lands"
       },
-      "head": "Lane 1 picked up V26-3532",
-      "line": "Keep facts in the journal. Starts after V26-3532 lands"
+      "head": "Lane 1 picked up APP-12",
+      "line": "Keep facts in the journal. Starts after APP-12 lands"
     },
     {
       "kind": "lane.assigned",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "title": "Keep facts in the journal"
       },
-      "head": "Lane 1 picked up V26-3532",
+      "head": "Lane 1 picked up APP-12",
       "line": "Keep facts in the journal"
     },
     {
       "kind": "review.round",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "round": 2,
         "startedAt": "2026-11-16T10:15:00Z",
@@ -90,13 +90,13 @@
         "refused": 2,
         "restarts": 2
       },
-      "head": "Review round 2 on V26-3532",
+      "head": "Review round 2 on APP-12",
       "line": "Findings: 0 P0, 1 P1, 2 P2 and 0 P3, after 2 refused results, restarted 2 times"
     },
     {
       "kind": "review.round",
       "lane": null,
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "round": 2,
         "startedAt": "2026-11-16T10:15:00Z",
@@ -114,35 +114,35 @@
         "refused": 0,
         "restarts": 0
       },
-      "head": "Review round 2 on V26-3532",
+      "head": "Review round 2 on APP-12",
       "line": "Findings: 0 P0, 1 P1, 2 P2 and 0 P3"
     },
     {
       "kind": "review.recorded",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "digest": "abababababababababababababababababababababababababababababababab",
         "candidateRef": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
       },
-      "head": "The review of V26-3532 was kept",
+      "head": "The review of APP-12 was kept",
       "line": "For 4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
     },
     {
       "kind": "review.recorded",
       "lane": null,
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "digest": "abababababababababababababababababababababababababababababababab",
         "candidateRef": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
       },
-      "head": "The review of V26-3532 was kept",
+      "head": "The review of APP-12 was kept",
       "line": "For 4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
     },
     {
       "kind": "review.carried",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "from": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b",
         "to": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
@@ -153,26 +153,26 @@
         ],
         "why": "The guide named a file the skill does not ship."
       },
-      "head": "The review of V26-3532 was carried",
+      "head": "The review of APP-12 was carried",
       "line": "From 9f3c2b1 to 4e66a05, across 9f3c2b1 and 0123456 from the main line. The guide named a file the skill does not ship."
     },
     {
       "kind": "review.carried",
       "lane": null,
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "from": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b",
         "to": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
         "digest": "abababababababababababababababababababababababababababababababab",
         "why": "The guide named a file the skill does not ship."
       },
-      "head": "The review of V26-3532 was carried",
+      "head": "The review of APP-12 was carried",
       "line": "From 9f3c2b1 to 4e66a05. The guide named a file the skill does not ship."
     },
     {
       "kind": "candidate.handed",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
         "changeRequest": "https://github.com/example/app/pull/12",
@@ -192,26 +192,26 @@
         ],
         "noChange": true
       },
-      "head": "Lane 1 handed off V26-3532",
+      "head": "Lane 1 handed off APP-12",
       "line": "No change needed, with unit and lint run by the lane"
     },
     {
       "kind": "candidate.handed",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
         "changeRequest": "https://github.com/example/app/pull/12",
         "rounds": 2,
         "checks": []
       },
-      "head": "Lane 1 handed off V26-3532",
+      "head": "Lane 1 handed off APP-12",
       "line": "After 2 review rounds"
     },
     {
       "kind": "candidate.handed",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
         "changeRequest": "https://github.com/example/app/pull/12",
@@ -219,13 +219,13 @@
         "checks": [],
         "noChange": true
       },
-      "head": "Lane 1 handed off V26-3532",
+      "head": "Lane 1 handed off APP-12",
       "line": "No change needed"
     },
     {
       "kind": "candidate.handed",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
         "changeRequest": "https://github.com/example/app/pull/12",
@@ -244,13 +244,13 @@
           }
         ]
       },
-      "head": "Lane 1 handed off V26-3532",
+      "head": "Lane 1 handed off APP-12",
       "line": "After 2 review rounds, with unit and lint run by the lane"
     },
     {
       "kind": "handoff.checked",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
         "rounds": 2,
@@ -260,13 +260,13 @@
           "Its rounds name the reviewed head."
         ]
       },
-      "head": "The lead checked the hand-off of V26-3532",
+      "head": "The lead checked the hand-off of APP-12",
       "line": "No change needed, at 4e66a05. Its rounds name the reviewed head."
     },
     {
       "kind": "handoff.checked",
       "lane": null,
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
         "rounds": 2,
@@ -274,13 +274,13 @@
         "noChange": true,
         "notes": []
       },
-      "head": "The lead checked the hand-off of V26-3532",
+      "head": "The lead checked the hand-off of APP-12",
       "line": "No change needed, at 4e66a05"
     },
     {
       "kind": "handoff.checked",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
         "rounds": 2,
@@ -288,13 +288,13 @@
         "noChange": true,
         "notes": []
       },
-      "head": "The lead checked the hand-off of V26-3532",
+      "head": "The lead checked the hand-off of APP-12",
       "line": "No change needed, at 4e66a05"
     },
     {
       "kind": "handoff.checked",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
         "rounds": 2,
@@ -304,13 +304,13 @@
           "Its rounds name the reviewed head."
         ]
       },
-      "head": "The lead checked the hand-off of V26-3532",
+      "head": "The lead checked the hand-off of APP-12",
       "line": "At 4e66a05, after 2 review rounds. Its rounds name the reviewed head."
     },
     {
       "kind": "handoff.checked",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
         "rounds": 2,
@@ -318,83 +318,83 @@
         "noChange": false,
         "notes": []
       },
-      "head": "The lead checked the hand-off of V26-3532",
+      "head": "The lead checked the hand-off of APP-12",
       "line": "At 4e66a05, after 2 review rounds"
     },
     {
       "kind": "handoff.accepted",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "settled": true
       },
-      "head": "The lead accepted V26-3532",
+      "head": "The lead accepted APP-12",
       "line": "Settled with no change"
     },
     {
       "kind": "handoff.accepted",
       "lane": null,
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "settled": true
       },
-      "head": "The lead accepted V26-3532",
+      "head": "The lead accepted APP-12",
       "line": "Settled with no change"
     },
     {
       "kind": "handoff.accepted",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "settled": false
       },
-      "head": "The lead accepted V26-3532",
+      "head": "The lead accepted APP-12",
       "line": "It went to the queue"
     },
     {
       "kind": "handoff.rejected",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "why": "The guide named a file the skill does not ship."
       },
-      "head": "The lead sent V26-3532 back",
+      "head": "The lead sent APP-12 back",
       "line": "The guide named a file the skill does not ship."
     },
     {
       "kind": "handoff.rejected",
       "lane": null,
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "why": "The guide named a file the skill does not ship."
       },
-      "head": "The lead sent V26-3532 back",
+      "head": "The lead sent APP-12 back",
       "line": "The guide named a file the skill does not ship."
     },
     {
       "kind": "handoff.requeued",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
       },
-      "head": "V26-3532 went back in the queue",
+      "head": "APP-12 went back in the queue",
       "line": "At 4e66a05"
     },
     {
       "kind": "handoff.requeued",
       "lane": null,
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
       },
-      "head": "V26-3532 went back in the queue",
+      "head": "APP-12 went back in the queue",
       "line": "At 4e66a05"
     },
     {
       "kind": "check.selected",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
         "checks": [
@@ -409,13 +409,13 @@
           }
         ]
       },
-      "head": "The lead chose the checks for V26-3532",
+      "head": "The lead chose the checks for APP-12",
       "line": "Checks: unit and lint, at 4e66a05, 1 check added. The guide named a file the skill does not ship."
     },
     {
       "kind": "check.selected",
       "lane": null,
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
         "checks": [
@@ -425,58 +425,58 @@
         "why": "The guide named a file the skill does not ship.",
         "added": []
       },
-      "head": "The lead chose the checks for V26-3532",
+      "head": "The lead chose the checks for APP-12",
       "line": "Checks: unit and lint, at 4e66a05. The guide named a file the skill does not ship."
     },
     {
       "kind": "check.selection.cleared",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {},
-      "head": "The lead cleared the checks chosen for V26-3532",
+      "head": "The lead cleared the checks chosen for APP-12",
       "line": "The usual checks ran"
     },
     {
       "kind": "check.selection.cleared",
       "lane": null,
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {},
-      "head": "The lead cleared the checks chosen for V26-3532",
+      "head": "The lead cleared the checks chosen for APP-12",
       "line": "The usual checks ran"
     },
     {
       "kind": "selection.refused",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "detail": "unit failed on the piece and passed on the main line"
       },
-      "head": "The checks for V26-3532 could not be chosen",
+      "head": "The checks for APP-12 could not be chosen",
       "line": "unit failed on the piece and passed on the main line"
     },
     {
       "kind": "selection.refused",
       "lane": null,
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "detail": "unit failed on the piece and passed on the main line"
       },
-      "head": "The checks for V26-3532 could not be chosen",
+      "head": "The checks for APP-12 could not be chosen",
       "line": "unit failed on the piece and passed on the main line"
     },
     {
       "kind": "check.started",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "batch": [
-          "V26-3425",
-          "V26-3319",
-          "V26-3318"
+          "APP-21",
+          "APP-22",
+          "APP-23"
         ]
       },
-      "head": "Checks started on V26-3532",
-      "line": "In one batch: V26-3425, V26-3319 and V26-3318"
+      "head": "Checks started on APP-12",
+      "line": "In one batch: APP-21, APP-22 and APP-23"
     },
     {
       "kind": "check.started",
@@ -489,16 +489,16 @@
     {
       "kind": "check.finished",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "batch": [
-          "V26-3425",
-          "V26-3319",
-          "V26-3318"
+          "APP-21",
+          "APP-22",
+          "APP-23"
         ]
       },
-      "head": "Checks finished on V26-3532",
-      "line": "In one batch: V26-3425, V26-3319 and V26-3318"
+      "head": "Checks finished on APP-12",
+      "line": "In one batch: APP-21, APP-22 and APP-23"
     },
     {
       "kind": "check.finished",
@@ -511,7 +511,7 @@
     {
       "kind": "check.failed",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "check": "unit",
         "timedOut": true,
@@ -541,7 +541,7 @@
     {
       "kind": "check.failed",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "check": "unit",
         "timedOut": true,
@@ -555,7 +555,7 @@
     {
       "kind": "check.failed",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "check": "unit",
         "timedOut": false,
@@ -571,7 +571,7 @@
     {
       "kind": "check.failed",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "check": "unit",
         "timedOut": false,
@@ -585,7 +585,7 @@
     {
       "kind": "check.retried",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "check": "unit",
         "failing": [
@@ -619,7 +619,7 @@
     {
       "kind": "check.retried",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "check": "unit",
         "failing": [
@@ -636,14 +636,14 @@
     {
       "kind": "check.reused",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "check": "unit",
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
-        "from": "V26-3425"
+        "from": "APP-21"
       },
       "head": "unit was not run again",
-      "line": "Its run for V26-3425 at 4e66a05 was used"
+      "line": "Its run for APP-21 at 4e66a05 was used"
     },
     {
       "kind": "check.reused",
@@ -652,15 +652,15 @@
       "data": {
         "check": "unit",
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
-        "from": "V26-3425"
+        "from": "APP-21"
       },
       "head": "unit was not run again",
-      "line": "Its run for V26-3425 at 4e66a05 was used"
+      "line": "Its run for APP-21 at 4e66a05 was used"
     },
     {
       "kind": "check.carried",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "checks": [
           "unit",
@@ -710,7 +710,7 @@
     {
       "kind": "candidate.merged",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
         "recovery": {
@@ -718,82 +718,82 @@
           "changeRequest": "https://github.com/example/app/pull/12"
         }
       },
-      "head": "V26-3532 landed",
+      "head": "APP-12 landed",
       "line": "At 4e66a05, found later on the forge at 4e66a05"
     },
     {
       "kind": "candidate.merged",
       "lane": null,
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
       },
-      "head": "V26-3532 landed",
+      "head": "APP-12 landed",
       "line": "At 4e66a05"
     },
     {
       "kind": "candidate.stopped",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "reason": "check_failed",
         "detail": "unit failed on the piece and passed on the main line",
         "requeued": true,
         "stage": "checking"
       },
-      "head": "V26-3532 went back in the queue",
+      "head": "APP-12 went back in the queue",
       "line": "unit failed on the piece and passed on the main line while checking"
     },
     {
       "kind": "candidate.stopped",
       "lane": null,
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "reason": "check_failed",
         "detail": "unit failed on the piece and passed on the main line"
       },
-      "head": "V26-3532 was stopped",
+      "head": "APP-12 was stopped",
       "line": "unit failed on the piece and passed on the main line"
     },
     {
       "kind": "candidate.stopped",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "reason": "check_failed",
         "detail": "unit failed on the piece and passed on the main line",
         "requeued": true
       },
-      "head": "V26-3532 went back in the queue",
+      "head": "APP-12 went back in the queue",
       "line": "unit failed on the piece and passed on the main line"
     },
     {
       "kind": "candidate.stopped",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "reason": "check_failed",
         "detail": "unit failed on the piece and passed on the main line",
         "stage": "checking"
       },
-      "head": "V26-3532 was stopped",
+      "head": "APP-12 was stopped",
       "line": "unit failed on the piece and passed on the main line while checking"
     },
     {
       "kind": "candidate.stopped",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "reason": "check_failed",
         "detail": "unit failed on the piece and passed on the main line"
       },
-      "head": "V26-3532 was stopped",
+      "head": "APP-12 was stopped",
       "line": "unit failed on the piece and passed on the main line"
     },
     {
       "kind": "base.rerun.started",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "checks": [
           "unit",
@@ -827,7 +827,7 @@
     {
       "kind": "base.rerun.finished",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "base": {
           "ref": "integrate/delivery-story",
@@ -871,7 +871,7 @@
     {
       "kind": "base.rerun.finished",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "base": {
           "ref": "integrate/delivery-story",
@@ -893,7 +893,7 @@
     {
       "kind": "base.rerun.finished",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "base": {
           "ref": "integrate/delivery-story",
@@ -915,7 +915,7 @@
     {
       "kind": "base.rerun.stopped",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "base": {
           "ref": "integrate/delivery-story",
@@ -945,13 +945,13 @@
     {
       "kind": "base.broken",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "source": "queue",
         "reason": "check_failed",
         "detail": "unit failed on the piece and passed on the main line",
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
-        "after": "V26-3318"
+        "after": "APP-23"
       },
       "head": "The main line broke",
       "line": "unit failed on the piece and passed on the main line"
@@ -969,21 +969,21 @@
     {
       "kind": "base.broken",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "source": "fullHealth",
         "reason": "check_failed",
         "detail": "unit failed on the piece and passed on the main line",
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
-        "after": "V26-3318"
+        "after": "APP-23"
       },
       "head": "The main line broke",
-      "line": "The full run failed at 4e66a05, after V26-3318 landed: unit failed on the piece and passed on the main line"
+      "line": "The full run failed at 4e66a05, after APP-23 landed: unit failed on the piece and passed on the main line"
     },
     {
       "kind": "base.broken",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "source": "fullHealth"
       },
@@ -993,7 +993,7 @@
     {
       "kind": "base.broken",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "source": "queue"
       },
@@ -1003,15 +1003,15 @@
     {
       "kind": "base.repaired",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "source": "queue",
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
-        "repair": "V26-3513",
+        "repair": "APP-24",
         "why": "The guide named a file the skill does not ship."
       },
       "head": "The main line was repaired",
-      "line": "At 4e66a05 by V26-3513. The guide named a file the skill does not ship."
+      "line": "At 4e66a05 by APP-24. The guide named a file the skill does not ship."
     },
     {
       "kind": "base.repaired",
@@ -1027,14 +1027,14 @@
     {
       "kind": "base.verified",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "source": "queue",
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
-        "after": "V26-3318"
+        "after": "APP-23"
       },
       "head": "The main line passed its full run",
-      "line": "At 4e66a05, after V26-3318 landed"
+      "line": "At 4e66a05, after APP-23 landed"
     },
     {
       "kind": "base.verified",
@@ -1050,17 +1050,17 @@
     {
       "kind": "base.flaky",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "source": "queue",
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
-        "after": "V26-3318",
+        "after": "APP-23",
         "failing": [
           "tests.test_guide.test_names_shipped_files"
         ]
       },
       "head": "The main line's full run was flaky",
-      "line": "tests.test_guide.test_names_shipped_files failed and then passed, after V26-3318 landed"
+      "line": "tests.test_guide.test_names_shipped_files failed and then passed, after APP-23 landed"
     },
     {
       "kind": "base.flaky",
@@ -1079,7 +1079,7 @@
     {
       "kind": "base.moved",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "from": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b",
         "to": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
@@ -1105,7 +1105,7 @@
     {
       "kind": "base.published",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "base": {
           "ref": "integrate/delivery-story",
@@ -1133,7 +1133,7 @@
     {
       "kind": "base.merge.authorized",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "reviewed": "0123456789abcdef0123456789abcdef01234567",
         "baseCommits": [
@@ -1142,13 +1142,13 @@
         ],
         "token": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
       },
-      "head": "The lead let Lane 1 merge the main line into V26-3532",
+      "head": "The lead let Lane 1 merge the main line into APP-12",
       "line": "9f3c2b1 and 0123456, from 0123456"
     },
     {
       "kind": "ownership.granted",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "path": "skills/orchestrate-work/references/*.md",
         "span": {
@@ -1177,7 +1177,7 @@
     {
       "kind": "ownership.revoked",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "path": "skills/orchestrate-work/references/*.md",
         "span": {
@@ -1206,7 +1206,7 @@
     {
       "kind": "ownership.claimed",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "path": "skills/orchestrate-work/references/*.md",
         "base": {
@@ -1234,7 +1234,7 @@
     {
       "kind": "plan.updated",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "updated": "2026-11-16T10:15:00Z",
         "changed": [
@@ -1258,7 +1258,7 @@
     {
       "kind": "cleanup.done",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "base": {
           "ref": "integrate/delivery-story",
@@ -1267,33 +1267,33 @@
         "changeRequest": "https://github.com/example/app/pull/12",
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
       },
-      "head": "V26-3532 was cleaned up",
+      "head": "APP-12 was cleaned up",
       "line": "Merged at 4e66a05 from https://github.com/example/app/pull/12"
     },
     {
       "kind": "cleanup.done",
       "lane": null,
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "base": {
           "ref": "integrate/delivery-story",
           "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
         }
       },
-      "head": "V26-3532 was cleaned up",
+      "head": "APP-12 was cleaned up",
       "line": ""
     },
     {
       "kind": "followup.filed",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "finding": "F-3",
-        "followup": "https://linear.app/team/issue/V26-3540/name-the-shipped-file",
+        "followup": "https://linear.app/team/issue/APP-40/name-the-shipped-file",
         "title": "Keep facts in the journal"
       },
       "head": "A follow-up was filed",
-      "line": "V26-3540: Keep facts in the journal"
+      "line": "APP-40: Keep facts in the journal"
     },
     {
       "kind": "followup.filed",
@@ -1301,16 +1301,16 @@
       "subject": null,
       "data": {
         "finding": "F-3",
-        "followup": "https://linear.app/team/issue/V26-3540/name-the-shipped-file",
+        "followup": "https://linear.app/team/issue/APP-40/name-the-shipped-file",
         "title": "Keep facts in the journal"
       },
       "head": "A follow-up was filed",
-      "line": "V26-3540: Keep facts in the journal"
+      "line": "APP-40: Keep facts in the journal"
     },
     {
       "kind": "snapshot.stale",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "source": "tracker"
       },
@@ -1330,7 +1330,7 @@
     {
       "kind": "snapshot.retaken",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "source": "tracker"
       },
@@ -1350,7 +1350,7 @@
     {
       "kind": "evidence.published",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "url": "https://example.github.io/app/evidence/",
         "clips": [
@@ -1360,13 +1360,13 @@
           }
         ]
       },
-      "head": "Evidence for V26-3532 was published",
+      "head": "Evidence for APP-12 was published",
       "line": "1 clip at https://example.github.io/app/evidence/"
     },
     {
       "kind": "evidence.published",
       "lane": null,
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "url": "https://example.github.io/app/evidence/",
         "clips": [
@@ -1376,13 +1376,13 @@
           }
         ]
       },
-      "head": "Evidence for V26-3532 was published",
+      "head": "Evidence for APP-12 was published",
       "line": "1 clip at https://example.github.io/app/evidence/"
     },
     {
       "kind": "flake.declared",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "flake": "https://github.com/example/app/issues/7",
         "check": "unit",
@@ -1406,7 +1406,7 @@
     {
       "kind": "fullhealth.skipped",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
         "posture": "focused",
@@ -1432,7 +1432,7 @@
     {
       "kind": "fullhealth.rerun",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
         "why": "The guide named a file the skill does not ship."
@@ -1454,7 +1454,7 @@
     {
       "kind": "posture.changed",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "from": "focused",
         "to": "focused",
@@ -1480,7 +1480,7 @@
     {
       "kind": "posture.changed",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "from": "focused",
         "to": "gate",
@@ -1493,7 +1493,7 @@
     {
       "kind": "serving.held",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "why": "The guide named a file the skill does not ship."
       },
@@ -1513,7 +1513,7 @@
     {
       "kind": "deferral.breached",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "finding": "F-3",
         "title": "Keep facts in the journal"
@@ -1535,11 +1535,11 @@
     {
       "kind": "blocker.recorded",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "text": "Carry the review across the base merge"
       },
-      "head": "Work was blocked on V26-3532",
+      "head": "Work was blocked on APP-12",
       "line": "Carry the review across the base merge"
     },
     {
@@ -1555,11 +1555,11 @@
     {
       "kind": "blocker.resolved",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "why": "The guide named a file the skill does not ship."
       },
-      "head": "Work was unblocked on V26-3532",
+      "head": "Work was unblocked on APP-12",
       "line": "The guide named a file the skill does not ship."
     },
     {
@@ -1575,7 +1575,7 @@
     {
       "kind": "decision.recorded",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "text": "Carry the review across the base merge",
         "why": "The guide named a file the skill does not ship."
@@ -1597,13 +1597,13 @@
     {
       "kind": "lease.granted",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "lease": "in-app",
         "holder": "lane-2"
       },
       "head": "lane-2 took the in-app lease",
-      "line": "For V26-3532"
+      "line": "For APP-12"
     },
     {
       "kind": "lease.granted",
@@ -1619,13 +1619,13 @@
     {
       "kind": "lease.released",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "lease": "in-app",
         "holder": "lane-2"
       },
       "head": "lane-2 let go of the in-app lease",
-      "line": "For V26-3532"
+      "line": "For APP-12"
     },
     {
       "kind": "lease.released",
@@ -1641,7 +1641,7 @@
     {
       "kind": "release.started",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
       },
@@ -1661,7 +1661,7 @@
     {
       "kind": "release.finished",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
         "failedAt": "pypi"
@@ -1682,7 +1682,7 @@
     {
       "kind": "finish.met",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "finish": "acs"
       },
@@ -1702,7 +1702,7 @@
     {
       "kind": "hook.held",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "hook": "lead.may-stop",
         "verdict": "block"
@@ -1724,7 +1724,7 @@
     {
       "kind": "hook.held",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "hook": "lead.may-stop",
         "verdict": "warn"
@@ -1735,15 +1735,15 @@
     {
       "kind": "peer.merged",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
-        "peer": "V26-3600",
+        "peer": "APP-30",
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
         "files": [
           "skills/orchestrate-work/SKILL.md"
         ]
       },
-      "head": "V26-3600 landed on the main line",
+      "head": "APP-30 landed on the main line",
       "line": "At 4e66a05, touching skills/orchestrate-work/SKILL.md"
     },
     {
@@ -1751,19 +1751,19 @@
       "lane": null,
       "subject": null,
       "data": {
-        "peer": "V26-3600",
+        "peer": "APP-30",
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
         "files": [
           "skills/orchestrate-work/SKILL.md"
         ]
       },
-      "head": "V26-3600 landed on the main line",
+      "head": "APP-30 landed on the main line",
       "line": "At 4e66a05, touching skills/orchestrate-work/SKILL.md"
     },
     {
       "kind": "delivery.closed",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "skipped": true
       },
@@ -1781,7 +1781,7 @@
     {
       "kind": "delivery.closed",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {},
       "head": "The delivery finished",
       "line": "Its close-out ran in full"
@@ -1789,33 +1789,33 @@
     {
       "kind": "candidate.handed",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
         "changeRequest": "https://github.com/example/app/pull/12",
         "rounds": 0,
         "checks": []
       },
-      "head": "Lane 1 handed off V26-3532",
+      "head": "Lane 1 handed off APP-12",
       "line": "After 0 review rounds"
     },
     {
       "kind": "candidate.handed",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
         "changeRequest": "https://github.com/example/app/pull/12",
         "rounds": 1,
         "checks": []
       },
-      "head": "Lane 1 handed off V26-3532",
+      "head": "Lane 1 handed off APP-12",
       "line": "After 1 review round"
     },
     {
       "kind": "check.carried",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "checks": [
           "unit",
@@ -1837,7 +1837,7 @@
     {
       "kind": "check.carried",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "checks": [
           "unit",
@@ -1861,7 +1861,7 @@
     {
       "kind": "check.carried",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "checks": [
           "unit",
@@ -1887,7 +1887,7 @@
     {
       "kind": "base.rerun.finished",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "base": {
           "ref": "integrate/delivery-story",
@@ -1909,7 +1909,7 @@
     {
       "kind": "base.rerun.finished",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "base": {
           "ref": "integrate/delivery-story",
@@ -1931,7 +1931,7 @@
     {
       "kind": "base.rerun.finished",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "base": {
           "ref": "integrate/delivery-story",
@@ -1953,7 +1953,7 @@
     {
       "kind": "base.rerun.finished",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "base": {
           "ref": "integrate/delivery-story",
@@ -1975,47 +1975,47 @@
     {
       "kind": "lane.assigned",
       "lane": "lead",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "title": "Keep facts in the journal",
-        "note": "Starts after V26-3532 lands"
+        "note": "Starts after APP-12 lands"
       },
-      "head": "Lead picked up V26-3532",
-      "line": "Keep facts in the journal. Starts after V26-3532 lands"
+      "head": "Lead picked up APP-12",
+      "line": "Keep facts in the journal. Starts after APP-12 lands"
     },
     {
       "kind": "lane.assigned",
       "lane": "lane-backend",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "title": "Keep facts in the journal",
-        "note": "Starts after V26-3532 lands"
+        "note": "Starts after APP-12 lands"
       },
-      "head": "Backend lane picked up V26-3532",
-      "line": "Keep facts in the journal. Starts after V26-3532 lands"
+      "head": "Backend lane picked up APP-12",
+      "line": "Keep facts in the journal. Starts after APP-12 lands"
     },
     {
       "kind": "lane.assigned",
       "lane": "reviewer",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "title": "Keep facts in the journal",
-        "note": "Starts after V26-3532 lands"
+        "note": "Starts after APP-12 lands"
       },
-      "head": "Reviewer lane picked up V26-3532",
-      "line": "Keep facts in the journal. Starts after V26-3532 lands"
+      "head": "Reviewer lane picked up APP-12",
+      "line": "Keep facts in the journal. Starts after APP-12 lands"
     },
     {
       "kind": "followup.filed",
       "lane": "lane-1",
-      "subject": "V26-3532",
+      "subject": "APP-12",
       "data": {
         "finding": "F-3",
-        "followup": "V26-3541",
+        "followup": "APP-41",
         "title": "Keep facts in the journal"
       },
       "head": "A follow-up was filed",
-      "line": "V26-3541: Keep facts in the journal"
+      "line": "APP-41: Keep facts in the journal"
     }
   ]
 }

@@ -319,8 +319,8 @@ class WordsTests(unittest.TestCase):
                          ["Lane 1", "Lead", "Backend lane", "Review lane"])
         self.assertEqual(show(HEAD, "commit"), "4e66a05")
         self.assertEqual([show(ticket, "ticket") for ticket in
-                          ("V26-3532", "https://linear.app/team/issue/V26-3540/name-it", "https://example.org/x")],
-                         ["V26-3532", "V26-3540", "https://example.org/x"])
+                          ("APP-12", "https://linear.app/team/issue/APP-40/name-it", "https://example.org/x")],
+                         ["APP-12", "APP-40", "https://example.org/x"])
         for value, form in ((True, None), ({"a": 1}, None), ("2", "count"), (-1, "duration"), ("a", "list"), ("x", "shout")):
             with self.subTest(value=value, form=form):
                 with self.assertRaises(words_tool.WordsError):
@@ -328,19 +328,19 @@ class WordsTests(unittest.TestCase):
 
     def test_a_bracket_is_left_out_when_a_field_it_uses_is_absent_or_an_empty_list(self) -> None:
         described = registry()
-        handed = {"kind": "candidate.handed", "lane": "lane-1", "subject": "V26-3532",
+        handed = {"kind": "candidate.handed", "lane": "lane-1", "subject": "APP-12",
                   "data": {"head": HEAD, "changeRequest": "https://example.org/pr/1", "rounds": 2, "checks": []}}
         self.assertEqual(words_tool.words(handed, described)["line"], "After 2 review rounds")
         handed["data"]["checks"] = ["unit"]
         self.assertEqual(words_tool.words(handed, described)["line"], "After 2 review rounds, with unit run by the lane")
-        merged = {"kind": "candidate.merged", "lane": None, "subject": "V26-3532", "data": {"head": HEAD}}
-        self.assertEqual(words_tool.words(merged, described), {"head": "V26-3532 landed", "line": "At 4e66a05"})
+        merged = {"kind": "candidate.merged", "lane": None, "subject": "APP-12", "data": {"head": HEAD}}
+        self.assertEqual(words_tool.words(merged, described), {"head": "APP-12 landed", "line": "At 4e66a05"})
 
     def test_words_are_refused_for_an_unknown_kind_or_a_required_field_the_entry_lacks(self) -> None:
         with self.assertRaises(words_tool.WordsError):
             words_tool.words({"kind": "candidate.vanished", "lane": None, "subject": None, "data": {}})
         with self.assertRaises(words_tool.WordsError):
-            words_tool.words({"kind": "candidate.merged", "lane": None, "subject": "V26-3532", "data": {}})
+            words_tool.words({"kind": "candidate.merged", "lane": None, "subject": "APP-12", "data": {}})
 
 
 class PlantedRegistryTests(unittest.TestCase):
@@ -357,17 +357,17 @@ class PlantedRegistryTests(unittest.TestCase):
         path.write_text(json.dumps(planted), encoding="utf-8")
         directory = Path(temporary.name) / "state"
         state_tool.init(directory, "Planted")
-        weighed = {"kind": "piece.weighed", "subject": "V26-3532", "data": {"finish": "acs"}}
+        weighed = {"kind": "piece.weighed", "subject": "APP-12", "data": {"finish": "acs"}}
         with self.assertRaises(state_tool.StateError) as refused:
             state_tool.append_journal(directory, **weighed)
         self.assertIn("no kind named piece.weighed", str(refused.exception))
-        merged = {"kind": "candidate.merged", "lane": None, "subject": "V26-3532", "data": {"head": HEAD}}
+        merged = {"kind": "candidate.merged", "lane": None, "subject": "APP-12", "data": {"head": HEAD}}
         with mock.patch.object(words_tool, "REGISTRY_FILE", path):
             entry = state_tool.append_journal(directory, **weighed)
-            self.assertEqual(words_tool.words(entry), {"head": "V26-3532 was weighed", "line": "acs"})
-            self.assertEqual(words_tool.words(merged)["head"], "V26-3532 reached the main line")
+            self.assertEqual(words_tool.words(entry), {"head": "APP-12 was weighed", "line": "acs"})
+            self.assertEqual(words_tool.words(merged)["head"], "APP-12 reached the main line")
             self.assertEqual([item["kind"] for item in state_tool.read_journal(directory)], ["piece.weighed"])
-        self.assertEqual(words_tool.words(merged)["head"], "V26-3532 landed")
+        self.assertEqual(words_tool.words(merged)["head"], "APP-12 landed")
 
 
     def test_a_planted_registry_with_a_type_that_is_not_a_schema_is_refused(self) -> None:
@@ -412,9 +412,9 @@ class JournalFactsTests(unittest.TestCase):
         self.refused("candidate.merged", {}, "/data: missing head")
         self.refused("candidate.merged", {**merged, "landed": True}, "/data/landed: no value is allowed here")
         self.refused("candidate.vanished", merged, "no kind named candidate.vanished")
-        entry = self.append("candidate.merged", merged, subject="V26-3532")
+        entry = self.append("candidate.merged", merged, subject="APP-12")
         self.assertEqual({key: entry[key] for key in ("id", "kind", "lane", "subject", "data")},
-                         {"id": 1, "kind": "candidate.merged", "lane": None, "subject": "V26-3532", "data": merged})
+                         {"id": 1, "kind": "candidate.merged", "lane": None, "subject": "APP-12", "data": merged})
         self.assertNotIn("summary", entry)
 
     def test_a_reserved_kind_is_refused_with_the_reservations_own_error(self) -> None:
@@ -433,7 +433,7 @@ class JournalFactsTests(unittest.TestCase):
             ("record.started", {"base": {"ref": "integrate/delivery-story"}}, "/data/base: missing head",
              {"base": {"ref": "integrate/delivery-story", "head": BASE_HEAD}}),
             ("candidate.stopped", {"reason": "gave_up", "detail": "It stopped."}, "/data/reason: not one of the allowed values",
-             {"reason": "interrupted", "detail": "A run ended while V26-3532 was checking."}),
+             {"reason": "interrupted", "detail": "A run ended while APP-12 was checking."}),
             ("candidate.handed", {"head": HEAD, "changeRequest": "pr-12", "rounds": 1, "checks": []},
              "/data/changeRequest: does not match",
              {"head": HEAD, "changeRequest": "https://github.com/example/app/pull/12", "rounds": 1, "checks": []}),
@@ -441,8 +441,8 @@ class JournalFactsTests(unittest.TestCase):
         for kind, wrong, expected, right in cases:
             with self.subTest(kind=kind, wrong=wrong):
                 self.refused(kind, wrong, expected)
-                self.assertEqual(self.append(kind, right, subject="V26-3532")["data"], right)
-        started = self.append("check.started", {}, subject="V26-3532")
+                self.assertEqual(self.append(kind, right, subject="APP-12")["data"], right)
+        started = self.append("check.started", {}, subject="APP-12")
         checked = {"head": HEAD, "rounds": 1, "afterMerge": False, "noChange": False}
         self.refused("handoff.checked", {**checked, "notes": ["  "]}, "/data/notes/0: does not match", because=[started["id"]])
         self.assertEqual(self.append("handoff.checked", {**checked, "notes": ["Checked."]}, because=[started["id"]])["data"]["notes"],
@@ -455,7 +455,7 @@ class JournalFactsTests(unittest.TestCase):
         self.assertEqual(self.append("check.failed", {**failed, "log": log}, because=[started["id"]])["data"]["log"], log)
 
     def test_links_name_earlier_entries_the_registry_requires_or_pairs(self) -> None:
-        started = self.append("check.started", {}, subject="V26-3532")
+        started = self.append("check.started", {}, subject="APP-12")
         self.refused("check.finished", {}, "/because: a check.finished names what caused it")
         self.refused("check.finished", {}, "/because: entry 2 is not an earlier entry", because=[2])
         self.refused("check.finished", {}, "/because: entry 9 is not an earlier entry", because=[9])
@@ -481,8 +481,8 @@ class JournalFactsTests(unittest.TestCase):
         self.assertEqual(self.append("blocker.recorded", {"text": "The lead must choose."})["data"]["text"], "The lead must choose.")
 
     def test_an_entry_with_facts_may_say_when_it_happened_and_a_sentence_only_one_may_not(self) -> None:
-        started = {"id": 1, "at": "2026-11-16T10:00:00Z", "kind": "check.started", "lane": None, "subject": "V26-3532", "data": {}}
-        finished = {"id": 2, "at": "2026-11-16T10:05:00Z", "kind": "check.finished", "lane": None, "subject": "V26-3532",
+        started = {"id": 1, "at": "2026-11-16T10:00:00Z", "kind": "check.started", "lane": None, "subject": "APP-12", "data": {}}
+        finished = {"id": 2, "at": "2026-11-16T10:05:00Z", "kind": "check.finished", "lane": None, "subject": "APP-12",
                     "occurredAt": "2026-11-16T10:04:00Z"}
         self.assertEqual(state_tool.journal_errors([started, {**finished, "data": {}, "because": [1]}]), [])
         self.assertEqual(state_tool.journal_errors([started, {**finished, "summary": "Checked"}]),
@@ -495,37 +495,37 @@ class JournalFactsTests(unittest.TestCase):
         broken = self.append("base.broken", {"source": "lead", "detail": "unit failed on the main line."})
         repaired = self.append("base.repaired", {"source": "lead", "head": HEAD}, answers=[broken["id"]])
         self.assertEqual(repaired["answers"], [broken["id"]])
-        stopped = self.append("candidate.stopped", {"reason": "base_broken", "detail": "The main line broke."}, subject="V26-3532")
+        stopped = self.append("candidate.stopped", {"reason": "base_broken", "detail": "The main line broke."}, subject="APP-12")
         self.assertNotIn("summary", stopped)
         rounds = {"round": 1, "startedAt": "2026-11-16T10:00:00Z", "finishedAt": "2026-11-16T10:30:00Z",
                   "verdicts": {"outcome-correctness": "approve"}, "findings": {"P0": 0, "P1": 0, "P2": 0, "P3": 0}}
-        self.append("review.round", rounds, subject="V26-3532", lane="lane-1")
+        self.append("review.round", rounds, subject="APP-12", lane="lane-1")
         document = state_tool.show(self.directory)
         self.assertEqual([entry["kind"] for entry in document["journal"]],
                          ["base.broken", "base.repaired", "candidate.stopped", "review.round"])
         # A piece's stats count a round that carries only its facts.
-        item = {"subject": "V26-3532", "lane": "lane-1", "stage": "queued", "head": HEAD, "checks": [], "syncedHead": None}
+        item = {"subject": "APP-12", "lane": "lane-1", "stage": "queued", "head": HEAD, "checks": [], "syncedHead": None}
         stats = state_tool._candidate_stats(item, [entry for entry in document["journal"] if entry["kind"] == "review.round"], [])
         self.assertEqual((stats["rounds"], stats["findings"]), (1, rounds["findings"]))
         # A repair after a break the main line named, beside a stop that carries only facts, puts back nothing and fails on nothing.
         named = {"id": 1, "at": "2026-11-16T10:00:00Z", "kind": "base.broken", "lane": None, "subject": None,
                  "summary": f"base_broken: unit also fails on integrate/delivery-story at {HEAD}"}
-        stop = {"id": 2, "at": "2026-11-16T10:01:00Z", "kind": "candidate.stopped", "lane": None, "subject": "V26-3532",
+        stop = {"id": 2, "at": "2026-11-16T10:01:00Z", "kind": "candidate.stopped", "lane": None, "subject": "APP-12",
                 "data": {"reason": "base_broken", "detail": "The main line broke."}}
         state = {"queue": [{**item, "stage": "stopped"}], "lanes": []}
         self.assertIsNone(state_tool.repaired_state(state, [named, stop]))
 
     def test_the_bridge_takes_a_sentence_facts_or_both_and_checks_facts_in_full(self) -> None:
         self.refused("candidate.merged", None, "an entry carries its facts in data, or a sentence")
-        sentence = self.append("candidate.merged", None, summary="Merged", subject="V26-3532")
+        sentence = self.append("candidate.merged", None, summary="Merged", subject="APP-12")
         self.assertNotIn("data", sentence)
         self.refused("candidate.merged", {"head": "short"}, "/data/head: does not match", summary="Merged")
-        both = self.append("candidate.merged", {"head": HEAD}, summary="Merged", subject="V26-3532")
+        both = self.append("candidate.merged", {"head": HEAD}, summary="Merged", subject="APP-12")
         self.assertEqual((both["summary"], both["data"]), ("Merged", {"head": HEAD}))
-        self.assertEqual(self.append("review.evidence", None, summary="Captured", subject="V26-3532", review_artifact={
+        self.assertEqual(self.append("review.evidence", None, summary="Captured", subject="APP-12", review_artifact={
             "digest": "a" * 64, "candidateRef": HEAD})["kind"], "review.evidence")
         self.refused("review.evidence", {"digest": "a" * 64, "candidateRef": HEAD},
-                     "review.evidence carries no facts", subject="V26-3532")
+                     "review.evidence carries no facts", subject="APP-12")
 
     def test_the_journal_command_takes_facts_links_and_a_persons_words(self) -> None:
         def run(*argv: str) -> dict:
@@ -536,16 +536,16 @@ class JournalFactsTests(unittest.TestCase):
             result = json.loads(out.buffer.getvalue().decode("ascii"))
             self.assertEqual(code == 0, result["ok"], result)
             return result
-        started = run("journal", "--kind", "check.started", "--subject", "V26-3532", "--data", "{}")["entry"]
+        started = run("journal", "--kind", "check.started", "--subject", "APP-12", "--data", "{}")["entry"]
         self.assertNotIn("summary", started)
-        finished = run("journal", "--kind", "check.finished", "--data", '{"batch": ["V26-3532"]}', "--because", "1")["entry"]
-        self.assertEqual((finished["data"], finished["because"]), ({"batch": ["V26-3532"]}, [1]))
+        finished = run("journal", "--kind", "check.finished", "--data", '{"batch": ["APP-12"]}', "--because", "1")["entry"]
+        self.assertEqual((finished["data"], finished["because"]), ({"batch": ["APP-12"]}, [1]))
         decided = run("journal", "--kind", "decision.recorded", "--text", "Carry the review", "--why", "It still holds.",
                       "--summary", "Carried the review")["entry"]
         self.assertEqual((decided["data"], decided["summary"]), ({"text": "Carry the review", "why": "It still holds."}, "Carried the review"))
         review = {"round": 2, "startedAt": "2026-11-16T10:00:00Z", "finishedAt": "2026-11-16T10:30:00Z",
                   "verdicts": {"adversarial-testing": "approve"}, "findings": {"P0": 0, "P1": 0, "P2": 1, "P3": 0}}
-        rounded = run("journal", "--kind", "review.round", "--subject", "V26-3532", "--lane", "lane-1",
+        rounded = run("journal", "--kind", "review.round", "--subject", "APP-12", "--lane", "lane-1",
                       "--data", json.dumps(review))["entry"]
         self.assertEqual((rounded["data"], "summary" in rounded, "review" in rounded), (review, False, False))
         unnamed = run("journal", "--kind", "review.round", "--data", json.dumps(review))
