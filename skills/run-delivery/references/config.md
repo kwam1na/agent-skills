@@ -1,5 +1,25 @@
 # Configuration
 
+## Optional hosted progress
+
+`hosted` is read from `.agents/delivery-views.json` on the delivery's binding
+shelf, alongside the delivery-views settings. It has `origin` (an HTTPS origin),
+`repositoryId` (the receiver's repository scope) and `tokenEnv` (the publishing
+credential's environment variable name). Omit it to disable hosted publishing.
+The owned watcher is separate from `state.publishers`; do not add it there.
+The credential is handed only to the publishing process, and never stored in
+the record, archive, view or supervisor log.
+
+`lead-init` and `lead-run` start or adopt the watcher using the current
+generation. Supervisor stop leaves it running; record or generation loss ends
+it. Close records the terminal request after matching `close-finished` marks,
+waits at most 30 additional seconds, and leaves the watcher up to 10 minutes to
+finish. `final-publication-pending` survives archive and retry. Only the matching
+terminal receipt changes it to `final-published`. `hosted-retry --archive PATH`
+uses the current checkout's trusted settings and the archive's existing public
+identity, with `--resume` for an expired writer lease. `view --archive PATH`
+only reads the archived link and status and needs no credential.
+
 Most of what run-delivery needs, the repository already declares for agent-skills. `run_delivery.py` reads it from there,
 in this order of precedence:
 
