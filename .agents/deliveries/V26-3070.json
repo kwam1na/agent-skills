@@ -204,6 +204,10 @@
         {
           "id": "v26-3527-4",
           "text": "Active archive polling uses bounded production unavailability handling, then direct post-exit assertions verify stable identity, receipt and status while persistent corruption still fails."
+        },
+        {
+          "id": "v26-3527-5",
+          "text": "The full retained lifecycle and c1 privacy behavior remains covered by installed-generation command/process tests, strict receiver fixtures and coherent capture of the actual delivery record."
         }
       ],
       "after": [
