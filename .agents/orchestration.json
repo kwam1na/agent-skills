@@ -2,7 +2,7 @@
   "schemaVersion": "orchestration-binding/1",
   "base": {
     "remote": "origin",
-    "ref": "integrate/knowledge-library"
+    "ref": "main"
   },
   "bases": [
     "main",
