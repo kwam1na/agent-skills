@@ -109,7 +109,7 @@ TABLE = {
     "release.started": ("H", "note", "head", "", "-"),
     "release.finished": ("H", "landed", "head failedAt?", "cause", "epic: Released"),
     "finish.met": ("H", "landed", "finish", "", "epic: Finish line met"),
-    "hook.held": ("S", "note", "hook verdict", "", "-"),
+    "hook.held": ("S", "note", "hook verdict lanes? pieces?", "", "-"),
     "peer.merged": ("S", "note", "peer head files", "", "-"),
     "delivery.closed": ("H", "landed", "skipped?", "", "epic: Delivery closed"),
 }

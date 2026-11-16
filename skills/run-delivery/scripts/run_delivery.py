@@ -8854,6 +8854,12 @@ def listener_needed(state: dict) -> list[str]:
             + [f"{item['subject']} ({item.get('stage')})" for item in state.get("queue", []) if item.get("stage") != "merged"])
 
 
+def listener_facts(state: dict) -> dict:
+    """The same, as a held stop's facts: the lanes still working and the pieces still to land, by name."""
+    return {"lanes": [lane["id"] for lane in state.get("lanes", []) if lane.get("state") not in LANE_DONE],
+            "pieces": [item["subject"] for item in state.get("queue", []) if item.get("stage") != "merged"]}
+
+
 def wait_output(c) -> Path:
     """Where lead-wait writes the wait's one result document by default: beside the flow logs, outside the record."""
     return lead_file(c, "wait.json")
@@ -9119,10 +9125,10 @@ def lead_may_stop(payload: dict) -> dict:
                           f"({', '.join(c.delivery for c in seat.configs)}), so which one this session leads can't be "
                           "told; lead each from its own checkout.")
     if payload.get("stop_hook_active") is not True:
-        for c, _, needed in missing:
+        for c, doc, needed in missing:
             tool = c.release / "skills/orchestrate-work/scripts/delivery_state.py"
             done = run([sys.executable, "-B", str(tool), "--dir", str(c.state), "journal", "--kind", HOOK_HELD,
-                        "--data", json.dumps({"hook": "lead.may-stop", "verdict": verdict})],
+                        "--data", json.dumps({"hook": "lead.may-stop", "verdict": verdict, **listener_facts(doc["state"])})],
                        check=False, timeout=10)
             if done.returncode != 0:
                 print(f"run-delivery: {HOOK_HELD} not journalled in {c.delivery}: "

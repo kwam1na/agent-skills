@@ -473,7 +473,7 @@
         },
         {
           "path": "skills/orchestrate-work/references/journal-kinds.json",
-          "sha256": "d8651c65f46c29f52719fc7429168842d2b44e4b5ae6d7f89a6fcede88f67336"
+          "sha256": "b6abff28855576d6d2c2e610c885478331e5a16584978844a98e08b15253ef18"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
@@ -1078,7 +1078,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "ce0783557833199761682d381a5ba791d0b74c2c777333909a8985801f2752cb"
+          "sha256": "6527a9c3bda1915f72b403cc6414171b1bd2858bed079cd1d1992844f523b9a7"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
