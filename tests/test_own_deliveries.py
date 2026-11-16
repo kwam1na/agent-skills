@@ -728,10 +728,14 @@ class HostedServiceBoundaryTests(unittest.TestCase):
         target['prepare']=[['standing-only']]
         target['selection']['catalogue']=[r for r in target['selection']['catalogue'] if r['id'] not in allowed]
         reader=target['selection']['readers'].pop()
-        for mode in ('add','already-identical','target-extension','target-python-order','target-service-order','collision','reader-collision','missing-reader','not-restored','missing-source-check','duplicate-source-check'):
+        for mode in ('add','already-identical','target-extension','partial-target','target-python-order','target-service-order','collision','reader-collision','missing-reader','not-restored','missing-source-check','duplicate-source-check'):
             with self.subTest(mode=mode),tempfile.TemporaryDirectory() as directory:
                 path=Path(directory)/'.agents/orchestration.json';path.parent.mkdir()
                 old=copy.deepcopy(target);candidate=copy.deepcopy(source)
+                if mode=='partial-target':
+                    old['selection']['catalogue']=[r for r in old['selection']['catalogue'] if r['id']<allowed[2]]
+                    old['selection']['catalogue'].extend(copy.deepcopy(next(r for r in source['selection']['catalogue'] if r['id']==key))
+                                                        for key in (SERVICE_IDS[0],SERVICE_IDS[2],SERVICE_IDS[4],SERVICE_IDS[5]))
                 if mode=='target-python-order':old['selection']['catalogue'][:2]=reversed(old['selection']['catalogue'][:2])
                 if mode=='target-service-order':
                     old['selection']['catalogue'].extend(copy.deepcopy(next(r for r in source['selection']['catalogue'] if r['id']==key))
@@ -760,14 +764,15 @@ class HostedServiceBoundaryTests(unittest.TestCase):
                 prefix='import subprocess,json\nanswers='+repr(answers)+'\nsubprocess.check_output=lambda args:json.dumps(answers[args[2]]).encode()\n'
                 done=subprocess.run([sys.executable,'-B','-c',prefix+recipe],cwd=directory,
                                     env={**os.environ,'PYTHONOPTIMIZE':'0'},capture_output=True,text=True,timeout=10)
-                if mode not in ('add','already-identical','target-extension'):
+                if mode not in ('add','already-identical','target-extension','partial-target'):
                     self.assertNotEqual(done.returncode,0,mode)
                     self.assertIn('AssertionError',done.stderr)
                     self.assertEqual(path.read_bytes(),before)
                     continue
                 self.assertEqual(done.returncode,0,done.stderr)
                 merged=json.loads(path.read_text())
-                expected=sorted([*CATALOGUE_IDS,*(['tests.test_delivery_views_hosted_extra'] if mode=='target-extension' else [])])
+                expected=sorted({r['id'] for r in old['selection']['catalogue'] if r['id'].startswith('tests.')} |
+                                {key for key in allowed if key.startswith('tests.')})
                 self.assertEqual([r['id'] for r in merged['selection']['catalogue']],[*expected,*SERVICE_IDS])
                 self.assertEqual([r['id'] for r in merged['selection']['catalogue'] if r['id'] in allowed],allowed)
                 self.assertEqual(merged['selection']['readers'],[*old['selection']['readers'],reader])
