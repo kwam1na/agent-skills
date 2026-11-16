@@ -8,6 +8,7 @@ import importlib.util
 import io
 import json
 import re
+import shutil
 import sys
 import tempfile
 import time
@@ -844,6 +845,66 @@ class CommandTests(unittest.TestCase):
                     contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(narrator.main([]), 2)
                 self.assertIn("narrator:", stderr.getvalue())
+
+
+def _queue_tests():
+    # Imported when a row runs, so the rows that read only fixtures never load the queue's harness.
+    from tests import test_merge_queue
+    return test_merge_queue
+
+
+class QueueJournalTests(unittest.TestCase):
+    """Journals the real queue and state tool write, built as the queue's own tests build them, narrate to one setback."""
+
+    def setUp(self) -> None:
+        self.directory = Path(tempfile.mkdtemp(prefix="narrator-queue-")).resolve()
+        self.addCleanup(shutil.rmtree, self.directory, True)
+        self.mq = _queue_tests()
+
+    def one_closed(self, journal: list[dict], opening: dict, closing: dict) -> None:
+        """The story has one setback, opened and closed by these entries, costing the time between their instants."""
+        def instant(entry: dict) -> datetime.datetime:
+            return datetime.datetime.fromisoformat(entry.get("occurredAt") or entry["at"])
+
+        story = narrator.narrate(journal)
+        self.assertEqual([(thread["opening"], thread["closing"], thread["state"]) for thread in story["threads"]],
+                         [(opening["id"], closing["id"], "closed")])
+        cost = round((instant(closing) - instant(opening)).total_seconds())
+        self.assertEqual(story["threads"][0]["cost"], cost)
+        self.assertEqual(story["digest"]["setbacks"], {"closed": 1, "cost": cost, "standing": []})
+
+    def test_a_stop_the_lane_answers_with_a_new_hand_off_is_one_setback_closed_at_the_hand_off(self) -> None:
+        mq = self.mq
+        case = mq.MergeQueueTestCase()
+        adopter = mq.Adopter(self.directory, None, "normal")
+        case.candidate(adopter, {"tests/test_own.txt": "FAIL\n"})
+        case.assertStopped(case.run_queue(adopter, "feature"), "check_failed")
+        fixed = adopter.lane_commit("feature", {"tests/test_own.txt": "pass\n"})
+        mq.StoppedBaseRerunTests.hand_off_again(adopter, fixed)
+        case.run_queue(adopter, "feature")
+        self.assertEqual(adopter.item("feature")["stage"], "merged")
+        journal = mq.state_tool.read_journal(adopter.state)
+        [stop] = [entry for entry in journal if entry["kind"] == "candidate.stopped"]
+        [handed] = [entry for entry in journal if entry["kind"] == "candidate.handed"]
+        self.assertEqual(handed.get("answers"), [stop["id"]])
+        self.one_closed(journal, stop, handed)
+
+    def test_a_break_a_rerun_declared_then_its_repair_is_one_setback_closed_at_the_repair(self) -> None:
+        mq = self.mq
+        case = mq.BaseRepairTests()
+        adopter = mq.Adopter(self.directory, {"postSync": []}, "normal")
+        adopter.advance_base(case.BROKEN)
+        case.break_with(adopter, "first")
+        case.candidate(adopter, {"src/app.txt": "app fixed\n"}, name="repair")
+        mq.state_tool.name_repair(adopter.state, "repair")
+        case.serve(adopter)
+        journal = mq.state_tool.read_journal(adopter.state)
+        [finished] = [entry for entry in journal if entry["kind"] == "base.rerun.finished"]
+        [broken] = [entry for entry in journal if entry["kind"] == "base.broken"]
+        [repaired] = [entry for entry in journal if entry["kind"] == "base.repaired"]
+        self.assertEqual((broken.get("because"), repaired.get("answers")), ([finished["id"]], [broken["id"]]))
+        self.assertEqual(adopter.item("first")["stage"], "merged")
+        self.one_closed(journal, broken, repaired)
 
 
 if __name__ == "__main__":
