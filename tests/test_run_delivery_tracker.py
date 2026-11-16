@@ -689,7 +689,7 @@ class Delivery:
         return tp.needs_you(self.doc(), self.state_dir, self.flow_log, EPIC, tp.settings(self.root), closing=closing)
 
 
-ALL_KINDS = list(tp.UPDATES)
+ALL_KINDS = list(tp.kind_updates())
 
 
 class Scenarios:
@@ -712,7 +712,7 @@ class Scenarios:
         d.ticket("EP-2")
         posted = {}
         for kind in ALL_KINDS:
-            subject = None if tp.UPDATES[kind] and tp.UPDATES[kind][0] == "epic" else "EP-2"
+            subject = None if tp.kind_updates()[kind] and tp.kind_updates()[kind][0] == "epic" else "EP-2"
             entry = d.entry(kind, subject, lane="lane-1" if kind == "review.round" else None)
             posted[entry["id"]] = kind
             if kind == "lane.assigned":
@@ -728,7 +728,7 @@ class Scenarios:
         comments = d.comments("EP-2") + d.comments(EPIC)
         for entry in d.journal:
             outcomes = d.outcomes(entry["id"])
-            update = tp.UPDATES[entry["kind"]]
+            update = tp.kind_updates()[entry["kind"]]
             if entry is lane_posted:
                 self.assertEqual(outcomes, ["comment"], "a command's action line is the entry's")
             elif entry["kind"] == "decision.recorded":
@@ -1438,8 +1438,8 @@ class RenderedPublisherTests(unittest.TestCase):
         version = json.loads(tool("show").stdout)["state"]["version"]
         tool("patch", "--writer", "lead", "--version", str(version), "--patch",
              json.dumps({"meta": {"trackerParent": EPIC}}))
-        tool("journal", "--kind", "decision.recorded", "--summary", "Record starts")
-        tool("journal", "--kind", "lease.granted", "--subject", "EP-2", "--summary", "The app lease")
+        tool("journal", "--kind", "decision.recorded", "--text", "Record starts", "--why", "a test's record")
+        tool("journal", "--kind", "lease.granted", "--subject", "EP-2", "--data", json.dumps({"lease": "app", "holder": "lane-1"}))
         render = lambda: subprocess.Popen([sys.executable, "-B", str(RENDER), "--dir", str(state), "--binding",
                                            str(d.root / ".agents/orchestration.json")], cwd=d.root, env=d.env,
                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -1474,9 +1474,9 @@ class EveryTrackerPostsThroughThePublisherTests(unittest.TestCase):
         version = json.loads(tool("show").stdout)["state"]["version"]
         tool("patch", "--writer", "lead", "--version", str(version), "--patch",
              json.dumps({"meta": {"trackerParent": EPIC}}))
-        tool("journal", "--kind", "decision.recorded", "--summary", "Record starts")
-        for kind, subject, summary in entries:
-            tool("journal", "--kind", kind, "--subject", subject, "--summary", summary)
+        tool("journal", "--kind", "decision.recorded", "--text", "Record starts", "--why", "a test's record")
+        for kind, subject, data in entries:
+            tool("journal", "--kind", kind, "--subject", subject, "--lane", "lane-1", "--data", json.dumps(data))
         return tool
 
     def render(self, d: Delivery, binding: Path) -> tuple[int, dict, str]:
@@ -1497,11 +1497,11 @@ class EveryTrackerPostsThroughThePublisherTests(unittest.TestCase):
         binding = self.bind(d, [publisher], ["python3", "snapshot.py", "--kind", "linear", "--parent", "{parent}",
                                              "--site", d.backend.linear.site, "--token-env", "FX_TRACKER_TOKEN"])
         self.assertNotIn("tracker", json.loads((d.root / ".agents/run-delivery.json").read_text()))
-        self.record(d, ("candidate.handed", "EP-2", "Handed off"))
+        self.record(d, ("candidate.handed", "EP-2", {"head": "a" * 40, "checks": []}))
         code, result, out = self.render(d, binding)
         self.assertEqual((code, result["publishers"][0]["ok"]), (0, True), out)
         [text] = d.comments("EP-2")
-        self.assertIn("Handed off", text)
+        self.assertIn("Handed off and queued (lane-1): Lane 1 handed off EP-2", text)
         self.assertEqual(d.backend.read()["issues"]["EP-2"]["comments"][0]["markers"],
                          [tp.marker(EPIC, tp.init_id(json.loads(subprocess.run(
                              [sys.executable, "-B", str(STATE_TOOL), "--dir", str(d.state_dir), "show"],
@@ -1539,8 +1539,8 @@ class EveryTrackerPostsThroughThePublisherTests(unittest.TestCase):
         publisher = tp.publisher_entry(str(PUBLISHER))
         publisher["argv"] += ["--repo", str(d.root)]
         binding = self.bind(d, [publisher])
-        tool = self.record(d, ("candidate.handed", "EP-2", "Posted by hand under the earlier generation"),
-                           ("lease.granted", "EP-2", "Journalled after the outbox was last posted"))
+        tool = self.record(d, ("candidate.handed", "EP-2", {"head": "a" * 40, "checks": []}),
+                           ("lease.granted", "EP-2", {"lease": "app", "holder": "lane-2"}))
         shown = json.loads(tool("show").stdout)
         # What the earlier generation left: an outbox still holding the last entry, and an ack through the first two.
         outbox = d.state_dir / "outbox" / "outbox.json"
@@ -1558,7 +1558,7 @@ class EveryTrackerPostsThroughThePublisherTests(unittest.TestCase):
                          [(1, "skip", "published before the tracker publisher"),
                           (2, "skip", "published before the tracker publisher"), (3, "comment", None)])
         [text] = d.comments("EP-2")
-        self.assertIn("Journalled after the outbox was last posted", text)
+        self.assertIn("Lease granted (lane-1): lane-2 took the app lease", text)
         conf = tp.settings(d.root)
         self.assertEqual((conf["mode"], conf["unrunnable"]), ("publisher", []))
         doc = json.loads(tool("show").stdout)
@@ -1825,9 +1825,12 @@ class LaneCommandTests(RunDeliveryTrackerCommandTests):
         fx, backend = self.lane({"start": ["Start work"]})
         self.publish(fx)
         self.assertEqual(backend.read()["issues"]["FX-3"]["status"], "Backlog", "nothing moves before lane-start")
+        # The record's start posts on the epic, as the registry says; the story's ticket waits for its start.
+        before = backend.read()["calls"]
+        self.assertEqual(before, [["comment", "FX-1"]])
         wt = self.started(fx)
         self.assertEqual(self.harness.sh("git", "rev-parse", "--abbrev-ref", "HEAD", cwd=wt).stdout.strip(), "feature/FX-3")
-        self.assertEqual(backend.read()["calls"], [], "lane-start makes no tracker call of its own")
+        self.assertEqual(backend.read()["calls"], before, "lane-start makes no tracker call of its own")
         record = json.loads(self.harness.sh(sys.executable, "-B", STATE_TOOL, "--dir", fx.tmp / "record", "show").stdout)
         self.assertEqual({l["id"]: l["focus"] for l in record["state"]["lanes"]}["lane-2"], "FX-3: started")
         self.publish(fx)
@@ -2989,9 +2992,90 @@ class LinearWordingTests(unittest.TestCase):
 class CarriedCheckUpdateTests(unittest.TestCase):
     def test_a_carried_check_posts_nothing_as_a_reused_one_posts_nothing(self) -> None:
         # The candidate's ticket already says it is being checked; what was carried shows in the record and the views.
-        self.assertIn("check.carried", tp.UPDATES)
-        self.assertIsNone(tp.UPDATES["check.carried"])
-        self.assertIsNone(tp.UPDATES["check.reused"])
+        self.assertIn("check.carried", tp.kind_updates())
+        self.assertIsNone(tp.kind_updates()["check.carried"])
+        self.assertIsNone(tp.kind_updates()["check.reused"])
+
+
+class StubAdapter:
+    """A tracker that takes every comment, in this process: what was posted on which ticket, and its body."""
+
+    def __init__(self) -> None:
+        self.limits: dict[str, int] = {}
+        self.posted: list[tuple[str, str]] = []
+
+    def markers(self, ticket: str) -> set[str]:
+        return set()
+
+    def status(self, ticket: str) -> dict:
+        return {}
+
+    def call(self, *args: str) -> dict:
+        ticket = args[args.index("--ticket") + 1]
+        self.posted.append((ticket, Path(args[args.index("--body-file") + 1]).read_text(encoding="utf-8")))
+        return {}
+
+
+class RegistryUpdateTests(unittest.TestCase):
+    """Where an entry posts, under what heading and in what words, all come from the registry of kinds, read through
+    the path a test may point at a copy: the publisher keeps no table of its own."""
+
+    MERGED = {"kind": "candidate.merged", "subject": "EP-2", "lane": "lane-1", "data": {"head": "a" * 40}}
+    STOPPED = {"kind": "candidate.stopped", "subject": "EP-2", "lane": None,
+               "data": {"reason": "check_failed", "detail": "unit failed"}}
+
+    def posted(self, *entries: dict) -> list[tuple[str, str]]:
+        """What one publisher run posts for these entries, each a journal entry of a record under epic EP-1."""
+        folder = Path(tempfile.mkdtemp(prefix="registry-updates-"))
+        self.addCleanup(shutil.rmtree, folder, True)
+        (folder / "state").mkdir()
+        journal = [{"id": number, "at": f"2026-01-01T00:00:{number:02d}Z", **entry}
+                   for number, entry in enumerate(entries, start=1)]
+        doc = {"state": {"meta": {"trackerParent": "EP-1"}, "queue": [], "planned": []}, "journal": journal}
+        adapter = StubAdapter()
+        publisher = tp.Publisher(doc, folder / "state", {"transitions": {}}, adapter, "EP-1", folder / "flow-log")
+        for entry in publisher.journal:
+            publisher.publish(entry)
+        return adapter.posted
+
+    def planted(self, change) -> Path:
+        """A copy of the registry with `change` made to its kinds, which the publisher reads in its place."""
+        registry = json.loads(tp.journal_words.REGISTRY_FILE.read_text(encoding="utf-8"))
+        change(registry["kinds"])
+        path = Path(tempfile.mkdtemp(prefix="planted-registry-")) / "journal-kinds.json"
+        self.addCleanup(shutil.rmtree, path.parent, True)
+        path.write_text(json.dumps(registry), encoding="utf-8")
+        return path
+
+    def test_a_landing_and_a_stop_post_under_the_registrys_heading_in_its_words(self) -> None:
+        [(merged_on, merged), (stopped_on, stopped)] = self.posted(self.MERGED, self.STOPPED)
+        self.assertEqual((merged_on, stopped_on), ("EP-2", "EP-2"))
+        self.assertTrue(merged.startswith(f"Merged (lane-1): EP-2 landed\n\nAt {'a' * 7}"), merged)
+        self.assertTrue(stopped.startswith("Stopped: EP-2 was stopped\n\nunit failed"), stopped)
+
+        def changed(kinds: dict) -> None:
+            kinds["candidate.merged"]["tracker"]["heading"] = "Landed, by the copy"
+            kinds["candidate.merged"]["words"]["head"] = {"by": "acceptanceSkipped", "cases": {}, "otherwise": "{subject} is in"}
+            kinds["candidate.stopped"]["tracker"]["heading"] = "Halted, by the copy"
+            kinds["candidate.stopped"]["words"]["line"] = "Because: {detail}"
+        with mock.patch.object(tp.journal_words, "REGISTRY_FILE", self.planted(changed)):
+            [(_, merged), (_, stopped)] = self.posted(self.MERGED, self.STOPPED)
+        self.assertTrue(merged.startswith(f"Landed, by the copy (lane-1): EP-2 is in\n\nAt {'a' * 7}"), merged)
+        self.assertTrue(stopped.startswith("Halted, by the copy: EP-2 was stopped\n\nBecause: unit failed"), stopped)
+
+    def test_each_destination_posts_where_the_registry_says_and_a_kind_with_none_posts_nothing(self) -> None:
+        broken = {"kind": "base.broken", "subject": "EP-2", "lane": None, "data": {"source": "lead", "detail": "red"}}
+        blocked = {"kind": "blocker.recorded", "subject": "EP-2", "lane": None, "data": {"text": "the API is down"}}
+        started = {"kind": "check.started", "subject": "EP-2", "lane": None, "data": {}}
+        posted = self.posted(self.MERGED, broken, blocked, {**blocked, "subject": None}, started)
+        self.assertEqual([(ticket, body.split(":")[0]) for ticket, body in posted],
+                         [("EP-2", "Merged (lane-1)"), ("EP-1", "The delivery base is broken; the queue is stopped"),
+                          ("EP-2", "Blocked"), ("EP-1", "Blocked")])
+        # With the copy moving the stop from its ticket to nowhere, its post stops; the landing's still goes.
+        def unposted(kinds: dict) -> None:
+            kinds["candidate.stopped"]["tracker"] = None
+        with mock.patch.object(tp.journal_words, "REGISTRY_FILE", self.planted(unposted)):
+            self.assertEqual([ticket for ticket, _ in self.posted(self.MERGED, self.STOPPED)], ["EP-2"])
 
 
 if __name__ == "__main__":

@@ -54,44 +54,24 @@ SEEDED = "published before the tracker publisher"
 JIRA_KEY = re.compile(r"^([A-Z][A-Z0-9_]*)-[0-9]+$")
 TOOL = Path(__file__).resolve().parent.parent
 
-# Each journal kind's update: where it goes ("ticket", "epic", "ticket-or-epic"), or None for no update, and the
-# heading it carries. From the orchestration guide's tracker-update table.
-UPDATES: dict[str, tuple[str, str] | None] = {
-    "lane.assigned": ("ticket", "Started"),
-    "review.round": None,
-    "review.evidence": None,
-    "candidate.handed": ("ticket", "Handed off and queued"),
-    "check.started": None,
-    "check.finished": None,
-    "check.failed": None,
-    "check.retried": ("ticket-or-epic", "Check retried"),
-    "check.reused": None,
-    "check.carried": None,
-    "check.selected": None,
-    "selection.refused": None,
-    "hook.held": None,
-    "candidate.merged": ("ticket", "Merged"),
-    "candidate.stopped": ("ticket", "Stopped"),
-    "base.verified": None,
-    "base.broken": ("epic", "The delivery base is broken; the queue is stopped"),
-    "base.repaired": ("epic", "The delivery base is repaired"),
-    "base.moved": ("epic", "Delivery base updated"),
-    "base.rerun.started": None,
-    "base.rerun.finished": None,
-    "base.rerun.stopped": None,
-    "base.flaky": None,
-    "peer.merged": None,
-    "lease.granted": ("ticket-or-epic", "Lease granted"),
-    "lease.released": ("ticket-or-epic", "Lease released"),
-    "release.started": None,
-    "release.finished": ("epic", "Released"),
-    "finish.met": ("epic", "Finish line met"),
-    "decision.recorded": ("ticket-or-epic", "Decision"),
-    "blocker.recorded": ("ticket-or-epic", "Blocked"),
-    "delivery.closed": ("epic", "Delivery closed"),
-}
+# Each journal kind's update, and its words, come from the registry of kinds, read through journal_words beside the
+# state tool, which a test may point at a copy.
+sys.path.insert(0, str(TOOL.parent / "orchestrate-work" / "scripts"))
+import journal_words  # noqa: E402
+
+
+def kind_updates(registry: dict | None = None) -> dict[str, tuple[str, str] | None]:
+    """Each registered kind's update: where it goes ("ticket", "epic", "ticket-or-epic") and the heading it carries,
+    or None for no update."""
+    kinds = (journal_words.load_registry() if registry is None else registry)["kinds"]
+    return {kind: (described["tracker"]["posts"], described["tracker"]["heading"]) if described.get("tracker") else None
+            for kind, described in kinds.items()}
+
+
 # Kinds the guide gives a move to; with no `lead` moves for one, its update says the move belongs to people.
 MOVING = ("candidate.merged", "delivery.closed")
+# The kinds whose mark may carry a follow-up to file: the follow-up's own entry, and a decision written as a sentence.
+FILING = ("followup.filed", "decision.recorded")
 # What ends a story's wait for its start: its hand-off or its merge.
 PAST_START = ("candidate.handed", "candidate.merged")
 
@@ -346,8 +326,8 @@ def settings(root: Path, own: dict | None = None, binding: dict | None = None) -
     if not isinstance(lead, dict) or not all(isinstance(names, list) and all(isinstance(n, str) and n for n in names)
                                              for names in lead.values()):
         problems.append("tracker.transitions.lead must map journal kinds to lists of transition names")
-    elif set(lead) - set(UPDATES):
-        problems.append(f"tracker.transitions.lead names kinds the journal doesn't have: {sorted(set(lead) - set(UPDATES))}")
+    elif set(lead) - set(kind_updates()):
+        problems.append(f"tracker.transitions.lead names kinds the journal doesn't have: {sorted(set(lead) - set(kind_updates()))}")
     return {"mode": mode, "adapter": adapter, "project": tracker.get("project"), "transitions": transitions,
             "snapshot": bool(snapshot),
             "followupType": tracker.get("followupType", "Task"), "publisher": publisher, "unrunnable": unrunnable,
@@ -477,9 +457,22 @@ def cut(text: str, limit: int) -> str:
     return text.encode("utf-16-le")[:2 * max(0, limit)].decode("utf-16-le", errors="ignore")
 
 
-def body_of(entry: dict, heading: str, notes: list[str], delivery: str, limit: int | None) -> str:
+def said(entry: dict, registry: dict | None = None) -> str:
+    """What an update says of its entry: the kind's head and line in the registry's words when the entry carries
+    facts, and its sentence when it has only that."""
+    if "data" not in entry:
+        return entry.get("summary", "")
+    try:
+        made = journal_words.words(entry, registry)
+    except journal_words.WordsError:
+        return entry.get("summary", "")
+    return made["head"] + (f"\n\n{made['line']}" if made["line"] else "")
+
+
+def body_of(entry: dict, heading: str, notes: list[str], delivery: str, limit: int | None,
+            registry: dict | None = None) -> str:
     who = f" ({entry['lane']})" if entry.get("lane") else ""
-    text = f"{heading}{who}: {entry.get('summary', '')}"
+    text = f"{heading}{who}: {said(entry, registry)}"
     if notes:
         text += "\n\n" + "\n".join(notes)
     footer = f"\n\n{delivery} delivery record, journal entry {entry['id']} ({entry['kind']})."
@@ -502,6 +495,8 @@ class Publisher:
         self.epic = self.state.get("meta", {}).get("trackerParent") or None
         self.project = project_of(conf, self.epic or delivery)
         self.init = init_id(self.journal)
+        self.registry = journal_words.load_registry()
+        self.updates = kind_updates(self.registry)
         self.marks = {m["journal"]: m for m in read_flow(flow_log, delivery, MARKS) if isinstance(m.get("journal"), int)}
         self.starts = read_flow(flow_log, delivery, LANE_STARTS)
         self.held = {item["subject"] for item in [*self.state.get("queue", []), *self.state.get("planned", [])]}
@@ -559,10 +554,11 @@ class Publisher:
 
     def decide(self, entry: dict) -> tuple[str | None, str | None]:
         """(ticket, None) to post, (None, reason) to skip, or (None, "wait")."""
-        update = UPDATES.get(entry["kind"])
+        update = self.updates.get(entry["kind"])
         if update is None:
             return None, f"{entry['kind']} has no tracker update"
-        if entry["kind"] == "decision.recorded" and entry["id"] not in self.marks:
+        # A tool's decision written as a sentence posts only when it was marked; a person's decision has its facts.
+        if entry["kind"] == "decision.recorded" and "data" not in entry and entry["id"] not in self.marks:
             return None, "an unmarked decision"
         if entry["kind"] == "lane.assigned":
             reason = self.start_decision(entry)
@@ -675,11 +671,14 @@ class Publisher:
         ticket, reason = self.decide(entry)
         if reason == "wait":
             return
+        notes: list[str] = []
+        wanted = (self.marks.get(entry["id"]) or {}).get("followup") if entry["kind"] in FILING else None
         if ticket is None:
+            # A follow-up's own entry posts nothing, as the registry says, but its follow-up is still filed.
+            if wanted:
+                self.followup(entry, wanted, notes)
             self.write(entry, "skip", final=True, reason=reason)
             return
-        notes: list[str] = []
-        wanted = (self.marks.get(entry["id"]) or {}).get("followup") if entry["kind"] == "decision.recorded" else None
         if wanted:
             self.followup(entry, wanted, notes)
         move, names = self.moves(entry)
@@ -701,7 +700,8 @@ class Publisher:
         limit = self.adapter.limits.get("comment")
         if limit is None:
             limit = self.adapter.status(ticket).get("commentLimit")
-        text = body_of(entry, UPDATES[entry["kind"]][1], notes, self.delivery, limit if isinstance(limit, int) else None)
+        text = body_of(entry, self.updates[entry["kind"]][1], notes, self.delivery,
+                       limit if isinstance(limit, int) else None, self.registry)
         with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as body:
             body.write(text)
         try:

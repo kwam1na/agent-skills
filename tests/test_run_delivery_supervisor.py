@@ -263,20 +263,36 @@ def held_by_the_queue(fx: Fixture, words: str) -> None:
     state_tool(fx, "journal", "--kind", "serving.held", "--data", json.dumps({"why": words}))
 
 
-def held_as_a_sentence(fx: Fixture, words: str) -> None:
-    """The hold as the queue wrote it before it had a kind of its own: a runner's blocker with only a sentence.
+# New work after a close, as each kind's facts.
+REOPENING = {"lane.assigned": {"title": "more work"}, "candidate.handed": {"head": "a" * 40, "checks": []},
+             "check.started": {}}
 
-    Written as a journal line directly, the one shape no tool writes any more."""
+
+def sentence_line(fx: Fixture, kind: str, words: str, subject: str | None = None) -> None:
+    """An entry as a writer journaled it before it wrote facts: only a sentence, written as a journal line directly."""
     journal = fx.tmp / "record" / "journal.jsonl"
     number = len(journal.read_text().splitlines()) + 1
-    entry = {"at": "2026-01-01T00:00:00Z", "id": number, "kind": "blocker.recorded", "lane": None, "subject": None,
-             "summary": words}
+    entry = {"at": "2026-01-01T00:00:00Z", "id": number, "kind": kind, "lane": None, "subject": subject, "summary": words}
     with journal.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n")
 
 
+def held_as_a_sentence(fx: Fixture, words: str) -> None:
+    """The hold as the queue wrote it before it had a kind of its own: a runner's blocker with only a sentence."""
+    sentence_line(fx, "blocker.recorded", words)
+
+
 def kinds(fx: Fixture, kind: str) -> list[dict]:
     return [e for e in record(fx)["journal"] if e["kind"] == kind]
+
+
+def assert_facts(case: unittest.TestCase, entry: dict, kind: str, data: dict, because: tuple = (),
+                 answers: tuple = ()) -> None:
+    """An entry's kind, the exact value of every field, and the entries it names as its cause and answers."""
+    case.assertEqual(entry["kind"], kind, entry)
+    case.assertEqual(entry.get("data"), data, entry)
+    case.assertEqual(entry.get("because", []), [named["id"] for named in because], entry)
+    case.assertEqual(entry.get("answers", []), [named["id"] for named in answers], entry)
 
 
 def passes(fx: Fixture) -> list[dict]:
@@ -582,11 +598,19 @@ class MovedHeadTests(unittest.TestCase):
     def test_a_pass_is_named_as_the_repair_only_of_a_break_full_health_found(self) -> None:
         found = {"id": 7, "kind": "base.broken", "summary": "fullHealth failed at aaaaaaaaaa after FX-2's merge: x"}
         queue = {"id": 7, "kind": "base.broken", "summary": "base_broken: lint also fails on the base"}
+        # The same breaks as facts, with other text in their prose: the source says whose break it is.
+        found_facts = {"id": 7, "kind": "base.broken", "data": {"source": "fullHealth", "head": "a" * 40,
+                                                                 "detail": "base_broken: other text"}}
+        queue_facts = {"id": 7, "kind": "base.broken", "data": {"source": "queue", "reason": "base_broken",
+                                                                 "detail": "fullHealth failed at aaaaaaaaaa"}}
         by_pass = "a fullHealth pass there journals it, or, once you have checked the base"
-        self.assertIn(by_pass, self.stands(last={"result": "passed"}, journal=[found]))
-        said = self.stands(last={"result": "passed"}, journal=[queue])
-        self.assertIn("base.broken (journal entry 7) still awaits base.repaired: once you have checked the base", said)
-        self.assertNotIn("a fullHealth pass", said)
+        for fullhealth, other in ((found, queue), (found_facts, queue_facts)):
+            with self.subTest(facts="data" in fullhealth):
+                self.assertIn(by_pass, self.stands(last={"result": "passed"}, journal=[fullhealth]))
+                said = self.stands(last={"result": "passed"}, journal=[other])
+                self.assertIn("base.broken (journal entry 7) still awaits base.repaired: once you have checked the base",
+                              said)
+                self.assertNotIn("a fullHealth pass", said)
 
 
 class FlakyFullHealthWordingTests(unittest.TestCase):
@@ -651,7 +675,8 @@ class FinishMarkOrderTests(unittest.TestCase):
             if len(calls) == 1:
                 raise subprocess.CalledProcessError(1, "delivery_state.py journal")
             doc["journal"].append({"kind": "finish.met", "subject": argv[argv.index("--subject") + 1],
-                                   "summary": argv[argv.index("--summary") + 1]})
+                                   "summary": argv[argv.index("--summary") + 1],
+                                   "data": json.loads(argv[argv.index("--data") + 1])})
 
         def patch(compute, what):
             doc["state"] = {**doc["state"], **compute(doc)}
@@ -664,9 +689,15 @@ class FinishMarkOrderTests(unittest.TestCase):
             self.assertEqual(marks, [], "a line whose journal failed was logged as marked")
             self.assertEqual(module.journal_finish_met(c, doc), ["finish line merged met"])
             self.assertEqual(module.journal_finish_met(c, doc), [])
-        self.assertEqual([e["subject"] for e in doc["journal"]], ["merged"])
+        self.assertEqual([(e["subject"], e["data"]) for e in doc["journal"]], [("merged", {"finish": "merged"})])
         self.assertEqual(marks, ["merged"])
         self.assertTrue(doc["state"]["finish"][0]["met"])
+        # A line met by hand, with no subject, is found by its facts, or by its id in a sentence-only entry.
+        for found in ({"kind": "finish.met", "subject": None, "data": {"finish": "merged"}},
+                      {"kind": "finish.met", "subject": None, "summary": "merged: met by hand"}):
+            with self.subTest(facts="data" in found):
+                self.assertTrue(module.finish_met_names(found, "merged"))
+                self.assertFalse(module.finish_met_names(found, "other"))
 
 
 class ProofStateTests(unittest.TestCase):
@@ -984,7 +1015,7 @@ class SupervisorProcessTests(unittest.TestCase):
         code, out = fx.flow("lead-run", cwd=m, env=running(fx))
         self.assertEqual(code, 2, out)
         self.assertIn("left children running", out)
-        decisions = len(kinds(fx, "decision.recorded"))
+        decisions = len([e for e in record(fx)["journal"] if e["kind"] in NOTED + ("cleanup.done",)])
         code, out = fx.flow("lead-run", "--resume", cwd=m, env=running(fx))
         self.assertEqual(code, 0, out)
         for pid in orphans:
@@ -994,7 +1025,8 @@ class SupervisorProcessTests(unittest.TestCase):
         self.assertNotEqual(second["pid"], first["pid"])
         count = len(passes(fx))
         wait_for(lambda: len(passes(fx)) > count + 1, "two more passes")
-        self.assertEqual(len(kinds(fx, "decision.recorded")), decisions, "a resumed supervisor journalled again")
+        self.assertEqual(len([e for e in record(fx)["journal"] if e["kind"] in NOTED + ("cleanup.done",)]), decisions,
+                         "a resumed supervisor journalled again")
 
     def test_a_running_supervisor_restarts_its_children_and_reports_one_that_wont_stay_up(self) -> None:
         fx = self.fixture()
@@ -1050,7 +1082,7 @@ class SupervisorProcessTests(unittest.TestCase):
         wait_for(lambda: passes(fx), "a first pass")
         first, live = lock_of(fx), live_of(fx)
         self.assertEqual(listeners(live["port"]), [live["pid"]])
-        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "closed early")
+        state_tool(fx, "journal", "--kind", "delivery.closed", "--data", "{}")
         code, out = fx.flow("lead-close", cwd=m)
         self.assertEqual(code, 0, out)
         self.assertIn(f"stopped the supervisor (pid {first['pid']}) after its pass", out)
@@ -1879,7 +1911,7 @@ if Path({str(started.with_suffix(".armed"))!r}).exists():
         self.assertFalse(self.item(fx).get("pending"))
         queue_run(fx, "FX-2")
         self.assertEqual(self.item(fx)["stage"], "merged")
-        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "fixture done")
+        state_tool(fx, "journal", "--kind", "delivery.closed", "--data", "{}")
         code, out = fx.flow("lead-close", cwd=fx.main)
         self.assertIn(code, (0, 1), out)
         archives = list(Path(closed_of(fx)["archive"]).glob("FX-1.json"))
@@ -1920,8 +1952,8 @@ if Path({str(started.with_suffix(".armed"))!r}).exists():
         selected = kinds(fx, "check.selected")
         self.assertEqual(len(selected), 1)
         self.assertIn(f"The lead selected checks for FX-2 at {head}: tests.test_one", selected[0]["summary"])
-        decision = [e for e in kinds(fx, "decision.recorded") if e.get("subject") == "FX-2"][-1]
-        self.assertIn(f"checks selected at {head[:10]}: tests.test_one", decision["summary"])
+        decision = [e for e in kinds(fx, "handoff.checked") if e.get("subject") == "FX-2"][-1]
+        self.assertIn(f"checks selected at {head[:10]}: tests.test_one", decision["data"]["notes"])
         queue_run(fx, "FX-2")
         item = self.item(fx)
         self.assertEqual((item["stage"], item["checkSelection"]),
@@ -1973,9 +2005,9 @@ if Path({str(started.with_suffix(".armed"))!r}).exists():
         self.assertEqual(code, 0, out)
         item = self.item(fx)
         self.assertNotIn("leadSelection", item)
-        decision = [e for e in kinds(fx, "decision.recorded") if e.get("subject") == "FX-2"][-1]
+        decision = [e for e in kinds(fx, "handoff.checked") if e.get("subject") == "FX-2"][-1]
         self.assertIn("checks: the binding's fallback (check), the lead's decision: a shared file moved",
-                      decision["summary"])
+                      decision["data"]["notes"])
         self.assertFalse(kinds(fx, "check.selected"))
         queue_run(fx, "FX-2")
         self.assertEqual(self.item(fx)["checkSelection"], {"by": "provider", "fallback": ["check"]})
@@ -1988,8 +2020,8 @@ if Path({str(started.with_suffix(".armed"))!r}).exists():
         code, out = fx.flow("lead-accept", "FX-2", "--full-suite", "--reason", "run everything after all", cwd=fx.main)
         self.assertEqual(code, 0, out)
         self.assertNotIn("leadSelection", self.item(fx))
-        decision = [e for e in kinds(fx, "decision.recorded") if e.get("subject") == "FX-2"][-1]
-        self.assertIn(f"cleared the lead selection recorded at {head[:10]}, so the fallback runs", decision["summary"])
+        decision = [e for e in kinds(fx, "handoff.checked") if e.get("subject") == "FX-2"][-1]
+        self.assertIn(f"cleared the lead selection recorded at {head[:10]}, so the fallback runs", decision["data"]["notes"])
         queue_run(fx, "FX-2")
         self.assertEqual(self.item(fx)["checkSelection"], {"by": "provider", "fallback": ["check"]})
 
@@ -2189,6 +2221,10 @@ class RegionOwnershipTests(unittest.TestCase):
         handed = sh("git", "rev-parse", "HEAD", cwd=checkout).stdout.strip()
         code, out = self.grant(fx, file, base, "lane-1", 3, 8, revoke=True)
         self.assertEqual(code, 0, out)
+        region = {"path": file, "span": {"first": 3, "after": 8}, "base": {"ref": base, "head": base}}
+        [granted] = kinds(fx, "ownership.granted")
+        [revoked] = kinds(fx, "ownership.revoked")
+        self.assertEqual([(e["lane"], e["data"]) for e in (granted, revoked)], [("lane-1", region)] * 2)
         code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
         self.assertNotEqual(code, 0, out)
         self.assertIn(file, out)
@@ -2196,6 +2232,15 @@ class RegionOwnershipTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
         self.assertEqual(code, 0, out)
+        # The check names the hand-off, and is journaled before the acceptance, which may name it.
+        [check] = kinds(fx, "handoff.checked")
+        [handoff] = kinds(fx, "candidate.handed")
+        assert_facts(self, check, "handoff.checked", {"head": handed, "rounds": 1, "afterMerge": False, "noChange": False,
+                                                      "notes": ["review evidence captured at that head",
+                                                                "marked https://forge.test/pr/1 ready under the "
+                                                                "delivery's readyPullRequests grant"]},
+                     because=(handoff,))
+        self.assertEqual(check["subject"], "FX-2")
         code, out = self.grant(fx, file, base, "lane-1", 3, 8, revoke=True)
         self.assertEqual(code, 0, out)
         queue_run(fx, "FX-2")
@@ -2204,6 +2249,9 @@ class RegionOwnershipTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         code, out = fx.flow("lead-accept", "--requeue", "FX-2", cwd=fx.main)
         self.assertEqual(code, 0, out)
+        # The re-queue answers the stop it resolves.
+        [requeued] = kinds(fx, "handoff.requeued")
+        assert_facts(self, requeued, "handoff.requeued", {"head": handed}, answers=(kinds(fx, "candidate.stopped")[-1],))
         queue_run(fx, "FX-2")
         doc = record(fx)
         item = next(item for item in doc["state"]["queue"] if item["subject"] == "FX-2")
@@ -2329,11 +2377,21 @@ class SupervisorPassTests(unittest.TestCase):
         wt = self.merged_by_hand(fx, "FX-2", "lane-1")
         self.once(fx)
         self.assertTrue(wt.exists())
-        state_tool(fx, "journal", "--kind", "decision.recorded", "--subject", "FX-3", "--summary", "About other work")
+        code, out = fx.flow("lead-decide", "--subject", "FX-3", "--text", "About other work", "--why", "FX-3 changed",
+                            cwd=fx.main)
+        self.assertEqual(code, 0, out)
         last = self.once(fx)
         self.assertTrue(wt.exists(), "a decision on other work released this checkout")
         self.assertTrue([item for item in last["needsYou"] if "merged before you accepted" in item["text"]])
-        state_tool(fx, "journal", "--kind", "decision.recorded", "--subject", "FX-2", "--summary", "Merged as it stands")
+        [merge] = kinds(fx, "candidate.merged")
+        code, out = fx.flow("lead-decide", "--subject", "FX-2", "--text", "Merged as it stands", "--why",
+                            "its review already covers it", "--because", str(merge["id"]), cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        decided = kinds(fx, "decision.recorded")[-1]
+        self.assertEqual(out.splitlines()[0], f"recorded decision {decided['id']}")
+        self.assertEqual(decided["subject"], "FX-2")
+        assert_facts(self, decided, "decision.recorded",
+                     {"text": "Merged as it stands", "why": "its review already covers it"}, because=(merge,))
         last = self.once(fx)
         self.assertEqual([item for item in last["needsYou"] if "merged before you accepted" in item["text"]], [])
         self.assertFalse(wt.exists())
@@ -2360,9 +2418,28 @@ class SupervisorPassTests(unittest.TestCase):
 
     def test_what_counts_as_a_merge_still_awaiting_the_lead(self) -> None:
         fx = self.fixture()
+        self.merges_awaiting_the_lead(fx, False)
+        # The same cases as facts, in this process: the installed tool reads its acceptance log as the module does.
+        tool = loaded_run_delivery(self, "run_delivery_for_skipped_merges")
+        accepted: list[dict] = []
+        with mock.patch.object(tool, "read_log", lambda name, subject: list(accepted) if name == "acceptance" else []):
+            self.merges_awaiting_the_lead(fx, True, lambda doc, item, head: (
+                accepted.clear(), accepted.extend([{"head": head}] if head else []), tool.unaccepted_merge(doc, item))[2])
+
+    def merges_awaiting_the_lead(self, fx: Fixture, facts: bool, found_by=None) -> None:
+        """As sentences alone, and as facts with other text in every prose field: the acceptance the merge skipped is
+        read from its facts, and what settles it from the kind the lead journals."""
         skipped = "Recorded from a forge snapshot: merged at x, not recorded by the runner before the lead accepted it"
-        merge = lambda id, summary=skipped, subject="S": {"id": id, "kind": "candidate.merged", "subject": subject, "summary": summary}
-        decision = lambda id, subject="S": {"id": id, "kind": "decision.recorded", "subject": subject, "summary": "d"}
+        if facts:
+            merge = lambda id, summary=skipped, subject="S": {
+                "id": id, "kind": "candidate.merged", "subject": subject,
+                "data": {"head": "a" * 40, **({"acceptanceSkipped": True} if summary == skipped else {})}}
+            decision = lambda id, subject="S": {"id": id, "kind": "handoff.checked", "subject": subject, "data": {
+                "head": "a" * 40, "rounds": 1, "afterMerge": True, "noChange": False, "notes": [skipped]}}
+        else:
+            merge = lambda id, summary=skipped, subject="S": {"id": id, "kind": "candidate.merged", "subject": subject,
+                                                              "summary": summary}
+            decision = lambda id, subject="S": {"id": id, "kind": "decision.recorded", "subject": subject, "summary": "d"}
         item = {"subject": "S", "stage": "merged", "head": "h1"}
         log = fx.tmp / "flow-log/S.acceptance.jsonl"
         for name, journal, accepted, queued, awaits in (
@@ -2380,12 +2457,15 @@ class SupervisorPassTests(unittest.TestCase):
                 ("an acceptance at its head", [merge(5)], "h1", item, None),
                 ("an acceptance at another head", [merge(5)], "h0", item, 5),
                 ("put back in the queue since", [merge(5)], None, {**item, "stage": "queued"}, None)):
-            with self.subTest(name):
-                log.unlink(missing_ok=True)
-                if accepted:
-                    log.write_text(json.dumps({"head": accepted}) + "\n")
-                found = fx.call("unaccepted_merge", {"state": {"queue": []}, "journal": journal}, queued, cwd=fx.main,
-                                delivery="FX-1")
+            with self.subTest(name, facts=facts):
+                doc = {"state": {"queue": []}, "journal": journal}
+                if found_by is not None:
+                    found = found_by(doc, queued, accepted)
+                else:
+                    log.unlink(missing_ok=True)
+                    if accepted:
+                        log.write_text(json.dumps({"head": accepted}) + "\n")
+                    found = fx.call("unaccepted_merge", doc, queued, cwd=fx.main, delivery="FX-1")
                 self.assertEqual(found and found["id"], awaits)
 
     def test_a_reconciles_reports_are_read_from_its_output_and_anything_else_reports_nothing(self) -> None:
@@ -2559,8 +2639,8 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertFalse(wt.exists(), "the pass left the squash-merged story's checkout")
         self.assertEqual(last["closeHeldBy"], [], last)
         self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)
-        cleaned = [e for e in kinds(fx, "decision.recorded") if e.get("subject") == "FX-2" and "Cleaned up" in e["summary"]]
-        self.assertTrue(cleaned and "https://forge.test/pr/1 merged at" in cleaned[-1]["summary"], cleaned)
+        cleaned = [e for e in kinds(fx, "cleanup.done") if e.get("subject") == "FX-2"]
+        self.assertTrue(cleaned and cleaned[-1]["data"].get("changeRequest") == "https://forge.test/pr/1", cleaned)
 
     def test_only_the_delivery_s_merged_stories_hold_the_close_for_their_checkouts(self) -> None:
         fx = self.fixture()
@@ -2736,8 +2816,9 @@ class SupervisorPassTests(unittest.TestCase):
         self.merged(fx, "FX-2", "lane-1")
         # The lead journals lines two and three by hand, ahead of their proofs, one by its subject and one by its
         # summary: the supervisor journals neither again.
-        state_tool(fx, "journal", "--kind", "finish.met", "--subject", "two", "--summary", "By hand, ahead of time.")
-        state_tool(fx, "journal", "--kind", "finish.met", "--summary", "Finish line three met by hand.")
+        state_tool(fx, "journal", "--kind", "finish.met", "--subject", "two", "--data", json.dumps({"finish": "two"}))
+        # Written by an older tool, as a sentence alone, which names the line by its id.
+        sentence_line(fx, "finish.met", "Finish line three met by hand.")
         for _ in range(2):
             self.once(fx)
         met = kinds(fx, "finish.met")
@@ -2767,7 +2848,7 @@ class SupervisorPassTests(unittest.TestCase):
         code, out = fx.flow("lead-init", "--replace", cwd=fx.main)
         self.assertEqual(code, 0, out)
         # The lead journals `every` by hand ahead of its proofs, without marking it: the supervisor marks it later.
-        state_tool(fx, "journal", "--kind", "finish.met", "--subject", "every", "--summary", "By hand, ahead of time.")
+        state_tool(fx, "journal", "--kind", "finish.met", "--subject", "every", "--data", json.dumps({"finish": "every"}))
         self.merged(fx, "FX-2", "lane-1")
         self.merged(fx, "FX-3", "lane-2")
         for lane in ("lane-1", "lane-2"):
@@ -2787,10 +2868,15 @@ class SupervisorPassTests(unittest.TestCase):
             state_tool(fx, "patch", "--writer", "lead", "--version", str(doc["state"]["version"]), "--patch",
                        json.dumps({"finish": [{**line, "met": False} if line["id"] == ident else line
                                               for line in doc["state"]["finish"]]}))
-        # A record an older generation kept has no flow log: the supervisor's own journal of `all` is its mark.
+        # A record an older generation kept has no flow log, and its journal of `all` is a sentence alone: that is its
+        # mark.
         marks = fx.tmp / "flow-log/FX-1.finish.jsonl"
         marks.write_text("".join(line + "\n" for line in marks.read_text().splitlines()
                                  if json.loads(line)["line"] != "all"))
+        journal = fx.tmp / "record/journal.jsonl"
+        older = lambda e: {k: v for k, v in e.items() if k != "data"} if e["kind"] == "finish.met" and e["subject"] == "all" else e
+        journal.write_text("".join(json.dumps(older(json.loads(line)), sort_keys=True, separators=(",", ":")) + "\n"
+                                   for line in journal.read_text().splitlines()))
         for _ in range(2):
             held = self.holds(fx)
         self.assertEqual(met(), {"empty": False, "null": False, "nothing": False, "merged": True, "every": False,
@@ -2802,7 +2888,7 @@ class SupervisorPassTests(unittest.TestCase):
         state_tool(fx, "patch", "--writer", "lead", "--version", str(doc["state"]["version"]), "--patch",
                    json.dumps({"finish": [{**line, "met": True} for line in doc["state"]["finish"]]}))
         for ident in (*lead_lines, "all"):
-            state_tool(fx, "journal", "--kind", "finish.met", "--subject", ident, "--summary", f"{ident} checked by hand.")
+            state_tool(fx, "journal", "--kind", "finish.met", "--subject", ident, "--data", json.dumps({"finish": ident}))
         last = self.once(fx)
         self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)
 
@@ -2824,7 +2910,7 @@ class SupervisorPassTests(unittest.TestCase):
         queue_run(fx, "FX-2")
         held = self.holds(fx)
         self.assertFalse(wt.exists(), "a lane quiet since its hand-off kept its checkout after the merge")
-        self.assertEqual(len([e for e in kinds(fx, "decision.recorded") if e["summary"].startswith("Cleaned up FX-2")]), 1)
+        self.assertEqual(len([e for e in kinds(fx, "cleanup.done") if e.get("subject") == "FX-2"]), 1)
         self.assertFalse(any("lane-1" in h for h in held), held)
 
     def lane_with_two_stories(self) -> Fixture:
@@ -2887,7 +2973,7 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertNotIn(row["state"], ("idle", "done"), "the row alone would read as moved off, so this proves nothing")
         self.once(fx)
         self.assertFalse(wt.exists(), "a lane assigned other work after its story merged kept that story's checkout")
-        self.assertEqual(len([e for e in kinds(fx, "decision.recorded") if e["summary"].startswith("Cleaned up FX-2")]), 1)
+        self.assertEqual(len([e for e in kinds(fx, "cleanup.done") if e.get("subject") == "FX-2"]), 1)
 
     def test_a_lane_at_work_with_no_pass_before_the_merge_keeps_its_checkout(self) -> None:
         fx = self.fixture()
@@ -2943,7 +3029,7 @@ class SupervisorPassTests(unittest.TestCase):
         queue_run(fx, "FX-2")
         self.once(fx)
         self.assertFalse(wt.exists(), "a lane done since its hand-off kept its checkout after the merge")
-        self.assertEqual(len([e for e in kinds(fx, "decision.recorded") if e["summary"].startswith("Cleaned up FX-2")]), 1)
+        self.assertEqual(len([e for e in kinds(fx, "cleanup.done") if e.get("subject") == "FX-2"]), 1)
 
     def test_the_close_waits_for_its_condition_and_each_failure_path_holds_it(self) -> None:
         fx = self.fixture()
@@ -2978,9 +3064,9 @@ class SupervisorPassTests(unittest.TestCase):
         state_tool(fx, "focus", "--lane", "lane-1", "--text", "done", "--state", "done")
         self.once(fx)
         self.assertFalse(wt.exists(), "the merged story wasn't cleaned up once its lane moved off it")
-        cleaned = [e for e in kinds(fx, "decision.recorded") if e["summary"].startswith("Cleaned up FX-2")]
+        cleaned = [e for e in kinds(fx, "cleanup.done") if e.get("subject") == "FX-2"]
         self.once(fx)
-        self.assertEqual(len([e for e in kinds(fx, "decision.recorded") if e["summary"].startswith("Cleaned up FX-2")]),
+        self.assertEqual(len([e for e in kinds(fx, "cleanup.done") if e.get("subject") == "FX-2"]),
                          len(cleaned), "a story already cleaned up was cleaned up again")
         # A story removed from the plan doesn't hold it.
         code, out = fx.flow("lead-plan", "change", "--kind", "removed", "--subjects", "FX-3", "--why", "Out of scope.", cwd=m)
@@ -2990,8 +3076,11 @@ class SupervisorPassTests(unittest.TestCase):
                 changes.write(json.dumps({"type": "change", "id": "c1", "kind": "removed", "subjects": ["FX-3"],
                                           "by": "lead", "why": "Out of scope.", "at": "2026-01-01T00:00:00Z"}) + "\n")
         # A lane's blocker holds it until lead-resolve resolves it.
-        state_tool(fx, "journal", "--kind", "blocker.recorded", "--data", json.dumps({"text": "the API is down"}))
+        code, out = fx.flow("lead-block", "--text", "the API is down", cwd=m)
+        self.assertEqual(code, 0, out)
         blocker = kinds(fx, "blocker.recorded")[-1]["id"]
+        assert_facts(self, kinds(fx, "blocker.recorded")[-1], "blocker.recorded", {"text": "the API is down"})
+        self.assertIn(f"recorded blocker {blocker}; resolve it with", out)
         held = self.holds(fx)
         self.assertTrue(any(h.startswith(f"Blocker {blocker}") for h in held), held)
         # Only the runner's own blocker clears with its hold or base.repaired; this one clears with lead-resolve alone.
@@ -3002,20 +3091,19 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertNotIn("runner's hold", mine[0]["clears"])
         self.assertFalse(any(h.startswith("not handed off") for h in held), held)
         # A broken base holds it until it's repaired; the runner's own blocker clears with base.repaired.
-        state_tool(fx, "journal", "--kind", "base.broken", "--summary", "the base fails its check")
+        state_tool(fx, "journal", "--kind", "base.broken", "--data", json.dumps({"source": "lead", "detail": "the base fails its check"}))
         held_by_the_queue(fx, "Serving is held: the base broke.")
         held = self.holds(fx)
         self.assertTrue(any(h.startswith("The delivery base is broken") for h in held), held)
-        state_tool(fx, "journal", "--kind", "base.repaired", "--summary", "repaired")
+        state_tool(fx, "journal", "--kind", "base.repaired", "--data", json.dumps({"source": "lead", "head": "a" * 40, "why": "repaired"}))
         held = self.holds(fx)
         self.assertFalse(any("broken" in h or "Serving is held" in h for h in held), held)
         code, out = fx.flow("lead-resolve", str(blocker), "--why", "the API is back", cwd=m)
         self.assertEqual(code, 0, out)
-        # Marked, so the tracker publisher posts the resolution rather than skipping it.
-        resolution = kinds(fx, "decision.recorded")[-1]
-        self.assertTrue(resolution["summary"].startswith(f"Blocker {blocker} resolved"), resolution)
-        marks = [json.loads(line) for line in (fx.tmp / "flow-log/FX-1.tracker-marks.jsonl").read_text().splitlines()]
-        self.assertIn(resolution["id"], [mark["journal"] for mark in marks])
+        # The resolution answers the blocker it names, and no other entry; the registry posts it, with no mark.
+        [resolution] = kinds(fx, "blocker.resolved")
+        assert_facts(self, resolution, "blocker.resolved", {"why": "the API is back"},
+                     answers=(kinds(fx, "blocker.recorded")[-1],))
         code, out = fx.flow("lead-resolve", str(blocker), "--why", "again", cwd=m)
         self.assertEqual(code, 2, out)
         # FX-2's merge already ran fullHealth at its head, so a pass there finds nothing more to run.
@@ -3032,10 +3120,10 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertEqual(runs(), 2, "fullHealth ran again at the same head")
         code, out = fx.flow("lead-resolve", "full-health", "--why", "flaky", cwd=m)
         self.assertEqual(code, 0, out)
-        rerun = kinds(fx, "decision.recorded")[-1]
-        self.assertIn("runs again on the supervisor's next pass: flaky", rerun["summary"])
-        marks = [json.loads(line) for line in (fx.tmp / "flow-log/FX-1.tracker-marks.jsonl").read_text().splitlines()]
-        self.assertIn(rerun["id"], [mark["journal"] for mark in marks], "the rerun's decision isn't marked for the tracker")
+        # The request names the standing break and answers nothing: only a pass repairs it.
+        [rerun] = kinds(fx, "fullhealth.rerun")
+        broken = kinds(fx, "base.broken")[-1]
+        assert_facts(self, rerun, "fullhealth.rerun", {"head": broken["data"]["head"], "why": "flaky"}, because=(broken,))
         code, out = fx.flow("lead-resolve", "full-health", "--why", "again", cwd=m)
         self.assertEqual(code, 2, out)
         self.assertIn("already asked for; it runs on the supervisor's next pass", out)
@@ -3329,7 +3417,7 @@ class LeadListenerTests(unittest.TestCase):
         # A wake ends it with the wait's own exit, naming the event, and the lease goes with it.
         proc = self.start_lead_wait(fx, "--delivery", "FX-1", "--timeout", "60", "--poll", "0.1")
         wait_for((fx.tmp / "record/lead-wait.json").exists, "the lease")
-        state_tool(fx, "journal", "--kind", "blocker.recorded", "--summary", "a blocker")
+        state_tool(fx, "journal", "--kind", "blocker.recorded", "--text", "a blocker")
         stdout, _ = proc.communicate(timeout=60)
         self.assertEqual(proc.returncode, 0)
         self.assertEqual([event["kind"] for event in json.loads(stdout)["events"]], ["blocker.recorded"])
@@ -3436,7 +3524,10 @@ class SupervisorTrackerTests(unittest.TestCase):
                  "a failed fullHealth")
         with backend.edit() as store:
             store["token"] = "revoked"
-        state_tool(fx, "journal", "--kind", "release.finished", "--summary", "Released for the tracker to hear about")
+        state_tool(fx, "journal", "--kind", "release.started", "--data", json.dumps({"head": "a" * 40}))
+        started = len((fx.tmp / "record/journal.jsonl").read_text().splitlines())
+        state_tool(fx, "journal", "--kind", "release.finished", "--data", json.dumps({"head": "a" * 40}),
+                   "--because", str(started))
         page = fx.tmp / "record/line-map.html"
         holding = lambda drawn: sorted("base.broken" if item["source"].endswith("(base.broken)") else item["source"]
                                        for item in drawn["items"] if item["holding"])
@@ -3490,6 +3581,11 @@ class SupervisorTrackerTests(unittest.TestCase):
         followups = [f["id"] for f in record(fx)["state"]["followups"]]
         self.assertEqual(len(followups), 1, followups)
         self.assertTrue(followups[0].startswith("FX-2-"), followups)
+        # Journalled as the follow-up's own kind, which posts nothing; the publisher files the follow-up from its mark.
+        [filed] = kinds(fx, "followup.filed")
+        finding = followups[0][len("FX-2-"):]
+        self.assertEqual((filed["subject"], filed["data"]["finding"], filed["data"]["followup"]), ("FX-2", finding, followups[0]))
+        self.assertEqual(filed["data"]["title"], record(fx)["state"]["followups"][0]["title"])
 
     def test_under_no_deferrals_a_finding_still_deferred_at_merge_is_a_blocker_and_never_a_follow_up(self) -> None:
         fx, backend = self.fixture(noDeferrals=True)
@@ -3509,6 +3605,10 @@ class SupervisorTrackerTests(unittest.TestCase):
         self.assertEqual(record(fx)["state"]["followups"], [])
         code, out = fx.flow("lead-resolve", str(blocker["id"]), "--why", "Fixed in FX-9.", cwd=fx.main)
         self.assertEqual(code, 0, out)
+        # The resolution answers the breach it names, and no other entry.
+        [resolution] = kinds(fx, "blocker.resolved")
+        self.assertEqual(resolution["subject"], "FX-2")
+        assert_facts(self, resolution, "blocker.resolved", {"why": "Fixed in FX-9."}, answers=(blocker,))
         for _ in range(3):
             last = self.once(fx)
             if (fx.tmp / "flow-log/FX-1.closed.json").exists():
@@ -3563,7 +3663,7 @@ class SupervisorTrackerTests(unittest.TestCase):
         code, out = fx.flow("lead-run", "--resume", cwd=m, env=running(fx))
         self.assertEqual(code, 0, out)
         wait_for(lambda: passes(fx), "a first pass")
-        state_tool(fx, "journal", "--kind", "blocker.recorded", "--summary", "the API is down")
+        state_tool(fx, "journal", "--kind", "blocker.recorded", "--text", "the API is down")
         seen = len(passes(fx))
         wait_for(lambda: len(passes(fx)) > seen + 1, "a whole pass after the entry")
         self.assertEqual(len([t for t in epic_comments(backend) if "the API is down" in t]), 1, epic_comments(backend))
@@ -3607,8 +3707,12 @@ def health_runs(fx: Fixture) -> int:
     return len(runs.read_text().splitlines()) if runs.exists() else 0
 
 
+# The kinds a lead-side note about the run or the posture is journalled as: a decision while it was a sentence.
+NOTED = ("decision.recorded", "posture.changed", "fullhealth.skipped", "fullhealth.rerun")
+
+
 def decisions(fx: Fixture, words: str) -> list[dict]:
-    return [e for e in kinds(fx, "decision.recorded") if words in e["summary"]]
+    return [e for e in record(fx)["journal"] if e["kind"] in NOTED and words in e.get("summary", "")]
 
 
 def plan_of(fx: Fixture) -> dict:
@@ -3675,6 +3779,9 @@ class SupervisorPostureTests(unittest.TestCase):
         said = decisions(fx, "fullHealth skipped")
         self.assertEqual(len(said), 1, said)
         self.assert_says_skipped(fx, said[0]["summary"])
+        assert_facts(self, said[0], "fullhealth.skipped", {"head": closed_of(fx)["fullHealth"]["head"],
+                                                           "posture": "focused", "source": "origin/feature/FX-1",
+                                                           "why": FOCUSED_REASON})
         self.assertEqual(plan_of(fx)["closeOut"], {"fullHealth": "skipped", "posture": "focused",
                                                    "source": "origin/feature/FX-1", "reason": FOCUSED_REASON})
         self.assert_says_skipped(fx, json.dumps(closed_of(fx)["fullHealth"]))
@@ -3690,6 +3797,7 @@ class SupervisorPostureTests(unittest.TestCase):
         # The supervisor's close-out summary, in its pass log and in delivery.closed.
         self.assert_says_skipped(fx, last["closeOut"][0])
         self.assert_says_skipped(fx, kinds(fx, "delivery.closed")[0]["summary"])
+        self.assertEqual(kinds(fx, "delivery.closed")[0]["data"], {"skipped": True})
         # No entry the log calls a result, so nothing can read it as a pass.
         entries = [json.loads(line) for line in (fx.tmp / "flow-log/FX-1.full-health.jsonl").read_text().splitlines()]
         self.assertTrue(entries)
@@ -3738,7 +3846,8 @@ class SupervisorPostureTests(unittest.TestCase):
         self.assertEqual(health_runs(fx), 1, "a run started once the base said focused")
         changed = decisions(fx, "posture changed")
         self.assertEqual(len(changed), 1, changed)
-        self.assertIn("from gate to focused", changed[0]["summary"])
+        assert_facts(self, changed[0], "posture.changed",
+                     {"from": "gate", "to": "focused", "source": "origin/feature/FX-1", "why": FOCUSED_REASON})
         self.assertEqual(len(decisions(fx, "fullHealth skipped")), 1)
         self.assertEqual(plan_of(fx)["closeOut"]["fullHealth"], "skipped")
 
@@ -3756,7 +3865,7 @@ class SupervisorPostureTests(unittest.TestCase):
         code, out = fx.flow("lead-resolve", "full-health", "--why", "one more", cwd=fx.main)
         self.assertEqual(code, 0, out)
         self.assertIn("if the base returns to gate", out)
-        self.assertNotIn("next pass", kinds(fx, "decision.recorded")[-1]["summary"])
+        self.assertNotIn("next pass", kinds(fx, "fullhealth.rerun")[-1]["summary"])
         # Asked again, the refusal says the same: no pass runs it while the base says focused.
         code, out = fx.flow("lead-resolve", "full-health", "--why", "again", cwd=fx.main)
         self.assertEqual(code, 2, out)
@@ -3838,7 +3947,7 @@ class SupervisorPostureTests(unittest.TestCase):
     def test_lead_close_with_the_supervisor_down_records_the_skip_the_same_way(self) -> None:
         fx = self.fixture()
         declare(fx, declaration())
-        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "FX-1 closed by hand.")
+        state_tool(fx, "journal", "--kind", "delivery.closed", "--data", "{}")
         out = self.lead_close(fx)
         self.assert_skip_recorded(fx)
         self.assert_says_skipped(fx, next(line for line in out.splitlines() if "fullHealth skipped" in line))
@@ -3862,7 +3971,7 @@ class SupervisorPostureTests(unittest.TestCase):
     def test_lead_close_under_gate_does_what_it_did(self) -> None:
         fx = self.fixture()
         declare(fx, declaration("gate", "The gate is on."))
-        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "FX-1 closed by hand.")
+        state_tool(fx, "journal", "--kind", "delivery.closed", "--data", "{}")
         out = self.lead_close(fx)
         self.assertEqual(health_runs(fx), 0)
         self.assertNotIn("skipped", out)
@@ -3986,7 +4095,7 @@ class SupervisorPostureRestoredTests(unittest.TestCase):
     def test_lead_close_under_gate_after_a_skip_records_the_change_and_stops_saying_skipped(self) -> None:
         fx = self.skipped_and_held_open()
         declare(fx, declaration("gate", "The gate is back."))
-        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "FX-1 closed by hand.")
+        state_tool(fx, "journal", "--kind", "delivery.closed", "--data", "{}")
         code, out = fx.flow("lead-close", cwd=fx.main)
         self.assertIn(code, (0, 1), out)
         self.assertNotIn("posture wasn't recorded", out)
@@ -4166,14 +4275,14 @@ class CloseStoppedPartwayTests(unittest.TestCase):
         for point in ("lead-close render", "lead-close archive"):
             with self.subTest(point=point):
                 fx = self.closable_fixture()
-                state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "closed by hand")
+                state_tool(fx, "journal", "--kind", "delivery.closed", "--data", "{}")
                 self.stopped_at(fx, point, "lead-close")
                 self.assert_partway(fx, "lead-run --resume")
                 self.finish_with_resume(fx)
 
     def test_lead_close_stopped_after_closed_json_reads_finished(self) -> None:
         fx = self.closable_fixture()
-        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "closed by hand")
+        state_tool(fx, "journal", "--kind", "delivery.closed", "--data", "{}")
         self.stopped_at(fx, "lead-close closed.json", "lead-close")
         self.assert_finished(fx)
 
@@ -4181,10 +4290,10 @@ class CloseStoppedPartwayTests(unittest.TestCase):
         """A need that holds the close, and that no later pass clears on its own, holds a resumed supervisor for good:
         the close names lead-close, not a resume."""
         fx = self.closable_fixture()
-        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "closed by hand")
+        state_tool(fx, "journal", "--kind", "delivery.closed", "--data", "{}")
         self.stopped_at(fx, "lead-close render", "lead-close")
         self.assert_partway(fx, "lead-run --resume")
-        state_tool(fx, "journal", "--kind", "blocker.recorded", "--summary", "the API is down")
+        state_tool(fx, "journal", "--kind", "blocker.recorded", "--text", "the API is down")
         self.assert_partway(fx, "lead-close")
         # A resumed supervisor holds on the blocker and writes no mark.
         self.once(fx)
@@ -4207,7 +4316,7 @@ class CloseStoppedPartwayTests(unittest.TestCase):
     def test_a_close_held_only_by_a_running_full_health_still_names_a_resume(self) -> None:
         """A running fullHealth clears when it ends, on a pass of its own, so it alone doesn't name lead-close."""
         fx = self.closable_fixture()
-        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "closed by hand")
+        state_tool(fx, "journal", "--kind", "delivery.closed", "--data", "{}")
         self.stopped_at(fx, "lead-close render", "lead-close")
         lock = fx.tmp / "flow-log/FX-1.full-health.lock"
         lock.parent.mkdir(parents=True, exist_ok=True)
@@ -4231,7 +4340,7 @@ class CloseStoppedPartwayTests(unittest.TestCase):
                    json.dumps({"finish": [{"id": "unmet", "text": "Something left unmet", "met": False}]}))
         with self.backend.edit() as store:
             store["failures"].append({"op": "comment", "ticket": "FX-1", "status": 409, "times": 50})
-        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "closed early, by hand")
+        state_tool(fx, "journal", "--kind", "delivery.closed", "--data", "{}")
         self.stopped_at(fx, "lead-close archive", "lead-close")
         self.assert_partway(fx, "lead-close")
         # A resumed supervisor holds on the unmet line and writes no mark.
@@ -4258,16 +4367,16 @@ class CloseStoppedPartwayTests(unittest.TestCase):
 
     def test_lead_close_refuses_a_supervisor_until_a_later_close_is_journaled(self) -> None:
         fx = self.closable_fixture()
-        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "closed by hand")
+        state_tool(fx, "journal", "--kind", "delivery.closed", "--data", "{}")
         code, out = fx.flow("lead-close", cwd=fx.main)
         self.assertIn(code, (0, 1), out)
         # New work alone doesn't undo lead-close's close: its entry is still the latest delivery.closed.
-        state_tool(fx, "journal", "--kind", "lane.assigned", "--summary", "more work", "--lane", "lane-1")
+        state_tool(fx, "journal", "--kind", "lane.assigned", "--data", json.dumps({"title": "more work"}), "--lane", "lane-1")
         code, out = fx.flow("lead-run", "--once", cwd=fx.main)
         self.assertEqual(code, 2, out)
         self.assertIn("the delivery is closed: lead-close closed it", out)
         # A later close is a close closed.json doesn't speak for.
-        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "closed again by hand")
+        state_tool(fx, "journal", "--kind", "delivery.closed", "--data", "{}")
         code, out = fx.flow("lead-run", "--once", cwd=fx.main)
         self.assertEqual(code, 0, out)
 
@@ -4280,12 +4389,12 @@ class CloseStoppedPartwayTests(unittest.TestCase):
                 for turn in (1, 2):
                     if turn == 2:
                         # Reopened by new work, then closed again: a new entry, a new archive, its own marks.
-                        state_tool(fx, "journal", "--kind", "lane.assigned", "--summary", "more work", "--lane", "lane-1")
+                        state_tool(fx, "journal", "--kind", "lane.assigned", "--data", json.dumps({"title": "more work"}), "--lane", "lane-1")
                         state_tool(fx, "focus", "--lane", "lane-1", "--text", "done", "--state", "done")
                     if path == "supervisor":
                         self.once(fx)
                     else:
-                        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", f"closed by hand, turn {turn}")
+                        state_tool(fx, "journal", "--kind", "delivery.closed", "--data", "{}")
                         code, out = fx.flow("lead-close", cwd=fx.main)
                         self.assertIn(code, (0, 1), out)
                     self.assertEqual(len(kinds(fx, "delivery.closed")), turn)
@@ -4310,7 +4419,7 @@ class CloseStoppedPartwayTests(unittest.TestCase):
         for path in ("supervisor", "lead-close"):
             with self.subTest(path=path):
                 fx = self.closable_fixture()
-                state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "closed by an older tool")
+                state_tool(fx, "journal", "--kind", "delivery.closed", "--data", "{}")
                 self.strip_marks(fx)
                 if path == "supervisor":
                     last = self.once(fx)
@@ -4371,7 +4480,7 @@ class CloseStoppedPartwayTests(unittest.TestCase):
                 fx = self.closable_fixture()
                 self.once(fx)
                 first, archive = self.closing_entry(fx), closed_of(fx)["archive"]
-                state_tool(fx, "journal", "--kind", kind, "--summary", "more work", "--lane", "lane-1",
+                state_tool(fx, "journal", "--kind", kind, "--lane", "lane-1", "--data", json.dumps(REOPENING[kind]),
                            *(["--subject", "FX-2"] if kind != "lane.assigned" else []))
                 state_tool(fx, "focus", "--lane", "lane-1", "--text", "done", "--state", "done")
                 self.stopped_at(fx, "archive")
@@ -4626,8 +4735,8 @@ class SupervisorPostMergeTests(unittest.TestCase):
         last = self.once(fx)
         self.assertEqual([e["kind"] for e in self.base_events(fx)], ["base.flaky"])
         head = self.base_tip(fx)
-        self.assertIn(f"fullHealth failed at {head[:10]}", kinds(fx, "base.flaky")[0]["summary"])
-        self.assertIn("tests.fx.T.test_flaky", kinds(fx, "base.flaky")[0]["summary"])
+        assert_facts(self, kinds(fx, "base.flaky")[0], "base.flaky", {
+            "source": "fullHealth", "head": head, "after": "FX-2", "failing": ["tests.fx.T.test_flaky"]})
         self.assertEqual((self.results(fx)[-1]["result"], self.results(fx)[-1]["tests"]), ("flaky", ["tests.fx.T.test_flaky"]))
         # Rerun once, alone, in the checkout the failed run used: not the lead's, and gone with the run.
         [rerun] = [json.loads(line) for line in (fx.tmp / "reruns.jsonl").read_text().splitlines()]
@@ -4646,6 +4755,8 @@ class SupervisorPostMergeTests(unittest.TestCase):
         state_tool(fx, "focus", "--lane", "lane-2", "--text", "still at work", "--state", "working")
         self.once(fx)
         self.assertEqual([e["kind"] for e in self.base_events(fx)], ["base.flaky", "base.verified"])
+        assert_facts(self, self.base_events(fx)[-1], "base.verified",
+                     {"source": "fullHealth", "head": self.base_tip(fx), "after": "FX-3"})
         self.assertEqual(kinds(fx, "delivery.closed"), [])
         # A flaky head with no break standing holds nothing at the close: the close-out reads its result and closes.
         (fx.tmp / "health").write_text("flaky")
@@ -4698,7 +4809,7 @@ class SupervisorPostMergeTests(unittest.TestCase):
         fx = self.fixture(fullHealthRerun=FLAKY_RERUN)
         self.merged(fx, "FX-2", "lane-1")
         self.once(fx)
-        state_tool(fx, "journal", "--kind", "base.broken", "--summary", "base_broken: lint also fails on the base")
+        state_tool(fx, "journal", "--kind", "base.broken", "--data", json.dumps({"source": "queue", "reason": "base_broken", "detail": "lint also fails on the base"}))
         for health, text in (("flaky", "landed by hand\n"), ("pass", "landed again\n")):
             (fx.tmp / "health").write_text(health)
             declare(fx, text, path="src/landed.txt")
@@ -4737,20 +4848,19 @@ class SupervisorPostMergeTests(unittest.TestCase):
         self.merged(fx, "FX-2", "lane-1")
         self.once(fx)
         [verified] = self.base_events(fx)
-        self.assertEqual(verified["kind"], "base.verified", verified)
-        self.assertIn("after FX-2's merge", verified["summary"])
+        assert_facts(self, verified, "base.verified", {"source": "fullHealth", "head": self.base_tip(fx), "after": "FX-2"})
         (fx.tmp / "health").write_text("fail")
         self.merged(fx, "FX-3", "lane-2")
         self.done(fx, "lane-1", "lane-2")
         held = self.once(fx)["closeHeldBy"]
         self.assertEqual(health_runs(fx), 2)
         broken = self.base_events(fx)[-1]
-        self.assertEqual(broken["kind"], "base.broken", broken)
-        self.assertIn("after FX-3's merge", broken["summary"])
-        self.assertNotIn("FX-2", broken["summary"])
-        self.assertIn("test_parser failed", broken["summary"])
+        detail = self.results(fx)[-1]["output"].strip()[-300:]
+        self.assertIn("test_parser failed", detail)
+        assert_facts(self, broken, "base.broken",
+                     {"source": "fullHealth", "head": self.base_tip(fx), "after": "FX-3", "detail": detail})
         self.assertTrue(any(h.startswith("fullHealth failed at") for h in held), held)
-        self.assertTrue(any(h.startswith("The delivery base is broken: fullHealth failed") for h in held), held)
+        self.assertTrue(any(h.startswith("The delivery base is broken: The full run failed at ") for h in held), held)
         needs = [item for item in passes(fx)[-1]["needsYou"] if "(base.broken)" in item["source"]]
         self.assertTrue(needs[0]["clears"].startswith("a fullHealth pass at a later base head"), needs)
         # Nothing else holds the close, and no pass runs it again at B's head: no third run until another merge.
@@ -4775,7 +4885,8 @@ class SupervisorPostMergeTests(unittest.TestCase):
         self.merged(fx, "FX-2", "lane-1")
         self.once(fx)
         # The lead reopens the queue by hand so the fix, C, can go through it.
-        state_tool(fx, "journal", "--kind", "base.repaired", "--summary", "reopened to let the fix through")
+        state_tool(fx, "journal", "--kind", "base.repaired", "--data", json.dumps(
+            {"source": "lead", "head": self.base_tip(fx), "why": "reopened to let the fix through"}))
         self.assertFalse(self.serving_waits(fx))
         (fx.tmp / "health").write_text("pass")
         self.merged(fx, "FX-3", "lane-2")
@@ -4783,8 +4894,9 @@ class SupervisorPostMergeTests(unittest.TestCase):
         last = self.once(fx)
         events = self.base_events(fx)
         self.assertEqual([e["kind"] for e in events], ["base.broken", "base.repaired", "base.repaired"])
-        self.assertIn("after FX-3's merge", events[-1]["summary"])
-        self.assertNotIn("FX-2", events[-1]["summary"])
+        # The run's own repair follows FX-3's merge, and answers nothing: the lead's repair already did.
+        self.assertEqual(events[-1]["subject"], "FX-3")
+        assert_facts(self, events[-1], "base.repaired", {"source": "fullHealth", "head": self.base_tip(fx)})
         # The second repair reopens nothing that was closed, holds nothing, and the run isn't counted twice.
         self.assertFalse(self.serving_waits(fx))
         self.assertFalse([item for item in last["needsYou"] if "base.broken" in item["source"]], last["needsYou"])
@@ -4808,10 +4920,11 @@ class SupervisorPostMergeTests(unittest.TestCase):
         last = self.once(fx)
         events = self.base_events(fx)
         self.assertEqual([e["kind"] for e in events], ["base.broken", "base.repaired"])
-        self.assertIn("after FX-3's merge", events[-1]["summary"])
-        self.assertNotIn("FX-2", events[-1]["summary"])
         self.assertEqual(health_runs(fx), 2, "close-out ran fullHealth again at the repaired head")
         head = self.base_tip(fx)
+        # The repair names the merge it follows as its subject, and answers the break it repairs.
+        self.assertEqual(events[-1]["subject"], "FX-3")
+        assert_facts(self, events[-1], "base.repaired", {"source": "fullHealth", "head": head}, answers=(events[0],))
         self.assertEqual(last["closeHeldBy"], [], last)
         self.assertEqual(last["closeOut"][0], f"fullHealth passed at {head[:10]}", last)
         self.assertEqual(len(kinds(fx, "delivery.closed")), 1)
@@ -4821,7 +4934,7 @@ class SupervisorPostMergeTests(unittest.TestCase):
         fx = self.fixture()
         self.merged(fx, "FX-2", "lane-1")
         self.once(fx)
-        state_tool(fx, "journal", "--kind", "base.broken", "--summary", "base_broken: lint also fails on the base")
+        state_tool(fx, "journal", "--kind", "base.broken", "--data", json.dumps({"source": "queue", "reason": "base_broken", "detail": "lint also fails on the base"}))
         self.merged(fx, "FX-3", "lane-2")
         self.once(fx)
         self.assertEqual([e["kind"] for e in self.base_events(fx)], ["base.verified", "base.broken", "base.verified"])
@@ -4836,9 +4949,9 @@ class SupervisorPostMergeTests(unittest.TestCase):
         (fx.tmp / "health").write_text("fail")
         self.merged(fx, "FX-2", "lane-1")
         self.once(fx)
-        state_tool(fx, "journal", "--kind", "base.repaired", "--summary", "reopened to let the fix through")
+        state_tool(fx, "journal", "--kind", "base.repaired", "--data", json.dumps({"source": "lead", "head": "a" * 40, "why": "reopened to let the fix through"}))
         # The queue then finds a break of its own, and a fix lands by hand.
-        state_tool(fx, "journal", "--kind", "base.broken", "--summary", "base_broken: lint also fails on the base")
+        state_tool(fx, "journal", "--kind", "base.broken", "--data", json.dumps({"source": "queue", "reason": "base_broken", "detail": "lint also fails on the base"}))
         (fx.tmp / "health").write_text("pass")
         declare(fx, "landed by hand\n", path="src/landed.txt")
         last = self.once(fx)
@@ -4853,7 +4966,7 @@ class SupervisorPostMergeTests(unittest.TestCase):
         self.merged(fx, "FX-2", "lane-1")
         self.once(fx)
         # The queue finds a break; a fix landed by hand fails fullHealth on top of it; the next fix passes.
-        state_tool(fx, "journal", "--kind", "base.broken", "--summary", "base_broken: lint also fails on the base")
+        state_tool(fx, "journal", "--kind", "base.broken", "--data", json.dumps({"source": "queue", "reason": "base_broken", "detail": "lint also fails on the base"}))
         (fx.tmp / "health").write_text("fail")
         declare(fx, "first fix\n", path="src/landed.txt")
         held = self.once(fx)
@@ -4871,8 +4984,8 @@ class SupervisorPostMergeTests(unittest.TestCase):
         self.merged(fx, "FX-2", "lane-1")
         self.once(fx)
         # The queue's break, confirmed by the lead; then a merge that fails fullHealth, and a fix that passes it.
-        state_tool(fx, "journal", "--kind", "base.broken", "--summary", "base_broken: lint also fails on the base")
-        state_tool(fx, "journal", "--kind", "base.repaired", "--summary", "lint fixed on the base")
+        state_tool(fx, "journal", "--kind", "base.broken", "--data", json.dumps({"source": "queue", "reason": "base_broken", "detail": "lint also fails on the base"}))
+        state_tool(fx, "journal", "--kind", "base.repaired", "--data", json.dumps({"source": "lead", "head": "a" * 40, "why": "lint fixed on the base"}))
         (fx.tmp / "health").write_text("fail")
         self.merged(fx, "FX-3", "lane-2")
         self.once(fx)
@@ -4903,7 +5016,7 @@ class SupervisorPostMergeTests(unittest.TestCase):
         self.assertEqual(health_runs(fx), 2)
         [item] = [item for item in last["needsYou"] if "(base.broken)" in item["source"]]
         self.assertTrue(item["holding"], item)
-        self.assertTrue(any(h.startswith("The delivery base is broken: fullHealth failed") for h in last["closeHeldBy"]))
+        self.assertTrue(any(h.startswith("The delivery base is broken: The full run failed at ") for h in last["closeHeldBy"]))
         (fx.tmp / "health").write_text("pass")
         code, out = fx.flow("lead-resolve", "full-health", "--why", "fixed", cwd=fx.main)
         self.assertEqual(code, 0, out)
@@ -4947,7 +5060,7 @@ class SupervisorPostMergeTests(unittest.TestCase):
         self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)
         self.assertTrue((fx.tmp / "flow-log/FX-1.closed.json").exists())
         self.assertFalse(wt.exists(), "the delivery closed with the lane's checkout left behind")
-        cleaned = [e for e in kinds(fx, "decision.recorded") if e["summary"].startswith("Cleaned up FX-2")]
+        cleaned = [e for e in kinds(fx, "cleanup.done") if e.get("subject") == "FX-2"]
         self.assertEqual(len(cleaned), 1)
         self.assertLess(cleaned[0]["id"], kinds(fx, "delivery.closed")[0]["id"])
 
@@ -5184,7 +5297,7 @@ class SupervisorBackgroundHealthTests(unittest.TestCase):
         self.addCleanup(stop_and_reap, once)
         wait_for(lambda: self.run_lock(fx).get("command"), "the --once pass's run to start", 60)
         run = self.run_lock(fx)
-        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "FX-1 closed by hand.")
+        state_tool(fx, "journal", "--kind", "delivery.closed", "--data", "{}")
         started = time.monotonic()
         code, out = fx.flow("lead-close", cwd=fx.main)
         self.assertIn(code, (0, 1), out)
@@ -5211,7 +5324,7 @@ class SupervisorBackgroundHealthTests(unittest.TestCase):
         fx = self.slow_run_under_a_supervisor()
         wait_for(lambda: self.run_lock(fx).get("command"), "the run's command to start", 30)
         run = self.run_lock(fx)
-        state_tool(fx, "journal", "--kind", "delivery.closed", "--summary", "FX-1 closed by hand.")
+        state_tool(fx, "journal", "--kind", "delivery.closed", "--data", "{}")
         code, out = fx.flow("lead-close", cwd=fx.main)
         self.assertIn(code, (0, 1), out)
         self.assertIn(f"stopped the fullHealth run at {run['head'][:10]} (pid {run['pid']}); it recorded no result", out)
