@@ -84,20 +84,33 @@
           "properties": {
             "head": {"type": "string", "minLength": 1},
             "line": {"type": "string"},
-            "standing": {"description": "One line for each setback still standing.", "type": "array", "items": {"type": "string", "minLength": 1}}
+            "standing": {
+              "description": "One line for each setback carried over from an earlier chapter: still standing at this chapter's end, or ended inside it at until, which a view shows as a time.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["thread", "text", "until"],
+                "properties": {
+                  "thread": {"$ref": "#/$defs/threadId"},
+                  "text": {"type": "string", "minLength": 1},
+                  "until": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/instant"}]}
+                }
+              }
+            }
           }
         }
       }
     },
     "beat": {
-      "description": "One thing a reader reads: an entry, a batch's starts, a run of bookkeeping, or a setback told whole at the headline altitude.",
+      "description": "One thing a reader reads: an entry, a batch's starts, a run of bookkeeping, finish lines met together, or a setback told whole at the headline altitude.",
       "type": "object",
       "additionalProperties": false,
       "required": ["id", "chapter", "form", "altitudes", "at", "entries", "thread", "kind", "tone", "label", "words"],
       "properties": {
         "id": {"$ref": "#/$defs/beatId"},
         "chapter": {"$ref": "#/$defs/chapterId"},
-        "form": {"enum": ["entry", "batch", "bookkeeping", "thread"]},
+        "form": {"enum": ["entry", "batch", "bookkeeping", "finish", "thread"]},
         "altitudes": {
           "description": "The altitudes it shows at.",
           "type": "array",

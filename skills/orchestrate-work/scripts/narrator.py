@@ -56,6 +56,7 @@ STOP_KIND = "candidate.stopped"
 ASSIGN_KIND = "lane.assigned"
 HANDOFF_KIND = "candidate.handed"
 BATCH_KIND = "check.started"
+FINISH_KIND = "finish.met"
 # Kinds that name a piece of the delivery by their subject.
 PIECE_KINDS = (ASSIGN_KIND, "story.added", HANDOFF_KIND, MERGE_KIND, STOP_KIND)
 # Work that, journaled after the close, means the delivery has reopened.
@@ -90,13 +91,14 @@ def narrate(journal: list, state: dict | None = None, plan: dict | None = None, 
     titles = _titles(entries, state, plan)
     threads, member_of = _threads(entries, by_id, registry)
     chapters = _chapters(entries, closed)
+    finishes = _finishes(state, plan)
 
     chapter_of = {entry: index for index, chapter in enumerate(chapters) for entry in chapter["entries"]}
     for thread in threads:
         thread["chapter"] = chapters[chapter_of[thread["opening"]]]["id"]
     beats = []
     for index, chapter in enumerate(chapters):
-        made = _entry_beats(chapter["entries"], by_id, member_of, registry)
+        made = _entry_beats(chapter["entries"], by_id, member_of, registry, finishes)
         for thread in threads:
             if chapter_of[thread["opening"]] == index:
                 made.append(_thread_beat(thread, by_id, registry))
@@ -310,7 +312,18 @@ def _altitudes(entry: dict, thread: str | None, registry: dict) -> list[str]:
     return list(ALTITUDES)
 
 
-def _entry_beats(ids: list[int], by_id: dict, member_of: dict, registry: dict) -> list[dict]:
+def _finishes(state: dict | None, plan: dict | None) -> dict:
+    """Each finish line by its id, as a reader knows it: the plan's label, else the record's own words for it."""
+    named = {}
+    for source, key in ((state, "text"), (state, "label"), (plan, "text"), (plan, "label")):
+        for line in (source or {}).get("finish") or [] if isinstance(source, dict) else []:
+            if isinstance(line, dict) and isinstance(line.get("id"), str):
+                said = line.get(key)
+                named[line["id"]] = said if isinstance(said, str) and said.strip() else named.get(line["id"])
+    return named
+
+
+def _entry_beats(ids: list[int], by_id: dict, member_of: dict, registry: dict, finishes: dict) -> list[dict]:
     beats = []
     for entry in (by_id[name] for name in ids):
         thread = member_of.get(entry["id"])
@@ -318,6 +331,11 @@ def _entry_beats(ids: list[int], by_id: dict, member_of: dict, registry: dict) -
         batch = entry.get("data", {}).get("batch") if entry["kind"] == BATCH_KIND else None
         last = beats[-1] if beats else None
         if (last and last["thread"] == thread and kind["altitude"] == "bookkeeping" and last["group"] == "bookkeeping"):
+            last["held"].append(entry)
+            continue
+        # Finish lines met together, journaled one after another with nothing between, are told as one.
+        met = "finish" if entry["kind"] == FINISH_KIND else None
+        if met and last and last["thread"] == thread and last["group"] == met:
             last["held"].append(entry)
             continue
         if batch:
@@ -333,17 +351,31 @@ def _entry_beats(ids: list[int], by_id: dict, member_of: dict, registry: dict) -
             if joined is not None:
                 joined["held"].append(entry)
                 continue
-        group = "bookkeeping" if kind["altitude"] == "bookkeeping" else ("batch", tuple(batch)) if batch else None
+        group = "bookkeeping" if kind["altitude"] == "bookkeeping" else ("batch", tuple(batch)) if batch else met
         beats.append({"group": group, "thread": thread, "held": [entry]})
-    return [_beat(beat, registry) for beat in beats]
+    return [_beat(beat, registry, finishes) for beat in beats]
 
 
-def _beat(beat: dict, registry: dict) -> dict:
+def _finish_label(entry: dict, finishes: dict) -> str:
+    return finishes.get(entry.get("data", {}).get("finish")) or "A finish line"
+
+
+def _beat(beat: dict, registry: dict, finishes: dict) -> dict:
     held = beat["held"]
     first = held[0]
     kind = registry["kinds"][first["kind"]]
-    if len(held) == 1:
+    if len(held) == 1 and first["kind"] == FINISH_KIND:
+        # A finish line is named for the reader by its label, never by its id.
+        words = journal_words.words({**first, "data": {**first["data"], "finish": _finish_label(first, finishes)}}, registry)
+        form, label, tone, kind_name = "entry", kind["label"], kind["tone"], first["kind"]
+    elif len(held) == 1:
         form, words, label, tone, kind_name = "entry", journal_words.words(first, registry), kind["label"], kind["tone"], first["kind"]
+    elif first["kind"] == FINISH_KIND:
+        met = [entry.get("data", {}).get("finish") for entry in held]
+        every = len(finishes) == len(held) and set(met) == set(finishes)
+        head = "Every finish line was met" if every else f"{_number(len(held)).capitalize()} finish lines were met"
+        form, label, tone, kind_name = "finish", kind["label"], kind["tone"], first["kind"]
+        words = {"head": head, "line": journal_words.show([_finish_label(entry, finishes) for entry in held], "list")}
     elif beat["group"] == "bookkeeping":
         counted = {}
         for entry in held:
@@ -390,8 +422,16 @@ def _thread_beat(thread: dict, by_id: dict, registry: dict) -> dict:
 def _word_chapter(chapter: dict, chapters: list[dict], index: int, by_id: dict, threads: list[dict], pieces: list[str],
                   landed: list[str], titles: dict, state: dict | None, closed: bool, registry: dict) -> None:
     held = [by_id[name] for name in chapter["entries"]]
-    standing = [_sentence("A setback still stands: " + _lower(next(t for t in threads if t["id"] == name)["words"]["head"][len("A setback: "):]))
-                for name in chapter["standing"]]
+    # A setback opened in an earlier chapter: still standing at this chapter's end, or ended inside it, with when.
+    ends = _seconds(_instant(held[-1]))
+    standing = []
+    for name in chapter["standing"]:
+        thread = next(t for t in threads if t["id"] == name)
+        opened = journal_words.words(by_id[thread["opening"]], registry)["head"]
+        if thread["closedAt"] is not None and _seconds(thread["closedAt"]) <= ends:
+            standing.append({"thread": name, "text": opened, "until": thread["closedAt"]})
+        else:
+            standing.append({"thread": name, "text": _sentence("A setback still stands: " + _lower(opened)), "until": None})
     if chapter["form"] == "landing":
         merge = held[-1]
         chapter["pieceTitle"] = titles.get(merge["subject"])

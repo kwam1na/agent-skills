@@ -485,7 +485,7 @@
         },
         {
           "path": "skills/orchestrate-work/references/story.schema.json",
-          "sha256": "a005496e54480c9ae229fd615bb28f035c430d1d63e1493fd7f74a84acd0f94c"
+          "sha256": "6ddd091b30a54b1137f09e7de2a79153bd2a9d8d75d484509d693c1e47d8f4a6"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
@@ -501,7 +501,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/narrator.py",
-          "sha256": "e348375bc0fad72560b8850f4a68c58f5a227933e17be52b5dced8bccc65d81d"
+          "sha256": "88858b83011c48eed42afe06f4de8a7a175e847a90459c5300d9b2ed272baaae"
         },
         {
           "path": "skills/orchestrate-work/scripts/region_ownership.py",

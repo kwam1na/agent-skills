@@ -57,9 +57,14 @@ def fixture(name: str) -> tuple[list[dict], dict | None]:
     return journal, json.loads(state.read_text(encoding="utf-8")) if state.is_file() else None
 
 
+def plan_of(name: str) -> dict | None:
+    plan = FIXTURES / name / "plan.json"
+    return json.loads(plan.read_text(encoding="utf-8")) if plan.is_file() else None
+
+
 def told(name: str) -> tuple[dict, list[dict]]:
     journal, state = fixture(name)
-    return narrator.narrate(journal, state=state), journal
+    return narrator.narrate(journal, state=state, plan=plan_of(name)), journal
 
 
 def instant(entry: dict) -> float:
@@ -104,7 +109,7 @@ def headline_markdown(story: dict) -> str:
             head += f" {chapter['pieceTitle']}."
         lines.append(head + (f" {words['line']}" if words["line"] else ""))
         for standing in words["standing"]:
-            lines.append(f"- {standing}")
+            lines.append(f"- {standing['text']}" + (f", until {clock_time(standing['until'], first_day)}." if standing["until"] else ""))
         for beat in (beats[name] for name in chapter["beats"]):
             if "headline" not in beat["altitudes"] or beat["kind"] == "candidate.merged":
                 continue
@@ -169,11 +174,11 @@ class FixtureTests(unittest.TestCase):
         for name in NAMES:
             with self.subTest(name=name):
                 journal, state = fixture(name)
-                expected = narrator.narrate(copy.deepcopy(journal), state=copy.deepcopy(state))
+                expected = narrator.narrate(copy.deepcopy(journal), state=copy.deepcopy(state), plan=plan_of(name))
                 with no_clock():
                     self.assertRaises(AssertionError, time.time)
                     self.assertRaises(AssertionError, datetime.datetime.now)
-                    story = narrator.narrate(journal, state=state)
+                    story = narrator.narrate(journal, state=state, plan=plan_of(name))
                 self.assertEqual(story, expected)
                 # Nothing it was given is changed.
                 self.assertEqual((journal, state), fixture(name))
@@ -238,6 +243,7 @@ class FixtureTests(unittest.TestCase):
         objects = {"story": lambda s: s, "digest": lambda s: s["digest"], "digest words": lambda s: s["digest"]["words"],
                    "setbacks": lambda s: s["digest"]["setbacks"], "standing": lambda s: s["digest"]["setbacks"]["standing"][0],
                    "chapter": lambda s: s["chapters"][0], "chapter words": lambda s: s["chapters"][0]["words"],
+                   "carried setback": lambda s: s["chapters"][1]["words"]["standing"][0],
                    "beat": lambda s: s["beats"][0], "beat words": lambda s: s["beats"][0]["words"], "thread": lambda s: s["threads"][0],
                    "thread words": lambda s: s["threads"][0]["words"]}
         changes = []
@@ -284,6 +290,40 @@ class ScenarioTests(unittest.TestCase):
         story, _ = told("last-delivery")
         self.assertEqual(headline_markdown(story), GOLDEN.read_text(encoding="utf-8"))
 
+    def test_a_setback_that_ended_inside_a_later_chapter_is_told_with_when_it_ended(self) -> None:
+        story, journal = told("last-delivery")
+        [stopped] = [thread for thread in story["threads"] if thread["opening"] == by_kind(journal, "candidate.stopped")[0]]
+        [carried] = [chapter for chapter in story["chapters"] if stopped["id"] in chapter["standing"]]
+        self.assertEqual(carried["subject"], journal[stopped["opening"] - 1]["subject"])
+        self.assertEqual(carried["words"]["standing"], [{"thread": stopped["id"], "text": "V26-3264 was stopped".replace("V26-3264", carried["subject"]),
+                                                          "until": stopped["closedAt"]}])
+        self.assertLess(stopped["closedAt"], carried["at"])
+
+    def test_finish_lines_are_told_by_their_labels_and_lines_met_together_are_one_beat(self) -> None:
+        story, journal = told("last-delivery")
+        met = by_kind(journal, "finish.met")
+        [beat] = [beat for beat in story["beats"] if set(met) & set(beat["entries"])]
+        self.assertEqual((beat["form"], beat["entries"], beat["altitudes"]), ("finish", met, list(ALTITUDES)))
+        self.assertEqual(beat["words"], {"head": "Every finish line was met", "line": "Every story, Local suite, Integration and Main CI"})
+        story, journal = told("never-landed")
+        [single] = [beat for beat in story["beats"] if beat["entries"] == by_kind(journal, "finish.met")]
+        self.assertEqual((single["form"], single["words"]), ("entry", {"head": "A finish line was met", "line": "Every story lands"}))
+        # Two of three lines met at once, by their plan labels; an id is never shown.
+        journal, state = fixture("never-landed")
+        journal.insert(len(journal) - 1, {**journal[-2], "id": len(journal), "data": {"finish": "release"}})
+        journal[-1]["id"] = len(journal)
+        plan = {"finish": [{"id": "stories", "label": "Every story"}, {"id": "release", "label": "Released"}, {"id": "docs", "label": "Docs"}]}
+        [both] = [beat for beat in narrator.narrate(journal, state=state, plan=plan)["beats"] if beat["form"] == "finish"]
+        self.assertEqual(both["words"], {"head": "Two finish lines were met", "line": "Every story and Released"})
+
+    def test_no_story_shows_a_finish_lines_id(self) -> None:
+        for name in NAMES:
+            with self.subTest(name=name):
+                story, journal = told(name)
+                ids = {entry["data"]["finish"] for entry in journal if entry["kind"] == "finish.met"}
+                shown = json.dumps([beat["words"] for beat in story["beats"]] + [chapter["words"] for chapter in story["chapters"]])
+                self.assertFalse([finish for finish in ids if re.search(rf"(?<![\w-]){re.escape(finish)}(?![\w-])", shown)])
+
     def test_just_started_is_one_chapter_and_nothing_has_landed(self) -> None:
         story, journal = told("just-started")
         self.assertEqual([(chapter["form"], chapter["entries"]) for chapter in story["chapters"]], [("start", [journal[0]["id"]])])
@@ -298,7 +338,8 @@ class ScenarioTests(unittest.TestCase):
         self.assertEqual((thread["state"], thread["openedAt"], thread["closing"], thread["cost"]), ("open", brk["at"], None, None))
         self.assertEqual(story["digest"]["setbacks"], {"closed": 0, "cost": 0, "standing": [{"thread": thread["id"], "openedAt": brk["at"]}]})
         self.assertEqual([chapter["standing"] for chapter in story["chapters"]], [[], [thread["id"]], [thread["id"]], [thread["id"]]])
-        self.assertEqual([len(chapter["words"]["standing"]) for chapter in story["chapters"]], [0, 1, 1, 1])
+        self.assertEqual([chapter["words"]["standing"] for chapter in story["chapters"]],
+                         [[]] + [[{"thread": thread["id"], "text": "A setback still stands: the main line broke.", "until": None}]] * 3)
         self.assertEqual(story["chapters"][-1]["words"]["head"], "Finishing")
         self.assertIn("still stand", story["digest"]["words"]["line"])
 
@@ -590,6 +631,18 @@ class BoundaryTests(unittest.TestCase):
         self.assertEqual(landing_a["words"]["line"], "1h after it was picked up.")
         self.assertEqual(landing_b["standing"], [])
 
+    def test_a_setback_that_ends_as_its_carried_chapter_ends_is_told_as_ended(self) -> None:
+        journal = Journal()
+        journal.started()
+        start = journal.add(1, "check.started", subject="B")
+        stop = journal.stopped(10, "B", [journal.failed(5, "B", start)])
+        journal.add(20, "candidate.merged", {"head": "c" * 40}, subject="A")
+        journal.handed(25, "B", answers=[stop])
+        journal.add(25, "candidate.merged", {"head": "d" * 40}, subject="C")
+        story = journal.told()
+        [thread] = story["threads"]
+        self.assertEqual(story["chapters"][2]["words"]["standing"], [{"thread": thread["id"], "text": "B was stopped", "until": thread["closedAt"]}])
+
     def test_the_plan_adds_pieces_and_titles_and_leaves_out_what_it_removed(self) -> None:
         journal = Journal()
         journal.started()
@@ -611,8 +664,7 @@ class BoundaryTests(unittest.TestCase):
         self.assertEqual(story["chapters"][-1]["words"], {"head": "Finished", "line": "Every finish line was met. B never landed.", "standing": []})
         self.assertEqual(story["chapters"][0]["words"]["line"], "Lane 1 picked up A and B.")
         story, _ = told("standing-break")
-        self.assertEqual(story["chapters"][-1]["words"], {"head": "Finishing", "line": "C is still to land.",
-                                                          "standing": ["A setback still stands: the main line broke."]})
+        self.assertEqual(story["chapters"][-1]["words"]["standing"][0]["text"], "A setback still stands: the main line broke.")
         self.assertEqual(story["digest"]["words"], {"head": "Two of three pieces landed so far.", "line": "One setback still stands."})
         journal, state = fixture("never-landed")
         state["finish"].append({"id": "release", "met": False, "text": "It is released"})
