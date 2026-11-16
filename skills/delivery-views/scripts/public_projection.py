@@ -2,7 +2,9 @@
 
 The versioned schema is shared with the service. Projection drops fields the
 schema does not name; validation refuses them. Public prose is intentional:
-known configured secrets and recognizable local paths cause a bounded refusal,
+known configured secrets cause a bounded refusal. Producer prose containing
+recognizable local references is explicitly omitted; raw uploads with paths
+remain invalid,
 not a claim to recognize every secret someone may type. No network or subprocess
 is used here. Callers supply the complete selected source inventory, including
 run inventory/review inputs, before collecting from those sources.
@@ -29,6 +31,7 @@ MAX_SOURCE_BYTES = 128 * 1024 * 1024
 # Absolute workstation/temp paths and file URLs are never public view content.
 LOCAL_PATH = re.compile(r'(?:file://|(?:^|[\s"\'(])(?:/[A-Za-z0-9_.-]+/|[A-Za-z]:[\\/]|\\\\)|(?:^|\s)~[/\\]|(?:^|[\s"\'(])(?:\.?agents|\.orchestration|docs|scripts|skills|tests)/)')
 CREDENTIAL_KEY = re.compile(r'^(?:password|token|secret|api[_-]?key|credential|authorization|cookie)$', re.I)
+OMITTED_LOCAL_REFERENCE = '[Local reference omitted]'
 
 
 class ProjectionError(ValueError):
@@ -139,6 +142,31 @@ def _strings(value):
             yield from _strings(entry)
 
 
+def _omit_local_prose(value, schema):
+    """Omit whole sensitive fields only where ordinary prose is schema-valid.
+
+    Identifiers, enums and links retain their constraints: a marker that cannot
+    satisfy their schema leaves the original value to fail strict validation.
+    """
+    schema=_resolve(schema)
+    for keyword in ('anyOf','oneOf'):
+        if keyword in schema:
+            for branch in schema[keyword]:
+                try:_check(value,branch)
+                except ProjectionError:continue
+                return _omit_local_prose(value,branch)
+            return value
+    if isinstance(value,str) and LOCAL_PATH.search(value):
+        try:_check(OMITTED_LOCAL_REFERENCE,schema)
+        except ProjectionError:return value
+        return OMITTED_LOCAL_REFERENCE
+    if isinstance(value,dict):
+        return {key:_omit_local_prose(entry,schema.get('properties',{}).get(key,schema.get('additionalProperties',{})))
+                for key,entry in value.items()}
+    if isinstance(value,list):return [_omit_local_prose(entry,schema.get('items',{})) for entry in value]
+    return value
+
+
 def _url(value):
     if not isinstance(value, str) or re.search(r'[\x00-\x20\x7f\\]', value):
         return False
@@ -246,7 +274,13 @@ def project(document: dict, runs: dict, config: dict, *, source_fingerprint: str
         if key in value['document']:
             value['document'][key] = {k: v for k, v in value['document'][key].items() if k in subjects}
     value['reviews'] = {key: row for key, row in value['reviews'].items() if key in subjects}
-    validate(value, secret_values=secret_values)
+    # Known secrets still fail closed even when a path in the same field would
+    # otherwise cause its prose to be omitted.
+    secrets=tuple(secret_values)
+    if any(secret and secret in text for text in _strings(value) for secret in secrets):
+        raise ProjectionError('snapshot.configured_secret')
+    value=_omit_local_prose(value,SCHEMA)
+    validate(value, secret_values=secrets)
     return value
 
 

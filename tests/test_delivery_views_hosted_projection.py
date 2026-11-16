@@ -76,7 +76,37 @@ class ProjectionTests(unittest.TestCase):
             with self.assertRaises(public.ProjectionError): public.validate(bad)
         with self.assertRaises(public.ProjectionError): self.project(secret_values=['Work'])
         doc['state']['queue'][0]['title'] = 'Open /Users/operator/private/file'
-        with self.assertRaises(public.ProjectionError): public.project(doc, runs, config(), source_fingerprint='1' * 64)
+        safe=public.project(doc,runs,config(),source_fingerprint='1'*64)
+        self.assertEqual(safe['document']['state']['queue'][0]['title'],public.OMITTED_LOCAL_REFERENCE)
+        unsafe=copy.deepcopy(safe);unsafe['document']['state']['queue'][0]['title']='Open /Users/operator/private/file'
+        with self.assertRaisesRegex(public.ProjectionError,'snapshot.local_path'):public.validate(unsafe)
+
+    def test_workflow_prose_with_local_references_is_explicitly_omitted_before_shared_validation(self):
+        base=ROOT/'tests/fixtures/delivery-views/line-map/plan-review'
+        doc=json.loads((base/'document.json').read_text())
+        plan=render.plan_block(json.loads((base/'plan.json').read_text()))
+        doc['state']['finish']=[{'id':'suite','text':'Suite passes inside tests/suite-budget.json','met':False}]
+        prose=['Review at docs/plans/approved.md','Source /Users/operator/work/app','Archive /tmp/delivery/state',
+               'Read file:///private/run.json','Use C:\\work\\repo','Inspect ~/.config/tool']
+        doc['journal']=[{'id':i+1,'at':'2026-11-15T00:00:00Z','kind':'decision.recorded','lane':None,'subject':None,'summary':text}
+                        for i,text in enumerate(prose)]
+        finish={'id':'suite','label':'Local suite','text':'Checks under scripts/run-tests.py',
+                'at':'2026-11-15T00:00:00Z','covers':{'criteria':[],'proofs':[]}}
+        plan['plan']['finish']=[finish]
+        plan['plan']['approved']['snapshot']['finish']=[{**finish,'text':'Reviewed source skills/run-delivery/SKILL.md'}]
+        value=public.project(doc,{},config(),source_fingerprint='1'*64,plan=plan)
+        self.assertEqual(value['document']['state']['finish'][0]['text'],public.OMITTED_LOCAL_REFERENCE)
+        self.assertEqual([row['summary'] for row in value['document']['journal']],[public.OMITTED_LOCAL_REFERENCE]*len(prose))
+        self.assertEqual(value['plan']['plan']['finish'][0]['text'],public.OMITTED_LOCAL_REFERENCE)
+        self.assertEqual(value['plan']['plan']['approved']['snapshot']['finish'][0]['text'],public.OMITTED_LOCAL_REFERENCE)
+        self.assertEqual(value['document']['state']['finish'][0]['id'],'suite')
+        self.assertEqual(len(value['document']['journal']),len(prose))
+        Draft202012Validator(public.SCHEMA).validate(value);public.validate(value)
+        expected=json.loads((FIXTURES/'valid-omitted-workflow-prose.json').read_text())
+        self.assertEqual(value,expected)
+        doc['journal'][0]['summary']='KNOWN-CANARY in /tmp/run'
+        with self.assertRaisesRegex(public.ProjectionError,'snapshot.configured_secret'):
+            public.project(doc,{},config(),source_fingerprint='1'*64,plan=plan,secret_values=['KNOWN-CANARY'])
 
     def test_unsafe_links_are_not_published(self):
         doc, runs = source()

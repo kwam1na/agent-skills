@@ -10,9 +10,11 @@ import json
 import os
 import subprocess
 import signal
+import shutil
 import sys
 import tempfile
 import time
+import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -90,6 +92,26 @@ class TerminalTests(unittest.TestCase):
             result=hosted.terminal_step(self.publisher,lambda:self.payload(),self.archives)
         self.assertEqual(result['state'],'final-publication-pending');self.assertEqual(self.api.calls,[])
         self.assertIsNone(self.publisher.identity['receipt'])
+    def test_delayed_old_mirror_cannot_replace_acknowledged_archive(self):
+        self.request();paused=threading.Event();release=threading.Event();errors=[]
+        original=hosted.atomic
+        def atomic(path,value):
+            if path==self.archive/hosted.IDENTITY and threading.current_thread().name=='old-mirror':
+                paused.set()
+                if not release.wait(5):raise AssertionError('mirror release missing')
+            return original(path,value)
+        def run(fn):
+            try:fn()
+            except Exception as error:errors.append(error)
+        with mock.patch.object(hosted,'atomic',side_effect=atomic):
+            old=threading.Thread(name='old-mirror',target=run,args=(lambda:hosted.mirror_hosted(self.live,self.archive),));old.start()
+            self.assertTrue(paused.wait(3))
+            new=threading.Thread(target=run,args=(lambda:hosted.terminal_step(self.publisher,lambda:self.payload(),self.archives),));new.start()
+            deadline=time.monotonic()+3
+            while hosted.read_json(self.live/hosted.TERMINAL)['state']!='published' and time.monotonic()<deadline:time.sleep(.01)
+            release.set();old.join(5);new.join(5)
+        self.assertFalse(old.is_alive() or new.is_alive());self.assertEqual(errors,[])
+        self.assertEqual(hosted.archive_status(self.archive)['state'],'final-published')
 
 class LifecycleTests(unittest.TestCase):
     def setUp(self):
@@ -141,6 +163,42 @@ class LifecycleTests(unittest.TestCase):
             self.assertNotIn('RUN_DELIVERY_HOSTED_FD',os.environ)
             self.assertEqual(flow.HOSTED_TOKENS[('FIXTURE_PUBLISH_TOKEN',CFG['hosted']['origin'],'repo_A')],TOKEN)
         self.assertEqual(list(self.state.iterdir()),[])
+    def test_invalid_optional_config_preserves_core_copy_and_valid_hosted_identity(self):
+        publisher=hosted.Publisher(self.state,self.views['hosted'],'APP-1')
+        (self.state/'state.json').write_text(json.dumps(render.review_state.initial_state('Local remains usable')))
+        (self.state/'journal.jsonl').write_text('');(self.state/'.hosted-unreferenced').write_text('staged body')
+        self.views['hosted']['origin']='http://invalid.example.com'
+        latest=flow.copy_latest(self.c)/'state'
+        self.assertEqual(hosted.read_json(latest/hosted.IDENTITY)['publicId'],publisher.identity['publicId'])
+        self.assertFalse((latest/'.hosted-unreferenced').exists());self.assertTrue((latest/'state.json').exists())
+        self.assertEqual(flow.finalize_hosted(self.c,self.archive.parent,{'id':1},seconds=0)['state'],'final-publication-pending')
+        self.c.raw={'lanes':{},'stories':{}};self.c.stories={};self.c.effective_ownership=lambda _:{}
+        self.c.delivery_path=self.root/'APP-1.json'
+        with mock.patch.object(flow,'archive_plan_review',return_value=False):
+            archive,_=flow.archive_delivery(self.c)
+        self.assertTrue((archive/'state/state.json').exists());self.assertFalse((archive/'state/.hosted-unreferenced').exists())
+        self.assertEqual(hosted.read_json(archive/'state'/hosted.IDENTITY)['publicId'],publisher.identity['publicId'])
+    def test_remote_shelf_token_is_absent_from_real_bootstrap_git_and_later_generic_children(self):
+        root=self.root;real_git=shutil.which('git');wrapper=root/'bin';wrapper.mkdir();observed=root/'git-environment.jsonl'
+        def git(*args):subprocess.run([real_git,*args],cwd=root,capture_output=True,check=True)
+        git('init','-q','-b','main');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid')
+        (root/'.agents').mkdir()
+        (root/'.agents/orchestration.json').write_text(json.dumps({'schemaVersion':'orchestration-binding/1','base':{'remote':'origin','ref':'main'}}))
+        (root/'.agents/run-delivery.json').write_text(json.dumps({'schemaVersion':'delivery-flow/1','harness':'ignore'}))
+        remote=copy.deepcopy(CFG);remote['hosted']['tokenEnv']='SHELF_PUBLISH_TOKEN'
+        views=root/'.agents/delivery-views.json';views.write_text(json.dumps(remote))
+        git('add','.agents');git('commit','-qm','Shared shelf');git('clone','-q','--bare',str(root),str(root/'origin.git'))
+        git('remote','add','origin',str(root/'origin.git'));git('fetch','-q','origin');git('checkout','-qb','feature/lane')
+        views.write_text(json.dumps(CFG))
+        (wrapper/'git').write_text(f'#!{sys.executable}\nimport os,sys,json\nwith open({str(observed)!r},"a") as out:out.write(json.dumps([sys.argv[1:],"SHELF_PUBLISH_TOKEN" in os.environ])+"\\n")\nos.execv({real_git!r},[{real_git!r},*sys.argv[1:]])\n')
+        (wrapper/'git').chmod(0o755)
+        with mock.patch.dict(os.environ,{'PATH':str(wrapper)+os.pathsep+os.environ['PATH'],'SHELF_PUBLISH_TOKEN':TOKEN,'FIXTURE_PUBLISH_TOKEN':TOKEN}):
+            c=flow.Config(root,need_delivery=False,pick=False)
+            self.assertEqual(c.shelf.ref,'origin/main')
+            result=flow.run([sys.executable,'-c','import os;print("SHELF_PUBLISH_TOKEN" in os.environ)'],cwd=root)
+            self.assertEqual(result.stdout.strip(),'False')
+        rows=[json.loads(line) for line in observed.read_text().splitlines()]
+        self.assertTrue(any(argv[:1]==['fetch'] for argv,_ in rows));self.assertFalse(any(present for _,present in rows))
 
 class OwnedProcessTests(unittest.TestCase):
     run_quietly=True
@@ -213,11 +271,24 @@ class OwnedProcessTests(unittest.TestCase):
         self.wait_for(lambda:not hosted.locked(self.state/hosted.LOCK))
         self.assertEqual(hosted.read_json(self.archive/hosted.TERMINAL)['state'],'published')
         self.assertEqual(hosted.finished_entry(json.loads(next(body for op,_,body in reversed(self.observed) if op=='snapshots'))['document']),1)
+        before=hosted.read_json(self.state/hosted.IDENTITY)['publicId']
+        self.document['journal'].append({'id':2,'kind':'lane.assigned','at':'2026-11-15T00:01:00Z','subject':'APP-2','lane':'one','summary':'New work'})
+        self.document['state']['meta']['headline']='Reopened delivery';self.write_record(self.state)
+        self.command('start','--resume')
+        self.wait_for(lambda:any(body and b'Reopened delivery' in body for op,_,body in self.observed if op=='snapshots'))
+        self.assertEqual(hosted.read_json(self.state/hosted.IDENTITY)['publicId'],before)
+        self.assertFalse((self.state/hosted.TERMINAL).exists());self.assertEqual(hosted.archive_status(self.archive)['state'],'final-published')
     def test_expired_terminal_self_exit_and_separate_fixture_cleanup_proof(self):
         self.environment.pop('FIXTURE_PUBLISH_TOKEN');self.command('start')
         intent=self.finished();intent.update(requestedAt=1,retryUntil=600001);hosted.atomic(self.state/hosted.TERMINAL,intent)
         self.wait_for(lambda:not hosted.locked(self.state/hosted.LOCK))
         self.assertEqual(hosted.archive_status(self.archive)['state'],'final-publication-pending')
+        self.environment['FIXTURE_PUBLISH_TOKEN']=TOKEN
+        self.command('start','--resume')
+        renewed=hosted.read_json(self.state/hosted.TERMINAL)
+        self.assertGreater(renewed['retryUntil'],int(time.time()*1000))
+        self.wait_for(lambda:hosted.archive_status(self.archive)['state']=='final-published')
+        self.wait_for(lambda:not hosted.locked(self.state/hosted.LOCK))
         # Keep the source intact: this independent cleanup path must stop the
         # owner even though neither production disappearance guard fires.
         (self.state/hosted.TERMINAL).unlink();self.command('start')
@@ -283,5 +354,118 @@ class OwnedProcessTests(unittest.TestCase):
         after=hosted.read_json(self.archive/hosted.IDENTITY)
         self.assertEqual(identity['publicId'],after['publicId']);self.assertEqual(after['receipt']['digest'],hashlib.sha256(before).hexdigest())
         self.assertEqual(sum(op=='snapshots' for op,_,_ in self.observed[-4:]),1)
+
+class InstalledLifecycleTests(unittest.TestCase):
+    """Exercise actual commands against the existing installed delivery fixture."""
+    run_quietly=True
+    @classmethod
+    def setUpClass(cls):
+        from tests import test_run_delivery as delivery
+        cls.installed=delivery.installed_release()
+    def setUp(self):
+        from tests import test_run_delivery as delivery
+        from tests import test_run_delivery_supervisor as supervisor
+        publisher_fixtures.ReceiverTests.setUp(self)
+        self.delivery=delivery;self.supervisor=supervisor
+        self.fx=fx=delivery.Fixture(self.installed.generation,self.installed.receipt)
+        self.addCleanup(fx.close);self.addCleanup(delivery.stop_supervisors,fx.tmp)
+        self.path=supervisor.supervised(fx)
+        self.state=fx.tmp/'record';OWNED.add(self.state)
+        self.addCleanup(OWNED.discard,self.state);self.addCleanup(hosted.stop,self.state)
+        before={number:signal.getsignal(number) for number in (signal.SIGTERM,signal.SIGHUP)}
+        for number,prior in before.items():
+            def interrupted(signum,frame,prior=prior):
+                stop_owned()
+                if callable(prior):return prior(signum,frame)
+                raise KeyboardInterrupt()
+            signal.signal(number,interrupted)
+        self.addCleanup(lambda:[signal.signal(number,prior) for number,prior in before.items()])
+        self.shim=fx.tmp/'hosted-shim';self.shim.mkdir()
+        self.environment_log=fx.tmp/'child-environment.jsonl'
+        self.base_shim=(
+            'import http.client,os,sys,json\nReal=http.client.HTTPConnection\n'
+            f'def fixture(host,port=None,timeout=None,context=None):\n assert host=="deliveries.example.com"\n return Real("127.0.0.1",{self.server.server_port},timeout=timeout)\n'
+            'http.client.HTTPSConnection=fixture\n'
+            f'with open({str(self.environment_log)!r},"a") as out:out.write(json.dumps([sys.argv,"FIXTURE_PUBLISH_TOKEN" in os.environ,"RUN_DELIVERY_HOSTED_FD" in os.environ])+"\\n")\n')
+        (self.shim/'sitecustomize.py').write_text(self.base_shim)
+        fx.env.update(FIXTURE_PUBLISH_TOKEN=TOKEN,PYTHONPATH=str(self.shim))
+        (fx.main/'.agents/delivery-views.json').write_text(json.dumps(CFG))
+        self.commit('Enable hosted fixture')
+    def commit(self,message):
+        self.delivery.commit(self.fx.main,message)
+        self.delivery.sh('git','push','-q','origin','feature/FX-1',cwd=self.fx.main)
+    def command(self,*argv,supervised=False):
+        environment=self.supervisor.running(self.fx) if supervised else self.fx.env
+        code,out=self.fx.flow(*argv,cwd=self.fx.main,env=environment)
+        self.assertEqual(code,0,out)
+        return out
+    def wait_for(self,predicate,seconds=15):
+        return self.supervisor.wait_for(predicate,'installed hosted lifecycle',seconds)
+    def state_command(self,*argv):
+        self.delivery.sh(sys.executable,'-B',self.fx.release/'skills/orchestrate-work/scripts/delivery_state.py',
+                         '--dir',self.state,*argv,cwd=self.fx.main,env=self.fx.env)
+    def isolate_supervisor_start(self,command):
+        # Inject a parent-only start failure. The detached supervisor must still
+        # receive the private credential and start its own hosted observer.
+        (self.shim/'sitecustomize.py').write_text(self.base_shim+
+            'def isolate(frame,event,arg):\n'
+            f' if event=="call" and frame.f_code.co_name=={command!r} and "--resume" in sys.argv:\n'
+            '  frame.f_globals["start_hosted"]=lambda *a,**kw:{"state":"failed"}\n  sys.settrace(None)\n return isolate\nsys.settrace(isolate)\n')
+    def test_real_init_resume_supervisor_stop_and_manual_close(self):
+        out=self.command('lead-init','--no-supervisor')
+        self.assertIn('hosted:',out)
+        self.wait_for(lambda:hosted.locked(self.state/hosted.LOCK))
+        public_id=hosted.read_json(self.state/hosted.IDENTITY)['publicId']
+        self.wait_for(lambda:any(op=='snapshots' for op,_,_ in self.observed))
+        hosted.stop(self.state)
+        self.isolate_supervisor_start('lead_run')
+        self.command('lead-run','--resume',supervised=True)
+        self.wait_for(lambda:hosted.locked(self.state/hosted.LOCK))
+        self.wait_for(lambda:hosted.read_json(self.state/hosted.STATUS).get('state')=='current')
+        self.assertEqual(hosted.read_json(self.state/hosted.IDENTITY)['publicId'],public_id)
+        stop=self.state.parent/'flow-log/FX-1.supervisor.stop';stop.write_text(json.dumps({'why':'held'}))
+        lock=stop.with_name('FX-1.supervisor.lock')
+        self.wait_for(lambda:not flow.read_lock(lock)[0])
+        self.assertTrue(hosted.locked(self.state/hosted.LOCK))
+        self.state_command('journal','--kind','delivery.closed','--summary','Manual finished close')
+        (self.state/'.hosted-unreferenced').write_text('active atomic staging body')
+        self.command('lead-close')
+        closed=json.loads((self.state.parent/'flow-log/FX-1.closed.json').read_text())
+        archive=Path(closed['archive'])/self.state.name
+        self.assertEqual(hosted.archive_status(archive)['state'],'final-published')
+        self.assertEqual(hosted.read_json(archive/hosted.IDENTITY)['publicId'],public_id)
+        self.assertFalse((archive/'.hosted-unreferenced').exists())
+        rows=[json.loads(line) for line in self.environment_log.read_text().splitlines()]
+        detached=[(present,fd) for argv,present,fd in rows if 'lead-run' in argv and '--resume' not in argv]
+        self.assertIn((False,True),detached)
+        generic=[present for argv,present,_ in rows if any(word in argv for word in ('collect','--state-config'))]
+        self.assertTrue(generic);self.assertFalse(any(generic))
+        self.assertTrue(any(auth=='Bearer '+TOKEN for _,auth,_ in self.observed))
+    def test_real_automatic_close_freezes_finished_record_and_pending_normal_resume(self):
+        data=json.loads(self.path.read_text());data.update(stories={},lanes={},finish=[])
+        self.path.write_text(json.dumps(data));self.commit('An empty completed delivery')
+        # A real collector hangs across close. The finalizer must create its
+        # durable request and let local shutdown finish within its own budget.
+        marker=self.fx.tmp/'blocked-collector'
+        (self.shim/'sitecustomize.py').write_text(self.base_shim+
+            f'if "collect" in sys.argv:\n import time\n open({str(marker)!r},"w").write(str(os.getpid()))\n time.sleep(60)\n'+
+            'def budget(frame,event,arg):\n if event=="call" and frame.f_code.co_name=="finalize_hosted":\n  frame.f_globals["HOSTED_CLOSE_SECONDS"]=1\n  sys.settrace(None)\n return budget\nsys.settrace(budget)\n')
+        self.command('lead-init',supervised=True)
+        self.wait_for(lambda:(self.state/hosted.TERMINAL).exists())
+        intent=hosted.read_json(self.state/hosted.TERMINAL)
+        self.assertEqual(hosted.finished_entry(hosted.record_document(self.state)),intent['entry'])
+        self.assertTrue((self.fx.tmp/'archive/FX-1'/intent['source']/hosted.TERMINAL).exists())
+        self.supervisor.wait_for(lambda:not flow.read_lock(self.state.parent/'flow-log/FX-1.supervisor.lock')[0],
+                                 'bounded automatic close',15)
+        self.wait_for(marker.exists)
+        intent.update(requestedAt=1,retryUntil=600001,state='final-publication-pending')
+        hosted.atomic(self.state/hosted.TERMINAL,intent)
+        self.wait_for(lambda:not hosted.locked(self.state/hosted.LOCK))
+        self.assertIsNone(hosted.process_started(int(marker.read_text())))
+        (self.shim/'sitecustomize.py').write_text(self.base_shim)
+        self.command('lead-run','--resume',supervised=True)
+        self.wait_for(lambda:hosted.read_json(self.state/hosted.TERMINAL)['state']=='published')
+        archived=self.fx.tmp/'archive/FX-1'/intent['source']
+        self.assertEqual(hosted.archive_status(archived)['state'],'final-published')
 
 if __name__=='__main__':unittest.main()

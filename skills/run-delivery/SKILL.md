@@ -78,6 +78,11 @@ record, generation and recorded PID identity; a generation transition replaces
 the verified owner. Generic renderers and tracker children receive no publishing
 credential. The detached supervisor receives that credential through a private
 pipe, never a command argument or a stored sidecar.
+Before the binding shelf names its credential, discovery git runs with a
+restricted OS/session environment. This also protects a token name changed on
+the shelf. Public prose containing recognizable local references carries a
+visible omission marker; raw uploaded paths and configured secrets still fail
+strict validation.
 
 Explicit lead status output, `doctor` and `view` show the hosted URL and local
 publication status. These links grant public read access. Supervisor logs do not

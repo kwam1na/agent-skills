@@ -430,6 +430,13 @@ def request_terminal(directory,source,approved_root,entry,document):
 
 
 def mirror_hosted(source,destination):
+    # Capture after acquiring the destination lock: a delayed older caller
+    # must observe the latest acknowledged identity when it finally installs.
+    with lock(destination/'hosted-mirror.lock'):
+        return mirror_locked(source,destination)
+
+
+def mirror_locked(source,destination):
     """Copy only a coherent identity, referenced bodies and bounded status, never orphan inventory."""
     source,destination=Path(source),Path(destination)
     for _ in range(4):
@@ -458,7 +465,8 @@ def mirror_hosted(source,destination):
         status_raw=regular(source/STATUS)
         owner_raw=regular(source/OWNER)
         if owner_raw is not None and not owner_shape(json.loads(owner_raw)):raise PublishError('owner_identity_mismatch')
-        if regular(source/IDENTITY)!=identity_raw:continue
+        if (regular(source/IDENTITY)!=identity_raw or read_json(source/TERMINAL,optional=True)!=terminal
+            or regular(source/STATUS)!=status_raw):continue
         for name,data in bodies.items():atomic(destination/name,data)
         if identity_raw is not None:atomic(destination/IDENTITY,identity_raw)
         if status_raw is not None:atomic(destination/STATUS,status_raw)
@@ -567,7 +575,8 @@ def load_inputs(arguments):
     root=next((path for path in (here,*here.parents) if (path/'.git').exists()),None)
     if root is None:raise PublishError('source_path')
     approved=Path(arguments.archive_root).resolve() if getattr(arguments,'archive_root',None) else None
-    allowed=lambda path:path.is_relative_to(root) or approved is not None and path.is_relative_to(approved)
+    record_root=Path(arguments.record_root).resolve() if getattr(arguments,'record_root',None) else None
+    allowed=lambda path:any(parent is not None and path.is_relative_to(parent) for parent in (root,approved,record_root))
     def source(given):
         if not given:raise PublishError('configuration_or_source_invalid')
         path=root/given
@@ -586,7 +595,8 @@ def load_inputs(arguments):
 def collect(inputs,arguments=None):
     directory,root,config=inputs.state_directory,inputs.root,inputs.config
     approved=Path(arguments.archive_root).resolve() if arguments is not None and getattr(arguments,'archive_root',None) else None
-    if not directory.is_relative_to(root) and (approved is None or not directory.is_relative_to(approved)):raise PublishError('source_path')
+    record_root=Path(arguments.record_root).resolve() if arguments is not None and getattr(arguments,'record_root',None) else None
+    if not any(parent is not None and directory.is_relative_to(parent) for parent in (root,approved,record_root)):raise PublishError('source_path')
     capture_root=Path(os.path.commonpath((root,directory)))
     deadline=time.monotonic()+CAPTURE_SECONDS-5
     trace={}
@@ -632,9 +642,9 @@ def collect(inputs,arguments=None):
             for given in (arguments.config,arguments.binding):
                 path=root/given
                 resolved=path.resolve()
-                if path.is_symlink() or not (resolved.is_relative_to(root) or approved is not None and resolved.is_relative_to(approved)):
+                if path.is_symlink() or not any(parent is not None and resolved.is_relative_to(parent) for parent in (root,approved,record_root)):
                     raise PublishError('source_path')
-                names.append(str(path.relative_to(capture_root)))
+                names.append(str(resolved.relative_to(capture_root)))
         return names
     value=public.capture(capture_root,inventory,cut)
     value['sourceFingerprint']=hashlib.sha256(public.encode([value['sourceFingerprint'],
@@ -647,6 +657,7 @@ def child_collect(arguments,inputs,source=None):
     argv=[sys.executable,'-B',str(Path(__file__).resolve()),'collect','--config',arguments.config,
           '--binding',arguments.binding,'--state-dir',str(source or inputs.state_directory),'--key',arguments.key]
     if getattr(arguments,'archive_root',None):argv.extend(['--archive-root',arguments.archive_root])
+    if getattr(arguments,'record_root',None):argv.extend(['--record-root',arguments.record_root])
     scrub=set(inputs.config['scrubEnv'])|{inputs.config['hosted']['tokenEnv']}
     try:return views.run_json(argv,timeout=CAPTURE_SECONDS,scrub=list(scrub),cwd=inputs.root,limit=public.MAX_BYTES,process_registry=CHILDREN,cancelled=CANCELLED)
     except views.RunUnavailable:raise PublishError('source_unavailable',transient=True) from None
@@ -659,6 +670,7 @@ def child_transport(arguments,inputs):
         command=[sys.executable,'-B',str(Path(__file__).resolve()),'request','--config',arguments.config,
                  '--binding',arguments.binding,'--state-dir',str(inputs.state_directory),'--key',arguments.key]
         if getattr(arguments,'archive_root',None):command.extend(['--archive-root',arguments.archive_root])
+        if getattr(arguments,'record_root',None):command.extend(['--record-root',arguments.record_root])
         environment={k:v for k,v in os.environ.items() if k not in inputs.config['scrubEnv'] or k==inputs.config['hosted']['tokenEnv']}
         envelope={'method':method,'operation':operation,'body':base64.b64encode(body).decode() if body is not None else None,'headers':headers}
         process=subprocess.Popen(command,cwd=inputs.root,env=environment,stdin=subprocess.PIPE,stdout=subprocess.PIPE,
@@ -874,6 +886,8 @@ def start(arguments,inputs):
         owner=read_json(directory/OWNER,optional=True)
         approved=Path(arguments.archive_root).resolve() if getattr(arguments,'archive_root',None) else directory
         intent=read_terminal(directory,approved)
+        if intent and directory!=approved and finished_entry(record_document(directory))!=intent['entry']:
+            (directory/TERMINAL).unlink();intent=None
         if intent and intent['state']=='published':return status(directory,inputs.config['hosted'],arguments.key)
         if intent and arguments.resume:
             at=int(time.time()*1000)
@@ -894,6 +908,7 @@ def start(arguments,inputs):
                  '--state-dir',str(directory),'--key',arguments.key,'--generation',str(generation(arguments))]
         if arguments.resume:command.append('--resume')
         if getattr(arguments,'archive_root',None):command.extend(['--archive-root',arguments.archive_root])
+        if getattr(arguments,'record_root',None):command.extend(['--record-root',arguments.record_root])
         environment={k:v for k,v in os.environ.items() if k not in inputs.config['scrubEnv'] or k==inputs.config['hosted']['tokenEnv']}
         child=subprocess.Popen(command,cwd=inputs.root,env=environment,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL,start_new_session=True)
@@ -916,6 +931,7 @@ def main(argv=None):
     parser.add_argument('--key',required=True)
     parser.add_argument('--generation')
     parser.add_argument('--archive-root')
+    parser.add_argument('--record-root')
     parser.add_argument('--resume',action='store_true')
     arguments=parser.parse_args(argv)
     try:

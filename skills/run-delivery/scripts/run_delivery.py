@@ -151,6 +151,13 @@ def _terminate(signum, _frame):
 HOSTED_CLOSE_SECONDS = 30
 HOSTED_TOKENS: dict[tuple[str, str, str], str] = {}
 HOSTED_MODULES = {}
+HOSTED_BOOTSTRAPPING = True
+# Before the binding shelf has named its credential, discovery git receives
+# only its OS/session baseline. Arbitrary caller variables cannot cross that
+# boundary, including a tokenEnv introduced by a newer remote shelf.
+HOSTED_BOOTSTRAP_ENV = frozenset(('PATH HOME TMPDIR TMP TEMP LANG LC_ALL LC_CTYPE TZ USER LOGNAME '
+                                'SYSTEMROOT WINDIR SSH_AUTH_SOCK SSH_AGENT_PID GIT_CONFIG_GLOBAL '
+                                'GIT_CONFIG_SYSTEM GIT_CONFIG_NOSYSTEM GIT_TERMINAL_PROMPT').split())
 
 
 def remember_hosted(raw):
@@ -215,7 +222,7 @@ def hosted_call(c,operation,*,resume=False,timeout=5):
     if token is not None:environment[member['tokenEnv']]=token
     command=[sys.executable,'-B',str(c.release/'skills/delivery-views/scripts/hosted.py'),operation,
              '--config',str(config),'--binding',str(binding),'--state-dir',str(c.state),'--key',c.delivery,
-             '--generation',str(c.release),'--archive-root',str(archive_root(c))]
+             '--generation',str(c.release),'--archive-root',str(archive_root(c)),'--record-root',str(c.state)]
     if resume:command.append('--resume')
     done=run(command,cwd=c.root,check=False,timeout=timeout,env=environment,_publishing=True)
     try:answer=json.loads(done.stdout)
@@ -256,9 +263,12 @@ def hosted_line(c,*,archive=None):
 
 
 def copy_hosted(c,target):
-    if hosted_settings(c) is None:return
-    module=hosted_module(c.release)
-    module.mirror_hosted(c.state,target)
+    if not any((c.state/name).exists() for name in ('hosted-identity.json','hosted-terminal.json')):return
+    try:hosted_module(c.release).mirror_hosted(c.state,target)
+    except (OSError,ValueError,RuntimeError,ImportError,Stop):
+        # Core archives remain usable; corrupt optional sidecars never become
+        # trusted recovery material. Doctor/status reports the source failure.
+        return
 
 
 def owned_hosted_processes(c):
@@ -307,11 +317,11 @@ def hosted_retry(args):
 
 
 def finalize_hosted(c,archive,closed,*,seconds=HOSTED_CLOSE_SECONDS):
-    settings=hosted_settings(c)
-    if settings is None:return {'state':'disabled'}
-    module=hosted_module(c.release);record=Path(archive)/c.state.name
     began=time.monotonic();deadline=began+min(HOSTED_CLOSE_SECONDS,max(0,seconds))
     try:
+        settings=hosted_settings(c)
+        if settings is None:return {'state':'disabled'}
+        module=hosted_module(c.release);record=Path(archive)/c.state.name
         document=module.record_document(record)
         module.request_terminal(c.state,record,archive_root(c),closed['id'],document)
         if time.monotonic()<deadline:start_hosted(c,timeout=min(5,deadline-time.monotonic()))
@@ -321,7 +331,7 @@ def finalize_hosted(c,archive,closed,*,seconds=HOSTED_CLOSE_SECONDS):
             if info.get('code') in ('credential_invalid','writer_fenced','unauthorized'):break
             time.sleep(min(.1,max(0,deadline-time.monotonic())))
         return {'state':'final-publication-pending'}
-    except (OSError,ValueError,RuntimeError):return {'state':'final-publication-pending'}
+    except (OSError,ValueError,RuntimeError,ImportError,Stop):return {'state':'final-publication-pending'}
 
 
 def hosted_credentials_pipe(c):
@@ -368,6 +378,8 @@ def run(argv: list[str], cwd: Path | None = None, check: bool = True, **kw) -> s
     if not publishing:
         environment=dict(kw.pop('env',os.environ))
         for name,_,_ in HOSTED_TOKENS:environment.pop(name,None)
+        if HOSTED_BOOTSTRAPPING and argv and str(argv[0])=='git':
+            environment={name:value for name,value in environment.items() if name in HOSTED_BOOTSTRAP_ENV}
         kw['env']=environment
     done = subprocess.run(argv, cwd=cwd, text=True, capture_output=True, **kw)
     if check and done.returncode != 0:
@@ -729,6 +741,8 @@ class Config:
 
     def __init__(self, root: Path, delivery: str | None = None, need_delivery: bool = True, tolerant: bool = False,
                  pick: bool = True):
+        global HOSTED_BOOTSTRAPPING
+        HOSTED_BOOTSTRAPPING=True
         # Its main checkout and, below, its branch are the root's own, never the working directory's: a configuration
         # built for one repository from inside another resolves that repository's deliveries, and no other's.
         self.root, self.main = root, main_checkout(root)
@@ -753,6 +767,7 @@ class Config:
         b = self.shelf.json(".agents/orchestration.json") or {}
         views = self.shelf.json(".agents/delivery-views.json") or {}
         remember_hosted(views)
+        HOSTED_BOOTSTRAPPING=False
         self.release = root / os.path.expanduser(f["release"]) if f.get("release") else GENERATION
         self.release_override = f.get("release")
         if f.get("harness") == "ignore":
@@ -8948,7 +8963,7 @@ def copy_latest(c) -> Path:
     with open(c.state / "state.lock", "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
-            shutil.copytree(c.state, staging / c.state.name, ignore=shutil.ignore_patterns("*.lock","hosted-*"))
+            shutil.copytree(c.state, staging / c.state.name, ignore=shutil.ignore_patterns("*.lock","hosted-*",".hosted-*"))
             if c.flow_log.exists():
                 shutil.copytree(c.flow_log, staging / "flow-log", ignore=shutil.ignore_patterns("*.lock"))
         finally:
@@ -10279,7 +10294,7 @@ def archive_delivery(c) -> tuple[Path, list[str]]:
     for source in (c.state, c.flow_log, c.flow_log.parent / "evidence"):
         if source.exists():
             shutil.copytree(source, archive / source.name,
-                            ignore=shutil.ignore_patterns('hosted-*') if source==c.state else None)
+                            ignore=shutil.ignore_patterns('hosted-*','.hosted-*') if source==c.state else None)
     copy_hosted(c,archive/c.state.name)
     state = load_json(archive / c.state.name / "state.json") or {}
     archived = copy.deepcopy(c.raw)
