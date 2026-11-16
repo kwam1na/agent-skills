@@ -992,6 +992,8 @@ test("each unit's status says where it stands, puts what is open first, and its 
   expect(order(app, "B")).toEqual(["Its approval is for an earlier commit.", "Done: handed off, merged"]);
   expect(standing(app, "C")).toBe("2 proofs left");
   expect(order(app, "C")).toEqual(["It's waiting for the lead to accept it.", "It still has to merge.", "Done: review"]);
+  // Only the unit a stale or stopped proof holds up is marked stuck: not a proven one, nor one whose open proofs can move.
+  expect(["A", "B", "C"].map((subject) => cell(app, subject).classList.contains("stuck"))).toEqual([false, true, false]);
   expect(cell(app, "C").querySelector(".pu-key").textContent).toBe("C");
   expect(cell(app, "A").querySelector(".pu-key")).toBeNull();
   expect(app.querySelector("#plan .plan-grid-head").textContent).toBe("UnitCriteriaStatus");
