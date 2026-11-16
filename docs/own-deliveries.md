@@ -239,7 +239,7 @@ base/remote, gates, prepare, merge strategy and posture. It changes no installed
 file. Inspect and stage the resulting binding diff explicitly.
 
 ```bash
-python3 - <<'PY'
+PYTHONOPTIMIZE=0 python3 - <<'PY'
 import copy, json, subprocess
 from pathlib import Path
 binding = Path(".agents/orchestration.json")
@@ -252,13 +252,23 @@ reader = {"paths": ["hosted/delivery-viewer/**", "skills/delivery-views/assets/*
 assert reader in source["selection"]["readers"], "reviewed service reader differs"
 merged = copy.deepcopy(target)
 rows = merged["selection"]["catalogue"]
+target_ids = [row["id"] for row in rows]
+python_ids = [key for key in target_ids if key.startswith("tests.")]
+assert python_ids == sorted(python_ids), "target Python checks are not in canonical order"
+assert [key for key in target_ids if key in service] == [key for key in service if key in target_ids], "target service checks are not in reviewed order"
 for key in allowed:
     candidates = [row for row in source["selection"]["catalogue"] if row["id"] == key]
     assert len(candidates) == 1, f"missing or duplicate reviewed check: {key}"
     existing = [row for row in rows if row["id"] == key]
     assert not existing or existing == candidates, f"different same-ID target check: {key}"
     if not existing:
-        rows.append(candidates[0])
+        if key.startswith("tests."):
+            at = next((i for i, row in enumerate(rows) if row["id"].startswith("tests.") and row["id"] > key), None)
+            if at is None:
+                at = next((i for i, row in enumerate(rows) if row["id"] in service), len(rows))
+        else:
+            at = next((i for i, row in enumerate(rows) if row["id"] in service and service.index(row["id"]) > service.index(key)), len(rows))
+        rows.insert(at, candidates[0])
 readers = merged["selection"]["readers"]
 assert not any(row["paths"] == reader["paths"] and row != reader for row in readers), "different target service reader"
 if reader not in readers:
@@ -270,6 +280,7 @@ restored["selection"]["readers"] = target["selection"]["readers"]
 assert restored == target
 assert all(row in rows for row in target["selection"]["catalogue"])
 assert all(row in readers for row in target["selection"]["readers"])
+assert [row for row in rows if row["id"] in target_ids] == target["selection"]["catalogue"]
 binding.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
 PY
 git diff origin/main -- .agents/orchestration.json

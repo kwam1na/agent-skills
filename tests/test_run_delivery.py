@@ -5887,7 +5887,7 @@ def troubleshooting_section() -> str:
 DOCTOR_LABELS = ["host and tools", "orchestration binding", "merge queue candidate step", "configuration", "release generation",
                  "host hooks", "release on the delivery base", "gates", "lane checkouts ignored", "tracker issue URL",
                  "pipeline PR review", "gh", "forge find", "forge write access", "tracker snapshot token",
-                 "snapshots and publishers", "in-app adapters", "in-app adapter contract", "video evidence tools",
+                 "snapshots and publishers", "hosted delivery", "in-app adapters", "in-app adapter contract", "video evidence tools",
                  "Node", "harness configuration", "delivery file", "plan chapter", "added stories' reasons",
                  "plan sections", "story files", "story readiness", "context sections", "finish lines",
                  "configuration on the remote base", "pull requests marked ready", "delivery supervisor", "deliveries on this base", "merge slot",
@@ -7968,11 +7968,12 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         lines = doctor_lines(out)
         self.assertEqual(list(lines), DOCTOR_LABELS, out)
         expected_skips = {"pipeline PR review", "gh", "forge write access", "plan chapter", "added stories' reasons",
-                          "pull requests marked ready", "delivery supervisor"}
+                          "pull requests marked ready", "delivery supervisor", "hosted delivery"}
         expected_skips |= set() if self.ffmpeg else {"video evidence tools"}
         expected_skips |= set() if self.node22 else {"harness configuration"}
         self.assertEqual({label for label, (status, _) in lines.items() if status == "skipped"}, expected_skips, out)
         self.assertEqual(failing(out), {}, out)
+        self.assertEqual(lines["hosted delivery"], ("skipped", "(hosted publishing is disabled)"), out)
         self.assertIn("not verified", lines["forge write access"][1])
         self.assertEqual(len(out.splitlines()), len(DOCTOR_LABELS), "doctor prints one line per check")
         # The fixture's one finish line declares no `covers`: a warning that it covers every criterion, not a failure.
@@ -10360,7 +10361,7 @@ class LaneStartAndReadinessTests(unittest.TestCase):
 # set in the test runner's own environment would point the fixtures' commands somewhere other than the fixture.
 TOOL_SETTINGS = ("DELIVERY_STATE", "RUN_DELIVERY_BASE", "RUN_DELIVERY_SUPERVISOR", "RUN_DELIVERY_LIVE_PORT",
                  "RUN_DELIVERY_CONFIG", "DELIVERY_FLOW_CONFIG", "RUN_DELIVERY_DELIVERY", "DELIVERY_FLOW_DELIVERY", "RUN_DELIVERY_LOCAL",
-                 "DELIVERY_FLOW_LOCAL", "RUN_DELIVERY_CLOCK")
+                 "DELIVERY_FLOW_LOCAL", "RUN_DELIVERY_CLOCK", "RUN_DELIVERY_HOSTED_FD")
 PLANTED_KEY = "PLANTED-9"
 PLANTED_MARKER = "planted-live-delivery-7f3c"
 
@@ -10461,7 +10462,8 @@ class LiveDeliveryOutOfReachTests(unittest.TestCase):
                     "DELIVERY_FLOW_CONFIG": str(main / ".agents/run-delivery.json"),
                     "RUN_DELIVERY_DELIVERY": PLANTED_KEY, "DELIVERY_FLOW_DELIVERY": PLANTED_KEY,
                     "RUN_DELIVERY_LOCAL": "1", "DELIVERY_FLOW_LOCAL": "1", "RUN_DELIVERY_SUPERVISOR": "on",
-                    "RUN_DELIVERY_LIVE_PORT": "0", "RUN_DELIVERY_CLOCK": str(live / "clock.json")}
+                    "RUN_DELIVERY_LIVE_PORT": "0", "RUN_DELIVERY_CLOCK": str(live / "clock.json"),
+                    "RUN_DELIVERY_HOSTED_FD": PLANTED_MARKER}
         (live / "clock.json").write_text(json.dumps({"now": 0, "poll": 0}))  # a clock no case's wait may read
         self.assertEqual(set(settings), set(TOOL_SETTINGS))
         return main, worktree, settings
