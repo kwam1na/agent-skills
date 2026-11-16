@@ -1,0 +1,116 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "writtenBy": "run-delivery plan-review",
+  "plan": "docs/plans/2026-11-16-knowledge-library-read-side.md",
+  "planSha256": "043ad6493a4b2a9e75593c39834bd2bc87bdeb554de7e932333cbdc42dd3712a",
+  "planCommit": "7d2f84cf7ccba5a6c4193f50ea94f675645bc537",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": [
+    "lens.outcome-correctness",
+    "lens.adversarial-testing"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "candidate": "1bfc909d7ea5c4a427d8a5b304ea8a934973846a",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-16T15:32:11.191491Z",
+      "finishedAt": "2026-11-16T15:34:39.783722Z",
+      "open": [
+        "outcome-correctness-r1-1",
+        "outcome-correctness-r1-2",
+        "outcome-correctness-r1-3",
+        "outcome-correctness-r1-4",
+        "adversarial-testing-r1-1",
+        "adversarial-testing-r1-2",
+        "adversarial-testing-r1-3",
+        "adversarial-testing-r1-4",
+        "adversarial-testing-r1-5"
+      ]
+    },
+    {
+      "round": 2,
+      "candidate": "3bef31bec0cb1126ae4c630b5bb2e5c88c3d1f53",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-16T15:35:59.576064Z",
+      "finishedAt": "2026-11-16T15:37:20.406390Z",
+      "open": [
+        "adversarial-testing-r2-1"
+      ]
+    },
+    {
+      "round": 3,
+      "candidate": "7d2f84cf7ccba5a6c4193f50ea94f675645bc537",
+      "outcome": "aligned",
+      "startedAt": "2026-11-16T15:38:04.434713Z",
+      "finishedAt": "2026-11-16T15:39:01.677804Z",
+      "open": []
+    }
+  ],
+  "reviews": [
+    {
+      "lens": "lens.outcome-correctness",
+      "round": 3,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.outcome-correctness",
+        "subjectRef": "knowledge-library-read-side.plan",
+        "candidateRef": "7d2f84cf7ccba5a6c4193f50ea94f675645bc537",
+        "round": 3,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [],
+        "evidence": [
+          "Reviewed tree SHA 9dcdd9eb9d50734f0a64dad343305b9b7d6baeb1. The start identity check passed: `git rev-parse HEAD^{tree}` matched and `git status --porcelain` was empty. The end identity check passed with the same tree and an empty status. No probes or mutants were made.",
+          "Carried findings: none are open. outcome-correctness-r1-1 to r1-4 closed as fixed in round 2, and round 2 raised none. The round-3 delta does not touch their fixes: the adapter's catalog `profiles: [\"jira\", \"linear\", \"run-delivery\"]`, the hive, hive-mined and qmd provider-boundary additions with red-proven test copies, the lane exception in the diagnose-work and compound-learning edits with its pins, and the budget-gated finish line all stand.",
+          "Delta derived with `git diff 3bef31bec0cb1126ae4c630b5bb2e5c88c3d1f53..7d2f84cf7ccba5a6c4193f50ea94f675645bc537`. It touches only docs/plans/2026-11-16-knowledge-library-read-side.md: Decision 3's wording, the doctor in-scope bullet, and the Core boundary, Transport boundary, Properties and Doctor scenarios.",
+          "Round-2 deferrable note on the doctor status vocabulary is resolved. A missing properties document is now an `ok` row saying the library is not consulted, 'never doctor's failing `missing` status', and doctor exits 0. That is consistent with Doctor.run in skills/run-delivery/scripts/run_delivery.py, where only `missing` and `wrong` set failed. A malformed document stays a failing row with exit 1. Nothing gates a workflow on doctor, since Doctor( is constructed only in the doctor command, so Decision 4 holds.",
+          "I reviewed the delta and found no new P0 or P1 issue. The new absence pins on `item_id`, `projects.txt`, `tags.txt` and `how-to` start green: a case-insensitive grep over skills/deliver-work/references/capability-contract.md and the deliver-work, plan-work, diagnose-work and compound-learning SKILL.md files found no match at this tree. They are paired with positive pins on itemRef, kind and scope, and one pin is proven red by planting `item_id` with its digest refreshed, which AGENTS.md requires. The Transport boundary scenario now has one subtest per other server tool (draft, push, sessions, plugins).",
+          "Model class: Claude Opus-class model (claude-opus-5-5), run as a native subagent. Realization basis: host-convention. Host limitation: no progress or permission signals were exposed to this lens, and no run-event command is declared (Run ID none).",
+          "Scoped checks: none, since a plan review runs no sensors. Additional evidence was the grep above and a re-read of Doctor.run and its row statuses in skills/run-delivery/scripts/run_delivery.py.",
+          "Approval conditions: no findings are raised this round, so none are pending."
+        ]
+      },
+      "resultSha256": "bc4a069eaf637168b8c5cfe0202e5cf35aaac726abe91a287070ff62b9d170a3"
+    },
+    {
+      "lens": "lens.adversarial-testing",
+      "round": 3,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.adversarial-testing",
+        "subjectRef": "knowledge-library-read-side.plan",
+        "candidateRef": "7d2f84cf7ccba5a6c4193f50ea94f675645bc537",
+        "round": 3,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [
+          {
+            "id": "adversarial-testing-r2-1",
+            "state": "fixed",
+            "resolution": "Fixed through alternative (a), as written. Decision 3 now rests on two guards: the provider-boundary rule for the provider's names, and absence pins for its field, type and list names. The Core boundary row adds those absence pins for `item_id`, `projects.txt`, `tags.txt` and `how-to` in capability-contract.md and in the deliver-work, plan-work, diagnose-work and compound-learning SKILL.md files. It pairs them with positive pins on `itemRef`, `kind` and `scope` in capability-contract.md, and proves one absence pin red by planting `item_id` with the digest refreshed. A grep at this tree confirms none of the five files holds any of the four literals, so the absence pins start green and can fail. The mutation from round 2 (planting `item_id`, the type enumeration with `how-to`, or `projects.txt` in capability-contract.md) now fails the suite."
+          }
+        ],
+        "evidence": [
+          "Reviewed tree 9dcdd9eb9d50734f0a64dad343305b9b7d6baeb1 at HEAD 7d2f84cf7ccba5a6c4193f50ea94f675645bc537. The start identity check passed (HEAD^{tree} matched, git status --porcelain empty), and so did the end check (same tree, status empty). Candidate reference resolutions matched by exact text: 3bef31bec0cb1126ae4c630b5bb2e5c88c3d1f53 and 7d2f84cf7ccba5a6c4193f50ea94f675645bc537 each resolve to the git commit of the same text.",
+          "Delta derived as git diff 3bef31bec0cb1126ae4c630b5bb2e5c88c3d1f53..7d2f84cf7ccba5a6c4193f50ea94f675645bc537. It touches only docs/plans/2026-11-16-knowledge-library-read-side.md: decision 3's enforcement sentence, doctor's handling of an absent properties document, the Core boundary absence pins, transport hostile strings for each other server tool, and the Doctor and Properties rows.",
+          "Re-check of carried findings: r1-1 through r1-5 were fixed in round 2 and are unchanged by this delta. r2-1 is fixed as recorded in resolvedFindings.",
+          "Delta review, transport boundary: the transport row now needs a hostile subtest that produces a finding for a call to each of `draft`, `push`, `sessions` and `plugins`. That closes the round-2 P2 note, where a single-marker category would let a call to another tool through. The adapter's own files must still scan clean, so the allow side holds.",
+          "Delta review, doctor: an absent properties document is now an `ok` row saying the library is not consulted, and the row asserts it is never doctor's failing `missing` status. This matches run_delivery.py, where a `missing` status sets failed (line 11446). So a mutation reusing that status for an absent document fails the row. Malformed subtests still each name the field and exit 1, and both valid documents report valid.",
+          "Delta review: no new surviving mutation found in the changed lines. The type-enumeration absence pin relies on `how-to` alone, because `rule` and `decision` are ordinary words in those files. Planting the full enumeration still trips the `how-to` pin, so I filed nothing on that.",
+          "Model class: Opus-class model (claude-opus-5-5), run as a native subagent. Realization basis: host-convention. The host exposes no progress or permission signals; recorded as a limitation.",
+          "Scoped checks: the brief names no sensor commands and no test files, and none were run. No mutants were planted in the checkout. Mutations were reasoned only against the plan's changed lines and the mechanisms they rely on: the run_delivery.py doctor status handling, and grep of the five pinned core files.",
+          "P3 note, carried: the Optional path row pins 'report that the library was not consulted' only in deliver-work. Unchanged and marginal.",
+          "No late findings.",
+          "Approval conditions: this round raises no findings. r2-1's approval condition (alternative (a), with paired positive pins and one absence pin proven red with its digest refreshed) is met as written."
+        ]
+      },
+      "resultSha256": "70034e31e45297a70193de5bbb99d2c9fd75a67b940fd44e5db08e73a4099fce"
+    }
+  ],
+  "residualRisks": [
+    "3 review rounds; findings open after each round: 9, 1, 0."
+  ]
+}
