@@ -151,7 +151,9 @@ class DeliveryStateFixture(unittest.TestCase):
         state_tool(self.state_dir, "patch", "--writer", "lead", "--version", str(version), "--patch", json.dumps(changes))
         state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", HOSTILE, "--lane", "lane-1")
         # What a renderer reads: the state tool's show, without its publication status.
-        self.document = {key: value for key, value in state_tool(self.state_dir, "show").items() if key != "publication"}
+        # What every renderer and publisher receives: the record shown, with the story the narrator tells of it.
+        self.document = render_state.with_story({key: value for key, value in state_tool(self.state_dir, "show").items() if key != "publication"},
+                                                self.state_dir)
 
     def config(self, renderers: list[dict] | None = None, publishers: list[dict] | None = None) -> str:
         return json.dumps({"directory": "state", "renderers": renderers or [], "publishers": publishers or []})
@@ -612,12 +614,12 @@ EMPTY_STATE = {
     "extensions": {},
 }
 PINNED_EMPTY_VIEWS = {
-    "delivery.md": "bf22eae1f7b5115650ba06265e138d9b9ed720f44158d1fc761ba4df356507c9",
-    "delivery.html": "a1b2b2add853334633832b0678e9f5ca8cb86ece80cbffc0c5d208c4b326a7e5",
+    "delivery.md": "b5eacc9b0d03fc036d219eca434188b86136421f6187692534f5d67f68cdc855",
+    "delivery.html": "356b5ee0f8e60157eec4ad3c1a4562537281e36ec24633655ed83293db46c055",
 }
 PINNED_VIEWS = {
-    "delivery.md": "412c01eecfbdcfba6f1f5f650a0368c29c40e3e7cf3b0ef44d0687e68115d79c",
-    "delivery.html": "a64e2f95193dd212e493a67e0d291bf2994ce4d35baa6078ee107b68a77203a1",
+    "delivery.md": "b5f72d94d7e66bcfea7be7b17c87123b8ffe405e43997a88f437d7cbe7b68abd",
+    "delivery.html": "2f6f961af8b25150713034b33bafeaac99ca0a4a0c8a8fb3db73cebedb37683e",
 }
 
 
@@ -1191,7 +1193,7 @@ class LiveTests(DeliveryStateFixture):
         seen = client.wait_for(lambda doc: doc["journal"] and doc["journal"][-1]["summary"] == "Reached the page")
         self.assertIsNotNone(seen)
         self.assertLess(time.monotonic() - written, 3.0)
-        self.assertEqual(set(seen), {"state", "journal", "stats", "estimates", "status", "focus"})
+        self.assertEqual(set(seen), {"state", "journal", "stats", "estimates", "status", "focus", "story"})
         status, page = client.get("")
         self.assertEqual(status, 200)
         self.assertIn(b"EventSource(\"/events\")", page)
@@ -1634,8 +1636,9 @@ class LiveTests(DeliveryStateFixture):
         second = self.client(url)
         second.listen()
         seen = second.wait_for(lambda doc: True, seconds=2)
-        shown = {key: value for key, value in state_tool(self.state_dir, "show").items() if key != "publication"}
-        self.assertEqual(seen, shown, "a page that comes back gets the whole current record")
+        shown = render_state.with_story({key: value for key, value in state_tool(self.state_dir, "show").items() if key != "publication"},
+                                        self.state_dir)
+        self.assertEqual(seen, shown, "a page that comes back gets the whole current record, and its story")
 
     def test_a_non_loopback_bind_answers_only_its_own_name(self) -> None:
         probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -1905,7 +1908,8 @@ class WrapperTests(DeliveryStateFixture):
         self.assertEqual(code, 0, result)
         received = json.loads((self.state_dir / "echo.json").read_bytes().decode("utf-8"))
         self.assertEqual(received, self.document)
-        self.assertEqual(set(received), {"state", "journal", "stats", "estimates", "status", "focus"})
+        self.assertEqual(set(received), {"state", "journal", "stats", "estimates", "status", "focus", "story"})
+        self.assertEqual(received["story"]["schemaVersion"], "story/1")
 
     def test_extensions_reach_renderers_unchanged(self) -> None:
         wrapper(self.state_dir, "--state-config", self.config([self.capture_renderer("echo")]))
@@ -2117,9 +2121,10 @@ class MarkdownRendererTests(DeliveryStateFixture):
             ["- 0\\. change-0", "- 3\\. change-3", "- 7\\. change-7", "  - unit", "- 12\\. change-12",
              "- 1234567890\\. change-1234567890"],
         )
-        rows = lines[lines.index("## Journal") + 2 :]
-        # Newest first, each with the id the journal holds.
-        self.assertEqual([row.split(" ")[1] for row in rows], ["10\\.", "2\\.", "1\\."])
+        # The story's beats, one row each, under the one chapter this record holds.
+        rows = [line for line in lines[lines.index("## Story") + 1 :] if line.startswith("- ")]
+        self.assertEqual([row.split(":")[0] for row in rows], ["- 2026-10-20T10"] * 3)
+        self.assertEqual(len([row for row in rows if " Review round: Round 1 " in row]), 3)
 
     def test_state_text_renders_inert(self) -> None:
         view = self.render()
@@ -2146,13 +2151,15 @@ class MarkdownRendererTests(DeliveryStateFixture):
     def test_it_shows_the_delivery(self) -> None:
         view = self.render()
         self.assertTrue(view.startswith("# "))
-        for heading in ("## Checking", "## Queue", "## Lanes", "## Finish line", "## Follow-ups", "## Leases", "## Journal"):
+        for heading in ("## Checking", "## Queue", "## Lanes", "## Finish line", "## Follow-ups", "## Leases", "## Story"):
             self.assertIn(heading, view)
         self.assertIn("change-1", view)
         # Non-ASCII state text arrives exactly, whatever the console encoding.
         self.assertIn("caf\u00e9 \u2713", view)
         self.assertIn("queued", view)
-        self.assertIn("decision.recorded", view)
+        # The journal's entry reads as the story tells it: its kind's label, never the kind's id.
+        self.assertIn("Z Decision: \\</script\\>", view)
+        self.assertNotIn("decision.recorded", view)
 
     def test_only_meaningful_punctuation_is_escaped(self) -> None:
         text = render_state._markdown_text
@@ -2775,6 +2782,59 @@ class PeerSectionTests(unittest.TestCase):
         self.assertNotIn("<b>FX-93", markup)
         page = render_state.render_static_page({"state": {}, "journal": []}, live=True, banner=markup)
         self.assertIn('<section id="peers">', page)
+
+
+class StoryViewTests(unittest.TestCase):
+    """The built-in views print the story the narrator tells, in the registry's words, and the wrapper tells it with
+    the plan beside the record."""
+
+    JOURNAL = [
+        {"id": 1, "at": "2026-11-16T09:00:00Z", "kind": "record.started", "lane": None, "subject": None,
+         "data": {"base": {"ref": "main", "head": HEAD_A}}},
+        {"id": 2, "at": "2026-11-16T09:05:00Z", "kind": "lane.assigned", "lane": "lane-1", "subject": "change-1", "data": {"title": "Work one"}},
+        {"id": 3, "at": "2026-11-16T10:00:00Z", "kind": "candidate.merged", "lane": "lane-1", "subject": "change-1", "data": {"head": "b" * 40}},
+        {"id": 4, "at": "2026-11-16T10:01:00Z", "kind": "finish.met", "lane": None, "subject": None, "data": {"finish": "every-change"}},
+    ]
+    PLAN = {"finish": [{"id": "every-change", "label": "Every change"}]}
+
+    def document(self) -> dict:
+        return {"state": json.loads(json.dumps(FIXED_STATE)), "journal": copy.deepcopy(self.JOURNAL)}
+
+    def test_the_markdown_view_and_the_page_show_the_storys_beats(self) -> None:
+        document = render_state.with_story(self.document(), Path(tempfile.mkdtemp()))
+        view = render_state.render_markdown(document)
+        story = view[view.index("## Story"):]
+        for said in ("### change-1 landed · 2026-11-16T10:00:00Z", "55m after it was picked up.",
+                     "- 2026-11-16T10:00:00Z change-1 landed: At bbbbbbb", "- 2026-11-16T09:00:00Z The delivery started: On main at aaaaaaa"):
+            with self.subTest(said=said):
+                self.assertIn(said, story)
+        self.assertNotIn("candidate.merged", view)
+        page = render_state.render_static_page(document)
+        embedded = json.loads(re.search(r'<script type="application/json" id="delivery-state">(.*?)</script>', page, re.S).group(1))
+        self.assertEqual(embedded["story"], document["story"])
+
+    def test_the_wrapper_tells_the_story_with_the_plan_beside_the_record(self) -> None:
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+        (directory / render_state.PLAN_FILE).write_text(json.dumps(self.PLAN), encoding="utf-8")
+        told = render_state.with_story(self.document(), directory)
+        [finish] = [beat for beat in told["story"]["beats"] if beat["kind"] == "finish.met"]
+        self.assertEqual(finish["words"], {"head": "A finish line was met", "line": "Every change"})
+        self.assertEqual(told["story"], render_state.narrator.narrate(self.JOURNAL, state=told["state"], plan=self.PLAN))
+
+    def test_a_changed_head_in_the_registry_changes_the_words_both_views_show(self) -> None:
+        planted = json.loads((PRODUCT_ROOT / "skills/orchestrate-work/references/journal-kinds.json").read_text(encoding="utf-8"))
+        planted["kinds"]["candidate.merged"]["words"]["head"] = "{subject} reached the main line"
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "journal-kinds.json"
+            path.write_text(json.dumps(planted), encoding="utf-8")
+            with mock.patch.object(render_state.narrator.journal_words, "REGISTRY_FILE", path):
+                view = render_state.render_markdown(self.document())
+                page = render_state.render_static_page(self.document())
+        self.assertIn("change-1 reached the main line: At bbbbbbb", view)
+        self.assertIn("### change-1 reached the main line", view)
+        embedded = json.loads(re.search(r'<script type="application/json" id="delivery-state">(.*?)</script>', page, re.S).group(1))
+        self.assertIn("change-1 reached the main line", [beat["words"]["head"] for beat in embedded["story"]["beats"]])
 
 
 if __name__ == "__main__":
