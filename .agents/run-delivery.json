@@ -1,6 +1,13 @@
 {
   "schemaVersion": "delivery-flow/1",
   "branchPattern": "claude/{key}",
+  "baseMove": {
+    "provenanceWriter": [
+      "python3",
+      "-B",
+      "scripts/update-provenance.py"
+    ]
+  },
   "gates": [
     {
       "id": "validate-registry",
