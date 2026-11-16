@@ -872,8 +872,9 @@ fresh run inventory/view/artifact reads checked again after collection. Never us
 previously rendered HTML or a cached run byte count as freshness proof. The
 uploader scans all projected text for its configured secret values before writing
 pending bytes or sending them; collection and run-command children receive none
-of those credentials. Projection rejects recognizable local paths and keeps the
-shared allowlist, candidate/review identity and unavailable/clipping indicators.
+of those credentials. Projection rejects recognizable local paths in structural
+references and raw uploads; named prose fields use a visible omission marker.
+It keeps the shared allowlist, candidate/review identity and unavailable/clipping indicators.
 No scanner claims to identify every secret someone types into public prose.
 
 Pending bytes use immutable `hosted-pending-<sha256>.json` files. The identity
@@ -889,3 +890,12 @@ freshness. Old receipt retries never masquerade as new confirmations. Lost
 contact leaves the last accepted remote copy readable; local completion alone
 does not establish remote completion. Lifecycle terminal-cut handling, service
 qualification and live deployment evidence remain distinct from fixture tests.
+
+The lifecycle adapter posts a credential-free terminal notification before
+waiting for owner control. One immutable notice fixes each finished cut's retry
+deadline; repeated close requests do not extend it. The existing watcher reads
+that notice during contention, preserves acknowledged terminal state, and exits
+by the terminal deadline. Only the selected terminal metadata and referenced
+bodies enter archives. Live pending status retains the public URL and preceding
+receipt; active archive polling tolerates bounded unavailability before strict
+post-exit identity/status checks.

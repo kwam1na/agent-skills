@@ -15,6 +15,10 @@ An unavailable receiver leaves `final-publication-pending` in the archive.
 uploader. From a configured checkout, `hosted-retry --archive PATH` retries
 the archived terminal cut with its existing public ID; use `--resume` for an
 expired writer lease. Wait until the recorded original watcher has exited.
+Lifecycle-lock contention does not prevent that owner receiving its terminal
+deadline. Repeated closes preserve the deadline and acknowledged cut. Pending
+live status retains the known URL and last receipt; concurrent archive reads can
+briefly be unavailable, then validate strictly after the writer exits.
 
 This guide takes a repository from nothing to a closed delivery. Read it once as the lead, and give its lane section
 to each lane. Every command and file below is in a marked example block. A first line such as

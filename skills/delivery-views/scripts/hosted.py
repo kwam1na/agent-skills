@@ -47,6 +47,7 @@ CONTROL = 'hosted-control.lock'
 PENDING_PREFIX = 'hosted-pending-'
 RETRY = 'hosted-retry.json'
 TERMINAL = 'hosted-terminal.json'
+TERMINAL_NOTICE_PREFIX = 'hosted-terminal-notice-'
 TERMINAL_BODY_PREFIX = 'hosted-terminal-body-'
 FINAL_RETRY_SECONDS = 600
 HEX = re.compile(r'^[a-f0-9]{64}$')
@@ -107,17 +108,21 @@ def read_json(path, *, optional=False):
     except (ValueError, UnicodeError, RecursionError):raise PublishError('sidecar_corrupt') from None
 
 
-def atomic(path, value):
+def atomic(path, value, *, exclusive=False):
     data = value if isinstance(value, bytes) else public.encode(value)
     if path.is_symlink():raise PublishError('sidecar_unsafe')
     descriptor, name = tempfile.mkstemp(prefix='.hosted-', dir=path.parent)
     try:
         with os.fdopen(descriptor, 'wb') as stream:
             stream.write(data);stream.flush();os.fsync(stream.fileno())
-        os.replace(name, path)
+        if exclusive:
+            try:os.link(name,path)
+            except FileExistsError:return False
+        else:os.replace(name, path)
         folder=os.open(path.parent,os.O_RDONLY)
         try:os.fsync(folder)
         finally:os.close(folder)
+        return True
     finally:
         with contextlib.suppress(FileNotFoundError):os.unlink(name)
 
@@ -411,10 +416,37 @@ def terminal_shape(value):
     return value
 
 
-def read_terminal(directory,approved_root):
-    value=read_json(directory/TERMINAL,optional=True)
-    if value is None:return None
+def notice_shape(value):
     terminal_shape(value)
+    if value['state']!='capture-pending' or value['digest'] is not None:
+        raise PublishError('terminal_corrupt')
+    return value
+
+
+def terminal_record(directory):
+    """Select one current cut; immutable notices never replace acknowledged state.
+
+    The finished journal entry names its notice directly. No orphan inventory,
+    arbitrary paths or older reopened deliveries participate in selection.
+    """
+    value=read_json(directory/TERMINAL,optional=True)
+    if value is not None:terminal_shape(value)
+    if (directory/'state.json').is_file() and (directory/'journal.jsonl').is_file():
+        entry=finished_entry(record_document(directory))
+        if entry is not None:
+            notice=read_json(directory/(TERMINAL_NOTICE_PREFIX+str(entry)+'.json'),optional=True)
+            if notice is not None:
+                notice_shape(notice)
+                if notice['entry']!=entry:raise PublishError('terminal_corrupt')
+                if value is None or value['entry']<entry:value=notice
+                elif value['entry']==entry and value['recordDigest']!=notice['recordDigest']:
+                    raise PublishError('terminal_source_changed')
+    return value
+
+
+def read_terminal(directory,approved_root):
+    value=terminal_record(directory)
+    if value is None:return None
     terminal_source(value,approved_root)
     return value
 
@@ -422,21 +454,33 @@ def request_terminal(directory,source,approved_root,entry,document,*,timeout=Non
     if finished_entry(document)!=entry:raise PublishError('terminal_unfinished')
     root=Path(approved_root).resolve(strict=True);source=Path(source).resolve(strict=True)
     if not source.is_relative_to(root):raise PublishError('source_path')
-    with lock(directory/CONTROL,timeout=timeout):
-        prior=read_terminal(directory,root)
-        if prior and prior['entry']==entry and prior['recordDigest']==record_digest(document):return prior
-        at=int(time.time()*1000)
-        intent={'spec':'hosted-terminal/1','entry':entry,'source':str(source.relative_to(root)),
-                'recordDigest':record_digest(document),'requestedAt':at,'retryUntil':at+FINAL_RETRY_SECONDS*1000,
-                'state':'capture-pending','digest':None,'sourceFingerprint':None}
-        # The archive's canonical files already carry close-finished. This
-        # durable capture request survives even when every API read is offline.
-        atomic(source/TERMINAL,{**intent,'source':'.'})
-        atomic(directory/TERMINAL,intent)
-        # The archive already has the immutable core and this durable intent.
-        # The independent owner mirrors receipts and referenced bytes later;
-        # local close never waits for an archive-side publication lock.
-        return intent
+    prior=read_terminal(directory,root);digest=record_digest(document)
+    if prior and prior['entry']==entry and prior['recordDigest']==digest:return prior
+    at=int(time.time()*1000)
+    intent={'spec':'hosted-terminal/1','entry':entry,'source':str(source.relative_to(root)),
+            'recordDigest':digest,'requestedAt':at,'retryUntil':at+FINAL_RETRY_SECONDS*1000,
+            'state':'capture-pending','digest':None,'sourceFingerprint':None}
+    notice_path=directory/(TERMINAL_NOTICE_PREFIX+str(entry)+'.json')
+    # Publish-if-absent fixes the original deadline even when repeated close
+    # commands race. CONTROL protects owner lifecycle, not this data-only signal.
+    atomic(notice_path,intent,exclusive=True)
+    notice=read_json(notice_path);notice_shape(notice)
+    if notice['entry']!=entry or notice['recordDigest']!=digest:raise PublishError('terminal_source_changed')
+    frozen=terminal_source(notice,root)
+    atomic(frozen/TERMINAL,{**notice,'source':'.'},exclusive=True)
+    # Materialize the ordinary sidecar when available; a live owner observes the
+    # durable notice directly even while this lock is held by another command.
+    try:
+        with lock(directory/CONTROL,timeout=timeout):
+            current=read_json(directory/TERMINAL,optional=True)
+            if current is not None:
+                terminal_shape(current)
+                if current['entry']==entry and current['recordDigest']==digest:return current
+                if current['entry']>=entry:raise PublishError('terminal_source_changed')
+            atomic(directory/TERMINAL,notice)
+    except PublishError as error:
+        if error.code!='owner_busy':raise
+    return notice
 
 
 def mirror_hosted(source,destination,*,timeout=1):
@@ -466,7 +510,7 @@ def mirror_locked(source,destination):
                     if regular(source/IDENTITY)!=identity_raw:continue
                     raise PublishError('identity_corrupt')
                 bodies[name]=data
-        terminal=read_json(source/TERMINAL,optional=True)
+        terminal=terminal_record(source)
         if terminal:terminal_shape(terminal)
         if terminal and terminal.get('digest'):
             name=TERMINAL_BODY_PREFIX+terminal['digest']+'.json';data=regular(source/name,public.MAX_BYTES)
@@ -475,7 +519,7 @@ def mirror_locked(source,destination):
         status_raw=regular(source/STATUS)
         owner_raw=regular(source/OWNER)
         if owner_raw is not None and not owner_shape(json.loads(owner_raw)):raise PublishError('owner_identity_mismatch')
-        if (regular(source/IDENTITY)!=identity_raw or read_json(source/TERMINAL,optional=True)!=terminal
+        if (regular(source/IDENTITY)!=identity_raw or terminal_record(source)!=terminal
             or regular(source/STATUS)!=status_raw):continue
         for name,data in bodies.items():atomic(destination/name,data)
         if identity_raw is not None:atomic(destination/IDENTITY,identity_raw)

@@ -85,6 +85,64 @@ class TerminalTests(unittest.TestCase):
         self.assertFalse((self.archive/'hosted-pending-unrelated.json').exists())
         (self.live/hosted.IDENTITY).write_text('null')
         with self.assertRaises(hosted.PublishError):hosted.mirror_hosted(self.live,self.archive)
+    def test_contended_notifications_keep_one_deadline_and_preserve_acknowledged_cut(self):
+        (self.live/'state.json').write_text(json.dumps(self.document['state']))
+        (self.live/'journal.jsonl').write_text(json.dumps(self.document['journal'][0])+'\n')
+        with hosted.lock(self.live/hosted.CONTROL):
+            intent=hosted.request_terminal(self.live,self.archive,self.archives,10,self.document,timeout=0)
+            notice=self.live/(hosted.TERMINAL_NOTICE_PREFIX+'10.json');before=notice.read_bytes()
+            self.assertFalse((self.live/hosted.TERMINAL).exists())
+            self.assertEqual(hosted.read_terminal(self.live,self.archives),intent)
+            with mock.patch.object(hosted.time,'time',return_value=time.time()+100):
+                repeated=hosted.request_terminal(self.live,self.archive,self.archives,10,self.document,timeout=0)
+            self.assertEqual(repeated,intent);self.assertEqual(notice.read_bytes(),before)
+            result=hosted.terminal_step(self.publisher,lambda:self.payload(),self.archives)
+            self.assertEqual(result['state'],'final-published')
+            accepted=(self.archive/hosted.TERMINAL).read_bytes()
+            hosted.request_terminal(self.live,self.archive,self.archives,10,self.document,timeout=0)
+            self.assertEqual((self.archive/hosted.TERMINAL).read_bytes(),accepted)
+        self.assertFalse(list(self.archive.glob(hosted.TERMINAL_NOTICE_PREFIX+'*.json')))
+    def test_corrupt_notification_is_not_absence_and_unselected_notices_are_ignored(self):
+        (self.live/'state.json').write_text(json.dumps(self.document['state']))
+        (self.live/'journal.jsonl').write_text(json.dumps(self.document['journal'][0])+'\n')
+        unrelated=self.live/(hosted.TERMINAL_NOTICE_PREFIX+'11.json');unrelated.write_text('null')
+        self.assertIsNone(hosted.read_terminal(self.live,self.archives))
+        selected=self.live/(hosted.TERMINAL_NOTICE_PREFIX+'10.json');selected.write_text('null')
+        with self.assertRaises(hosted.PublishError):hosted.read_terminal(self.live,self.archives)
+        with self.assertRaises(hosted.PublishError):
+            hosted.request_terminal(self.live,self.archive,self.archives,10,self.document,timeout=0)
+        self.assertEqual(selected.read_text(),'null')
+        selected.unlink();intent=self.request()
+        hosted.atomic(selected,{**intent,'state':'published','digest':'0'*64,'sourceFingerprint':'0'*64})
+        with self.assertRaises(hosted.PublishError):hosted.read_terminal(self.live,self.archives)
+    def test_concurrent_first_notifications_cannot_replace_the_first_durable_deadline(self):
+        (self.live/'state.json').write_text(json.dumps(self.document['state']))
+        (self.live/'journal.jsonl').write_text(json.dumps(self.document['journal'][0])+'\n')
+        notice=self.live/(hosted.TERMINAL_NOTICE_PREFIX+'10.json')
+        ready=threading.Event();created=threading.Event();second_done=threading.Event()
+        first=[];results=[];errors=[];original=hosted.atomic;now=time.time()
+        def atomic(path,value,**kwargs):
+            if path!=notice:return original(path,value,**kwargs)
+            if threading.current_thread().name=='first-notice':
+                first.append(value)
+                if not ready.wait(5):raise AssertionError('second producer missing')
+                result=original(path,value,**kwargs);created.set()
+                if not second_done.wait(5):raise AssertionError('second producer stuck')
+                return result
+            ready.set()
+            if not created.wait(5):raise AssertionError('first producer stuck')
+            try:return original(path,value,**kwargs)
+            finally:second_done.set()
+        def request():
+            try:results.append(hosted.request_terminal(self.live,self.archive,self.archives,10,self.document,timeout=1))
+            except Exception as error:errors.append(error)
+        with mock.patch.object(hosted,'atomic',side_effect=atomic),mock.patch.object(hosted.time,'time',side_effect=lambda:now if threading.current_thread().name=='first-notice' else now+100):
+            threads=[threading.Thread(name=name,target=request) for name in ('first-notice','second-notice')]
+            for thread in threads:thread.start()
+            for thread in threads:thread.join(8)
+        self.assertFalse(any(thread.is_alive() for thread in threads));self.assertEqual(errors,[])
+        self.assertEqual(len(results),2);self.assertEqual(hosted.read_json(notice),first[0])
+        self.assertTrue(all(row['requestedAt']==first[0]['requestedAt'] for row in results))
     def test_final_retry_window_expires_without_renewing_or_relabelling_completion(self):
         intent=self.request();intent['requestedAt']=1;intent['retryUntil']=600001
         hosted.atomic(self.live/hosted.TERMINAL,intent)
@@ -261,6 +319,11 @@ class OwnedProcessTests(unittest.TestCase):
             f'def fixture(host,port=None,timeout=None,context=None):\n assert host=="deliveries.example.com"\n return Real("127.0.0.1",{self.server.server_port},timeout=timeout)\n'
             'http.client.HTTPSConnection=fixture\n'
             f'with open({str(self.root/"environment.jsonl")!r},"a") as out:out.write(json.dumps([sys.argv,"FIXTURE_PUBLISH_TOKEN" in os.environ])+"\\n")\n')
+        clock=self.root/'watcher-clock'
+        with (self.root/'sitecustomize.py').open('a') as out:
+            out.write('import time,pathlib\nreal_time=time.time\n'
+                f'if "watch" in sys.argv:\n def watcher_time():\n  p=pathlib.Path({str(clock)!r})\n  return real_time()+(int(p.read_text()) if p.exists() else 0)\n time.time=watcher_time\n')
+        self.clock=clock
         self.environment={**os.environ,'FIXTURE_PUBLISH_TOKEN':TOKEN,'PYTHONPATH':str(self.root)}
         OWNED.add(self.state)
         self.addCleanup(OWNED.discard,self.state);self.addCleanup(hosted.stop,self.state)
@@ -288,11 +351,18 @@ class OwnedProcessTests(unittest.TestCase):
             if predicate():return
             time.sleep(.05)
         self.fail('owned watcher did not reach the expected state')
-    def finished(self):
+    def wait_archive_published(self):
+        self.wait_for(lambda:flow.hosted_info(None,archive=self.archive).get('state')=='final-published')
+        self.wait_for(lambda:not hosted.locked(self.state/hosted.LOCK) and not hosted.locked(self.archive/hosted.LOCK))
+        info=hosted.archive_status(self.archive)
+        self.assertEqual(info['state'],'final-published')
+        self.assertIsNotNone(hosted.read_json(self.archive/hosted.IDENTITY)['receipt'])
+        return info
+    def finished(self,*,notify=True):
         self.document['journal']=[{'id':1,'kind':'delivery.closed','at':'2026-11-15T00:00:00Z','subject':None,'lane':None,'summary':'Closed'}]
         self.document['state']['meta']['closing']={'started':{'entry':1,'at':'2026-11-15T00:00:00Z'},'finished':{'entry':1,'at':'2026-11-15T00:00:01Z'}}
         self.write_record(self.state);self.write_record(self.archive)
-        return hosted.request_terminal(self.state,self.archive,self.archives,1,self.document)
+        if notify:return hosted.request_terminal(self.state,self.archive,self.archives,1,self.document)
     def test_two_starts_adopt_one_owner_direct_mutations_publish_and_supervisor_stop_leaves_it(self):
         first=self.command('start');owner=hosted.read_json(self.state/hosted.OWNER)
         second=self.command('start')
@@ -323,7 +393,7 @@ class OwnedProcessTests(unittest.TestCase):
         self.assertTrue(any(auth=='Bearer '+TOKEN for _,auth,_ in self.observed))
     def test_terminal_ack_archives_finished_cut_and_owner_exits_without_cleanup(self):
         self.command('start');self.finished()
-        self.wait_for(lambda:hosted.archive_status(self.archive)['state']=='final-published')
+        self.wait_archive_published()
         self.wait_for(lambda:not hosted.locked(self.state/hosted.LOCK))
         self.assertEqual(hosted.read_json(self.archive/hosted.TERMINAL)['state'],'published')
         self.assertEqual(hosted.finished_entry(json.loads(next(body for op,_,body in reversed(self.observed) if op=='snapshots'))['document']),1)
@@ -358,7 +428,7 @@ class OwnedProcessTests(unittest.TestCase):
         self.command('start');self.wait_for(lambda:hosted.read_json(self.state/hosted.IDENTITY)['receipt'] is not None)
         hosted.stop(self.state)
         identity=hosted.read_json(self.state/hosted.IDENTITY)
-        self.finished();(self.state/hosted.TERMINAL).unlink();(self.archive/hosted.TERMINAL).unlink()
+        self.finished(notify=False)
         hosted.mirror_hosted(self.state,self.archive)
         c=SimpleNamespace(root=self.root,main=self.root,state=self.state,release=ROOT,delivery='APP-1',
             flow_raw={'cleanup':{'archive':str(self.archives)}},shelf=SimpleNamespace(json=lambda _:CFG))
@@ -370,20 +440,59 @@ class OwnedProcessTests(unittest.TestCase):
             if child.poll() is None:child.terminate()
             child.wait(timeout=5)
         self.addCleanup(cleanup);self.wait_for(ready.exists)
+        live=flow.hosted_info(c)
+        self.assertEqual(live['state'],'final-publication-pending')
+        self.assertTrue(live['url'].endswith(identity['publicId']))
+        self.assertEqual(live['receipt'],identity['receipt'])
+        self.assertIn('final-publication-pending '+live['url'],flow.hosted_line(c))
         before=(self.archive/hosted.IDENTITY).read_bytes();began=time.monotonic()
         with mock.patch.dict(os.environ,self.environment):
             result=flow.finalize_hosted(c,self.archive.parent,{'id':1},seconds=.2)
         self.assertLess(time.monotonic()-began,2);self.assertEqual(result['state'],'final-publication-pending')
         self.assertEqual((self.archive/hosted.IDENTITY).read_bytes(),before)
-        self.assertFalse((self.archive/hosted.TERMINAL).exists())
         self.assertEqual(hosted.archive_status(self.archive)['state'],'final-publication-pending')
         cleanup();OWNED.add(self.archive);self.addCleanup(OWNED.discard,self.archive);self.addCleanup(hosted.stop,self.archive)
         with mock.patch.object(flow,'Config',return_value=c),mock.patch.object(flow,'repo',return_value=self.root),mock.patch.dict(os.environ,self.environment),contextlib.redirect_stdout(io.StringIO()):
             flow.hosted_retry(SimpleNamespace(archive=self.archive,resume=False))
-        self.wait_for(lambda:hosted.archive_status(self.archive)['state']=='final-published')
+        self.wait_archive_published()
         accepted=hosted.read_json(self.archive/hosted.IDENTITY)
         self.assertEqual(accepted['publicId'],identity['publicId'])
         self.assertGreater(accepted['receipt']['sequence'],identity['receipt']['sequence'])
+    def test_active_owner_control_contention_receives_terminal_deadline_and_allows_same_id_retry(self):
+        self.command('start');self.wait_for(lambda:hosted.read_json(self.state/hosted.IDENTITY)['receipt'] is not None)
+        identity=hosted.read_json(self.state/hosted.IDENTITY);owner=hosted.read_json(self.state/hosted.OWNER)
+        self.api.code='unauthorized';self.finished(notify=False);hosted.mirror_hosted(self.state,self.archive)
+        c=SimpleNamespace(root=self.root,main=self.root,state=self.state,release=ROOT,delivery='APP-1',
+            flow_raw={'cleanup':{'archive':str(self.archives)}},shelf=SimpleNamespace(json=lambda _:CFG))
+        ready=self.root/'active-control-held'
+        child=subprocess.Popen([sys.executable,'-c',
+            'import fcntl,pathlib,sys,time;f=open(sys.argv[1],"a");fcntl.flock(f,fcntl.LOCK_EX);pathlib.Path(sys.argv[2]).touch();time.sleep(60)',
+            str(self.state/hosted.CONTROL),str(ready)],start_new_session=True)
+        def cleanup():
+            if child.poll() is None:child.terminate()
+            child.wait(timeout=5)
+        self.addCleanup(cleanup);self.wait_for(ready.exists)
+        before=(self.archive/hosted.IDENTITY).read_bytes();began=time.monotonic()
+        with mock.patch.dict(os.environ,self.environment):result=flow.finalize_hosted(c,self.archive.parent,{'id':1},seconds=.2)
+        self.assertLess(time.monotonic()-began,2);self.assertEqual(result['state'],'final-publication-pending')
+        self.assertTrue(hosted.process_matches(owner));self.assertEqual((self.archive/hosted.IDENTITY).read_bytes(),before)
+        intent=hosted.read_terminal(self.state,self.archives)
+        self.assertIsNotNone(intent,'the existing owner must receive intent before CONTROL is free')
+        self.assertLessEqual(intent['retryUntil']-intent['requestedAt'],600000)
+        again=hosted.request_terminal(self.state,self.archive,self.archives,1,self.document,timeout=0)
+        self.assertEqual(again['requestedAt'],intent['requestedAt'])
+        self.assertEqual(again['retryUntil'],intent['retryUntil'])
+        self.wait_for(lambda:hosted.read_json(self.state/hosted.STATUS).get('code')=='unauthorized')
+        cleanup();self.clock.write_text('700')
+        self.wait_for(lambda:not hosted.locked(self.state/hosted.LOCK))
+        self.assertEqual(hosted.archive_status(self.archive)['state'],'final-publication-pending')
+        self.assertEqual(hosted.read_json(self.archive/hosted.IDENTITY)['publicId'],identity['publicId'])
+        self.clock.write_text('0');self.api.code=None
+        OWNED.add(self.archive);self.addCleanup(OWNED.discard,self.archive);self.addCleanup(hosted.stop,self.archive)
+        with mock.patch.object(flow,'Config',return_value=c),mock.patch.object(flow,'repo',return_value=self.root),mock.patch.dict(os.environ,self.environment),contextlib.redirect_stdout(io.StringIO()):
+            flow.hosted_retry(SimpleNamespace(archive=self.archive,resume=False))
+        self.wait_archive_published()
+        self.assertEqual(hosted.read_json(self.archive/hosted.IDENTITY)['publicId'],identity['publicId'])
     def test_expired_terminal_self_exit_and_separate_fixture_cleanup_proof(self):
         self.environment.pop('FIXTURE_PUBLISH_TOKEN');self.command('start')
         intent=self.finished();intent.update(requestedAt=1,retryUntil=600001);hosted.atomic(self.state/hosted.TERMINAL,intent)
@@ -393,11 +502,13 @@ class OwnedProcessTests(unittest.TestCase):
         self.command('start','--resume')
         renewed=hosted.read_json(self.state/hosted.TERMINAL)
         self.assertGreater(renewed['retryUntil'],int(time.time()*1000))
-        self.wait_for(lambda:hosted.archive_status(self.archive)['state']=='final-published')
+        self.wait_archive_published()
         self.wait_for(lambda:not hosted.locked(self.state/hosted.LOCK))
         # Keep the source intact: this independent cleanup path must stop the
         # owner even though neither production disappearance guard fires.
-        (self.state/hosted.TERMINAL).unlink();self.command('start')
+        self.document['journal'].append({'id':2,'kind':'lane.assigned','at':'2026-11-15T00:01:00Z',
+                                        'subject':'APP-2','lane':'one','summary':'New work'})
+        self.write_record(self.state);self.command('start')
         self.assertTrue(hosted.locked(self.state/hosted.LOCK));stop_owned()
         self.assertFalse(hosted.locked(self.state/hosted.LOCK));self.assertTrue((self.state/'state.json').exists())
     def test_terminal_deadline_cancels_hanging_collection_and_upload_processes(self):
@@ -456,7 +567,7 @@ class OwnedProcessTests(unittest.TestCase):
         OWNED.add(self.archive);self.addCleanup(OWNED.discard,self.archive);self.addCleanup(hosted.stop,self.archive)
         with mock.patch.object(flow,'Config',return_value=c),mock.patch.object(flow,'repo',return_value=self.root),mock.patch.dict(os.environ,self.environment):
             with contextlib.redirect_stdout(io.StringIO()):flow.hosted_retry(SimpleNamespace(archive=self.archive,resume=False))
-        self.wait_for(lambda:hosted.archive_status(self.archive)['state']=='final-published')
+        self.wait_archive_published()
         after=hosted.read_json(self.archive/hosted.IDENTITY)
         self.assertEqual(identity['publicId'],after['publicId']);self.assertEqual(after['receipt']['digest'],hashlib.sha256(before).hexdigest())
         self.assertEqual(sum(op=='snapshots' for op,_,_ in self.observed[-4:]),1)
@@ -507,6 +618,10 @@ class InstalledLifecycleTests(unittest.TestCase):
         return out
     def wait_for(self,predicate,seconds=15):
         return self.supervisor.wait_for(predicate,'installed hosted lifecycle',seconds)
+    def wait_archive_published(self,archive):
+        self.wait_for(lambda:flow.hosted_info(None,archive=archive).get('state')=='final-published')
+        self.wait_for(lambda:not hosted.locked(self.state/hosted.LOCK) and not hosted.locked(archive/hosted.LOCK))
+        self.assertEqual(hosted.archive_status(archive)['state'],'final-published')
     def state_command(self,*argv):
         self.delivery.sh(sys.executable,'-B',self.fx.release/'skills/orchestrate-work/scripts/delivery_state.py',
                          '--dir',self.state,*argv,cwd=self.fx.main,env=self.fx.env)
@@ -541,6 +656,7 @@ class InstalledLifecycleTests(unittest.TestCase):
         self.command('lead-close')
         closed=json.loads((self.state.parent/'flow-log/FX-1.closed.json').read_text())
         archive=Path(closed['archive'])/self.state.name
+        self.wait_archive_published(archive)
         self.assertEqual(hosted.archive_status(archive)['state'],'final-published')
         self.assertEqual(hosted.read_json(archive/hosted.IDENTITY)['publicId'],public_id)
         self.assertFalse((archive/'.hosted-unreferenced').exists())
@@ -575,6 +691,7 @@ class InstalledLifecycleTests(unittest.TestCase):
         self.command('lead-run','--resume',supervised=True)
         self.wait_for(lambda:hosted.read_json(self.state/hosted.TERMINAL)['state']=='published')
         archived=self.fx.tmp/'archive/FX-1'/intent['source']
+        self.wait_archive_published(archived)
         self.assertEqual(hosted.archive_status(archived)['state'],'final-published')
 
 if __name__=='__main__':unittest.main()

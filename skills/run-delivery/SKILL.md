@@ -94,6 +94,13 @@ its archive, close records a durable terminal request. Publication adds at most
 cut for up to 10 minutes, then exits with `final-publication-pending`. Only a
 matching receipt for that finished cut yields `final-published`.
 
+Close notifies the existing owner before waiting for lifecycle control. The
+credential-free notification fixes the original retry deadline even under lock
+contention; repeated close commands do not extend it or replace an acknowledged
+cut. Live pending status keeps the known URL and preceding receipt. During
+active archive updates, status may briefly report bounded unavailability; stable
+post-exit reads still validate the archived identity and receipt strictly.
+
 The archive retains the identity, status, referenced pending bytes and frozen
 terminal cut. `view --archive PATH` needs no token and starts no uploader.
 From a configured checkout, `hosted-retry --archive PATH` reconciles and retries

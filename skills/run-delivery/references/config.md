@@ -19,6 +19,12 @@ terminal receipt changes it to `final-published`. `hosted-retry --archive PATH`
 uses the current checkout's trusted settings and the archive's existing public
 identity, with `--resume` for an expired writer lease. `view --archive PATH`
 only reads the archived link and status and needs no credential.
+Terminal notification is independent of lifecycle-lock acquisition. It carries
+no credentials, fixes one deadline per finished cut, and cannot overwrite an
+acknowledged cut. The watcher observes it even during a blocked capture/upload;
+archive copies retain the selected cut and referenced bodies, not unused notice
+files. Active status reads may report bounded transitional unavailability, while
+stable archived sidecars remain strictly validated.
 
 Most of what run-delivery needs, the repository already declares for agent-skills. `run_delivery.py` reads it from there,
 in this order of precedence:

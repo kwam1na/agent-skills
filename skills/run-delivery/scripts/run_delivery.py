@@ -257,6 +257,9 @@ def hosted_info(c,*,archive=None):
             info['state']='final-published' if done else 'final-publication-pending'
         elif (c.state/'state.json').exists() and module.finished_entry(module.record_document(c.state)) is not None:
             info['state']='final-publication-pending'
+        if info.get('state')=='final-publication-pending' and 'receipt' not in info:
+            identity=module.read_json(c.state/module.IDENTITY,optional=True)
+            if identity and identity.get('receipt') is not None:info['receipt']=module.receipt(identity['receipt'])
         return info
     except (ValueError,OSError,RuntimeError,Stop):return {'state':'failed','code':'hosted_status_unavailable'}
 

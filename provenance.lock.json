@@ -198,7 +198,7 @@
       "outputs": [
         {
           "path": "skills/delivery-views/SKILL.md",
-          "sha256": "bebabeba40346ecf03db2a103c59517d5574f3b995507c1ab3e96b69cad33169"
+          "sha256": "668b801a073185e625bf1d9ca1257ec31245c462248e984710f9d780e8dd28e7"
         },
         {
           "path": "skills/delivery-views/assets/history.css",
@@ -234,7 +234,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/hosted.py",
-          "sha256": "7cb3a5a030c98e00db4bcb1f27568abd276845f6c44b3d2ecb6f9d2c696dd564"
+          "sha256": "c3138f1a6e094e02a6717181237afc5bb6b679b8a544138fd0790c0cb099ed5f"
         },
         {
           "path": "skills/delivery-views/scripts/public_projection.py",
@@ -1034,7 +1034,7 @@
       "outputs": [
         {
           "path": "skills/run-delivery/SKILL.md",
-          "sha256": "a5ff5d6b06ad21e69f9b357b976c5f36a12f378b6e7b9ddbb3b5dea77b89780f"
+          "sha256": "bcd23d4e021a757f07a02e571a77d314fa28a5ecaa64673b7e877207f8c2bbb5"
         },
         {
           "path": "skills/run-delivery/adapters/forge_bitbucket.py",
@@ -1062,11 +1062,11 @@
         },
         {
           "path": "skills/run-delivery/references/adopting.md",
-          "sha256": "91521805fe797fb88f5fd0f49576130937180eb189f4fed99a0e90e1bae9a475"
+          "sha256": "41cfa78c974e83558dd8004239cdc8bcf1c2e255813bdd5fb279f5f90d36b16f"
         },
         {
           "path": "skills/run-delivery/references/config.md",
-          "sha256": "1c6d404ab795fe3ea60ddbda0237c6f77fbac97f2085a479f350298c98ed319f"
+          "sha256": "a1b05114054f3b267720c8e3bee81d0234d76308cb1313242c6e66f771ab5456"
         },
         {
           "path": "skills/run-delivery/scripts/pr_review_gates.py",
@@ -1074,7 +1074,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "0750c5215d5969def32d80011c387e871eb7bab2d159262be314d9f683436e75"
+          "sha256": "6c10d8cdb2ad533991241028c6fe7747c5558de4513ebcd1e10f584b0e61d63b"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
