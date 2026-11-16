@@ -687,9 +687,9 @@ describe("initial and active coherent rendering", () => {
       dom.window.close();
     }
   });
-  it.each([false, true])(
-    "seeds the latest coherent projection while renderer loading (remove optional plan: %s)",
-    async (removePlan) => {
+  it.each(["present", "null", "omitted"])(
+    "seeds the latest coherent projection while renderer loading (optional plan: %s)",
+    async (planMode) => {
       const built = JSON.parse(
         readFileSync(
           new URL("./assets.generated.json", import.meta.url),
@@ -721,12 +721,18 @@ describe("initial and active coherent rendering", () => {
         ) as ReturnType<typeof createViewStore>;
         const next = auxiliaryProjection("new");
         next.document.state.meta = { headline: "Latest startup document" };
-        next.plan = removePlan ? null : structuredClone(initial.plan);
+        next.plan =
+          planMode === "present" ? structuredClone(initial.plan) : null;
+        if (planMode === "omitted") delete next.plan;
         if (next.plan)
           (
             next.plan as { plan: { outcome: { summary: string } } }
           ).plan.outcome.summary = "Latest startup plan";
         r = await revision(2, next);
+        if (planMode === "omitted")
+          expect(
+            JSON.parse(new TextDecoder().decode(r.bytes)),
+          ).not.toHaveProperty("plan");
         await store.poll();
         dom.window.eval(built.renderer);
         await vi.waitFor(() =>
@@ -743,9 +749,12 @@ describe("initial and active coherent rendering", () => {
         expect(
           dom.window.document.querySelector("#now")!.textContent,
         ).toContain("new needs line");
-        if (removePlan)
+        if (planMode !== "present") {
+          expect(
+            dom.window.document.querySelector("#delivery-plan"),
+          ).toBeNull();
           expect(dom.window.document.querySelector("#plan")).toBeNull();
-        else
+        } else
           expect(
             dom.window.document.querySelector("#plan")!.textContent,
           ).toContain("Latest startup plan");
