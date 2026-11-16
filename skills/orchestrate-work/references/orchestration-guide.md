@@ -1068,7 +1068,8 @@ this generation doesn't install, the printed command, the status line and "Needs
 file, and reads no CI or forge. It returns on the first thing needing the lead:
 
 - a journal entry after `--after` of kind `candidate.handed`, `check.failed`,
-  `candidate.merged`, `candidate.stopped`, `base.broken` or `blocker.recorded`;
+  `candidate.merged`, `candidate.stopped`, `base.broken`, `blocker.recorded` or
+  `serving.held`;
 - a lane in the `blocked` state;
 - machine pressure: five-minute load above `--load-multiple` times the cores
   (2 by default), free disk under `--min-free-bytes` (20 GiB), or swap grown by

@@ -6398,6 +6398,13 @@ class StateToolFactsTests(unittest.TestCase):
         state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head=HEAD_A, change_request="cr-a")
         self.assertNotIn("answers", self.last())
 
+    def test_a_merge_after_a_stop_leaves_no_stop_standing(self) -> None:
+        stop = {"id": 1, "at": taken(), "kind": "candidate.stopped", "lane": None, "subject": "work-q",
+                "data": {"reason": "check_failed", "detail": "unit failed."}}
+        merged = {"id": 2, "at": taken(), "kind": "candidate.merged", "lane": None, "subject": "work-q", "data": {"head": HEAD_A}}
+        self.assertEqual(state_tool.standing_stop([stop], "work-q"), stop)
+        self.assertIsNone(state_tool.standing_stop([stop, merged], "work-q"))
+
     def test_a_no_change_hand_off_journals_the_base_head_its_evidence_ran_at(self) -> None:
         state_tool.no_change_handoff(self.directory, lane="lane-1", subject="work-a", base_head=HEAD_B,
                                      evidence="test_x passes at the base")
@@ -6438,6 +6445,12 @@ class StateToolFactsTests(unittest.TestCase):
         planted.write_text(json.dumps(registry), encoding="utf-8")
         with mock.patch.object(state_tool.journal_words, "REGISTRY_FILE", planted):
             self.assertEqual(state_tool.wait_events([entries[-1]])[0]["head"], "work-a is ready")
+        # Words that can't be made leave the event its facts, with no head or line.
+        registry["kinds"]["candidate.handed"]["words"]["head"] = "{subject} is ready at {nothing}"
+        planted.write_text(json.dumps(registry), encoding="utf-8")
+        with mock.patch.object(state_tool.journal_words, "REGISTRY_FILE", planted):
+            unworded = state_tool.wait_events([entries[-1]])[0]
+        self.assertEqual((unworded["data"], "head" in unworded, "line" in unworded), (entries[-1]["data"], False, False))
         self.assertEqual(handed["subject"], "work-a")
 
 
@@ -6488,8 +6501,15 @@ class FactsReaderTests(unittest.TestCase):
                 repaired = state_tool.repaired_state(state, journal)
                 self.assertEqual([(item["subject"], item["stage"]) for item in repaired["queue"]],
                                  [("work-q", "queued"), ("work-r", "stopped")])
-        # A stop that names no break is not the break's to put back.
+        # A stop that names no break is not the break's to put back, nor one stopped for another reason that names it,
+        # nor any stop of a break whose reason is not base_broken.
         self.assertIsNone(state_tool.repaired_state(state, [broken, {**stop, "because": []}]))
+        self.assertIsNone(state_tool.repaired_state(state, [broken, {**stop, "data": {**stop["data"], "reason": "check_failed"}}]))
+        self.assertIsNone(state_tool.repaired_state(state, [{**broken, "data": {**broken["data"], "reason": "merged_unverified"}}, stop]))
+        # A break with facts reads its head, for a stop that has only its sentence.
+        said_stop = {key: value for key, value in stop.items() if key not in ("data", "because")}
+        said_stop["summary"] = f"base_broken: unit also fails on main at {HEAD_B}"
+        self.assertEqual(state_tool.repaired_state(state, [broken, said_stop])["queue"][0]["stage"], "queued")
         # A sentence-only break and stop read as before.
         said = [{**broken, "summary": f"base_broken: unit also fails on main at {HEAD_B}"},
                 {**stop, "summary": f"base_broken: unit also fails on main at {HEAD_B}"}]
@@ -6518,6 +6538,11 @@ class FactsReaderTests(unittest.TestCase):
                 write_journal(self.directory, [said])
                 state_tool.complete_base_move_locked(self.directory, **arguments)
                 self.assertEqual(state_tool.read_journal(self.directory), [said])
+                # A different move after one with facts is journaled for itself.
+                write_journal(self.directory, [kept])
+                state_tool.complete_base_move_locked(self.directory, **{**arguments, "from_head": HEAD_B, "to_head": HEAD_D,
+                                                                        "expected_base": HEAD_B})
+                self.assertEqual([entry["data"]["to"] for entry in state_tool.read_journal(self.directory)], [HEAD_B, HEAD_D])
 
     def test_a_snapshot_note_is_matched_by_its_kind_and_source(self) -> None:
         state_tool.patch(self.directory, writer="lead", version=1, changes={"meta": {"trackerParent": "epic-7"}})
@@ -6542,6 +6567,24 @@ class FactsReaderTests(unittest.TestCase):
         retaken = state_tool.read_journal(self.directory)[-1]
         self.assertEqual((retaken["kind"], retaken["data"], retaken["answers"], retaken["summary"]),
                          ("snapshot.retaken", {"source": "tracker"}, [other["id"]], "tracker-snapshot: taken again"))
+        # Each class of cause is a fact of its own.
+        for result, cause in (((None, b"", "timed out after 2s"), "timed_out"), ((None, b"", "printed more than 16 MiB"), "too_much_output"),
+                              ((None, b"", "could not start: no such file"), "not_started"), ((None, b"", "it was killed"), "unfinished")):
+            with self.subTest(cause=cause):
+                with mock.patch.object(state_tool, "_run_bounded", return_value=result):
+                    state_tool.take_snapshot(self.directory, member, output, source="tracker", max_age=3600)
+                self.assertEqual(state_tool.read_journal(self.directory)[-1]["data"], {"source": "tracker", "cause": cause})
+        # A record that names no parent can't fill the command.
+        orphan = self.root / "orphan"
+        state_tool.init(orphan, "No parent")
+        state_tool.take_snapshot(orphan, member, output, source="tracker", max_age=3600)
+        self.assertEqual(state_tool.read_journal(orphan)[-1]["data"], {"source": "tracker", "cause": "no_parent"})
+        # A retake after a stale note with only its sentence answers nothing: that note is not of the kind it answers.
+        said = {"id": 1, "at": taken(), "kind": "decision.recorded", "lane": None, "subject": None,
+                "summary": "tracker-snapshot: the command exited with 3; the last snapshot stands"}
+        write_journal(self.directory, [said])
+        self.assertTrue(take(0, json.dumps(snapshot).encode())["taken"])
+        self.assertNotIn("answers", state_tool.read_journal(self.directory)[-1])
         # A forge note is not the tracker's.
         self.assertEqual(state_tool._snapshot_note({**stale, "data": {"source": "forge"}}, "tracker", "tracker-snapshot:"),
                          False)
@@ -6607,6 +6650,39 @@ class FactsReviewReaderTests(unittest.TestCase):
         write_journal(self.directory, prose_replaced(journal, FactsReaderTests.KINDS))
         self.assertEqual(self.evidence()["evidence"], "captured")
         self.assertEqual(state_tool.show(self.directory)["reviewEvidence"]["work-a"]["carried"]["note"], "Other words entirely.")
+
+    def test_a_base_merge_hand_off_carries_its_review_in_its_facts(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.directory = self.root / "state"
+        state_tool.init(self.directory, "A base merge")
+        state_tool.patch(self.directory, writer="lead", version=1, changes={
+            "lanes": [lane("lane-1")], "planned": [{"subject": "work-a", "title": "A", "lane": "lane-1", "stage": "review"}]})
+        self.facts_round(1)
+        self.facts_round(2)
+        capture = self.capture([review_round(1, HEAD_A, finding=True), review_round(2, HEAD_B, resolved=True)])
+        merge = {"reviewed": HEAD_B, "baseCommits": [HEAD_D]}
+        state_tool.append_journal(self.directory, kind="decision.recorded", subject="work-a", lane="lane-1",
+                                  data={"text": "Merge the main line into work-a", "why": "It needs the base's fix."},
+                                  base_merge_authorization=merge)
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head=HEAD_C, change_request="cr", rounds=2,
+                           base_merge=merge)
+        handed = state_tool.read_journal(self.directory)[-1]
+        carry = {"from": HEAD_B, "to": HEAD_C, "digest": capture["reviewArtifact"]["digest"], "baseCommits": [HEAD_D]}
+        self.assertEqual({key: handed.get(key) for key in ("kind", "lane", "subject", "data", "answers")},
+                         {"kind": "candidate.handed", "lane": "lane-1", "subject": "work-a", "answers": None,
+                          "data": {"head": HEAD_C, "changeRequest": "cr", "checks": [], "rounds": 2, "carry": carry}})
+        self.assertEqual(self.evidence()["evidence"], "captured")
+        # With only its facts, in other words: the carry still holds the evidence at the handed head.
+        journal = state_tool.read_journal(self.directory)
+        facts_only = [{key: value for key, value in entry.items() if key not in ("reviewCarry", "summary")}
+                      if entry["id"] == handed["id"] else entry for entry in journal]
+        write_journal(self.directory, prose_replaced(facts_only, FactsReaderTests.KINDS))
+        self.assertEqual(state_tool.carry_of(state_tool.read_journal(self.directory)[-1]),
+                         {"from": HEAD_B, "to": HEAD_C, "digest": carry["digest"], "note": ""})
+        found = self.evidence()
+        self.assertEqual((found["evidence"], found["carriedFrom"], found["carriedTo"]), ("captured", HEAD_B, HEAD_C))
 
     def test_rounds_with_only_their_facts_are_counted_captured_and_matched(self) -> None:
         temporary = tempfile.TemporaryDirectory()
@@ -6686,6 +6762,12 @@ class SkillTextTests(unittest.TestCase):
         listed = re.findall(r"`([\w-]+)`", folders.group(1))
         self.assertEqual(sorted(listed), sorted(runner.GIT_OWN_DIRECTORIES))
         self.assertEqual(len(listed), len(set(listed)))
+
+    def test_the_guide_names_every_kind_that_ends_a_wait(self) -> None:
+        guide = " ".join(GUIDE.read_text(encoding="utf-8").split())
+        listed = re.search(r"a journal entry after `--after` of kind ((?:`[a-z.]+`(?:, | or )?)+);", guide)
+        self.assertIsNotNone(listed)
+        self.assertEqual(sorted(re.findall(r"`([a-z.]+)`", listed.group(1))), sorted(state_tool.WAIT_KINDS))
 
     def test_the_guides_tracker_table_is_the_registrys(self) -> None:
         registry = json.loads((SKILL / "references/journal-kinds.json").read_text(encoding="utf-8"))["kinds"]
