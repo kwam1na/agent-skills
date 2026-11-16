@@ -105,3 +105,62 @@ class ReadmeLifecycleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _profile(name: str) -> dict:
+    import json
+
+    return json.loads((ROOT / "profiles" / f"{name}.json").read_text(encoding="utf-8"))
+
+
+def _intro() -> str:
+    """The README's overview, before its first second-level heading, whitespace-normalized."""
+    text = _readme()
+    return " ".join(text[: text.index("\n## ")].split())
+
+
+class ReadmeKnowledgeLibraryTests(unittest.TestCase):
+    """The README describes the knowledge library as the profile descriptions do."""
+
+    CORE_SENTENCE = (
+        "Workflows may consult an optional, read-only knowledge library after the repository's own solution notes, "
+        "and report that it was not consulted when none is configured."
+    )
+
+    def test_the_core_paragraph_carries_the_core_profiles_sentence(self) -> None:
+        self.assertIn(self.CORE_SENTENCE, " ".join(_profile("core")["description"].split()))
+        intro = _intro()
+        self.assertIn(self.CORE_SENTENCE, intro)
+        # It sits in the core paragraph, after the compounding decision and before bootstrap guidance.
+        self.assertIn(
+            "a compounding decision with a default home for solution notes. " + self.CORE_SENTENCE
+            + " Bootstrap guidance is opt-in.",
+            intro,
+        )
+
+    def test_the_run_delivery_paragraph_names_the_adapter_and_its_setup(self) -> None:
+        intro = _intro()
+        for phrase in (
+            "It also ships `hive-knowledge-adapter`, which maps that knowledge library to the host's hive-mined "
+            "server, configured by the repository's `.agents/knowledge-properties.json`; without that file, or on "
+            "a host other than macOS, where hive-mined does not run, the library is not consulted.",
+            "The adoption guide's [knowledge library section]"
+            "(skills/run-delivery/references/adopting.md#a-knowledge-library-optional) sets it up.",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, intro)
+        guide = (ROOT / "skills/run-delivery/references/adopting.md").read_text(encoding="utf-8")
+        self.assertIn("\n### A knowledge library (optional)\n", guide)
+
+    def test_the_archives_the_readme_says_ship_the_adapter_are_the_ones_that_do(self) -> None:
+        intro = _intro()
+        self.assertIn(
+            "The `run-delivery`, Linear and Jira archives carry the adapter; `core`, `bootstrap` and "
+            "`delivery-views` do not, so there the library is absent.",
+            intro,
+        )
+        adapter = "skills/hive-knowledge-adapter/SKILL.md"
+        for name, ships in (("run-delivery", True), ("linear", True), ("jira", True),
+                            ("core", False), ("bootstrap", False), ("delivery-views", False)):
+            with self.subTest(profile=name):
+                self.assertEqual(adapter in _profile(name).get("expectedFiles", []), ships)
