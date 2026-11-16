@@ -244,6 +244,7 @@ def hosted_info(c,*,archive=None):
         if archive is not None:return hosted_module(GENERATION).archive_status(Path(archive))
         settings=hosted_settings(c)
         if settings is None:return {'state':'disabled'}
+        if c.delivery is None:return {'state':'configured-no-delivery'}
         module=hosted_module(c.release)
         # This is read-only and needs no environment credential.
         info=module.status(c.state,settings[1],c.delivery)
@@ -266,6 +267,7 @@ def hosted_info(c,*,archive=None):
 
 def hosted_line(c,*,archive=None):
     info=hosted_info(c,archive=archive)
+    if info.get('state')=='configured-no-delivery':return 'hosted: configured; no delivery selected'
     if info.get('state') in ('disabled','unpublished') and not info.get('url'):return None
     # Called only by explicit status/view/doctor output, never supervisor logs.
     return 'hosted: '+str(info.get('state','unavailable'))+(' '+info['url'] if info.get('url') else '')
