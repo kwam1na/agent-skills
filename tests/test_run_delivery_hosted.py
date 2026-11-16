@@ -181,6 +181,15 @@ class LifecycleTests(unittest.TestCase):
         with mock.patch.dict(sys.modules,{'render_state':fake}),mock.patch.dict(os.environ,{},clear=True),mock.patch.object(flow,'start_hosted') as start,contextlib.redirect_stdout(io.StringIO()) as output:
             flow.view(SimpleNamespace(archive=self.archive,port=0))
         self.assertIn(info['url'],output.getvalue());start.assert_not_called()
+    def test_missing_intent_retry_refuses_an_unfinished_archive_without_changing_identity(self):
+        hosted.Publisher(self.archive,self.views['hosted'],'APP-1')
+        (self.archive/'state.json').write_text(json.dumps(render.review_state.initial_state('Unfinished')))
+        (self.archive/'journal.jsonl').write_text('');before=(self.archive/hosted.IDENTITY).read_bytes()
+        with mock.patch.object(flow,'Config',return_value=self.c),mock.patch.object(flow,'repo',return_value=self.root):
+            with self.assertRaisesRegex(flow.Stop,'no finished terminal cut'):
+                flow.hosted_retry(SimpleNamespace(archive=self.archive,resume=False))
+        self.assertEqual((self.archive/hosted.IDENTITY).read_bytes(),before)
+        self.assertFalse((self.archive/hosted.TERMINAL).exists())
     def test_private_descriptor_transfers_token_without_environment_or_disk_copy(self):
         with mock.patch.dict(os.environ,{'FIXTURE_PUBLISH_TOKEN':TOKEN}):
             descriptor=flow.hosted_credentials_pipe(self.c)
