@@ -186,6 +186,7 @@
       "heldUp": [],
       "told": {
         "cause": null,
+        "said": "The full run failed at d7daad0: The full run failed on the main line.",
         "heldUp": null,
         "ending": "It ended when the main line was repaired."
       },

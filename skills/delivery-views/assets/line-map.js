@@ -2982,8 +2982,8 @@
     var told = isObject(thread.told) ? thread.told : {};
     var sheet = el("div", "setback-sheet");
     var words = add(el("div", "setback-words"), add.apply(null, [el("div", "setback-head")].concat(linked(beat.words.head))));
-    // Its cause, what it held up and how it ended, each a sentence that says which it is.
-    [told.cause, told.heldUp, told.ending].forEach(function (part) {
+    // Its cause, its own line, what it held up and how it ended, each a sentence that says which it is.
+    [told.cause, told.said, told.heldUp, told.ending].forEach(function (part) {
       if (text(part)) { words.appendChild(add.apply(null, [el("p", "setback-part")].concat(linked(part)))); }
     });
     var cost = thread.state === "closed" && typeof thread.cost === "number"

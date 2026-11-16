@@ -332,6 +332,10 @@ export function pageWithRuns(document, runs = {}, { config = { spec: "delivery-v
 export function summarize(view, listed, readings = null, reportSpecs = undefined) {
   return JSON.parse(tool({ summarize: { view, listed, readings, ...(reportSpecs ? { reportSpecs } : {}) } }));
 }
+/** orchestrate-work's built-in page for a record, its story told with the registry at `registry` when given. */
+export function builtinPage(document, registry = null) {
+  return tool({ builtin: { document, registry } });
+}
 /** A record as the live server sends it: with the story the narrator tells of it. */
 export function told(document) {
   return JSON.parse(tool({ told: document }));

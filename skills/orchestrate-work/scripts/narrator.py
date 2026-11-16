@@ -356,8 +356,9 @@ def _entry_beats(ids: list[int], by_id: dict, member_of: dict, registry: dict, f
         if (last and last["thread"] == thread and kind["altitude"] == "bookkeeping" and last["group"] == "bookkeeping"):
             last["held"].append(entry)
             continue
-        # Finish lines met together, journaled one after another with nothing between, are told as one.
-        met = "finish" if entry["kind"] == FINISH_KIND else None
+        # Finish lines met together, journaled one after another with nothing between, are told as one; a line written
+        # only as a sentence keeps its sentence.
+        met = "finish" if entry["kind"] == FINISH_KIND and _facts(entry) else None
         if met and last and last["thread"] == thread and last["group"] == met:
             last["held"].append(entry)
             continue
@@ -431,8 +432,10 @@ def _thread_beat(thread: dict, by_id: dict, registry: dict) -> dict:
     held_up = f"It held up {journal_words.show(thread['heldUp'], 'list')}." if thread["heldUp"] else None
     ending = (_sentence("It ended when " + _lower(_said(by_id[thread["closing"]], registry)["head"])) if thread["closing"] is not None
               else "It still stands.")
-    thread["told"] = {"cause": cause, "heldUp": held_up, "ending": ending}
-    line = [part for part in (cause, _sentence(said["line"]) if said["line"].strip() else None, held_up, ending) if part]
+    # The opening's own line: why it happened, in its own words, when nothing earlier caused it, and its detail otherwise.
+    own = _sentence(said["line"]) if said["line"].strip() else None
+    thread["told"] = {"cause": cause, "said": own, "heldUp": held_up, "ending": ending}
+    line = [part for part in (cause, own, held_up, ending) if part]
     thread["words"] = {"head": "A setback: " + _lower(said["head"]), "line": " ".join(line)}
     ordered = sorted(told, key=lambda name: (_seconds(_instant(by_id[name])), name))
     return {"id": None, "chapter": None, "form": "thread", "altitudes": ["headline"], "at": thread["openedAt"], "entries": ordered,

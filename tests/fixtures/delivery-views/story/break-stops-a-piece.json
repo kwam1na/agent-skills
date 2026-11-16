@@ -358,6 +358,7 @@
       ],
       "told": {
         "cause": null,
+        "said": "A check failed on the main line too.",
         "heldUp": "It held up A.",
         "ending": "It ended when the main line was repaired."
       },

@@ -714,13 +714,31 @@ class ReadingTests(unittest.TestCase):
     def test_a_setback_is_told_in_its_parts(self) -> None:
         story, _ = told("last-delivery")
         stopped, broke = story["threads"]
-        self.assertEqual(stopped["told"], {"cause": "tests.test_orchestration_state failed.", "heldUp": None,
-                                           "ending": stopped["words"]["line"].rsplit(". ", 1)[-1]})
+        self.assertEqual({key: stopped["told"][key] for key in ("cause", "heldUp")}, {"cause": "tests.test_orchestration_state failed.", "heldUp": None})
+        self.assertEqual(stopped["told"]["said"], "The guide named a file the skill doesn't ship, and a test holds the guide to the files it names.")
+        self.assertTrue(stopped["told"]["ending"].startswith("It ended when lane 2 handed off"))
         expected = json.loads((FIXTURES / "last-delivery/expected.json").read_text(encoding="utf-8"))
         self.assertEqual(broke["told"]["heldUp"], f"It held up {expected['heldUp'][0]}.")
         self.assertEqual(broke["told"]["ending"], "It ended when the main line was repaired.")
         [standing] = told("standing-break")[0]["threads"]
         self.assertEqual((standing["told"]["cause"], standing["told"]["ending"]), (None, "It still stands."))
+        # With nothing before it, a setback's own line is why it happened: a blocker's is the whole of what blocked the work.
+        self.assertTrue(standing["told"]["said"].startswith("The full run failed"))
+        journal = [
+            {"id": 1, "at": "2026-11-16T09:00:00Z", "kind": "record.started", "lane": None, "subject": None, "data": {"base": {"ref": "main", "head": "a" * 40}}},
+            {"id": 2, "at": "2026-11-16T09:10:00Z", "kind": "blocker.recorded", "lane": "lane-1", "subject": "A", "data": {"text": "The staging database is down"}},
+        ]
+        [blocked] = narrator.narrate(journal)["threads"]
+        self.assertEqual(blocked["told"], {"cause": None, "said": "The staging database is down.", "heldUp": None, "ending": "It still stands."})
+
+    def test_finish_lines_written_only_as_sentences_each_keep_their_sentence(self) -> None:
+        journal = [
+            {"id": 1, "at": "2026-11-16T09:00:00Z", "kind": "finish.met", "lane": None, "subject": "stories", "summary": "stories: Every story lands"},
+            {"id": 2, "at": "2026-11-16T09:00:01Z", "kind": "finish.met", "lane": None, "subject": "suite", "summary": "suite: The suite passes"},
+        ]
+        story = narrator.narrate(journal)
+        self.assertEqual([(beat["form"], beat["words"]["line"]) for beat in story["beats"]],
+                         [("entry", "stories: Every story lands"), ("entry", "suite: The suite passes")])
 
 
 class BridgeTests(unittest.TestCase):

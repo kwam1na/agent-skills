@@ -158,12 +158,13 @@
         "heldUp": {"description": "The other pieces it stopped.", "$ref": "#/$defs/subjects"},
         "words": {"$ref": "#/$defs/words"},
         "told": {
-          "description": "Its parts, each a sentence of its own: what went wrong first, what it held up, and how it ended or that it still stands.",
+          "description": "Its parts, each a sentence of its own: what went wrong first, its own line, what it held up, and how it ended or that it still stands.",
           "type": "object",
           "additionalProperties": false,
-          "required": ["cause", "heldUp", "ending"],
+          "required": ["cause", "said", "heldUp", "ending"],
           "properties": {
             "cause": {"anyOf": [{"type": "null"}, {"type": "string", "minLength": 1}]},
+            "said": {"description": "The opening's own line: why it happened, when nothing earlier caused it.", "anyOf": [{"type": "null"}, {"type": "string", "minLength": 1}]},
             "heldUp": {"anyOf": [{"type": "null"}, {"type": "string", "minLength": 1}]},
             "ending": {"type": "string", "minLength": 1}
           }

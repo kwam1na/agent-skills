@@ -316,6 +316,7 @@
       "heldUp": [],
       "told": {
         "cause": "tests.test_one failed.",
+        "said": "Its checks failed.",
         "heldUp": null,
         "ending": "It ended when lane 1 handed off A."
       },

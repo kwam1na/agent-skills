@@ -127,13 +127,18 @@ test("a setback is one quiet sheet: why, what it held up, how it ended, and its 
   const [thread] = document.story.threads;
   const [, shown] = await open(document, { steps: [{ click: '#happened [data-depth="headline"]' }] });
   const sheet = shown.app.querySelector(`#happened .setback[data-thread="${thread.id}"]`);
-  expect([...sheet.querySelectorAll(".setback-part")].map((part) => part.textContent)).toEqual([thread.told.heldUp, thread.told.ending]);
+  const parts = (told) => [told.cause, told.said, told.heldUp, told.ending].filter(Boolean);
+  expect([...sheet.querySelectorAll(".setback-part")].map((part) => part.textContent)).toEqual(parts(thread.told));
+  expect(thread.told.said && thread.told.heldUp).toBeTruthy();
   expect(sheet.querySelector(".setback-cost b").textContent).toBe("17m");
   expect(sheet.className).toContain("is-closed");
   const standing = storied("standing-break");
   const [, still] = await open(standing, { steps: [{ click: '#happened [data-depth="headline"]' }] });
   const open_ = still.app.querySelector("#happened .setback");
   expect(open_.className).toContain("is-standing");
+  // With nothing earlier behind it, its own line says why it happened.
+  const [standingThread] = standing.story.threads;
+  expect([...open_.querySelectorAll(".setback-part")].map((part) => part.textContent)).toEqual([standingThread.told.said, "It still stands."]);
   expect(open_.querySelector(".setback-cost b").textContent).toBe("Still standing");
 });
 
