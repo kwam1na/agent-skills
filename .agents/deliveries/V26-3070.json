@@ -164,6 +164,10 @@
         {
           "id": "v26-3519-4",
           "text": "Correct the existing hosted collection fixture to use production atomic state replacement, with a deterministic concurrent-read regression for continuous updates and explicit malformed-source rejection. Preserve the failed V26-3527 queue evidence; review and qualify this bounded sensor correction in packaging before final integration."
+        },
+        {
+          "id": "v26-3519-5",
+          "text": "Prepare and review the exact non-secret production Wrangler custom-domain configuration and deployment procedure before main integration. This includes hosted/delivery-viewer/wrangler.jsonc for deliveries.v26technologies.com. Do not provision, release, deploy or claim live proof in packaging; V26-3520 remains active through the published candidate adopter and real hosted scenarios."
         }
       ]
     },
