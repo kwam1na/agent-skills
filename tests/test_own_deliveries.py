@@ -97,7 +97,8 @@ class FreshClone(unittest.TestCase):
         shutil.rmtree(seed)
         python = str(Path(sys.executable).parent)
         cls.environment = {"PATH": os.pathsep.join([python, os.environ["PATH"]]), "HOME": cls.temporary.name,
-                           "PYTHONDONTWRITEBYTECODE": "1", "LINEAR_API_KEY": "fixture", "GITHUB_TOKEN": "fixture"}
+                           "PYTHONDONTWRITEBYTECODE": "1", "LINEAR_API_KEY": "fixture", "GITHUB_TOKEN": "fixture",
+                           "AGENT_SKILLS_DELIVERY_PUBLISH_TOKEN": "fixture-publishing-" + "a" * 32}
 
     def doctor(self, cwd: Path | None = None, *, without: tuple[str, ...] = ()) -> subprocess.CompletedProcess:
         environment = {key: value for key, value in self.environment.items() if key not in without}
@@ -111,6 +112,16 @@ class FreshClone(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertTrue(any(line.startswith("ok") and "release on the delivery base" in line for line in lines), done.stdout)
         self.assertTrue(any(line.startswith("ok") and "orchestration binding" in line for line in lines), done.stdout)
+
+    def test_missing_publishing_credential_warns_without_selecting_a_delivery(self) -> None:
+        done = self.doctor(without=("AGENT_SKILLS_DELIVERY_PUBLISH_TOKEN",))
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        warnings = [line for line in done.stdout.splitlines() if line.split()[0] not in ("ok", "skipped")]
+        self.assertEqual(len(warnings), 1, done.stdout + done.stderr)
+        self.assertRegex(warnings[0], r"^warn\s+hosted delivery: hosted: configured; no delivery selected; "
+                                     r"AGENT_SKILLS_DELIVERY_PUBLISH_TOKEN is unset;")
+        self.assertNotIn("Traceback", done.stdout + done.stderr)
+        self.assertFalse((self.clone / ".orchestration/state").exists())
 
     def test_a_missing_piece_is_named(self) -> None:
         done = self.doctor(without=("LINEAR_API_KEY",))
