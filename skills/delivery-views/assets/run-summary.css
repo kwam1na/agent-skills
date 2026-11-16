@@ -80,10 +80,22 @@ a.run-commit { text-decoration: underline; text-decoration-color: color-mix(in s
   .run-bead .run-dot { transition: transform .18s var(--ease, ease); }
   .run-pick:hover .run-dot { transform: scale(1.1); }
 }
-.run-closures { font-size: 13px; line-height: 1.5; }
-.run-closures > summary { cursor: pointer; list-style: none; }
+/* The mark's gutter is the fold's own padding, so the mark stays inside what the slide clips and never blinks out. */
+.run-closures { font-size: 13px; line-height: 1.5; margin-left: -22px; padding-left: 22px; }
+.run-closures > summary { cursor: pointer; list-style: none; position: relative; grid-template-columns: minmax(0, 1fr) auto 10px;
+  color: var(--soft, #4d545a); font-weight: 400; }
 .run-closures > summary::-webkit-details-marker { display: none; }
+.run-closures > summary:hover, .run-closures[open] > summary { color: var(--ink, #161a1d); }
 .run-closures > summary:focus-visible { outline: 2px solid var(--ink, #161a1d); outline-offset: 3px; border-radius: 2px; }
-.run-closures > summary .run-fate::after { content: "⌄"; margin-left: 6px; }
-.run-closures[open] > summary .run-fate::after { content: "⌃"; }
-.run-closures .run-closure { margin-top: 8px; overflow-wrap: anywhere; color: var(--soft, #5f676d); }
+/* Fixed is a tick at the head of the line; its word stays for a screen reader. Any other ending is named in words. */
+.run-closures.is-fixed > summary::before { content: ""; position: absolute; left: -17px; top: .42em; width: 4.5px; height: 8px; border-right: 1.5px solid var(--faint, #868f94);
+  border-bottom: 1.5px solid var(--faint, #868f94); transform: rotate(40deg); }
+.run-closures.is-other > summary::before { content: ""; position: absolute; left: -18px; top: .7em; width: 7px; height: 1.5px; background: var(--faint, #868f94); }
+.run-closures.is-fixed .run-fate { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.run-closures .run-fate { color: var(--faint, #868f94); }
+.run-closures > summary::after { content: ""; align-self: center; width: 5px; height: 5px; border-right: 1.5px solid var(--faint, #868f94); border-bottom: 1.5px solid var(--faint, #868f94);
+  transform: translateY(-2px) rotate(45deg); transition: transform .15s ease; }
+.run-closures[open] > summary::after { transform: translateY(1px) rotate(-135deg); }
+.run-closures:not([open]) .run-finding-text { -webkit-line-clamp: 1; }
+.run-closures[open] .run-finding-text { display: block; }
+.run-closures .run-closure { margin: 4px 0 6px; overflow-wrap: anywhere; font: 400 11px/16px var(--mono, ui-monospace, monospace); color: var(--faint, #868f94); }

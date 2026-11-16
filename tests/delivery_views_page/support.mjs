@@ -114,6 +114,17 @@ export function renderHistoryPage(document, { config, runsCommands = null, expor
   }
 }
 
+/**
+ * A snapshot's text with each entry of the timeline, the "What happened" feed, read as "[entry]": a golden pins that the
+ * timeline draws and how many entries it shows, not what they say, since the story chapter replaces its wording whole.
+ * An empty feed keeps its own words, so it never reads as holding an entry.
+ */
+export function pageText(app) {
+  const copy = app.cloneNode(true);
+  for (const entry of copy.querySelectorAll("#happened .feed > li:not(.waiting)")) entry.textContent = "[entry]";
+  return copy.textContent ?? "";
+}
+
 /** One embedded JSON block of a page, parsed. */
 export function block(page, id) {
   const found = new RegExp(`<script type="application/json" id="${id}">([^<]*)</script>`).exec(page);

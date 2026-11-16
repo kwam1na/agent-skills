@@ -7,9 +7,16 @@
   --shadow-press: 0 1px 1px rgba(20, 23, 25, .08);
   --l1: #2f6fb3; --l2: #2f7d4f; --l3: #b8395f; --l4: #7f52ad; --l5: #9a6a14; --l6: #227a7a;
   --held: #b93d22; --wait: #946414; --landed: #2f7d4f;
+  /* The stream from a stop being checked: on paper it is the lane's own colour at full strength with a light halo; on the
+     dark ground it runs nearly white with a strong one. */
+  --flow-keep: 92%; --flow-glow: 16%; --flow-halo: 2px;
   --display: "Newsreader", "Iowan Old Style", Georgia, serif;
   --text: "Geist", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
   --ease: cubic-bezier(.2, .7, .2, 1);
+  /* One tempo for everything that moves. What loops keeps to the beat: a mark turns once a beat, and what breathes,
+     ripples or flows takes whole beats, all counted from the page's own clock, so they stay in step with each other and
+     through every redraw. What moves once takes one of three lengths and the one curve above. */
+  --beat: 1.2s; --quick: .35s; --move: .7s; --slow: 1.1s;
   --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color-scheme: light;
 }
@@ -21,6 +28,7 @@
     --shadow-press: 0 0 0 1px rgba(255, 255, 255, .08);
     --l1: #6ea6e6; --l2: #6cc28c; --l3: #ec7398; --l4: #b48ee0; --l5: #e0ad55; --l6: #5fc4c4;
     --held: #f2805f; --wait: #e0ad55; --landed: #6cc28c;
+    --flow-keep: 45%; --flow-glow: 40%; --flow-halo: 3px;
     color-scheme: dark;
   }
 }
@@ -31,6 +39,7 @@
     --shadow-press: 0 0 0 1px rgba(255, 255, 255, .08);
     --l1: #6ea6e6; --l2: #6cc28c; --l3: #ec7398; --l4: #b48ee0; --l5: #e0ad55; --l6: #5fc4c4;
     --held: #f2805f; --wait: #e0ad55; --landed: #6cc28c;
+    --flow-keep: 45%; --flow-glow: 40%; --flow-halo: 3px;
     color-scheme: dark;
 }
 .theme-switch { position: fixed; top: 14px; right: 14px; z-index: 20; display: flex; padding: 3px; gap: 2px;
@@ -122,7 +131,7 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 /* The check running now, as the highlighted row of the sheet. */
 /* The check running now, as the highlighted row of the sheet. Its mark is a ring whose arc turns while it runs; when it
    finishes the arc closes into the ring and its result draws inside, a check in ink or a cross in held. */
-.ck-run { display: flex; align-items: flex-start; gap: 9px; padding: 6px 10px; margin: 0 -10px; border-radius: 6px; background: var(--well); font-size: 14px;
+.ck-run { display: flex; align-items: flex-start; gap: 9px; padding: 3px 0; border-radius: 6px; font-size: 14px;
   line-height: 20px; font-weight: 500; overflow-wrap: anywhere; }
 .ck-run-words { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; flex: 1; min-width: 0; transform-origin: 50% 50%; backface-visibility: hidden; }
 .ck-run-name { min-width: 0; overflow-wrap: anywhere; }
@@ -142,6 +151,7 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 /* A lead's choice of checks is one line until opened; the run's progress above is what the panel is for. */
 .ck-chosen { font-size: 13px; line-height: 18px; color: var(--faint); }
 .ck-chosen + .ck-chosen { margin-top: -8px; }
+.ck-rest { display: grid; gap: 12px; padding: 10px 0 2px 16px; }
 .ck-fallback { font-size: 13px; line-height: 18px; color: var(--faint); margin: 0; }
 .ck-chosen > summary { cursor: pointer; list-style: none; position: relative; padding-left: 16px; }
 .ck-chosen > summary::-webkit-details-marker { display: none; }
@@ -176,28 +186,40 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .journey .stop.pieces { top: 42px; }
 .journey .tick { position: absolute; top: 23px; width: 2px; height: 10px; border-radius: 1px; background: var(--edge); margin-left: -1px; }
 /* The headline and its sentence read as one statement, and freshness belongs to the journey above it. */
-.chapter-now .title + .say { margin-top: -10px; }
-.chapter-now .journey + .since { margin-top: -14px; }
-.since { font-size: 12px; color: var(--faint); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.chapter-now .title + .say, .chapter-now .title + .plan-now, .chapter-now .plan-now + .say { margin-top: -10px; }
+.facts { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr); gap: 20px 40px; margin-right: 10px; }
+.chapter-now .journey + .facts { margin-top: -4px; padding-top: 20px; border-top: 1px solid var(--hair); }
+.fact { display: grid; gap: 4px; align-content: start; min-width: 0; }
+.fact-label { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--faint); letter-spacing: 0.01em; }
+.fact-label > span { display: inline-flex; gap: 8px; align-items: center; }
+.fact-value { font-size: 15px; line-height: 1.4; color: var(--ink); text-wrap: pretty; }
+.fact-detail { font-size: 12px; line-height: 16px; color: var(--faint); }
+.fact .issue-link { white-space: nowrap; }
+.fact .plan-now-link { display: inline; margin: 0; font-size: inherit; color: inherit; white-space: normal; }
 .since i { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); display: inline-block; }
 .since.live i { background: var(--ink); box-shadow: 0 0 0 3px color-mix(in oklab, var(--ink) 12%, transparent); }
 .since.closed i { background: transparent; box-shadow: inset 0 0 0 1.5px var(--edge); }
 .since.down i, .since.stale i { background: var(--held); }
+.since .head { font-family: var(--mono); font-size: 11px; }
 
 /* The line: each lane's work on one rule in its hue, solid where pieces have landed. Each stop's shape is its state. */
 /* The lanes sit on one pitch and end together; beside them each lane turns into the main line, which runs to the finish line.
    Rows have a fixed geometry, which the merge drawing follows: stops centre 23px below a row's top, rows 84px apart. */
-.lines { overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: thin; margin-block: -16px; }
+/* The row still scrolls sideways, by touch, trackpad or keys; its bar is hidden so no rule sits under the lanes. */
+.lines { overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: none; margin-block: -16px; }
+.lines::-webkit-scrollbar { display: none; }
 /* The rows keep 16px of room above and below inside the scroll area, so a stop's glow and pulse and the last row's labels
    are never clipped; scrolling sideways (on a phone) never brings a vertical scroll with it. */
-/* The track's least width: the lane-name column and its gap (168 + 24, or 104 + 12 on a phone) and the merge's 176
+/* The track's least width: the lane-name column and its gap (220 + 24, or 104 + 12 on a phone) and the merge's 176
    (MERGE_WIDTH in line-map.js), plus 46 for each stop of the longest lane, so stops never crowd under their keys. */
-.lines-track { position: relative; display: grid; gap: 20px; padding: 16px 176px 16px 0; min-width: max(820px, calc(368px + var(--most, 1) * 46px)); }
-.line { display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: 24px; align-items: start; height: 64px; }
+.lines-track { position: relative; display: grid; gap: 20px; padding: 16px 176px 16px 0; min-width: max(872px, calc(420px + var(--most, 1) * 46px)); }
+.line { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; align-items: start; height: 64px; }
 /* The lane's name stays pinned at the left while its row scrolls, so a lane is named wherever the reader has scrolled to. */
-.line .name { position: sticky; left: 0; z-index: 2; align-self: stretch; padding: 3px 0 10px; margin-bottom: -10px; font-size: 13px; color: var(--faint); white-space: nowrap; overflow: hidden;
-  text-overflow: ellipsis; background: linear-gradient(90deg, var(--paper) calc(100% - 12px), transparent); }
-.line .name b { display: block; color: var(--ink); font-weight: 550; font-size: 14px; line-height: 20px; overflow: hidden; text-overflow: ellipsis; }
+.line .name { position: sticky; left: 0; z-index: 2; align-self: stretch; padding: 3px 12px 10px 0; margin-bottom: -10px; font-size: 12px; line-height: 16px; color: var(--faint); overflow: hidden;
+  background: linear-gradient(90deg, var(--paper) calc(100% - 12px), transparent); }
+/* A lane is named by its piece's title, which rarely fits one line: it takes two, then is cut. */
+.line .name b { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; color: var(--ink); font-weight: 550; font-size: 13px; line-height: 18px;
+  margin-bottom: 2px; overflow: hidden; text-wrap: pretty; }
 .stops { position: relative; display: flex; justify-content: flex-end; min-height: 64px; }
 .stops::before { content: ""; position: absolute; left: 0; right: 0; top: 22px; height: 2.5px; border-radius: 2px;
   background: linear-gradient(90deg, var(--c) var(--solid, 0%), color-mix(in oklab, var(--c) 30%, transparent) var(--solid, 0%)); }
@@ -208,12 +230,20 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .mg-turn { fill: none; stroke: var(--c); stroke-width: 2.5; stroke-linecap: round; }
 .mg-turn.open { stroke: color-mix(in oklab, var(--c) 30%, transparent); }
 .mg-join { fill: var(--ink); }
+/* The line in motion: the lane is solid up to a stop in progress, the piece being checked fires down the line, and what has landed is still. */
+.flow-shot { fill: none; stroke-width: 3; stroke-linecap: butt; filter: drop-shadow(0 0 var(--flow-halo) color-mix(in oklab, var(--c) var(--flow-glow), transparent)); }
+/* On the main line the stream takes the main line's colour and weight, with no halo to smudge it. */
+.flow-trunk { fill: none; stroke-width: 4; stroke-linecap: butt; }
+.flow-trunk-light { stop-color: var(--ink); }
+.flow-shot-light { stop-color: color-mix(in oklab, var(--c) var(--flow-keep), var(--ink)); }
+.line-flow { position: absolute; left: 0; top: 0; z-index: 0; overflow: visible; pointer-events: none; }
+.flow-approach { fill: none; stroke: var(--c); stroke-width: 2.5; stroke-linecap: round; }
 .mg-post { stroke: var(--ink); stroke-width: 3; stroke-linecap: round; }
 .mg-label { font: 550 13px var(--text); fill: var(--ink); }
 .mg-count { font: 500 11px var(--mono); fill: var(--faint); }
 /* A stop: an 18px mark in its lane's hue. Circles fill as the piece goes; a hollow diamond waits on the lead; a triangle is stopped. */
 .stop-btn { position: absolute; top: 14px; z-index: 1; width: 18px; height: 18px; box-sizing: border-box; border-radius: 50%; border: 2px solid var(--c);
-  background: var(--paper); cursor: pointer; padding: 0; transition: transform .15s; }
+  background: var(--paper); cursor: pointer; padding: 0; transition: transform .15s var(--ease); }
 .stop-btn.merged { background: var(--c); }
 .stop-btn.now { border-color: color-mix(in oklab, var(--c) 25%, var(--paper)); }
 .stop-btn.now::after { content: ""; position: absolute; inset: -2px; border-radius: 50%; border: 2px solid transparent; border-top-color: var(--c); border-right-color: var(--c); }
@@ -389,11 +419,18 @@ a.issue-link { color: inherit; cursor: pointer; }
 .left-number { font-family: var(--display); font-weight: 300; font-size: clamp(96px, 18vw, 200px); line-height: .9; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
 .left-number small { font-family: var(--text); font-size: max(15px, .08em); letter-spacing: 0; color: var(--soft); font-weight: 400; margin-left: 12px; }
 .dots { display: flex; flex-wrap: wrap; gap: 6px; max-width: 560px; }
-.dots i { width: 10px; height: 10px; border-radius: 50%; background: var(--ink); display: block; }
+.dots i { width: 10px; height: 10px; border-radius: 50%; background: var(--c, var(--ink)); display: block; }
 .dots i.open { background: none; border: 1.5px solid var(--c); box-sizing: border-box; }
-.left-groups { display: grid; gap: 6px; font-size: 15px; color: var(--soft); }
-.left-groups div { display: flex; gap: 12px; align-items: baseline; }
-.left-groups b { color: var(--ink); font: 500 15px/22px var(--mono); min-width: 2ch; text-align: right; font-variant-numeric: tabular-nums; }
+.left-groups { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; max-width: 760px; font-size: 14px; line-height: 20px; color: var(--soft); }
+.left-groups li { display: grid; grid-template-columns: 10px auto minmax(0, 1fr) auto; gap: 12px; align-items: baseline; }
+.left-ring { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid var(--c); box-sizing: border-box; display: block; align-self: center; }
+.left-groups .issue-link { font: 450 12px/20px var(--mono); white-space: nowrap; }
+.left-groups li:not(.left-more) { cursor: pointer; }
+.left-title { font: inherit; text-align: left; border: 0; padding: 0; background: none; cursor: pointer; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.left-groups li:hover .left-title, .left-title:focus-visible { text-decoration: underline; text-decoration-color: var(--edge); text-underline-offset: 3px; }
+.left-groups li:hover .left-ring { background: color-mix(in oklab, var(--c) 35%, transparent); }
+.left-state { font-size: 12px; color: var(--faint); white-space: nowrap; }
+.left-groups .left-more { display: block; padding-left: 22px; font-size: 12px; color: var(--faint); }
 .after { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 24px; padding-top: 8px; }
 .after div { border-top: 2px solid var(--hair); padding-top: 12px; color: var(--soft); font-size: 15px; }
 .after div.on, .after div.met { border-color: var(--ink); color: var(--ink); }
@@ -419,7 +456,19 @@ a.issue-link { color: inherit; cursor: pointer; }
 /* Landed is the story's one good outcome, so in the feed and its legend it takes green; elsewhere success stays ink. */
 .g.ready, .g.decide { color: var(--ink); } .g.merge { color: var(--landed); } .g.stop { color: var(--held); }
 .feed p { margin: 0; max-width: 66ch; overflow-wrap: anywhere; }
-.feed .who { display: block; font-size: 12px; color: var(--faint); margin-top: 2px; }
+/* A row is a short sentence, at most one line of detail, and a quiet line saying what kind of entry it is and whose. */
+.feed-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px; min-width: 0; max-width: 72ch; }
+.feed-body > * { min-width: 0; }
+.feed-head { font-size: 15px; line-height: 22px; color: var(--ink); overflow-wrap: anywhere; }
+.feed-head .issue-link { font: 450 13px/22px var(--mono); white-space: nowrap; }
+.feed-line, .feed-fold { font-size: 13px; line-height: 19px; color: var(--soft); overflow-wrap: anywhere; }
+.feed-fold[open] > summary { color: var(--ink); }
+.feed-ref { font: 450 12px/1 var(--mono); color: inherit; }
+a.feed-ref { text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); text-underline-offset: 3px; }
+.feed .who { display: block; font-size: 12px; color: var(--faint); margin-top: 1px; }
+.feed li.quiet { padding: 8px 0; }
+.feed li.quiet .feed-fold { font-size: 12px; color: var(--faint); }
+.feed-quiet { list-style: none; margin: 0; padding: 8px 0 2px 16px; display: grid; gap: 4px; font-size: 12px; line-height: 17px; color: var(--soft); }
 .more { justify-self: start; font: inherit; font-size: 13px; font-weight: 500; height: 34px; padding: 0 16px; color: var(--ink); background: var(--lift);
   border: 0; border-radius: 6px; box-shadow: var(--shadow-press), 0 0 0 1px var(--hair); cursor: pointer; }
 
@@ -442,59 +491,60 @@ a.issue-link { color: inherit; cursor: pointer; }
 
 /* Motion marks only what is happening now, and rests under reduced motion. */
 @media (prefers-reduced-motion: no-preference) {
-  .checking.live:not(.failed) .ck-dot:not(.is-ready):not(.is-done), .ck-step.running::before, .ck-run .ck-run-mark { animation: spin 1.1s linear infinite; }
-  .ck-bar span.running { animation: breathe 1.6s ease-in-out infinite; }
+  .checking.live:not(.failed) .ck-dot:not(.is-ready):not(.is-done), .ck-step.running::before, .ck-run .ck-run-mark { animation: spin var(--beat) linear infinite; }
+  .ck-bar span.running { animation: breathe calc(var(--beat) * 2) ease-in-out infinite; }
   /* A failure's entry arrives once its row has turned over to the next check: handOff's SETTLE_MS and HOLD_MS (1.38s),
      then TURN_OUT_MS and TURN_IN_MS (1.88s in all). It holds its collapsed start only until then; once arrived nothing clips it. */
-  .ck-fails li.arriving { animation: fail-arrive 420ms cubic-bezier(.2, .7, .2, 1) 1.9s backwards; }
+  .ck-fails li.arriving { animation: fail-arrive var(--quick) var(--ease) 1.9s backwards; }
   @keyframes fail-arrive { from { opacity: 0; max-height: 0; padding-block: 0; margin-bottom: -6px; transform: translateY(-4px); overflow: hidden; }
     to { opacity: 1; max-height: 240px; transform: none; overflow: hidden; } }
-  .since.live i { animation: live 2.4s ease-in-out infinite; }
+  .since.live i { animation: live calc(var(--beat) * 2) ease-in-out infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   /* The result lands with the faintest lift as its stroke finishes drawing, then settles. */
   /* Settling, the arc stops where it is rather than snapping back, and closes into the ring from there. */
   .ck-run.settling .ck-run-mark { animation-play-state: paused; }
   .ck-run.settled:not(.landing) .ck-run-mark { animation: none; }
-  .ck-run.settled.landing .ck-run-mark { animation: land-mark .6s ease-out .2s; }
+  .ck-run.settled.landing .ck-run-mark { animation: land-mark var(--move) var(--ease) .2s; }
   @keyframes land-mark { 0% { transform: scale(1); } 50% { transform: scale(1.06); } 100% { transform: scale(1); } }
   @keyframes live { 50% { box-shadow: 0 0 0 5px color-mix(in oklab, var(--ink) 4%, transparent); } }
   @keyframes pulse { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
   @keyframes breathe { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
-  .stop-btn.now::after { animation: spin 1.1s linear infinite; }
-  .stop-btn.active::after { animation: ripple 2.4s ease-out infinite; }
+  .stop-btn.now::after { animation: spin var(--beat) linear infinite; }
+  .stop-btn.active::after { animation: ripple calc(var(--beat) * 2) ease-out infinite; }
   @keyframes ripple { 0% { opacity: .55; transform: scale(1); } 80%, 100% { opacity: 0; transform: scale(2); } }
   /* Only a stage where something is running turns; synced and checked are at rest, waiting their turn. */
-  .d-stage-icon.is-syncing, .d-stage-icon.is-checking, .d-stage-icon.is-merging { animation: spin 1.1s linear infinite; }
+  .d-stage-icon.is-syncing, .d-stage-icon.is-checking, .d-stage-icon.is-merging { animation: spin var(--beat) linear infinite; }
   @keyframes ring { from { opacity: .5; transform: scale(.7); } to { opacity: 0; transform: scale(1.5); } }
-  .stop-btn.landing { animation: land .9s var(--ease); }
+  .stop-btn.landing { animation: land var(--move) var(--ease); }
   @keyframes land { 0% { transform: scale(.4); } 55% { transform: scale(1.35); } 100% { transform: scale(1); } }
-  .feed li.fresh, .parked li.fresh { animation: slide-in .8s var(--ease) both; }
+  .feed li.fresh, .parked li.fresh { animation: slide-in var(--move) var(--ease) both; }
   @keyframes slide-in { from { opacity: .2; transform: translateX(-16px); } to { opacity: 1; transform: none; } }
-  .chapter.arrive .inner > * { animation: rise .7s var(--ease) both; }
+  .chapter.arrive .inner > * { animation: rise var(--move) var(--ease) both; }
   .chapter.arrive .inner > *:nth-child(2) { animation-delay: .06s; }
   .chapter.arrive .inner > *:nth-child(3) { animation-delay: .12s; }
   .chapter.arrive .inner > *:nth-child(4) { animation-delay: .18s; }
   .chapter.arrive .inner > *:nth-child(5) { animation-delay: .24s; }
   .chapter.arrive .inner > *:nth-child(n+6) { animation-delay: .3s; }
   @keyframes rise { from { opacity: .25; transform: translateY(14px); } to { opacity: 1; transform: none; } }
-  .left-number.ticking { animation: settle .9s var(--ease); }
+  .left-number.ticking { animation: settle var(--move) var(--ease); }
   @keyframes settle { 0% { transform: translateY(-6px); } 100% { transform: none; } }
-  .dots i.closing { animation: close-dot .7s var(--ease) both; }
-  @keyframes close-dot { 0% { transform: scale(1.6); background: var(--c); } 60% { transform: scale(.8); } 100% { transform: scale(1); background: var(--ink); } }
-  .left-groups b.changed { animation: flash-text 1.2s var(--ease); }
+  .dots i.closing { animation: close-dot var(--move) var(--ease) both; }
+  @keyframes close-dot { 0% { transform: scale(1.6); } 60% { transform: scale(.8); } 100% { transform: scale(1); } }
+  .left-groups b.changed { animation: flash-text var(--slow) var(--ease); }
   @keyframes flash-text { 0% { color: var(--soft); } 100% { color: var(--ink); } }
-  .person.changed { animation: row-flash 1.6s var(--ease); }
+  .person.changed { animation: row-flash var(--slow) var(--ease); }
   @keyframes row-flash { 0% { background: color-mix(in oklab, var(--c) 12%, var(--lift)); } 100% { background: var(--lift); } }
-  .journey .done, .journey .mark { transition: width 1.1s var(--ease), left 1.1s var(--ease); }
-  .journey .mark.moved { animation: nudge .9s var(--ease) 1.1s; }
+  .journey .done, .journey .mark { transition: width var(--slow) var(--ease), left var(--slow) var(--ease); }
+  .journey .mark.moved { animation: nudge var(--move) var(--ease) var(--slow); }
   @keyframes nudge { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ink) 35%, transparent); } 100% { box-shadow: 0 0 0 14px transparent; } }
-  .detail.swap > * { animation: fade-swap .35s var(--ease) both; }
+  .detail.swap > * { animation: fade-swap var(--quick) var(--ease) both; }
   @keyframes fade-swap { from { opacity: .3; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 }
 @media (prefers-reduced-motion: reduce) {
   .stop-btn.active { box-shadow: 0 0 0 3px color-mix(in oklab, var(--c, var(--ink)) 18%, transparent); }
 }
 @media (max-width: 640px) {
+  .facts { grid-template-columns: minmax(0, 1fr); }
   .chapter { padding: 48px 20px; }
   .chapter-now { min-height: auto; }
   .checking { padding: 18px 16px; border-radius: 12px; }
@@ -516,8 +566,11 @@ a.issue-link { color: inherit; cursor: pointer; }
 .plan-now-link { display: table; margin-top: 6px; font-size: 14px; color: var(--soft); text-decoration-color: var(--hair); text-underline-offset: 3px; white-space: nowrap; }
 .plan-now-link:hover, .plan-now-link:focus-visible { color: var(--ink); text-decoration-color: currentColor; }
 .plan-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; max-width: none; }
-.plan-reload { font-family: var(--text); font-size: 13px; font-weight: 500; letter-spacing: 0; color: var(--wait);
-  box-shadow: inset 0 0 0 1.5px var(--wait); border-radius: 6px; padding: 4px 12px; }
+/* The plan on the page is older than the record's: said in a quiet line under the headline, with the one thing to do. */
+.plan-reload { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: -10px 0 0; font-size: 13px; line-height: 20px; color: var(--soft); }
+.plan-reload::before { content: ""; align-self: center; width: 7px; height: 7px; border-radius: 50%; background: var(--wait); }
+.plan-reload button { font: inherit; border: 0; padding: 0; background: none; color: var(--ink); cursor: pointer; text-decoration: underline; text-decoration-color: var(--edge); text-underline-offset: 3px; }
+.plan-reload button:hover, .plan-reload button:focus-visible { text-decoration-color: currentColor; }
 .plan-needs { max-width: 62ch; display: grid; gap: 10px; }
 .plan-approval { margin: 0; max-width: 62ch; font-size: 14px; color: var(--soft); }
 .plan-needs .ah { font-size: 13px; font-weight: 600; color: var(--held); }
@@ -530,16 +583,21 @@ a.issue-link { color: inherit; cursor: pointer; }
 .plan-calm { margin: 0; color: var(--soft); font-size: 14px; }
 .plan-open { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; max-width: 72ch; }
 .plan-open li { display: grid; grid-template-columns: minmax(70px, auto) minmax(0, 1fr); gap: 2px 12px; padding: 8px 0; border-top: 1px solid var(--hair); }
-.po-title { color: var(--soft); font-size: 14px; overflow-wrap: anywhere; }
-.po-next { grid-column: 2; color: var(--wait); font-size: 12px; }
+.plan-open .issue-link { font: 450 12px/21px var(--mono); white-space: nowrap; }
+.po-title { color: var(--ink); font-size: 14px; overflow-wrap: anywhere; }
+/* A proof still ahead is said plainly; colour is kept for one that is held up, as in the piece's panel on the line. */
+.po-next { grid-column: 2; color: var(--soft); font-size: 12px; }
+.po-next b { font-weight: 600; color: var(--ink); }
+.plan-open li.stuck .po-next, .plan-open li.stuck .po-next b { color: var(--wait); }
 .plan-meters { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 20px; }
 .plan-meter { display: grid; gap: 6px; font-size: 14px; color: var(--soft); }
-.pm-head { display: flex; justify-content: space-between; gap: 8px; color: var(--ink); }
+.pm-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; color: var(--ink); }
 .pm-label { font-size: 14px; overflow-wrap: anywhere; }
-.pm-state { font-size: 13px; font-weight: 600; color: var(--faint); white-space: nowrap; }
+.pm-state { font-size: 12px; font-weight: 400; color: var(--faint); white-space: nowrap; }
+.plan-meter.met .pm-state, .plan-meter.open .pm-state { font-weight: 550; }
 .plan-meter.met .pm-state { color: var(--ink); }
 .plan-meter.open .pm-state { color: var(--wait); }
-.pm-bar { display: flex; height: 6px; border-radius: 999px; background: var(--well); box-shadow: inset 0 0 0 1px var(--hair); overflow: hidden; }
+.pm-bar { display: flex; height: 4px; border-radius: 999px; background: var(--well); box-shadow: inset 0 0 0 1px var(--hair); overflow: hidden; }
 .pm-done { background: var(--ink); }
 .pm-waived { background: repeating-linear-gradient(135deg, var(--ink) 0 2px, transparent 2px 5px); }
 .pm-count { font-size: 12px; color: var(--faint); }
@@ -574,17 +632,14 @@ a.issue-link { color: inherit; cursor: pointer; }
 .pu-criteria { margin: 0; padding: 0; list-style: none; font-size: 14px; display: grid; gap: 6px; align-content: start; overflow-wrap: anywhere; }
 .pu-id { color: var(--faint); font: 400 11px/16px var(--mono); }
 .pu-status { display: grid; gap: 4px; align-content: start; overflow-wrap: anywhere; }
-.pu-standing { font-size: 13px; font-weight: 600; color: var(--wait); }
-.plan-unit.proven .pu-standing { color: var(--ink); }
-.pu-proofs { display: flex; flex-wrap: wrap; gap: 2px 0; font-size: 12px; color: var(--faint); }
-.plan-proof { flex-basis: 100%; }
+/* A proof still ahead is said plainly; colour is kept for one that is held up, as in the piece's panel on the line. */
+.pu-standing { font-size: 13px; font-weight: 600; color: var(--ink); }
+.plan-unit.stuck .pu-standing { color: var(--wait); }
+.pu-proofs { display: grid; gap: 2px; font-size: 12px; color: var(--soft); }
 .plan-proof .pp-kind::after { content: ": "; }
-.plan-proof.done { flex-basis: auto; }
-.plan-proof.done .pp-kind::after { content: none; }
-.plan-proof.done .pp-state { display: none; }
-.plan-proof.done + .plan-proof.done::before { content: "\00a0·\00a0"; }
+.plan-proof.done { color: var(--faint); }
 .plan-proof.waived { color: var(--ink); }
-.plan-proof.stale, .plan-proof.open { color: var(--wait); }
+.plan-proof.stuck { color: var(--wait); }
 .plan-changes { display: grid; gap: 12px; }
 .plan-changes ul, .plan-waivers, .plan-approvals, .plan-scope-out { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; font-size: 14px; }
 .plan-scope { width: 100%; max-width: 600px; height: auto; overflow: visible; }
@@ -615,10 +670,12 @@ a.issue-link { color: inherit; cursor: pointer; }
 .plan-approvals li.done span { color: var(--ink); }
 .plan-approvals li.lapsed span { color: var(--faint); }
 .plan-full { margin: 0; max-width: 72ch; font-size: 14px; white-space: pre-line; overflow-wrap: anywhere; }
-.d-plan-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; overflow-wrap: anywhere; }
-.d-plan-row.proven .pu-standing { color: var(--ink); }
+/* A proof still ahead is ordinary, so it is said plainly; colour is kept for one that is held up. */
+.d-plan-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; overflow-wrap: anywhere; font-size: 13px; }
+.d-plan-row .pu-standing { color: var(--ink); }
 .d-plan-row.removed .pu-standing { color: var(--faint); }
-.d-plan-next { font-size: 12px; color: var(--wait); }
+.d-plan-next { color: var(--soft); }
+.d-plan-row.stuck .pu-standing, .d-plan-row.stuck .d-plan-next { color: var(--wait); }
 .d-plan { font: inherit; font-size: 13px; border: 0; padding: 0; background: none; color: var(--soft); cursor: pointer; text-decoration: underline; text-decoration-color: var(--hair); text-underline-offset: 3px; }
 .d-plan:hover, .d-plan:focus-visible { color: var(--ink); text-decoration-color: currentColor; }
 @media (max-width: 640px) {

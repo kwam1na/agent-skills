@@ -23,6 +23,13 @@ Each case directory holds:
   its detail panel after a click on it, plus the text of each round card after a
   click on each round of its run.
 
+The page has since been reworked on purpose, and its goldens follow it:
+`tests/delivery_views_page/recapture-goldens.mjs` re-derives each case's page text, detail panels, plan folds and the
+compared blocks from the page as it stands, with the clock, stops and folds its golden names. The links block is left as
+captured, since no row compares it. A recapture is committed apart from any page change. The page text reads each
+entry of the timeline, the "What happened" feed, as `[entry]`: the goldens pin that the timeline draws and how many
+entries it shows, not what they say, which the story chapter replaces whole.
+
 The cases:
 
 | Case | Document | Runs |

@@ -640,13 +640,14 @@ def _texts_order(texts: dict, named: list[str]) -> list:
 # Links
 
 
-def page_links(document: object, runs: dict, config: dict) -> dict:
+def page_links(document: object, runs: dict, config: dict, reviews: dict | None = None) -> dict:
     """The links the page may open, worked out here so the page holds no link rules of its own:
-    ticket ids by key, change requests by value and fix commits by hash."""
+    ticket ids by key, change requests by value, and fix commits and the commits a round reviewed by hash."""
     state = document.get("state") if _is_object(document) and _is_object(document.get("state")) else {}
     keys, changes, commits = [], [], []
     meta = state.get("meta") if _is_object(state.get("meta")) else {}
     keys.append(meta.get("trackerParent"))
+    commits.append(meta.get("baseHead"))
     for key in ("queue", "planned"):
         for item in state.get(key) if isinstance(state.get(key), list) else ():
             if _is_object(item):
@@ -659,8 +660,10 @@ def page_links(document: object, runs: dict, config: dict) -> dict:
     for entry in journal if isinstance(journal, list) else ():
         if _is_object(entry):
             keys.append(entry.get("subject"))
-    for summary in runs.values():
+    for summary in [*runs.values(), *(reviews.values() if isinstance(reviews, dict) else ())]:
         for entry in summary.get("roundDetail", []) if _is_object(summary) else ():
+            if _is_object(entry):
+                commits.append(entry.get("candidateRef"))
             for note in entry.get("settled", []) if _is_object(entry) else ():
                 if _is_object(note):
                     commits.append(note.get("fixCommit"))
@@ -1089,7 +1092,7 @@ def render_line_map(document: object, runs: dict, config: dict, *, theme_key: st
         f'<script type="application/json" id="delivery-state">{embed(document)}</script>',
         f'<script type="application/json" id="delivery-runs">{embed(runs)}</script>',
         f'<script type="application/json" id="delivery-reviews">{embed(reviews)}</script>',
-        f'<script type="application/json" id="delivery-links">{embed(page_links(document, runs, config))}</script>',
+        f'<script type="application/json" id="delivery-links">{embed(page_links(document, runs, config, reviews))}</script>',
         f'<script type="application/json" id="delivery-view">{embed(view)}</script>',
         *([f'<script type="application/json" id="delivery-plan">{embed(plan)}</script>'] if plan is not None else []),
         *([f'<script type="application/json" id="delivery-needs">{embed(needs)}</script>'] if needs is not None else []),

@@ -341,7 +341,8 @@ class HistoryCommandTests(unittest.TestCase):
         self.assertEqual(row["note"], "Its run could not be read from the product.")
 
     def test_both_pages_are_utf_8_with_plain_newlines_whatever_the_console_uses(self) -> None:
-        # A Windows console's default encoding can't hold the pages' characters.
+        # A Windows console's default encoding would write the pages' characters as other bytes: an en dash, which
+        # both pages hold, is 0x96 in cp1252, which no UTF-8 text holds, so the page decodes only if it was written as UTF-8.
         Repository(self.root, {"spec": views_common.CONFIG_SPEC}, self.RENDERERS)
         for command in ("history", "line-map"):
             with self.subTest(command=command):
@@ -350,7 +351,7 @@ class HistoryCommandTests(unittest.TestCase):
                                         capture_output=True, timeout=120, env={**os.environ, "PYTHONIOENCODING": "cp1252"})
                 self.assertEqual(result.returncode, 0, result.stderr)
                 page = result.stdout.decode("utf-8")
-                self.assertIn("\u2304", page)
+                self.assertIn("\u2013", page)
                 self.assertNotIn("\r", page)
 
     def test_the_views_scripts_leave_no_bytecode_beside_them_without_the_variable(self) -> None:

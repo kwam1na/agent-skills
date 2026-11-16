@@ -1,6 +1,6 @@
 {
   "rounds": [
-    "Reviewed candidate aaaaaaaRound 1Approved with 4 deferrable notesAdversarial testingMinor · 2No row covers an empty lane list.Deferred · minorA test name says merged where it means accepted.Deferred · minorOutcome correctnessModerateThe queue line keeps a stale head after a rebase.Deferred · moderateMinorThe hand-off message repeats the story key.Deferred · minorAll 4 fixed in bbbbbbb · confirmed round 2",
-    "Reviewed candidate bbbbbbbRound 2ApprovedAdversarial testingOutcome correctnessNothing new raisedConfirmed 4 earlier notes fixed in bbbbbbbAdversarial testingFixed at the next head.fixedat-1 · Fixed at the next head.Fixed at the next head.fixedat-2 · Fixed at the next head.Outcome correctnessFixed at the next head.fixedoc-1 · Fixed at the next head.Fixed at the next head.fixedoc-2 · Fixed at the next head."
+    "Reviewed at aaaaaaaRound 1Approved with 4 deferrable notesAdversarial testingMinor · 2No row covers an empty lane list.Deferred · minorA test name says merged where it means accepted.Deferred · minorOutcome correctnessModerateThe queue line keeps a stale head after a rebase.Deferred · moderateMinorThe hand-off message repeats the story key.Deferred · minorAll 4 of this round's notes were fixed in bbbbbbb, and round 2 confirmed them.",
+    "Reviewed at bbbbbbbRound 2ApprovedAdversarial testingOutcome correctnessNothing new raisedThis round confirmed 4 earlier notes fixed in bbbbbbb.Adversarial testingFixed at the next head.fixedat-1Fixed at the next head.fixedat-2Outcome correctnessFixed at the next head.fixedoc-1Fixed at the next head.fixedoc-2"
   ]
 }
