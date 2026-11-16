@@ -79,6 +79,13 @@ class HiveKnowledgeAdapterContractTests(unittest.TestCase):
         self.assertEqual(
             contract()["fieldMappings"], {"itemRef": "item_id", "kind": "type", "scope": "project"}
         )
+        self.assertEqual(
+            contract()["requestMappings"],
+            {"project": "request scope, else properties project", "tags": "properties tags"},
+        )
+        self.assertEqual(
+            contract()["outputPolicy"], {"forbiddenForwarding": ["raw-host-payload", "item-body-in-repository"]}
+        )
 
     def test_the_declared_limits_fit_the_neutral_contract(self) -> None:
         self.assertEqual(contract()["maxHits"], 5)
@@ -160,7 +167,10 @@ class HiveKnowledgeAdapterContractTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, text)
         # The tracker adapters' directory-derived fallback has no counterpart here.
-        for absent in ("basename", "directory-derived", "workspace metadata"):
+        for absent in (
+            "basename", "directory-derived", "workspace metadata", "repository name as", "directory name",
+            "fall back", "falls back", "fallback", "default project",
+        ):
             with self.subTest(absent=absent):
                 self.assertNotIn(absent, normalized(ADAPTER))
 
@@ -183,6 +193,21 @@ class HiveKnowledgeAdapterTransportTests(unittest.TestCase):
         boundary = contract()["transportBoundary"]
         self.assertEqual(boundary["mode"], "hive-mined-server-search-and-read-only")
         self.assertEqual(set(boundary["forbiddenActionMarkers"]), {category for category, _ in HOSTILE})
+        # Each marker is pinned, so deleting one fails here even where a hostile string still matches another.
+        self.assertEqual(
+            boundary["forbiddenActionMarkers"],
+            {
+                "library-git-access": [
+                    "git -c", "git checkout", "git clone", "git fetch", "git grep", "git log", "git pull", "git show",
+                ],
+                "library-file-read": [
+                    "library folder", "library directory", "library's files", "data repository", "items folder",
+                    "projects.txt", "tags.txt", "cat ", "open(", "read_text",
+                ],
+                "search-engine-outside-server": ["qmd", "ripgrep", "grep ", "sqlite", "embedding", "vector index"],
+                "other-server-tool": ["draft", "push", "sessions", "plugins"],
+            },
+        )
 
     def test_each_way_around_the_server_is_a_finding(self) -> None:
         for category, hostile in HOSTILE:
