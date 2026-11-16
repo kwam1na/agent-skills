@@ -337,6 +337,8 @@ test("record proofs follow the record's own shapes: hand-offs, stops, acceptance
   const app = await first(record({ queue: [item("A", "queued", { head: headOf("A", 2) })], journal: journal([[10, "approve", "A"],
     [11, "candidate.handed", "A"], [20, "candidate.handed", "A"]]) }), plan(["A"]));
   expect(openRows(app)).toEqual(["AWork A2 proofs left · Its approval is for an earlier commit."]);
+  // A proof that can't move until someone acts marks its open row as stuck.
+  expect([...app.querySelectorAll("#plan .plan-open li")].map((row) => row.className)).toEqual(["stuck"]);
   expect(title(app)).toBe("0 of 1 criteria proven.");
 });
 
@@ -1100,6 +1102,10 @@ test("what a closed delivery claims holds in every state the record can leave it
   future.journal.push({ id: 90, at: "2999-01-01T00:00:00Z", kind: "delivery.closed", lane: null, subject: "A", summary: "closed" });
   // Ahead of the clock it has no "ago"; its total is still the record's own, between two times it holds.
   expect((await first(future)).querySelector("#now .since .fact-value").textContent).toMatch(/^took \d+ days$/);
+  // A journal that no longer holds its first entry has no honest total, only when it closed.
+  const trimmed = closing([...landed, close], [item("A", "merged")]);
+  trimmed.journal = trimmed.journal.slice(1);
+  expect((await first(trimmed)).querySelector("#now .since .fact-value").textContent).toMatch(/^\d+ hours ago$/);
   const timeless = closing([...landed], [item("A", "merged")]);
   timeless.journal.push({ id: 90, at: null, kind: "delivery.closed", lane: null, subject: "A", summary: "closed" });
   expect((await first(timeless)).querySelector("#now .since").textContent).toBe("ClosedNothing more will land");

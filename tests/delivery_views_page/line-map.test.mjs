@@ -170,6 +170,22 @@ test("draws the run as a line map, chapter by chapter", async () => {
   expect(chapter("parked").textContent).toContain("Measure checkout drop-off by payment state");
 });
 
+test("What's left lists eight pieces and counts the rest, and a row picks its piece on the line", async () => {
+  const document = fixtureDocument();
+  const queued = document.state.queue.find((entry) => entry.stage === "queued");
+  for (const number of [2380, 2381, 2382]) {
+    document.state.queue.push({ ...queued, subject: `PAY-${number}`, title: `Piece ${number}`, order: number, head: null, changeRequest: null });
+  }
+  const pressed = (snapshot) => [...snapshot.app.querySelectorAll('.stop-btn[aria-pressed="true"]')].map((stop) => stop.getAttribute("data-subject"));
+  const [shown, picked] = await open(document, { steps: [{ click: "#left .left-groups li:nth-child(3) .left-title" }] });
+  const rows = [...shown.app.querySelectorAll("#left .left-groups > li:not(.left-more)")];
+  expect(rows).toHaveLength(8);
+  expect(shown.app.querySelector("#left .left-more")?.textContent).toBe("and 2 more");
+  const subject = rows[2].querySelector("[data-ticket]").getAttribute("data-ticket");
+  expect(pressed(shown)).not.toEqual([subject]);
+  expect(pressed(picked)).toEqual([subject]);
+});
+
 test("says when the checks being run were chosen by the lead, with the lead's reason", async () => {
   const plain = (await open(fixtureDocument()))[0].app.querySelector(".checking").textContent;
   expect(plain).not.toContain("chosen by the lead");
@@ -983,15 +999,16 @@ test("keeps a newer push over a late read, and works with a store that cannot su
   expect(headline(noStatus)).toBe("Pushed");
 });
 
-test("keeps the chosen stop, the open history and keyboard focus through an update", async () => {
+test("keeps the chosen stop, the open history, every open fold and keyboard focus through an update", async () => {
   const later = fixtureDocument();
   later.state.meta.headline = "Later";
+  const page = render(fixtureDocument());
   // Opening the history by its summary moves focus there; focus goes back to the stop before the update.
   const [, chosen, opened, , pushed] = await open(fixtureDocument(), {
     store: { read: "pending" },
     steps: [{ click: '.stop-btn[data-subject="PAY-2358"]' }, { click: "#detail details.mh summary" },
       { click: '.stop-btn[data-subject="PAY-2358"]' }, { push: later }],
-  });
+  }, page);
   const pressed = (snapshot) => [...snapshot.app.querySelectorAll('.stop-btn[aria-pressed="true"]')].map((stop) => stop.getAttribute("data-subject"));
   expect(pressed(chosen)).toEqual(["PAY-2358"]);
   expect(chosen.app.querySelector("#detail .d1")?.textContent).toBe("Hold the cart through a payment redirect");
@@ -999,6 +1016,11 @@ test("keeps the chosen stop, the open history and keyboard focus through an upda
   expect(pressed(pushed)).toEqual(["PAY-2358"]);
   expect(pushed.app.querySelector("#detail details.mh")?.hasAttribute("open")).toBe(true);
   expect(pushed.focused).toBe("PAY-2358");
+  // Every fold is the page's one fold, and each keeps its own place: the checking sheet's list stays open too.
+  const [, sheet, redrawn] = await open(fixtureDocument(), {
+    store: { read: "pending" }, steps: [{ click: "#now .ck-chosen > summary" }, { push: later }] }, page);
+  expect(sheet.app.querySelector("#now .ck-chosen")?.hasAttribute("open")).toBe(true);
+  expect(redrawn.app.querySelector("#now .ck-chosen")?.hasAttribute("open")).toBe(true);
 });
 
 test("draws again on a status only when the connection changes, so an open card stays open", async () => {
