@@ -121,13 +121,70 @@ runner`:
 4. Journal a decision (`--kind decision.recorded`) saying where the record
    starts, and validate.
 
+### Journal entries
+
+An entry is `{id, at, kind, lane, subject, data}`, with `because`, `answers`
+and `occurredAt` when they apply. The state tool gives `id` and `at`; an entry's
+instant is its `occurredAt` when it has one, and its `at` otherwise.
+
+- **One registry describes every kind.** `references/journal-kinds.json`,
+  schema `journal-kinds/1`, lists each kind with its `data` fields, its links,
+  whether it opens a thread, its altitude, tone and label, its `head` and
+  `line` words, a sentence that `explain`s it, and its tracker update. It is
+  the only place a kind is described: the tools, the views and the tracker
+  table below take each kind from there, and `scripts/journal_words.py` turns
+  an entry into its head and line from it.
+- **Facts are typed; only a person's words are prose.** The prose fields are
+  `text`, `why`, `detail`, `note`, `notes` and `title`, and nothing reads them
+  to decide anything. Every other field is typed and checked: a commit is a
+  full 40-character id, `base` is `{ref, head}` with both present,
+  `changeRequest` is the forge's address for it, `checks` are catalogue ids,
+  `reason` is one of the queue's stop codes, and `log` is a path that starts
+  `logs/`. A field the registry marks optional may be left out; any other
+  missing or unknown field is refused.
+- **Links say what caused an entry and what it answers.** `because` and
+  `answers` list earlier entries of the same journal by id; an id that does not
+  exist, or is not earlier, is refused. `because` may be given on any entry, and
+  a kind the registry marks as needing a cause is refused without one.
+  `answers` is allowed only between these pairs:
+
+  | An entry of this kind | may answer one of this kind |
+  | --- | --- |
+  | `candidate.handed` | `candidate.stopped` |
+  | `handoff.requeued` | `candidate.stopped` |
+  | `base.repaired` | `base.broken` |
+  | `snapshot.retaken` | `snapshot.stale` |
+  | `blocker.resolved` | `blocker.recorded` |
+  | `blocker.resolved` | `deferral.breached` |
+  | `lease.released` | `lease.granted` |
+
+  `candidate.stopped`, `base.broken` and `blocker.recorded` open a thread, a
+  stop only when it leaves the piece stopped, and the first entry answering the
+  opening closes it.
+- **A person's decision says why.** `decision.recorded` needs `data.text` and
+  `data.why`, and `blocker.recorded` needs `data.text`; none may be empty or
+  only spaces. Give them with `--text` and `--why`.
+- **Every kind has an altitude.** `headline` is what a stakeholder reads: what
+  landed, each setback and each decision. `story` adds each step an engineer
+  follows: rounds, hand-offs, checks. `bookkeeping` is the rest, and a
+  bookkeeping kind is never a problem and never posts to the tracker.
+- **A kind is added in the registry, and nowhere else.** Give it every member a
+  kind has, with words that reach each of its bracketed parts and variants, and
+  add vectors for them beside the registry's own test. Kinds beginning `x.` are
+  reserved for an adopter's own registry and are refused here.
+
+Until the sentence is removed, an entry may still carry a `summary` sentence,
+beside its `data` or instead of it, and an entry with `data` is checked in full.
+
 ### Tracker updates
 
 At each journal milestone the lead also posts one tracker update, with the
-host's own tracker tools, mirroring the journal entry it accompanies. Each
-journal kind maps to exactly one instruction below. An update is best-effort,
-like telemetry: one attempt, never a gate. With no tracker tools, delivery
-proceeds and the lead notes the gap in its close-out.
+host's own tracker tools, mirroring the journal entry it accompanies: the
+entry's head and line in the registry's words, under the kind's heading, where
+the registry says it posts. Each journal kind has exactly one row below, taken
+from the registry. An update is best-effort, like telemetry: one attempt,
+never a gate. With no tracker tools, delivery proceeds and the lead notes the
+gap in its close-out.
 
 Where the repository runs run-delivery with its tracker publisher in the
 binding, run-delivery's tracker publisher posts every update in this table,
@@ -135,40 +192,66 @@ once each, from its own ledger, and makes the moves its configuration names:
 the lead posts none of them by hand. With `tracker.updates` set to `manual`,
 the lead and the lanes make them instead, as the commands print them.
 
-| Journal kind | Tracker update |
-| --- | --- |
-| `lane.assigned` | On the ticket: it moves to started, naming the lane and what it delivers. |
-| `review.round` | None: a lane posts each round on its own ticket, as its brief says, and the lead posts the integration review's rounds on the epic. |
-| `review.evidence` | None: the lane already posted each captured round on its own ticket; the evidence shows in the record and the views. |
-| `candidate.handed` | On the ticket: the hand-off checked as a claim and queued, with its change request, reviewed head and review rounds. |
-| `check.started` | None: checking is transient, and its outcome posts with `candidate.merged` or `candidate.stopped`. |
-| `check.finished` | None: its outcome posts with `candidate.merged` or `candidate.stopped`. |
-| `check.failed` | None: its outcome posts with `candidate.stopped` once the failure is classified. |
-| `check.retried` | On the flake's tracking reference: one more retry, naming the candidate and the failing tests, as evidence for fixing the flake. |
-| `check.reused` | None: the candidate's work item already says it was handed off and is being checked; the reused check shows in the record and the views. |
-| `check.carried` | None: the candidate's work item already says it was handed off and is being checked; the carried checks and the base commits they were not run on show in the record and the views. |
-| `check.selected` | None: the lead's selection and its reason show in the record and the views, and the checks it ran post with `candidate.merged` or `candidate.stopped`. |
-| `selection.refused` | None: the stop posts with `candidate.stopped`, and the provider's words show in the record and the views. |
-| `hook.held` | None: a host hook held, or warned about, a lead's stop while no listener ran, and the entry shows in the record and the views. |
-| `candidate.merged` | On the ticket: the merge commit, the checks run, and any check reported but not awaited; the ticket moves to its review or completed state. |
-| `candidate.stopped` | On the ticket: the stop code and what happens next, whether returned to the lane, re-queued or pending a decision. |
-| `base.verified` | None: the post-merge `fullHealth` passed at the base head the named merge reached, and the result shows in the record and the views. |
-| `base.broken` | On the epic: the stop code and its detail (the failing check, an unverified merge, a base that moved under a batch, or a batch that landed in part), and that the queue is stopped; `base.repaired` reopens it. |
-| `base.repaired` | On the epic: the fix that landed and the gap it closed. |
-| `base.moved` | On the epic, record the previous and published base heads and the default branch commit. |
-| `base.rerun.started` | None: the candidate's failure already reached the lead as `check.failed`, and the record and the views show the re-run in progress. |
-| `base.rerun.finished` | None: its verdict posts with `candidate.stopped`, or with `base.broken` when the base fails the check too. |
-| `base.rerun.stopped` | None: a stopped re-run has no verdict, the candidate is queued again and checked once more, and a second stop at the same heads posts with `candidate.stopped`. |
-| `base.flaky` | None: the post-merge `fullHealth` failed and its failing tests passed when re-run alone, so the base isn't broken; the flaky tests show in the record, the views and "Needs you". |
-| `peer.merged` | None: the supervisor journals a merge by another delivery on the base that changed a file one of this delivery's open stories names, and the entry shows in the record and the views. |
-| `lease.granted` | On the ticket whose work needs the lease: the lease, its holder and when it will be released. |
-| `lease.released` | On the same ticket: the lease is released. |
-| `release.started` | None: the release posts once it finishes. |
-| `release.finished` | On the epic: the release shipped, its commit and targets, and who approved it. |
-| `finish.met` | On the epic: the finish line and the evidence that met it. |
-| `decision.recorded` | On the ticket the decision concerns, or the epic: what, why, and who decided, the operator or the lead. A deferred finding links its follow-up item. |
-| `blocker.recorded` | On the blocked ticket, or the epic when every ticket is blocked: the blocker, and whose answer or work unblocks it. |
-| `delivery.closed` | On the epic: the close-out summary; the epic moves to its final state. |
+| Journal kind | Posts on | Under the heading |
+| --- | --- | --- |
+| `record.started` | the epic | Delivery started |
+| `story.added` | the epic | Story added |
+| `lane.assigned` | the ticket | Started |
+| `review.round` | nowhere | - |
+| `review.recorded` | nowhere | - |
+| `review.carried` | the ticket | Review carried |
+| `candidate.handed` | the ticket | Handed off and queued |
+| `handoff.checked` | nowhere | - |
+| `handoff.accepted` | the ticket | Accepted |
+| `handoff.rejected` | the ticket | Hand-off rejected |
+| `handoff.requeued` | the ticket | Back in the queue |
+| `check.selected` | nowhere | - |
+| `check.selection.cleared` | nowhere | - |
+| `selection.refused` | nowhere | - |
+| `check.started` | nowhere | - |
+| `check.finished` | nowhere | - |
+| `check.failed` | nowhere | - |
+| `check.retried` | the ticket, or the epic | Check retried |
+| `check.reused` | nowhere | - |
+| `check.carried` | nowhere | - |
+| `candidate.merged` | the ticket | Merged |
+| `candidate.stopped` | the ticket | Stopped |
+| `base.rerun.started` | nowhere | - |
+| `base.rerun.finished` | nowhere | - |
+| `base.rerun.stopped` | nowhere | - |
+| `base.broken` | the epic | The delivery base is broken; the queue is stopped |
+| `base.repaired` | the epic | The delivery base is repaired |
+| `base.verified` | nowhere | - |
+| `base.flaky` | nowhere | - |
+| `base.moved` | the epic | Delivery base updated |
+| `base.published` | nowhere | - |
+| `base.merge.authorized` | nowhere | - |
+| `ownership.granted` | nowhere | - |
+| `ownership.revoked` | nowhere | - |
+| `ownership.claimed` | nowhere | - |
+| `plan.updated` | nowhere | - |
+| `cleanup.done` | nowhere | - |
+| `followup.filed` | nowhere | - |
+| `snapshot.stale` | nowhere | - |
+| `snapshot.retaken` | nowhere | - |
+| `evidence.published` | the epic | Evidence published |
+| `flake.declared` | the epic | Flake declared |
+| `fullhealth.skipped` | the epic | Full run skipped |
+| `fullhealth.rerun` | nowhere | - |
+| `posture.changed` | the epic | Posture changed |
+| `serving.held` | the epic | Serving is held |
+| `deferral.breached` | the ticket | Deferred note still open |
+| `blocker.recorded` | the ticket, or the epic | Blocked |
+| `blocker.resolved` | the ticket, or the epic | Blocker resolved |
+| `decision.recorded` | the ticket, or the epic | Decision |
+| `lease.granted` | the ticket, or the epic | Lease granted |
+| `lease.released` | the ticket, or the epic | Lease released |
+| `release.started` | nowhere | - |
+| `release.finished` | the epic | Released |
+| `finish.met` | the epic | Finish line met |
+| `hook.held` | nowhere | - |
+| `peer.merged` | nowhere | - |
+| `delivery.closed` | the epic | Delivery closed |
 
 The lead posts the updates in this table, including every cross-lane
 decision. Lanes post on their own tickets at the points the lane brief names.

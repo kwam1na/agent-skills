@@ -622,8 +622,12 @@ it.
 `references/schemas.json` holds the skill's schemas, keyed by name:
 
 - `delivery-state/1` describes the state document.
-- `delivery-journal/1` describes one journal entry. The journal is
+- `delivery-journal/2` describes one journal entry. The journal is
   append-only.
+- `journal-kinds/1` describes `references/journal-kinds.json`, the registry
+  that lists every kind of entry: its facts, typed or prose, its links, its
+  altitude and tone, its words and its tracker update. The guide's "Journal
+  entries" section says how an entry is shaped and how a kind is added.
 
 Write both only through the state tool, `scripts/delivery_state.py`. Run it
 with `python3 -B` so no bytecode is written beside the skill:
@@ -634,7 +638,8 @@ python3 -B scripts/delivery_state.py --dir <state directory> show
 python3 -B scripts/delivery_state.py --dir <state directory> patch --writer lead --version <n> --patch '<json merge patch>'
 python3 -B scripts/delivery_state.py --dir <state directory> patch --writer lead --version <n> --element 'queue[subject=<subject>]' --patch '<json merge patch>'
 python3 -B scripts/delivery_state.py --dir <state directory> patch --writer lead --version <n> --element 'lanes[id=<lane>]' --set '{"/waitingOn": null}'
-python3 -B scripts/delivery_state.py --dir <state directory> journal --kind <kind> --summary "<what happened>"
+python3 -B scripts/delivery_state.py --dir <state directory> journal --kind <kind> --data '<its facts as JSON>' [--because <ids>] [--answers <ids>]
+python3 -B scripts/delivery_state.py --dir <state directory> journal --kind decision.recorded --text "<the decision>" --why "<its reason>"
 python3 -B scripts/delivery_state.py --dir <state directory> journal --kind review.round --subject <subject> --lane <lane> --review '<review json>'
 ```
 
@@ -658,7 +663,10 @@ python3 -B scripts/delivery_state.py --dir <state directory> journal --kind revi
 - A queue element the lead adds starts with `stage` set to `queued`, empty
   `checks` and a null `syncedHead`.
 - Journal appends are never refused for concurrency; the tool allocates the
-  next id.
+  next id. An entry's `data` is checked against its kind in the registry, and
+  `because` and `answers` name earlier entries by id. Until the sentence is
+  removed, `--summary` still gives an entry a sentence, beside its facts or
+  instead of them.
 - A `review.round` entry records one review round of a candidate: its
   `review` is `{round, startedAt, finishedAt, verdicts, findings}`, where
   `verdicts` maps each lens to `approve` or `changes` and `findings` counts

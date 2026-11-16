@@ -29,6 +29,7 @@ import copy
 import datetime
 import fnmatch
 import functools
+import importlib.util
 import json
 import math
 import posixpath
@@ -50,6 +51,18 @@ if os.name == "nt":
     import msvcrt
 else:
     import fcntl
+
+
+def _sibling(name: str):
+    # Loaded by its own path, so a copy of this script beside another release's reads its own registry.
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().parent / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# What describes each kind of journal entry: read through journal_words.REGISTRY_FILE, which a test may replace.
+journal_words = _sibling("journal_words")
 
 
 STATE_FILE = "state.json"
@@ -92,6 +105,10 @@ RUNNER_LANE = ("focus", "state", "waitingOn", "since")
 # never reviews, so it never writes one.
 REVIEW_KIND = "review.round"
 SEVERITIES = ("P0", "P1", "P2", "P3")
+# The sentence's bridge: kinds the journal still accepts, with a sentence only, that the registry no longer lists.
+BRIDGE_KINDS = ("review.evidence",)
+# Kinds an adopter's own registry may name; this one never does.
+RESERVED_PREFIX = "x."
 LOCK_TIMEOUT_SECONDS = 30.0
 
 # Arrays whose elements a patch may select, and the field that names each one.
@@ -595,8 +612,9 @@ def state_errors(state: object) -> list[str]:
     return errors
 
 
-def journal_errors(entries: list[object]) -> list[str]:
-    schema = load_schema("delivery-journal/1")
+def journal_errors(entries: list[object], registry: dict | None = None) -> list[str]:
+    schema = load_schema("delivery-journal/2")
+    registry = kinds_registry() if registry is None else registry
     errors = []
     for index, entry in enumerate(entries):
         found = validate(entry, schema)
@@ -609,6 +627,10 @@ def journal_errors(entries: list[object]) -> list[str]:
             except ValueError:
                 # The pattern admits dates that do not exist; the stats read every time.
                 errors.append(f"entry {index + 1}/at: not a real time")
+            problems = _kind_problems(entry, entries[:index], registry)
+            errors.extend(f"entry {index + 1}{problem}" for problem in problems)
+            if problems:
+                continue
             errors.extend(f"entry {index + 1}: {problem}" for problem in _review_problems(entry))
             if (entry["kind"] == "review.evidence") != ("reviewArtifact" in entry) or (entry["kind"] == "review.evidence" and entry["subject"] is None):
                 errors.append(f"entry {index + 1}: review.evidence names its subject and artifact")
@@ -624,7 +646,7 @@ def journal_errors(entries: list[object]) -> list[str]:
                                else "a base merge carry belongs to a hand-off naming its story and base commits")
                     errors.append(f"entry {index + 1}: {message}")
             if "occurredAt" in entry:
-                if entry["kind"] != "candidate.merged":
+                if entry["kind"] != "candidate.merged" and "data" not in entry:
                     errors.append(f"entry {index + 1}: only a merge carries occurredAt")
                 if entry["occurredAt"] is not None:
                     try:
@@ -637,13 +659,64 @@ def journal_errors(entries: list[object]) -> list[str]:
     return errors
 
 
+def kinds_registry() -> dict:
+    """The registry of kinds, read where journal_words finds it, with its types checked as schemas."""
+    try:
+        registry = journal_words.load_registry()
+        for name, node in registry["types"].items():
+            _check_schema(node, f"journal-kinds types/{name}", {"$defs": registry["types"]})
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
+        raise StateError("registry_invalid", f"the registry of kinds at {journal_words.REGISTRY_FILE} cannot be read: {error}") from None
+    return registry
+
+
+def data_schema(kind: dict) -> dict:
+    """The schema a kind's data has, its fields typed by the registry's types."""
+    return {"type": "object", "additionalProperties": False,
+            "required": [name for name, field in kind["data"].items() if not field.get("optional")],
+            "properties": {name: {"$ref": f"#/$defs/{field['type']}"} for name, field in kind["data"].items()}}
+
+
+def _kind_problems(entry: dict, earlier: list[object], registry: dict) -> list[str]:
+    """What the registry says about one entry: its kind, its facts and its links."""
+    kind = entry["kind"]
+    if kind.startswith(RESERVED_PREFIX):
+        return [f"/kind: {kind} is reserved: kinds beginning {RESERVED_PREFIX} are an adopter's own, and this registry has none"]
+    described = registry["kinds"].get(kind)
+    if described is None and kind not in BRIDGE_KINDS:
+        return [f"/kind: no kind named {kind} in the registry"]
+    problems = []
+    if "data" in entry:
+        if described is None:
+            return [f"/data: {kind} carries no facts: it is the sentence's bridge only"]
+        # A pointer is relative to data: "/" is data itself, "/head" its head.
+        problems.extend("/data" + (error[1:] if error.startswith("/:") else error)
+                        for error in _errors(entry["data"], data_schema(described), {"$defs": registry["types"]}, ()))
+        if described["because"]["required"] and not entry.get("because"):
+            problems.append(f"/because: a {kind} names what caused it")
+    earlier_kinds = {item.get("id"): item.get("kind") for item in earlier if isinstance(item, dict)}
+    for link in ("because", "answers"):
+        ids = entry.get(link, [])
+        if len(set(ids)) != len(ids):
+            problems.append(f"/{link}: names an entry twice")
+        for target in ids:
+            if target not in earlier_kinds or target >= entry["id"]:
+                problems.append(f"/{link}: entry {target} is not an earlier entry of this journal")
+            elif link == "answers" and earlier_kinds[target] not in (described or {}).get("answers", []):
+                problems.append(f"/answers: a {kind} does not answer a {earlier_kinds[target]}")
+    return problems
+
+
 def _review_problems(entry: dict) -> list[str]:
     """What the schema cannot say about a review round."""
     review = entry.get("review")
     if entry["kind"] != REVIEW_KIND:
         return [] if review is None else [f"only a {REVIEW_KIND} entry carries a review"]
     if review is None:
-        return [f"a {REVIEW_KIND} entry carries its review"]
+        if "data" not in entry:
+            return [f"a {REVIEW_KIND} entry carries its review"]
+        # An entry with facts carries its round in data, in the shape the registry has checked.
+        review = entry["data"]
     problems = []
     if entry["subject"] is None:
         problems.append(f"a {REVIEW_KIND} entry names the candidate it reviewed")
@@ -2070,7 +2143,10 @@ def append_journal(
     directory: Path,
     *,
     kind: str,
-    summary: str,
+    summary: str | None = None,
+    data: dict | None = None,
+    because: list[int] | None = None,
+    answers: list[int] | None = None,
     lane: str | None = None,
     subject: str | None = None,
     review: dict | None = None,
@@ -2082,7 +2158,17 @@ def append_journal(
     review_carry: dict | None = None,
     base_merge_authorization: dict | None = None,
 ) -> dict:
-    """Append one entry. ``writer`` is "runner" when the runner writes; the lead and lanes leave it unset."""
+    """Append one entry. ``writer`` is "runner" when the runner writes; the lead and lanes leave it unset.
+
+    ``data`` holds the kind's facts, in the shape the registry gives it, and ``because`` and ``answers``
+    name earlier entries by id. Until the sentence's bridge is removed an entry may carry ``summary``,
+    ``data`` or both, and one with ``data`` is checked in full.
+    """
+    if isinstance(kind, str) and kind.startswith(RESERVED_PREFIX):
+        raise StateError("kind_reserved", f"{kind} is reserved: kinds beginning {RESERVED_PREFIX} are an adopter's own, "
+                         "and this registry has none")
+    if summary is None and data is None:
+        raise StateError("entry_invalid", "an entry carries its facts in data, or a sentence")
     if writer == "runner" and kind == REVIEW_KIND:
         raise StateError("kind_not_owned", f"the runner never writes {REVIEW_KIND}: the lead or the lane records its review")
     with file_lock(directory / STATE_LOCK):
@@ -2111,8 +2197,15 @@ def append_journal(
             "kind": kind,
             "lane": lane,
             "subject": subject,
-            "summary": summary,
         }
+        if summary is not None:
+            entry["summary"] = summary
+        if data is not None:
+            entry["data"] = data
+        if because:
+            entry["because"] = list(because)
+        if answers:
+            entry["answers"] = list(answers)
         if review is not None:
             entry["review"] = review
         if recovered:
@@ -4585,13 +4678,45 @@ def _review_argument(value: str | None) -> dict | None:
     return review
 
 
-def _journal_summary(args: argparse.Namespace, review: dict | None) -> str:
+# The kinds a person words: --text and --why go into their data.
+WORDED_KINDS = ("decision.recorded", "blocker.recorded")
+
+
+def _journal_data(args: argparse.Namespace) -> dict | None:
+    data = _json_argument(args.data, "--data")
+    if data is not None and not isinstance(data, dict):
+        raise StateError("entry_invalid", "--data is a JSON object")
+    worded = {name: value for name, value in (("text", args.text), ("why", args.why)) if value is not None}
+    if worded:
+        if args.kind not in WORDED_KINDS:
+            raise StateError("entry_invalid", f"--text and --why are for {' and '.join(WORDED_KINDS)}")
+        clash = sorted(set(worded) & set(data or {}))
+        if clash:
+            raise StateError("entry_invalid", f"give {clash[0]} once, in --data or as --{clash[0]}")
+        data = {**(data or {}), **worded}
+    return data
+
+
+def _links(value: str | None, name: str) -> list[int] | None:
+    """Entry ids, comma-separated."""
+    if value is None:
+        return None
+    try:
+        ids = [int(part) for part in value.split(",")]
+    except ValueError:
+        raise StateError("entry_invalid", f"{name} is entry ids, comma-separated, such as 3,7") from None
+    return ids
+
+
+def _journal_summary(args: argparse.Namespace, review: dict | None, data: dict | None) -> str | None:
     if args.summary:
         return args.summary
-    if args.kind == REVIEW_KIND and review is None:
-        raise StateError("entry_invalid", f"a {REVIEW_KIND} gives its review with --review")
+    if args.kind == REVIEW_KIND and review is None and data is None:
+        raise StateError("entry_invalid", f"a {REVIEW_KIND} gives its review with --review, or its facts with --data")
+    if data is not None and review is None:
+        return None
     if args.kind != REVIEW_KIND:
-        raise StateError("entry_invalid", "give --summary")
+        raise StateError("entry_invalid", "give the entry's facts with --data, or a sentence with --summary")
     try:
         verdicts = ", ".join(f"{lens} {verdict}" for lens, verdict in sorted(review["verdicts"].items()))
         findings = "/".join(str(review["findings"][severity]) for severity in SEVERITIES)
@@ -4980,7 +5105,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     entry = commands.add_parser("journal", help="append one journal entry")
     entry.add_argument("--kind", required=True)
-    entry.add_argument("--summary", help="required, except on a review.round, whose summary is written for it")
+    entry.add_argument("--data", help="the kind's facts as a JSON object, in the shape the registry gives; - reads stdin")
+    entry.add_argument("--because", help="earlier entry ids this one happened because of, comma-separated")
+    entry.add_argument("--answers", help="earlier entry ids this one answers, comma-separated")
+    entry.add_argument("--text", help="what a decision or a blocker says, in the person's words")
+    entry.add_argument("--why", help="why the decision was made, in the person's words")
+    entry.add_argument("--summary", help="the sentence's bridge: a sentence, beside or instead of --data; a review.round's is written for it")
     entry.add_argument("--base-merge-authorization", help="lead's reviewed head and exact allowed base commits as JSON")
     entry.add_argument("--review", help="a review.round's review as JSON, or - to read it from stdin")
     entry.add_argument("--lane")
@@ -5127,10 +5257,12 @@ def main(argv: list[str] | None = None) -> int:
             }
         elif args.command == "journal":
             review = _review_argument(args.review)
+            data = _journal_data(args)
             result = {
                 "ok": True,
                 "entry": append_journal(
-                    args.dir, kind=args.kind, summary=_journal_summary(args, review),
+                    args.dir, kind=args.kind, summary=_journal_summary(args, review, data), data=data,
+                    because=_links(args.because, "--because"), answers=_links(args.answers, "--answers"),
                     lane=args.lane, subject=args.subject, review=review,
                     writer="lane" if args.writer == "lane" else None,
                     base_merge_authorization=_json_argument(args.base_merge_authorization, "--base-merge-authorization"),

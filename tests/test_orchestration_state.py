@@ -5722,8 +5722,10 @@ VALID_FIXTURES = {
     "queued with its ticket started", "lane wait set by the queue", "a decision carrying a review",
     "queue check with a title", "queue check with its node", "step with a title", "a close started", "a close finished", "queue check with its base re-run",
     "checking now awaiting the base rerun", "queue row named as the repair",
+    "facts only", "facts beside a sentence", "with its causes and what it answers", "an unregistered kind", "the registry",
 }
-JOURNAL_KINDS = [
+# The kinds the journal took before the registry: every one is still accepted, by the registry or by the bridge.
+SENTENCE_KINDS = [
     "lane.assigned", "review.round", "candidate.handed", "check.started", "check.finished",
     "check.failed", "check.retried", "check.reused", "check.carried", "candidate.merged", "candidate.stopped", "base.verified", "base.broken",
     "base.repaired", "base.rerun.started", "base.rerun.finished", "base.rerun.stopped", "base.flaky",
@@ -5736,6 +5738,7 @@ JOURNAL_KINDS = [
 class SchemaAgreementTests(unittest.TestCase):
     def fixtures(self) -> dict[str, list[tuple[str, object]]]:
         state = valid_state()
+        registry = json.loads((SKILL / "references/journal-kinds.json").read_text(encoding="utf-8"))
         return {
             "delivery-state/1": [
                 ("valid", state),
@@ -5838,8 +5841,17 @@ class SchemaAgreementTests(unittest.TestCase):
                 ("empty run", with_change(state, ("queue", 0, "runId"), "")),
                 ("not an object", []),
             ],
-            "delivery-journal/1": [
+            "delivery-journal/2": [
                 ("valid", VALID_ENTRY),
+                ("facts only", {key: value for key, value in {**VALID_ENTRY, "data": {"head": HEAD_A}}.items() if key != "summary"}),
+                ("facts beside a sentence", {**VALID_ENTRY, "data": {"head": HEAD_A}}),
+                ("with its causes and what it answers", {**VALID_ENTRY, "because": [1, 2], "answers": [3]}),
+                ("neither facts nor a sentence", {key: value for key, value in VALID_ENTRY.items() if key != "summary"}),
+                ("facts that are not an object", {**VALID_ENTRY, "data": ["head"]}),
+                ("a cause that is not an entry id", {**VALID_ENTRY, "because": [0]}),
+                ("an answer by text", {**VALID_ENTRY, "answers": ["3"]}),
+                ("an unregistered kind", {**VALID_ENTRY, "kind": "candidate.vanished"}),
+                ("a kind that is not a name", {**VALID_ENTRY, "kind": "candidate vanished"}),
                 ("with lane", {**VALID_ENTRY, "lane": "lane-1"}),
                 ("a decision carrying a review", {**VALID_ENTRY, "kind": "decision.recorded",
                                                  "reviewCarry": {"from": HEAD_A, "to": HEAD_B, "digest": "0" * 64}}),
@@ -5847,7 +5859,6 @@ class SchemaAgreementTests(unittest.TestCase):
                                                        "reviewCarry": {"from": HEAD_A, "to": HEAD_B, "digest": "0" * 8}}),
                 ("a review carry without its target", {**VALID_ENTRY, "kind": "decision.recorded",
                                                       "reviewCarry": {"from": HEAD_A, "digest": "0" * 64}}),
-                ("unknown kind", {**VALID_ENTRY, "kind": "candidate.vanished"}),
                 ("id zero", {**VALID_ENTRY, "id": 0}),
                 ("id as boolean", {**VALID_ENTRY, "id": True}),
                 ("empty summary", {**VALID_ENTRY, "summary": ""}),
@@ -5855,6 +5866,13 @@ class SchemaAgreementTests(unittest.TestCase):
                 ("missing subject", {key: value for key, value in VALID_ENTRY.items() if key != "subject"}),
                 ("extra field", {**VALID_ENTRY, "extra": 1}),
                 ("bad time", {**VALID_ENTRY, "at": "2026-10-20 10:00:00"}),
+            ],
+            "journal-kinds/1": [
+                ("the registry", registry),
+                ("a kind with a tone of its own", with_change(registry, ("kinds", "finish.met", "tone"), "triumph")),
+                ("a kind without its words", with_change(registry, ("kinds", "finish.met", "words"), {"head": "Met"})),
+                ("a tracker update that posts on a lane", with_change(
+                    registry, ("kinds", "finish.met", "tracker"), {"posts": "lane", "heading": "Met"})),
             ],
             "work-snapshot/1": [
                 ("valid", SNAPSHOT),
@@ -5875,7 +5893,7 @@ class SchemaAgreementTests(unittest.TestCase):
                 with_change(state, ("queue", 0, "head"), HEAD_A + "\n"),
                 with_change(state, ("meta", "updatedAt"), "2026-10-20T10:00:00Z\n"),
             ],
-            "delivery-journal/1": [{**VALID_ENTRY, "at": "2026-10-20T10:00:00Z\n"}],
+            "delivery-journal/2": [{**VALID_ENTRY, "at": "2026-10-20T10:00:00Z\n"}],
         }
         for name, documents in cases.items():
             schema = schema_module.load_schema(name)
@@ -5899,8 +5917,12 @@ class SchemaAgreementTests(unittest.TestCase):
 
     def test_closed_value_lists_are_exact(self) -> None:
         state = schema_module.load_schema("delivery-state/1")
-        journal = schema_module.load_schema("delivery-journal/1")
-        self.assertEqual(journal["properties"]["kind"]["enum"], JOURNAL_KINDS)
+        journal = schema_module.load_schema("delivery-journal/2")
+        # The schema takes any kind by its shape; the registry, and the bridge until it goes, say which exist.
+        registered = list(json.loads((SKILL / "references/journal-kinds.json").read_text(encoding="utf-8"))["kinds"])
+        self.assertEqual(state_tool.BRIDGE_KINDS, ("review.evidence",))
+        self.assertEqual(sorted(set(SENTENCE_KINDS) - set(registered)), list(state_tool.BRIDGE_KINDS))
+        kinds = [*registered, *state_tool.BRIDGE_KINDS]
         queue = state["properties"]["queue"]["items"]["properties"]
         self.assertEqual(queue["stage"]["enum"],
                          ["queued", "syncing", "synced", "checking", "checked", "merging", "merged", "stopped"])
@@ -5910,16 +5932,21 @@ class SchemaAgreementTests(unittest.TestCase):
                          ["pending", "running", "passed", "failed", "skipped", "timed_out", "reused"])
         self.assertEqual(journal["properties"]["id"]["minimum"], 1)
         self.assertEqual(state["properties"]["version"]["minimum"], 1)
-        for kind in JOURNAL_KINDS:
+        for kind in kinds:
             with self.subTest(kind=kind):
                 self.assertEqual(schema_module.validate({**VALID_ENTRY, "kind": kind}, journal), [])
+                if kind not in ("review.round", "review.evidence"):
+                    # Each is accepted with a sentence only, as every writer still journals it.
+                    self.assertEqual(state_tool.journal_errors([{**VALID_ENTRY, "kind": kind}]), [])
+        self.assertEqual(state_tool.journal_errors([{**VALID_ENTRY, "kind": "candidate.vanished"}]),
+                         ["entry 1/kind: no kind named candidate.vanished in the registry"])
 
     def test_schemas_are_keyed_by_name_use_urn_ids_and_declare_no_dialect(self) -> None:
         text = SCHEMA_FILE.read_text(encoding="utf-8")
         schemas = json.loads(text)
         self.assertEqual(text, json.dumps(schemas, indent=2, ensure_ascii=False) + "\n")
         self.assertEqual(sorted(schemas), [
-            "affected-checks/1", "delivery-journal/1", "delivery-state/1", "merge-queue-result/1", "orchestration-binding/1",
+            "affected-checks/1", "delivery-journal/2", "delivery-state/1", "journal-kinds/1", "merge-queue-result/1", "orchestration-binding/1",
             "work-hints/1", "work-snapshot/1",
         ])
         for name, schema in schemas.items():
@@ -6375,24 +6402,38 @@ class SkillTextTests(unittest.TestCase):
         self.assertEqual(sorted(listed), sorted(runner.GIT_OWN_DIRECTORIES))
         self.assertEqual(len(listed), len(set(listed)))
 
-    def test_every_journal_kind_has_exactly_one_tracker_update_instruction(self) -> None:
-        kinds = json.loads(SCHEMA_FILE.read_text(encoding="utf-8"))["delivery-journal/1"]["properties"]["kind"]["enum"]
+    def test_the_guides_tracker_table_is_the_registrys(self) -> None:
+        registry = json.loads((SKILL / "references/journal-kinds.json").read_text(encoding="utf-8"))["kinds"]
         table = section(GUIDE.read_text(encoding="utf-8"), "### Tracker updates")
-        rows = [line for line in table.splitlines() if line.startswith("| `")]
-        mapped = [row.split("`")[1] for row in rows]
-        # A journal kind added to the schema without an update instruction,
-        # or an instruction for a kind that does not exist, fails here.
-        self.assertEqual(sorted(mapped), sorted(kinds))
-        self.assertEqual(len(mapped), len(set(mapped)))
-        for row in rows:
-            with self.subTest(row=row):
-                instruction = row.split("|")[2].strip()
-                self.assertTrue(instruction.startswith(("On the ", "None: ")), instruction)
-                # An update is never a gate: no instruction waits on, blocks or
-                # orders anything after itself.
-                self.assertIsNone(re.search(r"\b(?:wait(?:s|ing|ed)?|block(?:s|ing)?|until|till|before|after|gate[sd]?|hold(?:s|ing)?)\b", instruction), instruction)
+        rows = [[cell.strip() for cell in line.strip("|").split("|")] for line in table.splitlines() if line.startswith("| `")]
+        posts = {"the ticket": "ticket", "the epic": "epic", "the ticket, or the epic": "ticket-or-epic"}
+        # A kind added to the registry without its row, a row for a kind it does not list,
+        # or a row whose place or heading differs from the registry's, fails here.
+        self.assertEqual([(cells[0].strip("`"), None if cells[1] == "nowhere" else {"posts": posts[cells[1]], "heading": cells[2]})
+                          for cells in rows],
+                         [(name, kind["tracker"]) for name, kind in registry.items()])
+        self.assertTrue(all(cells[2] == "-" for cells in rows if cells[1] == "nowhere"))
 
-    def test_the_tracker_publisher_posts_nothing_for_exactly_the_kinds_the_guide_says_post_nothing(self) -> None:
+    def test_the_guide_lists_the_answers_pairs_and_describes_an_entry(self) -> None:
+        registry = json.loads((SKILL / "references/journal-kinds.json").read_text(encoding="utf-8"))["kinds"]
+        text = section(GUIDE.read_text(encoding="utf-8"), "### Journal entries")
+        pairs = re.findall(r"^\s*\| `([a-z.]+)` \| `([a-z.]+)` \|$", text, re.MULTILINE)
+        self.assertEqual(pairs, [(name, target) for name, kind in registry.items() for target in kind["answers"]])
+        normal = " ".join(text.split())
+        for phrase in ("An entry is `{id, at, kind, lane, subject, data}`, with `because`, `answers` and `occurredAt`",
+                       "The prose fields are `text`, `why`, `detail`, `note`, `notes` and `title`, and nothing reads them",
+                       "a commit is a full 40-character id, `base` is `{ref, head}` with both present",
+                       "an id that does not exist, or is not earlier, is refused",
+                       "`answers` is allowed only between these pairs",
+                       "`headline` is what a stakeholder reads", "`story` adds each step an engineer follows",
+                       "`bookkeeping` is the rest, and a bookkeeping kind is never a problem and never posts to the tracker",
+                       "**A kind is added in the registry, and nowhere else.**",
+                       "Kinds beginning `x.` are reserved for an adopter's own registry",
+                       "an entry may still carry a `summary` sentence, beside its `data` or instead of it"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, normal)
+
+    def test_the_tracker_publisher_posts_where_the_registry_says_for_the_kinds_it_knows(self) -> None:
         previous = sys.dont_write_bytecode
         sys.dont_write_bytecode = True
         try:
@@ -6402,12 +6443,14 @@ class SkillTextTests(unittest.TestCase):
             spec.loader.exec_module(publisher)
         finally:
             sys.dont_write_bytecode = previous
-        table = section(GUIDE.read_text(encoding="utf-8"), "### Tracker updates")
-        rows = {row.split("`")[1]: row.split("|")[2].strip() for row in table.splitlines() if row.startswith("| `")}
-        self.assertEqual(sorted(publisher.UPDATES), sorted(rows))
-        for kind, instruction in rows.items():
+        registry = json.loads((SKILL / "references/journal-kinds.json").read_text(encoding="utf-8"))["kinds"]
+        # Until the publisher reads the registry itself, its own table holds the kinds the bridge writes:
+        # each the registry lists posts where the registry says, and a bridge kind posts nothing.
+        self.assertEqual(sorted(set(publisher.UPDATES) - set(registry)), list(state_tool.BRIDGE_KINDS))
+        for kind, update in publisher.UPDATES.items():
             with self.subTest(kind=kind):
-                self.assertEqual(publisher.UPDATES[kind] is None, instruction.startswith("None: "), instruction)
+                expected = registry[kind]["tracker"] if kind in registry else None
+                self.assertEqual(None if update is None else dict(zip(("posts", "heading"), update)), expected)
 
     def test_the_operator_escalation_list_is_closed_and_pinned(self) -> None:
         for path in (SKILL / "SKILL.md", GUIDE):

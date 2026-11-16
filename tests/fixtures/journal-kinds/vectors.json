@@ -1,0 +1,2021 @@
+{
+  "vectors": [
+    {
+      "kind": "record.started",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        }
+      },
+      "head": "The delivery started",
+      "line": "On integrate/delivery-story at 9f3c2b1"
+    },
+    {
+      "kind": "record.started",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        }
+      },
+      "head": "The delivery started",
+      "line": "On integrate/delivery-story at 9f3c2b1"
+    },
+    {
+      "kind": "story.added",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "title": "Keep facts in the journal",
+        "why": "The guide named a file the skill does not ship."
+      },
+      "head": "The lead added V26-3532",
+      "line": "Keep facts in the journal. The guide named a file the skill does not ship."
+    },
+    {
+      "kind": "story.added",
+      "lane": null,
+      "subject": "V26-3532",
+      "data": {
+        "title": "Keep facts in the journal",
+        "why": "The guide named a file the skill does not ship."
+      },
+      "head": "The lead added V26-3532",
+      "line": "Keep facts in the journal. The guide named a file the skill does not ship."
+    },
+    {
+      "kind": "lane.assigned",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "title": "Keep facts in the journal",
+        "note": "Starts after V26-3532 lands"
+      },
+      "head": "Lane 1 picked up V26-3532",
+      "line": "Keep facts in the journal. Starts after V26-3532 lands"
+    },
+    {
+      "kind": "lane.assigned",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "title": "Keep facts in the journal"
+      },
+      "head": "Lane 1 picked up V26-3532",
+      "line": "Keep facts in the journal"
+    },
+    {
+      "kind": "review.round",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "round": 2,
+        "startedAt": "2026-11-16T10:15:00Z",
+        "finishedAt": "2026-11-16T10:15:00Z",
+        "verdicts": {
+          "adversarial-testing": "approve",
+          "outcome-correctness": "changes"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 1,
+          "P2": 2,
+          "P3": 0
+        },
+        "refused": 2,
+        "restarts": 2
+      },
+      "head": "Review round 2 on V26-3532",
+      "line": "Findings: 0 P0, 1 P1, 2 P2 and 0 P3, after 2 refused results, restarted 2 times"
+    },
+    {
+      "kind": "review.round",
+      "lane": null,
+      "subject": "V26-3532",
+      "data": {
+        "round": 2,
+        "startedAt": "2026-11-16T10:15:00Z",
+        "finishedAt": "2026-11-16T10:15:00Z",
+        "verdicts": {
+          "adversarial-testing": "approve",
+          "outcome-correctness": "changes"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 1,
+          "P2": 2,
+          "P3": 0
+        },
+        "refused": 0,
+        "restarts": 0
+      },
+      "head": "Review round 2 on V26-3532",
+      "line": "Findings: 0 P0, 1 P1, 2 P2 and 0 P3"
+    },
+    {
+      "kind": "review.recorded",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "digest": "abababababababababababababababababababababababababababababababab",
+        "candidateRef": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
+      },
+      "head": "The review of V26-3532 was kept",
+      "line": "For 4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
+    },
+    {
+      "kind": "review.recorded",
+      "lane": null,
+      "subject": "V26-3532",
+      "data": {
+        "digest": "abababababababababababababababababababababababababababababababab",
+        "candidateRef": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
+      },
+      "head": "The review of V26-3532 was kept",
+      "line": "For 4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
+    },
+    {
+      "kind": "review.carried",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "from": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b",
+        "to": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "digest": "abababababababababababababababababababababababababababababababab",
+        "baseCommits": [
+          "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b",
+          "0123456789abcdef0123456789abcdef01234567"
+        ],
+        "why": "The guide named a file the skill does not ship."
+      },
+      "head": "The review of V26-3532 was carried",
+      "line": "From 9f3c2b1 to 4e66a05, across 9f3c2b1 and 0123456 from the main line. The guide named a file the skill does not ship."
+    },
+    {
+      "kind": "review.carried",
+      "lane": null,
+      "subject": "V26-3532",
+      "data": {
+        "from": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b",
+        "to": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "digest": "abababababababababababababababababababababababababababababababab",
+        "why": "The guide named a file the skill does not ship."
+      },
+      "head": "The review of V26-3532 was carried",
+      "line": "From 9f3c2b1 to 4e66a05. The guide named a file the skill does not ship."
+    },
+    {
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "changeRequest": "https://github.com/example/app/pull/12",
+        "rounds": 2,
+        "checks": [
+          "unit",
+          "lint"
+        ],
+        "evidence": [
+          {
+            "check": "unit",
+            "definition": "sha256:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+            "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+            "tree": "0123456789abcdef0123456789abcdef01234567",
+            "result": "passed"
+          }
+        ],
+        "noChange": true
+      },
+      "head": "Lane 1 handed off V26-3532",
+      "line": "No change needed, with unit and lint run by the lane"
+    },
+    {
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "changeRequest": "https://github.com/example/app/pull/12",
+        "rounds": 2,
+        "checks": []
+      },
+      "head": "Lane 1 handed off V26-3532",
+      "line": "After 2 review rounds"
+    },
+    {
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "changeRequest": "https://github.com/example/app/pull/12",
+        "rounds": 2,
+        "checks": [],
+        "noChange": true
+      },
+      "head": "Lane 1 handed off V26-3532",
+      "line": "No change needed"
+    },
+    {
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "changeRequest": "https://github.com/example/app/pull/12",
+        "rounds": 2,
+        "checks": [
+          "unit",
+          "lint"
+        ],
+        "evidence": [
+          {
+            "check": "unit",
+            "definition": "sha256:efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+            "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+            "tree": "0123456789abcdef0123456789abcdef01234567",
+            "result": "passed"
+          }
+        ]
+      },
+      "head": "Lane 1 handed off V26-3532",
+      "line": "After 2 review rounds, with unit and lint run by the lane"
+    },
+    {
+      "kind": "handoff.checked",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "rounds": 2,
+        "afterMerge": true,
+        "noChange": true,
+        "notes": [
+          "Its rounds name the reviewed head."
+        ]
+      },
+      "head": "The lead checked the hand-off of V26-3532",
+      "line": "No change needed, at 4e66a05. Its rounds name the reviewed head."
+    },
+    {
+      "kind": "handoff.checked",
+      "lane": null,
+      "subject": "V26-3532",
+      "data": {
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "rounds": 2,
+        "afterMerge": true,
+        "noChange": true,
+        "notes": []
+      },
+      "head": "The lead checked the hand-off of V26-3532",
+      "line": "No change needed, at 4e66a05"
+    },
+    {
+      "kind": "handoff.checked",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "rounds": 2,
+        "afterMerge": true,
+        "noChange": true,
+        "notes": []
+      },
+      "head": "The lead checked the hand-off of V26-3532",
+      "line": "No change needed, at 4e66a05"
+    },
+    {
+      "kind": "handoff.checked",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "rounds": 2,
+        "afterMerge": true,
+        "noChange": false,
+        "notes": [
+          "Its rounds name the reviewed head."
+        ]
+      },
+      "head": "The lead checked the hand-off of V26-3532",
+      "line": "At 4e66a05, after 2 review rounds. Its rounds name the reviewed head."
+    },
+    {
+      "kind": "handoff.checked",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "rounds": 2,
+        "afterMerge": true,
+        "noChange": false,
+        "notes": []
+      },
+      "head": "The lead checked the hand-off of V26-3532",
+      "line": "At 4e66a05, after 2 review rounds"
+    },
+    {
+      "kind": "handoff.accepted",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "settled": true
+      },
+      "head": "The lead accepted V26-3532",
+      "line": "Settled with no change"
+    },
+    {
+      "kind": "handoff.accepted",
+      "lane": null,
+      "subject": "V26-3532",
+      "data": {
+        "settled": true
+      },
+      "head": "The lead accepted V26-3532",
+      "line": "Settled with no change"
+    },
+    {
+      "kind": "handoff.accepted",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "settled": false
+      },
+      "head": "The lead accepted V26-3532",
+      "line": "It went to the queue"
+    },
+    {
+      "kind": "handoff.rejected",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "why": "The guide named a file the skill does not ship."
+      },
+      "head": "The lead sent V26-3532 back",
+      "line": "The guide named a file the skill does not ship."
+    },
+    {
+      "kind": "handoff.rejected",
+      "lane": null,
+      "subject": "V26-3532",
+      "data": {
+        "why": "The guide named a file the skill does not ship."
+      },
+      "head": "The lead sent V26-3532 back",
+      "line": "The guide named a file the skill does not ship."
+    },
+    {
+      "kind": "handoff.requeued",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
+      },
+      "head": "V26-3532 went back in the queue",
+      "line": "At 4e66a05"
+    },
+    {
+      "kind": "handoff.requeued",
+      "lane": null,
+      "subject": "V26-3532",
+      "data": {
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
+      },
+      "head": "V26-3532 went back in the queue",
+      "line": "At 4e66a05"
+    },
+    {
+      "kind": "check.selected",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "checks": [
+          "unit",
+          "lint"
+        ],
+        "why": "The guide named a file the skill does not ship.",
+        "added": [
+          {
+            "id": "guide",
+            "why": "It reads the guide."
+          }
+        ]
+      },
+      "head": "The lead chose the checks for V26-3532",
+      "line": "Checks: unit and lint, at 4e66a05, 1 check added. The guide named a file the skill does not ship."
+    },
+    {
+      "kind": "check.selected",
+      "lane": null,
+      "subject": "V26-3532",
+      "data": {
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "checks": [
+          "unit",
+          "lint"
+        ],
+        "why": "The guide named a file the skill does not ship.",
+        "added": []
+      },
+      "head": "The lead chose the checks for V26-3532",
+      "line": "Checks: unit and lint, at 4e66a05. The guide named a file the skill does not ship."
+    },
+    {
+      "kind": "check.selection.cleared",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {},
+      "head": "The lead cleared the checks chosen for V26-3532",
+      "line": "The usual checks ran"
+    },
+    {
+      "kind": "check.selection.cleared",
+      "lane": null,
+      "subject": "V26-3532",
+      "data": {},
+      "head": "The lead cleared the checks chosen for V26-3532",
+      "line": "The usual checks ran"
+    },
+    {
+      "kind": "selection.refused",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "detail": "unit failed on the piece and passed on the main line"
+      },
+      "head": "The checks for V26-3532 could not be chosen",
+      "line": "unit failed on the piece and passed on the main line"
+    },
+    {
+      "kind": "selection.refused",
+      "lane": null,
+      "subject": "V26-3532",
+      "data": {
+        "detail": "unit failed on the piece and passed on the main line"
+      },
+      "head": "The checks for V26-3532 could not be chosen",
+      "line": "unit failed on the piece and passed on the main line"
+    },
+    {
+      "kind": "check.started",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "batch": [
+          "V26-3425",
+          "V26-3319",
+          "V26-3318"
+        ]
+      },
+      "head": "Checks started on V26-3532",
+      "line": "In one batch: V26-3425, V26-3319 and V26-3318"
+    },
+    {
+      "kind": "check.started",
+      "lane": null,
+      "subject": null,
+      "data": {},
+      "head": "Checks started",
+      "line": ""
+    },
+    {
+      "kind": "check.finished",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "batch": [
+          "V26-3425",
+          "V26-3319",
+          "V26-3318"
+        ]
+      },
+      "head": "Checks finished on V26-3532",
+      "line": "In one batch: V26-3425, V26-3319 and V26-3318"
+    },
+    {
+      "kind": "check.finished",
+      "lane": null,
+      "subject": null,
+      "data": {},
+      "head": "Checks finished",
+      "line": ""
+    },
+    {
+      "kind": "check.failed",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "check": "unit",
+        "timedOut": true,
+        "failing": [
+          "tests.test_guide.test_names_shipped_files"
+        ],
+        "more": 2,
+        "log": "logs/20261116T101500Z-003-a1b2c3d4-unit.log"
+      },
+      "head": "unit ran out of time",
+      "line": "Failing: tests.test_guide.test_names_shipped_files and 2 more"
+    },
+    {
+      "kind": "check.failed",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "check": "unit",
+        "timedOut": true,
+        "failing": [],
+        "more": 0,
+        "log": "logs/20261116T101500Z-003-a1b2c3d4-unit.log"
+      },
+      "head": "unit ran out of time",
+      "line": ""
+    },
+    {
+      "kind": "check.failed",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "check": "unit",
+        "timedOut": true,
+        "failing": [],
+        "more": 0,
+        "log": "logs/20261116T101500Z-003-a1b2c3d4-unit.log"
+      },
+      "head": "unit ran out of time",
+      "line": ""
+    },
+    {
+      "kind": "check.failed",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "check": "unit",
+        "timedOut": false,
+        "failing": [
+          "tests.test_guide.test_names_shipped_files"
+        ],
+        "more": 2,
+        "log": "logs/20261116T101500Z-003-a1b2c3d4-unit.log"
+      },
+      "head": "unit failed",
+      "line": "Failing: tests.test_guide.test_names_shipped_files and 2 more"
+    },
+    {
+      "kind": "check.failed",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "check": "unit",
+        "timedOut": false,
+        "failing": [],
+        "more": 0,
+        "log": "logs/20261116T101500Z-003-a1b2c3d4-unit.log"
+      },
+      "head": "unit failed",
+      "line": ""
+    },
+    {
+      "kind": "check.retried",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "check": "unit",
+        "failing": [
+          "tests.test_guide.test_names_shipped_files"
+        ],
+        "flake": [
+          "https://github.com/example/app/issues/7"
+        ],
+        "onBase": true
+      },
+      "head": "unit ran again on the main line",
+      "line": "Known as flaky: https://github.com/example/app/issues/7"
+    },
+    {
+      "kind": "check.retried",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "check": "unit",
+        "failing": [
+          "tests.test_guide.test_names_shipped_files"
+        ],
+        "flake": [
+          "https://github.com/example/app/issues/7"
+        ],
+        "onBase": true
+      },
+      "head": "unit ran again on the main line",
+      "line": "Known as flaky: https://github.com/example/app/issues/7"
+    },
+    {
+      "kind": "check.retried",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "check": "unit",
+        "failing": [
+          "tests.test_guide.test_names_shipped_files"
+        ],
+        "flake": [
+          "https://github.com/example/app/issues/7"
+        ],
+        "onBase": false
+      },
+      "head": "unit ran again",
+      "line": "Known as flaky: https://github.com/example/app/issues/7"
+    },
+    {
+      "kind": "check.reused",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "check": "unit",
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "from": "V26-3425"
+      },
+      "head": "unit was not run again",
+      "line": "Its run for V26-3425 at 4e66a05 was used"
+    },
+    {
+      "kind": "check.reused",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "check": "unit",
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "from": "V26-3425"
+      },
+      "head": "unit was not run again",
+      "line": "Its run for V26-3425 at 4e66a05 was used"
+    },
+    {
+      "kind": "check.carried",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "checks": [
+          "unit",
+          "lint"
+        ],
+        "ranAgain": [
+          "unit",
+          "lint"
+        ],
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        },
+        "commits": [
+          "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b",
+          "0123456789abcdef0123456789abcdef01234567"
+        ]
+      },
+      "head": "Checks carried to the new main line",
+      "line": "unit and lint carried, unit and lint ran again, across 2 commits"
+    },
+    {
+      "kind": "check.carried",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "checks": [
+          "unit",
+          "lint"
+        ],
+        "ranAgain": [
+          "unit",
+          "lint"
+        ],
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        },
+        "commits": [
+          "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b",
+          "0123456789abcdef0123456789abcdef01234567"
+        ]
+      },
+      "head": "Checks carried to the new main line",
+      "line": "unit and lint carried, unit and lint ran again, across 2 commits"
+    },
+    {
+      "kind": "candidate.merged",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "recovery": {
+          "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+          "changeRequest": "https://github.com/example/app/pull/12"
+        }
+      },
+      "head": "V26-3532 landed",
+      "line": "At 4e66a05, found later on the forge at 4e66a05"
+    },
+    {
+      "kind": "candidate.merged",
+      "lane": null,
+      "subject": "V26-3532",
+      "data": {
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
+      },
+      "head": "V26-3532 landed",
+      "line": "At 4e66a05"
+    },
+    {
+      "kind": "candidate.stopped",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "reason": "check_failed",
+        "detail": "unit failed on the piece and passed on the main line",
+        "requeued": true,
+        "stage": "checking"
+      },
+      "head": "V26-3532 went back in the queue",
+      "line": "unit failed on the piece and passed on the main line while checking"
+    },
+    {
+      "kind": "candidate.stopped",
+      "lane": null,
+      "subject": "V26-3532",
+      "data": {
+        "reason": "check_failed",
+        "detail": "unit failed on the piece and passed on the main line"
+      },
+      "head": "V26-3532 was stopped",
+      "line": "unit failed on the piece and passed on the main line"
+    },
+    {
+      "kind": "candidate.stopped",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "reason": "check_failed",
+        "detail": "unit failed on the piece and passed on the main line",
+        "requeued": true
+      },
+      "head": "V26-3532 went back in the queue",
+      "line": "unit failed on the piece and passed on the main line"
+    },
+    {
+      "kind": "candidate.stopped",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "reason": "check_failed",
+        "detail": "unit failed on the piece and passed on the main line",
+        "stage": "checking"
+      },
+      "head": "V26-3532 was stopped",
+      "line": "unit failed on the piece and passed on the main line while checking"
+    },
+    {
+      "kind": "candidate.stopped",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "reason": "check_failed",
+        "detail": "unit failed on the piece and passed on the main line"
+      },
+      "head": "V26-3532 was stopped",
+      "line": "unit failed on the piece and passed on the main line"
+    },
+    {
+      "kind": "base.rerun.started",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "checks": [
+          "unit",
+          "lint"
+        ],
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        }
+      },
+      "head": "Checking the main line too",
+      "line": "unit and lint, at 9f3c2b1"
+    },
+    {
+      "kind": "base.rerun.started",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "checks": [
+          "unit",
+          "lint"
+        ],
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        }
+      },
+      "head": "Checking the main line too",
+      "line": "unit and lint, at 9f3c2b1"
+    },
+    {
+      "kind": "base.rerun.finished",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        },
+        "seconds": 6180,
+        "verdict": "base_broken",
+        "results": [
+          {
+            "check": "unit",
+            "result": "failed",
+            "log": "logs/20261116T102000Z-004-b2c3d4e5-unit.log"
+          }
+        ]
+      },
+      "head": "The main line failed it too",
+      "line": "After 1h 43m"
+    },
+    {
+      "kind": "base.rerun.finished",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        },
+        "seconds": 6180,
+        "verdict": "base_broken",
+        "results": [
+          {
+            "check": "unit",
+            "result": "failed",
+            "log": "logs/20261116T102000Z-004-b2c3d4e5-unit.log"
+          }
+        ]
+      },
+      "head": "The main line failed it too",
+      "line": "After 1h 43m"
+    },
+    {
+      "kind": "base.rerun.finished",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        },
+        "seconds": 6180,
+        "verdict": "candidate_failed",
+        "results": [
+          {
+            "check": "unit",
+            "result": "failed",
+            "log": "logs/20261116T102000Z-004-b2c3d4e5-unit.log"
+          }
+        ]
+      },
+      "head": "The main line passed it",
+      "line": "After 1h 43m"
+    },
+    {
+      "kind": "base.rerun.finished",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        },
+        "seconds": 6180,
+        "verdict": "no_verdict",
+        "results": [
+          {
+            "check": "unit",
+            "result": "failed",
+            "log": "logs/20261116T102000Z-004-b2c3d4e5-unit.log"
+          }
+        ]
+      },
+      "head": "The main line gave no verdict",
+      "line": "After 1h 43m"
+    },
+    {
+      "kind": "base.rerun.stopped",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        },
+        "seconds": 6180,
+        "why": "The guide named a file the skill does not ship."
+      },
+      "head": "The run on the main line stopped",
+      "line": "After 1h 43m. The guide named a file the skill does not ship."
+    },
+    {
+      "kind": "base.rerun.stopped",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        },
+        "seconds": 6180,
+        "why": "The guide named a file the skill does not ship."
+      },
+      "head": "The run on the main line stopped",
+      "line": "After 1h 43m. The guide named a file the skill does not ship."
+    },
+    {
+      "kind": "base.broken",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "source": "queue",
+        "reason": "check_failed",
+        "detail": "unit failed on the piece and passed on the main line",
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "after": "V26-3318"
+      },
+      "head": "The main line broke",
+      "line": "unit failed on the piece and passed on the main line"
+    },
+    {
+      "kind": "base.broken",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "source": "queue"
+      },
+      "head": "The main line broke",
+      "line": ""
+    },
+    {
+      "kind": "base.broken",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "source": "fullHealth",
+        "reason": "check_failed",
+        "detail": "unit failed on the piece and passed on the main line",
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "after": "V26-3318"
+      },
+      "head": "The main line broke",
+      "line": "The full run failed at 4e66a05, after V26-3318 landed: unit failed on the piece and passed on the main line"
+    },
+    {
+      "kind": "base.broken",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "source": "fullHealth"
+      },
+      "head": "The main line broke",
+      "line": "The full run failed"
+    },
+    {
+      "kind": "base.broken",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "source": "queue"
+      },
+      "head": "The main line broke",
+      "line": ""
+    },
+    {
+      "kind": "base.repaired",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "source": "queue",
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "repair": "V26-3513",
+        "why": "The guide named a file the skill does not ship."
+      },
+      "head": "The main line was repaired",
+      "line": "At 4e66a05 by V26-3513. The guide named a file the skill does not ship."
+    },
+    {
+      "kind": "base.repaired",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "source": "queue",
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
+      },
+      "head": "The main line was repaired",
+      "line": "At 4e66a05"
+    },
+    {
+      "kind": "base.verified",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "source": "queue",
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "after": "V26-3318"
+      },
+      "head": "The main line passed its full run",
+      "line": "At 4e66a05, after V26-3318 landed"
+    },
+    {
+      "kind": "base.verified",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "source": "queue",
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
+      },
+      "head": "The main line passed its full run",
+      "line": "At 4e66a05"
+    },
+    {
+      "kind": "base.flaky",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "source": "queue",
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "after": "V26-3318",
+        "failing": [
+          "tests.test_guide.test_names_shipped_files"
+        ]
+      },
+      "head": "The main line's full run was flaky",
+      "line": "tests.test_guide.test_names_shipped_files failed and then passed, after V26-3318 landed"
+    },
+    {
+      "kind": "base.flaky",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "source": "queue",
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "failing": [
+          "tests.test_guide.test_names_shipped_files"
+        ]
+      },
+      "head": "The main line's full run was flaky",
+      "line": "tests.test_guide.test_names_shipped_files failed and then passed"
+    },
+    {
+      "kind": "base.moved",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "from": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b",
+        "to": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "merged": "0123456789abcdef0123456789abcdef01234567",
+        "why": "The guide named a file the skill does not ship."
+      },
+      "head": "The main line moved",
+      "line": "From 9f3c2b1 to 4e66a05, taking in 0123456. The guide named a file the skill does not ship."
+    },
+    {
+      "kind": "base.moved",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "from": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b",
+        "to": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "merged": "0123456789abcdef0123456789abcdef01234567",
+        "why": "The guide named a file the skill does not ship."
+      },
+      "head": "The main line moved",
+      "line": "From 9f3c2b1 to 4e66a05, taking in 0123456. The guide named a file the skill does not ship."
+    },
+    {
+      "kind": "base.published",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        },
+        "from": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+      },
+      "head": "The main line was pushed",
+      "line": "integrate/delivery-story from 9f3c2b1 to 9f3c2b1"
+    },
+    {
+      "kind": "base.published",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        },
+        "from": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+      },
+      "head": "The main line was pushed",
+      "line": "integrate/delivery-story from 9f3c2b1 to 9f3c2b1"
+    },
+    {
+      "kind": "base.merge.authorized",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "reviewed": "0123456789abcdef0123456789abcdef01234567",
+        "baseCommits": [
+          "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b",
+          "0123456789abcdef0123456789abcdef01234567"
+        ],
+        "token": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+      },
+      "head": "The lead let Lane 1 merge the main line into V26-3532",
+      "line": "9f3c2b1 and 0123456, from 0123456"
+    },
+    {
+      "kind": "ownership.granted",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "path": "skills/orchestrate-work/references/*.md",
+        "span": {
+          "first": 120,
+          "after": 160
+        },
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        },
+        "movedFrom": "lane-2"
+      },
+      "head": "skills/orchestrate-work/references/*.md was given to Lane 1",
+      "line": "From Lane 2 at 9f3c2b1"
+    },
+    {
+      "kind": "ownership.granted",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "path": "skills/orchestrate-work/references/*.md"
+      },
+      "head": "skills/orchestrate-work/references/*.md was given",
+      "line": ""
+    },
+    {
+      "kind": "ownership.revoked",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "path": "skills/orchestrate-work/references/*.md",
+        "span": {
+          "first": 120,
+          "after": 160
+        },
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        },
+        "movedFrom": "lane-2"
+      },
+      "head": "skills/orchestrate-work/references/*.md was taken back from Lane 1",
+      "line": "From Lane 2 at 9f3c2b1"
+    },
+    {
+      "kind": "ownership.revoked",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "path": "skills/orchestrate-work/references/*.md"
+      },
+      "head": "skills/orchestrate-work/references/*.md was taken back",
+      "line": ""
+    },
+    {
+      "kind": "ownership.claimed",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "path": "skills/orchestrate-work/references/*.md",
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        }
+      },
+      "head": "skills/orchestrate-work/references/*.md was claimed by Lane 1",
+      "line": "On integrate/delivery-story at 9f3c2b1"
+    },
+    {
+      "kind": "ownership.claimed",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "path": "skills/orchestrate-work/references/*.md",
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        }
+      },
+      "head": "skills/orchestrate-work/references/*.md was claimed",
+      "line": "On integrate/delivery-story at 9f3c2b1"
+    },
+    {
+      "kind": "plan.updated",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "updated": "2026-11-16T10:15:00Z",
+        "changed": [
+          "stories"
+        ]
+      },
+      "head": "The plan was rebuilt",
+      "line": "Changed: stories"
+    },
+    {
+      "kind": "plan.updated",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "updated": "2026-11-16T10:15:00Z",
+        "changed": []
+      },
+      "head": "The plan was rebuilt",
+      "line": ""
+    },
+    {
+      "kind": "cleanup.done",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        },
+        "changeRequest": "https://github.com/example/app/pull/12",
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
+      },
+      "head": "V26-3532 was cleaned up",
+      "line": "Merged at 4e66a05 from https://github.com/example/app/pull/12"
+    },
+    {
+      "kind": "cleanup.done",
+      "lane": null,
+      "subject": "V26-3532",
+      "data": {
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        }
+      },
+      "head": "V26-3532 was cleaned up",
+      "line": ""
+    },
+    {
+      "kind": "followup.filed",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "finding": "F-3",
+        "followup": "https://linear.app/team/issue/V26-3540/name-the-shipped-file",
+        "title": "Keep facts in the journal"
+      },
+      "head": "A follow-up was filed",
+      "line": "V26-3540: Keep facts in the journal"
+    },
+    {
+      "kind": "followup.filed",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "finding": "F-3",
+        "followup": "https://linear.app/team/issue/V26-3540/name-the-shipped-file",
+        "title": "Keep facts in the journal"
+      },
+      "head": "A follow-up was filed",
+      "line": "V26-3540: Keep facts in the journal"
+    },
+    {
+      "kind": "snapshot.stale",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "source": "tracker"
+      },
+      "head": "The tracker snapshot went out of date",
+      "line": "The last one stood"
+    },
+    {
+      "kind": "snapshot.stale",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "source": "tracker"
+      },
+      "head": "The tracker snapshot went out of date",
+      "line": "The last one stood"
+    },
+    {
+      "kind": "snapshot.retaken",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "source": "tracker"
+      },
+      "head": "The tracker snapshot was read again",
+      "line": "It was current again"
+    },
+    {
+      "kind": "snapshot.retaken",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "source": "tracker"
+      },
+      "head": "The tracker snapshot was read again",
+      "line": "It was current again"
+    },
+    {
+      "kind": "evidence.published",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "url": "https://example.github.io/app/evidence/",
+        "clips": [
+          {
+            "name": "page.mp4",
+            "digest": "1212121212121212121212121212121212121212121212121212121212121212"
+          }
+        ]
+      },
+      "head": "Evidence for V26-3532 was published",
+      "line": "1 clip at https://example.github.io/app/evidence/"
+    },
+    {
+      "kind": "evidence.published",
+      "lane": null,
+      "subject": "V26-3532",
+      "data": {
+        "url": "https://example.github.io/app/evidence/",
+        "clips": [
+          {
+            "name": "page.mp4",
+            "digest": "1212121212121212121212121212121212121212121212121212121212121212"
+          }
+        ]
+      },
+      "head": "Evidence for V26-3532 was published",
+      "line": "1 clip at https://example.github.io/app/evidence/"
+    },
+    {
+      "kind": "flake.declared",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "flake": "https://github.com/example/app/issues/7",
+        "check": "unit",
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
+      },
+      "head": "The lead declared unit flaky",
+      "line": "At 4e66a05, tracked at https://github.com/example/app/issues/7"
+    },
+    {
+      "kind": "flake.declared",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "flake": "https://github.com/example/app/issues/7",
+        "check": "unit",
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
+      },
+      "head": "The lead declared unit flaky",
+      "line": "At 4e66a05, tracked at https://github.com/example/app/issues/7"
+    },
+    {
+      "kind": "fullhealth.skipped",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "posture": "focused",
+        "source": "origin/main",
+        "why": "The guide named a file the skill does not ship."
+      },
+      "head": "The full run was skipped",
+      "line": "At 4e66a05. The guide named a file the skill does not ship."
+    },
+    {
+      "kind": "fullhealth.skipped",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "posture": "focused",
+        "source": "origin/main",
+        "why": "The guide named a file the skill does not ship."
+      },
+      "head": "The full run was skipped",
+      "line": "At 4e66a05. The guide named a file the skill does not ship."
+    },
+    {
+      "kind": "fullhealth.rerun",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "why": "The guide named a file the skill does not ship."
+      },
+      "head": "The lead ran the full run again",
+      "line": "At 4e66a05. The guide named a file the skill does not ship."
+    },
+    {
+      "kind": "fullhealth.rerun",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "why": "The guide named a file the skill does not ship."
+      },
+      "head": "The lead ran the full run again",
+      "line": "At 4e66a05. The guide named a file the skill does not ship."
+    },
+    {
+      "kind": "posture.changed",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "from": "focused",
+        "to": "focused",
+        "source": "origin/main",
+        "why": "The guide named a file the skill does not ship."
+      },
+      "head": "From then on, a piece needed only its own checks to land",
+      "line": "The guide named a file the skill does not ship."
+    },
+    {
+      "kind": "posture.changed",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "from": "focused",
+        "to": "focused",
+        "source": "origin/main",
+        "why": "The guide named a file the skill does not ship."
+      },
+      "head": "From then on, a piece needed only its own checks to land",
+      "line": "The guide named a file the skill does not ship."
+    },
+    {
+      "kind": "posture.changed",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "from": "focused",
+        "to": "gate",
+        "source": "origin/main",
+        "why": "The guide named a file the skill does not ship."
+      },
+      "head": "From then on, every landing needed the full run",
+      "line": "The guide named a file the skill does not ship."
+    },
+    {
+      "kind": "serving.held",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "why": "The guide named a file the skill does not ship."
+      },
+      "head": "The queue was held",
+      "line": "The guide named a file the skill does not ship."
+    },
+    {
+      "kind": "serving.held",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "why": "The guide named a file the skill does not ship."
+      },
+      "head": "The queue was held",
+      "line": "The guide named a file the skill does not ship."
+    },
+    {
+      "kind": "deferral.breached",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "finding": "F-3",
+        "title": "Keep facts in the journal"
+      },
+      "head": "A deferred note was still open",
+      "line": "F-3: Keep facts in the journal"
+    },
+    {
+      "kind": "deferral.breached",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "finding": "F-3",
+        "title": "Keep facts in the journal"
+      },
+      "head": "A deferred note was still open",
+      "line": "F-3: Keep facts in the journal"
+    },
+    {
+      "kind": "blocker.recorded",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "text": "Carry the review across the base merge"
+      },
+      "head": "Work was blocked on V26-3532",
+      "line": "Carry the review across the base merge"
+    },
+    {
+      "kind": "blocker.recorded",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "text": "Carry the review across the base merge"
+      },
+      "head": "Work was blocked",
+      "line": "Carry the review across the base merge"
+    },
+    {
+      "kind": "blocker.resolved",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "why": "The guide named a file the skill does not ship."
+      },
+      "head": "Work was unblocked on V26-3532",
+      "line": "The guide named a file the skill does not ship."
+    },
+    {
+      "kind": "blocker.resolved",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "why": "The guide named a file the skill does not ship."
+      },
+      "head": "Work was unblocked",
+      "line": "The guide named a file the skill does not ship."
+    },
+    {
+      "kind": "decision.recorded",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "text": "Carry the review across the base merge",
+        "why": "The guide named a file the skill does not ship."
+      },
+      "head": "Carry the review across the base merge",
+      "line": "The guide named a file the skill does not ship."
+    },
+    {
+      "kind": "decision.recorded",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "text": "Carry the review across the base merge",
+        "why": "The guide named a file the skill does not ship."
+      },
+      "head": "Carry the review across the base merge",
+      "line": "The guide named a file the skill does not ship."
+    },
+    {
+      "kind": "lease.granted",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "lease": "in-app",
+        "holder": "lane-2"
+      },
+      "head": "lane-2 took the in-app lease",
+      "line": "For V26-3532"
+    },
+    {
+      "kind": "lease.granted",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "lease": "in-app",
+        "holder": "lane-2"
+      },
+      "head": "lane-2 took the in-app lease",
+      "line": ""
+    },
+    {
+      "kind": "lease.released",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "lease": "in-app",
+        "holder": "lane-2"
+      },
+      "head": "lane-2 let go of the in-app lease",
+      "line": "For V26-3532"
+    },
+    {
+      "kind": "lease.released",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "lease": "in-app",
+        "holder": "lane-2"
+      },
+      "head": "lane-2 let go of the in-app lease",
+      "line": ""
+    },
+    {
+      "kind": "release.started",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
+      },
+      "head": "A release started",
+      "line": "At 4e66a05"
+    },
+    {
+      "kind": "release.started",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
+      },
+      "head": "A release started",
+      "line": "At 4e66a05"
+    },
+    {
+      "kind": "release.finished",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "failedAt": "pypi"
+      },
+      "head": "The release ended",
+      "line": "At 4e66a05, stopped at pypi"
+    },
+    {
+      "kind": "release.finished",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
+      },
+      "head": "The release ended",
+      "line": "At 4e66a05"
+    },
+    {
+      "kind": "finish.met",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "finish": "acs"
+      },
+      "head": "A finish line was met",
+      "line": "acs"
+    },
+    {
+      "kind": "finish.met",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "finish": "acs"
+      },
+      "head": "A finish line was met",
+      "line": "acs"
+    },
+    {
+      "kind": "hook.held",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "hook": "lead.may-stop",
+        "verdict": "block"
+      },
+      "head": "A hook kept the lead working",
+      "line": "lead.may-stop"
+    },
+    {
+      "kind": "hook.held",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "hook": "lead.may-stop",
+        "verdict": "block"
+      },
+      "head": "A hook kept the lead working",
+      "line": "lead.may-stop"
+    },
+    {
+      "kind": "hook.held",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "hook": "lead.may-stop",
+        "verdict": "warn"
+      },
+      "head": "A hook warned the lead",
+      "line": "lead.may-stop"
+    },
+    {
+      "kind": "peer.merged",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "peer": "V26-3600",
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "files": [
+          "skills/orchestrate-work/SKILL.md"
+        ]
+      },
+      "head": "V26-3600 landed on the main line",
+      "line": "At 4e66a05, touching skills/orchestrate-work/SKILL.md"
+    },
+    {
+      "kind": "peer.merged",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "peer": "V26-3600",
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "files": [
+          "skills/orchestrate-work/SKILL.md"
+        ]
+      },
+      "head": "V26-3600 landed on the main line",
+      "line": "At 4e66a05, touching skills/orchestrate-work/SKILL.md"
+    },
+    {
+      "kind": "delivery.closed",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "skipped": true
+      },
+      "head": "The delivery finished",
+      "line": "Without the close-out's full run"
+    },
+    {
+      "kind": "delivery.closed",
+      "lane": null,
+      "subject": null,
+      "data": {},
+      "head": "The delivery finished",
+      "line": "Its close-out ran in full"
+    },
+    {
+      "kind": "delivery.closed",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {},
+      "head": "The delivery finished",
+      "line": "Its close-out ran in full"
+    },
+    {
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "changeRequest": "https://github.com/example/app/pull/12",
+        "rounds": 0,
+        "checks": []
+      },
+      "head": "Lane 1 handed off V26-3532",
+      "line": "After 0 review rounds"
+    },
+    {
+      "kind": "candidate.handed",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "changeRequest": "https://github.com/example/app/pull/12",
+        "rounds": 1,
+        "checks": []
+      },
+      "head": "Lane 1 handed off V26-3532",
+      "line": "After 1 review round"
+    },
+    {
+      "kind": "check.carried",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "checks": [
+          "unit",
+          "lint"
+        ],
+        "ranAgain": [],
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        },
+        "commits": [
+          "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b",
+          "0123456789abcdef0123456789abcdef01234567"
+        ]
+      },
+      "head": "Checks carried to the new main line",
+      "line": "unit and lint carried, none ran again, across 2 commits"
+    },
+    {
+      "kind": "check.carried",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "checks": [
+          "unit",
+          "lint"
+        ],
+        "ranAgain": [
+          "unit"
+        ],
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        },
+        "commits": [
+          "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b",
+          "0123456789abcdef0123456789abcdef01234567"
+        ]
+      },
+      "head": "Checks carried to the new main line",
+      "line": "unit and lint carried, unit ran again, across 2 commits"
+    },
+    {
+      "kind": "check.carried",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "checks": [
+          "unit",
+          "lint"
+        ],
+        "ranAgain": [
+          "unit",
+          "lint",
+          "guide"
+        ],
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        },
+        "commits": [
+          "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b",
+          "0123456789abcdef0123456789abcdef01234567"
+        ]
+      },
+      "head": "Checks carried to the new main line",
+      "line": "unit and lint carried, unit, lint and guide ran again, across 2 commits"
+    },
+    {
+      "kind": "base.rerun.finished",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        },
+        "seconds": 42,
+        "verdict": "base_broken",
+        "results": [
+          {
+            "check": "unit",
+            "result": "failed",
+            "log": "logs/20261116T102000Z-004-b2c3d4e5-unit.log"
+          }
+        ]
+      },
+      "head": "The main line failed it too",
+      "line": "After 42s"
+    },
+    {
+      "kind": "base.rerun.finished",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        },
+        "seconds": 250,
+        "verdict": "base_broken",
+        "results": [
+          {
+            "check": "unit",
+            "result": "failed",
+            "log": "logs/20261116T102000Z-004-b2c3d4e5-unit.log"
+          }
+        ]
+      },
+      "head": "The main line failed it too",
+      "line": "After 4m 10s"
+    },
+    {
+      "kind": "base.rerun.finished",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        },
+        "seconds": 600,
+        "verdict": "base_broken",
+        "results": [
+          {
+            "check": "unit",
+            "result": "failed",
+            "log": "logs/20261116T102000Z-004-b2c3d4e5-unit.log"
+          }
+        ]
+      },
+      "head": "The main line failed it too",
+      "line": "After 10m"
+    },
+    {
+      "kind": "base.rerun.finished",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "base": {
+          "ref": "integrate/delivery-story",
+          "head": "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        },
+        "seconds": 3600,
+        "verdict": "base_broken",
+        "results": [
+          {
+            "check": "unit",
+            "result": "failed",
+            "log": "logs/20261116T102000Z-004-b2c3d4e5-unit.log"
+          }
+        ]
+      },
+      "head": "The main line failed it too",
+      "line": "After 1h"
+    },
+    {
+      "kind": "lane.assigned",
+      "lane": "lead",
+      "subject": "V26-3532",
+      "data": {
+        "title": "Keep facts in the journal",
+        "note": "Starts after V26-3532 lands"
+      },
+      "head": "Lead picked up V26-3532",
+      "line": "Keep facts in the journal. Starts after V26-3532 lands"
+    },
+    {
+      "kind": "lane.assigned",
+      "lane": "lane-backend",
+      "subject": "V26-3532",
+      "data": {
+        "title": "Keep facts in the journal",
+        "note": "Starts after V26-3532 lands"
+      },
+      "head": "Backend lane picked up V26-3532",
+      "line": "Keep facts in the journal. Starts after V26-3532 lands"
+    },
+    {
+      "kind": "lane.assigned",
+      "lane": "reviewer",
+      "subject": "V26-3532",
+      "data": {
+        "title": "Keep facts in the journal",
+        "note": "Starts after V26-3532 lands"
+      },
+      "head": "Reviewer lane picked up V26-3532",
+      "line": "Keep facts in the journal. Starts after V26-3532 lands"
+    },
+    {
+      "kind": "followup.filed",
+      "lane": "lane-1",
+      "subject": "V26-3532",
+      "data": {
+        "finding": "F-3",
+        "followup": "V26-3541",
+        "title": "Keep facts in the journal"
+      },
+      "head": "A follow-up was filed",
+      "line": "V26-3541: Keep facts in the journal"
+    }
+  ]
+}

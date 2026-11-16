@@ -1,0 +1,486 @@
+from __future__ import annotations
+
+import contextlib
+import copy
+import importlib.util
+import io
+import json
+import re
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+from jsonschema import Draft202012Validator
+
+import agent_skills
+
+
+ROOT = Path(__file__).resolve().parents[1]
+# The product under test: this repository, or the extracted release candidate that
+# qualification puts first on the path, so its shipped scripts are the ones exercised.
+PRODUCT_ROOT = Path(agent_skills.__file__).resolve().parents[1]
+SKILL = PRODUCT_ROOT / "skills/orchestrate-work"
+SCRIPTS = SKILL / "scripts"
+REGISTRY = SKILL / "references/journal-kinds.json"
+SCHEMA_FILE = SKILL / "references/schemas.json"
+VECTORS = ROOT / "tests/fixtures/journal-kinds/vectors.json"
+HEAD = "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901"
+BASE_HEAD = "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+
+
+def _load(name: str):
+    # Importing the skill's modules here must not leave bytecode beside them.
+    previous = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        spec = importlib.util.spec_from_file_location(name, SCRIPTS / f"{name}.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        sys.dont_write_bytecode = previous
+
+
+state_tool = _load("delivery_state")
+words_tool = state_tool.journal_words
+
+
+# The plan's table of kinds, as written there: altitude, tone, data (prose in *stars*, optional with ?),
+# links (cause: the registry requires one; answers: the kinds it may answer; opens: a thread, or unless a
+# flag), and tracker (where: heading, or - for nowhere).
+TABLE = {
+    "record.started": ("H", "note", "base", "", "epic: Delivery started"),
+    "story.added": ("H", "decision", "*title* *why*", "", "epic: Story added"),
+    "lane.assigned": ("S", "note", "*title* *note?*", "", "ticket: Started"),
+    "review.round": ("S", "note", "round startedAt finishedAt verdicts findings refused? restarts?", "", "-"),
+    "review.recorded": ("B", "note", "digest candidateRef", "", "-"),
+    "review.carried": ("S", "decision", "from to digest baseCommits? *why*", "", "ticket: Review carried"),
+    "candidate.handed": ("S", "ready", "head changeRequest rounds checks evidence? noChange?", "answers:candidate.stopped",
+                         "ticket: Handed off and queued"),
+    "handoff.checked": ("S", "decision", "head rounds afterMerge noChange *notes*", "cause", "-"),
+    "handoff.accepted": ("S", "decision", "settled", "", "ticket: Accepted"),
+    "handoff.rejected": ("H", "problem", "*why*", "cause", "ticket: Hand-off rejected"),
+    "handoff.requeued": ("S", "decision", "head", "answers:candidate.stopped", "ticket: Back in the queue"),
+    "check.selected": ("S", "note", "head checks *why* added", "", "-"),
+    "check.selection.cleared": ("S", "note", "", "", "-"),
+    "selection.refused": ("H", "problem", "*detail*", "", "-"),
+    "check.started": ("S", "note", "batch?", "", "-"),
+    "check.finished": ("S", "note", "batch?", "cause", "-"),
+    "check.failed": ("S", "problem", "check timedOut failing more log", "cause", "-"),
+    "check.retried": ("S", "note", "check failing flake onBase", "cause", "ticket-or-epic: Check retried"),
+    "check.reused": ("S", "note", "check head from", "", "-"),
+    "check.carried": ("S", "note", "checks ranAgain base commits", "", "-"),
+    "candidate.merged": ("H", "landed", "head recovery?", "", "ticket: Merged"),
+    "candidate.stopped": ("H", "problem", "reason *detail* requeued? stage?", "opens-unless:requeued", "ticket: Stopped"),
+    "base.rerun.started": ("S", "note", "checks base", "cause", "-"),
+    "base.rerun.finished": ("S", "note", "base seconds verdict results", "cause", "-"),
+    "base.rerun.stopped": ("S", "problem", "base seconds *why*", "cause", "-"),
+    "base.broken": ("H", "problem", "source reason? *detail?* head? after?", "opens",
+                    "epic: The delivery base is broken; the queue is stopped"),
+    "base.repaired": ("H", "landed", "source head repair? *why?*", "answers:base.broken", "epic: The delivery base is repaired"),
+    "base.verified": ("S", "note", "source head after?", "", "-"),
+    "base.flaky": ("S", "problem", "source head after? failing", "", "-"),
+    "base.moved": ("S", "note", "from to merged *why*", "", "epic: Delivery base updated"),
+    "base.published": ("B", "note", "base from", "", "-"),
+    "base.merge.authorized": ("S", "decision", "reviewed baseCommits token", "", "-"),
+    "ownership.granted": ("B", "note", "path span? base? movedFrom?", "", "-"),
+    "ownership.revoked": ("B", "note", "path span? base? movedFrom?", "", "-"),
+    "ownership.claimed": ("B", "note", "path base", "", "-"),
+    "plan.updated": ("B", "note", "updated changed", "", "-"),
+    "cleanup.done": ("B", "note", "base changeRequest? head?", "", "-"),
+    "followup.filed": ("B", "note", "finding followup *title*", "", "-"),
+    "snapshot.stale": ("B", "note", "source", "", "-"),
+    "snapshot.retaken": ("B", "note", "source", "answers:snapshot.stale", "-"),
+    "evidence.published": ("S", "note", "url clips", "", "epic: Evidence published"),
+    "flake.declared": ("S", "decision", "flake check head", "", "epic: Flake declared"),
+    "fullhealth.skipped": ("H", "decision", "head posture source *why*", "", "epic: Full run skipped"),
+    "fullhealth.rerun": ("S", "decision", "head *why*", "", "-"),
+    "posture.changed": ("H", "decision", "from to source *why*", "", "epic: Posture changed"),
+    "serving.held": ("H", "problem", "*why*", "", "epic: Serving is held"),
+    "deferral.breached": ("H", "problem", "finding *title*", "", "ticket: Deferred note still open"),
+    "blocker.recorded": ("H", "problem", "*text*", "opens", "ticket-or-epic: Blocked"),
+    "blocker.resolved": ("H", "landed", "*why*", "answers:blocker.recorded,deferral.breached",
+                         "ticket-or-epic: Blocker resolved"),
+    "decision.recorded": ("H", "decision", "*text* *why*", "", "ticket-or-epic: Decision"),
+    "lease.granted": ("S", "note", "lease holder", "", "ticket-or-epic: Lease granted"),
+    "lease.released": ("S", "note", "lease holder", "answers:lease.granted", "ticket-or-epic: Lease released"),
+    "release.started": ("H", "note", "head", "", "-"),
+    "release.finished": ("H", "landed", "head failedAt?", "cause", "epic: Released"),
+    "finish.met": ("H", "landed", "finish", "", "epic: Finish line met"),
+    "hook.held": ("S", "note", "hook verdict", "", "-"),
+    "peer.merged": ("S", "note", "peer head files", "", "-"),
+    "delivery.closed": ("H", "landed", "skipped?", "", "epic: Delivery closed"),
+}
+ALTITUDES = {"H": "headline", "S": "story", "B": "bookkeeping"}
+PROSE = ["text", "why", "detail", "note", "notes", "title"]
+
+
+def registry() -> dict:
+    return json.loads(REGISTRY.read_text(encoding="utf-8"))
+
+
+def vectors() -> list[dict]:
+    return json.loads(VECTORS.read_text(encoding="utf-8"))["vectors"]
+
+
+def unreached(described: dict, cases: list[dict]) -> list[str]:
+    """What of the registry's words no vector reaches: a bracket kept or left out, a variant, or a form's edge."""
+    reached: dict[str, set] = {}
+    for case in cases:
+        reached.setdefault(case["kind"], set()).update(words_tool.traced(case, described)[1])
+    missing = []
+    for name, kind in described["kinds"].items():
+        seen = reached.get(name, set())
+        for part in ("head", "line"):
+            template = kind["words"][part]
+            for key in words_tool.variants(template):
+                if (part, "variant", key) not in seen:
+                    missing.append(f"{name} {part}: no vector chooses {key or 'otherwise'}")
+            for text in words_tool.templates(template):
+                for index, _ in enumerate(words_tool.brackets(text)):
+                    for kept in (True, False):
+                        if (part, "bracket", text, index, kept) not in seen:
+                            missing.append(f"{name} {part}: no vector {'keeps' if kept else 'leaves out'} [{index}] of {text!r}")
+    edges = {(item[2], item[3]) for found in reached.values() for item in found if item[1] == "form"}
+    for form, edge in [("count", 0), ("count", 1), ("count", 2), ("list", 0), ("list", 1), ("list", 2), ("list", 3),
+                       ("duration", "under a minute"), ("duration", "over an hour"),
+                       ("commit", None), ("lane", None), ("ticket", None)]:
+        if (form, edge) not in edges:
+            missing.append(f"no vector shows {form} at {edge}")
+    return missing
+
+
+class RegistryTests(unittest.TestCase):
+    """The registry lists every kind in the plan's table, with each column's value, and its own rules hold."""
+
+    def test_the_registry_has_every_kind_of_the_plans_table_with_each_columns_value(self) -> None:
+        kinds = registry()["kinds"]
+        self.assertEqual(sorted(kinds), sorted(TABLE))
+        for name, (altitude, tone, data, links, tracker) in TABLE.items():
+            kind = kinds[name]
+            with self.subTest(kind=name):
+                self.assertEqual(kind["altitude"], ALTITUDES[altitude])
+                self.assertEqual(kind["tone"], tone)
+                fields = {}
+                for field in data.split():
+                    prose = field.startswith("*")
+                    field = field.strip("*")
+                    fields[field.rstrip("?")] = (prose, field.endswith("?"))
+                self.assertEqual({field: (spec["type"] in ("prose", "proseList"), spec.get("optional", False))
+                                  for field, spec in kind["data"].items()}, fields)
+                self.assertEqual(kind["because"], {"required": links == "cause"})
+                answers = links.split(":", 1)[1].split(",") if links.startswith("answers:") else []
+                self.assertEqual(kind["answers"], answers)
+                opens = {"opens": True, "opens-unless:requeued": {"unless": "requeued"}}.get(links, False)
+                self.assertEqual(kind["opensThread"], opens)
+                expected = None if tracker == "-" else dict(zip(("posts", "heading"), tracker.split(": ", 1)))
+                self.assertEqual(kind["tracker"], expected)
+                self.assertTrue(kind["label"].strip())
+
+    def test_the_registry_is_a_journal_kinds_document_in_canonical_form(self) -> None:
+        text = REGISTRY.read_text(encoding="utf-8")
+        described = json.loads(text)
+        self.assertEqual(text, json.dumps(described, indent=2, ensure_ascii=False) + "\n")
+        schema = state_tool.load_schema("journal-kinds/1")
+        self.assertEqual(state_tool.validate(described, schema), [])
+        self.assertEqual(list(Draft202012Validator(schema).iter_errors(described)), [])
+        self.assertEqual(described["prose"], PROSE)
+
+    def test_no_kind_is_reserved_and_no_bookkeeping_kind_is_a_problem_or_posts(self) -> None:
+        for name, kind in registry()["kinds"].items():
+            with self.subTest(kind=name):
+                self.assertFalse(name.startswith("x."))
+                self.assertRegex(name, r"^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)+$")
+                if kind["altitude"] == "bookkeeping":
+                    self.assertNotEqual(kind["tone"], "problem")
+                    self.assertIsNone(kind["tracker"])
+
+    def test_every_field_is_typed_or_prose_by_its_name_and_every_type_is_a_schema(self) -> None:
+        described = registry()
+        for name, node in described["types"].items():
+            with self.subTest(type=name):
+                state_tool._check_schema(node, name, {"$defs": described["types"]})
+        for name, kind in described["kinds"].items():
+            for field, spec in kind["data"].items():
+                with self.subTest(kind=name, field=field):
+                    self.assertIn(spec["type"], described["types"])
+                    # A field is prose exactly when it has a prose name.
+                    self.assertEqual(spec["type"] in ("prose", "proseList"), field in described["prose"])
+
+    def test_typed_fields_hold_their_closed_values(self) -> None:
+        described, schemas = registry(), json.loads(SCHEMA_FILE.read_text(encoding="utf-8"))
+        reasons = schemas["merge-queue-result/1"]["$defs"]["reason"]["enum"]
+        self.assertIn("interrupted", reasons)
+        self.assertEqual(described["types"]["reason"]["enum"], reasons)
+        self.assertEqual(described["types"]["stage"]["enum"],
+                         schemas["delivery-state/1"]["properties"]["queue"]["items"]["properties"]["stage"]["enum"])
+        self.assertEqual(described["types"]["commit"]["pattern"], "^[0-9a-f]{40}([0-9a-f]{24})?$")
+
+    def test_links_name_kinds_the_registry_lists_and_only_the_three_open_threads(self) -> None:
+        kinds = registry()["kinds"]
+        for name, kind in kinds.items():
+            for target in kind["answers"]:
+                with self.subTest(kind=name, answers=target):
+                    self.assertIn(target, kinds)
+        self.assertEqual(sorted(name for name, kind in kinds.items() if kind["opensThread"]),
+                         ["base.broken", "blocker.recorded", "candidate.stopped"])
+        self.assertIn("requeued", kinds["candidate.stopped"]["data"])
+
+    def test_every_template_uses_only_its_kinds_fields_in_the_closed_forms(self) -> None:
+        for name, kind in registry()["kinds"].items():
+            data = kind["data"]
+            for part in ("head", "line"):
+                template = kind["words"][part]
+                if isinstance(template, dict):
+                    with self.subTest(kind=name, part=part):
+                        self.assertIn(template["by"], data)
+                        self.assertTrue(template["cases"])
+                for text in words_tool.templates(template):
+                    outside = re.sub(r"\[[^\]]*\]", "", text)
+                    for field, form, argument in words_tool.references(text):
+                        with self.subTest(kind=name, part=part, field=field):
+                            top = field.split(".")[0]
+                            self.assertIn(top, [*data, "lane", "subject"])
+                            self.assertIn(form, (None, *words_tool.FORMS))
+                            # A count names its noun; a list may name its items' form; nothing else takes one.
+                            if form == "count":
+                                self.assertIsNotNone(argument)
+                            elif form == "list":
+                                self.assertIn(argument, (None, *words_tool.FORMS))
+                            else:
+                                self.assertIsNone(argument)
+                    for field, _, _ in words_tool.references(outside):
+                        top = field.split(".")[0]
+                        # Outside brackets only what is always there: a required field, or the entry's lane or subject.
+                        if top in data:
+                            with self.subTest(kind=name, part=part, required=field):
+                                self.assertFalse(data[top].get("optional"))
+
+    def test_every_explanation_is_short_and_plain(self) -> None:
+        for name, kind in registry()["kinds"].items():
+            with self.subTest(kind=name):
+                explain = kind["explain"]
+                self.assertTrue(explain.endswith("."))
+                self.assertLessEqual(len(re.findall(r"[.!?](?:\s|$)", explain)), 2)
+                self.assertLessEqual(len(explain), 160)
+
+
+class WordsTests(unittest.TestCase):
+    """journal_words gives every vector's words, and the vectors reach every part of every kind's words."""
+
+    def test_every_vector_is_an_entry_of_its_kind_and_journal_words_gives_its_words(self) -> None:
+        described = registry()
+        for index, case in enumerate(vectors()):
+            with self.subTest(vector=index, kind=case["kind"]):
+                kind = described["kinds"][case["kind"]]
+                self.assertEqual(state_tool._errors(case["data"], state_tool.data_schema(kind), {"$defs": described["types"]}, ()), [])
+                self.assertEqual(words_tool.words(case, described), {"head": case["head"], "line": case["line"]})
+                self.assertTrue(case["head"].strip())
+
+    def test_the_vectors_reach_every_bracket_both_ways_every_variant_and_each_forms_edges(self) -> None:
+        self.assertEqual(unreached(registry(), vectors()), [])
+
+    def test_a_bracket_or_variant_no_vector_reaches_is_named(self) -> None:
+        planted = registry()
+        planted["kinds"]["finish.met"]["words"]["line"] = "{finish}[ at {finish:ticket}]"
+        planted["kinds"]["finish.met"]["words"]["head"] = {
+            "by": "finish", "cases": {"acs": "A finish line was met"}, "otherwise": "Another finish line was met"}
+        missing = unreached(planted, vectors())
+        self.assertIn("finish.met line: no vector leaves out [0] of '{finish}[ at {finish:ticket}]'", missing)
+        self.assertIn("finish.met head: no vector chooses otherwise", missing)
+
+    def test_each_form_reads_at_its_edges(self) -> None:
+        show = words_tool.show
+        self.assertEqual([show(n, "count", "review round") for n in (0, 1, 2)],
+                         ["0 review rounds", "1 review round", "2 review rounds"])
+        self.assertEqual(show(["a", "b"], "count", "check"), "2 checks")
+        self.assertEqual(show(3, "count", "fix|fixes"), "3 fixes")
+        self.assertEqual([show(items, "list") for items in ([], ["a"], ["a", "b"], ["a", "b", "c"])],
+                         ["none", "a", "a and b", "a, b and c"])
+        self.assertEqual(show([HEAD, BASE_HEAD], "list", "commit"), "4e66a05 and 9f3c2b1")
+        self.assertEqual([show(seconds, "duration") for seconds in (0, 59, 60, 250, 600, 3600, 6180, 172800)],
+                         ["0s", "59s", "1m", "4m 10s", "10m", "1h", "1h 43m", "2d"])
+        self.assertEqual([show(lane, "lane") for lane in ("lane-1", "lead", "lane-backend", "review")],
+                         ["Lane 1", "Lead", "Backend lane", "Review lane"])
+        self.assertEqual(show(HEAD, "commit"), "4e66a05")
+        self.assertEqual([show(ticket, "ticket") for ticket in
+                          ("V26-3532", "https://linear.app/team/issue/V26-3540/name-it", "https://example.org/x")],
+                         ["V26-3532", "V26-3540", "https://example.org/x"])
+        for value, form in ((True, None), ({"a": 1}, None), ("2", "count"), (-1, "duration"), ("a", "list"), ("x", "shout")):
+            with self.subTest(value=value, form=form):
+                with self.assertRaises(words_tool.WordsError):
+                    show(value, form, "noun")
+
+    def test_a_bracket_is_left_out_when_a_field_it_uses_is_absent_or_an_empty_list(self) -> None:
+        described = registry()
+        handed = {"kind": "candidate.handed", "lane": "lane-1", "subject": "V26-3532",
+                  "data": {"head": HEAD, "changeRequest": "https://example.org/pr/1", "rounds": 2, "checks": []}}
+        self.assertEqual(words_tool.words(handed, described)["line"], "After 2 review rounds")
+        handed["data"]["checks"] = ["unit"]
+        self.assertEqual(words_tool.words(handed, described)["line"], "After 2 review rounds, with unit run by the lane")
+        merged = {"kind": "candidate.merged", "lane": None, "subject": "V26-3532", "data": {"head": HEAD}}
+        self.assertEqual(words_tool.words(merged, described), {"head": "V26-3532 landed", "line": "At 4e66a05"})
+
+    def test_words_are_refused_for_an_unknown_kind_or_a_required_field_the_entry_lacks(self) -> None:
+        with self.assertRaises(words_tool.WordsError):
+            words_tool.words({"kind": "candidate.vanished", "lane": None, "subject": None, "data": {}})
+        with self.assertRaises(words_tool.WordsError):
+            words_tool.words({"kind": "candidate.merged", "lane": None, "subject": "V26-3532", "data": {}})
+
+
+class PlantedRegistryTests(unittest.TestCase):
+    """Every reader of a kind's description reads it through the one path, so a planted registry is what they see."""
+
+    def test_the_state_tool_appends_a_planted_kind_and_journal_words_gives_a_planted_head(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        planted = registry()
+        planted["kinds"]["piece.weighed"] = {**copy.deepcopy(planted["kinds"]["finish.met"]),
+                                             "words": {"head": "{subject} was weighed", "line": "{finish}"}}
+        planted["kinds"]["candidate.merged"]["words"]["head"] = "{subject} reached the main line"
+        path = Path(temporary.name) / "journal-kinds.json"
+        path.write_text(json.dumps(planted), encoding="utf-8")
+        directory = Path(temporary.name) / "state"
+        state_tool.init(directory, "Planted")
+        weighed = {"kind": "piece.weighed", "subject": "V26-3532", "data": {"finish": "acs"}}
+        with self.assertRaises(state_tool.StateError) as refused:
+            state_tool.append_journal(directory, **weighed)
+        self.assertIn("no kind named piece.weighed", str(refused.exception))
+        merged = {"kind": "candidate.merged", "lane": None, "subject": "V26-3532", "data": {"head": HEAD}}
+        with mock.patch.object(words_tool, "REGISTRY_FILE", path):
+            entry = state_tool.append_journal(directory, **weighed)
+            self.assertEqual(words_tool.words(entry), {"head": "V26-3532 was weighed", "line": "acs"})
+            self.assertEqual(words_tool.words(merged)["head"], "V26-3532 reached the main line")
+            self.assertEqual([item["kind"] for item in state_tool.read_journal(directory)], ["piece.weighed"])
+        self.assertEqual(words_tool.words(merged)["head"], "V26-3532 landed")
+
+
+class JournalFactsTests(unittest.TestCase):
+    """The record's scenarios: each refusal appends nothing and names what is wrong, beside its accepted form."""
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.directory = Path(temporary.name) / "state"
+        state_tool.init(self.directory, "Facts")
+
+    def append(self, kind: str, data: dict | None = None, **fields: object) -> dict:
+        return state_tool.append_journal(self.directory, kind=kind, data=data, **fields)
+
+    def refused(self, kind: str, data: dict | None, expected: str, code: str = "entry_invalid", **fields: object) -> None:
+        before = state_tool.read_journal(self.directory)
+        with self.assertRaises(state_tool.StateError) as refusal:
+            self.append(kind, data, **fields)
+        self.assertEqual(refusal.exception.code, code)
+        self.assertIn(expected, str(refusal.exception))
+        self.assertEqual(state_tool.read_journal(self.directory), before)
+
+    def test_an_entry_whose_data_fits_its_kind_is_appended_and_one_that_does_not_is_refused(self) -> None:
+        merged = {"head": HEAD}
+        self.refused("candidate.merged", {}, "/data: missing head")
+        self.refused("candidate.merged", {**merged, "landed": True}, "/data/landed: no value is allowed here")
+        self.refused("candidate.vanished", merged, "no kind named candidate.vanished")
+        entry = self.append("candidate.merged", merged, subject="V26-3532")
+        self.assertEqual({key: entry[key] for key in ("id", "kind", "lane", "subject", "data")},
+                         {"id": 1, "kind": "candidate.merged", "lane": None, "subject": "V26-3532", "data": merged})
+        self.assertNotIn("summary", entry)
+
+    def test_a_reserved_kind_is_refused_with_the_reservations_own_error(self) -> None:
+        self.refused("x.weighed", {"finish": "acs"}, "x.weighed is reserved", code="kind_reserved")
+        self.refused("x.weighed", None, "kinds beginning x. are an adopter's own", code="kind_reserved", summary="Weighed")
+
+    def test_typed_fields_are_refused_out_of_shape_and_accepted_in_it(self) -> None:
+        cases = [
+            ("candidate.merged", {"head": HEAD[:10]}, "/data/head: does not match", {"head": HEAD}),
+            ("record.started", {"base": {"head": BASE_HEAD}}, "/data/base: missing ref",
+             {"base": {"ref": "integrate/delivery-story", "head": BASE_HEAD}}),
+            ("record.started", {"base": {"ref": "integrate/delivery-story"}}, "/data/base: missing head",
+             {"base": {"ref": "integrate/delivery-story", "head": BASE_HEAD}}),
+            ("candidate.stopped", {"reason": "gave_up", "detail": "It stopped."}, "/data/reason: not one of the allowed values",
+             {"reason": "interrupted", "detail": "A run ended while V26-3532 was checking."}),
+            ("candidate.handed", {"head": HEAD, "changeRequest": "pr-12", "rounds": 1, "checks": []},
+             "/data/changeRequest: does not match",
+             {"head": HEAD, "changeRequest": "https://github.com/example/app/pull/12", "rounds": 1, "checks": []}),
+        ]
+        for kind, wrong, expected, right in cases:
+            with self.subTest(kind=kind, wrong=wrong):
+                self.refused(kind, wrong, expected)
+                self.assertEqual(self.append(kind, right, subject="V26-3532")["data"], right)
+        started = self.append("check.started", {}, subject="V26-3532")
+        failed = {"check": "unit", "timedOut": False, "failing": [], "more": 0}
+        for log in ("/tmp/unit.log", "unit.log", "logs/"):
+            with self.subTest(log=log):
+                self.refused("check.failed", {**failed, "log": log}, "/data/log: does not match", because=[started["id"]])
+        log = "logs/20261116T101500Z-003-a1b2c3d4-unit.log"
+        self.assertEqual(self.append("check.failed", {**failed, "log": log}, because=[started["id"]])["data"]["log"], log)
+
+    def test_links_name_earlier_entries_the_registry_requires_or_pairs(self) -> None:
+        started = self.append("check.started", {}, subject="V26-3532")
+        self.refused("check.finished", {}, "/because: a check.finished names what caused it")
+        self.refused("check.finished", {}, "/because: entry 2 is not an earlier entry", because=[2])
+        self.refused("check.finished", {}, "/because: entry 9 is not an earlier entry", because=[9])
+        self.refused("check.finished", {}, "/because: names an entry twice", because=[1, 1])
+        finished = self.append("check.finished", {}, because=[started["id"]])
+        self.assertEqual(finished["because"], [1])
+        handed = {"head": HEAD, "changeRequest": "https://github.com/example/app/pull/12", "rounds": 1, "checks": []}
+        self.refused("candidate.handed", handed, "/answers: a candidate.handed does not answer a check.started", answers=[1])
+        stopped = self.append("candidate.stopped", {"reason": "check_failed", "detail": "unit failed."}, because=[1])
+        self.assertEqual(self.append("candidate.handed", handed, answers=[stopped["id"]])["answers"], [stopped["id"]])
+        # A cause may be given on any entry.
+        self.assertEqual(self.append("finish.met", {"finish": "acs"}, because=[2])["because"], [2])
+
+    def test_a_decision_or_a_blocker_needs_its_words_and_a_decision_its_reason(self) -> None:
+        for data, expected in (({"text": "Carry it"}, "/data: missing why"),
+                               ({"text": "", "why": "It holds."}, "/data/text: does not match"),
+                               ({"text": "Carry it", "why": "   "}, "/data/why: does not match"),
+                               ({"text": " \n", "why": "It holds."}, "/data/text: does not match")):
+            with self.subTest(data=data):
+                self.refused("decision.recorded", data, expected)
+        self.refused("blocker.recorded", {"text": "  "}, "/data/text: does not match")
+        self.assertEqual(self.append("decision.recorded", {"text": "Carry it", "why": "It holds."})["data"]["why"], "It holds.")
+        self.assertEqual(self.append("blocker.recorded", {"text": "The lead must choose."})["data"]["text"], "The lead must choose.")
+
+    def test_the_bridge_takes_a_sentence_facts_or_both_and_checks_facts_in_full(self) -> None:
+        self.refused("candidate.merged", None, "an entry carries its facts in data, or a sentence")
+        sentence = self.append("candidate.merged", None, summary="Merged", subject="V26-3532")
+        self.assertNotIn("data", sentence)
+        self.refused("candidate.merged", {"head": "short"}, "/data/head: does not match", summary="Merged")
+        both = self.append("candidate.merged", {"head": HEAD}, summary="Merged", subject="V26-3532")
+        self.assertEqual((both["summary"], both["data"]), ("Merged", {"head": HEAD}))
+        self.assertEqual(self.append("review.evidence", None, summary="Captured", subject="V26-3532", review_artifact={
+            "digest": "a" * 64, "candidateRef": HEAD})["kind"], "review.evidence")
+        self.refused("review.evidence", {"digest": "a" * 64, "candidateRef": HEAD},
+                     "review.evidence carries no facts", subject="V26-3532")
+
+    def test_the_journal_command_takes_facts_links_and_a_persons_words(self) -> None:
+        def run(*argv: str) -> dict:
+            out = io.TextIOWrapper(io.BytesIO(), encoding="ascii")
+            with contextlib.redirect_stdout(out):
+                code = state_tool.main(["--dir", str(self.directory), *argv])
+            out.flush()
+            result = json.loads(out.buffer.getvalue().decode("ascii"))
+            self.assertEqual(code == 0, result["ok"], result)
+            return result
+        started = run("journal", "--kind", "check.started", "--subject", "V26-3532", "--data", "{}")["entry"]
+        self.assertNotIn("summary", started)
+        finished = run("journal", "--kind", "check.finished", "--data", '{"batch": ["V26-3532"]}', "--because", "1")["entry"]
+        self.assertEqual((finished["data"], finished["because"]), ({"batch": ["V26-3532"]}, [1]))
+        decided = run("journal", "--kind", "decision.recorded", "--text", "Carry the review", "--why", "It still holds.")["entry"]
+        self.assertEqual(decided["data"], {"text": "Carry the review", "why": "It still holds."})
+        for argv, expected in (
+                (["--kind", "decision.recorded", "--text", "Carry the review"], "missing why"),
+                (["--kind", "finish.met", "--text", "acs"], "--text and --why are for decision.recorded and blocker.recorded"),
+                (["--kind", "decision.recorded", "--data", '{"why": "a"}', "--why", "b", "--text", "c"], "give why once"),
+                (["--kind", "check.finished", "--data", "{}", "--because", "one"], "--because is entry ids"),
+                (["--kind", "candidate.merged"], "give the entry's facts with --data, or a sentence with --summary")):
+            with self.subTest(argv=argv):
+                result = run("journal", *argv)
+                self.assertEqual(result["code"], "entry_invalid")
+                self.assertIn(expected, result["error"])
+        self.assertEqual(len(state_tool.read_journal(self.directory)), 3)
+
+
+if __name__ == "__main__":
+    unittest.main()
