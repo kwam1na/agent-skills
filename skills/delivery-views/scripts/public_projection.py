@@ -63,7 +63,7 @@ def _has_local_path(text):
 
 CREDENTIAL_KEY = re.compile(r'^(?:password|token|secret|api[_-]?key|credential|authorization|cookie)$', re.I)
 OMITTED_LOCAL_REFERENCE = '[Local reference omitted]'
-PROSE_FIELDS = frozenset(('headline title text summary label description detail reason why waitingOn clears').split())
+PROSE_FIELDS = frozenset(('headline title text summary label description detail reason why waitingOn clears evidence').split())
 
 
 class ProjectionError(ValueError):
