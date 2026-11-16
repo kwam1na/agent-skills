@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import unittest
 from pathlib import Path
@@ -29,6 +30,16 @@ def _checked_in_sets() -> set[str]:
             if archive.stem.startswith(f"{profile}-"):
                 sets.add(archive.stem[len(profile) + 1 :])
     return sets
+
+
+def _profile(name: str) -> dict:
+    return json.loads((ROOT / "profiles" / f"{name}.json").read_text(encoding="utf-8"))
+
+
+def _intro() -> str:
+    """The README's overview, before its first second-level heading, whitespace-normalized."""
+    text = _readme()
+    return " ".join(text[: text.index("\n## ")].split())
 
 
 class ReadmeLifecycleTests(unittest.TestCase):
@@ -103,21 +114,6 @@ class ReadmeLifecycleTests(unittest.TestCase):
         self.assertIn("return a first installation to `absent`", readme)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
-def _profile(name: str) -> dict:
-    import json
-
-    return json.loads((ROOT / "profiles" / f"{name}.json").read_text(encoding="utf-8"))
-
-
-def _intro() -> str:
-    """The README's overview, before its first second-level heading, whitespace-normalized."""
-    text = _readme()
-    return " ".join(text[: text.index("\n## ")].split())
-
 
 class ReadmeKnowledgeLibraryTests(unittest.TestCase):
     """The README describes the knowledge library as the profile descriptions do."""
@@ -164,3 +160,7 @@ class ReadmeKnowledgeLibraryTests(unittest.TestCase):
                             ("core", False), ("bootstrap", False), ("delivery-views", False)):
             with self.subTest(profile=name):
                 self.assertEqual(adapter in _profile(name).get("expectedFiles", []), ships)
+
+
+if __name__ == "__main__":
+    unittest.main()
