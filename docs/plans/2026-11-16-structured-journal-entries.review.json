@@ -1,0 +1,159 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "writtenBy": "run-delivery plan-review",
+  "plan": "docs/plans/2026-11-16-structured-journal-entries.md",
+  "planSha256": "195aa78051203da2185e9b9bd5259ec1824efa813dae3fd441ceb605381a47a7",
+  "planCommit": "b588b5dd9c948e1eb1cf700b3e06b24e189da11c",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": [
+    "lens.outcome-correctness",
+    "lens.adversarial-testing"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "candidate": "0c24374d60d127bce8cc3a8b7bdc14f15e645f8c",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-16T06:44:24.649239Z",
+      "finishedAt": "2026-11-16T06:51:19.587030Z",
+      "open": [
+        "outcome-correctness-r1-1",
+        "outcome-correctness-r1-2",
+        "outcome-correctness-r1-3",
+        "outcome-correctness-r1-4",
+        "outcome-correctness-r1-5",
+        "outcome-correctness-r1-6",
+        "outcome-correctness-r1-7",
+        "outcome-correctness-r1-8",
+        "outcome-correctness-r1-9",
+        "adversarial-testing-r1-1",
+        "adversarial-testing-r1-2",
+        "adversarial-testing-r1-3",
+        "adversarial-testing-r1-4",
+        "adversarial-testing-r1-5",
+        "adversarial-testing-r1-6",
+        "adversarial-testing-r1-7",
+        "adversarial-testing-r1-8",
+        "adversarial-testing-r1-9",
+        "adversarial-testing-r1-10",
+        "adversarial-testing-r1-11",
+        "adversarial-testing-r1-12",
+        "adversarial-testing-r1-13",
+        "adversarial-testing-r1-14"
+      ]
+    },
+    {
+      "round": 2,
+      "candidate": "73c8372d67125b2bf2cea351be8a137b7b621985",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-16T06:55:21.885037Z",
+      "finishedAt": "2026-11-16T07:00:56.374475Z",
+      "open": [
+        "outcome-correctness-r2-1",
+        "outcome-correctness-r2-2",
+        "outcome-correctness-r2-3",
+        "outcome-correctness-r2-4",
+        "outcome-correctness-r2-5",
+        "adversarial-testing-r2-1",
+        "adversarial-testing-r2-2",
+        "adversarial-testing-r2-3",
+        "adversarial-testing-r2-4",
+        "adversarial-testing-r2-5"
+      ]
+    },
+    {
+      "round": 3,
+      "candidate": "f5abd33bddbdba7b0fdb5c8d7aec82dc8289bfc3",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-16T07:02:04.134250Z",
+      "finishedAt": "2026-11-16T07:04:12.602419Z",
+      "open": [
+        "adversarial-testing-r3-1"
+      ]
+    },
+    {
+      "round": 4,
+      "candidate": "b588b5dd9c948e1eb1cf700b3e06b24e189da11c",
+      "outcome": "aligned",
+      "startedAt": "2026-11-16T07:04:23.932203Z",
+      "finishedAt": "2026-11-16T07:05:05.718615Z",
+      "open": []
+    }
+  ],
+  "reviews": [
+    {
+      "lens": "lens.outcome-correctness",
+      "round": 4,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.outcome-correctness",
+        "subjectRef": "structured-journal-entries.plan",
+        "candidateRef": "b588b5dd9c948e1eb1cf700b3e06b24e189da11c",
+        "round": 4,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [],
+        "evidence": [
+          "Reviewed tree SHA 79242f939c8b33bbd9a985dca160f8e12fb3fa3c in the private checkout at /Users/kwamina/agent-skills/.orchestration/plan-review/structured-journal-entries/checkouts/lens.outcome-correctness.",
+          "Start identity check passed: HEAD b588b5dd9c948e1eb1cf700b3e06b24e189da11c, tree 79242f939c8b33bbd9a985dca160f8e12fb3fa3c, `git status --porcelain` empty.",
+          "End identity check passed: same HEAD, same tree, `git status --porcelain` empty. Nothing was written in the checkout.",
+          "Delta derived with `git diff f5abd33bddbdba7b0fdb5c8d7aec82dc8289bfc3..b588b5dd9c948e1eb1cf700b3e06b24e189da11c`: one file, the plan, 20 insertions and 14 deletions. Every hunk was read.",
+          "Re-check of carried findings: this lens has no finding left open. Round 3 raised none and closed the five from round 2 as fixed; round 2 closed the nine from round 1 as fixed. The delta touches none of the text those fixes rest on, so `resolvedFindings` is empty.",
+          "Model class: claude-fable-5-2. Realization basis: host-convention. Host: a native subagent with no progress or permission signals exposed, recorded as a limitation. No subagent was spawned.",
+          "Checks: none run, as the brief sets for a plan review. No mutation or fault injection was done. Evidence is from reading the plan's delta.",
+          "Delta check: Decision 27 now names the one exception to `no test journals a sentence`, a reader's sentence-only case written as a journal line directly and removed by JF-7. That settles the round 3 P2 note on the clash with JF-3 c3 and JF-5 c4.",
+          "Delta check: JF-7's files and its row in the units table now hold `skills/run-delivery/scripts/tracker_publisher.py` and all of `skills/delivery-views/`. That settles the round 3 P3 note, and the table and the story's file list agree.",
+          "Delta check: the reader criteria (JF-3 c3, JF-4 c5, JF-5 c4, JF-6 c8) now run their prose-replacement case on entries that carry `data` and no sentence. This closes a way to pass by reading the sentence, and the bridge's schema allows such an entry, so the criteria can be met.",
+          "Delta check: a resolution of a deferral breach answers that breach and no other entry, stated in the record scenarios and in JF-5 c2, with JF-5 c4 taking the resolution from the `lead-resolve` call. This agrees with the `blocker.resolved` row and the allowed pairs.",
+          "Delta check: JF-6's criteria are renumbered so c7 precedes c8, which settles the round 3 P3 note.",
+          "Approval conditions: none, since no finding is raised. The plan is ready to approve from this lens."
+        ]
+      },
+      "resultSha256": "48552dfd57df53c5f59f24e0143bd0e9ce70d46957947b4d99c3401430ba7ad4"
+    },
+    {
+      "lens": "lens.adversarial-testing",
+      "round": 4,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.adversarial-testing",
+        "subjectRef": "structured-journal-entries.plan",
+        "candidateRef": "b588b5dd9c948e1eb1cf700b3e06b24e189da11c",
+        "round": 4,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [
+          {
+            "id": "adversarial-testing-r3-1",
+            "state": "fixed",
+            "resolution": "Adopted as written. JF-5 c2 now holds that a resolution of a deferral breach, made through `lead-resolve`, answers that breach and no other entry. The record scenarios gain the same line for both a blocker and a breach. JF-5 c4 takes the deferral-breach reader's resolution from the `lead-resolve` call, not from an entry built by hand."
+          }
+        ],
+        "evidence": [
+          "Reviewed tree SHA 79242f939c8b33bbd9a985dca160f8e12fb3fa3c in the private checkout /Users/kwamina/agent-skills/.orchestration/plan-review/structured-journal-entries/checkouts/lens.adversarial-testing.",
+          "Start identity check passed: HEAD b588b5dd9c948e1eb1cf700b3e06b24e189da11c, `git rev-parse HEAD^{tree}` equal to 79242f939c8b33bbd9a985dca160f8e12fb3fa3c, `git status --porcelain` empty.",
+          "End identity check passed: same HEAD, same tree SHA, `git status --porcelain` empty.",
+          "Delta derived with `git diff f5abd33bddbdba7b0fdb5c8d7aec82dc8289bfc3..b588b5dd9c948e1eb1cf700b3e06b24e189da11c`: one file, docs/plans/2026-11-16-structured-journal-entries.md, 20 insertions and 14 deletions, read whole. The candidate references were matched to their resolution pairs by exact text.",
+          "Re-check of carried findings: adversarial-testing-r3-1 was re-checked against the revision and is fixed, as `resolvedFindings` records. The findings of rounds 1 and 2 were closed as fixed in rounds 2 and 3; the delta was read against each and reopens none.",
+          "Review of the delta found no new surviving mutation. The prose-replacement rows (JF-3 c3, JF-4 c5, JF-5 c4, JF-6 c8) now run on entries that carry `data` and no sentence, so they can fail for a reader that still reads the sentence in that reader's own story. This closes the first round 3 P2 note.",
+          "Decision 27 now carves out the reader's sentence-only case, written as a journal line directly and removed by JF-7. This closes the second round 3 P2 note. JF-7 c4 turns each such case into a refusal at the journal, so the carve-out cannot outlive the bridge.",
+          "JF-7's files now include `skills/run-delivery/scripts/tracker_publisher.py` and all of `skills/delivery-views/`, which covers the view scripts whose readers lose their second path. JF-6 c8 was only moved below c7 and gained the same `data`-only wording.",
+          "No checks were run, as the brief names none. No mutant or probe was planted and no file was written in the checkout. The review stayed on the lines this revision changed.",
+          "P3 note, not a finding, carried from round 3: Decision 15 moves a requeued stop to the story altitude by a field's value. `requeued-stop` pins the behaviour, but no planted-registry row shows the rule lives in the registry and not in the narrator.",
+          "P3 note, not a finding, carried from round 3: JF-7 c4 proves a sentence-only entry is refused at the journal, which leaves a reader's second path unreachable but does not prove it removed.",
+          "Declined, as in round 3: findings against the Design direction section. It is direction the lead holds stories to, not an acceptance criterion, and it was not changed in this delta.",
+          "Model class: claude-fable-5-2, run as a native subagent. Realization basis: host-convention.",
+          "Host limitation: no progress or permission signals are exposed to this lens. No run-event command is declared, so no run ID. activityId review-structured-journal-entries.plan, attemptId 1, roundId structured-journal-entries.plan-r4.",
+          "No subagent was spawned, nothing was pushed or committed, and no other checkout was touched. No process was started beyond short read-only shell commands.",
+          "Approval conditions: none, since this round raises no finding. The plan is ready to approve from this lens."
+        ]
+      },
+      "resultSha256": "593e839fd817959a317968a2068a7ddacc266d2231452cd610f0c2a8a20474c2"
+    }
+  ],
+  "residualRisks": [
+    "4 review rounds; findings open after each round: 23, 10, 1, 0."
+  ]
+}

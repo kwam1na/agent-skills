@@ -48,7 +48,7 @@ Four ideas, each new to this record.
    entry, take that entry's words from the registry. None of them words an entry itself.
 
 For this repository's last delivery, the headline altitude of that story would read along these lines. The times
-and counts here are illustrative; the story's exact words are settled in JF-2, from a fixture of that record:
+and counts here are illustrative; the story's exact words are settled in V26-3533, from a fixture of that record:
 
 > **Six pieces in nine hours.** Two setbacks cost 54m. The lead made four decisions.
 >
@@ -130,7 +130,7 @@ The record:
 2. No path reads `delivery-journal/1`. An entry carries no version, so the old shape is known by what it holds: an
    entry with a `summary`, or without `data`, is refused, and the refusal names the release that reads it. A record
    whose journal is empty is valid in either shape. A delivery open under an older release closes there before the
-   new one is applied. The refusal arrives with JF-7, when the bridge of Decision 25 goes.
+   new one is applied. The refusal arrives with V26-3538, when the bridge of Decision 25 goes.
 3. `decision.recorded` stops being a catch-all. What a tool does gets its own kind, listed below.
    `decision.recorded` and `blocker.recorded` remain for what a person decides or reports. Both require
    `data.text`, a decision also requires `data.why`, and neither may be empty or only spaces.
@@ -210,15 +210,15 @@ The views:
 
 The delivery:
 
-25. The break is made in one pass with a bridge that never ships. From JF-1 to JF-7 the schema still allows
+25. The break is made in one pass with a bridge that never ships. From V26-3532 to V26-3538 the schema still allows
     `summary`, the old top-level members and the old kind `review.evidence`, and `append_journal` still takes a
     sentence. An entry with `data` is checked in full whether or not it also has a sentence; an entry with only a
-    sentence is not checked beyond today's rules. Until JF-7 a writer moved to facts still passes its sentence as
+    sentence is not checked beyond today's rules. Until V26-3538 a writer moved to facts still passes its sentence as
     well, so its entries carry both and no reader that has not yet moved breaks. A reader moved to fields reads them
-    when the entry has `data` and the sentence otherwise. JF-7 removes the sentence from every writer and the
+    when the entry has `data` and the sentence otherwise. V26-3538 removes the sentence from every writer and the
     second path from every reader, in all three scripts, along with the schema's allowances.
 26. What replaces "no sentence" as an assertion is a mechanism, not a search for a word, since review findings and
-    tickets rightly have summaries. One test, added by JF-7, walks every call that writes an entry. It knows three
+    tickets rightly have summaries. One test, added by V26-3538, walks every call that writes an entry. It knows three
     shapes: `append_journal(…)` in `delivery_state.py` and in `merge_queue.py`'s one direct use,
     `Runner.journal(…)` in `merge_queue.py`, and `state_tool("journal", "--kind", …)` in `run_delivery.py`. It
     counts call expressions. At each, the kind must be a string literal the registry lists, or, at a call the
@@ -231,7 +231,7 @@ The delivery:
 27. A sentence pin is replaced by an assertion at least as strong: the entry's kind, the exact value of every field,
     and its links. When a writer's story hands off, no test among its files journals a sentence, whether it
     asserted it or only wrote it. The one exception is a reader's sentence-only case, which writes its entry as a
-    journal line directly and which JF-7 removes. Wording is asserted in the registry's vectors: for every kind, each bracketed
+    journal line directly and which V26-3538 removes. Wording is asserted in the registry's vectors: for every kind, each bracketed
     part both present and absent, each variant, and each form at its edges. No story adds a fixture that starts a
     process. The suite ran at 1,702s of 1,740s on 2026-11-15.
 28. This delivery ends merge-ready, on the integration branch `integrate/delivery-story` with `main` as its target.
@@ -239,7 +239,7 @@ The delivery:
     adopter's tool that journals with `--summary`, or reads `summary`, must change. It goes out as a candidate
     first, and the candidate is tried on a delivery here before the final is tagged. Those steps are not this
     delivery's.
-29. The page rework on `claude/live-view-ui` is this delivery's first story, JF-0, so the story chapter is built on
+29. The page rework on `claude/live-view-ui` is this delivery's first story, V26-3531, so the story chapter is built on
     it and the operator sees one design, not two.
 
 ## The kinds
@@ -406,8 +406,8 @@ the code it finds and corrects this list in its hand-off if the two differ, with
 
 - The operator has approved delivering this plan once its lenses align, with the three lanes of the last delivery,
   each granted what it needs to land its stories.
-- The lead reads the registry's words and explanations as JF-1 hands them off, and the last delivery's headline
-  story as JF-2 hands it off, and accepts them or sends them back. The operator sees both in the design.
+- The lead reads the registry's words and explanations as V26-3532 hands them off, and the last delivery's headline
+  story as V26-3533 hands it off, and accepts them or sends them back. The operator sees both in the design.
 - The operator sees the design running before anything merges into `main`, and the merge is theirs.
 - The lead holds the operator's authority to make the judgement calls that land the delivery on its integration
   branch, and records each as a decision with its reason. Raising a number in `tests/suite-budget.json` is not
@@ -433,17 +433,17 @@ Shared resources: none new. No story adds a port, a fixed path or a serial unit.
 
 Pins that go stale and are re-derived by the story named:
 
-- The journal schema's members and kind list in `tests/test_orchestration_state.py`: by JF-1.
+- The journal schema's members and kind list in `tests/test_orchestration_state.py`: by V26-3532.
 - The guide's tracker table and the two tests that hold it to the schema's kinds and to the publisher's table, in
-  `tests/test_orchestration_state.py`: by JF-1, which derives the guide's table from the registry and holds the
-  publisher's table to the bridge's kinds only, until JF-5 replaces that table with a read of the registry.
+  `tests/test_orchestration_state.py`: by V26-3532, which derives the guide's table from the registry and holds the
+  publisher's table to the bridge's kinds only, until V26-3536 replaces that table with a read of the registry.
 - Every sentence a test journals or asserts in `tests/test_orchestration_state.py`, `tests/test_merge_occurrence.py`,
-  `tests/test_orchestration_adopter.py`, `tests/test_lane_rows.py` and `tests/test_runless_reviews.py`: by JF-3.
-  Those in `tests/test_merge_queue.py`: by JF-4. Those in `tests/test_run_delivery.py`,
+  `tests/test_orchestration_adopter.py`, `tests/test_lane_rows.py` and `tests/test_runless_reviews.py`: by V26-3534.
+  Those in `tests/test_merge_queue.py`: by V26-3535. Those in `tests/test_run_delivery.py`,
   `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_peers.py`, `tests/test_run_delivery_hooks.py`
-  and `tests/test_run_delivery_tracker.py`: by JF-5.
+  and `tests/test_run_delivery_tracker.py`: by V26-3536.
 - `tests/fixtures/delivery-views/line-map/source/journal.jsonl`, every golden built from it, and the plan-update
-  entry `tests/test_delivery_views_plan.py` journals: by JF-6.
+  entry `tests/test_delivery_views_plan.py` journals: by V26-3537.
 - The count and names of shipped files wherever a test lists them: by the story that adds the file.
 
 ## Scenarios
@@ -458,7 +458,7 @@ For the record and its writers. Each refusal appends nothing and names what is w
 - `because` naming a later or missing entry is refused. A kind the registry requires a cause for is refused without
   one. `answers` between two kinds the registry does not pair is refused.
 - A decision whose text or reason is empty or only spaces is refused.
-- After JF-7, an entry with a `summary` or without `data` is refused, naming the release that reads it; a record
+- After V26-3538, an entry with a `summary` or without `data` is refused, naming the release that reads it; a record
   with an empty journal is accepted.
 - A candidate stopped by a failed check names that failure. A new hand-off for its subject answers the stop, and so
   does a re-queue.
@@ -517,25 +517,24 @@ For the views:
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | JF-1, JF-3 | `skills/orchestrate-work/references/schemas.json`, `skills/orchestrate-work/references/journal-kinds.json`, `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/scripts/journal_words.py`, `skills/orchestrate-work/references/orchestration-guide.md`, `skills/orchestrate-work/SKILL.md`, `tests/test_orchestration_state.py`, `tests/test_merge_occurrence.py`, `tests/test_orchestration_adopter.py`, `tests/test_lane_rows.py`, `tests/test_runless_reviews.py`, `tests/test_lead_wait.py`, `tests/test_journal_kinds.py`, `tests/fixtures/journal-kinds/` |
-| 1 | 2 | JF-0, JF-2, JF-6 | `skills/delivery-views/`, `tests/delivery_views_page/`, `tests/fixtures/delivery-views/`, `tests/test_delivery_views_page.py`, `tests/test_delivery_views_render.py`, `tests/test_delivery_views_history.py`, `tests/test_delivery_views_plan.py`, `skills/orchestrate-work/scripts/narrator.py`, `skills/orchestrate-work/references/story.schema.json`, `tests/test_narrator.py`, `tests/fixtures/narrator/`, `skills/orchestrate-work/scripts/render_state.py`, `tests/test_orchestration_render.py` |
-| 2 | 3 | JF-4, JF-5 | `skills/orchestrate-work/scripts/merge_queue.py`, `tests/test_merge_queue.py`, `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/scripts/tracker_publisher.py`, `skills/run-delivery/SKILL.md`, `skills/run-delivery/references/`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_peers.py`, `tests/test_run_delivery_hooks.py`, `tests/test_run_delivery_tracker.py` |
-| 3 | 1 | JF-7 | `tests/test_journal_shape.py`, `skills/orchestrate-work/scripts/merge_queue.py`, `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/scripts/tracker_publisher.py`, `skills/delivery-views/`, `skills/orchestrate-work/scripts/render_state.py`, `tests/` |
+| 1 | 1 | V26-3532, V26-3534 | `skills/orchestrate-work/references/schemas.json`, `skills/orchestrate-work/references/journal-kinds.json`, `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/scripts/journal_words.py`, `skills/orchestrate-work/references/orchestration-guide.md`, `skills/orchestrate-work/SKILL.md`, `tests/test_orchestration_state.py`, `tests/test_merge_occurrence.py`, `tests/test_orchestration_adopter.py`, `tests/test_lane_rows.py`, `tests/test_runless_reviews.py`, `tests/test_lead_wait.py`, `tests/test_journal_kinds.py`, `tests/fixtures/journal-kinds/` |
+| 1 | 2 | V26-3531, V26-3533, V26-3537 | `skills/delivery-views/`, `tests/delivery_views_page/`, `tests/fixtures/delivery-views/`, `tests/test_delivery_views_page.py`, `tests/test_delivery_views_render.py`, `tests/test_delivery_views_history.py`, `tests/test_delivery_views_plan.py`, `skills/orchestrate-work/scripts/narrator.py`, `skills/orchestrate-work/references/story.schema.json`, `tests/test_narrator.py`, `tests/fixtures/narrator/`, `skills/orchestrate-work/scripts/render_state.py`, `tests/test_orchestration_render.py` |
+| 2 | 3 | V26-3535, V26-3536 | `skills/orchestrate-work/scripts/merge_queue.py`, `tests/test_merge_queue.py`, `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/scripts/tracker_publisher.py`, `skills/run-delivery/SKILL.md`, `skills/run-delivery/references/`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_peers.py`, `tests/test_run_delivery_hooks.py`, `tests/test_run_delivery_tracker.py` |
+| 3 | 1 | V26-3538 | `tests/test_journal_shape.py`, `skills/orchestrate-work/scripts/merge_queue.py`, `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/scripts/tracker_publisher.py`, `skills/delivery-views/`, `skills/orchestrate-work/scripts/render_state.py`, `tests/` |
 
-The keys are placeholders. Tracker items are filed once the plan is approved, each with its criteria below, and the
-headings take their keys then. `provenance.lock.json` is shared; each story takes the lock side that lists its new
+Epic V26-3530. Each story's tracker item holds its criteria below. `provenance.lock.json` is shared; each story takes the lock side that lists its new
 files and runs the writer, as `AGENTS.md` describes.
 
-Lane 2 starts at once with JF-0, which touches only the page. JF-1 writes the whole registry and the journal's
-schema, so no later story edits either until JF-7. The story's own schema is a separate file, lane 2's. Lane 3
-starts, and lane 2 goes on to JF-2, when JF-1 has merged. The narrator is built against fixture
+Lane 2 starts at once with V26-3531, which touches only the page. V26-3532 writes the whole registry and the journal's
+schema, so no later story edits either until V26-3538. The story's own schema is a separate file, lane 2's. Lane 3
+starts, and lane 2 goes on to V26-3533, when V26-3532 has merged. The narrator is built against fixture
 journals in the new shape, so it does not wait for the writers. By Decision 25 the writers' and readers' stories
-may merge in any order. JF-7 runs when every other story has merged and lanes 2 and 3 have none left, so lane 1
+may merge in any order. V26-3538 runs when every other story has merged and lanes 2 and 3 have none left, so lane 1
 gains their files for it.
 
 ## Stories
 
-### JF-0. Land the page rework the story chapter is built on
+### V26-3531. Land the page rework the story chapter is built on
 
 Lane 2, tier 1, not blocked. Characterization-first. Files: `skills/delivery-views/`, `tests/delivery_views_page/`,
 `tests/fixtures/delivery-views/`, `tests/test_delivery_views_page.py`, `tests/test_delivery_views_render.py`,
@@ -547,7 +546,7 @@ animation, the stream from a stop being checked, the humanized proof and review 
 piece. The lead commits that branch as it stands. This story merges it into its own branch, then makes the page's
 tests and goldens true of it: each pin that the rework changed on purpose is re-derived, and each that it broke by
 accident is a defect to fix in the page. The timeline's own wording on that branch matches patterns in sentences
-and is replaced whole by JF-6, so this story pins only that the timeline draws, not what it says.
+and is replaced whole by V26-3537, so this story pins only that the timeline draws, not what it says.
 
 Acceptance criteria:
 
@@ -559,7 +558,7 @@ Acceptance criteria:
   each changed pin's reason given in the hand-off as deliberate or as a defect fixed.
 - `c3` The registry and provenance checks pass.
 
-### JF-1. Keep facts and causes in the journal, described by one registry of kinds
+### V26-3532. Keep facts and causes in the journal, described by one registry of kinds
 
 Lane 1, tier 1, not blocked. Test-first. Files: `skills/orchestrate-work/references/schemas.json`,
 `skills/orchestrate-work/references/journal-kinds.json`, `skills/orchestrate-work/scripts/delivery_state.py`,
@@ -580,7 +579,7 @@ one with facts is checked in full.
 Acceptance criteria:
 
 - `c1` Every kind in this plan's table is in the registry with each column's value, and the journal schema accepts
-  those kinds, plus the bridge's until JF-7. No registered kind begins `x.`, and none of `bookkeeping` altitude has
+  those kinds, plus the bridge's until V26-3538. No registered kind begins `x.`, and none of `bookkeeping` altitude has
   the `problem` tone.
 - `c2` Each refusal in the record scenarios, other than the old shape's, is refused as stated with nothing
   appended, and each has its accepted form beside it.
@@ -592,9 +591,9 @@ Acceptance criteria:
 - `c5` The guide describes the entry's shape, typed and prose fields, links and their allowed pairs, altitudes, and
   how a kind is added, and its tracker table equals the registry's.
 
-### JF-2. Narrate a delivery from its journal
+### V26-3533. Narrate a delivery from its journal
 
-Lane 2, tier 1, after JF-0 and JF-1. Test-first. Files: `skills/orchestrate-work/scripts/narrator.py`,
+Lane 2, tier 1, after V26-3531 and V26-3532. Test-first. Files: `skills/orchestrate-work/scripts/narrator.py`,
 `skills/orchestrate-work/references/story.schema.json`, `tests/test_narrator.py` and `tests/fixtures/narrator/`.
 
 Build the narrator by Decisions 12 to 19 and the `story/1` schema it writes, in its own file: the digest, chapters,
@@ -614,9 +613,9 @@ Acceptance criteria:
 - `c6` With the registry's path pointed at a copy in which a fourth kind opens a thread, an entry of that kind opens
   one.
 
-### JF-3. Write the state tool's own entries as facts, and read them as facts
+### V26-3534. Write the state tool's own entries as facts, and read them as facts
 
-Lane 1, tier 1, after JF-1. Test-first. Files: `skills/orchestrate-work/scripts/delivery_state.py`,
+Lane 1, tier 1, after V26-3532. Test-first. Files: `skills/orchestrate-work/scripts/delivery_state.py`,
 `tests/test_orchestration_state.py`, `tests/test_merge_occurrence.py`, `tests/test_orchestration_adopter.py`,
 `tests/test_lane_rows.py`, `tests/test_runless_reviews.py` and `tests/test_lead_wait.py`.
 
@@ -638,9 +637,9 @@ Acceptance criteria:
 - `c4` A `wait` event carries `data` and the entry's head and line, and with the registry's path pointed at a copy
   with a changed head, carries the changed words.
 
-### JF-4. Write the merge queue's entries as facts, with their causes
+### V26-3535. Write the merge queue's entries as facts, with their causes
 
-Lane 3, tier 2, after JF-1. Test-first. Files: `skills/orchestrate-work/scripts/merge_queue.py` and
+Lane 3, tier 2, after V26-3532. Test-first. Files: `skills/orchestrate-work/scripts/merge_queue.py` and
 `tests/test_merge_queue.py`.
 
 `Runner.journal` takes `data` and links, and returns the entry's id so a later entry can name it. Every call in the
@@ -661,9 +660,9 @@ Acceptance criteria:
 - `c5` The rerun's reader, in a case where it finds what it looks for, gives the same result when every prose field
   of the entries it reads is replaced by other text, on entries that carry `data` and no sentence.
 
-### JF-5. Write run-delivery's entries as facts, and let the lead say why
+### V26-3536. Write run-delivery's entries as facts, and let the lead say why
 
-Lane 3, tier 2, after JF-4. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`,
+Lane 3, tier 2, after V26-3535. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`,
 `skills/run-delivery/scripts/tracker_publisher.py`, `skills/run-delivery/SKILL.md`,
 `skills/run-delivery/references/`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`,
 `tests/test_run_delivery_peers.py`, `tests/test_run_delivery_hooks.py` and `tests/test_run_delivery_tracker.py`.
@@ -694,15 +693,15 @@ Acceptance criteria:
   posts where the registry says: its ticket; the epic; either, both with a subject and without; and a kind with
   none posts nothing. With the copy moving a kind from its ticket to nowhere, that kind's post stops.
 
-### JF-6. Show the story on every view
+### V26-3537. Show the story on every view
 
-Lane 2, tier 1, after JF-2, JF-3, JF-4 and JF-5. Test-first. Files:
+Lane 2, tier 1, after V26-3533, V26-3534, V26-3535 and V26-3536. Test-first. Files:
 `skills/orchestrate-work/scripts/render_state.py`, `skills/delivery-views/`, `tests/delivery_views_page/`,
 `tests/fixtures/delivery-views/`, `tests/test_orchestration_render.py`, `tests/test_delivery_views_page.py`,
 `tests/test_delivery_views_render.py`, `tests/test_delivery_views_history.py` and
 `tests/test_delivery_views_plan.py`.
 
-Builds on JF-0's layout, shared fold and motion, and follows the design direction above. The renderers run the narrator and embed its story; the live stream sends it with the
+Builds on V26-3531's layout, shared fold and motion, and follows the design direction above. The renderers run the narrator and embed its story; the live stream sends it with the
 record, by Decision 20. "What happened" is rebuilt by Decisions 21 to 24. The page's own labels, marks, tab rules
 and every pattern it matches against an entry's text are removed in favour of the story; the checking sheet finds a
 batch from `batch`, and the plan chapter finds a plan update by its kind. The Markdown view and the built-in page
@@ -729,9 +728,9 @@ Acceptance criteria:
   plan update, a stop's notes, and any other the story finds in `skills/delivery-views/` and `render_state.py`,
   listed in its hand-off.
 
-### JF-7. Remove the sentence
+### V26-3538. Remove the sentence
 
-Lane 1, tier 3, after JF-6. Test-first. Files: `skills/orchestrate-work/references/schemas.json`,
+Lane 1, tier 3, after V26-3537. Test-first. Files: `skills/orchestrate-work/references/schemas.json`,
 `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/scripts/merge_queue.py`,
 `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/scripts/tracker_publisher.py`,
 `skills/delivery-views/`, `skills/orchestrate-work/scripts/render_state.py`,
@@ -750,7 +749,7 @@ Acceptance criteria:
 - `c3` The walk of Decision 26 passes on the three scripts and on `tests/`. Planted in each of the three call
   shapes, and once through a helper that passes a kind on, it fails for a call given a sentence, for a kind outside
   its rules, and for a call the inventory does not hold. It fails for a test that journals a sentence.
-- `c4` No reader keeps a path for an entry without `data`: each reader's sentence-only case from JF-3 and JF-5 is
+- `c4` No reader keeps a path for an entry without `data`: each reader's sentence-only case from V26-3534 and V26-3536 is
   now a refusal at the journal.
 - `c5` The guide names no sentence on an entry.
 
@@ -766,7 +765,7 @@ records each in the delivery's journal at the start.
 3. The tool refuses a decision without a separate reason. A decision whose reason is only in its text cannot be
    shown as "why" without reading prose, which is what this delivery ends.
 4. Archived deliveries in the old shape appear on the history page by name only.
-5. The page rework lands as JF-0, by Decision 29.
+5. The page rework lands as V26-3531, by Decision 29.
 6. The tracker column stands as written. Bookkeeping posts nothing, which the registry's test holds, and what a
    stakeholder would want to hear of posts under its own heading. A lease is story, not bookkeeping, and posts as
    it does today.
