@@ -65,6 +65,11 @@
       "file": "invalid-fingerprint.json",
       "valid": false,
       "layer": "schema"
+    },
+    {
+      "file": "valid-omitted-workflow-prose.json",
+      "valid": true,
+      "layer": "boundary"
     }
   ]
 }
