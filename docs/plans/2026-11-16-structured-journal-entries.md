@@ -230,7 +230,8 @@ The delivery:
     that passes `--summary` to the `journal` command or a sentence to `append_journal`.
 27. A sentence pin is replaced by an assertion at least as strong: the entry's kind, the exact value of every field,
     and its links. When a writer's story hands off, no test among its files journals a sentence, whether it
-    asserted it or only wrote it. Wording is asserted in the registry's vectors: for every kind, each bracketed
+    asserted it or only wrote it. The one exception is a reader's sentence-only case, which writes its entry as a
+    journal line directly and which JF-7 removes. Wording is asserted in the registry's vectors: for every kind, each bracketed
     part both present and absent, each variant, and each form at its edges. No story adds a fixture that starts a
     process. The suite ran at 1,702s of 1,740s on 2026-11-15.
 28. This delivery ends merge-ready, on the integration branch `integrate/delivery-story` with `main` as its target.
@@ -468,6 +469,8 @@ For the record and its writers. Each refusal appends nothing and names what is w
   is appended.
 - A base broken after a rerun names the rerun's verdict. Its repair answers the break. A request to run
   `fullHealth` again names the break and answers nothing.
+- A resolution of a blocker answers that blocker, and a resolution of a deferral breach answers that breach, each
+  and no other entry.
 - A batch of three journals three starts whose `batch` lists the same three subjects.
 
 For the narrator, each from a named fixture journal under `tests/fixtures/narrator/`:
@@ -517,7 +520,7 @@ For the views:
 | 1 | 1 | JF-1, JF-3 | `skills/orchestrate-work/references/schemas.json`, `skills/orchestrate-work/references/journal-kinds.json`, `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/scripts/journal_words.py`, `skills/orchestrate-work/references/orchestration-guide.md`, `skills/orchestrate-work/SKILL.md`, `tests/test_orchestration_state.py`, `tests/test_merge_occurrence.py`, `tests/test_orchestration_adopter.py`, `tests/test_lane_rows.py`, `tests/test_runless_reviews.py`, `tests/test_lead_wait.py`, `tests/test_journal_kinds.py`, `tests/fixtures/journal-kinds/` |
 | 1 | 2 | JF-0, JF-2, JF-6 | `skills/delivery-views/`, `tests/delivery_views_page/`, `tests/fixtures/delivery-views/`, `tests/test_delivery_views_page.py`, `tests/test_delivery_views_render.py`, `tests/test_delivery_views_history.py`, `tests/test_delivery_views_plan.py`, `skills/orchestrate-work/scripts/narrator.py`, `skills/orchestrate-work/references/story.schema.json`, `tests/test_narrator.py`, `tests/fixtures/narrator/`, `skills/orchestrate-work/scripts/render_state.py`, `tests/test_orchestration_render.py` |
 | 2 | 3 | JF-4, JF-5 | `skills/orchestrate-work/scripts/merge_queue.py`, `tests/test_merge_queue.py`, `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/scripts/tracker_publisher.py`, `skills/run-delivery/SKILL.md`, `skills/run-delivery/references/`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_peers.py`, `tests/test_run_delivery_hooks.py`, `tests/test_run_delivery_tracker.py` |
-| 3 | 1 | JF-7 | `tests/test_journal_shape.py`, `skills/orchestrate-work/scripts/merge_queue.py`, `skills/run-delivery/scripts/run_delivery.py`, `skills/delivery-views/assets/`, `skills/orchestrate-work/scripts/render_state.py`, `tests/` |
+| 3 | 1 | JF-7 | `tests/test_journal_shape.py`, `skills/orchestrate-work/scripts/merge_queue.py`, `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/scripts/tracker_publisher.py`, `skills/delivery-views/`, `skills/orchestrate-work/scripts/render_state.py`, `tests/` |
 
 The keys are placeholders. Tracker items are filed once the plan is approved, each with its criteria below, and the
 headings take their keys then. `provenance.lock.json` is shared; each story takes the lock side that lists its new
@@ -630,7 +633,8 @@ Acceptance criteria:
 - `c2` A hand-off for a subject with a stop standing answers that stop, and one for a subject with none answers
   nothing.
 - `c3` Each of the five readers, in a case where it finds what it looks for, gives the same result when every prose
-  field of the entries it reads is replaced by other text, and reads an entry that has only a sentence as before.
+  field of the entries it reads is replaced by other text, on entries that carry `data` and no sentence. It reads
+  an entry that has only a sentence as before.
 - `c4` A `wait` event carries `data` and the entry's head and line, and with the registry's path pointed at a copy
   with a changed head, carries the changed words.
 
@@ -655,7 +659,7 @@ Acceptance criteria:
 - `c3` Every stop carries a `reason` from the queue's enum, the interrupted stop included.
 - `c4` A batch's entries list its subjects in `batch`; a single candidate's carry none.
 - `c5` The rerun's reader, in a case where it finds what it looks for, gives the same result when every prose field
-  of the entries it reads is replaced by other text.
+  of the entries it reads is replaced by other text, on entries that carry `data` and no sentence.
 
 ### JF-5. Write run-delivery's entries as facts, and let the lead say why
 
@@ -678,11 +682,13 @@ Acceptance criteria:
 - `c1` For each of run-delivery's calls in the inventory, a test appends through that call and asserts the entry's
   kind, the exact value of every field, and its links.
 - `c2` A re-queue answers its stop, a resolution answers its blocker, and a `fullHealth` rerun request names the
-  standing break and answers nothing.
+  standing break and answers nothing. A resolution of a deferral breach, made through `lead-resolve`, answers that
+  breach and no other entry.
 - `c3` `lead-decide` refuses a decision whose reason is absent, empty or only spaces.
 - `c4` Each of the seven readers, in a case where it finds what it looks for, gives the same result when every
-  prose field of the entries it reads is replaced by other text, and reads an entry that has only a sentence as
-  before.
+  prose field of the entries it reads is replaced by other text, on entries that carry `data` and no sentence. It
+  reads an entry that has only a sentence as before. The deferral-breach reader's case takes its resolution from
+  the `lead-resolve` call, not from an entry built by hand.
 - `c5` A tracker post for a landing and for a stop is under the registry's heading and in its words, and with the
   registry's path pointed at a copy that changes both, the post changes with them. One kind for each destination
   posts where the registry says: its ticket; the epic; either, both with a subject and without; and a kind with
@@ -715,21 +721,21 @@ Acceptance criteria:
   declared then its repair, each narrate to one closed thread with the expected cost. The journals come from
   records existing test classes already build.
 - `c6` A write to a live record changes the story on an open page without a reload.
-- `c8` Each view's reader of an entry, in a case where it finds what it looks for, gives the same result when every
-  prose field of the entries it reads is replaced by other text: the checking sheet's batch, the plan chapter's
-  plan update, a stop's notes, and any other the story finds in `skills/delivery-views/` and `render_state.py`,
-  listed in its hand-off.
 - `c7` The Markdown view and the built-in page show the story's beats, and with the registry's path pointed at a
   copy with a changed head, show the changed words. The history page reads a new-shape archive and names an
   old-shape one, in one test.
+- `c8` Each view's reader of an entry, in a case where it finds what it looks for, gives the same result when every
+  prose field of the entries it reads is replaced by other text, on entries that carry `data` and no sentence: the checking sheet's batch, the plan chapter's
+  plan update, a stop's notes, and any other the story finds in `skills/delivery-views/` and `render_state.py`,
+  listed in its hand-off.
 
 ### JF-7. Remove the sentence
 
 Lane 1, tier 3, after JF-6. Test-first. Files: `skills/orchestrate-work/references/schemas.json`,
 `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/scripts/merge_queue.py`,
-`skills/run-delivery/scripts/run_delivery.py`, `skills/delivery-views/assets/`,
-`skills/orchestrate-work/scripts/render_state.py`, `skills/orchestrate-work/references/orchestration-guide.md`,
-`tests/` and `tests/test_journal_shape.py`.
+`skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/scripts/tracker_publisher.py`,
+`skills/delivery-views/`, `skills/orchestrate-work/scripts/render_state.py`,
+`skills/orchestrate-work/references/orchestration-guide.md`, `tests/` and `tests/test_journal_shape.py`.
 
 Remove the bridge of Decision 25. Every writer stops passing a sentence and every reader loses its second path, in
 all three scripts and the views. `append_journal` no longer takes a sentence, the schema no longer allows `summary`,
