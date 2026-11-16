@@ -972,14 +972,16 @@ class BindingBasesSchemaTests(unittest.TestCase):
 
 class AdopterNeutralityTests(unittest.TestCase):
     def tool_sources(self) -> list[Path]:
-        return [*sorted(SCRIPTS.glob("*.py")), ROOT / "skills/orchestrate-work/references/schemas.json"]
+        return [*sorted(SCRIPTS.glob("*.py")), ROOT / "skills/orchestrate-work/references/journal-kinds.json",
+                ROOT / "skills/orchestrate-work/references/schemas.json"]
 
     def fixture_files(self) -> list[Path]:
         return sorted(path for path in FIXTURE.rglob("*") if path.is_file())
 
     def test_the_tools_assume_no_adopter_default(self) -> None:
         self.assertEqual([path.name for path in self.tool_sources()],
-                         ["delivery_state.py", "merge_queue.py", "region_ownership.py", "render_state.py", "schemas.json"])
+                         ["delivery_state.py", "journal_words.py", "merge_queue.py", "region_ownership.py", "render_state.py",
+                          "journal-kinds.json", "schemas.json"])
         for path in self.tool_sources():
             contents = path.read_text(encoding="utf-8")
             for name, pattern in ADOPTER_DEFAULTS:
