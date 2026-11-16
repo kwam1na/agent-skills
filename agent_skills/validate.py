@@ -59,9 +59,11 @@ LEAKAGE_PATTERNS = (
         # A provider reference never belongs in a core file. Three forms of the
         # word http are not provider references and are allowed: the standard
         # library's http.server module, the HTTP/1.1 status line, and a URL to
-        # this machine's own loopback address. https has no exception.
+        # this machine's own loopback address. https has no exception. The
+        # knowledge library's provider and its search engine are named here too,
+        # so core keeps only the neutral capability.
         re.compile(
-            r"\b(?:linear|mcp|https|sdk|oauth|credentials?)\b"
+            r"\b(?:linear|mcp|https|sdk|oauth|credentials?|hive|hive-mined|qmd)\b"
             r"|\bhttp\b(?!\.server\b)(?!/1\.1\b)"
             r"(?!://(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?(?=[/?\s\"'`)>]|$))",
             re.IGNORECASE,
