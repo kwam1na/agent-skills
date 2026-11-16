@@ -231,6 +231,56 @@ git show origin/main:.agent-skills/active.json | python3 -c \
 python3 -c 'import json; print(json.load(open(".agent-skills/active.json"))["release"]["archiveSha256"])'
 ```
 
+Preserve only the reviewed hosted check additions after the target restore. Use
+the fetched, reviewed integration ref below, replacing `<name>` as above. The
+script refuses missing additions, different same-ID target entries and an altered
+service reader. It retains every other target field and existing entry, including
+base/remote, gates, prepare, merge strategy and posture. It changes no installed
+file. Inspect and stage the resulting binding diff explicitly.
+
+```bash
+python3 - <<'PY'
+import copy, json, subprocess
+from pathlib import Path
+binding = Path(".agents/orchestration.json")
+target = json.loads(subprocess.check_output(["git", "show", "origin/main:.agents/orchestration.json"]))
+source = json.loads(subprocess.check_output(["git", "show", "origin/integrate/<name>:.agents/orchestration.json"]))
+assert json.loads(binding.read_text()) == target, "restore the target binding first"
+service = ["hosted.install", "hosted.typecheck", "hosted.build", "hosted.test", "hosted.browser-install", "hosted.browser"]
+allowed = ["tests.test_delivery_views_hosted", "tests.test_delivery_views_hosted_projection", "tests.test_run_delivery_hosted", *service]
+reader = {"paths": ["hosted/delivery-viewer/**", "skills/delivery-views/assets/**", "skills/delivery-views/scripts/render.py", "skills/delivery-views/references/hosted-snapshot.schema.json", "tests/fixtures/delivery-views/hosted/**", ".github/workflows/hosted-delivery-viewer.yml"], "checks": service}
+assert reader in source["selection"]["readers"], "reviewed service reader differs"
+merged = copy.deepcopy(target)
+rows = merged["selection"]["catalogue"]
+for key in allowed:
+    candidates = [row for row in source["selection"]["catalogue"] if row["id"] == key]
+    assert len(candidates) == 1, f"missing or duplicate reviewed check: {key}"
+    existing = [row for row in rows if row["id"] == key]
+    assert not existing or existing == candidates, f"different same-ID target check: {key}"
+    if not existing:
+        rows.append(candidates[0])
+readers = merged["selection"]["readers"]
+assert not any(row["paths"] == reader["paths"] and row != reader for row in readers), "different target service reader"
+if reader not in readers:
+    readers.append(reader)
+# Everything outside these exact additions must still equal the target.
+restored = copy.deepcopy(merged)
+restored["selection"]["catalogue"] = target["selection"]["catalogue"]
+restored["selection"]["readers"] = target["selection"]["readers"]
+assert restored == target
+assert all(row in rows for row in target["selection"]["catalogue"])
+assert all(row in readers for row in target["selection"]["readers"])
+binding.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
+PY
+git diff origin/main -- .agents/orchestration.json
+git add .agents/orchestration.json
+```
+
+The binding diff must contain only these catalogue/reader additions; the installed
+receipt, host projections, hooks and remaining standing settings still match the
+target exactly as checked separately above. Do not carry the integration base or
+other branch-specific operational configuration into `main`.
+
 Require the digests to match. If a merge is in progress, finish it after resolving
 the conflicts and restoring these paths. Otherwise commit the restore. Retain
 the reviewed product source, tests, catalog, profiles, provenance and delivery

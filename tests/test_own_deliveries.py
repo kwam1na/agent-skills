@@ -702,6 +702,50 @@ class HostedServiceBoundaryTests(unittest.TestCase):
                 self.assertEqual(set(SERVICE_IDS).issubset(ids),changed!='docs/own-deliveries.md')
                 for row in checks:self.assertLessEqual(set(row['prerequisites']),ids)
 
+    def test_integration_recipe_carries_only_named_checks_and_refuses_collisions(self):
+        import copy
+        text=(ROOT/'docs/own-deliveries.md').read_text()
+        start=text.index('python3 - <<\'PY\'\n',text.index('Preserve only the reviewed hosted check additions'))
+        recipe=text[start+len('python3 - <<\'PY\'\n'):text.index('\nPY\n',start)]
+        source=json.loads((ROOT/'.agents/orchestration.json').read_text())
+        allowed=['tests.test_delivery_views_hosted','tests.test_delivery_views_hosted_projection',
+                 'tests.test_run_delivery_hosted',*SERVICE_IDS]
+        target=copy.deepcopy(source)
+        target['base']={'remote':'standing','ref':'standing-main'}
+        target['prepare']=[['standing-only']]
+        target['selection']['catalogue']=[r for r in target['selection']['catalogue'] if r['id'] not in allowed]
+        reader=target['selection']['readers'].pop()
+        for mode in ('add','already-identical','collision','reader-collision','missing-reader','not-restored'):
+            with self.subTest(mode=mode),tempfile.TemporaryDirectory() as directory:
+                path=Path(directory)/'.agents/orchestration.json';path.parent.mkdir()
+                old=copy.deepcopy(target);candidate=copy.deepcopy(source)
+                if mode in ('already-identical','collision'):
+                    row=copy.deepcopy(next(r for r in source['selection']['catalogue'] if r['id']==allowed[0]))
+                    if mode=='collision':row['argv']=['unreviewed']
+                    old['selection']['catalogue'].append(row)
+                if mode=='reader-collision':old['selection']['readers'].append({**reader,'checks':['unreviewed']})
+                if mode=='missing-reader':candidate['selection']['readers'].remove(reader)
+                written=copy.deepcopy(old)
+                if mode=='not-restored':written['merge']=['branch-specific']
+                path.write_text(json.dumps(written,indent=2)+'\n');before=path.read_bytes()
+                answers={'origin/main:.agents/orchestration.json':old,
+                         'origin/integrate/<name>:.agents/orchestration.json':candidate}
+                prefix='import subprocess,json\nanswers='+repr(answers)+'\nsubprocess.check_output=lambda args:json.dumps(answers[args[2]]).encode()\n'
+                done=subprocess.run([sys.executable,'-B','-c',prefix+recipe],cwd=directory,capture_output=True,text=True,timeout=10)
+                if mode not in ('add','already-identical'):
+                    self.assertNotEqual(done.returncode,0,mode)
+                    self.assertIn('AssertionError',done.stderr)
+                    self.assertEqual(path.read_bytes(),before)
+                    continue
+                self.assertEqual(done.returncode,0,done.stderr)
+                merged=json.loads(path.read_text())
+                self.assertEqual([r['id'] for r in merged['selection']['catalogue'] if r['id'] in allowed],allowed)
+                self.assertEqual(merged['selection']['readers'],[*old['selection']['readers'],reader])
+                self.assertEqual(merged['selection']['catalogue'][:len(old['selection']['catalogue'])],old['selection']['catalogue'])
+                merged['selection']['catalogue']=old['selection']['catalogue']
+                merged['selection']['readers']=old['selection']['readers']
+                self.assertEqual(merged,old)
+
     def test_nonsecret_production_config_is_exact_and_live_proof_stays_separate(self):
         config=json.loads((ROOT/'hosted/delivery-viewer/wrangler.jsonc').read_text())
         self.assertEqual(config['routes'],[{'pattern':'deliveries.v26technologies.com','custom_domain':True}])
