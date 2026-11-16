@@ -489,6 +489,9 @@ def child_transport(arguments,inputs):
         finally:
             views._stop(process)
             with contextlib.suppress(subprocess.TimeoutExpired):process.wait(2)
+            for stream in (process.stdin,process.stdout):
+                if stream is not None:
+                    with contextlib.suppress(OSError):stream.close()
             CHILDREN.discard(process)
     return request
 

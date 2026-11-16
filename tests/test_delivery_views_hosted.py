@@ -528,11 +528,52 @@ class ProcessTests(unittest.TestCase):
             with self.assertRaisesRegex(hosted.PublishError,'transport_timeout'):
                 hosted.child_transport(args,inputs)('GET','status')
         self.assertEqual(len(started),1);self.assertIsNotNone(started[0].poll());self.assertEqual(hosted.CHILDREN,set())
+
         args.state_dir=str(self.state)
         started.clear()
         with mock.patch.object(hosted.subprocess,'Popen',side_effect=sleeping),mock.patch.object(hosted,'CAPTURE_SECONDS',.1):
             with self.assertRaisesRegex(hosted.PublishError,'source_unavailable'):hosted.child_collect(args,inputs)
         self.assertEqual(len(started),1);self.assertIsNotNone(started[0].poll());self.assertEqual(hosted.CHILDREN,set())
+
+    def test_cancellation_during_spawn_is_observed_before_normal_child_wait(self):
+        args=SimpleNamespace(config='views.json',binding='binding.json',state_dir=str(self.state),key='APP-1')
+        inputs=views_common.Inputs(self.root,views_common.validate_config(CFG),{},self.state)
+        real_popen=subprocess.Popen;real_stop=hosted.views._stop
+        for operation in ('upload','collection'):
+            started=[];waiting=[False];stopped_before_wait=[]
+            def spawn(command,**kwargs):
+                child=real_popen([sys.executable,'-c','import time;time.sleep(30)'],**kwargs);started.append(child)
+                original_wait=child.wait
+                def wait(*a,**kw):waiting[0]=True;return original_wait(*a,**kw)
+                child.wait=wait
+                # Deterministically cancel before the caller can register this
+                # actual process; no monitor or normal timeout can win the race.
+                hosted.CANCELLED.set()
+                return child
+            def stop(process,**kwargs):
+                stopped_before_wait.append(not waiting[0]);return real_stop(process,**kwargs)
+            hosted.CANCELLED.clear()
+            try:
+                with self.subTest(operation=operation),mock.patch.object(hosted.subprocess,'Popen',side_effect=spawn), \
+                     mock.patch.object(hosted.views,'_stop',side_effect=stop),mock.patch.object(hosted,'UPLOAD_SECONDS',.1), \
+                     mock.patch.object(hosted,'CAPTURE_SECONDS',.1):
+                    if operation=='upload':
+                        with self.assertRaisesRegex(hosted.PublishError,'^source_missing$'):
+                            hosted.child_transport(args,inputs)('GET','status')
+                    else:
+                        with self.assertRaisesRegex(hosted.PublishError,'^source_unavailable$'):
+                            hosted.child_collect(args,inputs)
+                    self.assertEqual(len(started),1);self.assertIsNotNone(started[0].poll())
+                    self.assertEqual(hosted.CHILDREN,set());self.assertTrue(stopped_before_wait[0])
+                    for stream in (started[0].stdin,started[0].stdout):
+                        self.assertTrue(stream is None or stream.closed)
+            finally:
+                hosted.CANCELLED.clear()
+                for child in started:
+                    if child.poll() is None:real_stop(child)
+                    child.wait(timeout=2)
+                    for stream in (child.stdin,child.stdout):
+                        if stream is not None:stream.close()
 
     def test_start_adopts_same_owner_and_old_retry_is_not_replayed_on_restart(self):
         hosted.atomic(self.state/hosted.RETRY,{'nonce':'a'*64,'resume':True})

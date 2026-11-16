@@ -234,7 +234,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/hosted.py",
-          "sha256": "b2ce250e0c54382140787f91c1ec14c57601f28f7b9cc2ec5e7d9f6f7717fc20"
+          "sha256": "317361f7f31ce424f4934fea3cc166ca896192bb578ceefee437a635fe82579b"
         },
         {
           "path": "skills/delivery-views/scripts/public_projection.py",
