@@ -8,6 +8,8 @@
         prints the run view's summary, with its round reports when readings are given
     {"embed": <value>}
         prints the value as the page embeds it
+    {"told": <document>}
+        prints the document with the story the narrator tells of it, as the live server sends a record
 """
 
 import json
@@ -40,3 +42,5 @@ elif "summarize" in request:
     sys.stdout.write(json.dumps(summary))
 elif "embed" in request:
     sys.stdout.write(render.embed(request["embed"]))
+elif "told" in request:
+    sys.stdout.write(json.dumps(render.with_story({key: value for key, value in request["told"].items() if key != "story"}, None)))

@@ -1,0 +1,224 @@
+{
+  "schemaVersion": "story/1",
+  "state": "open",
+  "digest": {
+    "landed": 0,
+    "pieces": 4,
+    "startedAt": "2026-11-16T09:00:00Z",
+    "closedAt": null,
+    "took": null,
+    "setbacks": {
+      "closed": 0,
+      "cost": 0,
+      "standing": []
+    },
+    "decisions": 0,
+    "words": {
+      "head": "Nothing has landed yet.",
+      "line": "No setbacks."
+    }
+  },
+  "chapters": [
+    {
+      "id": "c1",
+      "form": "start",
+      "subject": null,
+      "pieceTitle": null,
+      "at": "2026-11-16T09:00:00Z",
+      "entries": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "beats": [
+        "b1",
+        "b2",
+        "b3",
+        "b4",
+        "b5",
+        "b6",
+        "b7"
+      ],
+      "standing": [],
+      "notLanded": [],
+      "words": {
+        "head": "Getting started",
+        "line": "Lane 1 picked up A, B, C and D.",
+        "standing": []
+      }
+    }
+  ],
+  "beats": [
+    {
+      "id": "b1",
+      "chapter": "c1",
+      "form": "entry",
+      "altitudes": [
+        "headline",
+        "story",
+        "everything"
+      ],
+      "at": "2026-11-16T09:00:00Z",
+      "entries": [
+        1
+      ],
+      "thread": null,
+      "kind": "record.started",
+      "tone": "note",
+      "label": "Started",
+      "words": {
+        "head": "The delivery started",
+        "line": "On integrate/delivery-story at 1405df6"
+      },
+      "explain": "The lead opened the record. Everything after it happened in this delivery.",
+      "items": []
+    },
+    {
+      "id": "b2",
+      "chapter": "c1",
+      "form": "entry",
+      "altitudes": [
+        "story",
+        "everything"
+      ],
+      "at": "2026-11-16T09:01:00Z",
+      "entries": [
+        2
+      ],
+      "thread": null,
+      "kind": "lane.assigned",
+      "tone": "note",
+      "label": "Picked up",
+      "words": {
+        "head": "Lane 1 picked up A",
+        "line": "Work A"
+      },
+      "explain": "The lead gave a piece to a lane, which starts work on it.",
+      "items": []
+    },
+    {
+      "id": "b3",
+      "chapter": "c1",
+      "form": "entry",
+      "altitudes": [
+        "story",
+        "everything"
+      ],
+      "at": "2026-11-16T09:02:00Z",
+      "entries": [
+        3
+      ],
+      "thread": null,
+      "kind": "lane.assigned",
+      "tone": "note",
+      "label": "Picked up",
+      "words": {
+        "head": "Lane 1 picked up B",
+        "line": "Work B"
+      },
+      "explain": "The lead gave a piece to a lane, which starts work on it.",
+      "items": []
+    },
+    {
+      "id": "b4",
+      "chapter": "c1",
+      "form": "entry",
+      "altitudes": [
+        "story",
+        "everything"
+      ],
+      "at": "2026-11-16T09:03:00Z",
+      "entries": [
+        4
+      ],
+      "thread": null,
+      "kind": "lane.assigned",
+      "tone": "note",
+      "label": "Picked up",
+      "words": {
+        "head": "Lane 1 picked up C",
+        "line": "Work C"
+      },
+      "explain": "The lead gave a piece to a lane, which starts work on it.",
+      "items": []
+    },
+    {
+      "id": "b5",
+      "chapter": "c1",
+      "form": "entry",
+      "altitudes": [
+        "story",
+        "everything"
+      ],
+      "at": "2026-11-16T09:04:00Z",
+      "entries": [
+        5
+      ],
+      "thread": null,
+      "kind": "lane.assigned",
+      "tone": "note",
+      "label": "Picked up",
+      "words": {
+        "head": "Lane 1 picked up D",
+        "line": "Work D"
+      },
+      "explain": "The lead gave a piece to a lane, which starts work on it.",
+      "items": []
+    },
+    {
+      "id": "b6",
+      "chapter": "c1",
+      "form": "batch",
+      "altitudes": [
+        "story",
+        "everything"
+      ],
+      "at": "2026-11-16T09:10:00Z",
+      "entries": [
+        6,
+        7,
+        8
+      ],
+      "thread": null,
+      "kind": "check.started",
+      "tone": "note",
+      "label": "Checking",
+      "words": {
+        "head": "Checks started on three pieces together",
+        "line": "In one batch: A, B and C"
+      },
+      "explain": "The queue began running a piece's checks.",
+      "items": []
+    },
+    {
+      "id": "b7",
+      "chapter": "c1",
+      "form": "entry",
+      "altitudes": [
+        "story",
+        "everything"
+      ],
+      "at": "2026-11-16T09:20:00Z",
+      "entries": [
+        9
+      ],
+      "thread": null,
+      "kind": "check.started",
+      "tone": "note",
+      "label": "Checking",
+      "words": {
+        "head": "Checks started on D",
+        "line": ""
+      },
+      "explain": "The queue began running a piece's checks.",
+      "items": []
+    }
+  ],
+  "threads": []
+}

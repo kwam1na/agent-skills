@@ -77,7 +77,7 @@ test("missing phase times never borrow another subject, earlier attempt or lane 
   }
 });
 
-test("recovered landings show source time, unknowns, and retain observation in the feed", async () => {
+test("recovered landings show source time, unknowns, and sit in the story at the instant they happened", async () => {
   const document = { state: { lanes: [], queue: [
     { subject: "PAY-1", title: "Earlier merge", stage: "merged", order: 1 },
     { subject: "PAY-2", title: "Latest merge", stage: "merged", order: 2 },
@@ -93,7 +93,8 @@ test("recovered landings show source time, unknowns, and retain observation in t
   expect(initial.app.querySelector("#now .fact")?.textContent).toBe("Last landedLatest mergePAY-2 · 15 minutes ago");
   expect(earlier.app.querySelector("#detail .d-meta").textContent).toContain("Landed yesterday at 10:00 pm");
   expect(unknown.app.querySelector("#detail .d-meta").textContent).toContain("Landed · time unknown");
-  expect(initial.app.querySelector('.feed time[datetime="2026-10-22T07:09:00Z"]') !== null).toEqual(true);
+  // In the story a recovered landing sits at the instant it happened, not when it was found.
+  expect(initial.app.querySelector('#happened .beat > time[datetime="2026-10-22T05:00:00Z"]') !== null).toEqual(true);
 });
 
 

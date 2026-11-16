@@ -1,0 +1,154 @@
+// "What happened" draws the story the narrator told, and words nothing itself. Each story here is the narrator's own,
+// for a named journal under tests/fixtures/narrator/, kept byte for byte beside it (tests.test_delivery_views_render
+// regenerates each and fails when one differs).
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
+import { test } from "node:test";
+
+import { REPLAYED_RUNS, ROOT, expect, openPage, pageWithRuns, readJson } from "./support.mjs";
+import { item, record } from "./plan-fixtures.mjs";
+
+const NOW = "2026-11-16T12:00:00Z";
+const CONFIG = {
+  spec: "delivery-views-config/1", runs: REPLAYED_RUNS,
+  tracker: { name: "Tracker", issueUrl: "https://tracker.example/issue/{key}", keyPattern: "^[A-Z]$" },
+  forges: [{ name: "GitHub", repository: "acme/shop", pullUrl: "https://github.com/{repository}/pull/{number}",
+    commitUrl: "https://github.com/{repository}/commit/{sha}" }],
+};
+const ALTITUDES = { headline: "headline", story: "story", everything: "everything" };
+
+/** A record holding a narrator journal and its pieces, with the story the narrator told of it. */
+function storied(name) {
+  const folder = path.join(ROOT, "tests", "fixtures", "narrator", name);
+  const journal = readFileSync(path.join(folder, "journal.jsonl"), "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  const state = existsSync(path.join(folder, "state.json")) ? readJson(path.join(folder, "state.json")) : { queue: [] };
+  const document = record({ queue: state.queue.map((piece) => item(piece.subject, piece.stage)), journal });
+  document.story = readJson(path.join(ROOT, "tests", "fixtures", "delivery-views", "story", `${name}.json`));
+  return document;
+}
+function open(document, scenario = {}) {
+  return openPage(pageWithRuns(document, {}, { config: CONFIG }), { now: NOW, store: false, ...scenario });
+}
+const drawn = (snapshot) => [...snapshot.app.querySelectorAll("#happened [data-beat]")].map((row) => row.getAttribute("data-beat"));
+const held = (story, altitude) => story.beats.filter((beat) => beat.altitudes.includes(altitude)).map((beat) => beat.id);
+
+test("at each depth the chapter draws exactly the beats the story holds for it, and a setback once at the headline", async () => {
+  for (const name of ["thread-at-story", "standing-break", "bookkeeping-run", "batch-of-three", "break-stops-a-piece"]) {
+    const document = storied(name);
+    const story = document.story;
+    const snapshots = await open(document, { steps: Object.keys(ALTITUDES).map((depth) => ({ click: `#happened [data-depth="${depth}"]` })) });
+    Object.keys(ALTITUDES).forEach((depth, index) => {
+      const shown = snapshots[index + 1];
+      expect([name, drawn(shown).sort()]).toEqual([name, held(story, depth).sort()]);
+      const sheets = [...shown.app.querySelectorAll("#happened .setback")].map((row) => row.getAttribute("data-thread"));
+      expect([name, depth, sheets]).toEqual([name, depth, depth === "headline" ? story.threads.map((thread) => thread.id) : []]);
+    });
+  }
+});
+
+test("at the story altitude a setback's entries keep their places, each marked as the thread's", async () => {
+  const document = storied("thread-at-story");
+  const [thread] = document.story.threads;
+  const [, shown] = await open(document, { steps: [{ click: '#happened [data-depth="story"]' }] });
+  const threaded = [...shown.app.querySelectorAll("#happened .beat.threaded")];
+  expect(threaded.length).toBe(thread.entries.length);
+  expect(threaded.every((row) => row.getAttribute("data-thread") === thread.id)).toBe(true);
+});
+
+test("the chapter opens on Story for an open delivery and on Headlines for a closed one, and keeps the reader's choice", async () => {
+  const open_ = storied("standing-break");
+  const [first] = await open(open_);
+  expect(first.app.querySelector('#happened [data-depth="story"]').getAttribute("aria-pressed")).toBe("true");
+  const closed = storied("standing-break");
+  closed.story = { ...closed.story, state: "closed" };
+  const [shut] = await open(closed);
+  expect(shut.app.querySelector('#happened [data-depth="headline"]').getAttribute("aria-pressed")).toBe("true");
+  const page = pageWithRuns(open_, {}, { config: CONFIG });
+  const chosen = await openPage(page, { now: NOW, store: false, rendered: page, steps: [{ click: '#happened [data-depth="everything"]' }] });
+  const key = Object.keys(chosen.storage).find((name) => name.endsWith(":story-depth"));
+  expect(chosen.storage[key]).toBe("everything");
+  const [kept] = await openPage(page, { now: NOW, store: false, rendered: page, stored: { [key]: "everything" } });
+  expect(kept.app.querySelector('#happened [data-depth="everything"]').getAttribute("aria-pressed")).toBe("true");
+});
+
+test("a beat opens to its kind's explanation and its entries' facts, with commits and tickets linked", async () => {
+  const document = storied("break-stops-a-piece");
+  const stop = document.journal.find((entry) => entry.kind === "candidate.handed" && entry.answers);
+  const beat = document.story.beats.find((each) => each.entries.includes(stop.id) && each.form === "entry");
+  const row = `#happened [data-beat="${beat.id}"]`;
+  const [closed, opened] = await open(document, { steps: [{ click: '#happened [data-depth="everything"]' }, { click: `${row} summary` }] }).then((snaps) => [snaps[1], snaps[2]]);
+  expect(closed.app.querySelector(`${row} details`).hasAttribute("open")).toBe(false);
+  const shown = opened.app.querySelector(row);
+  expect(shown.querySelector("details").hasAttribute("open")).toBe(true);
+  expect(shown.querySelector(".beat-explain").textContent).toBe(beat.explain);
+  const facts = Object.fromEntries([...shown.querySelectorAll(".beat-entry > div")].map((pair) => [pair.querySelector("dt").textContent, pair.querySelector("dd")]));
+  expect(facts.head.querySelector("a.fact-ref").getAttribute("href")).toBe(`https://github.com/acme/shop/commit/${stop.data.head}`);
+  expect(facts.piece.querySelector("[data-ticket]").getAttribute("href")).toBe("https://tracker.example/issue/A");
+  expect(facts["change request"].textContent).toBe("#" + stop.data.changeRequest.split("/").pop());
+  // An explanation waits to be asked for.
+  expect(closed.app.querySelector("#happened .beat-explain:not(details:not([open]) *)")).toBeNull();
+});
+
+test("a kind no page script names draws its label, mark and tab from the story alone", async () => {
+  const document = storied("standing-break");
+  const story = structuredClone(document.story);
+  const beat = story.beats.find((each) => each.form === "entry" && each.altitudes.includes("story"));
+  Object.assign(beat, { kind: "x.novel", label: "Weighed and set aside", tone: "decision", words: { head: "The lead set it aside", line: "For now." } });
+  document.story = story;
+  const [, all, decisions] = await open(document, { steps: [{ click: '#happened [data-depth="story"]' }, { click: '#happened [data-tab="decisions"]' }] });
+  const row = (snapshot) => snapshot.app.querySelector(`#happened [data-beat="${beat.id}"]`);
+  expect(row(all).querySelector(".beat-label").textContent).toBe("Weighed and set aside");
+  expect(row(all).querySelector(".g").className).toBe("g decide");
+  expect(row(all).querySelector(".beat-said").textContent).toBe("The lead set it aside");
+  expect(drawn(decisions)).toEqual([beat.id]);
+});
+
+test("a setback is one quiet sheet: why, what it held up, how it ended, and its cost as its only number", async () => {
+  const document = storied("break-stops-a-piece");
+  const [thread] = document.story.threads;
+  const [, shown] = await open(document, { steps: [{ click: '#happened [data-depth="headline"]' }] });
+  const sheet = shown.app.querySelector(`#happened .setback[data-thread="${thread.id}"]`);
+  expect([...sheet.querySelectorAll(".setback-part")].map((part) => part.textContent)).toEqual(
+    ["Held up" + thread.told.heldUp, "How it ended" + thread.told.ending]);
+  expect(sheet.querySelector(".setback-cost b").textContent).toBe("17m");
+  expect(sheet.className).toContain("is-closed");
+  const standing = storied("standing-break");
+  const [, still] = await open(standing, { steps: [{ click: '#happened [data-depth="headline"]' }] });
+  const open_ = still.app.querySelector("#happened .setback");
+  expect(open_.className).toContain("is-standing");
+  expect(open_.querySelector(".setback-cost b").textContent).toBe("Still standing");
+});
+
+test("a setback carried into a later chapter says it still stands there, and one that ended there says until when", async () => {
+  const [shown] = await open(storied("standing-break"));
+  const carried = [...shown.app.querySelectorAll("#happened .chapter-standing")].map((line) => line.textContent);
+  expect(carried).toEqual(["A setback still stands: the main line broke.", "A setback still stands: the main line broke.",
+    "A setback still stands: the main line broke."]);
+  const document = storied("standing-break");
+  const story = structuredClone(document.story);
+  story.chapters[1].words.standing = [{ thread: "t1", text: "The main line broke", until: "2026-11-16T09:40:00Z" }];
+  document.story = story;
+  const [ended] = await open(document);
+  expect(ended.app.querySelector(`#happened [data-chapter="c2"] .chapter-standing`).textContent).toBe("The main line broke, until 9:40 am.");
+});
+
+test("a run of bookkeeping is the one run that folds, and opened lists each entry in its own words", async () => {
+  const document = storied("bookkeeping-run");
+  const [run] = document.story.beats.filter((beat) => beat.form === "bookkeeping");
+  const row = `#happened [data-beat="${run.id}"]`;
+  const [, , opened] = await open(document, { steps: [{ click: '#happened [data-depth="everything"]' }, { click: `${row} summary` }] });
+  expect([...opened.app.querySelectorAll(`${row} .beat-items li`)].map((line) => line.textContent)).toEqual(
+    run.items.map((each) => each.words.head + (each.words.line ? " " + each.words.line : "")));
+  // Everything else shows its words in full, with nothing to open to read them.
+  const lines = [...opened.app.querySelectorAll("#happened .beat:not(.setback) .beat-said")];
+  expect(lines.length).toBeGreaterThan(1);
+});
+
+test("a write to a live record moves the story on an open page without a reload", async () => {
+  const before = storied("standing-break");
+  const after = storied("break-stops-a-piece");
+  const [first, pushed] = await openPage(pageWithRuns(before, {}, { config: CONFIG }), { now: NOW, store: { read: "pending" }, steps: [{ push: after }] });
+  expect(first.app.querySelector("#happened .title").textContent).toBe(before.story.digest.words.head);
+  expect(pushed.app.querySelector("#happened .title").textContent).toBe(after.story.digest.words.head);
+  expect(drawn(pushed).sort()).toEqual(held(after.story, "story").sort());
+});

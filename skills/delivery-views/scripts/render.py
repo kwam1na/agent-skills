@@ -645,9 +645,29 @@ def _texts_order(texts: dict, named: list[str]) -> list:
 # Links
 
 
+COMMIT_ID = re.compile(r"^[0-9a-f]{40}$")
+
+
+def _facts_named(value: object, commits: list, changes: list) -> None:
+    """The commits and change requests a journal entry's facts name, by the registry's types: a commit is a full id, and a
+    change request is the value of a changeRequest field."""
+    if isinstance(value, dict):
+        for key, inner in value.items():
+            if key == "changeRequest" and isinstance(inner, str):
+                changes.append(inner)
+            else:
+                _facts_named(inner, commits, changes)
+    elif isinstance(value, list):
+        for inner in value:
+            _facts_named(inner, commits, changes)
+    elif isinstance(value, str) and COMMIT_ID.match(value):
+        commits.append(value)
+
+
 def page_links(document: object, runs: dict, config: dict, reviews: dict | None = None) -> dict:
     """The links the page may open, worked out here so the page holds no link rules of its own:
-    ticket ids by key, change requests by value, and fix commits and the commits a round reviewed by hash."""
+    ticket ids by key, change requests by value, and by hash the fix commits, the commits a round reviewed and those the
+    journal's facts name."""
     state = document.get("state") if _is_object(document) and _is_object(document.get("state")) else {}
     keys, changes, commits = [], [], []
     meta = state.get("meta") if _is_object(state.get("meta")) else {}
@@ -665,6 +685,8 @@ def page_links(document: object, runs: dict, config: dict, reviews: dict | None 
     for entry in journal if isinstance(journal, list) else ():
         if _is_object(entry):
             keys.append(entry.get("subject"))
+            # An entry's facts, as an opened beat shows them: each commit and change request it names opens on the forge.
+            _facts_named(entry.get("data"), commits, changes)
     for summary in [*runs.values(), *(reviews.values() if isinstance(reviews, dict) else ())]:
         for entry in summary.get("roundDetail", []) if _is_object(summary) else ():
             if _is_object(entry):

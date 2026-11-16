@@ -56,8 +56,8 @@ html { scroll-behavior: smooth; }
 a:focus-visible, button:focus-visible, summary:focus-visible, .issue-link:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 a:focus-visible, summary:focus-visible, .issue-link:focus-visible { border-radius: 4px; }
 [tabindex="-1"]:focus { outline: none; }
-.plan-unit:focus, .plan-open li:focus, .feed li[data-revealed]:focus { position: relative; isolation: isolate; }
-.plan-unit:focus::before, .plan-open li:focus::before, .feed li[data-revealed]:focus::before { content: ""; position: absolute; inset: 4px -12px; z-index: -1; border-radius: 4px; background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.plan-unit:focus, .plan-open li:focus { position: relative; isolation: isolate; }
+.plan-unit:focus::before, .plan-open li:focus::before { content: ""; position: absolute; inset: 4px -12px; z-index: -1; border-radius: 4px; background: color-mix(in srgb, var(--ink) 6%, transparent); }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--text); font-size: 16px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
 .chapter { padding: 64px max(64px, env(safe-area-inset-right, 0px)) 64px max(24px, env(safe-area-inset-left, 0px)); }
@@ -436,41 +436,74 @@ a.issue-link { color: inherit; cursor: pointer; }
 .after div.on, .after div.met { border-color: var(--ink); color: var(--ink); }
 .after span { display: block; font-size: 12px; color: var(--faint); margin-bottom: 4px; }
 
-/* What happened: the journal, newest first, each line marked by the shape of what happened. */
-.feed-legend { display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 12px; color: var(--faint); }
-.feed-legend span { display: inline-flex; align-items: center; gap: 6px; }
-.feed-legend .g { display: flex; }
-.feed-legend .g svg { vertical-align: top; }
+/* What happened: the story, typography first. A chapter is a heading and a time; a beat is a line, its words in full;
+   only a setback gets a surface. Colour stays where it is on the rest of the page: on a landing and on trouble. */
 /* A choice of view: a soft track with the chosen segment raised. */
 .tabs { display: inline-flex; flex-wrap: wrap; justify-self: start; gap: 2px; padding: 3px; border-radius: 8px; background: color-mix(in oklab, var(--edge) 14%, transparent); font-size: 13px; }
 .tabs button { font: inherit; font-weight: 500; height: 28px; padding: 0 14px; border: 0; border-radius: 6px; background: none; color: var(--faint); cursor: pointer; }
 .tabs button:hover { color: var(--ink); }
 .tabs button[aria-pressed="true"] { color: var(--ink); background: var(--lift); box-shadow: var(--shadow-press); }
-.feed { list-style: none; margin: 0; padding: 0; }
-.feed li { display: grid; grid-template-columns: 96px 18px minmax(0, 1fr); gap: 14px; padding: 14px 0; border-bottom: 1px solid var(--hair); align-items: baseline; }
-.feed time { display: grid; justify-items: end; gap: 2px; font: 400 12px/16px var(--mono); color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.feed time .t-clock { color: var(--soft); }
-.feed time .t-day { font-size: 11px; line-height: 14px; }
+/* Depth is the choice that matters; what to show among it is a quieter one, words with no track. */
+.story-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px; }
+.tabs.filter { padding: 0; background: none; gap: 4px; }
+.tabs.filter button { height: 24px; padding: 0 8px; font-weight: 450; }
+.tabs.filter button[aria-pressed="true"] { background: none; box-shadow: none; text-decoration: underline; text-decoration-color: var(--edge); text-underline-offset: 5px; }
+.story, .beats { list-style: none; margin: 0; padding: 0; }
+.story { display: grid; gap: 40px; }
+.chapter-of { display: grid; gap: 6px; min-width: 0; }
+.chapter-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.chapter-head h3 { margin: 0; font-family: var(--display); font-weight: 500; font-size: 22px; line-height: 1.25; letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.chapter-head time, .beat time { font: 400 12px/16px var(--mono); color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.chapter-head time { display: inline-flex; gap: 6px; }
+.chapter-of.is-landing .chapter-head h3 { color: var(--landed); }
+.chapter-line { margin: 0; color: var(--soft); max-width: 68ch; overflow-wrap: anywhere; }
+.chapter-standing { margin: 0; font-size: 13px; color: var(--held); overflow-wrap: anywhere; }
+.chapter-standing.is-ended { color: var(--faint); }
+.beats { margin-top: 6px; border-top: 1px solid var(--hair); }
+.beat { position: relative; display: grid; grid-template-columns: 96px 18px minmax(0, 1fr); gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--hair); align-items: baseline; }
+.beat time { display: grid; justify-items: end; gap: 2px; }
+.beat time .t-clock { color: var(--soft); }
+.beat time .t-day { font-size: 11px; line-height: 14px; }
 .g { font-size: 13px; color: var(--faint); text-align: center; }
 .g svg { display: inline-block; width: 14px; height: 14px; vertical-align: -2px; }
-/* Landed is the story's one good outcome, so in the feed and its legend it takes green; elsewhere success stays ink. */
+/* Landed is the story's one good outcome, so it takes green; elsewhere success stays ink. */
 .g.ready, .g.decide { color: var(--ink); } .g.merge { color: var(--landed); } .g.stop { color: var(--held); }
-.feed p { margin: 0; max-width: 66ch; overflow-wrap: anywhere; }
-/* A row is a short sentence, at most one line of detail, and a quiet line saying what kind of entry it is and whose. */
-.feed-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px; min-width: 0; max-width: 72ch; }
-.feed-body > * { min-width: 0; }
-.feed-head { font-size: 15px; line-height: 22px; color: var(--ink); overflow-wrap: anywhere; }
-.feed-head .issue-link { font: 450 13px/22px var(--mono); white-space: nowrap; }
-.feed-line, .feed-fold { font-size: 13px; line-height: 19px; color: var(--soft); overflow-wrap: anywhere; }
-.feed-fold[open] > summary { color: var(--ink); }
-.feed-ref { font: 450 12px/1 var(--mono); color: inherit; }
-a.feed-ref { text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); text-underline-offset: 3px; }
-.feed .who { display: block; font-size: 12px; color: var(--faint); margin-top: 1px; }
-.feed li.quiet { padding: 8px 0; }
-.feed li.quiet .feed-fold { font-size: 12px; color: var(--faint); }
-.feed-quiet { list-style: none; margin: 0; padding: 8px 0 2px 16px; display: grid; gap: 4px; font-size: 12px; line-height: 17px; color: var(--soft); }
-.more { justify-self: start; font: inherit; font-size: 13px; font-weight: 500; height: 34px; padding: 0 16px; color: var(--ink); background: var(--lift);
-  border: 0; border-radius: 6px; box-shadow: var(--shadow-press), 0 0 0 1px var(--hair); cursor: pointer; }
+.beat-body { display: grid; gap: 2px; min-width: 0; max-width: 72ch; }
+.beat-fold > summary { list-style: none; cursor: pointer; }
+.beat-fold > summary::-webkit-details-marker { display: none; }
+/* Each message in full: nothing is cut, and a long word or address wraps rather than running off the page. */
+.beat-words { display: grid; gap: 2px; min-width: 0; }
+.beat-said { font-size: 15px; line-height: 22px; color: var(--ink); overflow-wrap: anywhere; }
+.beat-line { font-size: 13px; line-height: 19px; color: var(--soft); overflow-wrap: anywhere; }
+.beat-label { font-size: 12px; color: var(--faint); }
+.beat-fold > summary:hover .beat-said { text-decoration: underline; text-decoration-color: var(--hair); text-underline-offset: 4px; }
+/* Opened, a beat shows what its kind of event is, then the facts its entries hold, linked. */
+.beat-facts { display: grid; gap: 10px; padding: 10px 0 4px; }
+.beat-explain { margin: 0; font-size: 13px; line-height: 19px; color: var(--soft); font-style: italic; }
+.beat-entry { display: grid; gap: 3px; margin: 0; font-size: 12px; line-height: 17px; }
+.beat-entry > div { display: grid; grid-template-columns: minmax(96px, max-content) minmax(0, 1fr); gap: 12px; }
+.beat-entry-head { display: block !important; color: var(--soft); }
+.beat-entry dt { color: var(--faint); }
+.beat-entry dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
+.fact-ref { font: 450 12px/1 var(--mono); color: inherit; }
+a.fact-ref { text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); text-underline-offset: 3px; }
+.beat-items { list-style: none; margin: 0; padding: 6px 0 2px 16px; display: grid; gap: 4px; font-size: 12px; line-height: 17px; color: var(--soft); overflow-wrap: anywhere; }
+.beat.is-note:not(.threaded) .beat-said { font-size: 14px; color: var(--soft); }
+/* At the story altitude, a thin line in the margin ties a setback's entries together; no arrows. */
+.beat.threaded::before { content: ""; position: absolute; left: 104px; top: 0; bottom: 0; width: 1.5px; background: color-mix(in oklab, var(--held) 45%, transparent); }
+.beat.threaded + .beat.threaded[data-thread]::before { top: -1px; }
+/* A setback is the one thing with a surface: a quiet sheet, its cause, what it held up and how it ended, and its cost as
+   the only number in view. */
+.beat.setback { border-bottom: 0; padding: 10px 0; }
+.setback-sheet { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 24px; padding: 16px 18px; border-radius: 10px; background: var(--held-wash); }
+.setback-words { display: grid; gap: 6px; min-width: 0; }
+.setback-head { font-size: 15px; line-height: 22px; color: var(--ink); overflow-wrap: anywhere; }
+.setback-part { margin: 0; font-size: 13px; line-height: 19px; color: var(--soft); overflow-wrap: anywhere; }
+.setback-k { display: inline-block; min-width: 88px; color: var(--faint); }
+.setback-cost { display: grid; justify-items: end; align-content: start; gap: 2px; text-align: right; }
+.setback-cost b { font-family: var(--display); font-weight: 500; font-size: 28px; line-height: 1; color: var(--held); font-variant-numeric: tabular-nums; }
+.setback-cost span { font-size: 12px; color: var(--faint); white-space: nowrap; }
+.setback-cost.is-standing b { font-family: var(--text); font-size: 13px; line-height: 20px; font-weight: 500; }
 
 /* Parked */
 .parked { list-style: none; margin: 0; padding: 0; columns: 2 300px; column-gap: 40px; }
@@ -517,7 +550,9 @@ a.feed-ref { text-decoration: underline; text-decoration-color: color-mix(in srg
   @keyframes ring { from { opacity: .5; transform: scale(.7); } to { opacity: 0; transform: scale(1.5); } }
   .stop-btn.landing { animation: land var(--move) var(--ease); }
   @keyframes land { 0% { transform: scale(.4); } 55% { transform: scale(1.35); } 100% { transform: scale(1); } }
-  .feed li.fresh, .parked li.fresh { animation: slide-in var(--move) var(--ease) both; }
+  .beat.fresh, .parked li.fresh { animation: slide-in var(--move) var(--ease) both; }
+  /* A setback still standing breathes on the page's one slow pulse; a closed one is still. */
+  .beat.setback.is-standing .setback-sheet { animation: live calc(var(--beat) * 2) ease-in-out infinite; }
   @keyframes slide-in { from { opacity: .2; transform: translateX(-16px); } to { opacity: 1; transform: none; } }
   .chapter.arrive .inner > * { animation: rise var(--move) var(--ease) both; }
   .chapter.arrive .inner > *:nth-child(2) { animation-delay: .06s; }
@@ -556,8 +591,11 @@ a.feed-ref { text-decoration: underline; text-decoration-color: color-mix(in srg
   .detail { padding: 18px 16px; border-radius: 12px; }
   .person .st { grid-column: 2; justify-items: start; }
   .person .on { text-align: left; }
-  .feed li { grid-template-columns: 18px minmax(0, 1fr); }
-  .feed time { grid-column: 2; order: 2; display: flex; gap: 8px; justify-content: start; }
+  .beat { grid-template-columns: 18px minmax(0, 1fr); }
+  .beat time { grid-column: 2; order: 2; display: flex; gap: 8px; justify-content: start; }
+  .beat.threaded::before { left: 8px; }
+  .setback-sheet { grid-template-columns: minmax(0, 1fr); }
+  .setback-cost { justify-items: start; text-align: left; }
 }
 
 /* The plan: what was agreed, and what proves it. Colours come only from the theme's tokens, so both themes hold. */

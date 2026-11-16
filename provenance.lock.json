@@ -210,11 +210,11 @@
         },
         {
           "path": "skills/delivery-views/assets/line-map.css",
-          "sha256": "1bf3265d696885d5dcc3d25997d8e5d51d1f399afec62dab435c8da717635bfe"
+          "sha256": "80a1e683414321750ed0a61170c1fbe805bdd23f9165962d5831451b974449bb"
         },
         {
           "path": "skills/delivery-views/assets/line-map.js",
-          "sha256": "a65792c057e8cf2197dae3a5b25efc7df4dc9a5e19dd6eb0c5fa5b3308331c2c"
+          "sha256": "9fa860d4c3454ec34b5c61ed7478bbee3caea37e8a0c3209d77720cb6490e7a7"
         },
         {
           "path": "skills/delivery-views/assets/run-summary.css",
@@ -230,7 +230,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/render.py",
-          "sha256": "f328d2fdf580bfb05234635057b4790c0d53dc0d5457a0427fb5eb53e0f3f45e"
+          "sha256": "17616287a6d6c0a76376729305326fc665b20cc0ede59611f6a740db8a78d9fa"
         },
         {
           "path": "skills/delivery-views/scripts/review_projection.py",

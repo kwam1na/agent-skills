@@ -1,0 +1,198 @@
+{
+  "schemaVersion": "story/1",
+  "state": "open",
+  "digest": {
+    "landed": 0,
+    "pieces": 0,
+    "startedAt": "2026-11-16T09:00:00Z",
+    "closedAt": null,
+    "took": null,
+    "setbacks": {
+      "closed": 1,
+      "cost": 600,
+      "standing": []
+    },
+    "decisions": 1,
+    "words": {
+      "head": "Nothing has landed yet.",
+      "line": "One setback cost 10m. The lead made one decision."
+    }
+  },
+  "chapters": [
+    {
+      "id": "c1",
+      "form": "start",
+      "subject": null,
+      "pieceTitle": null,
+      "at": "2026-11-16T09:00:00Z",
+      "entries": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "beats": [
+        "b1",
+        "b2",
+        "b3",
+        "b4",
+        "b5"
+      ],
+      "standing": [],
+      "notLanded": [],
+      "words": {
+        "head": "Getting started",
+        "line": "",
+        "standing": []
+      }
+    }
+  ],
+  "beats": [
+    {
+      "id": "b1",
+      "chapter": "c1",
+      "form": "entry",
+      "altitudes": [
+        "headline",
+        "story",
+        "everything"
+      ],
+      "at": "2026-11-16T09:00:00Z",
+      "entries": [
+        1
+      ],
+      "thread": null,
+      "kind": "record.started",
+      "tone": "note",
+      "label": "Started",
+      "words": {
+        "head": "The delivery started",
+        "line": "On integrate/delivery-story at 1405df6"
+      },
+      "explain": "The lead opened the record. Everything after it happened in this delivery.",
+      "items": []
+    },
+    {
+      "id": "b2",
+      "chapter": "c1",
+      "form": "thread",
+      "altitudes": [
+        "headline"
+      ],
+      "at": "2026-11-16T09:10:00Z",
+      "entries": [
+        2,
+        4
+      ],
+      "thread": "t1",
+      "kind": "base.broken",
+      "tone": "problem",
+      "label": "Setback",
+      "words": {
+        "head": "A setback: the main line broke",
+        "line": "The full run failed at d7daad0: The full run failed on the main line. It ended when the main line was repaired."
+      },
+      "explain": "A check failed on the main line itself, not only on a piece. Nothing lands until it is repaired.",
+      "items": []
+    },
+    {
+      "id": "b3",
+      "chapter": "c1",
+      "form": "entry",
+      "altitudes": [
+        "story",
+        "everything"
+      ],
+      "at": "2026-11-16T09:10:00Z",
+      "entries": [
+        2
+      ],
+      "thread": "t1",
+      "kind": "base.broken",
+      "tone": "problem",
+      "label": "Main line broke",
+      "words": {
+        "head": "The main line broke",
+        "line": "The full run failed at d7daad0: The full run failed on the main line."
+      },
+      "explain": "A check failed on the main line itself, not only on a piece. Nothing lands until it is repaired.",
+      "items": []
+    },
+    {
+      "id": "b4",
+      "chapter": "c1",
+      "form": "entry",
+      "altitudes": [
+        "headline",
+        "story",
+        "everything"
+      ],
+      "at": "2026-11-16T09:11:00Z",
+      "entries": [
+        3
+      ],
+      "thread": "t1",
+      "kind": "decision.recorded",
+      "tone": "decision",
+      "label": "Decision",
+      "words": {
+        "head": "Held every landing until the main line is repaired",
+        "line": "A piece checked against a broken main line proves nothing."
+      },
+      "explain": "The lead or the operator made a call, and said why.",
+      "items": []
+    },
+    {
+      "id": "b5",
+      "chapter": "c1",
+      "form": "entry",
+      "altitudes": [
+        "story",
+        "everything"
+      ],
+      "at": "2026-11-16T09:20:00Z",
+      "entries": [
+        4
+      ],
+      "thread": "t1",
+      "kind": "base.repaired",
+      "tone": "landed",
+      "label": "Main line repaired",
+      "words": {
+        "head": "The main line was repaired",
+        "line": "At 6aa2c59. The lead reverted the commit that broke it."
+      },
+      "explain": "The main line passes again, so pieces can land once more.",
+      "items": []
+    }
+  ],
+  "threads": [
+    {
+      "id": "t1",
+      "chapter": "c1",
+      "beat": "b2",
+      "opening": 2,
+      "closing": 4,
+      "openedAt": "2026-11-16T09:10:00Z",
+      "closedAt": "2026-11-16T09:20:00Z",
+      "cost": 600,
+      "state": "closed",
+      "entries": [
+        2,
+        3,
+        4
+      ],
+      "cause": [],
+      "heldUp": [],
+      "told": {
+        "cause": null,
+        "heldUp": null,
+        "ending": "It ended when the main line was repaired."
+      },
+      "words": {
+        "head": "A setback: the main line broke",
+        "line": "The full run failed at d7daad0: The full run failed on the main line. It ended when the main line was repaired."
+      }
+    }
+  ]
+}

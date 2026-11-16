@@ -145,6 +145,188 @@
       "status": {
         "source": "derived",
         "text": "last landed V26-2836 at 2026-10-23T03:20:11.241630Z"
+      },
+      "story": {
+        "schemaVersion": "story/1",
+        "state": "open",
+        "digest": {
+          "landed": 2,
+          "pieces": 2,
+          "startedAt": "2026-10-23T03:20:06.059364Z",
+          "closedAt": null,
+          "took": null,
+          "setbacks": {
+            "closed": 0,
+            "cost": 0,
+            "standing": []
+          },
+          "decisions": 0,
+          "words": {
+            "head": "Two pieces landed so far.",
+            "line": "No setbacks."
+          }
+        },
+        "chapters": [
+          {
+            "id": "c1",
+            "form": "start",
+            "subject": null,
+            "pieceTitle": null,
+            "at": "2026-10-23T03:20:06.059364Z",
+            "entries": [
+              1,
+              2
+            ],
+            "beats": [
+              "b1",
+              "b2"
+            ],
+            "standing": [],
+            "notLanded": [],
+            "words": {
+              "head": "Getting started",
+              "line": "",
+              "standing": []
+            }
+          },
+          {
+            "id": "c2",
+            "form": "landing",
+            "subject": "V26-2835",
+            "pieceTitle": "Show the line map's run as a round track and a card for the picked round",
+            "at": "2026-10-23T03:20:11.047887Z",
+            "entries": [
+              3
+            ],
+            "beats": [
+              "b3"
+            ],
+            "standing": [],
+            "notLanded": [],
+            "words": {
+              "head": "V26-2835 landed",
+              "line": "",
+              "standing": []
+            }
+          },
+          {
+            "id": "c3",
+            "form": "landing",
+            "subject": "V26-2836",
+            "pieceTitle": "Closing a review round stores each finding with the run",
+            "at": "2026-10-23T03:20:11.241630Z",
+            "entries": [
+              4
+            ],
+            "beats": [
+              "b4"
+            ],
+            "standing": [],
+            "notLanded": [],
+            "words": {
+              "head": "V26-2836 landed",
+              "line": "",
+              "standing": []
+            }
+          }
+        ],
+        "beats": [
+          {
+            "id": "b1",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-23T03:20:06.059364Z",
+            "entries": [
+              1
+            ],
+            "thread": null,
+            "kind": "candidate.handed",
+            "tone": "ready",
+            "label": "Handed off",
+            "words": {
+              "head": "Handed off",
+              "line": "lane-line-map handed V26-2835 at 2fd3bb6dd887df7ea5dff67e44e24eaa12ba42c7 (https://github.com/v26-technologies/athena/pull/1156) after 2 review rounds"
+            },
+            "explain": "A lane says its piece is ready. The lead checks the claim before anything is run on it.",
+            "items": []
+          },
+          {
+            "id": "b2",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-23T03:20:06.124203Z",
+            "entries": [
+              2
+            ],
+            "thread": null,
+            "kind": "candidate.handed",
+            "tone": "ready",
+            "label": "Handed off",
+            "words": {
+              "head": "Handed off",
+              "line": "lane-line-map handed V26-2836 at 2c8772e14a2083d3d9898466894d45b7c052697a (https://github.com/v26-technologies/athena/pull/1157) after 2 review rounds"
+            },
+            "explain": "A lane says its piece is ready. The lead checks the claim before anything is run on it.",
+            "items": []
+          },
+          {
+            "id": "b3",
+            "chapter": "c2",
+            "form": "entry",
+            "altitudes": [
+              "headline",
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-23T03:20:11.047887Z",
+            "entries": [
+              3
+            ],
+            "thread": null,
+            "kind": "candidate.merged",
+            "tone": "landed",
+            "label": "Landed",
+            "words": {
+              "head": "Landed",
+              "line": "V26-2835 merged by the lead"
+            },
+            "explain": "A piece reached the main line.",
+            "items": []
+          },
+          {
+            "id": "b4",
+            "chapter": "c3",
+            "form": "entry",
+            "altitudes": [
+              "headline",
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-23T03:20:11.241630Z",
+            "entries": [
+              4
+            ],
+            "thread": null,
+            "kind": "candidate.merged",
+            "tone": "landed",
+            "label": "Landed",
+            "words": {
+              "head": "Landed",
+              "line": "V26-2836 merged by the lead"
+            },
+            "explain": "A piece reached the main line.",
+            "items": []
+          }
+        ],
+        "threads": []
       }
     },
     "delivery-runs": {
@@ -339,7 +521,7 @@
       ]
     }
   },
-  "initialText": "NowThe lineWhoWhat's leftWhat happenedParkedThe line map's round card (V26-2835, V26-2836)Every piece has landed.StartPieces landedLast landedThe line map's round card lists each finding and the fix that closed itV26-2836 · just nowSaved viewUpdated just nowThe lineEvery piece of work merges into one main line.Each row is one lane's work, in the order it lands. Point at or tap a stop to see what it carries.Line map round card2 of 2 landed2835#11562836#1157Finish line2/2 landedLine-map laneLand the line map's round card redesignV26-2835 · #1156 · Landed just nowShow the line map's run as a round track and a card for the picked round.Approved on round 2 · 4 moderate notes, 10 minor notes raised11312:31 am219 min laterRound 2Approved1 note1 minor2 review roundsMerge check · Landed just now · 2 steps3:20 amlane-line-map handed V26-2835 at 2fd3bb6dd887df7ea5dff67e44e24eaa12ba42c7 (https://github.com/v26-technologies/athena/pull/1156) after 2 review rounds3:20 amV26-2835 merged by the leadLandedBeing checkedReady to checkIn progressNot startedWaiting for the lead to acceptStoppedBoth landedWho's doing what1 lane is working on this.Each lane is a separate session working in parallel on its own part of the work.Line map round cardhanded V26-2836No time recordedHanded overfor 2h 33mWhat's left0pieces to go2 of 2 pieces have landed.What happenedThe story so far, newest first.LandedReady to checkDecisionProblemOther updateEverythingDecisionsLandedProblems[entry][entry][entry][entry]Parked for laterNothing parked.Past deliveries and runs",
+  "initialText": "NowThe lineWhoWhat's leftWhat happenedParkedThe line map's round card (V26-2835, V26-2836)Every piece has landed.StartPieces landedLast landedThe line map's round card lists each finding and the fix that closed itV26-2836 · just nowSaved viewUpdated just nowThe lineEvery piece of work merges into one main line.Each row is one lane's work, in the order it lands. Point at or tap a stop to see what it carries.Line map round card2 of 2 landed2835#11562836#1157Finish line2/2 landedLine-map laneLand the line map's round card redesignV26-2835 · #1156 · Landed just nowShow the line map's run as a round track and a card for the picked round.Approved on round 2 · 4 moderate notes, 10 minor notes raised11312:31 am219 min laterRound 2Approved1 note1 minor2 review roundsMerge check · Landed just now · 2 steps3:20 amlane-line-map handed V26-2835 at 2fd3bb6dd887df7ea5dff67e44e24eaa12ba42c7 (https://github.com/v26-technologies/athena/pull/1156) after 2 review rounds3:20 amV26-2835 merged by the leadLandedBeing checkedReady to checkIn progressNot startedWaiting for the lead to acceptStoppedBoth landedWho's doing what1 lane is working on this.Each lane is a separate session working in parallel on its own part of the work.Line map round cardhanded V26-2836No time recordedHanded overfor 2h 33mWhat's left0pieces to go2 of 2 pieces have landed.What happenedTwo pieces landed so far.No setbacks.HeadlinesStoryEverythingAllDecisionsLandingsSetbacksV26-2836 landed3:20 amClosing a review round stores each finding with the run3:20 amLandedV26-2836 merged by the leadA piece reached the main line.pieceV26-2836as writtenV26-2836 merged by the leadLandedV26-2835 landed3:20 amShow the line map's run as a round track and a card for the picked round3:20 amLandedV26-2835 merged by the leadA piece reached the main line.pieceV26-2835as writtenV26-2835 merged by the leadLandedGetting started3:20 am3:20 amHanded offlane-line-map handed V26-2836 at 2c8772e (#1157) after 2 review roundsA lane says its piece is ready. The lead checks the claim before anything is run on it.pieceV26-2836as writtenlane-line-map handed V26-2836 at 2c8772e14a2083d3d9898466894d45b7c052697a (https://github.com/v26-technologies/athena/pull/1157) after 2 review roundsHanded off3:20 amHanded offlane-line-map handed V26-2835 at 2fd3bb6 (#1156) after 2 review roundsA lane says its piece is ready. The lead checks the claim before anything is run on it.pieceV26-2835as writtenlane-line-map handed V26-2835 at 2fd3bb6dd887df7ea5dff67e44e24eaa12ba42c7 (https://github.com/v26-technologies/athena/pull/1156) after 2 review roundsHanded offParked for laterNothing parked.Past deliveries and runs",
   "details": {
     "V26-2835": {
       "detail": "Line-map laneLand the line map's round card redesignV26-2835 · #1156 · Landed just nowShow the line map's run as a round track and a card for the picked round.Approved on round 2 · 4 moderate notes, 10 minor notes raised11312:31 am219 min laterRound 2Approved1 note1 minor2 review roundsMerge check · Landed just now · 2 steps3:20 amlane-line-map handed V26-2835 at 2fd3bb6dd887df7ea5dff67e44e24eaa12ba42c7 (https://github.com/v26-technologies/athena/pull/1156) after 2 review rounds3:20 amV26-2835 merged by the lead",

@@ -1369,6 +1369,2030 @@
       "status": {
         "source": "derived",
         "text": "Serving is paused: Operator: focused posture. The lead merges by hand; serve runs held only to refresh Linear and GitHub snapshots. · last landed V26-2827 at 2026-10-22T23:35:00.671438Z"
+      },
+      "story": {
+        "schemaVersion": "story/1",
+        "state": "closed",
+        "digest": {
+          "landed": 8,
+          "pieces": 9,
+          "startedAt": "2026-10-22T22:04:23.891286Z",
+          "closedAt": "2026-10-22T23:38:12.841558Z",
+          "took": 5629,
+          "setbacks": {
+            "closed": 0,
+            "cost": 0,
+            "standing": []
+          },
+          "decisions": 0,
+          "words": {
+            "head": "Eight of nine pieces landed in 1h 33m.",
+            "line": "No setbacks."
+          }
+        },
+        "chapters": [
+          {
+            "id": "c1",
+            "form": "start",
+            "subject": null,
+            "pieceTitle": null,
+            "at": "2026-10-22T22:04:23.891286Z",
+            "entries": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13,
+              14,
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22,
+              23,
+              24,
+              25,
+              26,
+              27,
+              28,
+              29,
+              30,
+              31,
+              32,
+              33,
+              34,
+              35,
+              36,
+              37
+            ],
+            "beats": [
+              "b1",
+              "b2",
+              "b3",
+              "b4",
+              "b5",
+              "b6",
+              "b7",
+              "b8",
+              "b9",
+              "b10",
+              "b11",
+              "b12",
+              "b13",
+              "b14",
+              "b15",
+              "b16",
+              "b17",
+              "b18",
+              "b19",
+              "b20",
+              "b21",
+              "b22",
+              "b23",
+              "b24",
+              "b25",
+              "b26",
+              "b27",
+              "b28",
+              "b29",
+              "b30",
+              "b31",
+              "b32",
+              "b33",
+              "b34",
+              "b35",
+              "b36",
+              "b37"
+            ],
+            "standing": [],
+            "notLanded": [],
+            "words": {
+              "head": "Getting started",
+              "line": "Four lanes picked up V26-2821, V26-2822, V26-2823, V26-2826, V26-2831 and V26-2825.",
+              "standing": []
+            }
+          },
+          {
+            "id": "c2",
+            "form": "landing",
+            "subject": "V26-2823",
+            "pieceTitle": "Epic lanes record runs",
+            "at": "2026-10-22T23:11:33.026047Z",
+            "entries": [
+              38
+            ],
+            "beats": [
+              "b38"
+            ],
+            "standing": [],
+            "notLanded": [],
+            "words": {
+              "head": "V26-2823 landed",
+              "line": "1h 7m after it was picked up.",
+              "standing": []
+            }
+          },
+          {
+            "id": "c3",
+            "form": "landing",
+            "subject": "V26-2822",
+            "pieceTitle": "One review-round write lands in the run and the journal",
+            "at": "2026-10-22T23:13:01.558521Z",
+            "entries": [
+              39,
+              40,
+              41
+            ],
+            "beats": [
+              "b39",
+              "b40",
+              "b41"
+            ],
+            "standing": [],
+            "notLanded": [],
+            "words": {
+              "head": "V26-2822 landed",
+              "line": "1h 8m after it was picked up.",
+              "standing": []
+            }
+          },
+          {
+            "id": "c4",
+            "form": "landing",
+            "subject": "V26-2826",
+            "pieceTitle": "History page of deliveries and runs",
+            "at": "2026-10-22T23:14:22.206633Z",
+            "entries": [
+              42
+            ],
+            "beats": [
+              "b42"
+            ],
+            "standing": [],
+            "notLanded": [],
+            "words": {
+              "head": "V26-2826 landed",
+              "line": "1h 9m after it was picked up.",
+              "standing": []
+            }
+          },
+          {
+            "id": "c5",
+            "form": "landing",
+            "subject": "V26-2831",
+            "pieceTitle": "Repin the harness app registry (base fix)",
+            "at": "2026-10-22T23:17:11.749349Z",
+            "entries": [
+              43,
+              44,
+              45,
+              46
+            ],
+            "beats": [
+              "b43",
+              "b44",
+              "b45",
+              "b46"
+            ],
+            "standing": [],
+            "notLanded": [],
+            "words": {
+              "head": "V26-2831 landed",
+              "line": "1h 2m after it was picked up.",
+              "standing": []
+            }
+          },
+          {
+            "id": "c6",
+            "form": "landing",
+            "subject": "V26-2824",
+            "pieceTitle": "Install the release; lanes hand off naming their run",
+            "at": "2026-10-22T23:18:49.127784Z",
+            "entries": [
+              47,
+              48,
+              49,
+              50,
+              51,
+              52
+            ],
+            "beats": [
+              "b47",
+              "b48",
+              "b49",
+              "b50",
+              "b51",
+              "b52"
+            ],
+            "standing": [],
+            "notLanded": [],
+            "words": {
+              "head": "V26-2824 landed",
+              "line": "7m 16s after it was picked up.",
+              "standing": []
+            }
+          },
+          {
+            "id": "c7",
+            "form": "landing",
+            "subject": "V26-2825",
+            "pieceTitle": "Line map shows each stop's run",
+            "at": "2026-10-22T23:22:18.637061Z",
+            "entries": [
+              53,
+              54,
+              55,
+              56
+            ],
+            "beats": [
+              "b53",
+              "b54",
+              "b55",
+              "b56"
+            ],
+            "standing": [],
+            "notLanded": [],
+            "words": {
+              "head": "V26-2825 landed",
+              "line": "28m after it was picked up.",
+              "standing": []
+            }
+          },
+          {
+            "id": "c8",
+            "form": "landing",
+            "subject": "V26-2832",
+            "pieceTitle": "Storefront-composition fixture gets admission context",
+            "at": "2026-10-22T23:27:15.478148Z",
+            "entries": [
+              57,
+              58,
+              59,
+              60,
+              61,
+              62,
+              63
+            ],
+            "beats": [
+              "b57",
+              "b58",
+              "b59",
+              "b60",
+              "b61",
+              "b62",
+              "b63"
+            ],
+            "standing": [],
+            "notLanded": [],
+            "words": {
+              "head": "V26-2832 landed",
+              "line": "10m after it was picked up.",
+              "standing": []
+            }
+          },
+          {
+            "id": "c9",
+            "form": "landing",
+            "subject": "V26-2827",
+            "pieceTitle": "Agreement sensor for review rounds",
+            "at": "2026-10-22T23:35:00.671438Z",
+            "entries": [
+              64,
+              65,
+              66,
+              67,
+              68,
+              69
+            ],
+            "beats": [
+              "b64",
+              "b65",
+              "b66",
+              "b67",
+              "b68",
+              "b69"
+            ],
+            "standing": [],
+            "notLanded": [],
+            "words": {
+              "head": "V26-2827 landed",
+              "line": "16m after it was picked up.",
+              "standing": []
+            }
+          },
+          {
+            "id": "c10",
+            "form": "finish",
+            "subject": null,
+            "pieceTitle": null,
+            "at": "2026-10-22T23:38:12.841558Z",
+            "entries": [
+              70,
+              71,
+              72,
+              73,
+              74,
+              75
+            ],
+            "beats": [
+              "b70",
+              "b71",
+              "b72"
+            ],
+            "standing": [],
+            "notLanded": [
+              "V26-2821"
+            ],
+            "words": {
+              "head": "Finished",
+              "line": "Every finish line was met. V26-2821 never landed.",
+              "standing": []
+            }
+          }
+        ],
+        "beats": [
+          {
+            "id": "b1",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:04:23.891286Z",
+            "entries": [
+              1
+            ],
+            "thread": null,
+            "kind": "decision.recorded",
+            "tone": "decision",
+            "label": "Decision",
+            "words": {
+              "head": "Decision",
+              "line": "Approved plan = epic V26-2829, its Linear design document (operator decision 2026-10-22) and its seven filed tickets; no separate plan document."
+            },
+            "explain": "The lead or the operator made a call, and said why.",
+            "items": []
+          },
+          {
+            "id": "b2",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:04:23.955806Z",
+            "entries": [
+              2
+            ],
+            "thread": null,
+            "kind": "decision.recorded",
+            "tone": "decision",
+            "label": "Decision",
+            "words": {
+              "head": "Decision",
+              "line": "V26-2821 lives in agent-skills: its lane delivers there; the lead merges it and cuts the release there, outside the Athena runner. The runner's sync and regenerators replace the epic's suggested single integration change set."
+            },
+            "explain": "The lead or the operator made a call, and said why.",
+            "items": []
+          },
+          {
+            "id": "b3",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:04:24.020743Z",
+            "entries": [
+              3
+            ],
+            "thread": null,
+            "kind": "decision.recorded",
+            "tone": "decision",
+            "label": "Decision",
+            "words": {
+              "head": "Decision",
+              "line": "Lanes started before V26-2823 merges follow today's AGENTS.md epic rules (recording off, Run: none, push --no-verify); later lanes follow the rules it lands. No ticket touches convex/, so no dev-backend lease."
+            },
+            "explain": "The lead or the operator made a call, and said why.",
+            "items": []
+          },
+          {
+            "id": "b4",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:04:24.086042Z",
+            "entries": [
+              4
+            ],
+            "thread": null,
+            "kind": "decision.recorded",
+            "tone": "decision",
+            "label": "Decision",
+            "words": {
+              "head": "Decision",
+              "line": "Operator: finish line is merged into main, no deploys; focused posture; no close-out full-health run."
+            },
+            "explain": "The lead or the operator made a call, and said why.",
+            "items": []
+          },
+          {
+            "id": "b5",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:04:24.149924Z",
+            "entries": [
+              5
+            ],
+            "thread": null,
+            "kind": "lane.assigned",
+            "tone": "note",
+            "label": "Picked up",
+            "words": {
+              "head": "Picked up",
+              "line": "V26-2821 assigned to lane-skills"
+            },
+            "explain": "The lead gave a piece to a lane, which starts work on it.",
+            "items": []
+          },
+          {
+            "id": "b6",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:04:24.216156Z",
+            "entries": [
+              6
+            ],
+            "thread": null,
+            "kind": "lane.assigned",
+            "tone": "note",
+            "label": "Picked up",
+            "words": {
+              "head": "Picked up",
+              "line": "V26-2822 assigned to lane-recorder"
+            },
+            "explain": "The lead gave a piece to a lane, which starts work on it.",
+            "items": []
+          },
+          {
+            "id": "b7",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:04:24.281805Z",
+            "entries": [
+              7
+            ],
+            "thread": null,
+            "kind": "lane.assigned",
+            "tone": "note",
+            "label": "Picked up",
+            "words": {
+              "head": "Picked up",
+              "line": "V26-2823 assigned to lane-runs"
+            },
+            "explain": "The lead gave a piece to a lane, which starts work on it.",
+            "items": []
+          },
+          {
+            "id": "b8",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:04:24.345896Z",
+            "entries": [
+              8
+            ],
+            "thread": null,
+            "kind": "lane.assigned",
+            "tone": "note",
+            "label": "Picked up",
+            "words": {
+              "head": "Picked up",
+              "line": "V26-2826 assigned to lane-history"
+            },
+            "explain": "The lead gave a piece to a lane, which starts work on it.",
+            "items": []
+          },
+          {
+            "id": "b9",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:05:47.079450Z",
+            "entries": [
+              9
+            ],
+            "thread": null,
+            "kind": "decision.recorded",
+            "tone": "decision",
+            "label": "Decision",
+            "words": {
+              "head": "Decision",
+              "line": "tracker-snapshot: the command exited with 1; the last snapshot stands"
+            },
+            "explain": "The lead or the operator made a call, and said why.",
+            "items": []
+          },
+          {
+            "id": "b10",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:05:47.310154Z",
+            "entries": [
+              10
+            ],
+            "thread": null,
+            "kind": "decision.recorded",
+            "tone": "decision",
+            "label": "Decision",
+            "words": {
+              "head": "Decision",
+              "line": "forge-snapshot: the command exited with 1; the last snapshot stands"
+            },
+            "explain": "The lead or the operator made a call, and said why.",
+            "items": []
+          },
+          {
+            "id": "b11",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:10:58.594796Z",
+            "entries": [
+              11
+            ],
+            "thread": null,
+            "kind": "review.round",
+            "tone": "note",
+            "label": "Review round",
+            "words": {
+              "head": "Review round",
+              "line": "Round 1: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/0/2"
+            },
+            "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
+            "items": []
+          },
+          {
+            "id": "b12",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:11:15.121182Z",
+            "entries": [
+              12
+            ],
+            "thread": null,
+            "kind": "review.round",
+            "tone": "note",
+            "label": "Review round",
+            "words": {
+              "head": "Review round",
+              "line": "Round 2: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/0/0"
+            },
+            "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
+            "items": []
+          },
+          {
+            "id": "b13",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:13:32.729189Z",
+            "entries": [
+              13
+            ],
+            "thread": null,
+            "kind": "candidate.handed",
+            "tone": "ready",
+            "label": "Handed off",
+            "words": {
+              "head": "Handed off",
+              "line": "lane-runs handed V26-2823 at d48bf11f991a4fff7a4dccd2f80ee344acfc43f5 (https://github.com/v26-technologies/athena/pull/1147) after 2 review rounds"
+            },
+            "explain": "A lane says its piece is ready. The lead checks the claim before anything is run on it.",
+            "items": []
+          },
+          {
+            "id": "b14",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:14:20.278650Z",
+            "entries": [
+              14
+            ],
+            "thread": null,
+            "kind": "lane.assigned",
+            "tone": "note",
+            "label": "Picked up",
+            "words": {
+              "head": "Picked up",
+              "line": "V26-2831 assigned to lane-runs"
+            },
+            "explain": "The lead gave a piece to a lane, which starts work on it.",
+            "items": []
+          },
+          {
+            "id": "b15",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:14:20.430804Z",
+            "entries": [
+              15
+            ],
+            "thread": null,
+            "kind": "decision.recorded",
+            "tone": "decision",
+            "label": "Decision",
+            "words": {
+              "head": "Decision",
+              "line": "Main fails harness:test: stale harness-app-registry pins after #1146 (V26-2819). Fix forward as V26-2831 on lane-runs (free after handing off V26-2823). V26-2823 stays queued: no approved work is held; its docs mention the recorder's marker read one merge ahead of V26-2822, accepted."
+            },
+            "explain": "The lead or the operator made a call, and said why.",
+            "items": []
+          },
+          {
+            "id": "b16",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:15:12.923649Z",
+            "entries": [
+              16
+            ],
+            "thread": null,
+            "kind": "check.started",
+            "tone": "note",
+            "label": "Checking",
+            "words": {
+              "head": "Checking",
+              "line": "Checking Epic lanes record runs"
+            },
+            "explain": "The queue began running a piece's checks.",
+            "items": []
+          },
+          {
+            "id": "b17",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:15:20.849019Z",
+            "entries": [
+              17
+            ],
+            "thread": null,
+            "kind": "review.round",
+            "tone": "note",
+            "label": "Review round",
+            "words": {
+              "head": "Review round",
+              "line": "Round 1: lens.adversarial-testing changes, lens.outcome-correctness approve; findings 0/0/1/1"
+            },
+            "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
+            "items": []
+          },
+          {
+            "id": "b18",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:15:53.511463Z",
+            "entries": [
+              18
+            ],
+            "thread": null,
+            "kind": "review.round",
+            "tone": "note",
+            "label": "Review round",
+            "words": {
+              "head": "Review round",
+              "line": "Round 2: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/0/0"
+            },
+            "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
+            "items": []
+          },
+          {
+            "id": "b19",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:16:03.358016Z",
+            "entries": [
+              19
+            ],
+            "thread": null,
+            "kind": "review.round",
+            "tone": "note",
+            "label": "Review round",
+            "words": {
+              "head": "Review round",
+              "line": "Round 1: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/0/1"
+            },
+            "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
+            "items": []
+          },
+          {
+            "id": "b20",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:16:24.058461Z",
+            "entries": [
+              20
+            ],
+            "thread": null,
+            "kind": "review.round",
+            "tone": "note",
+            "label": "Review round",
+            "words": {
+              "head": "Review round",
+              "line": "Round 1: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/0/5"
+            },
+            "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
+            "items": []
+          },
+          {
+            "id": "b21",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:16:41.077894Z",
+            "entries": [
+              21
+            ],
+            "thread": null,
+            "kind": "review.round",
+            "tone": "note",
+            "label": "Review round",
+            "words": {
+              "head": "Review round",
+              "line": "Round 2: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/0/0"
+            },
+            "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
+            "items": []
+          },
+          {
+            "id": "b22",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:17:09.252440Z",
+            "entries": [
+              22
+            ],
+            "thread": null,
+            "kind": "candidate.handed",
+            "tone": "ready",
+            "label": "Handed off",
+            "words": {
+              "head": "Handed off",
+              "line": "lane-recorder handed V26-2822 at 5bf8aeeca2bcea5759f46f34164d836096b120e1 (https://github.com/v26-technologies/athena/pull/1148) after 2 review rounds"
+            },
+            "explain": "A lane says its piece is ready. The lead checks the claim before anything is run on it.",
+            "items": []
+          },
+          {
+            "id": "b23",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:17:32.745026Z",
+            "entries": [
+              23
+            ],
+            "thread": null,
+            "kind": "decision.recorded",
+            "tone": "decision",
+            "label": "Decision",
+            "words": {
+              "head": "Decision",
+              "line": "V26-2822 hand-off checked (PR #1148 head 5bf8aee, 2 rounds, both lenses approve) and queued. lane-recorder left handed: no unblocked work (V26-2824 needs 2821+2823, V26-2825 needs 2821, V26-2827 needs 2822+2824); it gets the first of those to unblock."
+            },
+            "explain": "The lead or the operator made a call, and said why.",
+            "items": []
+          },
+          {
+            "id": "b24",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:19:07.479173Z",
+            "entries": [
+              24
+            ],
+            "thread": null,
+            "kind": "review.round",
+            "tone": "note",
+            "label": "Review round",
+            "words": {
+              "head": "Review round",
+              "line": "Round 2: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/0/2"
+            },
+            "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
+            "items": []
+          },
+          {
+            "id": "b25",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:19:20.816288Z",
+            "entries": [
+              25
+            ],
+            "thread": null,
+            "kind": "candidate.handed",
+            "tone": "ready",
+            "label": "Handed off",
+            "words": {
+              "head": "Handed off",
+              "line": "lane-history handed V26-2826 at eec4becf7d7366aebd9071ddc5fe45ba2171de1b (https://github.com/v26-technologies/athena/pull/1149) after 2 review rounds"
+            },
+            "explain": "A lane says its piece is ready. The lead checks the claim before anything is run on it.",
+            "items": []
+          },
+          {
+            "id": "b26",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:19:29.149547Z",
+            "entries": [
+              26
+            ],
+            "thread": null,
+            "kind": "candidate.handed",
+            "tone": "ready",
+            "label": "Handed off",
+            "words": {
+              "head": "Handed off",
+              "line": "lane-history handed V26-2826 at eec4becf707366aebd9071ddc5fe45ba2171de1b (https://github.com/v26-technologies/athena/pull/1149) after 2 review rounds"
+            },
+            "explain": "A lane says its piece is ready. The lead checks the claim before anything is run on it.",
+            "items": []
+          },
+          {
+            "id": "b27",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:19:54.881889Z",
+            "entries": [
+              27
+            ],
+            "thread": null,
+            "kind": "decision.recorded",
+            "tone": "decision",
+            "label": "Decision",
+            "words": {
+              "head": "Decision",
+              "line": "V26-2826 hand-off checked (PR #1149 head eec4bec, 2 rounds, both lenses approve) and queued; the earlier hand-off entry at a mistyped head is superseded. P3 left open by both lenses (1+N runs show processes per render, ~6s for 37 runs, inside the 60s timeout): dropped, no ticket; V26-2825 touches the same summary code and may batch it if it bites. lane-history left handed: no unblocked work."
+            },
+            "explain": "The lead or the operator made a call, and said why.",
+            "items": []
+          },
+          {
+            "id": "b28",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:27:45.833244Z",
+            "entries": [
+              28
+            ],
+            "thread": null,
+            "kind": "review.round",
+            "tone": "note",
+            "label": "Review round",
+            "words": {
+              "head": "Review round",
+              "line": "Round 1: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/1/0"
+            },
+            "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
+            "items": []
+          },
+          {
+            "id": "b29",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:43:54.825402Z",
+            "entries": [
+              29
+            ],
+            "thread": null,
+            "kind": "candidate.handed",
+            "tone": "ready",
+            "label": "Handed off",
+            "words": {
+              "head": "Handed off",
+              "line": "lane-skills handed V26-2821 at c96e2dd1f99d5f583e839b97f9555ff122768c1c (https://github.com/kwam1na/agent-skills/pull/122) after 2 review rounds"
+            },
+            "explain": "A lane says its piece is ready. The lead checks the claim before anything is run on it.",
+            "items": []
+          },
+          {
+            "id": "b30",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:44:52.155071Z",
+            "entries": [
+              30
+            ],
+            "thread": null,
+            "kind": "decision.recorded",
+            "tone": "decision",
+            "label": "Decision",
+            "words": {
+              "head": "Decision",
+              "line": "V26-2821 hand-off checked (agent-skills PR #122 head c96e2dd, 2 rounds; round 1 adversarial changes P2+P3 fixed, round 2 both approve). Removed from the Athena queue: the runner serves Athena only. The lead merges #122 in agent-skills once its CI matches main's pre-existing failures, then cuts the release. Round 1's journaled finishedAt (22:16:30Z) is the lane's estimate; the true finish was about 22:14:20Z."
+            },
+            "explain": "The lead or the operator made a call, and said why.",
+            "items": []
+          },
+          {
+            "id": "b31",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:47:48.067618Z",
+            "entries": [
+              31
+            ],
+            "thread": null,
+            "kind": "decision.recorded",
+            "tone": "decision",
+            "label": "Decision",
+            "words": {
+              "head": "Decision",
+              "line": "Widened V26-2831 to all of main's #1146 breakage the queue hit on V26-2823: static-product-metadata title test and motionInventory literal timings (both reproduced on clean main), plus any behavior or e2e scenario that fails on main for a #1146 reason. It lands first; queued candidates wait on it."
+            },
+            "explain": "The lead or the operator made a call, and said why.",
+            "items": []
+          },
+          {
+            "id": "b32",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:54:07.933307Z",
+            "entries": [
+              32
+            ],
+            "thread": null,
+            "kind": "decision.recorded",
+            "tone": "decision",
+            "label": "Decision",
+            "words": {
+              "head": "Decision",
+              "line": "V26-2821 merged by the lead in agent-skills: PR #122 squash 122c12f at reviewed head c96e2dd. CI failures identical to main 22f90b8 (7 failures, 54 errors, pre-existing). Release linear-orchestration-v1.2-unqualified built and verified from 122c12f: ~/delivery-artifacts/agent-skills-releases/linear-orchestration-v1.2-unqualified (zip sha256 f80af864..., 123 entries). V26-2825 is unblocked."
+            },
+            "explain": "The lead or the operator made a call, and said why.",
+            "items": []
+          },
+          {
+            "id": "b33",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T22:54:08.510812Z",
+            "entries": [
+              33
+            ],
+            "thread": null,
+            "kind": "lane.assigned",
+            "tone": "note",
+            "label": "Picked up",
+            "words": {
+              "head": "Picked up",
+              "line": "V26-2825 assigned to lane-skills"
+            },
+            "explain": "The lead gave a piece to a lane, which starts work on it.",
+            "items": []
+          },
+          {
+            "id": "b34",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:06:30.397413Z",
+            "entries": [
+              34
+            ],
+            "thread": null,
+            "kind": "review.round",
+            "tone": "note",
+            "label": "Review round",
+            "words": {
+              "head": "Review round",
+              "line": "Round 2: lens.adversarial-testing changes, lens.outcome-correctness changes; findings 0/1/1/0"
+            },
+            "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
+            "items": []
+          },
+          {
+            "id": "b35",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:06:57.498537Z",
+            "entries": [
+              35
+            ],
+            "thread": null,
+            "kind": "review.round",
+            "tone": "note",
+            "label": "Review round",
+            "words": {
+              "head": "Review round",
+              "line": "Round 3: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/0/0"
+            },
+            "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
+            "items": []
+          },
+          {
+            "id": "b36",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:09:43.458466Z",
+            "entries": [
+              36
+            ],
+            "thread": null,
+            "kind": "decision.recorded",
+            "tone": "decision",
+            "label": "Decision",
+            "words": {
+              "head": "Decision",
+              "line": "Operator (2026-10-22): focused tests only, no full suites. The lead stopped merge_queue serve mid-check of V26-2823 (it had pushed its sync, head 74d36b3) and removed its checkouts. Lanes drop harness:test: touched test files plus harness:check only. The lead now acts as the runner: per candidate, sync with origin/main in a detached checkout, regenerate generated artifacts and refresh solution-note fingerprints, run the lane-named focused tests plus harness:check and the Convex generated-API check, push, then merge with github:pr-merge --expected-head. Accepted risk: no broad cross-candidate check before merge."
+            },
+            "explain": "The lead or the operator made a call, and said why.",
+            "items": []
+          },
+          {
+            "id": "b37",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:11:08.608314Z",
+            "entries": [
+              37
+            ],
+            "thread": null,
+            "kind": "candidate.handed",
+            "tone": "ready",
+            "label": "Handed off",
+            "words": {
+              "head": "Handed off",
+              "line": "lane-runs handed V26-2831 at ef3e4793f13b1d15a367c9050eb202eb97acd207 (https://github.com/v26-technologies/athena/pull/1151) after 3 review rounds"
+            },
+            "explain": "A lane says its piece is ready. The lead checks the claim before anything is run on it.",
+            "items": []
+          },
+          {
+            "id": "b38",
+            "chapter": "c2",
+            "form": "entry",
+            "altitudes": [
+              "headline",
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:11:33.026047Z",
+            "entries": [
+              38
+            ],
+            "thread": null,
+            "kind": "candidate.merged",
+            "tone": "landed",
+            "label": "Landed",
+            "words": {
+              "head": "Landed",
+              "line": "V26-2823 merged by the lead (manual, focused): PR #1147 synced at 4ab4f4e317ea8b07d2ec0e8a0f688e1f167e0a6a, squash fa373d7493472edb6a9de916de1ecf55b037f7cc on main. Checks: worktree-manager, github-pr-merge, pr-athena-guidance-contract tests, harness:check, convex-generated-api, all pass."
+            },
+            "explain": "A piece reached the main line.",
+            "items": []
+          },
+          {
+            "id": "b39",
+            "chapter": "c3",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:11:33.394618Z",
+            "entries": [
+              39
+            ],
+            "thread": null,
+            "kind": "lane.assigned",
+            "tone": "note",
+            "label": "Picked up",
+            "words": {
+              "head": "Picked up",
+              "line": "V26-2824 assigned to lane-recorder"
+            },
+            "explain": "The lead gave a piece to a lane, which starts work on it.",
+            "items": []
+          },
+          {
+            "id": "b40",
+            "chapter": "c3",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:11:50.951761Z",
+            "entries": [
+              40
+            ],
+            "thread": null,
+            "kind": "review.round",
+            "tone": "note",
+            "label": "Review round",
+            "words": {
+              "head": "Review round",
+              "line": "Round 1: lens.adversarial-testing approve, lens.outcome-correctness changes; findings 0/0/1/3"
+            },
+            "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
+            "items": []
+          },
+          {
+            "id": "b41",
+            "chapter": "c3",
+            "form": "entry",
+            "altitudes": [
+              "headline",
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:13:01.558521Z",
+            "entries": [
+              41
+            ],
+            "thread": null,
+            "kind": "candidate.merged",
+            "tone": "landed",
+            "label": "Landed",
+            "words": {
+              "head": "Landed",
+              "line": "V26-2822 merged by the lead (manual, focused): PR #1148 synced at c6b98c246116b20364d1f4fec338c8334844c778, squash 996b310b9f028563c70032591173d8b74c790646 on main. Checks: delivery-run-recorder, worktree-manager tests, harness:check, convex-generated-api, all pass."
+            },
+            "explain": "A piece reached the main line.",
+            "items": []
+          },
+          {
+            "id": "b42",
+            "chapter": "c4",
+            "form": "entry",
+            "altitudes": [
+              "headline",
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:14:22.206633Z",
+            "entries": [
+              42
+            ],
+            "thread": null,
+            "kind": "candidate.merged",
+            "tone": "landed",
+            "label": "Landed",
+            "words": {
+              "head": "Landed",
+              "line": "V26-2826 merged by the lead (manual, focused): PR #1149 synced at 33140d0d8262124ff4ed8490f3199d8a22ad2190, squash 26b53015832841f8b85e3962a79a608a426b91e1 on main. Checks: delivery-history-view, delivery-run-summary, delivery-live-view, delivery-live tests, harness:check, convex-generated-api, all pass."
+            },
+            "explain": "A piece reached the main line.",
+            "items": []
+          },
+          {
+            "id": "b43",
+            "chapter": "c5",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:14:22.277767Z",
+            "entries": [
+              43
+            ],
+            "thread": null,
+            "kind": "decision.recorded",
+            "tone": "decision",
+            "label": "Decision",
+            "words": {
+              "head": "Decision",
+              "line": "lane-history idle after V26-2826 merged: no unblocked work (V26-2827 needs V26-2824, in progress on lane-recorder; V26-2825 on lane-skills; V26-2831 on lane-runs)."
+            },
+            "explain": "The lead or the operator made a call, and said why.",
+            "items": []
+          },
+          {
+            "id": "b44",
+            "chapter": "c5",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:16:07.717181Z",
+            "entries": [
+              44
+            ],
+            "thread": null,
+            "kind": "review.round",
+            "tone": "note",
+            "label": "Review round",
+            "words": {
+              "head": "Review round",
+              "line": "Round 1: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/0/2"
+            },
+            "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
+            "items": []
+          },
+          {
+            "id": "b45",
+            "chapter": "c5",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:16:50.748772Z",
+            "entries": [
+              45
+            ],
+            "thread": null,
+            "kind": "review.round",
+            "tone": "note",
+            "label": "Review round",
+            "words": {
+              "head": "Review round",
+              "line": "Round 2: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/0/0"
+            },
+            "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
+            "items": []
+          },
+          {
+            "id": "b46",
+            "chapter": "c5",
+            "form": "entry",
+            "altitudes": [
+              "headline",
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:17:11.749349Z",
+            "entries": [
+              46
+            ],
+            "thread": null,
+            "kind": "candidate.merged",
+            "tone": "landed",
+            "label": "Landed",
+            "words": {
+              "head": "Landed",
+              "line": "V26-2831 merged by the lead (manual, focused): PR #1151 synced at 3780cabfb7dc5947ba87771170f0412910b03746, squash c0129301daf91a3ff3aa9e959a95f46b44670dc2 on main. Checks: 5 harness registry/contract tests, static-product-metadata, motionInventory, components/auth, routes/login, harness:check, convex-generated-api, all pass."
+            },
+            "explain": "A piece reached the main line.",
+            "items": []
+          },
+          {
+            "id": "b47",
+            "chapter": "c6",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:17:11.822754Z",
+            "entries": [
+              47
+            ],
+            "thread": null,
+            "kind": "decision.recorded",
+            "tone": "decision",
+            "label": "Decision",
+            "words": {
+              "head": "Decision",
+              "line": "Lead accepts lane-runs' call on the landing's motion: motionInventory exempts src/components/marketing/ (the public landing keeps its own motion profile outside Motion Studio) rather than retiming #1146's shipped landing onto --motion-* profiles. Pre-existing storefront-composition fixture break (since #1018) filed as V26-2832 and assigned to lane-runs, which diagnosed it; the e2e webServer 120s timeout is environmental (tsc 144s under load before and after #1146): no action."
+            },
+            "explain": "The lead or the operator made a call, and said why.",
+            "items": []
+          },
+          {
+            "id": "b48",
+            "chapter": "c6",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:17:12.191451Z",
+            "entries": [
+              48
+            ],
+            "thread": null,
+            "kind": "lane.assigned",
+            "tone": "note",
+            "label": "Picked up",
+            "words": {
+              "head": "Picked up",
+              "line": "V26-2832 assigned to lane-runs"
+            },
+            "explain": "The lead gave a piece to a lane, which starts work on it.",
+            "items": []
+          },
+          {
+            "id": "b49",
+            "chapter": "c6",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:17:14.880712Z",
+            "entries": [
+              49
+            ],
+            "thread": null,
+            "kind": "candidate.handed",
+            "tone": "ready",
+            "label": "Handed off",
+            "words": {
+              "head": "Handed off",
+              "line": "lane-recorder handed V26-2824 at ffb41cef5b32596c3d058366fb7e730be8a882f7 (https://github.com/v26-technologies/athena/pull/1152) after 2 review rounds"
+            },
+            "explain": "A lane says its piece is ready. The lead checks the claim before anything is run on it.",
+            "items": []
+          },
+          {
+            "id": "b50",
+            "chapter": "c6",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:17:30.338963Z",
+            "entries": [
+              50
+            ],
+            "thread": null,
+            "kind": "review.round",
+            "tone": "note",
+            "label": "Review round",
+            "words": {
+              "head": "Review round",
+              "line": "Round 2: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/0/0"
+            },
+            "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
+            "items": []
+          },
+          {
+            "id": "b51",
+            "chapter": "c6",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:17:55.991915Z",
+            "entries": [
+              51
+            ],
+            "thread": null,
+            "kind": "candidate.handed",
+            "tone": "ready",
+            "label": "Handed off",
+            "words": {
+              "head": "Handed off",
+              "line": "lane-skills handed V26-2825 at 84f92469e4a7388e39def6cb4149b9774622d689 (https://github.com/v26-technologies/athena/pull/1153) after 2 review rounds"
+            },
+            "explain": "A lane says its piece is ready. The lead checks the claim before anything is run on it.",
+            "items": []
+          },
+          {
+            "id": "b52",
+            "chapter": "c6",
+            "form": "entry",
+            "altitudes": [
+              "headline",
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:18:49.127784Z",
+            "entries": [
+              52
+            ],
+            "thread": null,
+            "kind": "candidate.merged",
+            "tone": "landed",
+            "label": "Landed",
+            "words": {
+              "head": "Landed",
+              "line": "V26-2824 merged by the lead (manual, focused): PR #1152 synced at cec7101b4e540ba1adbcc97a44536a59f25b63da, squash a184f2ff52ab95cc0678ebfa1d1753ed6a0086cf on main. Checks: pr-athena-guidance-contract test, policy:check, delivery:status, harness:check, convex-generated-api, all pass."
+            },
+            "explain": "A piece reached the main line.",
+            "items": []
+          },
+          {
+            "id": "b53",
+            "chapter": "c7",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:18:49.504510Z",
+            "entries": [
+              53
+            ],
+            "thread": null,
+            "kind": "lane.assigned",
+            "tone": "note",
+            "label": "Picked up",
+            "words": {
+              "head": "Picked up",
+              "line": "V26-2827 assigned to lane-recorder"
+            },
+            "explain": "The lead gave a piece to a lane, which starts work on it.",
+            "items": []
+          },
+          {
+            "id": "b54",
+            "chapter": "c7",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:20:00.847373Z",
+            "entries": [
+              54
+            ],
+            "thread": null,
+            "kind": "candidate.handed",
+            "tone": "ready",
+            "label": "Handed off",
+            "words": {
+              "head": "Handed off",
+              "line": "lane-skills handed V26-2825 at 7d39b2620567a45b7ec079c6f135d5ae96e7490f (https://github.com/v26-technologies/athena/pull/1153) after 2 review rounds"
+            },
+            "explain": "A lane says its piece is ready. The lead checks the claim before anything is run on it.",
+            "items": []
+          },
+          {
+            "id": "b55",
+            "chapter": "c7",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:20:44.084673Z",
+            "entries": [
+              55
+            ],
+            "thread": null,
+            "kind": "decision.recorded",
+            "tone": "decision",
+            "label": "Decision",
+            "words": {
+              "head": "Decision",
+              "line": "V26-2825 moved after hand-off (84f9246 -> 7d39b26): the lane rebased onto a184f2f and restamped its note fingerprint. The branch-own scripts patch is identical (patch-id a409bbc), so the lead accepts 7d39b26 as the reviewed head."
+            },
+            "explain": "The lead or the operator made a call, and said why.",
+            "items": []
+          },
+          {
+            "id": "b56",
+            "chapter": "c7",
+            "form": "entry",
+            "altitudes": [
+              "headline",
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:22:18.637061Z",
+            "entries": [
+              56
+            ],
+            "thread": null,
+            "kind": "candidate.merged",
+            "tone": "landed",
+            "label": "Landed",
+            "words": {
+              "head": "Landed",
+              "line": "V26-2825 merged by the lead (manual, focused): PR #1153 synced at 7d39b2620567a45b7ec079c6f135d5ae96e7490f, squash 096428d328e3066f5f05098a41d477b5f09f098a on main. Checks: delivery-run-summary, delivery-line-map-runs, delivery-live-view, delivery-history-view tests, harness:check, convex-generated-api, all pass."
+            },
+            "explain": "A piece reached the main line.",
+            "items": []
+          },
+          {
+            "id": "b57",
+            "chapter": "c8",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:22:18.710750Z",
+            "entries": [
+              57
+            ],
+            "thread": null,
+            "kind": "decision.recorded",
+            "tone": "decision",
+            "label": "Decision",
+            "words": {
+              "head": "Decision",
+              "line": "lane-skills idle after V26-2825 merged: the only open tickets, V26-2827 (lane-recorder) and V26-2832 (lane-runs), are assigned."
+            },
+            "explain": "The lead or the operator made a call, and said why.",
+            "items": []
+          },
+          {
+            "id": "b58",
+            "chapter": "c8",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:22:31.877893Z",
+            "entries": [
+              58
+            ],
+            "thread": null,
+            "kind": "review.round",
+            "tone": "note",
+            "label": "Review round",
+            "words": {
+              "head": "Review round",
+              "line": "Round 1: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/0/1"
+            },
+            "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
+            "items": []
+          },
+          {
+            "id": "b59",
+            "chapter": "c8",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:22:52.215138Z",
+            "entries": [
+              59
+            ],
+            "thread": null,
+            "kind": "decision.recorded",
+            "tone": "decision",
+            "label": "Decision",
+            "words": {
+              "head": "Decision",
+              "line": "tracker-snapshot: taken again"
+            },
+            "explain": "The lead or the operator made a call, and said why.",
+            "items": []
+          },
+          {
+            "id": "b60",
+            "chapter": "c8",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:22:53.545547Z",
+            "entries": [
+              60
+            ],
+            "thread": null,
+            "kind": "decision.recorded",
+            "tone": "decision",
+            "label": "Decision",
+            "words": {
+              "head": "Decision",
+              "line": "forge-snapshot: taken again"
+            },
+            "explain": "The lead or the operator made a call, and said why.",
+            "items": []
+          },
+          {
+            "id": "b61",
+            "chapter": "c8",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:23:34.083704Z",
+            "entries": [
+              61
+            ],
+            "thread": null,
+            "kind": "review.round",
+            "tone": "note",
+            "label": "Review round",
+            "words": {
+              "head": "Review round",
+              "line": "Round 2: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/0/0"
+            },
+            "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
+            "items": []
+          },
+          {
+            "id": "b62",
+            "chapter": "c8",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:24:41.477362Z",
+            "entries": [
+              62
+            ],
+            "thread": null,
+            "kind": "candidate.handed",
+            "tone": "ready",
+            "label": "Handed off",
+            "words": {
+              "head": "Handed off",
+              "line": "lane-runs handed V26-2832 at 10c94bda8f50a10c17f2d36fd221a031e228a7ce (https://github.com/v26-technologies/athena/pull/1154) after 2 review rounds"
+            },
+            "explain": "A lane says its piece is ready. The lead checks the claim before anything is run on it.",
+            "items": []
+          },
+          {
+            "id": "b63",
+            "chapter": "c8",
+            "form": "entry",
+            "altitudes": [
+              "headline",
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:27:15.478148Z",
+            "entries": [
+              63
+            ],
+            "thread": null,
+            "kind": "candidate.merged",
+            "tone": "landed",
+            "label": "Landed",
+            "words": {
+              "head": "Landed",
+              "line": "V26-2832 merged by the lead (manual, focused): PR #1154 synced at 10c94bda8f50a10c17f2d36fd221a031e228a7ce, squash 0cac8e9b744e82c965319b0a018c934c157f19d2 on main. Checks: storefront-composition scenario x3, storefront-failure-visibility scenario, compound:check, harness:check, convex-generated-api, all pass."
+            },
+            "explain": "A piece reached the main line.",
+            "items": []
+          },
+          {
+            "id": "b64",
+            "chapter": "c9",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:27:15.551714Z",
+            "entries": [
+              64
+            ],
+            "thread": null,
+            "kind": "decision.recorded",
+            "tone": "decision",
+            "label": "Decision",
+            "words": {
+              "head": "Decision",
+              "line": "lane-runs idle after V26-2832 merged: the only open ticket, V26-2827, is on lane-recorder."
+            },
+            "explain": "The lead or the operator made a call, and said why.",
+            "items": []
+          },
+          {
+            "id": "b65",
+            "chapter": "c9",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:31:57.026703Z",
+            "entries": [
+              65
+            ],
+            "thread": null,
+            "kind": "review.round",
+            "tone": "note",
+            "label": "Review round",
+            "words": {
+              "head": "Review round",
+              "line": "Round 1: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/0/1"
+            },
+            "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
+            "items": []
+          },
+          {
+            "id": "b66",
+            "chapter": "c9",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:32:20.133107Z",
+            "entries": [
+              66
+            ],
+            "thread": null,
+            "kind": "decision.recorded",
+            "tone": "decision",
+            "label": "Decision",
+            "words": {
+              "head": "Decision",
+              "line": "Operator: Linear and GitHub must refresh automatically. The lead restarted merge_queue serve under meta.hold: it takes and merges nothing, but refreshes the tracker and forge snapshots every 180s and reconciles the record. Merges stay manual (focused posture)."
+            },
+            "explain": "The lead or the operator made a call, and said why.",
+            "items": []
+          },
+          {
+            "id": "b67",
+            "chapter": "c9",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:32:56.347394Z",
+            "entries": [
+              67
+            ],
+            "thread": null,
+            "kind": "review.round",
+            "tone": "note",
+            "label": "Review round",
+            "words": {
+              "head": "Review round",
+              "line": "Round 2: lens.adversarial-testing approve, lens.outcome-correctness approve; findings 0/0/0/0"
+            },
+            "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
+            "items": []
+          },
+          {
+            "id": "b68",
+            "chapter": "c9",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:33:08.201041Z",
+            "entries": [
+              68
+            ],
+            "thread": null,
+            "kind": "candidate.handed",
+            "tone": "ready",
+            "label": "Handed off",
+            "words": {
+              "head": "Handed off",
+              "line": "lane-recorder handed V26-2827 at f3d097ebec0637b2d1599d931ca20cad82f743b4 (https://github.com/v26-technologies/athena/pull/1155) after 2 review rounds"
+            },
+            "explain": "A lane says its piece is ready. The lead checks the claim before anything is run on it.",
+            "items": []
+          },
+          {
+            "id": "b69",
+            "chapter": "c9",
+            "form": "entry",
+            "altitudes": [
+              "headline",
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:35:00.671438Z",
+            "entries": [
+              69
+            ],
+            "thread": null,
+            "kind": "candidate.merged",
+            "tone": "landed",
+            "label": "Landed",
+            "words": {
+              "head": "Landed",
+              "line": "V26-2827 merged by the lead (manual, focused): PR #1155 synced at f5dacc1a145399a796ec18af444ba729732634eb, squash 5c450a16bc1d8915acdbf69f9ac5ea04a049bf4b on main. Checks: delivery-records-agreement, delivery-run-recorder, harness-blocker-inventory, harness-blockers, pr-athena-guidance-contract tests, compound:check, delivery:records-agreement on the epic's state, harness:check, convex-generated-api, all pass."
+            },
+            "explain": "A piece reached the main line.",
+            "items": []
+          },
+          {
+            "id": "b70",
+            "chapter": "c10",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:35:00.746937Z",
+            "entries": [
+              70
+            ],
+            "thread": null,
+            "kind": "decision.recorded",
+            "tone": "decision",
+            "label": "Decision",
+            "words": {
+              "head": "Decision",
+              "line": "Lead ruling: V26-2827 reads runs with the product's runs show --json instead of the ticket's runs view --json (runs view embeds a closed round's payload as a JSON string inside a display field). Both are product commands, so the ticket's no-store-reads rule holds; both lenses accepted it."
+            },
+            "explain": "The lead or the operator made a call, and said why.",
+            "items": []
+          },
+          {
+            "id": "b71",
+            "chapter": "c10",
+            "form": "finish",
+            "altitudes": [
+              "headline",
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:36:01.634859Z",
+            "entries": [
+              71,
+              72,
+              73,
+              74
+            ],
+            "thread": null,
+            "kind": "finish.met",
+            "tone": "landed",
+            "label": "Finish line met",
+            "words": {
+              "head": "Four finish lines were met",
+              "line": "A finish line, A finish line, A finish line and A finish line"
+            },
+            "explain": "One of the delivery's finish lines is now true.",
+            "items": []
+          },
+          {
+            "id": "b72",
+            "chapter": "c10",
+            "form": "entry",
+            "altitudes": [
+              "headline",
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T23:38:12.841558Z",
+            "entries": [
+              75
+            ],
+            "thread": null,
+            "kind": "delivery.closed",
+            "tone": "landed",
+            "label": "Finished",
+            "words": {
+              "head": "Finished",
+              "line": "V26-2829 closed. Finish line met: every child merged into main (agent-skills 122c12f + release v1.2; Athena through 5c450a1), no deploys. Plus base fixes V26-2831 and V26-2832. Operator direction: focused posture (queue stopped at 23:05Z, lead merged by hand after sync + focused checks), no full-health run. All four finish lines met with evidence. Lane worktrees removed."
+            },
+            "explain": "The lead closed the delivery.",
+            "items": []
+          }
+        ],
+        "threads": []
       }
     },
     "delivery-runs": {
@@ -1513,7 +3537,7 @@
       ]
     }
   },
-  "initialText": "NowThe lineWhoWhat's leftWhat happenedParkedDelivery records: state is the present, runs are the history (V26-2829) · V26-2829Delivered.StartPieces landedFinish line metLast landedA sensor confirms each candidate's review rounds agree between its run and the delivery stateV26-2827 · a minute agoClosedtook an hour 34 minutesfinal commit 5c450a1The lineEvery piece of work merges into one main line.Each row is one lane's work, in the order it lands. Point at or tap a stop to see what it carries.V26-2832 Storefront-composition fixture gets admission context3 of 3 landed2823#11472831#11512832#1154V26-2827 Agreement sensor for review rounds3 of 3 landed2822#11482824#11522827#1155V26-2826 history page1 of 1 landed2826#1149V26-2825 Line map shows each stop's run2 of 2 landed2825#11532821#122Finish line9/9 landed4/4 metRuns laneEpic lanes record runs: drop `ATHENA_DELIVERY_RECORDING=off` and `Run: none`, mark lane worktreesV26-2823 · #1147 · Landed 24 minutes agoEpic lanes record no runs today:Review evidence unavailable or stale for this candidate.Building · 4m 39sReview · 2m 26sWaiting · 1m 40sCheck to merge · 56m2 review roundsIn all: 1h 7mMerge check · Landed 24 minutes ago · 3 steps10:13 pmlane-runs handed V26-2823 at d48bf11f991a4fff7a4dccd2f80ee344acfc43f5 (https://github.com/v26-technologies/athena/pull/1147) after 2 review rounds10:15 pmChecking Epic lanes record runs11:11 pmV26-2823 merged by the lead (manual, focused): PR #1147 synced at 4ab4f4e317ea8b07d2ec0e8a0f688e1f167e0a6a, squash fa373d7493472edb6a9de916de1ecf55b037f7cc on main. Checks: worktree-manager, github-pr-merge, pr-athena-guidance-contract tests, harness:check, convex-generated-api, all pass.LandedNot landedBoth landedWho's doing whatThis delivery is closed; no lane is working.Each lane was a separate session working in parallel on its own part of the work.V26-2825 Line map shows each stop's runV26-2825: review round 1FinishedV26-2827 Agreement sensor for review roundsassigned V26-2827FinishedV26-2832 Storefront-composition fixture gets admission contextassigned V26-2832FinishedV26-2826 history pageHanded off #1149; available if the queue sends it backFinishedWhat's leftNothing left to land.9 of 9 pieces have landed.The finish lineMetA real epic delivery shows each stop's run on the line mapMetIts review rounds agree between run and stateMetThe history page lists it beside earlier runsMetEvery child merged into main (agent-skills main plus release for V26-2821); no deploysWhat happenedThe story so far, newest first.LandedReady to checkDecisionProblemOther updateEverythingDecisionsLandedProblems[entry][entry][entry][entry][entry][entry][entry][entry]Show all 75Parked for laterNothing parked.Past deliveries and runs",
+  "initialText": "NowThe lineWhoWhat's leftWhat happenedParkedDelivery records: state is the present, runs are the history (V26-2829) · V26-2829Delivered.StartPieces landedFinish line metLast landedA sensor confirms each candidate's review rounds agree between its run and the delivery stateV26-2827 · a minute agoClosedtook an hour 34 minutesfinal commit 5c450a1The lineEvery piece of work merges into one main line.Each row is one lane's work, in the order it lands. Point at or tap a stop to see what it carries.V26-2832 Storefront-composition fixture gets admission context3 of 3 landed2823#11472831#11512832#1154V26-2827 Agreement sensor for review rounds3 of 3 landed2822#11482824#11522827#1155V26-2826 history page1 of 1 landed2826#1149V26-2825 Line map shows each stop's run2 of 2 landed2825#11532821#122Finish line9/9 landed4/4 metRuns laneEpic lanes record runs: drop `ATHENA_DELIVERY_RECORDING=off` and `Run: none`, mark lane worktreesV26-2823 · #1147 · Landed 24 minutes agoEpic lanes record no runs today:Review evidence unavailable or stale for this candidate.Building · 4m 39sReview · 2m 26sWaiting · 1m 40sCheck to merge · 56m2 review roundsIn all: 1h 7mMerge check · Landed 24 minutes ago · 3 steps10:13 pmlane-runs handed V26-2823 at d48bf11f991a4fff7a4dccd2f80ee344acfc43f5 (https://github.com/v26-technologies/athena/pull/1147) after 2 review rounds10:15 pmChecking Epic lanes record runs11:11 pmV26-2823 merged by the lead (manual, focused): PR #1147 synced at 4ab4f4e317ea8b07d2ec0e8a0f688e1f167e0a6a, squash fa373d7493472edb6a9de916de1ecf55b037f7cc on main. Checks: worktree-manager, github-pr-merge, pr-athena-guidance-contract tests, harness:check, convex-generated-api, all pass.LandedNot landedBoth landedWho's doing whatThis delivery is closed; no lane is working.Each lane was a separate session working in parallel on its own part of the work.V26-2825 Line map shows each stop's runV26-2825: review round 1FinishedV26-2827 Agreement sensor for review roundsassigned V26-2827FinishedV26-2832 Storefront-composition fixture gets admission contextassigned V26-2832FinishedV26-2826 history pageHanded off #1149; available if the queue sends it backFinishedWhat's leftNothing left to land.9 of 9 pieces have landed.The finish lineMetA real epic delivery shows each stop's run on the line mapMetIts review rounds agree between run and stateMetThe history page lists it beside earlier runsMetEvery child merged into main (agent-skills main plus release for V26-2821); no deploysWhat happenedEight of nine pieces landed in 1h 33m.No setbacks.HeadlinesStoryEverythingAllDecisionsLandingsSetbacksFinished11:38 pmEvery finish line was met. V26-2821 never landed.11:38 pmFinishedV26-2829 closed. Finish line met: every child merged into main (agent-skills 122c12f + release v1.2; Athena through 5c450a1), no deploys. Plus base fixes V26-2831 and V26-2832. Operator direction: focused posture (queue stopped at 23:05Z, lead merged by hand after sync + focused checks), no full-health run. All four finish lines met with evidence. Lane worktrees removed.The lead closed the delivery.as writtenV26-2829 closed. Finish line met: every child merged into main (agent-skills 122c12f + release v1.2; Athena through 5c450a1), no deploys. Plus base fixes V26-2831 and V26-2832. Operator direction: focused posture (queue stopped at 23:05Z, lead merged by hand after sync + focused checks), no full-health run. All four finish lines met with evidence. Lane worktrees removed.Finished11:36 pmFour finish lines were metA finish line, A finish line, A finish line and A finish lineOne of the delivery's finish lines is now true.Four finish lines were met · 11:36 pmas writtenline-map-runs: Live line map on main 5c450a1: stops V26-2824, V26-2832 and V26-2827 each show their run (run-1a53c64e, run-04c54d36, run-8cbfe446) with rounds, verdicts, P0-P3 counts and timings; earlier stops predate run recording.Four finish lines were met · 11:36 pmas writtenrounds-agree: bun run delivery:records-agreement -- --dir ~/athena-delivery on main 5c450a1: 'Delivery records agree: 3 candidates with a run, every review round in both.' exit 0.Four finish lines were met · 11:36 pmas writtenhistory-lists: /view/athena-history.html lists 40 runs newest first; this epic's three runs appear beside earlier runs, each naming the V26-2829 delivery.Four finish lines were met · 11:36 pmas writtenmerged: All children merged: V26-2821 agent-skills 122c12f + release linear-orchestration-v1.2-unqualified; Athena main fa373d7 (2823), 996b310 (2822), 26b5301 (2826), c012930 (2831), a184f2f (2824), 096428d (2825), 0cac8e9 (2832), 5c450a1 (2827). No deploys.Finish line metV26-2827 landed11:35 pmAgreement sensor for review rounds 16m after it was picked up.11:35 pmLandedV26-2827 merged by the lead (manual, focused): PR #1155 synced at f5dacc1, squash 5c450a1 on main. Checks: delivery-records-agreement, delivery-run-recorder, harness-blocker-inventory, harness-blockers, pr-athena-guidance-contract tests, compound:check, delivery:records-agreement on the epic's state, harness:check, convex-generated-api, all pass.A piece reached the main line.pieceV26-2827as writtenV26-2827 merged by the lead (manual, focused): PR #1155 synced at f5dacc1a145399a796ec18af444ba729732634eb, squash 5c450a16bc1d8915acdbf69f9ac5ea04a049bf4b on main. Checks: delivery-records-agreement, delivery-run-recorder, harness-blocker-inventory, harness-blockers, pr-athena-guidance-contract tests, compound:check, delivery:records-agreement on the epic's state, harness:check, convex-generated-api, all pass.LandedV26-2832 landed11:27 pmStorefront-composition fixture gets admission context 10m after it was picked up.11:27 pmLandedV26-2832 merged by the lead (manual, focused): PR #1154 synced at 10c94bd, squash 0cac8e9 on main. Checks: storefront-composition scenario x3, storefront-failure-visibility scenario, compound:check, harness:check, convex-generated-api, all pass.A piece reached the main line.pieceV26-2832as writtenV26-2832 merged by the lead (manual, focused): PR #1154 synced at 10c94bda8f50a10c17f2d36fd221a031e228a7ce, squash 0cac8e9b744e82c965319b0a018c934c157f19d2 on main. Checks: storefront-composition scenario x3, storefront-failure-visibility scenario, compound:check, harness:check, convex-generated-api, all pass.LandedV26-2825 landed11:22 pmLine map shows each stop's run 28m after it was picked up.11:22 pmLandedV26-2825 merged by the lead (manual, focused): PR #1153 synced at 7d39b26, squash 096428d on main. Checks: delivery-run-summary, delivery-line-map-runs, delivery-live-view, delivery-history-view tests, harness:check, convex-generated-api, all pass.A piece reached the main line.pieceV26-2825as writtenV26-2825 merged by the lead (manual, focused): PR #1153 synced at 7d39b2620567a45b7ec079c6f135d5ae96e7490f, squash 096428d328e3066f5f05098a41d477b5f09f098a on main. Checks: delivery-run-summary, delivery-line-map-runs, delivery-live-view, delivery-history-view tests, harness:check, convex-generated-api, all pass.LandedV26-2824 landed11:18 pmInstall the release; lanes hand off naming their run 7m 16s after it was picked up.11:18 pmLandedV26-2824 merged by the lead (manual, focused): PR #1152 synced at cec7101, squash a184f2f on main. Checks: pr-athena-guidance-contract test, policy:check, delivery:status, harness:check, convex-generated-api, all pass.A piece reached the main line.pieceV26-2824as writtenV26-2824 merged by the lead (manual, focused): PR #1152 synced at cec7101b4e540ba1adbcc97a44536a59f25b63da, squash a184f2ff52ab95cc0678ebfa1d1753ed6a0086cf on main. Checks: pr-athena-guidance-contract test, policy:check, delivery:status, harness:check, convex-generated-api, all pass.LandedV26-2831 landed11:17 pmRepin the harness app registry (base fix) 1h 2m after it was picked up.11:17 pmLandedV26-2831 merged by the lead (manual, focused): PR #1151 synced at 3780cab, squash c012930 on main. Checks: 5 harness registry/contract tests, static-product-metadata, motionInventory, components/auth, routes/login, harness:check, convex-generated-api, all pass.A piece reached the main line.pieceV26-2831as writtenV26-2831 merged by the lead (manual, focused): PR #1151 synced at 3780cabfb7dc5947ba87771170f0412910b03746, squash c0129301daf91a3ff3aa9e959a95f46b44670dc2 on main. Checks: 5 harness registry/contract tests, static-product-metadata, motionInventory, components/auth, routes/login, harness:check, convex-generated-api, all pass.LandedV26-2826 landed11:14 pmHistory page of deliveries and runs 1h 9m after it was picked up.11:14 pmLandedV26-2826 merged by the lead (manual, focused): PR #1149 synced at 33140d0, squash 26b5301 on main. Checks: delivery-history-view, delivery-run-summary, delivery-live-view, delivery-live tests, harness:check, convex-generated-api, all pass.A piece reached the main line.pieceV26-2826as writtenV26-2826 merged by the lead (manual, focused): PR #1149 synced at 33140d0d8262124ff4ed8490f3199d8a22ad2190, squash 26b53015832841f8b85e3962a79a608a426b91e1 on main. Checks: delivery-history-view, delivery-run-summary, delivery-live-view, delivery-live tests, harness:check, convex-generated-api, all pass.LandedV26-2822 landed11:13 pmOne review-round write lands in the run and the journal 1h 8m after it was picked up.11:13 pmLandedV26-2822 merged by the lead (manual, focused): PR #1148 synced at c6b98c2, squash 996b310 on main. Checks: delivery-run-recorder, worktree-manager tests, harness:check, convex-generated-api, all pass.A piece reached the main line.pieceV26-2822as writtenV26-2822 merged by the lead (manual, focused): PR #1148 synced at c6b98c246116b20364d1f4fec338c8334844c778, squash 996b310b9f028563c70032591173d8b74c790646 on main. Checks: delivery-run-recorder, worktree-manager tests, harness:check, convex-generated-api, all pass.LandedV26-2823 landed11:11 pmEpic lanes record runs 1h 7m after it was picked up.11:11 pmLandedV26-2823 merged by the lead (manual, focused): PR #1147 synced at 4ab4f4e, squash fa373d7 on main. Checks: worktree-manager, github-pr-merge, pr-athena-guidance-contract tests, harness:check, convex-generated-api, all pass.A piece reached the main line.pieceV26-2823as writtenV26-2823 merged by the lead (manual, focused): PR #1147 synced at 4ab4f4e317ea8b07d2ec0e8a0f688e1f167e0a6a, squash fa373d7493472edb6a9de916de1ecf55b037f7cc on main. Checks: worktree-manager, github-pr-merge, pr-athena-guidance-contract tests, harness:check, convex-generated-api, all pass.LandedGetting started10:04 pmFour lanes picked up V26-2821, V26-2822, V26-2823, V26-2826, V26-2831 and V26-2825.Parked for laterNothing parked.Past deliveries and runs",
   "details": {
     "V26-2823": {
       "detail": "Runs laneEpic lanes record runs: drop `ATHENA_DELIVERY_RECORDING=off` and `Run: none`, mark lane worktreesV26-2823 · #1147 · Landed 24 minutes agoEpic lanes record no runs today:Review evidence unavailable or stale for this candidate.Building · 4m 39sReview · 2m 26sWaiting · 1m 40sCheck to merge · 56m2 review roundsIn all: 1h 7mMerge check · Landed 24 minutes ago · 3 steps10:13 pmlane-runs handed V26-2823 at d48bf11f991a4fff7a4dccd2f80ee344acfc43f5 (https://github.com/v26-technologies/athena/pull/1147) after 2 review rounds10:15 pmChecking Epic lanes record runs11:11 pmV26-2823 merged by the lead (manual, focused): PR #1147 synced at 4ab4f4e317ea8b07d2ec0e8a0f688e1f167e0a6a, squash fa373d7493472edb6a9de916de1ecf55b037f7cc on main. Checks: worktree-manager, github-pr-merge, pr-athena-guidance-contract tests, harness:check, convex-generated-api, all pass."
@@ -1552,7 +3576,7 @@
       "detail": "Skills laneThe line map shows each stop's run: rounds, findings, waits and timingsV26-2825 · #1153 · Landed 14 minutes agoThe line map (scripts/delivery-live-view.ts, served by bun scripts/delivery-live.ts) becomes the operator's run surface. A stop whose queue or planned element has a runId shows that run's story beside the state:Review evidence unavailable or stale for this candidate.Building · 13mReview · 9m 9s2 review roundsIn all: 28mMerge check · Landed 14 minutes ago · 3 steps11:17 pmlane-skills handed V26-2825 at 84f92469e4a7388e39def6cb4149b9774622d689 (https://github.com/v26-technologies/athena/pull/1153) after 2 review rounds11:20 pmlane-skills handed V26-2825 at 7d39b2620567a45b7ec079c6f135d5ae96e7490f (https://github.com/v26-technologies/athena/pull/1153) after 2 review rounds11:22 pmV26-2825 merged by the lead (manual, focused): PR #1153 synced at 7d39b2620567a45b7ec079c6f135d5ae96e7490f, squash 096428d328e3066f5f05098a41d477b5f09f098a on main. Checks: delivery-run-summary, delivery-line-map-runs, delivery-live-view, delivery-history-view tests, harness:check, convex-generated-api, all pass."
     },
     "V26-2821": {
-      "detail": "Skills laneDelivery state links each candidate to its run: `handoff --run`, `runId` on planned workV26-2821 · #122 · Landed · time unknowndelivery-state/1 already has a runId on each queue element, but nothing sets it: delivery_state.py always writes null, and handoff has no way to name a run. The records design joins the delivery state (the present tense) to the adopter's runs (the history) on this field. This ticket makes the join real, in a form any adopter can use.Review evidence unavailable or stale for this candidate.Building · 8m 5sReview · 4m2 review roundsMerge check · Handed over 52 minutes ago · 1 step10:43 pmlane-skills handed V26-2821 at c96e2dd1f99d5f583e839b97f9555ff122768c1c (https://github.com/kwam1na/agent-skills/pull/122) after 2 review rounds"
+      "detail": "Skills laneDelivery state links each candidate to its run: `handoff --run`, `runId` on planned workV26-2821 · #122 · Landed · time unknowndelivery-state/1 already has a runId on each queue element, but nothing sets it: delivery_state.py always writes null, and handoff has no way to name a run. The records design joins the delivery state (the present tense) to the adopter's runs (the history) on this field. This ticket makes the join real, in a form any adopter can use.Review evidence unavailable or stale for this candidate.Building · 8m 5sReview · 4m2 review roundsMerge check · Handed off 52 minutes ago · 1 step10:43 pmlane-skills handed V26-2821 at c96e2dd1f99d5f583e839b97f9555ff122768c1c (https://github.com/kwam1na/agent-skills/pull/122) after 2 review rounds"
     }
   }
 }
