@@ -501,7 +501,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/narrator.py",
-          "sha256": "7bbffccd92978931224cb03b3e01437b1e31758e8003c849433af73d0a076ad1"
+          "sha256": "aff74488aa04aae5a17dc7139787a3071ed8247e91c046a7f19eac36781894f9"
         },
         {
           "path": "skills/orchestrate-work/scripts/region_ownership.py",

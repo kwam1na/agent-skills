@@ -320,9 +320,12 @@ def _entry_beats(ids: list[int], by_id: dict, member_of: dict, registry: dict) -
         if (last and last["thread"] == thread and kind["altitude"] == "bookkeeping" and last["group"] == "bookkeeping"):
             last["held"].append(entry)
             continue
-        if last and last["thread"] == thread and batch and last["group"] == ("batch", tuple(batch)):
-            last["held"].append(entry)
-            continue
+        if batch:
+            # A batch's starts are one beat, even when one member's start joined a thread and is its own beat between them.
+            joined = next((beat for beat in reversed(beats) if beat["group"] == ("batch", tuple(batch)) and beat["thread"] == thread), None)
+            if joined is not None and (thread is None or joined is last):
+                joined["held"].append(entry)
+                continue
         group = "bookkeeping" if kind["altitude"] == "bookkeeping" else ("batch", tuple(batch)) if batch else None
         beats.append({"group": group, "thread": thread, "held": [entry]})
     return [_beat(beat, registry) for beat in beats]
@@ -344,7 +347,7 @@ def _beat(beat: dict, registry: dict) -> dict:
     else:
         form, label, tone, kind_name = "batch", kind["label"], kind["tone"], first["kind"]
         line = journal_words.words({**first, "subject": None}, registry)["line"]
-        words = {"head": f"Checks started on {_number(len(held))} pieces together", "line": line}
+        words = {"head": f"Checks started on {_number(len(beat['group'][1]))} pieces together", "line": line}
     return {"id": None, "chapter": None, "form": form, "altitudes": _altitudes(first, beat["thread"], registry), "at": _instant(first),
             "entries": [entry["id"] for entry in held], "thread": beat["thread"], "kind": kind_name, "tone": tone, "label": label,
             "words": words, "first": first["id"]}
