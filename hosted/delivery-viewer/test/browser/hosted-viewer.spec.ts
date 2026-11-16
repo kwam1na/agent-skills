@@ -239,7 +239,10 @@ test("polling preserves keyboard selection, folds, viewport and mobile line posi
   await publish(id, body);
   await page.goto(`${origin}/d/${id}`);
   const second = page.locator('.stop-btn[data-subject="APP-2"]');
-  await second.focus();
+  await page.locator('.stop-btn[data-subject="APP-1"]').focus();
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Tab");
+  await expect(second).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(page.locator("#detail")).toContainText("Second unit");
   await page.locator("#plan summary").filter({ hasText: "All units" }).click();
