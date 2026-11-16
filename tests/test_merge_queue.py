@@ -4774,6 +4774,16 @@ class BaseRepairTests(MergeQueueTestCase):
         self.assertFacts(stop, "candidate.stopped", {"reason": "base_broken", "detail": detail}, because=[broken])
         self.assertFacts(broken, "base.broken", {"source": "queue", "reason": "base_broken", "detail": detail,
                                                  "head": broken_head}, because=[finished])
+        # The second break found the first standing at the same head and names it beside its own verdict, so both
+        # stops are one setback; the earlier break, at another head, is named by neither.
+        [second_stop] = self.journal(adopter, "candidate.stopped", "second")
+        [second] = self.journal(adopter, "base.broken", "second")
+        [second_finished] = self.journal(adopter, "base.rerun.finished", "second")
+        second_detail = broke["second"]["stop"]["detail"]
+        self.assertFacts(second_stop, "candidate.stopped", {"reason": "base_broken", "detail": second_detail},
+                         because=[second])
+        self.assertFacts(second, "base.broken", {"source": "queue", "reason": "base_broken", "detail": second_detail,
+                                                 "head": broken_head}, because=[second_finished, broken])
 
     def test_naming_a_repair_is_refused_on_a_healthy_base_for_a_second_repair_and_for_a_row_not_queued(self) -> None:
         adopter = self.adopter()

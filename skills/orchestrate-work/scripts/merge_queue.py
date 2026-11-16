@@ -1266,6 +1266,13 @@ class Runner:
         self.render()
         return entry["id"]
 
+    def standing_breaks(self, head: str) -> list[int]:
+        """The base_broken breaks journaled at ``head`` since the base was last repaired, oldest first."""
+        journal = delivery_state.read_journal(self.state_directory)
+        since = max((entry["id"] for entry in journal if entry["kind"] == "base.repaired"), default=0)
+        return [entry["id"] for entry in journal if entry["id"] > since and entry["kind"] == "base.broken"
+                and entry.get("data", {}).get("reason") == "base_broken" and entry["data"].get("head") == head]
+
     def cause(self, stop: Stop, subject: str | None) -> list[int]:
         """What a stop names as its cause: the failed checks when one failed, the break when the base broke, else nothing."""
         if stop.reason == "check_failed" and subject is not None:
@@ -3133,12 +3140,13 @@ class Runner:
             if queue_stopped:
                 # Every stop that stops the queue leaves the base to confirm by hand; serve waits for base.repaired.
                 # A break a re-run declared names its verdict and the base head it failed at; any other names no cause.
+                # One that finds a break already standing at the same head names it too: both are one setback.
                 verdict = self.verdicts.get(subject) if stop.reason == "base_broken" and subject is not None else None
                 self.last_break = self.journal(
                     "base.broken", f"{stop.reason}: {stop.detail}", subject,
                     data={"source": "queue", "reason": stop.reason, "detail": stop.detail,
                           **({"head": verdict[1]} if verdict else {})},
-                    because=[verdict[0]] if verdict else [])
+                    because=[verdict[0], *self.standing_breaks(verdict[1])] if verdict else [])
             if subject is not None and stop.reason == "provider_refused":
                 self.journal("selection.refused", f"The provider refused {subject}'s checks: {stop.detail}", subject,
                              data={"detail": stop.detail})
