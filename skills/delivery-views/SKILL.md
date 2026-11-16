@@ -876,9 +876,12 @@ of those credentials. Projection rejects recognizable local paths in structural
 references and raw uploads; named prose fields use a visible omission marker.
 This includes option-assigned Unix, Windows, home and explicit relative paths,
 and installed executable references under `.agent-skills/current/`;
-Ordinary Markdown, typographic quotes, brackets and diagnostic punctuation
-also delimit local references; public HTTPS links and benign option values
-remain ordinary prose.
+All ASCII punctuation, whitespace and typographic quotes delimit local
+references, including Markdown emphasis. HTTPS tokens accepted by the existing public-link rules and their path
+components remain public prose, including punctuation wrappers. Malformed
+HTTPS-like strings and adjoining path prose receive no URL exception;
+configured-secret scans still inspect the full original text.
+Benign option values remain ordinary prose.
 It keeps the shared allowlist, candidate/review identity and unavailable/clipping indicators.
 No scanner claims to identify every secret someone types into public prose.
 

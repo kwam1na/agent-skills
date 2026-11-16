@@ -50,6 +50,11 @@ describe('ingestion boundary', () => {
     ['[/Users/operator/private/wait.json]', false], ['[docs/private-plan.md]', false],
     [String.raw`Output:[C:\work\wait.json]`, false], ['Read “~/work/wait.json”', false], ['Read `../wait.json`', false],
     ['{docs/private-plan.md}', false], ['<./wait.json>', false], ['Output;/tmp/wait.json', false], ['Output,/tmp/wait.json', false],
+    ['Read **/Users/operator/private/wait.json**', false], ['Inspect **docs/private-plan.md**', false],
+    ['Read _/Users/operator/private/wait.json_', false], ['Read ~~/Users/operator/private/wait.json~~', false],
+    ['https:///Users/operator/private/wait.json', false], ['https://user:pass@example.com/docs/private.md', false],
+    ['Read "https://example.com/public_docs/file"/Users/operator/private/wait.json', false],
+    ['Read `https://example.com/public_docs/file`docs/private-plan.md', false],
     ['--output=https://example.com/public/wait.json', true], ['--timeout=1800.0', true],
     ['--output=summary.json', true], ['--mode=public', true], ['Review https://example.com/docs/wait.json', true],
     ['`https://example.com/docs/wait.json`', true], ['“https://example.com/docs/wait.json”', true],
@@ -61,6 +66,22 @@ describe('ingestion boundary', () => {
     expect((await upload(publicId, 1, body)).status).toBe(valid ? 200 : 400);
     expect((await current(publicId)).status).toBe(valid ? 200 : 404);
   });
+  it.each([..."!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~“”‘’"])(
+    'scans punctuation wrappers independently: %s', async (prefix) => {
+      const local = ['/Users/operator/private/wait.json', 'docs/private-plan.md', String.raw`C:\work\wait.json`,
+        '.agent-skills/current/run.py', '~/work/wait.json', './wait.json', '../wait.json'];
+      const benign = ['https://public_docs.example.com/part_docs/file', 'https://example.com/public_docs/file',
+        'HTTPS://example.com/public_docs/file', 'https://public-docs.example.com/.docs/file',
+        '--mode=public', 'ready'];
+      for (const text of [...local, ...benign]) {
+        // Slash controls that form UNC/absolute paths remain private.
+        const privateReference = local.includes(text) || prefix === '\\' || (prefix === '/' && text === 'ready');
+        const publicId = id(); await session(publicId);
+        const body = fixture(); body.document.state.meta.headline = `Read ${prefix}${prefix}${text}${prefix}${prefix}`;
+        expect((await upload(publicId, 1, body)).status).toBe(privateReference ? 400 : 200);
+        expect((await current(publicId)).status).toBe(privateReference ? 404 : 200);
+      }
+    });
   it('serves the deployed entrypoint through local Worker, DO and R2 bindings', async () => {
     const publicId=id();
     const auth={'Authorization':`Bearer ${TOKEN}`,'Content-Type':'application/json'};

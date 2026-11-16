@@ -146,6 +146,8 @@ class ProjectionTests(unittest.TestCase):
             '[/Users/operator/private/wait.json]', '[docs/private-plan.md]',
             r'Output:[C:\work\wait.json]', 'Read “~/work/wait.json”', 'Read `../wait.json`',
             '{docs/private-plan.md}', '<./wait.json>', 'Output;/tmp/wait.json', 'Output,/tmp/wait.json',
+            'Read **/Users/operator/private/wait.json**', 'Inspect **docs/private-plan.md**',
+            'Read _/Users/operator/private/wait.json_', 'Read ~~/Users/operator/private/wait.json~~',
         ]
         benign_options = ['--output=https://example.com/public/wait.json', '--timeout=1800.0',
                           '--output=summary.json', '--mode=public', 'Review https://example.com/docs/wait.json',
@@ -190,6 +192,53 @@ class ProjectionTests(unittest.TestCase):
                 runs={'docs/runs/current':{**runs['run-1'],'runId':'docs/runs/current'}}
             with self.subTest(key=key),self.assertRaises(public.ProjectionError):
                 public.project(doc,runs,config(),source_fingerprint='1'*64)
+
+    def test_punctuation_wrappers_preserve_privacy_and_public_url_components(self):
+        punctuation = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~“”‘’"
+        local = ['/Users/operator/private/wait.json', 'docs/private-plan.md', r'C:\work\wait.json',
+                 '.agent-skills/current/run.py', '~/work/wait.json', './wait.json', '../wait.json']
+        benign = ['https://public_docs.example.com/part_docs/file', 'https://example.com/public_docs/file',
+                  'HTTPS://example.com/public_docs/file', 'https://public-docs.example.com/.docs/file',
+                  '--mode=public', 'ready']
+        doc, _ = source()
+        for prefix in punctuation:
+            for text in local + benign:
+                with self.subTest(prefix=prefix, text=text):
+                    # These separators create actual UNC/absolute paths even
+                    # around a nominal control; they are not benign wrappers.
+                    private = text in local or prefix == '\\' or (prefix == '/' and text == 'ready')
+                    original = f'Read {prefix}{prefix}{text}{prefix}{prefix}'
+                    needs = {'running': True, 'at': '2026-11-15T00:00:00Z', 'staleAfter': '2026-11-15T00:02:00Z',
+                             'items': [{'holding': False, 'source': 'lead-wait.json in the record', 'text': original,
+                                        'clears': 'a running lead-wait'}]}
+                    value = public.project(doc, {}, config(), source_fingerprint='1' * 64, needs=needs)
+                    self.assertEqual(value['needs']['items'][0]['text'],
+                                     public.OMITTED_LOCAL_REFERENCE if private else original)
+                    self.assertEqual(needs['items'][0]['text'], original)
+                    raw = copy.deepcopy(value); raw['needs']['items'][0]['text'] = original
+                    if private:
+                        with self.assertRaisesRegex(public.ProjectionError, '^snapshot.local_path$'): public.validate(raw)
+                    else: public.validate(raw)
+
+    def test_url_exception_does_not_hide_malformed_urls_adjacent_paths_or_secrets(self):
+        doc, _ = source()
+        local = ['https:///Users/operator/private/wait.json', 'https://user:pass@example.com/docs/private.md',
+                 'Read "https://example.com/public_docs/file"/Users/operator/private/wait.json',
+                 'Read `https://example.com/public_docs/file`docs/private-plan.md']
+        for text in local:
+            with self.subTest(text=text):
+                needs = {'running': True, 'at': '2026-11-15T00:00:00Z', 'staleAfter': '2026-11-15T00:02:00Z',
+                         'items': [{'holding': False, 'source': 'listener', 'text': text, 'clears': 'listener restored'}]}
+                value = public.project(doc, {}, config(), source_fingerprint='1' * 64, needs=needs)
+                self.assertEqual(value['needs']['items'][0]['text'], public.OMITTED_LOCAL_REFERENCE)
+                value['needs']['items'][0]['text'] = text
+                with self.assertRaisesRegex(public.ProjectionError, '^snapshot.local_path$'): public.validate(value)
+        needs['items'][0]['text'] = 'https://example.com/public_docs/KNOWN-CANARY'
+        with self.assertRaisesRegex(public.ProjectionError, '^snapshot.configured_secret$'):
+            public.project(doc, {}, config(), source_fingerprint='1' * 64, needs=needs, secret_values=['KNOWN-CANARY'])
+        value['needs']['items'][0]['text'] = needs['items'][0]['text']
+        with self.assertRaisesRegex(public.ProjectionError, '^snapshot.configured_secret$'):
+            public.validate(value, secret_values=['KNOWN-CANARY'])
 
     def test_byte_bound_and_credential_shaped_map_fields_are_refused(self):
         value = self.project()
