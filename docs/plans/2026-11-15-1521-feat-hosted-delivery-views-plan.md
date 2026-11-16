@@ -360,7 +360,7 @@ Cloudflare resource IDs and the next admissible release version are execution-ti
 3. Covers AE5. Archived configuration/status and all hosted requests pass credential-canary checks.
 4. Registry/provenance checks and all profile resolvers agree after new output-list changes; historical qualification files remain byte-for-byte unchanged.
 5. Covers recorded clarification c9. The hosted collection fixture uses the production atomic state-write protocol. A deterministic concurrent liveness-read interleaving preserves continuous updates, while deliberately malformed-source coverage remains explicit. Preserve the original failed queue run and candidate/base diagnosis.
-**Verification:** Installed-archive proof is recorded separately from source tests and service CI; no fixture result is described as live proof. The bounded qualification repair also owns `tests/test_delivery_views_hosted.py`.
+**Verification:** Installed-archive proof is recorded separately from source tests and service CI; no fixture result is described as live proof. The bounded qualification repair also owns `tests/test_delivery_views_hosted.py`. Clarification c10 places production source/configuration preparation here: review the non-secret `hosted/delivery-viewer/wrangler.jsonc` custom domain and deployment procedure before main integration. U7 remains open through published-candidate adoption and actual hosted proof; packaging performs no provisioning, release or deployment.
 
 ### U7. Deploy and prove a real adopter delivery
 
