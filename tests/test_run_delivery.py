@@ -5875,7 +5875,7 @@ TROUBLESHOOTING_KEYS = [
     "no plan at", "has no configuration for lanes", "forge.mergeNeedsReady says the merge step refuses a draft",
     "the supervisor is down", "don't have the default signal dispositions", "it runs Node",
     "it runs with no node on its PATH", "it recorded no Node", "supervisor: down (<why>)", "it wanted port",
-    "binding doesn't serve the base", "isn't offered; refine it first",
+    "binding doesn't serve the base", "isn't offered; refine it first", "isn't a valid knowledge-properties/1",
 ]
 
 
@@ -5888,7 +5888,7 @@ DOCTOR_LABELS = ["host and tools", "orchestration binding", "merge queue candida
                  "host hooks", "release on the delivery base", "gates", "lane checkouts ignored", "tracker issue URL",
                  "pipeline PR review", "gh", "forge find", "forge write access", "tracker snapshot token",
                  "snapshots and publishers", "hosted delivery", "in-app adapters", "in-app adapter contract", "video evidence tools",
-                 "Node", "harness configuration", "delivery file", "plan chapter", "added stories' reasons",
+                 "Node", "harness configuration", "knowledge library properties", "delivery file", "plan chapter", "added stories' reasons",
                  "plan sections", "story files", "story readiness", "context sections", "finish lines",
                  "configuration on the remote base", "pull requests marked ready", "delivery supervisor", "deliveries on this base", "merge slot",
                  "gates on the base"]
@@ -8020,6 +8020,66 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         self.assertEqual(status, "warn", out)
         self.assertIn("acs declares no `covers`, so the supervisor reads each as covering every criterion", detail)
         self.assertIn('fix: give each its `covers`, `{"criteria": [], "proofs": []}` for a line you check', detail)
+        # The same clean repository carries the knowledge library's rows: one fixture, not another.
+        self.knowledge_library_rows(fx, lines)
+
+    def knowledge_library_rows(self, fx: Fixture, lines: dict) -> None:
+        """Doctor reports the adopting repository's knowledge-properties document: absent is an ok row that says the
+        library isn't consulted, valid is ok, malformed is wrong naming the field and fails doctor. It never writes
+        the document, and never guesses the properties from where the repository lives."""
+        m, path = fx.main, fx.main / ".agents/knowledge-properties.json"
+        # Properties are never guessed: the checkout's own folder name is a project the library could hold, yet with no
+        # document the capability is available, not configured, and nothing is derived from that name.
+        self.assertEqual(m.name, "main")
+        status, detail = lines["knowledge library properties"]
+        self.assertEqual(status, "ok", detail)
+        self.assertIn("no .agents/knowledge-properties.json found", detail)
+        self.assertIn("the knowledge library is available, not configured, and isn't consulted", detail)
+        self.assertNotIn("project", detail)
+        self.assertNotIn(m.name, detail.replace("references/adopting.md", ""))
+        self.assertFalse(path.exists(), "doctor wrote the knowledge-properties document")
+        # The guide's own document is a valid plugin document.
+        guide = next(b for b in guide_blocks() if b["path"] == ".agents/knowledge-properties.json")
+        plugin = json.loads(guide["body"])
+        self.assertEqual(plugin["server"], "plugin")
+        read_only = {"schemaVersion": "knowledge-properties/1", "server": "read-only", "name": "team-library",
+                     "project": "fixture-app", "tags": ["payments", "ci"]}
+        for document, shown in ((plugin, f"server plugin, project {plugin['project']}"),
+                                (read_only, "server read-only team-library, project fixture-app, tags payments, ci")):
+            with self.subTest(valid=document["server"]):
+                path.write_text(json.dumps(document, indent=2) + "\n")
+                before = path.read_bytes()
+                status, detail = doctor_lines(self.doctor(fx, "--offline", expect_code=0))["knowledge library properties"]
+                self.assertEqual(status, "ok", detail)
+                self.assertIn(f".agents/knowledge-properties.json is valid: {shown}", detail)
+                self.assertIn("the first search shows whether the library holds that project", detail)
+                self.assertEqual(path.read_bytes(), before, "doctor rewrote the knowledge-properties document")
+        valid = read_only
+        malformed = (
+            ("invalid JSON", "{not json", "isn't JSON"),
+            ("schemaVersion", {**valid, "schemaVersion": "knowledge-properties/2"}, "`schemaVersion`"),
+            ("server", {**valid, "server": "remote"}, "`server`"),
+            ("name", {k: v for k, v in valid.items() if k != "name"}, "`name`"),
+            ("project", {k: v for k, v in valid.items() if k != "project"}, "`project`"),
+            ("tags not a list", {**valid, "tags": "payments"}, "`tags`"),
+            ("more than five tags", {**valid, "tags": ["a", "b", "c", "d", "e", "f"]}, "`tags`"),
+        )
+        try:
+            for case, document, names in malformed:
+                with self.subTest(malformed=case):
+                    path.write_text(document if isinstance(document, str) else json.dumps(document, indent=2) + "\n")
+                    out = self.doctor(fx, "--offline", expect_code=1)
+                    self.assertEqual(list(failing(out)), ["knowledge library properties"], out)
+                    status, detail = doctor_lines(out)["knowledge library properties"]
+                    self.assertEqual(status, "wrong", detail)
+                    problem, _, fix = detail.partition("; fix: ")
+                    self.assertIn(".agents/knowledge-properties.json", problem)
+                    self.assertIn(names, problem)
+                    self.assertIn("references/adopting.md", fix)
+                    self.assertTrue([key for key in TROUBLESHOOTING_KEYS if key in problem],
+                                    f"no troubleshooting entry is keyed by: {detail}")
+        finally:
+            path.unlink()
 
     def test_each_missing_prerequisite_yields_one_failing_line_with_its_fix(self) -> None:
         fx = self.fixture()
