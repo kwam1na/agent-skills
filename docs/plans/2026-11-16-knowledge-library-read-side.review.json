@@ -2,8 +2,8 @@
   "schemaVersion": "plan-review-evidence/1",
   "writtenBy": "run-delivery plan-review",
   "plan": "docs/plans/2026-11-16-knowledge-library-read-side.md",
-  "planSha256": "50e81600fb5726e05b2f3d77957c03f07a994c44c9cc597408f5764bacb91170",
-  "planCommit": "dee970c97493ddab45ed4edd8cdab7539a2fd463",
+  "planSha256": "bfb8b417a0955e3e9eb5bf445519cd93c7523c89e4136dd72814950916fdf0fb",
+  "planCommit": "930c58fd8e2591801cc580d25ef243535fecc2bc",
   "outcome": "unanimous-alignment",
   "requiredLenses": [
     "lens.outcome-correctness",
@@ -63,72 +63,101 @@
       "startedAt": "2026-11-16T15:47:21.136058Z",
       "finishedAt": "2026-11-16T15:47:56.317174Z",
       "open": []
+    },
+    {
+      "round": 6,
+      "candidate": "38fbe45d441ec91889b5d0d38663f40c12e4ec04",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-16T16:02:09.495889Z",
+      "finishedAt": "2026-11-16T16:03:23.471890Z",
+      "open": [
+        "outcome-correctness-r6-1",
+        "outcome-correctness-r6-2",
+        "adversarial-testing-r6-1"
+      ]
+    },
+    {
+      "round": 7,
+      "candidate": "930c58fd8e2591801cc580d25ef243535fecc2bc",
+      "outcome": "aligned",
+      "startedAt": "2026-11-16T16:03:54.472852Z",
+      "finishedAt": "2026-11-16T16:04:27.914117Z",
+      "open": []
     }
   ],
   "reviews": [
     {
       "lens": "lens.outcome-correctness",
-      "round": 5,
+      "round": 7,
       "findings": [],
       "result": {
         "schemaVersion": "review-lens-result/1",
         "lensId": "lens.outcome-correctness",
         "subjectRef": "knowledge-library-read-side.plan",
-        "candidateRef": "dee970c97493ddab45ed4edd8cdab7539a2fd463",
-        "round": 5,
+        "candidateRef": "930c58fd8e2591801cc580d25ef243535fecc2bc",
+        "round": 7,
         "outcome": "aligned",
         "findings": [],
-        "resolvedFindings": [],
+        "resolvedFindings": [
+          {
+            "id": "outcome-correctness-r6-1",
+            "state": "fixed",
+            "resolution": "Adopted as written. Delivery item 5 moves the Core boundary row that makes the adapter a core member from V26-3544 to V26-3546, in tests/test_hive_knowledge_adapter.py, against the real adapter files. V26-3544's scope now reads 'Core boundary (except the adapter-as-core-member row)' and keeps the planted hive-mined and qmd rows and the clean-core row. V26-3546's scope names the moved row. Lane 2 owns that test file and creates the adapter in the same story, so the row has an owner and a real subject."
+          },
+          {
+            "id": "outcome-correctness-r6-2",
+            "state": "fixed",
+            "resolution": "Adopted by the second alternative, moving the whole scenario rather than half of it. Delivery item 5 moves 'Properties are never guessed' from V26-3546 to V26-3547, in tests/test_run_delivery.py, with the doctor change it observes. V26-3547's scope names it, and V26-3546's scope no longer lists Properties. The scenario's assertions are the capability reading as available rather than guessed, doctor's no-document row, and the document staying absent. All three are observable from doctor in lane 3's own story and test file, so the criterion no longer depends on merge timing between lanes 2 and 3."
+          }
+        ],
         "evidence": [
-          "Reviewed tree SHA d1b39ae1fe3ef6a1b9a3e0e4368663c492ea8acc. The start identity check passed: `git rev-parse HEAD^{tree}` matched and `git status --porcelain` was empty. The end identity check passed with the same tree and an empty status. No probes or mutants were made.",
-          "Carried findings: none are open. outcome-correctness-r1-1 to r1-4 closed in round 2, and rounds 2 to 4 raised none. As the coordinator directed, resolvedFindings is empty.",
-          "Delta derived with `git diff ceb7c482dcdd2088f5b5a5f02eaf2502542e1156..dee970c97493ddab45ed4edd8cdab7539a2fd463`. It touches only docs/plans/2026-11-16-knowledge-library-read-side.md: hand-off routing sentences in the diagnose-work and compound-learning consult edits, the Lanes scenario, and the Risks refuse_folders bullet.",
-          "Delta review: no new P0 or P1 issue. Decision 7 is now carried into the two workflows a lane actually runs, diagnose-work and compound-learning. Each gets an 'In a lane, ... goes to the lead as a hand-off finding ... cited in the hand-off' sentence pinned beside its consult sentence, so a lane following either skill alone gets the routing. The Lanes scenario follows the AGENTS.md rule for withdrawing a fallback-like instruction: a search by meaning across the core and run-delivery closures, recorded in evidence, then absence pins on synonyms, with one pin proven red by planting a skip sentence in diagnose-work with its digest refreshed.",
-          "Absence pins start green. A whitespace-normalized, case-insensitive grep of skills/deliver-work/SKILL.md, skills/plan-work/SKILL.md, skills/diagnose-work/SKILL.md and skills/compound-learning/SKILL.md for all eight named synonyms ('never calls the capability', 'except in a lane', 'lanes do not', 'not in a lane', 'skips this step', 'does not consult', 'never consult', 'relies on the approved plan') found no match at this tree. None of the planned new sentences contains any of them either.",
-          "Deferrable note (P3, not a finding). The Risks bullet now asserts as fact that hive-mined's `refuse_folders` stops drafting but leaves `search` and `read` working. I couldn't verify hive-mined's semantics from this machine. If it is wrong, lanes in delivery worktrees take the core path, which is harmless to the outcome. The adopting guide's 'run one search to confirm' step would show it from inside a lane worktree.",
+          "Reviewed tree SHA b457bed6c2571752ce73e0ba92567cbe458870c8. The start identity check passed: `git rev-parse HEAD^{tree}` matched and `git status --porcelain` was empty. The end identity check passed with the same tree and an empty status. No probes or mutants were made.",
+          "Delta derived with `git diff 38fbe45d441ec91889b5d0d38663f40c12e4ec04..930c58fd8e2591801cc580d25ef243535fecc2bc`. It touches only docs/plans/2026-11-16-knowledge-library-read-side.md. Changes: Delivery item 4 reworded and item 5 added; the Units and order table moves V26-3548 to its own tier-3 row; V26-3544, V26-3546, V26-3547 and V26-3548 scopes are updated. I re-checked both carried findings, outcome-correctness-r6-1 and r6-2; both are fixed, as set out in resolvedFindings.",
+          "Delta review: no new P0 or P1 issue. Round 6's P2 note (a) is resolved: V26-3548 is now tier 3, after the tier-2 V26-3546, matching its 'after V26-3545 and V26-3546' story line. File ownership stays disjoint across lanes. README.md and tests/test_readme.py appear in both lane-1 rows, but that is the same lane. No test file is shared between lanes 1, 2 and 3. Every scenario in Test scenarios now has exactly one owning story.",
+          "Deferrable note (P3, carried from round 6 note (b), not a finding). The front matter still says `status: approved` while plan review is open. That is harmless if the plan-review record, not the status field, is what gates lead setup.",
           "Model class: Claude Opus-class model (claude-opus-5-5), run as a native subagent. Realization basis: host-convention. Host limitation: no progress or permission signals were exposed to this lens, and no run-event command is declared (Run ID none).",
-          "Scoped checks: none, since a plan review runs no sensors. The only additional evidence was the synonym grep above over the four named SKILL.md files.",
-          "Approval conditions: no findings are raised this round, so none are pending."
+          "Scoped checks: none, since a plan review runs no sensors, and no additional test files were run.",
+          "Approval conditions: no findings are raised this round, so none are pending. Both carried findings' adopted changes resolve them."
         ]
       },
-      "resultSha256": "d7fa0bfa7d38cdca135e78585e50ea7ca66eab06d69b4328129417e974523220"
+      "resultSha256": "7c205e4b016bb1e71386fb7b34a3e3eb3b3e40b346c003c93e98735a873edb0a"
     },
     {
       "lens": "lens.adversarial-testing",
-      "round": 5,
+      "round": 7,
       "findings": [],
       "result": {
         "schemaVersion": "review-lens-result/1",
         "lensId": "lens.adversarial-testing",
         "subjectRef": "knowledge-library-read-side.plan",
-        "candidateRef": "dee970c97493ddab45ed4edd8cdab7539a2fd463",
-        "round": 5,
+        "candidateRef": "930c58fd8e2591801cc580d25ef243535fecc2bc",
+        "round": 7,
         "outcome": "aligned",
         "findings": [],
         "resolvedFindings": [
           {
-            "id": "adversarial-testing-r4-1",
+            "id": "adversarial-testing-r6-1",
             "state": "fixed",
-            "resolution": "Fixed as written. The Lanes row now adds the three things the approval condition asked for. First, a search by meaning across every skill in the core and run-delivery closures for text keeping a lane from the library, recorded in the change's evidence. Second, absence pins in deliver-work, plan-work, diagnose-work and compound-learning on 'never calls the capability', 'except in a lane', 'lanes do not', 'not in a lane', 'skips this step', 'does not consult', 'never consult' and 'relies on the approved plan'. Third, one pin proven red by planting the round-4 mutation sentence beside diagnose-work's consult sentence with its digest refreshed. That sentence trips both 'skips this step' and 'relies on the approved plan', so the round-4 surviving mutation now fails the suite. The pins also cover diagnose-work and compound-learning, the files a lane runs, which the approval condition required. A whitespace-normalized, case-insensitive grep at this tree finds none of the eight phrases in any of the four files, so every absence pin starts green and can fail."
+            "resolution": "Fixed as written. The new Delivery item 5, 'Each row lands with the surface it observes', moves two rows. The Core boundary row that makes the adapter a core member moves from V26-3544 to V26-3546, in tests/test_hive_knowledge_adapter.py, against the real adapter files. The 'Properties are never guessed' scenario moves from V26-3546 to V26-3547, in tests/test_run_delivery.py, with the doctor change it observes. The V26-3544, V26-3546 and V26-3547 story scopes each state their move, and V26-3544 keeps the planted hive-mined and qmd rows and the clean-core row. The round-6 mutation is now caught in the story that makes it: a doctor that writes a guessed document when none exists fails the never-guessed row in V26-3547, which asserts the document still does not exist after doctor runs. The adapter-as-core-member row now runs against the real adapter in V26-3546, after the adapter exists, instead of against a synthetic fixture."
           }
         ],
         "evidence": [
-          "Reviewed tree d1b39ae1fe3ef6a1b9a3e0e4368663c492ea8acc at HEAD dee970c97493ddab45ed4edd8cdab7539a2fd463. The start identity check passed (HEAD^{tree} matched, git status --porcelain empty), and so did the end check (same tree, status empty). Candidate reference resolutions matched by exact text: ceb7c482dcdd2088f5b5a5f02eaf2502542e1156 and dee970c97493ddab45ed4edd8cdab7539a2fd463 each resolve to the git commit of the same text.",
-          "Delta derived as git diff ceb7c482dcdd2088f5b5a5f02eaf2502542e1156..dee970c97493ddab45ed4edd8cdab7539a2fd463. It touches only docs/plans/2026-11-16-knowledge-library-read-side.md (+16/-6). It adds the in-lane hand-off routing sentence to the diagnose-work and compound-learning bullets, rewrites the Lanes test row, and adds a clarification to the Risks entry on duplicate learnings from delivery sessions.",
-          "Re-check of the one carried finding: adversarial-testing-r4-1 is fixed, as recorded in resolvedFindings. No other finding of this lens was open after round 4.",
-          "Delta review: the Lanes row now also pins the hand-off routing phrase beside each consult sentence in diagnose-work and compound-learning. That closes the round-4 P2 note that the routing was pinned only in orchestrate-work. The orchestrate-work one-phrase pin is unchanged. Deleting the routing from a file a lane runs now fails a pin.",
-          "Delta review: the Risks clarification says refuse_folders stops only drafting and leaves search and read working. It makes no testable claim and contradicts no row, so I filed nothing on it.",
-          "P3 notes, carried: the Optional path row pins 'report that the library was not consulted' only in deliver-work. And the review.json added in round 4 records an earlier planCommit; this lies outside this lens's charter.",
+          "Reviewed tree b457bed6c2571752ce73e0ba92567cbe458870c8 at HEAD 930c58fd8e2591801cc580d25ef243535fecc2bc. The start identity check passed (HEAD^{tree} matched, git status --porcelain empty), and so did the end check (same tree, status empty). Candidate reference resolutions matched by exact text: 38fbe45d441ec91889b5d0d38663f40c12e4ec04 and 930c58fd8e2591801cc580d25ef243535fecc2bc each resolve to the git commit of the same text.",
+          "Delta derived as git diff 38fbe45d441ec91889b5d0d38663f40c12e4ec04..930c58fd8e2591801cc580d25ef243535fecc2bc. It touches only docs/plans/2026-11-16-knowledge-library-read-side.md (+15/-8). The changes are Delivery items 4 and 5, the Units and order table (V26-3548 moves to its own tier-3 row), and the V26-3544, V26-3546, V26-3547 and V26-3548 story scopes.",
+          "Re-check of the one carried finding: adversarial-testing-r6-1 is fixed, as recorded in resolvedFindings. No other finding of this lens was open after round 6.",
+          "Delta review: V26-3548 is now tier 3, after V26-3545 and V26-3546, which matches its dependency text, and it stays sensor-only. Delivery item 4 now names the adapter's contract, transport and profile rows. The properties row moved to lane 3's module, so lanes 1 and 2 still share no test file. No row from the Test scenarios lost an owning story.",
+          "P3 note, not a testing concern: the Units table still lists README.md and tests/test_readme.py in lane 1's tier-1 row as well as in the new tier-3 row. Both rows are lane 1, so no other lane's ownership conflicts with it.",
+          "P3 note, carried: the Optional path row pins 'report that the library was not consulted' only in deliver-work.",
           "Model class: Opus-class model (claude-opus-5-5), run as a native subagent. Realization basis: host-convention. The host exposes no progress or permission signals; recorded as a limitation.",
-          "Scoped checks: the brief names no sensor commands and no test files, and none were run. No mutants were planted in the checkout. Mutations were reasoned only against the plan's changed lines and the four skill files its absence pins name. The only additional evidence is the grep above.",
+          "Scoped checks: the brief names no sensor commands and no test files, and none were run. No mutants were planted in the checkout. Mutations were reasoned only against the plan's changed lines (the story and row assignments) and the doctor and adapter surfaces they name.",
           "No late findings.",
-          "Approval conditions: this round raises no findings. r4-1's approval condition is met as written: synonym pins cover the files a lane runs, and one is proven red with its digest refreshed."
+          "Approval conditions: this round raises no findings. r6-1's approval condition is met as written: the never-guessed row is in V26-3547 and the adapter-as-core-member row is in V26-3546, each landing with the surface it observes."
         ]
       },
-      "resultSha256": "53fc3299dddcba1e8d9396ce513c83615ec45aba4d27632d123c30dddd5f717a"
+      "resultSha256": "2a6d854e8df33a1f078833f1ee69dcb8ee61d6bda9ffd097523d46ec7c49661c"
     }
   ],
   "residualRisks": [
-    "5 review rounds; findings open after each round: 9, 1, 0, 1, 0."
+    "7 review rounds; findings open after each round: 9, 1, 0, 1, 0, 3, 0."
   ]
 }
