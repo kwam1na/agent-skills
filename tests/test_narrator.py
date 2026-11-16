@@ -249,17 +249,18 @@ class ScenarioTests(unittest.TestCase):
 
     def test_last_delivery_has_a_start_six_landings_and_a_close_and_two_setbacks_both_closed(self) -> None:
         story, journal = told("last-delivery")
+        # The record's own pieces, by the ids it keeps, are kept beside it.
+        expected = json.loads((FIXTURES / "last-delivery/expected.json").read_text(encoding="utf-8"))
         self.assertEqual([chapter["form"] for chapter in story["chapters"]], ["start"] + ["landing"] * 6 + ["finish"])
-        self.assertEqual([chapter["subject"] for chapter in story["chapters"][1:-1]],
-                         ["V26-3425", "V26-3319", "V26-3318", "V26-3264", "V26-3513", "V26-3320"])
+        self.assertEqual([chapter["subject"] for chapter in story["chapters"][1:-1]], expected["landings"])
         self.assertEqual([chapter["words"]["head"] for chapter in (story["chapters"][0], story["chapters"][-1])], ["Getting started", "Finished"])
-        stop = by_kind(journal, "candidate.stopped", "V26-3264")[0]
+        stop = by_kind(journal, "candidate.stopped", expected["stopped"])[0]
         brk = by_kind(journal, "base.broken")[0]
         self.assertEqual([(thread["opening"], thread["state"]) for thread in story["threads"]], [(stop, "closed"), (brk, "closed")])
         handed_again = [entry for entry in journal if entry["kind"] == "candidate.handed" and stop in entry.get("answers", [])]
         self.assertEqual(story["threads"][0]["closing"], handed_again[0]["id"])
         self.assertEqual(story["threads"][1]["closing"], by_kind(journal, "base.repaired")[0])
-        self.assertEqual(story["threads"][1]["heldUp"], ["V26-3320"])
+        self.assertEqual(story["threads"][1]["heldUp"], expected["heldUp"])
         digest = story["digest"]
         self.assertEqual((digest["landed"], digest["pieces"], digest["setbacks"]["closed"], digest["setbacks"]["standing"], digest["decisions"]),
                          (6, 6, 2, [], 6))
