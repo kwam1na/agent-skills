@@ -638,8 +638,8 @@ python3 -B scripts/delivery_state.py --dir <state directory> show
 python3 -B scripts/delivery_state.py --dir <state directory> patch --writer lead --version <n> --patch '<json merge patch>'
 python3 -B scripts/delivery_state.py --dir <state directory> patch --writer lead --version <n> --element 'queue[subject=<subject>]' --patch '<json merge patch>'
 python3 -B scripts/delivery_state.py --dir <state directory> patch --writer lead --version <n> --element 'lanes[id=<lane>]' --set '{"/waitingOn": null}'
-python3 -B scripts/delivery_state.py --dir <state directory> journal --kind <kind> --data '<its facts as JSON>' [--because <ids>] [--answers <ids>]
-python3 -B scripts/delivery_state.py --dir <state directory> journal --kind decision.recorded --text "<the decision>" --why "<its reason>"
+python3 -B scripts/delivery_state.py --dir <state directory> journal --kind <kind> --data '<its facts as JSON>' --summary "<what happened>" [--because <ids>] [--answers <ids>]
+python3 -B scripts/delivery_state.py --dir <state directory> journal --kind decision.recorded --text "<the decision>" --why "<its reason>" --summary "<what happened>"
 python3 -B scripts/delivery_state.py --dir <state directory> journal --kind review.round --subject <subject> --lane <lane> --review '<review json>'
 ```
 
@@ -665,8 +665,8 @@ python3 -B scripts/delivery_state.py --dir <state directory> journal --kind revi
 - Journal appends are never refused for concurrency; the tool allocates the
   next id. An entry's `data` is checked against its kind in the registry, and
   `because` and `answers` name earlier entries by id. Until the sentence is
-  removed, `--summary` still gives an entry a sentence, beside its facts or
-  instead of them.
+  removed, give `--summary` beside `--data`: an entry may carry a sentence,
+  facts or both, and the readers that still read the sentence need it.
 - A `review.round` entry records one review round of a candidate: its
   `review` is `{round, startedAt, finishedAt, verdicts, findings}`, where
   `verdicts` maps each lens to `approve` or `changes` and `findings` counts

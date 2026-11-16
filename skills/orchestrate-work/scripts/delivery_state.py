@@ -707,6 +707,11 @@ def _kind_problems(entry: dict, earlier: list[object], registry: dict) -> list[s
     return problems
 
 
+def review_round(entry: dict) -> dict:
+    """A review round's own record: its old review member, or its facts once it carries them."""
+    return entry.get("review") or entry.get("data") or {}
+
+
 def _review_problems(entry: dict) -> list[str]:
     """What the schema cannot say about a review round."""
     review = entry.get("review")
@@ -834,7 +839,7 @@ def complete_base_move_locked(directory: Path, *, from_head: str, to_head: str, 
             if current["meta"].get("writerGeneration") != running:
                 _note_change(directory, "writer-upgrade", version=updated["version"])
             _note_change(directory, "base-move", version=updated["version"])
-        if not any(item["kind"] == "base.moved" and item["summary"] == summary for item in entries):
+        if not any(item["kind"] == "base.moved" and item.get("summary") == summary for item in entries):
             _append_journal_locked(directory, updated, entries, entry)
         return updated
 
@@ -1987,8 +1992,8 @@ def repaired_state(state: dict, journal: list[dict]) -> dict | None:
     """
     since = max((entry["id"] for entry in journal if entry["kind"] == "base.repaired"), default=0)
     breaks = [entry for entry in journal if entry["id"] > since and entry["kind"] == "base.broken"
-              and entry["summary"].startswith("base_broken:")]
-    found = BROKEN_AT.findall(breaks[-1]["summary"]) if breaks else []
+              and entry.get("summary", "").startswith("base_broken:")]
+    found = BROKEN_AT.findall(breaks[-1].get("summary", "")) if breaks else []
     head = found[-1] if found else None
     latest = {entry["subject"]: entry for entry in journal if entry["kind"] == "candidate.stopped" and entry["subject"]}
     updated = copy.deepcopy(state)
@@ -1998,7 +2003,7 @@ def repaired_state(state: dict, journal: list[dict]) -> dict | None:
             changed = True
         stop = latest.get(item["subject"])
         if (head is not None and item["stage"] == "stopped" and stop is not None and stop["id"] > since
-                and stop["summary"].startswith("base_broken:") and head in BROKEN_AT.findall(stop["summary"])):
+                and stop.get("summary", "").startswith("base_broken:") and head in BROKEN_AT.findall(stop.get("summary", ""))):
             item.update(stage="queued", checks=[])
             updated["lanes"] = lane_rows_put_back(updated, item["subject"])
             changed = True
@@ -2545,8 +2550,8 @@ def aligned_capture(directory: Path, journal: list[dict], subject: str, lane: st
     if hashlib.sha256(data).hexdigest() != reference["digest"]:
         raise StateError("carry_invalid", "the captured review artifact is damaged")
     outcomes = _review_outcomes(_review_json(data), subject, reviewed)
-    verdicts = latest["review"]["verdicts"]
-    if (outcomes[-1]["outcome"] != "aligned" or latest["review"]["round"] != len(outcomes)
+    verdicts = review_round(latest)["verdicts"]
+    if (outcomes[-1]["outcome"] != "aligned" or review_round(latest)["round"] != len(outcomes)
             or set(verdicts.values()) != {"approve"} or set(verdicts) != {e["lens"] for e in outcomes[-1]["entries"]}):
         raise StateError("carry_invalid", "the captured review must match the last aligned round")
     return capture, len(outcomes)
@@ -2662,12 +2667,12 @@ def review_observations(directory: Path, state: dict, journal: list[dict]) -> di
             if hashlib.sha256(data).hexdigest() != reference["digest"]:
                 raise StateError("review_artifact_invalid", "review artifact digest mismatch")
             outcomes = _review_outcomes(_review_json(data), subject, candidate)
-            if subject not in queued and (latest.get("review") or {}).get("round") != len(outcomes):
+            if subject not in queued and review_round(latest).get("round") != len(outcomes):
                 raise StateError("review_artifact_invalid", "the capture is not of the latest journaled round")
             observed[subject] = {"candidateRef": candidate, "digest": reference["digest"], "outcomes": outcomes}
             if carry is not None and item.get("head") != candidate:
                 observed[subject]["carried"] = {"from": carry["reviewCarry"]["from"], "to": carry["reviewCarry"]["to"],
-                                                "note": carry["summary"]}
+                                                "note": carry.get("summary", "")}
         except (StateError, OSError, ValueError, UnicodeError, RecursionError):
             observed[subject] = {"candidateRef": candidate, "unavailable": True}
     return observed
@@ -2684,7 +2689,7 @@ def review_evidence(directory: Path, subject: str) -> dict:
     if item.get("runId"):
         return {"subject": subject, "evidence": "run-named", "head": item.get("head"), "runId": item["runId"]}
     observed = document.get("reviewEvidence", {}).get(subject)
-    rounds = len({entry["review"]["round"] for entry in document["journal"]
+    rounds = len({review_round(entry)["round"] for entry in document["journal"]
                   if entry["subject"] == subject and entry["kind"] == "review.round"})
     found = {"subject": subject, "head": item.get("head"), "roundsJournaled": rounds}
     if observed is None:
@@ -2774,7 +2779,7 @@ def _candidate_stats(item: dict, own: list[dict], lane_entries: list[dict]) -> d
     rounds_by_number: dict[int, dict] = {}
     for entry in own:
         if entry["kind"] == REVIEW_KIND:
-            rounds_by_number[entry["review"]["round"]] = entry["review"]  # a round recorded again replaces itself
+            rounds_by_number[review_round(entry)["round"]] = review_round(entry)  # a round recorded again replaces itself
     rounds = [rounds_by_number[number] for number in sorted(rounds_by_number)]
 
     assigned = next((entry for entry in own if entry["kind"] == "lane.assigned"), None)
@@ -3671,7 +3676,7 @@ def _finish_intent(directory: Path, intent: dict, finished: list[dict], reports:
             _tool_write(directory, lambda state: next(entry for entry in state["queue"]
                                                       if entry["subject"] == intent["subject"]).pop("pending", None))
         # A merge the runner journaled went through the queue, so its acceptance was not skipped.
-        if intent["summary"].endswith(WAIT_BYPASSED) and (not journaled or any(entry["summary"] == intent["summary"] for entry in entries)):
+        if intent["summary"].endswith(WAIT_BYPASSED) and (not journaled or any(entry.get("summary") == intent["summary"] for entry in entries)):
             reports.append(_bypass_report(intent["subject"]))
     (directory / RECOVERY_FILE).unlink(missing_ok=True)
 
@@ -4519,19 +4524,19 @@ def take_snapshot(directory: Path, member: dict, output: Path, *, source: str, m
                 reason = ("the command's snapshot is too old" if error.code == "snapshot_stale"
                           else f"the command's snapshot is not a valid {source} snapshot")
                 detail = str(error)
-    last = next((entry for entry in reversed(read_journal(directory)) if entry["summary"].startswith(note)), None)
+    last = next((entry for entry in reversed(read_journal(directory)) if entry.get("summary", "").startswith(note)), None)
     if reason is None:
         try:
             _write_atomically(Path(output), dumps(snapshot))
         except OSError as error:
             raise StateError("output_invalid", f"cannot write {Path(output).name}: {error.strerror or error}") from None
-        if last is not None and last["summary"] != again:
+        if last is not None and last.get("summary") != again:
             # Say the outage ended, so the next failure is noted again.
             append_journal(directory, kind="decision.recorded", summary=again)
         return {"ok": True, "taken": True, "output": str(output), "items": len(snapshot["items"]),
                 "takenAt": snapshot["takenAt"], **_cleanup_note(cleanup)}
     summary = f"{note} {reason}; the last snapshot stands"
-    if last is None or last["summary"] != summary:
+    if last is None or last.get("summary") != summary:
         append_journal(directory, kind="decision.recorded", summary=summary)
     result = {"ok": True, "taken": False, "reason": reason, "fallback": Path(output).is_file(), **_cleanup_note(cleanup)}
     if detail and detail != reason:

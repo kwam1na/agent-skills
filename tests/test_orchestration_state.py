@@ -6431,9 +6431,16 @@ class SkillTextTests(unittest.TestCase):
                        "`bookkeeping` is the rest, and a bookkeeping kind is never a problem and never posts to the tracker",
                        "**A kind is added in the registry, and nowhere else.**",
                        "Kinds beginning `x.` are reserved for an adopter's own registry",
-                       "an entry may still carry a `summary` sentence, beside its `data` or instead of it"):
+                       "an entry may still carry a `summary` sentence, beside its `data` or instead of it",
+                       "Give the sentence beside the facts, with `--summary`: the readers that still read it need it"):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normal)
+        skill = " ".join((SKILL / "SKILL.md").read_text(encoding="utf-8").split())
+        for phrase in ("journal --kind <kind> --data '<its facts as JSON>' --summary \"<what happened>\"",
+                       "--why \"<its reason>\" --summary \"<what happened>\"",
+                       "give `--summary` beside `--data`: an entry may carry a sentence, facts or both"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, skill)
 
     def test_the_tracker_publisher_posts_where_the_registry_says_for_the_kinds_it_knows(self) -> None:
         previous = sys.dont_write_bytecode

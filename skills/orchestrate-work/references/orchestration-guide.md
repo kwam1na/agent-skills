@@ -163,7 +163,8 @@ instant is its `occurredAt` when it has one, and its `at` otherwise.
   opening closes it.
 - **A person's decision says why.** `decision.recorded` needs `data.text` and
   `data.why`, and `blocker.recorded` needs `data.text`; none may be empty or
-  only spaces. Give them with `--text` and `--why`.
+  only spaces. Give them with `--text` and `--why`, and, until the sentence is
+  removed, `--summary`.
 - **Every kind has an altitude.** `headline` is what a stakeholder reads: what
   landed, each setback and each decision. `story` adds each step an engineer
   follows: rounds, hand-offs, checks. `bookkeeping` is the rest, and a
@@ -175,6 +176,8 @@ instant is its `occurredAt` when it has one, and its `at` otherwise.
 
 Until the sentence is removed, an entry may still carry a `summary` sentence,
 beside its `data` or instead of it, and an entry with `data` is checked in full.
+Give the sentence beside the facts, with `--summary`: the readers that still
+read it need it until they read the facts.
 
 ### Tracker updates
 
