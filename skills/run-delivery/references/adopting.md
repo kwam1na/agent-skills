@@ -305,7 +305,7 @@ was not consulted. hive-mined runs on macOS only; on any other host, leave the l
 5. Run one search, in a session, for a lesson you know the project holds. A hit confirms the project; no hit means the
    project is misspelt or the library hasn't synced yet.
 
-Commit the file with the configuration.
+Commit and push the file, as the configuration was, so lane checkouts carry it.
 
 ## 5. Run the setup check
 

@@ -8043,9 +8043,9 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         plugin = json.loads(guide["body"])
         self.assertEqual(plugin["server"], "plugin")
         read_only = {"schemaVersion": "knowledge-properties/1", "server": "read-only", "name": "team-library",
-                     "project": "fixture-app", "tags": ["payments", "ci"]}
+                     "project": "fixture-app", "tags": ["payments", "ci", "billing", "deploys", "flaky"]}
         for document, shown in ((plugin, f"server plugin, project {plugin['project']}"),
-                                (read_only, "server read-only team-library, project fixture-app, tags payments, ci")):
+                                (read_only, "server read-only team-library, project fixture-app, tags payments, ci, billing, deploys, flaky")):
             with self.subTest(valid=document["server"]):
                 path.write_text(json.dumps(document, indent=2) + "\n")
                 before = path.read_bytes()
@@ -8061,8 +8061,17 @@ class RunDeliveryDoctorTests(unittest.TestCase):
             ("server", {**valid, "server": "remote"}, "`server`"),
             ("name", {k: v for k, v in valid.items() if k != "name"}, "`name`"),
             ("project", {k: v for k, v in valid.items() if k != "project"}, "`project`"),
-            ("tags not a list", {**valid, "tags": "payments"}, "`tags`"),
-            ("more than five tags", {**valid, "tags": ["a", "b", "c", "d", "e", "f"]}, "`tags`"),
+            # A short string, which the count can't catch: only the list check refuses it.
+            ("tags not a list", {**valid, "tags": "ci"}, "`tags` must be a list"),
+            ("more than five tags", {**valid, "tags": ["a", "b", "c", "d", "e", "f"]}, "`tags` holds 6 names, more than 5"),
+            # The rest of the shape the adapter reads: nothing outside it is accepted.
+            ("not an object", "[]", "must be a JSON object"),
+            ("unknown field", {**valid, "projects": ["a"]}, "`projects` isn't one of its fields"),
+            ("plugin with name", {**valid, "server": "plugin"}, "`name` names a `read-only` server only"),
+            ("project with a space", {**valid, "project": "my project"}, "`project` must be one name"),
+            ("name with a comma", {**valid, "name": "a,b"}, "needs its `name`"),
+            ("tag with a comma", {**valid, "tags": ["a,b"]}, "`tags` must hold only names"),
+            ("duplicate tag", {**valid, "tags": ["ci", "ci"]}, "`tags` names a tag twice"),
         )
         try:
             for case, document, names in malformed:
@@ -8600,6 +8609,8 @@ class RunDeliveryDoctorTests(unittest.TestCase):
             "orchestration binding": "no .agents/orchestration.json; fix: write the orchestrate-work binding (see the "
                                      "adoption guide, references/adopting.md)"}, done.stdout)
         self.assertEqual(doctor_lines(done.stdout)["release generation"][0], "ok", done.stdout)
+        # The knowledge library's row needs only the host: it reports without a configuration.
+        self.assertEqual(doctor_lines(done.stdout)["knowledge library properties"][0], "ok", done.stdout)
 
     def test_every_message_has_its_troubleshooting_entry(self) -> None:
         section = troubleshooting_section()
