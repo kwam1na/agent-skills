@@ -11,8 +11,8 @@ test("a page read just after local midnight says yesterday for the evening befor
     queue: [{ subject: "PAY-1", title: "Retry card payments", lane: "lane-pay", stage: "merged", order: 1 },
       { subject: "PAY-2", title: "Hold the cart", lane: "lane-pay", stage: "merged", order: 2 }],
   }, journal: [
-    { at: "2026-10-22T05:00:00Z", id: 1, kind: "candidate.merged", lane: null, subject: "PAY-1", summary: "PAY-1 merged" },
-    { at: "2026-10-22T06:55:00Z", id: 2, kind: "candidate.merged", lane: null, subject: "PAY-2", summary: "PAY-2 merged" },
+    { at: "2026-10-22T05:00:00Z", id: 1, kind: "candidate.merged", lane: null, subject: "PAY-1", data: { head: "1111111111111111111111111111111111111111" } },
+    { at: "2026-10-22T06:55:00Z", id: 2, kind: "candidate.merged", lane: null, subject: "PAY-2", data: { head: "2222222222222222222222222222222222222222" } },
   ] };
   const page = pageWithRuns(document, {}, { config: { spec: "delivery-views-config/1", runs: REPLAYED_RUNS } });
   // 00:10 on Oct 22 in Los Angeles is 07:10 UTC; PAY-1 landed at 22:00 the evening before, local time.
@@ -35,18 +35,19 @@ test("detail times follow the subject's current stage and attempt", async () => 
   ];
   for (const [stage, label, expectedTime] of rows) {
     const history = [
-      { kind: "review.round", at: "2026-10-22T05:30:00Z", review: { startedAt: "2026-10-22T05:20:00Z" } },
-      { kind: "candidate.handed", at: "2026-10-22T06:00:00Z" },
-      { kind: "check.started", at: "2026-10-22T06:10:00Z" },
-      { kind: "check.finished", at: "2026-10-22T06:15:00Z" },
-      { kind: "candidate.stopped", at: "2026-10-22T06:20:00Z" },
-      { kind: "candidate.merged", at: "2026-10-22T07:00:00Z", occurredAt: "2026-10-22T06:30:00Z" },
+      { kind: "review.round", at: "2026-10-22T05:30:00Z", data: { round: 1, startedAt: "2026-10-22T05:20:00Z", finishedAt: "2026-10-22T05:30:00Z",
+        verdicts: { "lens.outcome-correctness": "approve" }, findings: { P0: 0, P1: 0, P2: 0, P3: 0 } } },
+      { kind: "candidate.handed", at: "2026-10-22T06:00:00Z", data: { head: "1111111111111111111111111111111111111111", checks: [] } },
+      { kind: "check.started", at: "2026-10-22T06:10:00Z", data: {} },
+      { kind: "check.finished", at: "2026-10-22T06:15:00Z", because: [3], data: {} },
+      { kind: "candidate.stopped", at: "2026-10-22T06:20:00Z", data: { reason: "check_failed", detail: "A check failed." } },
+      { kind: "candidate.merged", at: "2026-10-22T07:00:00Z", occurredAt: "2026-10-22T06:30:00Z", data: { head: "1111111111111111111111111111111111111111" } },
     ];
     const end = { planned: 0, building: 0, review: 1, queued: 2, checking: 3, checked: 4, stopped: 5, merging: 4, merged: 6 }[stage];
     const doc = { state: { lanes: [{ id: "lane-1", state: "working", since: "2026-10-22T07:09:00Z" }],
       queue: [], planned: [{ subject: "PAY-1", title: "Payment", lane: "lane-1", stage }] },
       stats: { "PAY-1": { assignedAt: "2026-10-22T05:00:00Z" } },
-      journal: history.slice(0, end).map((entry, index) => ({ ...entry, id: index + 1, subject: "PAY-1" })) };
+      journal: history.slice(0, end).map((entry, index) => ({ ...entry, id: index + 1, lane: "lane-1", subject: "PAY-1" })) };
     const [shown] = await openPage(pageWithRuns(doc, {}, { config: { spec: "delivery-views-config/1" } }), { now: "2026-10-22T07:10:00Z" });
     const meta = shown.app.querySelector("#detail .d-meta");
     const timing = meta.querySelector(".d-stage-time");
@@ -64,13 +65,14 @@ test("missing phase times never borrow another subject, earlier attempt or lane 
     const doc = { state: { lanes: [{ id: "lane-1", since: "2026-10-22T07:09:00Z" }],
       planned: [{ subject: "PAY-1", title: "Payment", lane: "lane-1", stage }], queue: [] },
       journal: [
-        { id: 1, subject: "PAY-1", kind: "review.round", at: "2026-10-22T05:00:00Z", review: { startedAt: "2026-10-22T04:30:00Z" } },
-        { id: 2, subject: "PAY-1", kind: "check.started", at: "2026-10-22T05:10:00Z" },
-        { id: 3, subject: "PAY-1", kind: "check.finished", at: "2026-10-22T05:20:00Z" },
-        { id: 4, subject: "PAY-1", kind: "candidate.stopped", at: "2026-10-22T05:30:00Z" },
-        { id: 5, subject: "PAY-1", kind: "candidate.merged", at: "2026-10-22T05:40:00Z" },
-        { id: 6, subject: "PAY-1", kind: "candidate.handed", at: "2026-10-22T06:00:00Z" },
-        { id: 7, subject: "OTHER", kind: "check.started", at: "2026-10-22T06:10:00Z" },
+        { id: 1, lane: "lane-1", subject: "PAY-1", kind: "review.round", at: "2026-10-22T05:00:00Z", data: { round: 1, startedAt: "2026-10-22T04:30:00Z",
+          finishedAt: "2026-10-22T05:00:00Z", verdicts: { "lens.outcome-correctness": "approve" }, findings: { P0: 0, P1: 0, P2: 0, P3: 0 } } },
+        { id: 2, lane: "lane-1", subject: "PAY-1", kind: "check.started", at: "2026-10-22T05:10:00Z", data: {} },
+        { id: 3, lane: "lane-1", subject: "PAY-1", kind: "check.finished", at: "2026-10-22T05:20:00Z", because: [2], data: {} },
+        { id: 4, lane: "lane-1", subject: "PAY-1", kind: "candidate.stopped", at: "2026-10-22T05:30:00Z", data: { reason: "check_failed", detail: "A check failed." } },
+        { id: 5, lane: "lane-1", subject: "PAY-1", kind: "candidate.merged", at: "2026-10-22T05:40:00Z", data: { head: "1111111111111111111111111111111111111111" } },
+        { id: 6, lane: "lane-1", subject: "PAY-1", kind: "candidate.handed", at: "2026-10-22T06:00:00Z", data: { head: "1111111111111111111111111111111111111111", checks: [] } },
+        { id: 7, lane: "lane-1", subject: "OTHER", kind: "check.started", at: "2026-10-22T06:10:00Z", data: {} },
       ] };
     const [shown] = await openPage(pageWithRuns(doc, {}, { config: { spec: "delivery-views-config/1" } }), { now: "2026-10-22T07:10:00Z" });
     expect(shown.app.querySelector("#detail .d-meta").textContent).toContain("time unknown");
@@ -83,9 +85,11 @@ test("recovered landings show source time, unknowns, and sit in the story at the
     { subject: "PAY-2", title: "Latest merge", stage: "merged", order: 2 },
     { subject: "PAY-3", title: "Unknown merge", stage: "merged", order: 3 },
   ] }, journal: [
-    { at: "2026-10-22T06:55:00Z", id: 1, kind: "candidate.merged", subject: "PAY-2", summary: "Normal merge" },
-    { at: "2026-10-22T07:09:00Z", occurredAt: "2026-10-22T05:00:00Z", id: 2, kind: "candidate.merged", subject: "PAY-1", summary: "Recovered earlier merge" },
-    { at: "2026-10-22T07:09:30Z", occurredAt: null, id: 3, kind: "candidate.merged", subject: "PAY-3", summary: "Recovered unknown merge" },
+    { at: "2026-10-22T06:55:00Z", id: 1, kind: "candidate.merged", lane: null, subject: "PAY-2", data: { head: "2222222222222222222222222222222222222222" } },
+    { at: "2026-10-22T07:09:00Z", occurredAt: "2026-10-22T05:00:00Z", id: 2, kind: "candidate.merged", lane: null, subject: "PAY-1",
+      data: { head: "1111111111111111111111111111111111111111", recovery: { head: "1111111111111111111111111111111111111111", changeRequest: null } } },
+    { at: "2026-10-22T07:09:30Z", occurredAt: null, id: 3, kind: "candidate.merged", lane: null, subject: "PAY-3",
+      data: { head: "3333333333333333333333333333333333333333", recovery: { head: "3333333333333333333333333333333333333333", changeRequest: null } } },
   ] };
   const page = pageWithRuns(document, {}, { config: { spec: "delivery-views-config/1", runs: REPLAYED_RUNS } });
   const [initial, earlier, unknown] = await openPage(page, { now: "2026-10-22T07:10:00Z", steps: [
@@ -103,10 +107,10 @@ test("building uses the current assignment after a rejected handoff, or reports 
     const doc = { state: { lanes: [], queue: [], planned: [{ subject: "PAY-1", stage: "building", title: "Payment" }] },
       stats: { "PAY-1": { assignedAt: "2026-10-22T04:00:00Z" } },
       journal: [
-        { id: 1, kind: "lane.assigned", subject: "PAY-1", at: "2026-10-22T04:00:00Z" },
-        { id: 2, kind: "candidate.handed", subject: "PAY-1", at: "2026-10-22T05:00:00Z" },
-        { id: 3, kind: "candidate.rejected", subject: "PAY-1", at: "2026-10-22T05:10:00Z" },
-        ...(assigned ? [{ id: 4, kind: "lane.assigned", subject: "PAY-1", at: "2026-10-22T06:00:00Z" }] : []),
+        { id: 1, kind: "lane.assigned", lane: "lane-1", subject: "PAY-1", at: "2026-10-22T04:00:00Z", data: { title: "Payment" } },
+        { id: 2, kind: "candidate.handed", lane: "lane-1", subject: "PAY-1", at: "2026-10-22T05:00:00Z", data: { head: "1111111111111111111111111111111111111111", checks: [] } },
+        { id: 3, kind: "handoff.rejected", lane: null, subject: "PAY-1", at: "2026-10-22T05:10:00Z", because: [2], data: { why: "It was not ready." } },
+        ...(assigned ? [{ id: 4, kind: "lane.assigned", lane: "lane-1", subject: "PAY-1", at: "2026-10-22T06:00:00Z", data: { title: "Payment" } }] : []),
       ] };
     const [shown] = await openPage(pageWithRuns(doc, {}, { config: { spec: "delivery-views-config/1" } }), { now: "2026-10-22T07:10:00Z" });
     const timing = shown.app.querySelector("#detail .d-stage-time");
@@ -134,7 +138,7 @@ test("planned work the tracker moved to building names its stage with no time, a
   expect(reviewing.app.querySelector("#detail .d-meta").textContent).toContain("In review since · time unknown");
   // A start the record does hold still shows beside the same flag.
   const doc = { state: { lanes: [], queue: [], planned: [{ subject: "PAY-1", stage: "building", title: "Payment", lane: "lane-1", trackerStarted: true }] },
-    journal: [{ id: 1, kind: "lane.assigned", lane: "lane-1", subject: "PAY-1", at: "2026-10-22T06:00:00Z" }] };
+    journal: [{ id: 1, kind: "lane.assigned", lane: "lane-1", subject: "PAY-1", at: "2026-10-22T06:00:00Z", data: { title: "Payment" } }] };
   const [shown] = await openPage(pageWithRuns(doc, {}, { config: { spec: "delivery-views-config/1" } }), { now: "2026-10-22T07:10:00Z" });
   expect(shown.app.querySelector("#detail .d-stage-time").getAttribute("aria-label")).toBe("Recorded work assignment: 2026-10-22T06:00:00Z");
 });

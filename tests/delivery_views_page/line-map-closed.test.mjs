@@ -46,9 +46,9 @@ test("on a closed delivery with finish lines, the Pieces landed tick counts plan
 });
 
 test("a closed stop that was being checked in a batch says nothing of the batch and draws no stage mark", async () => {
-  const summary = "Checking Work A, Work B as one batch";
+  const batch = { data: { batch: ["A", "B"] } };
   const steps = [...landed("Z"), [20, "candidate.handed", "A"], [21, "candidate.handed", "B"],
-    [22, "check.started", "A", { summary }], [23, "check.started", "B", { summary }]];
+    [22, "check.started", "A", batch], [23, "check.started", "B", batch]];
   const shape = (entries) => record({ queue: [item("Z", "merged"), item("A", "checking"), item("B", "checking")], journal: journal(entries) });
   const [, live] = await open(render(shape(steps)), { steps: [{ click: '.stop-btn[data-subject="A"]' }] });
   expect(live.app.querySelector("#detail .d-batch").textContent).toBe("Checked together with B; lands in order once the shared test run passes.");

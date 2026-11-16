@@ -54,7 +54,7 @@ test('runless actual rounds share cards, escaped findings and originating closur
 test('missing or stale runless reports stay visibly unavailable without approval from journal counts',async()=>{
   for(const mode of ['missing','stale','damaged']){
     const doc=document();
-    doc.journal=[{kind:'review.round',subject:'WORK-1',review:{round:2,verdicts:{'lens.outcome-correctness':'approve'}}}];
+    doc.journal=[{id:1, at:'2026-01-01T00:02:00Z', kind:'review.round', lane:'lane-1', subject:'WORK-1', data:{round:2, startedAt:'2026-01-01T00:01:00Z', finishedAt:'2026-01-01T00:02:00Z', verdicts:{'lens.outcome-correctness':'approve'}, findings:{P0:0,P1:0,P2:0,P3:0}}}];
     if(mode==='missing') delete doc.reviewEvidence;
     if(mode==='stale') doc.state.queue[0].head=A;
     if(mode==='damaged') doc.reviewEvidence['WORK-1']={unavailable:true};
@@ -72,8 +72,9 @@ test('candidate changes in a live push invalidate retained native approval immed
 test('same-head digest, later review and unavailable pushes immediately invalidate approval',async()=>{
   for(const mode of ['digest','review','unavailable']){
     const doc=document(),changed=structuredClone(doc);
-    if(mode==='digest') changed.journal.push({id:1,subject:'WORK-1',kind:'review.evidence',reviewArtifact:{candidateRef:B,digest:'e'.repeat(64)}});
-    if(mode==='review') changed.journal.push({id:1,subject:'WORK-1',kind:'review.round',review:{round:3,verdicts:{'lens.outcome-correctness':'changes'}}});
+    if(mode==='digest') changed.journal.push({id:1,at:'2026-01-01T00:05:00Z',kind:'review.recorded',lane:'lane-1',subject:'WORK-1',data:{candidateRef:B,digest:'e'.repeat(64)}});
+    if(mode==='review') changed.journal.push({id:1,at:'2026-01-01T00:05:00Z',kind:'review.round',lane:'lane-1',subject:'WORK-1',data:{round:3,startedAt:'2026-01-01T00:04:00Z',
+      finishedAt:'2026-01-01T00:05:00Z',verdicts:{'lens.outcome-correctness':'changes'},findings:{P0:0,P1:1,P2:0,P3:0}}});
     if(mode==='unavailable') changed.reviewEvidence['WORK-1']={unavailable:true};
     const [before,after]=await openPage(pageWithRuns(doc,{}, {config}),{steps:[{push:changed}]});
     expect(before.app.querySelector('.run-card-outcome').textContent).toBe('Approved');
@@ -93,7 +94,7 @@ test('actual renderer contains malformed observation input without losing the pa
 test('a fresh matching render restores the observed verdict after immediate invalidation',async()=>{
   const doc=document(),changed=structuredClone(doc);
   changed.reviewEvidence['WORK-1'].digest='e'.repeat(64);
-  changed.journal.push({id:1,subject:'WORK-1',kind:'review.evidence',reviewArtifact:{candidateRef:B,digest:'e'.repeat(64)}});
+  changed.journal.push({id:1,at:'2026-01-01T00:05:00Z',kind:'review.recorded',lane:'lane-1',subject:'WORK-1',data:{candidateRef:B,digest:'e'.repeat(64)}});
   const [,pending,fresh]=await openPage(pageWithRuns(doc,{}, {config}),{
     rendered:pageWithRuns(changed,{}, {config}),steps:[{push:changed},{wait:3100}]});
   expect(pending.app.querySelector('.run-card')).toBeNull();
@@ -101,9 +102,9 @@ test('a fresh matching render restores the observed verdict after immediate inva
   expect(fresh.app.querySelector('.run-card-outcome').textContent).toBe('Approved');
 });
 test('malformed journal boundary data yields unavailable evidence without crashing the renderer',async()=>{
-  for(const journal of [null,[null],[42],['row'],[{id:null,kind:'review.evidence',subject:'WORK-1'}],
+  for(const journal of [null,[null],[42],['row'],[{id:null,kind:'review.recorded',subject:'WORK-1'}],
     [{id:'1',kind:'review.round',subject:'WORK-1'}], [{id:true,kind:'review.round',subject:'WORK-1'}],
-    [{id:1,kind:'review.evidence',subject:'WORK-1',reviewArtifact:null}]]){
+    [{id:1,kind:'review.recorded',subject:'WORK-1',data:null}]]){
     const doc=document();doc.journal=journal;
     const [shown]=await openPage(renderPage(doc,{config}));
     expect(shown.app.querySelector('.d-run-none').textContent).toContain('unavailable or stale');
@@ -122,11 +123,11 @@ function plannedDocument() {
   doc.state.queue = [];
   doc.state.planned = [{subject:'WORK-1',title:'Work',lane:'lane-1',stage:'review'}];
   const round = (id, number, verdict) => ({id, at:'2026-01-01T00:0'+id+':00Z', kind:'review.round', subject:'WORK-1', lane:'lane-1',
-    summary:'WORK-1: review round '+number, review:{round:number, startedAt:'2026-01-01T00:00:00Z', finishedAt:'2026-01-01T00:0'+id+':00Z',
+    data:{round:number, startedAt:'2026-01-01T00:00:00Z', finishedAt:'2026-01-01T00:0'+id+':00Z',
       verdicts:{'lens.outcome-correctness':verdict}, findings:{P0:0,P1:verdict==='approve'?0:1,P2:0,P3:0}}});
   doc.journal = [round(1, 1, 'changes'), round(2, 2, 'approve'),
-    {id:3, at:'2026-01-01T00:03:00Z', kind:'review.evidence', subject:'WORK-1', lane:'lane-1', summary:'captured',
-      reviewArtifact:{candidateRef:B, digest:'d'.repeat(64)}}];
+    {id:3, at:'2026-01-01T00:03:00Z', kind:'review.recorded', subject:'WORK-1', lane:'lane-1',
+      data:{candidateRef:B, digest:'d'.repeat(64)}}];
   return doc;
 }
 test('before hand-off, a planned story shows its round cards and notes from its latest reviewed round', async()=>{
@@ -140,8 +141,8 @@ test('before hand-off, a planned story shows its round cards and notes from its 
 });
 test('a planned story whose latest round was not captured stays visibly stale', async()=>{
   const doc=plannedDocument();
-  doc.journal.push({id:4, at:'2026-01-01T00:04:00Z', kind:'review.round', subject:'WORK-1', lane:'lane-1', summary:'WORK-1: review round 3',
-    review:{round:3, startedAt:'2026-01-01T00:03:00Z', finishedAt:'2026-01-01T00:04:00Z', verdicts:{'lens.outcome-correctness':'changes'},
+  doc.journal.push({id:4, at:'2026-01-01T00:04:00Z', kind:'review.round', subject:'WORK-1', lane:'lane-1',
+    data:{round:3, startedAt:'2026-01-01T00:03:00Z', finishedAt:'2026-01-01T00:04:00Z', verdicts:{'lens.outcome-correctness':'changes'},
       findings:{P0:0,P1:1,P2:0,P3:0}}});
   const [shown]=await openPage(renderPage(doc,{config}));
   expect(shown.app.querySelector('.d-run-none').textContent).toBe('Review evidence unavailable or stale for this candidate.'
@@ -149,7 +150,7 @@ test('a planned story whose latest round was not captured stays visibly stale', 
   expect(shown.app.querySelector('.run-card')).toBeNull();
   // Closed, nothing will record a later round, so the sentence stops at what is true.
   const closed=structuredClone(doc);
-  closed.journal.push({id:5, at:'2026-01-01T00:05:00Z', kind:'delivery.closed', subject:null, lane:null, summary:'closed'});
+  closed.journal.push({id:5, at:'2026-01-01T00:05:00Z', kind:'delivery.closed', subject:null, lane:null, data:{}});
   const [shut]=await openPage(renderPage(closed,{config}));
   expect(shut.app.querySelector('.d-run-none').textContent).toBe('Review evidence unavailable or stale for this candidate.');
   const fresh=plannedDocument(),pushed=structuredClone(fresh);pushed.journal.push(doc.journal[3]);

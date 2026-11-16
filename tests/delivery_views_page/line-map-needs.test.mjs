@@ -89,7 +89,7 @@ test("item text is shown as text, never as markup", async () => {
 test("a live push takes the list from the page the server renders after it", async () => {
   const first = renderPage(document(), { config, needs: needs() });
   const later = renderPage(document(), { config, needs: needs({ running: false }) });
-  const pushed = { ...document(), journal: [{ id: 1, at: NOW, kind: "decision.recorded", summary: "moved" }] };
+  const pushed = { ...document(), journal: [{ id: 1, at: NOW, kind: "decision.recorded", lane: null, subject: null, data: { text: "The lead moved a piece", why: "It was ready." } }] };
   const [before, pending, after] = await openPage(first, { now: NOW, rendered: later, steps: [{ push: pushed }, { wait: 3100 }] });
   expect(before.app.querySelectorAll(".needs-you li").length).toBe(3);
   expect(pending.app.querySelectorAll(".needs-you li").length).toBe(3);
@@ -124,7 +124,7 @@ test("a refresh whose page has no list drops the one shown", async () => {
 
 test("a closed delivery shows the box only while a running, current list still holds it", async () => {
   const closed = document();
-  closed.journal = [{ id: 1, at: "2026-01-01T11:00:00Z", kind: "delivery.closed", lane: null, subject: null, summary: "closed" }];
+  closed.journal = [{ id: 1, at: "2026-01-01T11:00:00Z", kind: "delivery.closed", lane: null, subject: null, data: {} }];
   const box = async (list) => (await openPage(renderPage(closed, { config, needs: list }), { now: NOW }))[0].app.querySelector(".needs-you");
   expect((await box(needs())).textContent).toContain("The tracker publisher hasn't posted journal entries 12");
   const shownOnly = needs().items.filter((item) => !item.holding);

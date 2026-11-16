@@ -38,7 +38,7 @@ The cases:
 | `parked-round-reports` | the parked fixture record | round reports with findings, fixes and a confirming round |
 | `parked-round-report-unreadable` | the parked fixture record | as above, with round 2's report unreadable |
 | `delivery-records-epic` | a real delivery record of nine merged pieces | their three recorded runs |
-| `round-card-record` | a record built with the state tool for the two pieces that landed the round card | their two recorded runs, one with stored findings |
+| `round-card-record` | a record built with the state tool for the two pieces that landed the round card, its entries since rewritten as facts | their two recorded runs, one with stored findings |
 
 Real records and run listings named the capturing machine's home directory; the
 capture replaced it with `~/` in its inputs before rendering, so inputs and
