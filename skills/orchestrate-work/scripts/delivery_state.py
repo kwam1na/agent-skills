@@ -2038,12 +2038,16 @@ def _broken_head(entry: dict) -> str | None:
     return found[-1] if found else None
 
 
-def _stopped_by(stop: dict, broken: dict, head: str | None) -> bool:
-    """Whether a stop was made by this break: it names the break as its cause, or its sentence names the break's head."""
+def _stopped_by(stop: dict, broken: dict, head: str | None, entries: dict[int, dict]) -> bool:
+    """Whether a stop was made by this break: it names as its cause this break or a base_broken break at the head this
+    one names, or its sentence names the break's head. ``entries`` are the journal's entries by id."""
     if not _base_broken(stop):
         return False
     if "data" in stop:
-        return broken["id"] in stop.get("because", [])
+        causes = [entries[number] for number in stop.get("because", []) if number in entries]
+        return any(cause["id"] == broken["id"] or (
+            head is not None and cause["kind"] == "base.broken" and _base_broken(cause) and _broken_head(cause) == head)
+            for cause in causes)
     return head is not None and head in BROKEN_AT.findall(stop.get("summary", ""))
 
 
@@ -2058,6 +2062,7 @@ def repaired_state(state: dict, journal: list[dict]) -> dict | None:
     broken = breaks[-1] if breaks else None
     head = _broken_head(broken) if broken else None
     latest = {entry["subject"]: entry for entry in journal if entry["kind"] == "candidate.stopped" and entry["subject"]}
+    entries = {entry["id"]: entry for entry in journal}
     updated = copy.deepcopy(state)
     changed = False
     for item in updated["queue"]:
@@ -2065,7 +2070,7 @@ def repaired_state(state: dict, journal: list[dict]) -> dict | None:
             changed = True
         stop = latest.get(item["subject"])
         if (broken is not None and item["stage"] == "stopped" and stop is not None and stop["id"] > since
-                and _stopped_by(stop, broken, head)):
+                and _stopped_by(stop, broken, head, entries)):
             item.update(stage="queued", checks=[])
             updated["lanes"] = lane_rows_put_back(updated, item["subject"])
             changed = True

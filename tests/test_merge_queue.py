@@ -62,6 +62,7 @@ def _load(name: str):
 
 state_tool = _load("delivery_state")
 queue = _load("merge_queue")
+narrator = _load("narrator")
 
 
 # The fixture adopter's tools. Each is a small script committed to the base.
@@ -562,6 +563,23 @@ class Adopter:
         return run("show", f"{revision}:{path}", cwd=self.lane)
 
 
+def sentence_lines(adopter: "Adopter", *entries: tuple[str, str, str | None]) -> None:
+    """Entries as a writer journaled them before it wrote facts: only a sentence, written as journal lines directly."""
+    path = adopter.state / state_tool.JOURNAL_FILE
+    number = len(state_tool.read_journal(adopter.state))
+    with path.open("a", encoding="utf-8") as stream:
+        for number, (kind, words, subject) in enumerate(entries, start=number + 1):
+            entry = {"at": state_tool.now(), "id": number, "kind": kind, "lane": None, "subject": subject,
+                     "summary": words}
+            stream.write(json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n")
+
+
+def journaled(adopter: Adopter, kind: str, subject: str | None = None) -> list[dict]:
+    """The record's entries of one kind, on one subject when one is named, in order."""
+    return [entry for entry in state_tool.read_journal(adopter.state)
+            if entry["kind"] == kind and (subject is None or entry.get("subject") == subject)]
+
+
 def remove_tree(path: Path) -> None:
     # Git writes its objects read-only, and Windows refuses to delete a read-only file.
     if os.name == "nt":
@@ -602,6 +620,14 @@ class MergeQueueTestCase(unittest.TestCase):
         self.assertIn(last["outcome"], ("stopped", "refused"), last)
         self.assertEqual(last["stop"]["reason"], reason, last["stop"])
         return last
+
+    def assertFacts(self, entry: dict, kind: str, data: dict, because: Iterable[dict] = (),
+                    answers: Iterable[dict] = ()) -> None:
+        """An entry's kind, the exact value of every field, and the entries it names as its cause and answers."""
+        self.assertEqual(entry["kind"], kind, entry)
+        self.assertEqual(entry.get("data"), data, entry)
+        self.assertEqual(entry.get("because", []), [named["id"] for named in because], entry)
+        self.assertEqual(entry.get("answers", []), [named["id"] for named in answers], entry)
 
 
 class FixtureMaintenanceTests(MergeQueueTestCase):
@@ -1988,6 +2014,11 @@ class ReleaseTests(MergeQueueTestCase):
         self.assertEqual([target["state"] for target in document["release"]["targets"]], ["passed", "failed", "skipped"])
         self.assertEqual(document["release"]["targets"][1]["approvedBy"], "operator in chat")
         self.assertIsNone(state_tool.read_state(adopter.state)["meta"]["releasedHead"])
+        [started] = journaled(adopter, "release.started")
+        [finished] = journaled(adopter, "release.finished")
+        self.assertFacts(started, "release.started", {"head": adopter.tip("main")})
+        self.assertFacts(finished, "release.finished", {"head": adopter.tip("main"), "failedAt": "clients"},
+                         because=[started])
 
     def test_a_release_records_the_released_head(self) -> None:
         adopter = self.adopter()
@@ -1996,6 +2027,10 @@ class ReleaseTests(MergeQueueTestCase):
         self.assertEqual(document["outcome"], "released")
         self.assertEqual(adopter.log_lines(), ["release backend", "release clients", "release docs"])
         self.assertEqual(state_tool.read_state(adopter.state)["meta"]["releasedHead"], tip)
+        [started] = journaled(adopter, "release.started")
+        [finished] = journaled(adopter, "release.finished")
+        self.assertFacts(started, "release.started", {"head": tip})
+        self.assertFacts(finished, "release.finished", {"head": tip}, because=[started])
 
 
 class IsolationTests(MergeQueueTestCase):
@@ -2210,6 +2245,9 @@ class HardeningTests(MergeQueueTestCase):
         document = self.assertStopped(self.run_queue(adopter, "feature"), "binding_invalid")
         self.assertEqual(document["outcome"], "refused")
         self.assertEqual(adopter.item("feature")["stage"], "stopped")
+        # The refusal left the piece stopped, so its stop does not say it is still in the queue.
+        self.assertFacts(journaled(adopter, "candidate.stopped", "feature")[-1], "candidate.stopped",
+                         {"reason": "binding_invalid", "detail": document["stop"]["detail"]})
 
     def test_a_tracked_or_git_owned_work_root_is_refused(self) -> None:
         for name, work_root, ignore in (
@@ -3164,9 +3202,11 @@ class BatchTests(MergeQueueTestCase):
                 main = adopter.tip("main")
                 self.assertEqual(adopter.show(main, "src/app.txt"), "app one")
                 self.assertEqual(adopter.show(main, "src/extra.txt"), "extra")
-                culprit = [entry for entry in state_tool.read_journal(adopter.state)
-                           if entry["kind"] == "candidate.stopped" and entry.get("subject") == "second"]
-                self.assertTrue(culprit and "culprit" in culprit[-1]["summary"], culprit)
+                [culprit] = journaled(adopter, "candidate.stopped", "second")
+                # The culprit's stop names the failure its whole batch's run journaled on it.
+                self.assertFacts(culprit, "candidate.stopped", {"reason": "check_failed",
+                                                                "detail": final["second"]["stop"]["detail"]},
+                                 because=journaled(adopter, "check.failed", "second"))
 
     def test_bisection_checks_fewer_prefixes_than_the_serial_search(self) -> None:
         runs = {}
@@ -3217,6 +3257,13 @@ class BatchTests(MergeQueueTestCase):
         self.assertTrue(documents["first"]["stop"]["queueStopped"])
         for name in subjects:
             self.assertEqual(adopter.item(name)["stage"], "queued")
+            # Nothing landed, so every member's stop leaves it in the queue.
+            [stopped] = journaled(adopter, "candidate.stopped", name)
+            self.assertIs(stopped["data"]["requeued"], True)
+        # A tree that no longer fits names no cause.
+        [broken] = journaled(adopter, "base.broken")
+        self.assertFacts(broken, "base.broken", {"source": "queue", "reason": "batch_tree_mismatch",
+                                                 "detail": documents["first"]["stop"]["detail"]})
 
     def test_a_conflict_in_derived_paths_is_regenerated_and_one_in_source_drops_the_member(self) -> None:
         adopter = self.adopter()
@@ -3300,7 +3347,13 @@ class BatchTests(MergeQueueTestCase):
         self.assertEqual(rerun, [("base.rerun.started", "first"), ("base.rerun.finished", "first"),
                                  ("base.broken", "first")])
         [finished] = [entry for entry in state_tool.read_journal(adopter.state) if entry["kind"] == "base.rerun.finished"]
-        self.assertIn("also fails", finished["summary"])
+        self.assertEqual(finished["data"]["verdict"], "base_broken")
+        # The member sent back names the break the first member's stop found.
+        [broken] = journaled(adopter, "base.broken")
+        [third] = journaled(adopter, "candidate.stopped", "third")
+        self.assertFacts(third, "candidate.stopped", {"reason": "base_broken", "detail": documents["third"]["stop"]["detail"],
+                                                      "requeued": True}, because=[broken])
+        self.assertEqual(broken["because"], [finished["id"]])
 
     def test_members_a_failed_batch_requeues_are_journalled_so_the_stats_end_their_check(self) -> None:
         adopter = self.adopter()
@@ -3309,7 +3362,8 @@ class BatchTests(MergeQueueTestCase):
         for name, changes in (("first", {"src/lib.txt": "lib two\n"}), ("third", {"src/extra.txt": "extra\n"}),
                               ("fourth", {"src/more.txt": "more\n"})):
             self.candidate(adopter, changes, name=name)
-            state_tool.append_journal(adopter.state, kind="candidate.handed", summary=f"Handed {name}", subject=name)
+            state_tool.append_journal(adopter.state, kind="candidate.handed", subject=name, data={
+                "head": adopter.item(name)["head"], "changeRequest": f"https://forge.test/{name}", "rounds": 2, "checks": []})
         self.batch(adopter, "first", "third", "fourth")
         stats = state_tool.delivery_stats(state_tool.read_state(adopter.state), state_tool.read_journal(adopter.state))
         for name in ("third", "fourth"):
@@ -3317,10 +3371,9 @@ class BatchTests(MergeQueueTestCase):
                 self.assertEqual(adopter.item(name)["stage"], "queued")
                 self.assertEqual(stats[name]["outcome"], "stopped", stats[name])
                 self.assertIsNotNone(stats[name]["endedAt"])
-                requeued = [entry for entry in state_tool.read_journal(adopter.state)
-                            if entry["kind"] == "candidate.stopped" and entry.get("subject") == name]
-                self.assertTrue(requeued and "queued again" in requeued[-1]["summary"], requeued)
-                self.assertIn("base_broken", requeued[-1]["summary"])
+                requeued = journaled(adopter, "candidate.stopped", name)
+                self.assertEqual(requeued[-1]["data"]["reason"], "base_broken")
+                self.assertIs(requeued[-1]["data"]["requeued"], True)
 
     def test_a_stacked_pair_lands_through_a_squash_merging_forge(self) -> None:
         adopter = self.environment_adopter({"MQ_MERGE": "squash"})
@@ -3367,6 +3420,21 @@ class BatchTests(MergeQueueTestCase):
         self.assertTrue(documents["second"]["stop"]["queueStopped"])
         self.assertTrue(documents["third"]["stop"]["queueStopped"])
         self.assertEqual(adopter.item("third")["stage"], "queued")
+        # Each member's start and finish list the whole batch; the second stays stopped, the third goes back in the
+        # queue, and the break says how far the batch landed.
+        for name in subjects:
+            [started] = journaled(adopter, "check.started", name)
+            [finished] = journaled(adopter, "check.finished", name)
+            self.assertFacts(started, "check.started", {"batch": subjects})
+            self.assertFacts(finished, "check.finished", {"batch": subjects}, because=[started])
+        [second] = journaled(adopter, "candidate.stopped", "second")
+        [third] = journaled(adopter, "candidate.stopped", "third")
+        [broken] = journaled(adopter, "base.broken")
+        self.assertFacts(second, "candidate.stopped", {"reason": "merge_refused", "detail": documents["second"]["stop"]["detail"]})
+        self.assertFacts(third, "candidate.stopped", {"reason": "merge_refused", "detail": documents["third"]["stop"]["detail"],
+                                                      "requeued": True})
+        self.assertFacts(broken, "base.broken", {"source": "queue", "reason": "merge_refused",
+                                                 "detail": "main holds the batch's tree up to first", "after": "first"})
 
     def test_a_runner_error_after_a_partial_landing_stops_the_queue(self) -> None:
         adopter = self.adopter()
@@ -3486,9 +3554,10 @@ class BatchTests(MergeQueueTestCase):
         self.assertIn("culprit", detail)
         self.assertIn("failing test_app", detail)
         self.assertIn("log logs/", detail)
-        stopped = [entry for entry in state_tool.read_journal(adopter.state)
-                   if entry["kind"] == "candidate.stopped" and entry.get("subject") == "second"]
-        self.assertIn("failing test_app", stopped[-1]["summary"])
+        stopped = journaled(adopter, "candidate.stopped", "second")
+        failed = journaled(adopter, "check.failed", "second")
+        self.assertEqual([entry["data"]["failing"] for entry in failed], [["test_app"]])
+        self.assertEqual(stopped[-1]["because"], [entry["id"] for entry in failed])
         # The batch's run and the third's own run count; the prefixes checked to find the culprit do not.
         self.assertEqual(len(state_tool.read_state(adopter.state)["meta"]["checkHistory"]["runs"]), 2)
 
@@ -3630,6 +3699,15 @@ class CheckVisibilityTests(MergeQueueTestCase):
     def journal(self, adopter: Adopter, kind: str) -> list[dict]:
         return [entry for entry in state_tool.read_journal(adopter.state) if entry["kind"] == kind]
 
+    def causes(self, adopter: Adopter, entry: dict) -> list[str]:
+        """The kinds reached by following each entry's first cause back from this one."""
+        by_id = {item["id"]: item for item in state_tool.read_journal(adopter.state)}
+        kinds = [entry["kind"]]
+        while entry.get("because"):
+            entry = by_id[entry["because"][0]]
+            kinds.append(entry["kind"])
+        return kinds
+
     def test_steps_carry_their_times_and_the_history_median_as_expected(self) -> None:
         adopter = self.visible_adopter([check_entry("always")])
         # Only the last five passing runs count: their median is 40 seconds.
@@ -3744,7 +3822,8 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.assertLess(history["runs"][4], 500)
 
     def test_a_failed_check_records_its_failing_tests_and_log_everywhere(self) -> None:
-        adopter = self.visible_adopter([check_entry("suite", "--fail-with", "test_alpha", "test_beta")])
+        adopter = self.visible_adopter([check_entry("suite", "--fail-with", "test_alpha", "test_beta"),
+                                        check_entry("other", "--fail-with", "test_gamma")])
         self.candidate(adopter)
         results = self.run_queue(adopter, "feature")
         document = self.assertStopped(results, "check_failed")
@@ -3758,22 +3837,30 @@ class CheckVisibilityTests(MergeQueueTestCase):
         row = next(check for check in adopter.item("feature")["checks"] if check["id"] == "suite")
         self.assertEqual(row["failures"], ["test_alpha", "test_beta"])
         self.assertEqual(row["log"], entry["log"])
+        [started] = self.journal(adopter, "check.started")
+        failed = self.journal(adopter, "check.failed")
         [stopped] = self.journal(adopter, "candidate.stopped")
-        self.assertIn("test_beta", stopped["summary"])
-        self.assertIn(entry["log"], stopped["summary"])
+        self.assertFacts(started, "check.started", {})
+        # The stop names every failure, in order, and each failure the run it belongs to.
+        self.assertEqual([entry["data"]["check"] for entry in failed], ["suite", "other"])
+        self.assertTrue(all(entry["because"] == [started["id"]] for entry in failed), failed)
+        self.assertFacts(stopped, "candidate.stopped", {"reason": "check_failed", "detail": document["stop"]["detail"]},
+                         because=failed)
+        self.assertEqual(self.causes(adopter, stopped)[-1], "check.started")
         self.assertEqual(self.journal(adopter, "check.retried"), [])
 
     def test_a_failing_check_journals_its_failing_tests_and_log_before_the_stop(self) -> None:
-        adopter = self.visible_adopter([check_entry("suite", "--fail-with", "test_alpha", "test_beta")])
+        # One more failing test than a stop names: the rest is counted.
+        names = [f"test_{number:02d}" for number in range(queue.STOP_FAILURES + 1)]
+        adopter = self.visible_adopter([check_entry("suite", "--fail-with", *names)])
         self.candidate(adopter)
         results = self.run_queue(adopter, "feature")
         entry = self.check_entry_of(results, "suite")
         [failed] = self.journal(adopter, "check.failed")
+        [started] = self.journal(adopter, "check.started")
         self.assertEqual(failed["subject"], "feature")
-        self.assertIn("suite", failed["summary"])
-        self.assertIn("test_alpha", failed["summary"])
-        self.assertIn("test_beta", failed["summary"])
-        self.assertIn(entry["log"], failed["summary"])
+        self.assertFacts(failed, "check.failed", {"check": "suite", "timedOut": False, "failing": names[:-1],
+                                                  "more": 1, "log": entry["log"]}, because=[started])
         [stopped] = self.journal(adopter, "candidate.stopped")
         self.assertLess(failed["id"], stopped["id"])
 
@@ -3783,8 +3870,9 @@ class CheckVisibilityTests(MergeQueueTestCase):
         results = self.run_queue(adopter, "feature")
         self.assertStopped(results, "check_failed")
         [failed] = self.journal(adopter, "check.failed")
-        self.assertIn("timed out", failed["summary"])
-        self.assertIn(self.check_entry_of(results, "slow")["log"], failed["summary"])
+        [started] = self.journal(adopter, "check.started")
+        self.assertFacts(failed, "check.failed", {"check": "slow", "timedOut": True, "failing": [], "more": 0,
+                                                  "log": self.check_entry_of(results, "slow")["log"]}, because=[started])
 
     def test_a_passing_check_journals_no_failure(self) -> None:
         adopter = self.visible_adopter([check_entry("always")])
@@ -3850,8 +3938,10 @@ class CheckVisibilityTests(MergeQueueTestCase):
             while not self.journal(adopter, "base.rerun.started") and time.monotonic() < deadline:
                 time.sleep(0.02)
             [started] = self.journal(adopter, "base.rerun.started")
+            [failed] = self.journal(adopter, "check.failed")
             self.assertEqual(started["subject"], "feature")
-            self.assertIn("held", started["summary"])
+            self.assertFacts(started, "base.rerun.started",
+                             {"checks": ["held"], "base": {"ref": "main", "head": adopter.tip("main")}}, because=[failed])
             self.assertEqual(self.journal(adopter, "base.rerun.finished"), [])
             now = state_tool.read_state(adopter.state)["meta"]["checking"]["now"]
             self.assertEqual(now["subject"], "feature")
@@ -3873,7 +3963,8 @@ class CheckVisibilityTests(MergeQueueTestCase):
         [finished] = self.journal(adopter, "base.rerun.finished")
         self.assertEqual(finished["subject"], "feature")
         self.assertLessEqual(started["at"], finished["at"])
-        self.assertRegex(finished["summary"], r"after [0-9]+s")
+        self.assertEqual(finished["because"], [started["id"]])
+        self.assertIsInstance(finished["data"]["seconds"], int)
         # The waiting state ends with the turn.
         self.assertIsNone(state_tool.read_state(adopter.state)["meta"]["checking"]["now"])
         return finished
@@ -3886,8 +3977,9 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.assertEqual(self.journal(adopter, "base.broken"), [])
         self.assertEqual(len(self.journal(adopter, "check.failed")), 1)
         finished = self.rerun_order(adopter, "candidate.stopped")
-        self.assertIn("held passed", finished["summary"])
-        self.assertIn("the failure is the candidate's", finished["summary"])
+        log = next(check for check in adopter.item("feature")["checks"] if check["id"] == "held")["baseRerun"]["log"]
+        self.assertEqual({key: finished["data"][key] for key in ("verdict", "results")},
+                         {"verdict": "candidate_failed", "results": [{"check": "held", "result": "passed", "log": log}]})
 
     def test_the_wait_returns_on_the_failure_while_the_base_rerun_holds_and_the_base_fails(self) -> None:
         results, adopter = self.wait_through_a_held_base_rerun(1)
@@ -3896,37 +3988,50 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.assertEqual(len(self.journal(adopter, "base.broken")), 1)
         self.assertEqual(len(self.journal(adopter, "check.failed")), 1)
         finished = self.rerun_order(adopter, "base.broken")
-        self.assertIn("held also fails", finished["summary"])
-        self.assertNotIn("the failure is the candidate's", finished["summary"])
+        log = next(check for check in adopter.item("feature")["checks"] if check["id"] == "held")["baseRerun"]["log"]
+        self.assertEqual({key: finished["data"][key] for key in ("verdict", "results")},
+                         {"verdict": "base_broken", "results": [{"check": "held", "result": "failed", "log": log}]})
+        # The break names the verdict, and the stop the break; back from the stop, the chain reaches the check's start.
+        [broken] = self.journal(adopter, "base.broken")
+        [stopped] = self.journal(adopter, "candidate.stopped")
+        self.assertFacts(broken, "base.broken", {"source": "queue", "reason": "base_broken",
+                                                 "detail": results[-1].document()["stop"]["detail"],
+                                                 "head": finished["data"]["base"]["head"]}, because=[finished])
+        self.assertEqual(stopped["because"], [broken["id"]])
+        self.assertEqual(self.causes(adopter, stopped), ["candidate.stopped", "base.broken", "base.rerun.finished",
+                                                         "base.rerun.started", "check.failed", "check.started"])
 
-    def rerun_with(self, adopter: Adopter, *, judged: bool = True, starts: bool = True, raises: bool = False) -> tuple[list, list]:
+    def rerun_with(self, adopter: Adopter, *, judged: bool = True, starts: bool = True,
+                   raises_second: bool = False) -> tuple[list, list]:
         """Run the queue with the base re-run bent as asked; returns the results and the panel at each re-run entry."""
-        real_journal, real_run_one, real_checkout = queue.Runner.journal, queue.Runner.run_one, queue.Runner.checkout
+        real_journal, real_run_one = queue.Runner.journal, queue.Runner.run_one
         real_prerequisites = queue.Runner.base_prerequisites_pass
         seen: list = []
         rerunning = []
 
-        def journal(runner, kind, summary, subject=None):
+        def journal(runner, kind, summary, subject=None, **facts):
             if kind in ("base.rerun.started", "base.rerun.finished"):
                 seen.append((kind, copy.deepcopy(state_tool.read_state(adopter.state)["meta"]["checking"]["now"])))
             if kind == "base.rerun.started":
                 rerunning.append(True)
-            return real_journal(runner, kind, summary, subject)
+            return real_journal(runner, kind, summary, subject, **facts)
 
         def run_one(runner, check, checkout, context):
             return None if rerunning and not starts else real_run_one(runner, check, checkout, context)
 
+        asked: list[bool] = []
+
         def prerequisites(runner, *args):
+            # Bent to raise partway: the first check cannot be judged, and asking about the second raises.
+            asked.append(True)
+            if raises_second:
+                if len(asked) == 2:
+                    raise OSError("no room for the second check")
+                return False
             return real_prerequisites(runner, *args) if judged else False
 
-        def checkout(runner, commit, label, *args, **kwargs):
-            if raises and label == "base-rerun":
-                raise OSError("no room for the base checkout")
-            return real_checkout(runner, commit, label, *args, **kwargs)
-
         with mock.patch.object(queue.Runner, "journal", journal), mock.patch.object(queue.Runner, "run_one", run_one), \
-                mock.patch.object(queue.Runner, "base_prerequisites_pass", prerequisites), \
-                mock.patch.object(queue.Runner, "checkout", checkout):
+                mock.patch.object(queue.Runner, "base_prerequisites_pass", prerequisites):
             results = self.run_queue(adopter, "feature")
         return results, seen
 
@@ -3943,8 +4048,8 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.assertNotIn("baseRerun", at_verdict)
 
     def test_a_base_rerun_that_cannot_judge_or_start_the_check_says_so_and_leaves_the_failure_the_candidates(self) -> None:
-        for name, bent, words in (("unjudged", {"judged": False}, "implicit could not be judged there"),
-                                  ("unstarted", {"starts": False}, "implicit could not start there")):
+        for name, bent, result in (("unjudged", {"judged": False}, "not_judged"),
+                                   ("unstarted", {"starts": False}, "not_started")):
             with self.subTest(name):
                 self.fresh()
                 adopter = self.adopter(mode="implicit")
@@ -3952,19 +4057,22 @@ class CheckVisibilityTests(MergeQueueTestCase):
                 results, _ = self.rerun_with(adopter, **bent)
                 self.assertStopped(results, "check_failed")
                 [finished] = self.journal(adopter, "base.rerun.finished")
-                self.assertIn(words + ": the failure is the candidate's", finished["summary"])
-                self.assertNotIn("passed", finished["summary"])
+                self.assertEqual({key: finished["data"][key] for key in ("verdict", "results")},
+                                 {"verdict": "candidate_failed", "results": [{"check": "implicit", "result": result}]})
 
     def test_a_base_rerun_that_raises_partway_still_journals_its_end_and_the_error(self) -> None:
-        adopter = self.adopter(mode="implicit")
-        self.candidate(adopter, {"src/app.txt": "FAIL here\n"})
-        results, seen = self.rerun_with(adopter, raises=True)
+        adopter = self.visible_adopter([check_entry("one", "--fail-with", "test_one"),
+                                        check_entry("two", "--fail-with", "test_two")])
+        self.candidate(adopter)
+        results, seen = self.rerun_with(adopter, raises_second=True)
         last = results[-1].document()
         self.assertEqual(last["outcome"], "stopped", last)
-        self.assertIn("no room for the base checkout", last["stop"]["detail"])
+        self.assertIn("no room for the second check", last["stop"]["detail"])
         self.assertEqual([kind for kind, _ in seen], ["base.rerun.started", "base.rerun.finished"])
+        # The verdict keeps what the re-run found before it raised.
         [finished] = self.journal(adopter, "base.rerun.finished")
-        self.assertIn("ended without a verdict (OSError)", finished["summary"])
+        self.assertEqual({key: finished["data"][key] for key in ("verdict", "results")},
+                         {"verdict": "no_verdict", "results": [{"check": "one", "result": "not_judged"}]})
         self.assertNotIn("baseRerun", seen[1][1])
 
     def test_a_failure_with_no_check_to_rerun_on_the_base_journals_no_rerun(self) -> None:
@@ -3989,20 +4097,23 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.assertFalse(document["stop"]["queueStopped"])
         self.assertEqual(self.journal(adopter, "base.broken"), [])
         [retried] = self.journal(adopter, "check.retried")
+        [failed] = self.journal(adopter, "check.failed")
         self.assertEqual(retried["subject"], "feature")
-        self.assertIn("base re-run", retried["summary"])
-        self.assertIn("test_launcher_cancel", retried["summary"])
-        self.assertIn("FLAKE-9", retried["summary"])
+        # A retry on the base names the candidate's failure it follows from.
+        self.assertFacts(retried, "check.retried", {"check": "suite", "failing": ["test_launcher_cancel"],
+                                                    "flake": ["FLAKE-9"], "onBase": True}, because=[failed])
         [started] = self.journal(adopter, "base.rerun.started")
         [finished] = self.journal(adopter, "base.rerun.finished")
         self.assertLess(started["id"], retried["id"])
         self.assertLess(retried["id"], finished["id"])
-        self.assertIn("suite passed after a flake retry", finished["summary"])
         self.assertEqual(state_tool.read_state(adopter.state)["meta"]["checkHistory"]["checks"]["suite"]["flakes"], 1)
         # The record keeps the retry's run, the one the verdict stands on, not the flaky first one.
         rerun = next(check for check in adopter.item("feature")["checks"] if check["id"] == "suite")["baseRerun"]
         self.assertNotIn("failures", rerun)
-        self.assertIn(f"(log {rerun['log']})", finished["summary"])
+        self.assertFacts(finished, "base.rerun.finished", {
+            "base": {"ref": "main", "head": document["baseHead"]}, "seconds": finished["data"]["seconds"],
+            "verdict": "candidate_failed", "results": [{"check": "suite", "result": "passed", "retried": True,
+                                                         "log": rerun["log"]}]}, because=[started])
         self.assertNotIn("flaked on the base", (adopter.state / rerun["log"]).read_text(encoding="utf-8"))
 
     def test_a_declared_flake_failing_its_base_retry_too_breaks_the_base_naming_its_tests_and_log(self) -> None:
@@ -4020,7 +4131,12 @@ class CheckVisibilityTests(MergeQueueTestCase):
         words = f"suite (failing test_launcher_cancel; log {rerun['log']})"
         self.assertIn(words, document["stop"]["detail"])
         [broken] = self.journal(adopter, "base.broken")
-        self.assertIn(words, broken["summary"])
+        [finished] = self.journal(adopter, "base.rerun.finished")
+        self.assertFacts(broken, "base.broken", {"source": "queue", "reason": "base_broken",
+                                                 "detail": document["stop"]["detail"],
+                                                 "head": finished["data"]["base"]["head"]}, because=[finished])
+        self.assertEqual(finished["data"]["results"],
+                         [{"check": "suite", "result": "failed", "retried": True, "log": rerun["log"]}])
 
     def test_a_base_rerun_failure_keeps_its_log_and_names_its_tests_like_a_check_failure(self) -> None:
         adopter = self.visible_adopter([check_entry("suite", "--fail-with", "test_alpha", "test_beta")])
@@ -4036,12 +4152,13 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.assertIn("some other output", (adopter.state / rerun["log"]).read_text(encoding="utf-8"))
         [failed] = self.journal(adopter, "check.failed")
         [broken] = self.journal(adopter, "base.broken")
-        # Named as check.failed names the candidate's run: the check, then its failing tests and log.
-        self.assertIn(f"suite (failing test_alpha, test_beta; log {row['log']})", failed["summary"])
-        self.assertIn(f"suite (failing test_alpha, test_beta; log {rerun['log']})", broken["summary"])
+        # The failure names the candidate's run, and the verdict the re-run's, each by its own log.
+        self.assertEqual((failed["data"]["failing"], failed["data"]["log"]), (["test_alpha", "test_beta"], row["log"]))
+        self.assertEqual(broken["data"], {"source": "queue", "reason": "base_broken", "detail": document["stop"]["detail"],
+                                          "head": document["baseHead"]})
         self.assertIn(rerun["log"], document["stop"]["detail"])
         [finished] = self.journal(adopter, "base.rerun.finished")
-        self.assertIn(f"suite also fails (failing test_alpha, test_beta; log {rerun['log']})", finished["summary"])
+        self.assertEqual(finished["data"]["results"], [{"check": "suite", "result": "failed", "log": rerun["log"]}])
         # No flake is declared, so nothing is retried.
         self.assertEqual(self.journal(adopter, "check.retried"), [])
 
@@ -4076,9 +4193,11 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.assertEqual(self.journal(adopter, "base.broken"), [])
         self.assertEqual(len(self.journal(adopter, "check.retried")), 1)
         [finished] = self.journal(adopter, "base.rerun.finished")
-        self.assertIn("suite could not start there on its flake retry: the failure is the candidate's", finished["summary"])
         # The first run, the only one there is, stays on the record.
         rerun = next(check for check in adopter.item("feature")["checks"] if check["id"] == "suite")["baseRerun"]
+        self.assertEqual({key: finished["data"][key] for key in ("verdict", "results")},
+                         {"verdict": "candidate_failed",
+                          "results": [{"check": "suite", "result": "not_started", "retried": True, "log": rerun["log"]}]})
         self.assertEqual(rerun["failures"], ["test_launcher_cancel"])
         self.assertIn("flaked on the base", (adopter.state / rerun["log"]).read_text(encoding="utf-8"))
 
@@ -4092,7 +4211,7 @@ class CheckVisibilityTests(MergeQueueTestCase):
         self.assertTrue((adopter.state / row["baseRerun"]["log"]).is_file())
         self.assertEqual(self.journal(adopter, "check.retried"), [])
         [finished] = self.journal(adopter, "base.rerun.finished")
-        self.assertIn(row["baseRerun"]["log"], finished["summary"])
+        self.assertEqual(finished["data"]["results"], [{"check": "suite", "result": "passed", "log": row["baseRerun"]["log"]}])
 
     def test_a_temporary_flake_from_an_old_base_expires_when_the_binding_moves(self) -> None:
         adopter = self.visible_adopter([check_entry("suite", "--flaky-once", "test_flaky")])
@@ -4116,8 +4235,7 @@ class CheckVisibilityTests(MergeQueueTestCase):
         results = self.run_queue(adopter, "next-feature")
         self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document())
         [retried] = self.journal(adopter, "check.retried")
-        self.assertIn("DURABLE", retried["summary"])
-        self.assertNotIn("TEMP", retried["summary"])
+        self.assertEqual(retried["data"]["flake"], ["DURABLE"])
 
     def test_a_failure_matching_only_a_declared_flake_is_retried_once_and_journaled(self) -> None:
         flakes = [{"check": "suite", "tests": ["test_launcher_.*"], "ref": "FLAKE-7"}]
@@ -4126,8 +4244,14 @@ class CheckVisibilityTests(MergeQueueTestCase):
         results = self.run_queue(adopter, "feature")
         self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
         [retried] = self.journal(adopter, "check.retried")
-        self.assertIn("FLAKE-7", retried["summary"])
-        self.assertIn("test_launcher_cancel", retried["summary"])
+        [started] = self.journal(adopter, "check.started")
+        [finished] = self.journal(adopter, "check.finished")
+        [merged] = self.journal(adopter, "candidate.merged")
+        # The failure retried is never journaled, so the retry names the run it belongs to.
+        self.assertFacts(retried, "check.retried", {"check": "suite", "failing": ["test_launcher_cancel"],
+                                                    "flake": ["FLAKE-7"], "onBase": False}, because=[started])
+        self.assertFacts(finished, "check.finished", {}, because=[started])
+        self.assertFacts(merged, "candidate.merged", {"head": adopter.item("feature")["syncedHead"]})
         entry = self.check_entry_of(results, "suite")
         self.assertEqual(entry["state"], "passed")
         self.assertEqual(entry["retried"]["flake"], "FLAKE-7")
@@ -4353,14 +4477,17 @@ class StoppedBaseRerunTests(MergeQueueTestCase):
     def journal(self, adopter: Adopter, kind: str) -> list[dict]:
         return [entry for entry in state_tool.read_journal(adopter.state) if entry["kind"] == kind]
 
-    def assert_put_back(self, adopter: Adopter, document: dict) -> None:
+    def assert_put_back(self, adopter: Adopter, document: dict, why: str) -> None:
         """The stop said nothing of the base: no verdict on the record, no broken base, the candidate queued again."""
         self.assertEqual(document["stop"]["reason"], "base_rerun_stopped", document["stop"])
         self.assertFalse(document["stop"]["queueStopped"])
         self.assertIn("queued again", document["stop"]["detail"])
         [stopped] = self.journal(adopter, "base.rerun.stopped")
+        [started] = self.journal(adopter, "base.rerun.started")
         self.assertEqual(stopped["subject"], "feature")
-        self.assertIn(adopter.item("feature")["head"], stopped["summary"])
+        self.assertFacts(stopped, "base.rerun.stopped", {
+            "base": {"ref": "main", "head": adopter.tip("main")}, "seconds": stopped["data"]["seconds"], "why": why,
+            "head": adopter.item("feature")["head"]}, because=[started])
         self.assertEqual(self.journal(adopter, "base.broken"), [])
         self.assertEqual(self.journal(adopter, "candidate.stopped"), [])
         self.assertEqual(self.journal(adopter, "base.rerun.finished"), [])
@@ -4377,7 +4504,7 @@ class StoppedBaseRerunTests(MergeQueueTestCase):
         self.assertEqual(adopter.item("feature")["stage"], "stopped")
         self.assertEqual(len(self.journal(adopter, "base.rerun.stopped")), 1)
         [finished] = self.journal(adopter, "base.rerun.finished")
-        self.assertIn("the failure is the candidate's", finished["summary"])
+        self.assertEqual(finished["data"]["verdict"], "candidate_failed")
         self.assertEqual(self.journal(adopter, "base.broken"), [])
         [entry] = state_tool.read_state(adopter.state)["meta"]["baseReruns"]
         self.assertEqual(entry["result"], "passed")
@@ -4404,9 +4531,55 @@ class StoppedBaseRerunTests(MergeQueueTestCase):
         with self.stopping(adopter) as signalled:
             results = self.run_queue(adopter, "feature")
         self.assertEqual(len(signalled), 1)
-        self.assert_put_back(adopter, results[-1].document())
+        [log] = [f"logs/{path.name}" for path in (adopter.state / "logs").glob("*-stop.base-rerun.log")]
+        self.assert_put_back(adopter, results[-1].document(), f"stop ended by signal {int(signal.SIGTERM)} (log {log})")
         self.assertEqual(adopter.item("feature")["stage"], "queued")
+        self.assert_same_heads_read_from_fields(adopter)
         self.assert_checked_again(adopter, self.serve(adopter))
+
+    def assert_same_heads_read_from_fields(self, adopter: Adopter) -> None:
+        """Whether a stop is the second at the same heads is read from the entry's heads, never from its words.
+
+        The journal is rewritten without its sentences and with other text in every prose field, then put back.
+        """
+        path = adopter.state / state_tool.JOURNAL_FILE
+        original = path.read_bytes()
+        [started] = self.journal(adopter, "base.rerun.started")
+        base_head = adopter.tip("main")
+
+        def again(change: Callable[[dict], None]) -> bool:
+            lines = []
+            for entry in state_tool.read_journal(adopter.state):
+                if entry["kind"] == "base.rerun.stopped":
+                    change(entry)
+                lines.append(json.dumps(entry, sort_keys=True) + "\n")
+            path.write_text("".join(lines), encoding="utf-8")
+            runner = adopter.runner()
+            runner.rerun_started["feature"] = started["id"]
+            try:
+                return not runner.rerun_stopped("feature", base_head, time.monotonic(), "stopped once more").requeued
+            finally:
+                path.write_bytes(original)
+
+        def facts_only(entry: dict) -> None:
+            entry.pop("summary")
+            entry["data"]["why"] = "other text"
+
+        def sentence_only(entry: dict) -> None:
+            entry.pop("data")
+
+        def other_head(entry: dict) -> None:
+            facts_only(entry)
+            entry["data"]["head"] = "0" * 40
+
+        def other_base(entry: dict) -> None:
+            facts_only(entry)
+            entry["data"]["base"]["head"] = "0" * 40
+
+        self.assertTrue(again(facts_only))
+        self.assertTrue(again(sentence_only))
+        self.assertFalse(again(other_head))
+        self.assertFalse(again(other_base))
 
     def test_a_rerun_whose_check_traps_the_signal_and_exits_as_stopped_puts_the_candidate_back(self) -> None:
         for how, signum in (("term143", signal.SIGTERM), ("int130", signal.SIGINT)):
@@ -4436,7 +4609,7 @@ class StoppedBaseRerunTests(MergeQueueTestCase):
         with mock.patch.object(queue.Runner, "run_one", run_one), self.assertRaises(KeyboardInterrupt):
             self.serve(adopter)
         [stopped] = self.journal(adopter, "base.rerun.stopped")
-        self.assertIn("interrupted", stopped["summary"])
+        self.assertEqual(stopped["data"]["why"], "the runner was interrupted")
         self.assertEqual(adopter.item("feature")["stage"], "queued")
         self.assertEqual(self.journal(adopter, "base.broken"), [])
         self.assertEqual(self.journal(adopter, "candidate.stopped"), [])
@@ -4487,7 +4660,7 @@ class StoppedBaseRerunTests(MergeQueueTestCase):
         self.assertEqual(adopter.item("feature")["stage"], "stopped")
         self.assertEqual(len(self.journal(adopter, "base.rerun.stopped")), 2)
         [stopped] = self.journal(adopter, "candidate.stopped")
-        self.assertTrue(stopped["summary"].startswith("base_rerun_stopped: "), stopped["summary"])
+        self.assertFacts(stopped, "candidate.stopped", {"reason": "base_rerun_stopped", "detail": last["stop"]["detail"]})
         self.assertEqual(self.journal(adopter, "base.broken"), [])
         self.assertFalse(state_tool.base_awaits_repair(state_tool.read_journal(adopter.state)))
         # The queue is free: serve takes the next candidate and lands it.
@@ -4538,13 +4711,15 @@ class BaseRepairTests(MergeQueueTestCase):
 
     def stopped_as(self, adopter: Adopter, subject: str) -> str:
         """The reason the candidate's latest stop names."""
-        return self.journal(adopter, "candidate.stopped", subject)[-1]["summary"].split(":")[0]
+        return self.journal(adopter, "candidate.stopped", subject)[-1]["data"]["reason"]
 
-    def break_with(self, adopter: Adopter, *subjects: str) -> None:
-        """Each candidate, run on the broken base, stops as base_broken."""
+    def break_with(self, adopter: Adopter, *subjects: str) -> dict[str, dict]:
+        """Each candidate, run on the broken base, stops as base_broken; returns each one's result."""
+        documents = {}
         for subject in subjects:
             self.candidate(adopter, {f"src/{subject}.txt": f"{subject}\n"}, name=subject)
-            self.assertStopped(self.run_queue(adopter, subject), "base_broken")
+            documents[subject] = self.assertStopped(self.run_queue(adopter, subject), "base_broken")
+        return documents
 
     def test_serve_takes_the_named_repair_alone_and_its_merge_puts_back_what_the_break_stopped(self) -> None:
         adopter = self.adopter()
@@ -4556,7 +4731,7 @@ class BaseRepairTests(MergeQueueTestCase):
         self.break_with(adopter, "earlier")
         # Two stopped by the break at the base head the repair answers.
         broken_head = adopter.advance_base({"notes/more.txt": "more\n"})
-        self.break_with(adopter, "first", "second")
+        broke = self.break_with(adopter, "first", "second")
         # A queued candidate ahead of the repair, which would batch with it.
         self.candidate(adopter, {"src/ahead.txt": "ahead\n"}, name="ahead")
         self.candidate(adopter, {"src/app.txt": "app fixed\n"}, name="repair")
@@ -4568,7 +4743,19 @@ class BaseRepairTests(MergeQueueTestCase):
         started = [(entry["subject"], entry["id"]) for entry in later if entry["kind"] == "check.started"]
         [repaired] = self.journal(adopter, "base.repaired")
         self.assertEqual(repaired["subject"], "repair")
-        self.assertIn("repair", repaired["summary"])
+        # The repair's merge answers every break standing when it landed, oldest first: one setback, closed there.
+        run("fetch", "--quiet", "origin", cwd=adopter.lane)
+        tree = run("rev-parse", f"{adopter.item('repair')['syncedHead']}^{{tree}}", cwd=adopter.lane)
+        merged = next(commit for commit in run("rev-list", "--first-parent", "origin/main", cwd=adopter.lane).split()
+                      if run("rev-parse", f"{commit}^{{tree}}", cwd=adopter.lane) == tree)
+        standing = [entry for entry in self.journal(adopter, "base.broken") if entry["id"] < repaired["id"]]
+        self.assertEqual([entry["subject"] for entry in standing], ["earlier", "first", "second"])
+        self.assertFacts(repaired, "base.repaired", {"source": "queue", "head": merged, "repair": "repair"},
+                         answers=standing)
+        threads = narrator.narrate(state_tool.read_journal(adopter.state))["threads"]
+        broken = {entry["id"] for entry in standing}
+        self.assertEqual([(thread["state"], thread["closing"]) for thread in threads if thread["opening"] in broken],
+                         [("closed", repaired["id"])])
         # The repair ran first and alone: nothing else started before its merge repaired the base.
         self.assertEqual(started[0][0], "repair")
         self.assertTrue(all(at > repaired["id"] for subject, at in started if subject != "repair"), started)
@@ -4585,8 +4772,24 @@ class BaseRepairTests(MergeQueueTestCase):
         self.assertNotIn("refused", [result.document()["outcome"] for result in served])
         # The break's stop said it may be cross-talk rather than the base itself.
         [stop] = self.journal(adopter, "candidate.stopped", "first")
-        self.assertIn(broken_head, stop["summary"])
-        self.assertIn("could also be cross-talk with another run on the same machine", stop["summary"])
+        [broken] = self.journal(adopter, "base.broken", "first")
+        [finished] = self.journal(adopter, "base.rerun.finished", "first")
+        detail = broke["first"]["stop"]["detail"]
+        self.assertIn(broken_head, detail)
+        self.assertIn("could also be cross-talk with another run on the same machine", detail)
+        self.assertFacts(stop, "candidate.stopped", {"reason": "base_broken", "detail": detail}, because=[broken])
+        self.assertFacts(broken, "base.broken", {"source": "queue", "reason": "base_broken", "detail": detail,
+                                                 "head": broken_head}, because=[finished])
+        # The second break found the first standing at the same head and names it beside its own verdict, so both
+        # stops are one setback; the earlier break, at another head, is named by neither.
+        [second_stop] = self.journal(adopter, "candidate.stopped", "second")
+        [second] = self.journal(adopter, "base.broken", "second")
+        [second_finished] = self.journal(adopter, "base.rerun.finished", "second")
+        second_detail = broke["second"]["stop"]["detail"]
+        self.assertFacts(second_stop, "candidate.stopped", {"reason": "base_broken", "detail": second_detail},
+                         because=[second])
+        self.assertFacts(second, "base.broken", {"source": "queue", "reason": "base_broken", "detail": second_detail,
+                                                 "head": broken_head}, because=[second_finished, broken])
 
     def test_naming_a_repair_is_refused_on_a_healthy_base_for_a_second_repair_and_for_a_row_not_queued(self) -> None:
         adopter = self.adopter()
@@ -4596,7 +4799,8 @@ class BaseRepairTests(MergeQueueTestCase):
             state_tool.name_repair(adopter.state, "a")
         self.assertEqual(healthy.exception.code, "repair_invalid")
         self.assertIn("not broken", str(healthy.exception))
-        state_tool.append_journal(adopter.state, kind="base.broken", summary="base_broken: lint also fails on main")
+        state_tool.append_journal(adopter.state, kind="base.broken",
+                                  data={"source": "lead", "detail": "lint also fails on main"})
         state_tool.name_repair(adopter.state, "a")
         with self.assertRaises(state_tool.StateError) as second:
             state_tool.name_repair(adopter.state, "b")
@@ -4618,16 +4822,28 @@ class BaseRepairTests(MergeQueueTestCase):
         [refused] = adopter.runner().run_command("merge", ["b"])
         self.assertEqual((refused.document()["outcome"], refused.document()["stop"]["reason"]), ("refused", "not_synced"))
         self.assertNotIn("named repair", refused.document()["stop"]["detail"])
+        # It left the row queued, so its stop says the piece is still in the queue.
+        self.assertEqual(adopter.item("b")["stage"], "queued")
+        self.assertFacts(journaled(adopter, "candidate.stopped", "b")[-1], "candidate.stopped",
+                         {"reason": "not_synced", "detail": refused.document()["stop"]["detail"], "requeued": True})
         # The mark is the repair command's alone: no patch sets it.
         current = state_tool.read_state(adopter.state)
         with self.assertRaises(state_tool.StateError):
             state_tool.patch(adopter.state, writer="lead", version=current["version"], selector="queue[subject=a]",
                              changes={"repair": {"namedAt": state_tool.now()}})
         # A base.repaired journalled by hand clears it.
-        state_tool.append_journal(adopter.state, kind="base.repaired", summary="fixed by hand")
+        state_tool.append_journal(adopter.state, kind="base.repaired",
+                                  data={"source": "lead", "head": adopter.tip("main"), "why": "fixed by hand"})
         self.assertEqual([item["subject"] for item in state_tool.read_state(adopter.state)["queue"] if "repair" in item], [])
 
     def test_only_a_base_broken_break_names_the_head_a_repair_puts_back_at(self) -> None:
+        for facts in (True, False):
+            with self.subTest(facts=facts):
+                self.fresh()
+                self.only_a_base_broken_break_names_the_head(facts)
+
+    def only_a_base_broken_break_names_the_head(self, facts: bool) -> None:
+        """The break and the stop as facts, and as sentences alone, the shape the record's repair still reads."""
         adopter = self.adopter()
         adopter.enqueue("c", "c" * 40)
         current = state_tool.read_state(adopter.state)
@@ -4635,18 +4851,33 @@ class BaseRepairTests(MergeQueueTestCase):
                          changes={"stage": "stopped"})
         broke, other = "a" * 40, "e" * 40
         stopped = f"base_broken: lint also fails on main at {broke}"
-        state_tool.append_journal(adopter.state, kind="base.broken", summary=stopped, subject="c")
-        state_tool.append_journal(adopter.state, kind="candidate.stopped", summary=stopped, subject="c")
-        # A later break of another kind names another commit; it does not move the head the repair answers.
-        state_tool.append_journal(adopter.state, kind="base.broken",
-                                  summary=f"merged_unverified: main at {other} is not the checked tree on top of {broke}")
-        state_tool.append_journal(adopter.state, kind="base.repaired", summary="fixed by hand")
+        if facts:
+            detail = f"lint also fails on main at {broke}"
+            break_id = state_tool.append_journal(adopter.state, kind="base.broken", subject="c", data={
+                "source": "queue", "reason": "base_broken", "detail": detail, "head": broke})["id"]
+            state_tool.append_journal(adopter.state, kind="candidate.stopped", subject="c", because=[break_id],
+                                      data={"reason": "base_broken", "detail": detail})
+            # A later break of another kind names another commit; it does not move the head the repair answers.
+            state_tool.append_journal(adopter.state, kind="base.broken", data={
+                "source": "queue", "reason": "merged_unverified", "detail": f"main at {other}"})
+        else:
+            sentence_lines(adopter, ("base.broken", stopped, "c"), ("candidate.stopped", stopped, "c"), (
+                "base.broken", f"merged_unverified: main at {other} is not the checked tree on top of {broke}", None))
+        state_tool.append_journal(adopter.state, kind="base.repaired", data={"source": "lead", "head": other})
         self.assertEqual(adopter.item("c")["stage"], "queued")
+        if facts:
+            # A break at the same head after the repair finds none standing: the repaired one closed with it.
+            runner = adopter.runner()
+            self.assertEqual(runner.standing_breaks(broke), [])
+            again = state_tool.append_journal(adopter.state, kind="base.broken", subject="c", data={
+                "source": "queue", "reason": "base_broken", "detail": detail, "head": broke})["id"]
+            self.assertEqual(runner.standing_breaks(broke), [again])
 
     def test_the_repair_command_names_and_withdraws_on_the_command_line(self) -> None:
         adopter = self.adopter()
         adopter.enqueue("a", "a" * 40)
-        state_tool.append_journal(adopter.state, kind="base.broken", summary="base_broken: lint also fails on main")
+        state_tool.append_journal(adopter.state, kind="base.broken",
+                                  data={"source": "lead", "detail": "lint also fails on main"})
         tool = [PY, "-B", str(SCRIPTS / "delivery_state.py"), "--dir", str(adopter.state), "repair", "--subject", "a"]
         named = subprocess.run(tool, capture_output=True, text=True, check=False)
         self.assertEqual(named.returncode, 0, named.stdout + named.stderr)
@@ -4665,7 +4896,7 @@ class BaseRepairTests(MergeQueueTestCase):
         last = served[-1].document()
         self.assertEqual((last["candidate"], last["stop"]["reason"]), ("repair", "check_failed"), last["stop"])
         self.assertIn("repair is the base's named repair, so the base still awaits repair", last["stop"]["detail"])
-        self.assertIn("named repair", self.journal(adopter, "candidate.stopped", "repair")[-1]["summary"])
+        self.assertEqual(self.journal(adopter, "candidate.stopped", "repair")[-1]["data"]["detail"], last["stop"]["detail"])
         self.assertTrue(self.awaits_repair(adopter))
         self.assertEqual(self.journal(adopter, "base.repaired"), [])
         self.assertEqual(adopter.item("first")["stage"], "stopped")
@@ -4693,7 +4924,8 @@ class BaseRepairTests(MergeQueueTestCase):
         lane = next(row for row in state_tool.read_state(adopter.state)["lanes"] if row["id"] == "lane-1")
         self.assertTrue(lane["focus"].startswith(("first stopped:", "second stopped:")), lane)
         # The lead says so.
-        state_tool.append_journal(adopter.state, kind="base.repaired", summary="app fixed by hand")
+        state_tool.append_journal(adopter.state, kind="base.repaired",
+                                  data={"source": "lead", "head": adopter.tip("main"), "why": "app fixed by hand"})
         for subject in ("first", "second"):
             self.assertEqual((adopter.item(subject)["stage"], adopter.item(subject)["checks"]), ("queued", []), subject)
         lane = next(row for row in state_tool.read_state(adopter.state)["lanes"] if row["id"] == "lane-1")
@@ -4776,8 +5008,8 @@ class CarriedBaseMoveTests(MergeQueueTestCase):
         self.assertEqual(self.runs(adopter), {"lib": 1, "app": 1})
         [carried] = self.carried(adopter)
         self.assertEqual(carried["subject"], "feature")
-        self.assertIn("lib, app", carried["summary"])
-        self.assertIn(moved, carried["summary"])
+        self.assertFacts(carried, "check.carried", {"checks": ["lib", "app"], "ranAgain": [],
+                                                    "base": {"ref": "main", "head": moved}, "commits": [moved]})
         # The merged head holds the new base, as its first parent.
         run("fetch", "--quiet", "origin", cwd=adopter.lane)
         self.assertEqual(run("rev-parse", "origin/main^1", cwd=adopter.lane), moved)
@@ -4788,12 +5020,13 @@ class CarriedBaseMoveTests(MergeQueueTestCase):
     def test_a_move_in_a_file_one_complete_entry_lists_runs_that_check_and_the_always_run_ones_again(self) -> None:
         adopter = self.carrying([self.LIB, self.APP], always=True)
         self.candidate_with(adopter, ["lib", "app"])
-        results, _ = self.moved(adopter, self.base_files(adopter, {"src/lib.txt": "lib two\n"}))
+        results, [moved] = self.moved(adopter, self.base_files(adopter, {"src/lib.txt": "lib two\n"}))
         self.merged(results)
         self.assertEqual(self.runs(adopter), {"lib": 2, "app": 1, "always": 2})
         [carried] = self.carried(adopter)
-        self.assertIn("app", carried["summary"])
-        self.assertNotIn("lib", carried["summary"].split(":")[0])
+        self.assertFacts(carried, "check.carried", {"checks": ["app"], "ranAgain": carried["data"]["ranAgain"],
+                                                    "base": {"ref": "main", "head": moved}, "commits": [moved]})
+        self.assertEqual(sorted(carried["data"]["ranAgain"]), ["always", "lib"])
 
     def test_a_check_named_only_by_a_plain_entry_runs_again_on_any_move(self) -> None:
         plain = {"paths": ["tests/test_loose.txt"], "checks": ["loose"]}
@@ -4837,7 +5070,7 @@ class CarriedBaseMoveTests(MergeQueueTestCase):
         self.merged(results)
         self.assertEqual(self.runs(adopter), {"lib": 1, "loose": 2, "always": 2})
         [carried] = self.carried(adopter)
-        self.assertIn("lib", carried["summary"])
+        self.assertEqual((carried["data"]["checks"], sorted(carried["data"]["ranAgain"])), (["lib"], ["always", "loose"]))
 
     def test_a_move_wholly_inside_unread_carries_every_check_and_one_file_outside_it_does_not(self) -> None:
         adopter = self.carrying([self.LIB], unread=["docs/**"], always=True)
@@ -4846,7 +5079,7 @@ class CarriedBaseMoveTests(MergeQueueTestCase):
         self.merged(results)
         self.assertEqual(self.runs(adopter), {"lib": 1, "loose": 1, "always": 1})
         [carried] = self.carried(adopter)
-        self.assertIn("always", carried["summary"])
+        self.assertEqual((sorted(carried["data"]["checks"]), carried["data"]["ranAgain"]), (["always", "lib", "loose"], []))
         self.fresh()
         adopter = self.carrying([self.LIB], unread=["docs/**"], always=True)
         self.candidate_with(adopter, ["lib", "loose"])
@@ -5394,7 +5627,8 @@ class ServeTests(MergeQueueTestCase):
         self.assertEqual(results, [])
         self.assertEqual(adopter.item("later")["stage"], "queued")
         adopter.advance_base({"src/app.txt": "app one\n"})
-        state_tool.append_journal(adopter.state, kind="base.repaired", summary="The base passes again")
+        state_tool.append_journal(adopter.state, kind="base.repaired",
+                                  data={"source": "lead", "head": adopter.tip("main"), "why": "The base passes again"})
         self.serve(adopter)
         self.assertEqual(adopter.item("later")["stage"], "merged")
 
@@ -5433,7 +5667,7 @@ class ServeTests(MergeQueueTestCase):
         return lambda: away.rename(git)
 
     def blockers(self, adopter: Adopter) -> list[dict]:
-        return [entry for entry in state_tool.read_journal(adopter.state) if entry["kind"] == "blocker.recorded"]
+        return [entry for entry in state_tool.read_journal(adopter.state) if entry["kind"] == "serving.held"]
 
     def test_a_checkout_removed_between_turns_holds_serve_and_stops_nothing(self) -> None:
         adopter = self.adopter()
@@ -5453,7 +5687,12 @@ class ServeTests(MergeQueueTestCase):
         self.assertEqual(results, [])
         hold = state_tool.read_state(adopter.state)["meta"]["hold"]
         self.assertIn("top level of a checkout", hold["reason"])
-        self.assertEqual(len(self.blockers(adopter)), 1)
+        [blocker] = self.blockers(adopter)
+        self.assertFacts(blocker, "serving.held",
+                         {"why": f"Serving is held: {hold['reason']}. Repair it, then clear meta.hold."})
+        self.assertIsNone(blocker["subject"])
+        # The lead's wait wakes on the hold, as it did when the hold was journaled as a blocker.
+        self.assertIn("serving.held", state_tool.WAIT_KINDS)
         self.assertEqual([adopter.item(name)["stage"] for name in ("first", "second")], ["queued", "queued"])
         self.assertNotIn("candidate.stopped", [entry["kind"] for entry in state_tool.read_journal(adopter.state)])
         self.assertTrue(state_tool.show(adopter.state)["status"]["text"].startswith("Serving is paused: "))
@@ -5602,7 +5841,9 @@ class ServeTests(MergeQueueTestCase):
         self.assertEqual(adopter.item("feature")["stage"], "queued")
         self.assertIsNotNone(state_tool.read_state(adopter.state)["meta"]["hold"])
         [blocker] = self.blockers(adopter)
-        self.assertIn("Put back to queued, to be taken again: feature.", blocker["summary"])
+        hold = state_tool.read_state(adopter.state)["meta"]["hold"]
+        self.assertFacts(blocker, "serving.held", {"why": f"Serving is held: {hold['reason']}. Repair it, then clear "
+                                                               "meta.hold. Put back to queued, to be taken again: feature."})
 
     def test_a_candidate_the_lead_moved_during_the_turn_is_not_put_back(self) -> None:
         adopter = self.adopter()
@@ -5661,7 +5902,10 @@ class ServeTests(MergeQueueTestCase):
         self.assertEqual(adopter.item("feature")["stage"], "stopped")
         self.assertIsNotNone(state_tool.read_state(adopter.state)["meta"]["hold"])
         [blocker] = self.blockers(adopter)
-        self.assertIn("feature", blocker["summary"])
+        hold = state_tool.read_state(adopter.state)["meta"]["hold"]
+        self.assertFacts(blocker, "serving.held", {"why": f"Serving is held: {hold['reason']}. Repair it, then clear "
+                                                               "meta.hold. Stopped while it broke, after their merge began, so "
+                                                               "check the forge before handing them off again: feature."})
 
     def test_a_check_that_meets_another_runner_holds_nothing_and_stops_nothing(self) -> None:
         adopter = self.adopter()
@@ -6212,7 +6456,7 @@ class InterruptedRunTests(MergeQueueTestCase):
     def interruptions(self, adopter: Adopter) -> list[dict]:
         return [
             entry for entry in state_tool.read_journal(adopter.state)
-            if entry["kind"] == "candidate.stopped" and "interrupted" in entry["summary"]
+            if entry["kind"] == "candidate.stopped" and entry["data"]["reason"] == "interrupted"
         ]
 
     def test_the_next_run_clears_what_a_killed_run_left_before_anything_else(self) -> None:
@@ -6237,6 +6481,10 @@ class InterruptedRunTests(MergeQueueTestCase):
         self.assertEqual(item["stage"], "stopped")
         [entry] = self.interruptions(adopter)
         self.assertEqual(entry["subject"], "feature")
+        # An interrupted stop has its own code and the stage it was at, and names no cause.
+        self.assertFacts(entry, "candidate.stopped", {
+            "reason": "interrupted", "stage": "checking",
+            "detail": "interrupted: a run ended while feature was checking; its running checks read pending again"})
 
     def seed(self, adopter: Adopter, stage: str, checks: list[dict], panel: str | None) -> None:
         current = state_tool.read_state(adopter.state)
@@ -6255,12 +6503,14 @@ class InterruptedRunTests(MergeQueueTestCase):
 
     def test_an_item_killed_mid_step_stops_whatever_the_step(self) -> None:
         passed = [{"id": "a", "state": "passed"}]
-        for name, stage, panel, summary in (
+        running = "interrupted: a run ended while feature was {}; its running checks read pending again"
+        for name, stage, panel, detail in (
             # merge writes no running check and no panel; only the stage shows it.
-            ("killed while merging", "merging", None, "check the forge"),
-            ("killed while syncing", "syncing", None, "interrupted"),
+            ("killed while merging", "merging", None,
+             running.format("merging") + "; check the forge, since the merge may have landed"),
+            ("killed while syncing", "syncing", None, running.format("syncing")),
             # The panel alone names it: the run died between steps while working on it.
-            ("named only by the panel", "checked", "feature", "interrupted"),
+            ("named only by the panel", "checked", "feature", running.format("checked")),
         ):
             with self.subTest(name):
                 self.fresh()
@@ -6272,7 +6522,7 @@ class InterruptedRunTests(MergeQueueTestCase):
                 self.assertEqual(adopter.item("feature")["checks"], passed)
                 self.assertIsNone(state_tool.read_state(adopter.state)["meta"]["checking"]["now"])
                 [entry] = self.interruptions(adopter)
-                self.assertIn(summary, entry["summary"])
+                self.assertFacts(entry, "candidate.stopped", {"reason": "interrupted", "detail": detail, "stage": stage})
 
     def test_the_interruption_is_journalled_before_the_state_is_cleared(self) -> None:
         # A second failure between the two repeats the entry at the next run; it never loses it.
@@ -6365,9 +6615,8 @@ class InterruptedRunTests(MergeQueueTestCase):
         hang.unlink()
         results = self.run_queue(adopter, "feature")
         [entry] = self.interruptions(adopter)
-        kinds = [(item["kind"], item["summary"]) for item in state_tool.read_journal(adopter.state)]
-        self.assertLess(kinds.index((entry["kind"], entry["summary"])),
-                        max(index for index, (kind, _) in enumerate(kinds) if kind == "check.started"))
+        starts = [item["id"] for item in state_tool.read_journal(adopter.state) if item["kind"] == "check.started"]
+        self.assertLess(entry["id"], max(starts))
         final = adopter.item("feature")
         self.assertNotIn("running", [check["state"] for check in final["checks"]])
         self.assertIsNone(state_tool.read_state(adopter.state)["meta"]["checking"]["now"])
@@ -6746,7 +6995,7 @@ class ReusedCheckTests(MergeQueueTestCase):
         [row] = [check for check in adopter.item("feature")["checks"] if check["id"] == "full"]
         self.assertEqual(row, {"id": "full", "state": "reused", "reusedFrom": head})
         [journaled] = [entry for entry in state_tool.read_journal(adopter.state) if entry["kind"] == "check.reused"]
-        self.assertIn(f"reused from the lane's run at {head}", journaled["summary"])
+        self.assertFacts(journaled, "check.reused", {"check": "full", "head": head, "from": "feature"})
         # The merge is still pinned to the synced head, whose tree is the one the lane checked.
         run("fetch", "--quiet", "origin", cwd=adopter.lane)
         self.assertEqual(run("rev-parse", f"{adopter.tip('main')}^{{tree}}", cwd=adopter.lane),
@@ -7401,15 +7650,18 @@ class CandidateStepTests(MergeQueueTestCase):
     def script(self, code: str) -> list[str]:
         return [PY, "-c", code, "{candidate}"]
 
-    def stop(self, adopter: Adopter, reason: str = "candidate_unresolved") -> tuple[str, str]:
-        """The stop's detail and the journal's candidate.stopped summary."""
+    def stop(self, adopter: Adopter, reason: str = "candidate_unresolved") -> tuple[str, dict]:
+        """The stop's detail and the journal's candidate.stopped entry, which carries the same code and detail."""
         self.candidate(adopter)
         document = self.assertStopped(self.run_queue(adopter, "feature"), reason)
         Draft202012Validator(schema("merge-queue-result")).validate(document)
-        summary = next(entry["summary"] for entry in reversed(state_tool.read_journal(adopter.state))
-                       if entry["kind"] == "candidate.stopped")
-        self.assertIn(document["stop"]["detail"], summary)
-        return document["stop"]["detail"], summary
+        entry = next(entry for entry in reversed(state_tool.read_journal(adopter.state))
+                     if entry["kind"] == "candidate.stopped")
+        # A refusal leaves the row where it stood, in the queue, and its stop says so.
+        self.assertFacts(entry, "candidate.stopped", {"reason": reason, "detail": document["stop"]["detail"],
+                                                      **({"requeued": True} if reason in queue.REFUSALS else {})})
+        self.assertEqual(adopter.item("feature")["stage"], "queued" if reason in queue.REFUSALS else "stopped")
+        return document["stop"]["detail"], entry
 
     def test_a_missing_script_stops_with_the_interpreters_own_words(self) -> None:
         detail, _ = self.stop(self.adopter({"candidate": [PY, "tools/missing.py", "{candidate}"]}))
@@ -7478,8 +7730,8 @@ class CandidateStepTests(MergeQueueTestCase):
 
     def held(self, adopter: Adopter) -> str:
         hold = state_tool.read_state(adopter.state)["meta"]["hold"]
-        blockers = [entry for entry in state_tool.read_journal(adopter.state) if entry["kind"] == "blocker.recorded"]
-        self.assertEqual(len(blockers), 1)
+        [held] = journaled(adopter, "serving.held")
+        self.assertEqual(held["data"], {"why": f"Serving is held: {hold['reason']}. Repair it, then clear meta.hold."})
         self.assertNotIn("candidate.stopped", [entry["kind"] for entry in state_tool.read_journal(adopter.state)])
         return hold["reason"]
 
@@ -7673,11 +7925,12 @@ class ProviderRefusalTests(MergeQueueTestCase):
         mine = [entry for entry in self.kinds(adopter) if entry.get("subject") == subject]
         refusals = [entry for entry in mine if entry["kind"] == "selection.refused"]
         self.assertEqual(len(refusals), 1, mine)
-        self.assertIn(subject, refusals[0]["summary"])
-        self.assertIn("over the budget: unit (400s)", refusals[0]["summary"])
         self.assertNotIn("candidate.merged", [entry["kind"] for entry in mine])
         stops = [entry for entry in mine if entry["kind"] == "candidate.stopped"]
-        self.assertTrue(stops and stops[-1]["summary"].startswith("provider_refused: "), mine)
+        detail = stops[-1]["data"]["detail"]
+        self.assertIn("over the budget: unit (400s)", detail)
+        self.assertFacts(refusals[0], "selection.refused", {"detail": detail})
+        self.assertFacts(stops[-1], "candidate.stopped", {"reason": "provider_refused", "detail": detail})
         self.assertLess(refusals[0]["id"], stops[-1]["id"])
 
     def test_with_the_flag_a_refusing_provider_stops_the_candidate_and_runs_no_check(self) -> None:
