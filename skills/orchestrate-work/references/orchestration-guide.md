@@ -173,9 +173,8 @@ instant is its `occurredAt` when it has one, and its `at` otherwise.
   add vectors for them beside the registry's own test. Kinds beginning `x.` are
   reserved for an adopter's own registry and are refused here.
 
-An entry in the older journal shape, one without `data` or with a member this
-shape doesn't have, is refused, and the refusal names the release that reads
-it. A record whose journal is empty is valid in either shape. A delivery open
+An entry in the older journal shape, without `data` or with that shape's
+`summary`, is refused, and the refusal names the release that reads it. A record whose journal is empty is valid in either shape. A delivery open
 under an older release closes there before this one is applied.
 
 ### Tracker updates
@@ -792,7 +791,7 @@ At the end of each review round, alongside its tracker post, record the round
 in the delivery record:
 
 ```bash
-python3 -B <skill>/scripts/delivery_state.py --dir <state> journal --writer lane --kind review.round --subject <subject> --lane <lane> --review '{"round": <n>, "startedAt": "<dispatched>", "finishedAt": "<last verdict>", "verdicts": {"<lens>": "approve"}, "findings": {"P0": 0, "P1": 0, "P2": 0, "P3": 0}}'
+python3 -B <skill>/scripts/delivery_state.py --dir <state> journal --writer lane --kind review.round --subject <subject> --lane <lane> --data '{"round": <n>, "startedAt": "<dispatched>", "finishedAt": "<last verdict>", "verdicts": {"<lens>": "approve"}, "findings": {"P0": 0, "P1": 0, "P2": 0, "P3": 0}}'
 ```
 
 **Review evidence**
