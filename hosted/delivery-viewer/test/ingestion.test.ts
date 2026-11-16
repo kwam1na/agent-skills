@@ -101,7 +101,7 @@ describe('independent transport contract guards', () => {
     }
     expect((await request(route(publicId,'status','repo-b'),{},OTHER_TOKEN)).status).toBe(404);
     expect((await request(route(publicId,'status'))).status).toBe(200);
-    expect(await (await current(publicId)).json()).toEqual(before);
+    expect(await (await current(publicId)).json()).toEqual({...before as object,serverNow:expect.any(Number)});
     expect((await sql<{n:number}>(publicId,'SELECT count(*) AS n FROM receipts'))[0].n).toBe(1);
   });
   it('accepts the digest of noncanonical bytes and rejects a reserialized digest for those bytes', async () => {
