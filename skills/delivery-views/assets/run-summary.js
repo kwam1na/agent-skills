@@ -28,6 +28,48 @@ function runEaseHeight(node, from) {
   var easing = node.animate([{ height: from + "px" }, { height: to + "px" }], { id: "run-height", duration: runEaseDuration(from, to), easing: RUN_EASING });
   easing.onfinish = easing.oncancel = function () { node.style.overflow = ""; };
 }
+// Which folds the reader has open, by key, kept across live redraws.
+var runFoldOpen = {};
+/**
+ * The page's one fold: a details element that slides open and closed by the motion rules above, and is rebuilt open
+ * after a redraw when the reader left it open. Every fold on the page is made with it, so they all move alike.
+ * Closing keeps the fold open until the slide ends, so nothing vanishes before it has moved. `options.key` names the
+ * fold for its memory; `options.oneLine` says its summary is a single line when closed though it may wrap when open;
+ * `options.onChange(open)` is told at the click, and `options.onSettle()` whenever the fold's height has changed.
+ */
+function runFold(fold, options) {
+  options = options || {};
+  var summary = fold.querySelector("summary");
+  if (!summary) { return fold; }
+  if (options.key !== undefined && runFoldOpen[options.key] === true) { fold.open = true; }
+  var settled = function () { if (typeof options.onSettle === "function") { options.onSettle(); } };
+  summary.addEventListener("click", function (event) {
+    // A link or button inside the summary keeps its own click.
+    if (event.target && event.target.closest && event.target.closest("a, button") && summary.contains(event.target.closest("a, button"))) { return; }
+    event.preventDefault();
+    var open = !fold.open;
+    // Remembered now, not on the toggle event, which fires later: a redraw in between would rebuild it as it was.
+    if (options.key !== undefined) { runFoldOpen[options.key] = open; }
+    if (typeof options.onChange === "function") { options.onChange(open); }
+    var from = runHeldHeight(fold);
+    if (open) {
+      fold.open = true;
+      runEaseHeight(fold, from);
+      var opening = typeof fold.getAnimations === "function" ? fold.getAnimations().filter(function (running) { return running.id === "run-height"; })[0] : null;
+      if (opening && opening.finished) { opening.finished.then(settled, function () {}); }
+    } else if (!runMotionWanted(fold)) {
+      fold.open = false;
+    } else {
+      var closed = options.oneLine ? parseFloat(getComputedStyle(summary).lineHeight) || summary.offsetHeight : summary.offsetHeight;
+      fold.style.overflow = "hidden";
+      var closing = fold.animate([{ height: from + "px" }, { height: closed + "px" }], { id: "run-height", duration: runEaseDuration(from, closed), easing: RUN_EASING });
+      closing.onfinish = function () { fold.style.overflow = ""; fold.open = false; settled(); };
+      closing.oncancel = function () { fold.style.overflow = ""; };
+    }
+    settled();
+  });
+  return fold;
+}
 /**
  * Draws icon parts on the 24px persona grid into an svg: { c: [cx, cy, r] } is a circle, { d } a path, and core: true
  * fills it, as an agent's core. The persona set, the lens icons and the marks drawn on that grid all go through here.
@@ -281,31 +323,42 @@ function runSummaryNode(summary, options) {
     var made = node("span", "run-fate is-" + kind, words);
     return made;
   }
-  // What became of the round's findings, said once: "All 5 fixed in 61f086d · confirmed round 2".
+  // "round 4", "rounds 2 and 4", "rounds 2, 3 and 4".
+  function roundsSaid(rounds) {
+    var sorted = rounds.slice().sort(function (x, y) { return x - y; });
+    if (sorted.length === 1) { return "round " + sorted[0]; }
+    return "rounds " + sorted.slice(0, -1).join(", ") + " and " + sorted[sorted.length - 1];
+  }
+  // What became of the notes this round raised, as a sentence: "All 5 of this round's notes were fixed in 61f086d, and
+  // round 2 confirmed them."
   function outcomeOfNotes(raised, known) {
     var fixed = raised.filter(function (entry) { return entry.state === "resolved" && known[entry.id] && known[entry.id].entry.state === "fixed"; });
     var open = raised.filter(function (entry) { return entry.state === "unresolved"; }).length;
     if (!fixed.length) {
       if (!open) { return null; }
-      return node("p", "run-quiet", open === raised.length ? (open === 1 ? "Still open" : "All " + open + " still open") : open + " open");
+      return node("p", "run-quiet", open === raised.length ? (open === 1 ? "This round's note is still open." : "All " + open + " of this round's notes are still open.")
+        : open + " of this round's notes " + (open === 1 ? "is" : "are") + " still open.");
     }
     var confirmed = [];
     fixed.forEach(function (entry) { if (confirmed.indexOf(known[entry.id].round) < 0) { confirmed.push(known[entry.id].round); } });
     var commits = commitsOf(fixed.map(function (entry) { return known[entry.id].entry; }));
-    var head = fixed.length === raised.length ? (raised.length === 1 ? "Fixed" : "All " + raised.length + " fixed") : fixed.length + " of " + raised.length + " fixed";
+    var head = fixed.length === raised.length ? (raised.length === 1 ? "This round's note was fixed" : "All " + raised.length + " of this round's notes were fixed")
+      : fixed.length + " of this round's " + raised.length + " notes " + (fixed.length === 1 ? "was" : "were") + " fixed";
     return line("run-settled", [head + (commits.length ? " in " : ""), commits,
-      " · confirmed round " + confirmed.sort(function (a, b) { return a - b; }).join(", ") + (open ? " · " + open + " open" : "")]);
+      ", and " + roundsSaid(confirmed) + " confirmed " + (fixed.length === 1 ? "it" : "them") + "." +
+      (open ? " " + open + (open === 1 ? " is" : " are") + " still open." : "")]);
   }
-  // Earlier findings this round confirmed, as one line: "Confirmed 5 earlier notes fixed in 61f086d".
+  // Earlier notes this round confirmed, as a sentence: "This round confirmed 5 earlier notes fixed in 61f086d."
   function settledNode(settled) {
     var fixed = settled.filter(function (entry) { return entry && entry.state === "fixed"; });
     var others = settled.length - fixed.length;
-    var parts = ["Confirmed "];
+    var parts = ["This round confirmed "];
     if (fixed.length) {
       var commits = commitsOf(fixed);
       parts.push(fixed.length + (fixed.length === 1 ? " earlier note" : " earlier notes") + " fixed" + (commits.length ? " in " : ""), commits);
     }
-    if (others) { parts.push((fixed.length ? ", " : "") + others + (others === 1 ? " earlier note" : " earlier notes") + " settled otherwise"); }
+    if (others) { parts.push((fixed.length ? ", and " : "") + others + (fixed.length ? "" : others === 1 ? " earlier note" : " earlier notes") + " settled another way"); }
+    parts.push(".");
     return line("run-settled", parts);
   }
   // What the round's report recorded of a lens's brief and result: each a toggle that shows the text in place,
@@ -351,9 +404,8 @@ function runSummaryNode(summary, options) {
     var box = node("div", "run-card is-" + outcome);
     var head = node("p", "run-card-head");
     if (summary.observational && typeof round.candidateRef === "string") {
-      var candidate = node("p", "run-quiet", "Reviewed candidate " + short(round.candidateRef));
-      candidate.setAttribute("aria-label", "Reviewed candidate " + round.candidateRef);
-      box.appendChild(candidate);
+      // Which commit the round read, as a sentence; the commit opens on the forge when the renderer gave its address.
+      box.appendChild(line("run-quiet", ["Reviewed at ", [round.candidateRef]]));
     }
     head.appendChild(node("b", null, nameOf(round, index)));
     // An approval that came with findings its lenses filed as deferred counts them, whatever later rounds made of them.
@@ -435,13 +487,16 @@ function runSummaryNode(summary, options) {
         var list = node("ul", "run-findings");
         closures.filter(function (entry) { return entry.lens === lens; }).forEach(function (entry) {
           var item = node("li", "");
-          var disclosure = node("details", "run-closures");
+          // A settled note is quiet: a tick stands for "fixed", said in words only for a screen reader, and any other
+          // ending is named. Opened, the line shows whole in place, with the note's id beneath, not the words twice.
+          var fate = entry.state === "fixed" ? "fixed" : entry.state === "dropped" ? "withdrawn" : entry.state;
+          var disclosure = node("details", "run-closures is-" + (entry.state === "fixed" ? "fixed" : "other"));
           var preview = node("summary", "run-finding");
           preview.appendChild(node("span", "run-finding-text", entry.resolution));
-          preview.appendChild(node("span", "run-fate", entry.state === "fixed" ? "fixed" : entry.state === "dropped" ? "withdrawn" : entry.state));
+          preview.appendChild(node("span", "run-fate", fate));
           disclosure.appendChild(preview);
-          disclosure.appendChild(node("p", "run-closure", entry.id + " · " + entry.resolution));
-          item.appendChild(disclosure);
+          disclosure.appendChild(node("p", "run-closure", entry.id));
+          item.appendChild(runFold(disclosure, { key: "closure:" + (summary.observationKey || summary.runId || "") + ":" + round.round + ":" + entry.id, oneLine: true }));
           list.appendChild(item);
         });
         group.appendChild(list);

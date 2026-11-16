@@ -1,0 +1,11 @@
+{
+  "queue": [
+    {
+      "subject": "A",
+      "title": "Work A",
+      "stage": "stopped"
+    }
+  ],
+  "planned": [],
+  "finish": []
+}

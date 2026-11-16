@@ -74,10 +74,10 @@
       }
     },
     "changeRequest": {
-      "description": "A change request by the forge's address for it.",
+      "description": "A change request, by the name the record holds for it: the forge's address or its own key.",
       "type": "string",
-      "maxLength": 2048,
-      "pattern": "^[a-z][a-z0-9+.-]*://\\S+$"
+      "minLength": 1,
+      "maxLength": 2048
     },
     "checks": {
       "description": "Checks by their catalogue ids.",
@@ -394,6 +394,48 @@
           }
         }
       }
+    },
+    "carry": {
+      "description": "A review carried across base commits: the head it covered, the head it now covers, the captured review's digest, and the base commits between.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "from",
+        "to",
+        "digest",
+        "baseCommits"
+      ],
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/commit"
+        },
+        "to": {
+          "$ref": "#/$defs/commit"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "baseCommits": {
+          "$ref": "#/$defs/commits"
+        }
+      }
+    },
+    "snapshotCause": {
+      "description": "Why a snapshot could not be taken, by the state tool's fixed classes of reason.",
+      "enum": [
+        "no_parent",
+        "timed_out",
+        "too_much_output",
+        "not_started",
+        "unfinished",
+        "exited",
+        "no_json",
+        "too_old",
+        "invalid"
+      ]
+    },
+    "exitCode": {
+      "type": "integer"
     }
   },
   "kinds": {
@@ -593,10 +635,12 @@
           "type": "commit"
         },
         "changeRequest": {
-          "type": "changeRequest"
+          "type": "changeRequest",
+          "optional": true
         },
         "rounds": {
-          "type": "count"
+          "type": "count",
+          "optional": true
         },
         "checks": {
           "type": "checks"
@@ -607,6 +651,10 @@
         },
         "noChange": {
           "type": "flag",
+          "optional": true
+        },
+        "carry": {
+          "type": "carry",
           "optional": true
         }
       },
@@ -624,7 +672,7 @@
           "cases": {
             "true": "No change needed[, with {checks:list} run by the lane]"
           },
-          "otherwise": "After {rounds:count:review round}[, with {checks:list} run by the lane]"
+          "otherwise": "Ready[ after {rounds:count:review round}][, with {checks:list} run by the lane][, its review carried from {carry.from:commit}]"
         }
       },
       "explain": "A lane says its piece is ready. The lead checks the claim before anything is run on it.",
@@ -933,7 +981,7 @@
         }
       },
       "because": {
-        "required": true
+        "required": false
       },
       "answers": [],
       "opensThread": false,
@@ -1024,6 +1072,10 @@
         "recovery": {
           "type": "recovery",
           "optional": true
+        },
+        "acceptanceSkipped": {
+          "type": "flag",
+          "optional": true
         }
       },
       "because": {
@@ -1032,7 +1084,13 @@
       "answers": [],
       "opensThread": false,
       "words": {
-        "head": "{subject} landed",
+        "head": {
+          "by": "acceptanceSkipped",
+          "cases": {
+            "true": "{subject} landed before the lead accepted it"
+          },
+          "otherwise": "{subject} landed"
+        },
         "line": "At {head:commit}[, found later on the forge at {recovery.head:commit}]"
       },
       "explain": "A piece reached the main line.",
@@ -1157,6 +1215,9 @@
         "base": {
           "type": "base"
         },
+        "head": {
+          "type": "commit"
+        },
         "seconds": {
           "type": "seconds"
         },
@@ -1171,7 +1232,7 @@
       "opensThread": false,
       "words": {
         "head": "The run on the main line stopped",
-        "line": "After {seconds:duration}. {why}"
+        "line": "After {seconds:duration}, for the piece at {head:commit}. {why}"
       },
       "explain": "The run on the main line ended without a verdict, so the piece is checked once more.",
       "tracker": null,
@@ -1593,6 +1654,14 @@
       "data": {
         "source": {
           "type": "snapshotSource"
+        },
+        "cause": {
+          "type": "snapshotCause",
+          "optional": true
+        },
+        "exitCode": {
+          "type": "exitCode",
+          "optional": true
         }
       },
       "because": {

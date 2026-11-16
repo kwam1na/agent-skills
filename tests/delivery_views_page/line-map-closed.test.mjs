@@ -4,7 +4,7 @@
 import { test } from "node:test";
 
 import { REPLAYED_RUNS, expect, openPage, pageWithRuns, renderPage } from "./support.mjs";
-import { finishLine, item, journal, minute, planFor, record, unit } from "./plan-fixtures.mjs";
+import { APP_KIND, RECORD_KINDS, finishLine, item, journal, minute, planFor, record, unit } from "./plan-fixtures.mjs";
 
 const NOW = "2026-10-30T12:00:00Z";
 const CONFIG = { spec: "delivery-views-config/1", runs: REPLAYED_RUNS };
@@ -79,20 +79,29 @@ test("a planned piece reads as not landed at the close, whatever stage it claims
   expect(shown.app.querySelector("#now .title").textContent).toBe("Closed with 1 of 2 pieces landed.");
 });
 
-test("a closed delivery's plan says a unit was never handed off, not that it is before hand-off", async () => {
+test("a closed delivery's plan says each proof a unit still owes was never given, not that it is still to come", async () => {
+  // B never reached the line; C was handed off and not merged; D's review asked for changes; E owes an in-app check.
+  const steps = [[13, "approve", "C"], [14, "candidate.handed", "C"], [15, "changes", "D"], [16, "candidate.handed", "D"]];
   const shape = (entries) => {
-    const document = record({ queue: [item("A", "merged")], journal: journal(entries) });
+    const document = record({ queue: [item("A", "merged"), item("C", "queued"), item("D", "queued"), item("E", "merged")],
+      journal: journal([...entries.slice(0, 3), ...steps, ...landed("E", 20), ...entries.slice(3)]) });
     document.state.planned = [{ subject: "B", title: "Work B", lane: "lane-1", stage: "building" }];
     return document;
   };
-  const plan = planFor([unit("A"), unit("B")], { finish: [] });
+  const record_ = ["review", "handed", "merged"];
+  const plan = planFor([unit("A", { proofs: record_ }), unit("B", { proofs: record_ }), unit("C", { proofs: record_ }),
+    unit("D", { proofs: record_ }), unit("E", { proofs: [...record_, "app"] })],
+    { finish: [], kinds: [...RECORD_KINDS, APP_KIND], evidence: { E: { app: { state: "todo", items: ["flow"] } } } });
   const row = async (entries) => {
     const [shown] = await open(render(shape(entries), plan));
     return [...shown.app.querySelectorAll("#plan .plan-open li")].map((li) => li.querySelector(".po-next").textContent);
   };
-  expect(await row(landed("A"))).toEqual(["Review: not recorded · before hand-off"]);
+  expect(await row(landed("A"))).toEqual(["3 proofs left · No review is recorded for it. It hasn't been handed off yet.",
+    "1 proof left · It still has to merge.", "2 proofs left · Its review isn't approved yet.", "Merged, 1 proof left · In-app check is still to do."]);
+  // Closed, every proof still owed is one that was never given, in its own words.
   const closed = await row([...landed("A"), close]);
-  expect(closed).toEqual(["Review: not recorded · never handed off"]);
+  expect(closed).toEqual(["3 proofs left · No review is recorded for it. It was never handed off.",
+    "1 proof left · It never merged.", "2 proofs left · Its review was never approved.", "Merged, 1 proof left · In-app check was never done."]);
 });
 
 test("a closed delivery names a piece with no lane as having none, and a stop names its lane as a name", async () => {

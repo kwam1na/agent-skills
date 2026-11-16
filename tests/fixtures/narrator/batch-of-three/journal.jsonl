@@ -1,0 +1,9 @@
+{"id": 1, "at": "2026-11-16T09:00:00Z", "kind": "record.started", "lane": null, "subject": null, "data": {"base": {"ref": "integrate/delivery-story", "head": "1405df66cbe219b0bf6355bc3d60361a8376b6b4"}}}
+{"id": 2, "at": "2026-11-16T09:01:00Z", "kind": "lane.assigned", "lane": "lane-1", "subject": "A", "data": {"title": "Work A"}}
+{"id": 3, "at": "2026-11-16T09:02:00Z", "kind": "lane.assigned", "lane": "lane-1", "subject": "B", "data": {"title": "Work B"}}
+{"id": 4, "at": "2026-11-16T09:03:00Z", "kind": "lane.assigned", "lane": "lane-1", "subject": "C", "data": {"title": "Work C"}}
+{"id": 5, "at": "2026-11-16T09:04:00Z", "kind": "lane.assigned", "lane": "lane-1", "subject": "D", "data": {"title": "Work D"}}
+{"id": 6, "at": "2026-11-16T09:10:00Z", "kind": "check.started", "lane": "lane-1", "subject": "A", "data": {"batch": ["A", "B", "C"]}}
+{"id": 7, "at": "2026-11-16T09:10:00Z", "kind": "check.started", "lane": "lane-1", "subject": "B", "data": {"batch": ["A", "B", "C"]}}
+{"id": 8, "at": "2026-11-16T09:10:00Z", "kind": "check.started", "lane": "lane-1", "subject": "C", "data": {"batch": ["A", "B", "C"]}}
+{"id": 9, "at": "2026-11-16T09:20:00Z", "kind": "check.started", "lane": "lane-1", "subject": "D", "data": {}}

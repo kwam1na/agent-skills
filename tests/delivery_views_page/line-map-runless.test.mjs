@@ -11,29 +11,43 @@ function document() {
   return {state:{lanes:[],queue:[{subject:'WORK-1',title:'Work',stage:'merged',head:B,runId:null}]},journal:[],
     reviewEvidence:{'WORK-1':{candidateRef:B,digest:'d'.repeat(64),outcomes:[result(1,A,true),result(2,B,false)]}}};
 }
-const config={spec:'delivery-views-config/1'};
+// A forge, so the commit a round reviewed opens on it.
+const config={spec:'delivery-views-config/1',forges:[{name:'GitHub',repository:'acme/shop',pullUrl:'https://github.com/{repository}/pull/{number}',
+  commitUrl:'https://github.com/{repository}/commit/{sha}'}]};
 test('closure explanations start collapsed and expand without hiding the settlement summary',async()=>{
-  const [closed,opened,first,last]=await openPage(pageWithRuns(document(),{}, {config}),{steps:[
+  const page=pageWithRuns(document(),{}, {config});
+  // Opened by its summary, a closure keeps its place through a pushed redraw.
+  const [,clicked,pushed]=await openPage(page,{store:{read:'pending'},steps:[{click:'.run-closures > summary'},{push:document()}]});
+  expect(clicked.app.querySelector('.run-closures').hasAttribute('open')).toBe(true);
+  expect(pushed.app.querySelector('.run-closures').hasAttribute('open')).toBe(true);
+  const [closed,opened,first,last]=await openPage(page,{steps:[
     {toggle:'.run-closures'}, {click:'.run-pick',index:0}, {click:'.run-pick',index:1}
   ]});
   expect(closed.app.querySelector('.run-closures').hasAttribute('open')).toBe(false);
   expect(closed.app.querySelector('.run-closures > summary').textContent).toContain('Original reviewer confirmed');
   expect(closed.app.querySelector('.run-settled').closest('details')).toBeNull();
   expect(opened.app.querySelector('.run-closures').hasAttribute('open')).toBe(true);
-  expect(opened.app.querySelector('.run-closure').textContent).toContain('Original reviewer confirmed <b>the fix</b>.');
+  // Opened, the note's id shows beneath its line, which stays whole in place rather than said twice.
+  expect(opened.app.querySelector('.run-closure').textContent).toBe('F1');
+  expect(opened.app.querySelector('.run-closures > summary .run-finding-text').textContent).toBe('Original reviewer confirmed <b>the fix</b>.');
   expect(first.app.querySelector('.run-closures')).toBeNull();
   expect(last.app.querySelector('.run-closures').hasAttribute('open')).toBe(false);
 });
 test('runless actual rounds share cards, escaped findings and originating closure text', async()=>{
   const page=pageWithRuns(document(),{}, {config});
   expect(page).not.toContain('</script><img');
+  // Each commit a round reviewed is a link the renderer worked out, and the card's "Reviewed at" opens it.
+  const links=JSON.parse(/<script type="application\/json" id="delivery-links">([^<]*)<\/script>/.exec(page)[1]);
+  expect(Object.keys(links.commits).filter((commit)=>commit===A||commit===B).sort()).toEqual([A,B]);
   const [last,first]=await openPage(page,{steps:[{click:'.run-pick',index:0}]});
+  expect(last.app.querySelector('.run-card .run-quiet a')?.getAttribute('href')).toBe('https://github.com/acme/shop/commit/'+B);
+  expect(first.app.querySelector('.run-card .run-quiet a')?.getAttribute('href')).toBe('https://github.com/acme/shop/commit/'+A);
   expect(last.app.querySelector('.run-card-outcome').textContent).toBe('Approved');
-  expect(last.app.querySelector('.run-closure').textContent).toContain('Original reviewer confirmed <b>the fix</b>.');
-  expect(last.app.querySelector('.run-card .run-quiet').getAttribute('aria-label')).toBe('Reviewed candidate '+B);
+  expect(last.app.querySelector('.run-closures .run-finding-text').textContent).toBe('Original reviewer confirmed <b>the fix</b>.');
+  expect(last.app.querySelector('.run-card .run-quiet').textContent).toBe('Reviewed at '+B.slice(0,7));
   expect(first.app.querySelector('.run-card-outcome').textContent).toBe('Changes requested');
   expect(first.app.querySelector('.run-finding-text').textContent).toContain('<img');
-  expect(first.app.querySelector('.run-settled').textContent).toContain('confirmed round 2');
+  expect(first.app.querySelector('.run-settled').textContent).toContain('round 2 confirmed it');
   expect(first.app.querySelector('img')).toBeNull();
   expect(first.app.querySelector('.run-record-row')).toBeNull();
 });
@@ -101,7 +115,7 @@ test('a runner sync onto a moved base keeps the reviewed head approval and its n
   const [shown]=await openPage(pageWithRuns(doc,{}, {config}));
   expect(shown.app.querySelector('.d-run-none')).toBeNull();
   expect(shown.app.querySelector('.run-card-outcome').textContent).toBe('Approved');
-  expect(shown.app.querySelector('.run-closure').textContent).toContain('Original reviewer confirmed');
+  expect(shown.app.querySelector('.run-closures .run-finding-text').textContent).toContain('Original reviewer confirmed');
 });
 function plannedDocument() {
   const doc = document();
@@ -119,8 +133,8 @@ test('before hand-off, a planned story shows its round cards and notes from its 
   const [shown,first]=await openPage(renderPage(plannedDocument(),{config}),{steps:[{click:'.run-pick',index:0}]});
   expect(shown.app.querySelector('.d-run-none')).toBeNull();
   expect(shown.app.querySelector('.run-card-outcome').textContent).toBe('Approved');
-  expect(shown.app.querySelector('.run-card .run-quiet').getAttribute('aria-label')).toBe('Reviewed candidate '+B);
-  expect(shown.app.querySelector('.run-closure').textContent).toContain('Original reviewer confirmed');
+  expect(shown.app.querySelector('.run-card .run-quiet').textContent).toBe('Reviewed at '+B.slice(0,7));
+  expect(shown.app.querySelector('.run-closures .run-finding-text').textContent).toContain('Original reviewer confirmed');
   expect(first.app.querySelector('.run-card-outcome').textContent).toBe('Changes requested');
   expect(first.app.querySelector('.run-finding-text').textContent).toContain('<img');
 });
@@ -164,7 +178,7 @@ test('evidence the lead carried to a later head shows as carried, and only at th
   expect(shown.app.querySelector('.d-run-carried').textContent).toBe('Carried by the lead. '+carry.note);
   expect(shown.app.querySelector('.run-card-outcome').textContent).toBe('Approved');
   // The rounds still name the head they reviewed, never the carried one.
-  expect(shown.app.querySelector('.run-card .run-quiet').getAttribute('aria-label')).toBe('Reviewed candidate '+B);
+  expect(shown.app.querySelector('.run-card .run-quiet').textContent).toBe('Reviewed at '+B.slice(0,7));
   // The same capture at the later head without a carry, or carried to another head, is stale.
   for (const doc of [carriedDocument(C, null), carriedDocument(C, {...carry, to:'d'.repeat(40)})]) {
     const [stale] = await openPage(pageWithRuns(doc, {}, {config}));

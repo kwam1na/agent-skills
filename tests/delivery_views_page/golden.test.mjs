@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readdirSync, existsSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
-import { CORPUS, ROOT, block, openPage, pageWithRuns, readJson, renderPage } from "./support.mjs";
+import { CORPUS, ROOT, block, openPage, pageText, pageWithRuns, readJson, renderPage } from "./support.mjs";
 
 process.env.TZ = "UTC";
 
@@ -28,7 +28,7 @@ for (const name of CASES) {
     assert.deepEqual(block(page, "delivery-runs"), golden.blocks["delivery-runs"]);
     assert.deepEqual(block(page, "delivery-plan"), golden.blocks["delivery-plan"] ?? null);
     const [first] = await openPage(page, { now: golden.now });
-    assert.equal(first.text, golden.initialText);
+    assert.equal(pageText(first.app), golden.initialText);
     for (const [name, expected] of Object.entries(golden.folds ?? {})) {
       const fold = `.plan-fold[data-fold="${name}"]`;
       const [, opened] = await openPage(page, { now: golden.now, steps: [{ toggle: fold }] });
@@ -81,7 +81,7 @@ test("a round that approved with deferred findings says so at its head and on ea
   const [first] = cards;
   assert.equal(pill(first), "Approved with 4 deferrable notes");
   assert.deepEqual(marks(first), ["Deferred · minor", "Deferred · minor", "Deferred · moderate", "Deferred · minor"]);
-  assert.equal(first.querySelector(".run-settled").textContent, "All 4 fixed in bbbbbbb · confirmed round 2");
+  assert.equal(first.querySelector(".run-settled").textContent, "All 4 of this round's notes were fixed in bbbbbbb, and round 2 confirmed them.");
 });
 
 test("a deferred finding a later round leaves unfixed is still counted and marked", async () => {
@@ -90,7 +90,7 @@ test("a deferred finding a later round leaves unfixed is still counted and marke
   }));
   assert.equal(pill(first), "Approved with 4 deferrable notes");
   assert.deepEqual(marks(first), ["Deferred · minor", "Deferred · minor", "Deferred · moderate", "Deferred · minor"]);
-  assert.equal(first.querySelector(".run-settled").textContent, "3 of 4 fixed in bbbbbbb · confirmed round 2");
+  assert.equal(first.querySelector(".run-settled").textContent, "3 of this round's 4 notes were fixed in bbbbbbb, and round 2 confirmed them.");
 });
 
 test("a round that approved with one deferred finding says it in the singular", async () => {

@@ -57,7 +57,7 @@ TABLE = {
     "review.round": ("S", "note", "round startedAt finishedAt verdicts findings refused? restarts?", "", "-"),
     "review.recorded": ("B", "note", "digest candidateRef", "", "-"),
     "review.carried": ("S", "decision", "from to digest baseCommits? *why*", "", "ticket: Review carried"),
-    "candidate.handed": ("S", "ready", "head changeRequest rounds checks evidence? noChange?", "answers:candidate.stopped",
+    "candidate.handed": ("S", "ready", "head changeRequest? rounds? checks evidence? noChange? carry?", "answers:candidate.stopped",
                          "ticket: Handed off and queued"),
     "handoff.checked": ("S", "decision", "head rounds afterMerge noChange *notes*", "cause", "-"),
     "handoff.accepted": ("S", "decision", "settled", "", "ticket: Accepted"),
@@ -69,14 +69,14 @@ TABLE = {
     "check.started": ("S", "note", "batch?", "", "-"),
     "check.finished": ("S", "note", "batch?", "cause", "-"),
     "check.failed": ("S", "problem", "check timedOut failing more log", "cause", "-"),
-    "check.retried": ("S", "note", "check failing flake onBase", "cause", "ticket-or-epic: Check retried"),
+    "check.retried": ("S", "note", "check failing flake onBase", "", "ticket-or-epic: Check retried"),
     "check.reused": ("S", "note", "check head from", "", "-"),
     "check.carried": ("S", "note", "checks ranAgain base commits", "", "-"),
-    "candidate.merged": ("H", "landed", "head recovery?", "", "ticket: Merged"),
+    "candidate.merged": ("H", "landed", "head recovery? acceptanceSkipped?", "", "ticket: Merged"),
     "candidate.stopped": ("H", "problem", "reason *detail* requeued? stage?", "opens-unless:requeued", "ticket: Stopped"),
     "base.rerun.started": ("S", "note", "checks base", "cause", "-"),
     "base.rerun.finished": ("S", "note", "base seconds verdict results", "cause", "-"),
-    "base.rerun.stopped": ("S", "problem", "base seconds *why*", "cause", "-"),
+    "base.rerun.stopped": ("S", "problem", "base head seconds *why*", "cause", "-"),
     "base.broken": ("H", "problem", "source reason? *detail?* head? after?", "opens",
                     "epic: The delivery base is broken; the queue is stopped"),
     "base.repaired": ("H", "landed", "source head repair? *why?*", "answers:base.broken", "epic: The delivery base is repaired"),
@@ -91,7 +91,7 @@ TABLE = {
     "plan.updated": ("B", "note", "updated changed", "", "-"),
     "cleanup.done": ("B", "note", "base changeRequest? head?", "", "-"),
     "followup.filed": ("B", "note", "finding followup *title*", "", "-"),
-    "snapshot.stale": ("B", "note", "source", "", "-"),
+    "snapshot.stale": ("B", "note", "source cause? exitCode?", "", "-"),
     "snapshot.retaken": ("B", "note", "source", "answers:snapshot.stale", "-"),
     "evidence.published": ("S", "note", "url clips", "", "epic: Evidence published"),
     "flake.declared": ("S", "decision", "flake check head", "", "epic: Flake declared"),
@@ -330,9 +330,11 @@ class WordsTests(unittest.TestCase):
         described = registry()
         handed = {"kind": "candidate.handed", "lane": "lane-1", "subject": "APP-12",
                   "data": {"head": HEAD, "changeRequest": "https://example.org/pr/1", "rounds": 2, "checks": []}}
-        self.assertEqual(words_tool.words(handed, described)["line"], "After 2 review rounds")
+        self.assertEqual(words_tool.words(handed, described)["line"], "Ready after 2 review rounds")
         handed["data"]["checks"] = ["unit"]
-        self.assertEqual(words_tool.words(handed, described)["line"], "After 2 review rounds, with unit run by the lane")
+        self.assertEqual(words_tool.words(handed, described)["line"], "Ready after 2 review rounds, with unit run by the lane")
+        handed["data"]["rounds"] = 0
+        self.assertEqual(words_tool.words(handed, described)["line"], "Ready, with unit run by the lane")
         merged = {"kind": "candidate.merged", "lane": None, "subject": "APP-12", "data": {"head": HEAD}}
         self.assertEqual(words_tool.words(merged, described), {"head": "APP-12 landed", "line": "At 4e66a05"})
 
@@ -434,9 +436,9 @@ class JournalFactsTests(unittest.TestCase):
              {"base": {"ref": "integrate/delivery-story", "head": BASE_HEAD}}),
             ("candidate.stopped", {"reason": "gave_up", "detail": "It stopped."}, "/data/reason: not one of the allowed values",
              {"reason": "interrupted", "detail": "A run ended while APP-12 was checking."}),
-            ("candidate.handed", {"head": HEAD, "changeRequest": "pr-12", "rounds": 1, "checks": []},
-             "/data/changeRequest: does not match",
-             {"head": HEAD, "changeRequest": "https://github.com/example/app/pull/12", "rounds": 1, "checks": []}),
+            ("candidate.handed", {"head": HEAD, "changeRequest": "", "rounds": 1, "checks": []},
+             "/data/changeRequest: shorter than 1",
+             {"head": HEAD, "changeRequest": "pr-12", "rounds": 1, "checks": []}),
         ]
         for kind, wrong, expected, right in cases:
             with self.subTest(kind=kind, wrong=wrong):

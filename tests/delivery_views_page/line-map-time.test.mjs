@@ -90,7 +90,7 @@ test("recovered landings show source time, unknowns, and retain observation in t
   const page = pageWithRuns(document, {}, { config: { spec: "delivery-views-config/1", runs: REPLAYED_RUNS } });
   const [initial, earlier, unknown] = await openPage(page, { now: "2026-10-22T07:10:00Z", steps: [
     { click: '.stop-btn[data-subject="PAY-1"]' }, { click: '.stop-btn[data-subject="PAY-3"]' }] });
-  expect(initial.app.textContent).toContain("Last landed: Latest merge, 15m ago.");
+  expect(initial.app.querySelector("#now .fact")?.textContent).toBe("Last landedLatest mergePAY-2 · 15 minutes ago");
   expect(earlier.app.querySelector("#detail .d-meta").textContent).toContain("Landed yesterday at 10:00 pm");
   expect(unknown.app.querySelector("#detail .d-meta").textContent).toContain("Landed · time unknown");
   expect(initial.app.querySelector('.feed time[datetime="2026-10-22T07:09:00Z"]') !== null).toEqual(true);
