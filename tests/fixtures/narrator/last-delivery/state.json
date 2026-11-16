@@ -1,0 +1,57 @@
+{
+  "queue": [
+    {
+      "subject": "V26-3425",
+      "title": "Tell a fullHealth failure that passes alone from one that reproduces",
+      "stage": "merged"
+    },
+    {
+      "subject": "V26-3319",
+      "title": "Re-sync instead of restarting a check when the base moved only in files it doesn't read",
+      "stage": "merged"
+    },
+    {
+      "subject": "V26-3264",
+      "title": "Run the lead's full suite in its own detached checkout of a commit",
+      "stage": "merged"
+    },
+    {
+      "subject": "V26-3318",
+      "title": "Share one merge slot for each base across every delivery's queue on a machine",
+      "stage": "merged"
+    },
+    {
+      "subject": "V26-3513",
+      "title": "Pin the merge slot's order and its wait, and say what to do when the slot is held",
+      "stage": "merged"
+    },
+    {
+      "subject": "V26-3320",
+      "title": "Let deliveries on one base see each other and claim shared files",
+      "stage": "merged"
+    }
+  ],
+  "planned": [],
+  "finish": [
+    {
+      "id": "stories",
+      "met": true,
+      "text": "Each of the five stories lands on integrate/shared-base through the merge queue, or closes with its reason recorded"
+    },
+    {
+      "id": "local-suite",
+      "met": true,
+      "text": "The full local suite passes on macOS with Python 3.11 at the integration candidate, inside tests/suite-budget.json"
+    },
+    {
+      "id": "integration",
+      "met": true,
+      "text": "The integration reaches main through a change request the operator approves"
+    },
+    {
+      "id": "main-ci",
+      "met": true,
+      "text": "CI's Ubuntu and cut-release jobs pass for that push to main"
+    }
+  ]
+}

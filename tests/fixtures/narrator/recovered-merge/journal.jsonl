@@ -1,0 +1,4 @@
+{"id": 1, "at": "2026-11-16T09:00:00Z", "kind": "record.started", "lane": null, "subject": null, "data": {"base": {"ref": "integrate/delivery-story", "head": "1405df66cbe219b0bf6355bc3d60361a8376b6b4"}}}
+{"id": 2, "at": "2026-11-16T09:00:00Z", "kind": "lane.assigned", "lane": "lane-1", "subject": "A", "data": {"title": "Work A"}}
+{"id": 3, "at": "2026-11-16T11:30:00Z", "kind": "lane.assigned", "lane": "lane-1", "subject": "B", "data": {"title": "Work B"}}
+{"id": 4, "at": "2026-11-16T12:00:00Z", "kind": "candidate.merged", "lane": "lane-1", "subject": "A", "data": {"head": "c6379c21d950be5e8767c4c656ed1a04001d9bc5"}, "occurredAt": "2026-11-16T11:00:00Z"}

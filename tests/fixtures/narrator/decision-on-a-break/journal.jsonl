@@ -1,0 +1,4 @@
+{"id": 1, "at": "2026-11-16T09:00:00Z", "kind": "record.started", "lane": null, "subject": null, "data": {"base": {"ref": "integrate/delivery-story", "head": "1405df66cbe219b0bf6355bc3d60361a8376b6b4"}}}
+{"id": 2, "at": "2026-11-16T09:10:00Z", "kind": "base.broken", "lane": null, "subject": null, "data": {"source": "fullHealth", "detail": "The full run failed on the main line.", "head": "d7daad0b0d590aa07d7b48427bc4e6eb4f5e85ce"}}
+{"id": 3, "at": "2026-11-16T09:11:00Z", "kind": "decision.recorded", "lane": null, "subject": null, "data": {"text": "Held every landing until the main line is repaired", "why": "A piece checked against a broken main line proves nothing."}, "because": [2]}
+{"id": 4, "at": "2026-11-16T09:20:00Z", "kind": "base.repaired", "lane": null, "subject": null, "data": {"source": "lead", "head": "6aa2c59ad2fe177d10f71bc36d4a8e3ce65bc72e", "why": "The lead reverted the commit that broke it."}, "answers": [2]}
