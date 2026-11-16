@@ -410,7 +410,7 @@ class FixtureAdopterTests(unittest.TestCase):
         self.assertEqual(last["baseHead"], broken_base)
         self.assertEqual(adopter.item("alpha-rewrite")["stage"], "stopped")
         self.assertQueueRow(adopter.view(), "alpha-rewrite", "stopped")
-        self.assertIn(f"base{text('.')}broken", adopter.view())
+        self.assertIn(text("Main line broke"), adopter.view())
 
         # The lead fixes forward and makes lint run on every candidate from now on.
         binding = adopter.binding()
@@ -460,8 +460,8 @@ class FixtureAdopterTests(unittest.TestCase):
         final = adopter.document()
         page = (adopter.state / "delivery.html").read_text(encoding="utf-8")
         embedded = re.search(r'<script type="application/json" id="delivery-state">(.*?)</script>', page, re.S)
-        self.assertEqual(json.loads(embedded.group(1)), final)
-        self.assertEqual(adopter.view(), render_state.render_markdown(final))
+        self.assertEqual(json.loads(embedded.group(1)), render_state.with_story(final, adopter.state))
+        self.assertEqual(adopter.view(), render_state.render_markdown(render_state.with_story(final, adopter.state)))
 
         # Each stop's stats: the recorded rounds for the first, the lanes' reports for the others.
         stats = final["stats"]
@@ -630,7 +630,7 @@ class FixtureAdopterTests(unittest.TestCase):
         self.assertIn(text("failing test_source_beta"), view)
         self.assertIn(text(f"log {suite_entry['log']}"), view)
         self.assertIn(text("test_launcher_cancel"), view)
-        self.assertIn(text("check.retried"), view)
+        self.assertIn(text("Check retried"), view)
 
     def test_lanes_hand_off_through_the_tool_and_serve_lands_everything_without_the_lead(self) -> None:
         adopter = FixtureAdopter(self.root)
@@ -850,7 +850,7 @@ class FixtureAdopterTests(unittest.TestCase):
         adopter.tool(WRAPPER, "--dir", str(adopter.state), "--binding", binding)
         shown = adopter.show()
         self.assertEqual(json.loads(mirror.read_text(encoding="utf-8")),
-                         {key: value for key, value in shown.items() if key != "publication"})
+                         render_state.with_story({key: value for key, value in shown.items() if key != "publication"}, adopter.state))
         self.assertFalse((adopter.state / "outbox").exists(), "nothing is left for anyone to post by hand")
 
         # The next pass finds no drift, and a new entry reaches the publisher on the next render.
