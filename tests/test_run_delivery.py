@@ -7625,6 +7625,45 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         cls.bins = Path(tempfile.mkdtemp(prefix="run-delivery-bins-"))
         cls.addClassCleanup(shutil.rmtree, cls.bins, True)
 
+    def test_installed_global_hosted_doctor_without_a_selected_delivery(self) -> None:
+        from tests.test_delivery_views_hosted import CFG, TOKEN
+        fx = self.fixture()
+        views = fx.main / ".agents/delivery-views.json"
+        views.write_text(json.dumps(CFG))
+        for path in (fx.main / ".agents/deliveries").glob("*.json"):
+            path.unlink()
+        commit(fx.main, "Global hosting without a selected delivery")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+        before = fx.tool.read_bytes()
+        for mode in ("configured", "missing-token", "malformed"):
+            with self.subTest(mode=mode):
+                environment = {**fx.env, "FIXTURE_PUBLISH_TOKEN": TOKEN}
+                if mode == "missing-token":
+                    environment.pop("FIXTURE_PUBLISH_TOKEN")
+                if mode == "malformed":
+                    invalid = json.loads(json.dumps(CFG))
+                    invalid["hosted"]["origin"] = "http://invalid.example.com"
+                    views.write_text(json.dumps(invalid))
+                    commit(fx.main, "Invalid hosting remains a diagnostic failure")
+                    sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+                code, output = fx.flow("doctor", "--offline", cwd=fx.main, env=environment)
+                status, detail = doctor_lines(output)["hosted delivery"]
+                if mode == "malformed":
+                    self.assertEqual(code, 1, output)
+                    self.assertEqual(status, "wrong")
+                    self.assertIn("hosted configuration is invalid", detail)
+                else:
+                    self.assertEqual(code, 0, output)
+                    self.assertEqual(status, "ok" if mode == "configured" else "warn")
+                    self.assertIn("configured", detail)
+                    self.assertIn("no delivery selected", detail)
+                    self.assertEqual("FIXTURE_PUBLISH_TOKEN is unset" in detail, mode == "missing-token")
+                self.assertNotIn(TOKEN, output)
+                self.assertFalse((fx.main / ".orchestration/state").exists())
+                self.assertFalse((fx.tmp / "record").exists())
+                self.assertFalse(list(fx.main.rglob("hosted-owner.json")))
+        self.assertEqual(fx.tool.read_bytes(), before)
+
     def without(self, *names: str) -> str:
         """A PATH with every program the current one has, except these."""
         folder = self.bins / "-".join(names)
