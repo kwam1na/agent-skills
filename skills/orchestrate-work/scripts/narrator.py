@@ -82,6 +82,10 @@ journal_words = _sibling("journal_words")
 BRIDGE_KINDS = {"review.evidence": {"altitude": "bookkeeping", "tone": "note", "label": "Review evidence", "opensThread": False}}
 
 
+# What each tone means to a reader, in the order a legend lists them. A setback's sheet is named by its tone's word.
+TONES = [("landed", "Landed"), ("ready", "Ready to check"), ("decision", "Decision"), ("problem", "Setback"), ("note", "Other update")]
+
+
 class NarratorError(ValueError):
     """A record the story cannot be told from."""
 
@@ -147,6 +151,7 @@ def narrate(journal: list, state: dict | None = None, plan: dict | None = None, 
         "chapters": chapters,
         "beats": beats,
         "threads": threads,
+        "tones": [{"tone": tone, "word": word} for tone, word in TONES],
     }
 
 
@@ -439,7 +444,7 @@ def _thread_beat(thread: dict, by_id: dict, registry: dict) -> dict:
     thread["words"] = {"head": "A setback: " + _lower(said["head"]), "line": " ".join(line)}
     ordered = sorted(told, key=lambda name: (_seconds(_instant(by_id[name])), name))
     return {"id": None, "chapter": None, "form": "thread", "altitudes": ["headline"], "at": thread["openedAt"], "entries": ordered,
-            "thread": thread["id"], "kind": opening["kind"], "tone": "problem", "label": "Setback", "words": dict(thread["words"]),
+            "thread": thread["id"], "kind": opening["kind"], "tone": "problem", "label": dict(TONES)["problem"], "words": dict(thread["words"]),
             "explain": _kind(opening, registry).get("explain"), "items": [], "first": opening["id"]}
 
 

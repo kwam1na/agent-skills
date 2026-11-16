@@ -444,6 +444,11 @@ a.issue-link { color: inherit; cursor: pointer; }
 .tabs button:hover { color: var(--ink); }
 .tabs button[aria-pressed="true"] { color: var(--ink); background: var(--lift); box-shadow: var(--shadow-press); }
 /* Depth is the choice that matters; what to show among it is a quieter one, words with no track. */
+/* What each mark means: one quiet row under the digest. */
+.story-legend { display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 12px; color: var(--faint); }
+.story-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.story-legend .g { display: flex; }
+.story-legend .g svg { vertical-align: top; }
 .story-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px; }
 .tabs.filter { padding: 0; background: none; gap: 4px; }
 .tabs.filter button { height: 24px; padding: 0 8px; font-weight: 450; }

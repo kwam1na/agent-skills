@@ -367,5 +367,27 @@
         "line": "A check failed on the main line too. It held up A. It ended when the main line was repaired."
       }
     }
+  ],
+  "tones": [
+    {
+      "tone": "landed",
+      "word": "Landed"
+    },
+    {
+      "tone": "ready",
+      "word": "Ready to check"
+    },
+    {
+      "tone": "decision",
+      "word": "Decision"
+    },
+    {
+      "tone": "problem",
+      "word": "Setback"
+    },
+    {
+      "tone": "note",
+      "word": "Other update"
+    }
   ]
 }

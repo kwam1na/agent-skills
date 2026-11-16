@@ -188,3 +188,44 @@ test("a write to a live record moves the story on an open page without a reload"
   expect(pushed.app.querySelector("#happened .title").textContent).toBe(after.story.digest.words.head);
   expect(drawn(pushed).sort()).toEqual(held(after.story, "story").sort());
 });
+
+/** The legend's entries as drawn: each one's word and its mark. */
+const legendOf = (snapshot) => [...snapshot.app.querySelectorAll("#happened .story-legend > span")]
+  .map((entry) => ({ word: entry.textContent, mark: entry.querySelector(".g").outerHTML }));
+
+test("the legend says what each mark on the page means, for exactly the tones the depth in view holds", async () => {
+  for (const name of ["standing-break", "bookkeeping-run", "break-stops-a-piece"]) {
+    const document = storied(name);
+    const story = document.story;
+    const snapshots = await open(document, { steps: Object.keys(ALTITUDES).map((depth) => ({ click: `#happened [data-depth="${depth}"]` })) });
+    Object.keys(ALTITUDES).forEach((depth, index) => {
+      const shown = snapshots[index + 1];
+      const present = new Set(story.beats.filter((beat) => beat.altitudes.includes(depth)).map((beat) => beat.tone));
+      const legend = legendOf(shown);
+      expect([name, depth, legend.map((entry) => entry.word)]).toEqual([name, depth,
+        story.tones.filter((tone) => present.has(tone.tone)).map((tone) => tone.word)]);
+      // Each mark is the one its beats carry, drawn by the same code.
+      story.tones.filter((tone) => present.has(tone.tone)).forEach((tone) => {
+        const beat = story.beats.find((each) => each.tone === tone.tone && each.altitudes.includes(depth));
+        const mark = shown.app.querySelector(`#happened [data-beat="${beat.id}"] > .g`).outerHTML;
+        expect([name, depth, tone.tone, legend.find((entry) => entry.word === tone.word).mark]).toEqual([name, depth, tone.tone, mark]);
+      });
+    });
+  }
+  // One quiet row between the digest line and the switches.
+  const [shown] = await open(storied("standing-break"));
+  const legend = shown.app.querySelector("#happened .story-legend");
+  expect([legend.previousElementSibling.className, legend.nextElementSibling.className]).toEqual(["say", "story-bar"]);
+});
+
+test("a tone no page script names gets its mark and its word in the legend from the story alone", async () => {
+  const document = storied("standing-break");
+  const story = structuredClone(document.story);
+  const beat = story.beats.find((each) => each.form === "entry" && each.altitudes.includes("headline") && each.tone === "landed");
+  beat.tone = "x.calm";
+  story.tones.push({ tone: "x.calm", word: "Calm" });
+  document.story = story;
+  const [, headline] = await open(document, { steps: [{ click: '#happened [data-depth="headline"]' }] });
+  const calm = legendOf(headline).find((entry) => entry.word === "Calm");
+  expect(calm.mark).toBe(headline.app.querySelector(`#happened [data-beat="${beat.id}"] > .g`).outerHTML);
+});

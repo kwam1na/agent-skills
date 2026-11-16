@@ -195,5 +195,27 @@
         "line": "The full run failed at d7daad0: The full run failed on the main line. It ended when the main line was repaired."
       }
     }
+  ],
+  "tones": [
+    {
+      "tone": "landed",
+      "word": "Landed"
+    },
+    {
+      "tone": "ready",
+      "word": "Ready to check"
+    },
+    {
+      "tone": "decision",
+      "word": "Decision"
+    },
+    {
+      "tone": "problem",
+      "word": "Setback"
+    },
+    {
+      "tone": "note",
+      "word": "Other update"
+    }
   ]
 }

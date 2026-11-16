@@ -220,5 +220,27 @@
       "items": []
     }
   ],
-  "threads": []
+  "threads": [],
+  "tones": [
+    {
+      "tone": "landed",
+      "word": "Landed"
+    },
+    {
+      "tone": "ready",
+      "word": "Ready to check"
+    },
+    {
+      "tone": "decision",
+      "word": "Decision"
+    },
+    {
+      "tone": "problem",
+      "word": "Setback"
+    },
+    {
+      "tone": "note",
+      "word": "Other update"
+    }
+  ]
 }

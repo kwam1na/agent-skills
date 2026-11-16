@@ -743,6 +743,14 @@ class ReadingTests(unittest.TestCase):
         [blocked] = narrator.narrate(journal)["threads"]
         self.assertEqual(blocked["told"], {"cause": None, "said": "The staging database is down.", "heldUp": None, "ending": "It still stands."})
 
+    def test_the_story_says_what_each_tone_means_and_a_setback_is_named_as_its_sheet_is(self) -> None:
+        story, _ = told("last-delivery")
+        self.assertEqual(story["tones"], [{"tone": "landed", "word": "Landed"}, {"tone": "ready", "word": "Ready to check"},
+                                          {"tone": "decision", "word": "Decision"}, {"tone": "problem", "word": "Setback"},
+                                          {"tone": "note", "word": "Other update"}])
+        words = {tone["tone"]: tone["word"] for tone in story["tones"]}
+        self.assertTrue(all(words[beat["tone"]] == beat["label"] for beat in story["beats"] if beat["form"] == "thread"))
+
     def test_finish_lines_written_only_as_sentences_each_keep_their_sentence(self) -> None:
         journal = [
             {"id": 1, "at": "2026-11-16T09:00:00Z", "kind": "finish.met", "lane": None, "subject": "stories", "summary": "stories: Every story lands"},

@@ -2807,6 +2807,8 @@
   var FILTER_TONE = table({ decisions: "decision", landed: "landed", problems: "problem" });
   // A beat's mark, by its tone: the story says what kind of moment it is, and the page has one mark for each.
   var MARK_OF = table({ landed: "merge", ready: "ready", decision: "decide", problem: "stop", note: "note" });
+  /** A tone's mark, as a beat and the legend both draw it; a tone the page doesn't know draws as a note. */
+  function toneMark(tone) { return glyph(MARK_OF[tone] || "note"); }
   var DEPTH_KEY = (typeof VIEW.themeKey === "string" && VIEW.themeKey ? VIEW.themeKey.replace(/:theme$/, "") : "delivery-views") + ":story-depth";
   function storyOf(doc) {
     var story = isObject(doc.story) ? doc.story : null;
@@ -2969,7 +2971,7 @@
       fold.appendChild(listed);
     }
     fold.appendChild(beatFacts(doc, beat));
-    add(li, timeOf(beat.at), glyph(MARK_OF[beat.tone] || "note"), add(el("div", "beat-body"), runFold(fold, { key: "beat:" + text(beat.id) + ":" + list(beat.entries)[0] }),
+    add(li, timeOf(beat.at), toneMark(beat.tone), add(el("div", "beat-body"), runFold(fold, { key: "beat:" + text(beat.id) + ":" + list(beat.entries)[0] }),
       el("span", "beat-label", text(beat.label))));
     return li;
   }
@@ -2991,13 +2993,23 @@
       : add(el("div", "setback-cost is-standing"), el("b", null, "Still standing"), el("span", null, "since " + (clock(thread.openedAt) || "a time unknown")));
     var head = add(el("summary", "beat-head"), add(sheet, words, cost));
     var fold = add(el("details", "beat-fold"), head, beatFacts(doc, beat));
-    add(li, timeOf(beat.at), glyph("stop"), add(el("div", "beat-body"), runFold(fold, { key: "beat:" + text(beat.id) + ":" + text(thread.opening) })));
+    add(li, timeOf(beat.at), toneMark(beat.tone), add(el("div", "beat-body"), runFold(fold, { key: "beat:" + text(beat.id) + ":" + text(thread.opening) })));
     return li;
   }
   // Exactly the beats the story holds at a depth, and among them the tone the reader chose.
   function beatShown(beat, depth, filter) {
     if (!isObject(beat) || list(beat.altitudes).indexOf(depth) < 0) { return false; }
     return filter === "all" || beat.tone === FILTER_TONE[filter];
+  }
+  /** What each mark on the page means: one entry for each tone among the beats in view, in the story's words. */
+  function storyLegend(story, depth) {
+    var present = Object.create(null);
+    story.beats.forEach(function (beat) { if (beatShown(beat, depth, storyFilter)) { present[text(beat.tone)] = true; } });
+    var legend = el("div", "story-legend");
+    list(story.tones).filter(function (tone) { return isObject(tone) && present[text(tone.tone)]; }).forEach(function (tone) {
+      legend.appendChild(add(el("span"), toneMark(text(tone.tone)), text(tone.word)));
+    });
+    return legend.childNodes.length ? legend : null;
   }
   function drawHappened(doc) {
     var inner = parts.happened;
@@ -3045,7 +3057,7 @@
     prev.story = seen;
     var digest = isObject(story.digest.words) ? story.digest.words : { head: "", line: "" };
     inner.replaceChildren(el("div", "kicker", "What happened"), el("h2", "title", text(digest.head)),
-      text(digest.line) ? el("p", "say", text(digest.line)) : null, switches, ol);
+      text(digest.line) ? el("p", "say", text(digest.line)) : null, storyLegend(story, depth), switches, ol);
     // Depth changes density in place: the chapter eases from the height it had, on the shared fold's motion.
     runEaseHeight(inner, from);
   }
