@@ -747,9 +747,9 @@ python3 -B scripts/delivery_state.py --dir <state directory> carry-review --writ
 
 Before carrying, the lead reads the diff between the two heads and judges that
 nothing in it needs review; the tool does no git work. The carry journals a
-`decision.recorded` entry with `reviewCarry` naming both heads and the capture's
-digest, and the views then show the capture at the queued head with that
-decision, never as a review of the new head. A carry never changes what the
+`review.carried` entry whose facts name both heads, the capture's digest and
+the lead's reason, and the views then show the capture at the queued head with
+that carry, never as a review of the new head. A carry never changes what the
 evidence says: a capture whose last round is not aligned, or that leaves a P0 or
 P1 open, is refused. Each later head needs its own carry, from the head the last
 carry reached, and a later review round or capture ends a carry. Like a capture,

@@ -1766,10 +1766,10 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual(code, 0, result)
         self.assertEqual([report["subject"] for report in result["reports"]], ["work-m"])
         self.assertIn("before the lead accepted", result["reports"][0]["note"])
-        summaries = {entry["subject"]: entry["summary"] for entry in state_tool.read_journal(self.directory)
-                     if entry["kind"] == "candidate.merged"}
-        self.assertIn("before the lead accepted", summaries["work-m"])
-        self.assertNotIn("before the lead accepted", summaries["work-n"])
+        skipped = {entry["subject"]: entry["data"].get("acceptanceSkipped", False) for entry in state_tool.read_journal(self.directory)
+                   if entry["kind"] == "candidate.merged"}
+        self.assertTrue(skipped["work-m"])
+        self.assertFalse(skipped["work-n"])
 
     def test_planned_work_merged_with_no_hand_off_skipped_the_lead_only_under_its_policy(self) -> None:
         for policy, reported in ((True, ["work-p"]), (False, [])):
@@ -1783,18 +1783,16 @@ class ReconcileTests(unittest.TestCase):
                 code, result = run_tool(directory, "reconcile", "--snapshot", forge)
                 self.assertEqual(code, 0, result)
                 self.assertEqual([report["subject"] for report in result["reports"]], reported)
-                summary = next(entry["summary"] for entry in state_tool.read_journal(directory)
-                               if entry["kind"] == "candidate.merged")
-                self.assertEqual("before the lead accepted" in summary, policy)
+                merged = next(entry for entry in state_tool.read_journal(directory) if entry["kind"] == "candidate.merged")
+                self.assertEqual(merged["data"].get("acceptanceSkipped", False), policy)
 
     def test_an_accepted_merge_under_the_policy_stays_silent(self) -> None:
         self.lead({"meta": {"handoffsNeedAcceptance": True}, "queue": [queue_item("work-a", changeRequest="change 43")]})
         forge = self.snapshot("forge", [{"subject": "work-a", "state": "merged", "changeRequest": "change 43", "head": HEAD_B}])
         code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
         self.assertEqual((code, result["reports"]), (0, []), result)
-        summary = next(entry["summary"] for entry in state_tool.read_journal(self.directory)
-                       if entry["kind"] == "candidate.merged")
-        self.assertNotIn("before the lead accepted", summary)
+        merged = next(entry for entry in state_tool.read_journal(self.directory) if entry["kind"] == "candidate.merged")
+        self.assertNotIn("acceptanceSkipped", merged["data"])
 
     def test_planned_work_keeps_its_skipped_acceptance_across_a_recovery_put_off_by_the_runner(self) -> None:
         self.lead({"meta": {"handoffsNeedAcceptance": True},
@@ -1808,8 +1806,8 @@ class ReconcileTests(unittest.TestCase):
         code, result = run_tool(self.directory, "reconcile", "--snapshot", forge)
         self.assertEqual((code, [report["subject"] for report in result["reports"]]), (0, ["work-p"]), result)
         self.assertNotIn("pending", state_tool.show(self.directory)["state"]["queue"][0])
-        self.assertIn("before the lead accepted", next(entry["summary"] for entry in state_tool.read_journal(self.directory)
-                                                       if entry["kind"] == "candidate.merged"))
+        self.assertTrue(next(entry for entry in state_tool.read_journal(self.directory)
+                             if entry["kind"] == "candidate.merged")["data"]["acceptanceSkipped"])
 
     def leftover(self) -> str:
         """A merged, journaled item carrying the flag, as an earlier version left it; returns its forge snapshot."""
@@ -2401,7 +2399,7 @@ class RecoveryIntentTests(unittest.TestCase):
         result = state_tool.reconcile(self.directory, [elsewhere])
         self.assertNotIn("pending", state_tool.show(self.directory)["state"]["queue"][0])
         self.assertEqual(len(self.recovered()), 1)
-        self.assertIn("before the lead accepted", self.recovered()[0]["summary"])
+        self.assertTrue(self.recovered()[0]["data"]["acceptanceSkipped"])
         self.assertEqual([report["subject"] for report in result["reports"]], ["work-q"])
         self.assertFalse(self.intent().exists())
 
@@ -6201,10 +6199,11 @@ class CarryReviewTests(unittest.TestCase):
         self.assertEqual(self.evidence()["evidence"], "unavailable", "a capture binds to the head it reviewed")
         before = state_tool.show(self.directory)
         entry = self.carry()
-        self.assertEqual((entry["kind"], entry["subject"]), ("decision.recorded", "work-a"))
-        self.assertEqual(entry["reviewCarry"]["from"], HEAD_B)
-        self.assertEqual(entry["reviewCarry"]["to"], HEAD_C)
-        self.assertIn("only a fixture changed", entry["summary"])
+        capture = next(item for item in before["journal"] if item["kind"] == "review.evidence")
+        self.assertEqual((entry["kind"], entry["subject"], entry["lane"]), ("review.carried", "work-a", "lane-1"))
+        self.assertEqual(entry["data"], {"from": HEAD_B, "to": HEAD_C, "digest": capture["reviewArtifact"]["digest"],
+                                         "why": "only a fixture changed"})
+        self.assertNotIn("reviewCarry", entry)
         found = self.evidence()
         self.assertEqual((found["evidence"], found["carriedFrom"], found["carriedTo"]), ("captured", HEAD_B, HEAD_C))
         after = state_tool.show(self.directory)
@@ -6212,7 +6211,7 @@ class CarryReviewTests(unittest.TestCase):
         # The evidence itself is unchanged: its rounds, its own reviewed head, its digest.
         self.assertEqual(observed["candidateRef"], HEAD_B)
         self.assertEqual(len(observed["outcomes"]), 2)
-        self.assertEqual(observed["carried"], {"from": HEAD_B, "to": HEAD_C, "note": entry["summary"]})
+        self.assertEqual(observed["carried"], {"from": HEAD_B, "to": HEAD_C, "note": "only a fixture changed"})
 
     def test_a_carry_is_no_run_no_round_and_no_admission_evidence(self) -> None:
         before = state_tool.show(self.directory)
@@ -6222,7 +6221,7 @@ class CarryReviewTests(unittest.TestCase):
         self.assertIsNone(after["state"]["queue"][0]["runId"])
         self.assertNotIn("evidence", after["state"]["queue"][0])
         self.assertEqual(after["stats"]["work-a"].get("rounds"), before["stats"]["work-a"].get("rounds"))
-        self.assertEqual([entry["kind"] for entry in after["journal"]][len(before["journal"]):], ["decision.recorded"])
+        self.assertEqual([entry["kind"] for entry in after["journal"]][len(before["journal"]):], ["review.carried"])
 
     def test_a_later_round_or_capture_ends_a_carry(self) -> None:
         self.carry()
@@ -6337,7 +6336,7 @@ class CarryReviewTests(unittest.TestCase):
         self.assertEqual((code, refused["code"]), (1, "writer_not_owned"))
         code, carried = run_tool(self.directory, *arguments, "--writer", "lead")
         self.assertEqual(code, 0, carried)
-        self.assertEqual(carried["entry"]["reviewCarry"]["to"], HEAD_C)
+        self.assertEqual(carried["entry"]["data"]["to"], HEAD_C)
         carry = {"from": HEAD_B, "to": HEAD_C, "digest": "0" * 64}
         for stray in ({**VALID_ENTRY, "kind": "candidate.merged", "reviewCarry": carry},
                       {**VALID_ENTRY, "kind": "decision.recorded", "subject": None, "reviewCarry": carry}):
@@ -6408,7 +6407,7 @@ class StateToolFactsTests(unittest.TestCase):
                          ("candidate.handed", "lane-1", "work-a", {"head": HEAD_B, "checks": [], "noChange": True}, False))
         self.assertIn("with no change needed", entry["summary"])
 
-    def test_a_selection_journals_its_checks_and_reason_and_a_clearing_keeps_its_sentence(self) -> None:
+    def test_a_selection_journals_its_checks_and_reason_and_a_clearing_its_own_kind(self) -> None:
         LeadSelectionTests.select(self, binding={**LeadSelectionTests.BINDING,
                                                   "selection": {"lead": True, "catalogue": [selected_check("guide")],
                                                                 "guards": ["guide"]}})
@@ -6418,9 +6417,8 @@ class StateToolFactsTests(unittest.TestCase):
                                          "added": [{"id": "guide", "why": "a guard"}]})
         state_tool.select_checks(self.directory, "work-q", binding=LeadSelectionTests.BINDING)
         cleared = self.last()
-        # The clearing becomes a kind of its own once the readers of check.selected move: until then, a sentence.
-        self.assertEqual((cleared["kind"], "data" in cleared), ("check.selected", False))
-        self.assertIn("Cleared the lead's check selection for work-q", cleared["summary"])
+        self.assertEqual((cleared["kind"], cleared["lane"], cleared["subject"], cleared["data"]),
+                         ("check.selection.cleared", "lane-1", "work-q", {}))
 
     def test_wait_events_carry_each_entrys_facts_and_its_words_from_the_registry(self) -> None:
         handed = state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head=HEAD_A, change_request="cr-a",
@@ -6526,17 +6524,24 @@ class FactsReaderTests(unittest.TestCase):
         member = {"directory": "state", "renderers": [], "publishers": [],
                   "trackerSnapshot": {"argv": ["tracker", "{parent}"], "timeoutSeconds": 2}}
         output = self.root / "tracker.json"
-        stale = state_tool.append_journal(self.directory, kind="snapshot.stale", data={"source": "tracker"})
+        stale = state_tool.append_journal(self.directory, kind="snapshot.stale",
+                                          data={"source": "tracker", "cause": "exited", "exitCode": 3})
 
         def take(code: int, out: bytes = b"") -> dict:
             with mock.patch.object(state_tool, "_run_bounded", return_value=(code, out, "")):
                 return state_tool.take_snapshot(self.directory, member, output, source="tracker", max_age=3600)
-        # The outage is already noted by a stale note with facts: a failure notes nothing more.
+        # The outage is already noted, for this cause, by a stale note with facts: the same failure notes nothing more.
         self.assertFalse(take(3)["taken"])
         self.assertEqual(state_tool.read_journal(self.directory), [stale])
+        # Another cause is noted, by its facts.
+        self.assertFalse(take(4)["taken"])
+        other = state_tool.read_journal(self.directory)[-1]
+        self.assertEqual((other["kind"], other["data"]), ("snapshot.stale", {"source": "tracker", "cause": "exited", "exitCode": 4}))
         snapshot = {"takenAt": taken(), "source": "tracker", "items": []}
         self.assertTrue(take(0, json.dumps(snapshot).encode())["taken"])
-        self.assertEqual(state_tool.read_journal(self.directory)[-1]["summary"], "tracker-snapshot: taken again")
+        retaken = state_tool.read_journal(self.directory)[-1]
+        self.assertEqual((retaken["kind"], retaken["data"], retaken["answers"], retaken["summary"]),
+                         ("snapshot.retaken", {"source": "tracker"}, [other["id"]], "tracker-snapshot: taken again"))
         # A forge note is not the tracker's.
         self.assertEqual(state_tool._snapshot_note({**stale, "data": {"source": "forge"}}, "tracker", "tracker-snapshot:"),
                          False)
@@ -6553,8 +6558,9 @@ class FactsReaderTests(unittest.TestCase):
                              + state_tool.WAIT_BYPASSED}
         recorded = {"id": 1, "at": taken(), "kind": "candidate.merged", "lane": "lane-1", "subject": "work-q",
                     "occurredAt": None, "recovery": {"head": HEAD_B, "changeRequest": "change 7"},
-                    "data": {"head": HEAD_B, "recovery": {"head": HEAD_B, "changeRequest": "change 7"}}}
-        for entry, bypassed in ((recorded, True), ({**recorded, "data": {"head": HEAD_B}}, False)):
+                    "data": {"head": HEAD_B, "recovery": {"head": HEAD_B, "changeRequest": "change 7"}, "acceptanceSkipped": True}}
+        for entry, bypassed in ((recorded, True), ({**recorded, "data": {"head": HEAD_B}}, False),
+                                (prose_replaced([recorded], FactsReaderTests.KINDS)[0], True)):
             with self.subTest(data=entry["data"]):
                 write_journal(self.directory, [entry])
                 (self.directory / state_tool.RECOVERY_FILE).write_text(json.dumps(intent), encoding="utf-8")
@@ -6838,7 +6844,7 @@ class LeadSelectionTests(unittest.TestCase):
         code, result = run_tool(self.directory, "select", "--subject", "work-q", "--clear")
         self.assertEqual(code, 0, result)
         self.assertNotIn("leadSelection", result["item"])
-        self.assertEqual(state_tool.read_journal(self.directory)[-1]["kind"], "check.selected")
+        self.assertEqual(state_tool.read_journal(self.directory)[-1]["kind"], "check.selection.cleared")
         code, result = run_tool(self.directory, "select", "--subject", "work-q", "--head", HEAD_A)
         self.assertEqual((code, result["code"]), (1, "select_invalid"))
 

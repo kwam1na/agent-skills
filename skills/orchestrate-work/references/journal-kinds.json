@@ -419,6 +419,23 @@
           "$ref": "#/$defs/commits"
         }
       }
+    },
+    "snapshotCause": {
+      "description": "Why a snapshot could not be taken, by the state tool's fixed classes of reason.",
+      "enum": [
+        "no_parent",
+        "timed_out",
+        "too_much_output",
+        "not_started",
+        "unfinished",
+        "exited",
+        "no_json",
+        "too_old",
+        "invalid"
+      ]
+    },
+    "exitCode": {
+      "type": "integer"
     }
   },
   "kinds": {
@@ -964,7 +981,7 @@
         }
       },
       "because": {
-        "required": true
+        "required": false
       },
       "answers": [],
       "opensThread": false,
@@ -1055,6 +1072,10 @@
         "recovery": {
           "type": "recovery",
           "optional": true
+        },
+        "acceptanceSkipped": {
+          "type": "flag",
+          "optional": true
         }
       },
       "because": {
@@ -1063,7 +1084,13 @@
       "answers": [],
       "opensThread": false,
       "words": {
-        "head": "{subject} landed",
+        "head": {
+          "by": "acceptanceSkipped",
+          "cases": {
+            "true": "{subject} landed before the lead accepted it"
+          },
+          "otherwise": "{subject} landed"
+        },
         "line": "At {head:commit}[, found later on the forge at {recovery.head:commit}]"
       },
       "explain": "A piece reached the main line.",
@@ -1188,6 +1215,9 @@
         "base": {
           "type": "base"
         },
+        "head": {
+          "type": "commit"
+        },
         "seconds": {
           "type": "seconds"
         },
@@ -1202,7 +1232,7 @@
       "opensThread": false,
       "words": {
         "head": "The run on the main line stopped",
-        "line": "After {seconds:duration}. {why}"
+        "line": "After {seconds:duration}, for the piece at {head:commit}. {why}"
       },
       "explain": "The run on the main line ended without a verdict, so the piece is checked once more.",
       "tracker": null,
@@ -1624,6 +1654,14 @@
       "data": {
         "source": {
           "type": "snapshotSource"
+        },
+        "cause": {
+          "type": "snapshotCause",
+          "optional": true
+        },
+        "exitCode": {
+          "type": "exitCode",
+          "optional": true
         }
       },
       "because": {

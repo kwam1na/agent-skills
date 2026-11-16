@@ -1980,8 +1980,12 @@ def select_checks(directory: Path, subject: str, *, binding: dict, head: str | N
         summary = f"The lead selected checks for {subject} at {head}: {names}. Why: {reason}"
         if added:
             summary += ". Added: " + "; ".join(f"{entry['id']} ({entry['why']})" for entry in added)
-    facts = None if clearing else {"head": head, "checks": [check["id"] for check in checks], "why": reason,  # type: ignore[union-attr]
-                                   "added": [{"id": entry["id"], "why": entry["why"]} for entry in added or []]}
+    if clearing:
+        append_journal(directory, kind="check.selection.cleared", subject=subject, lane=item.get("lane"),  # type: ignore[union-attr]
+                       summary=summary, data={})
+        return item  # type: ignore[return-value]
+    facts = {"head": head, "checks": [check["id"] for check in checks], "why": reason,  # type: ignore[union-attr]
+             "added": [{"id": entry["id"], "why": entry["why"]} for entry in added or []]}
     append_journal(directory, kind="check.selected", subject=subject, lane=item.get("lane"), summary=summary, data=facts)  # type: ignore[union-attr]
     return item  # type: ignore[return-value]
 
@@ -2701,10 +2705,10 @@ def carry_review(directory: Path, *, subject: str, from_head: str, to_head: str,
             raise StateError("carry_invalid", f"the captured review leaves {', '.join(blocking)} open; a carry can't approve it")
         if outcomes[-1].get("outcome") != "aligned":
             raise StateError("carry_invalid", f"the captured review's last round, round {len(outcomes)}, is not aligned")
-        return append_journal(directory, kind="decision.recorded", subject=subject, lane=item.get("lane"),
+        return append_journal(directory, kind="review.carried", subject=subject, lane=item.get("lane"),
                               summary=f"The lead carried {subject}'s review from {from_head} to {to_head}, "
                                       f"no new round needed: {reason.strip()}",
-                              review_carry={"from": from_head, "to": to_head, "digest": reference["digest"]})
+                              data={"from": from_head, "to": to_head, "digest": reference["digest"], "why": reason.strip()})
 
 
 def review_observations(directory: Path, state: dict, journal: list[dict]) -> dict:
@@ -3650,7 +3654,10 @@ def _journal_recovery(directory: Path, intent: dict) -> dict:
 def _recovery_facts(intent: dict) -> dict:
     """A recovered merge's facts: its head, and the source identity a late hand-off can't duplicate."""
     # Always named, so a merge the runner journaled, which carries no recovery, is never taken for this one.
-    return {"head": intent["head"], "recovery": {"head": intent["head"], "changeRequest": intent.get("changeRequest")}}
+    facts = {"head": intent["head"], "recovery": {"head": intent["head"], "changeRequest": intent.get("changeRequest")}}
+    if intent["summary"].endswith(WAIT_BYPASSED):
+        facts["acceptanceSkipped"] = True
+    return facts
 
 
 def _read_recovery(directory: Path) -> dict | None:
@@ -4592,9 +4599,9 @@ def _snapshot_retaken(entry: dict, again: str) -> bool:
     return entry["kind"] == "snapshot.retaken" if "data" in entry else entry.get("summary") == again
 
 
-def _snapshot_stale(entry: dict, summary: str) -> bool:
-    # A stale note with facts names only its source; while one stands, the outage is already noted.
-    return entry["kind"] == "snapshot.stale" if "data" in entry else entry.get("summary") == summary
+def _snapshot_stale(entry: dict, facts: dict, summary: str) -> bool:
+    """Whether a note already says the snapshot is stale for this reason: by its cause with facts, its sentence otherwise."""
+    return entry["kind"] == "snapshot.stale" and entry["data"] == facts if "data" in entry else entry.get("summary") == summary
 
 
 def take_snapshot(directory: Path, member: dict, output: Path, *, source: str, max_age: float,
@@ -4617,17 +4624,24 @@ def take_snapshot(directory: Path, member: dict, output: Path, *, source: str, m
     # The journal is published, so it gets a fixed reason class; the command's
     # own words, which may carry anything it printed, stay in this result.
     reason, detail = None, None
+    # The reason's class, as the note's facts give it: the sentence's own words are not read.
+    cause: dict = {}
     cleanup: list[dict] = []
     if any("{parent}" in part for part in config["argv"]) and not parent:
         reason = "the command needs {parent}, and the record names no meta.trackerParent"
+        cause = {"cause": "no_parent"}
     else:
         argv = _fill(config["argv"], parent, directory)
         code, out, detail = _run_bounded(argv, config["timeoutSeconds"], TRACKER_SNAPSHOT_OUTPUT_BYTES, cwd,
                                          cleanup=cleanup)
         if code is None:
             reason = detail if detail.startswith(("timed out", "printed more", "could not start")) else "it did not finish"
+            cause = {"cause": next((name for start, name in (("timed out", "timed_out"), ("printed more", "too_much_output"),
+                                                            ("could not start", "not_started")) if detail.startswith(start)),
+                                   "unfinished")}
         elif code != 0:
             reason = f"the command exited with {code}"
+            cause = {"cause": "exited", "exitCode": code}
         else:
             try:
                 snapshot = check_snapshot(json.loads(out.decode("utf-8-sig")), "the command's snapshot", max_age,
@@ -4636,9 +4650,11 @@ def take_snapshot(directory: Path, member: dict, output: Path, *, source: str, m
                     raise StateError("snapshot_invalid", f"the command's snapshot is not from the {source}")
             except (UnicodeDecodeError, ValueError, RecursionError):
                 reason = "the command printed no JSON"
+                cause = {"cause": "no_json"}
             except StateError as error:
                 reason = ("the command's snapshot is too old" if error.code == "snapshot_stale"
                           else f"the command's snapshot is not a valid {source} snapshot")
+                cause = {"cause": "too_old" if error.code == "snapshot_stale" else "invalid"}
                 detail = str(error)
     last = next((entry for entry in reversed(read_journal(directory)) if _snapshot_note(entry, source, note)), None)
     if reason is None:
@@ -4647,13 +4663,15 @@ def take_snapshot(directory: Path, member: dict, output: Path, *, source: str, m
         except OSError as error:
             raise StateError("output_invalid", f"cannot write {Path(output).name}: {error.strerror or error}") from None
         if last is not None and not _snapshot_retaken(last, again):
-            # Say the outage ended, so the next failure is noted again.
-            append_journal(directory, kind="decision.recorded", summary=again)
+            # Say the outage ended, so the next failure is noted again; it answers the note of the outage.
+            append_journal(directory, kind="snapshot.retaken", summary=again, data={"source": source},
+                           answers=[last["id"]] if last["kind"] == "snapshot.stale" else None)
         return {"ok": True, "taken": True, "output": str(output), "items": len(snapshot["items"]),
                 "takenAt": snapshot["takenAt"], **_cleanup_note(cleanup)}
     summary = f"{note} {reason}; the last snapshot stands"
-    if last is None or not _snapshot_stale(last, summary):
-        append_journal(directory, kind="decision.recorded", summary=summary)
+    facts = {"source": source, **cause}
+    if last is None or not _snapshot_stale(last, facts, summary):
+        append_journal(directory, kind="snapshot.stale", summary=summary, data=facts)
     result = {"ok": True, "taken": False, "reason": reason, "fallback": Path(output).is_file(), **_cleanup_note(cleanup)}
     if detail and detail != reason:
         result["detail"] = detail
@@ -4950,7 +4968,9 @@ def _checks_argument(value: str) -> object:
 
 
 # What a running `wait` returns on: the journal kinds that need the lead. A blocked lane and machine pressure also end it.
-WAIT_KINDS = frozenset({"candidate.handed", "check.failed", "candidate.merged", "candidate.stopped", "base.broken", "blocker.recorded"})
+# A held runner wakes the lead as a blocker does: the queue writes its hold as serving.held.
+WAIT_KINDS = frozenset({"candidate.handed", "check.failed", "candidate.merged", "candidate.stopped", "base.broken", "blocker.recorded",
+                        "serving.held"})
 # 0 is a wake and 1 an error, so a lead can tell what ended a wait left running in the background.
 WAIT_EXPIRED_EXIT = 3
 WAIT_TIMEOUT_SECONDS = 1800.0

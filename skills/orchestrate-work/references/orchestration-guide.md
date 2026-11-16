@@ -1614,7 +1614,8 @@ binding declares may change.
   interrupted. A check that exits in that range with no signal sent cannot be
   told from a stopped one and reads as stopped. An exit of 128, one above the
   range, and a timeout are failures, as before. A stopped re-run journals
-  `base.rerun.stopped` in place of `base.rerun.finished`, joins no
+  `base.rerun.stopped` in place of `base.rerun.finished`, naming both heads
+  in its facts, the base's in `base` and the candidate's in `head`, joins no
   `meta.baseReruns`, journals no `base.broken`, and leaves the queue free: the
   candidate goes back to `queued` and is checked again without the lead, once
   for each pair of candidate head and base head, and the lead's wait does not

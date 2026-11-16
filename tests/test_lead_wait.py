@@ -23,7 +23,8 @@ SKILL = ROOT / "skills/orchestrate-work/SKILL.md"
 GUIDE = ROOT / "skills/orchestrate-work/references/orchestration-guide.md"
 RUN_DELIVERY_BRIEF = ROOT / "skills/run-delivery/templates/lane-brief.md"
 TOOL = ROOT / "skills/orchestrate-work/scripts/delivery_state.py"
-EVENT_KINDS = ("candidate.handed", "check.failed", "candidate.merged", "candidate.stopped", "base.broken", "blocker.recorded")
+EVENT_KINDS = ("candidate.handed", "check.failed", "candidate.merged", "candidate.stopped", "base.broken", "blocker.recorded",
+               "serving.held")
 GIB = 2**30
 
 
