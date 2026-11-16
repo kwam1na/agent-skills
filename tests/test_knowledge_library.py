@@ -46,7 +46,8 @@ class KnowledgeLibraryContractTests(unittest.TestCase):
         text = section(CONTRACT, "Knowledge Library Operations")
         for phrase in (
             "The knowledge-library capability exposes only these neutral operations, both read-only:",
-            "- `search-knowledge` - `read-knowledge`",
+            # The closed list carried with the paragraph after it, so a third operation breaks the phrase.
+            "read-only: - `search-knowledge` - `read-knowledge` `search-knowledge` takes a `query`",
             "Neither operation mutates anything, so neither needs an idempotency key.",
         ):
             with self.subTest(phrase=phrase):
