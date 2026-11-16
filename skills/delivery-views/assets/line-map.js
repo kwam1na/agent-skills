@@ -543,6 +543,17 @@
     var missing = plan ? liveUnits().filter(function (unit) { return !all.some(function (piece) { return piece.item.subject === unit.subject; }); }).length : 0;
     return { landed: landed, total: meant.length + missing, placed: meant.length };
   }
+  // A review round's own record: its facts, or, for a round written before them, the review it carried beside it.
+  function roundOf(entry) {
+    if (isObject(entry.data) && entry.kind === "review.round") { return entry.data; }
+    return isObject(entry.review) ? entry.review : null;
+  }
+  // The entry that says a review was kept, and what it names: its facts, or the sentence's own artifact beside it.
+  var KEPT = table({ "review.recorded": true, "review.evidence": true });
+  function keptReview(entry) {
+    if (entry.kind === "review.recorded" && isObject(entry.data)) { return { digest: entry.data.digest, candidateRef: entry.data.candidateRef }; }
+    return isObject(entry.reviewArtifact) ? entry.reviewArtifact : null;
+  }
   function journalFor(doc, subject, kinds) {
     return list(doc.journal).filter(function (entry) { return isObject(entry) && entry.subject === subject && (!kinds || kinds[entry.kind]); });
   }
@@ -1566,7 +1577,7 @@
     }
     else if (item.stage === "review") {
       label = "In review since"; basis = "Recorded review round start";
-      event = last("review.round"); at = event && isObject(event.review) ? event.review.startedAt : null;
+      event = last("review.round"); at = event && roundOf(event) ? roundOf(event).startedAt : null;
     } else if (item.stage === "queued") {
       label = "Handed over"; basis = "Recorded hand-off"; event = handedIndex >= 0 ? own[handedIndex] : null;
     } else if (item.stage === "checking" && rerunOf(doc, item)) {
@@ -1674,7 +1685,7 @@
   function reviewedCandidate(doc, item, evidence) {
     var queued = list(doc.state.queue).some(function (entry) { return isObject(entry) && entry.subject === item.subject; });
     if (queued) { return item.head; }
-    return evidence && isObject(evidence.reviewArtifact) ? evidence.reviewArtifact.candidateRef : undefined;
+    return evidence && keptReview(evidence) ? keptReview(evidence).candidateRef : undefined;
   }
   function isPlanned(doc, item) {
     return list(doc.state.planned).some(function (entry) { return isObject(entry) && entry.subject === item.subject; })
@@ -1686,9 +1697,9 @@
   function runFor(doc, item) {
     if (typeof item.runId !== "string" || item.runId === "") {
       var native = Object.prototype.hasOwnProperty.call(nativeReviews, item.subject) ? nativeReviews[item.subject] : null;
-      var events = journalFor(doc, item.subject, { "review.round": true, "review.evidence": true });
+      var events = journalFor(doc, item.subject, { "review.round": true, "review.recorded": true, "review.evidence": true });
       var boundary = events.reduce(function (last, event) { return Math.max(last, event.id || 0); }, 0);
-      var evidence = events.filter(function (event) { return event.kind === "review.evidence"; }).slice(-1)[0];
+      var evidence = events.filter(function (event) { return KEPT[event.kind]; }).slice(-1)[0];
       var observation = isObject(doc.reviewEvidence) ? doc.reviewEvidence[item.subject] : undefined;
       if (!native && !events.length) {
         return isPlanned(doc, item) && !closedEntry(doc)
@@ -1701,7 +1712,7 @@
       var covers = carried ? carried.to : (isObject(native) ? native.candidateRef : undefined);
       if (!isObject(native) || native.unavailable === true || typeof candidate !== "string" || covers !== candidate
           || native.journalId !== boundary
-          || (evidence && (!isObject(evidence.reviewArtifact) || evidence.reviewArtifact.digest !== native.digest))
+          || (evidence && (!keptReview(evidence) || keptReview(evidence).digest !== native.digest))
           || (isObject(doc.reviewEvidence) && (!isObject(observation) || observation.unavailable === true || observation.digest !== native.digest))) {
         return el("div", "d-run-none", "Review evidence unavailable or stale for this candidate." + (isPlanned(doc, item) && !closedEntry(doc)
           ? " Its rounds show here again once the lane's review-reduce records its latest round." : ""));
@@ -1716,7 +1727,8 @@
     if (!isObject(summary) || summary.unavailable === true) { return el("div", "d-run-none", "Run " + item.runId + " unavailable."); }
     var journaled = {};
     journalFor(doc, item.subject, { "review.round": true }).forEach(function (entry) {
-      if (isObject(entry.review) && isObject(entry.review.verdicts)) { journaled[entry.review.round] = entry.review.verdicts; }
+      var round = roundOf(entry);
+      if (round && isObject(round.verdicts)) { journaled[round.round] = round.verdicts; }
     });
     // The run's own verdicts stand. A lens the run gives no verdict for, or calls unknown, takes the one the record's
     // review.round entry journaled for that round, and a round the run gives no outcome for takes one from those verdicts.
@@ -2020,9 +2032,9 @@
   function reviewProof(doc, subject, item) {
     var handed = journalFor(doc, subject, { "candidate.handed": true });
     var boundary = handed.length > 1 ? handed[handed.length - 2] : null;
-    var journaled = journalFor(doc, subject, { "review.round": true }).filter(function (entry) { return isObject(entry.review); });
+    var journaled = journalFor(doc, subject, { "review.round": true }).filter(function (entry) { return roundOf(entry) !== null; });
     var overlay = Object.create(null);
-    journaled.forEach(function (entry) { if (isObject(entry.review.verdicts)) { overlay[entry.review.round] = entry.review.verdicts; } });
+    journaled.forEach(function (entry) { var round = roundOf(entry); if (isObject(round.verdicts)) { overlay[round.round] = round.verdicts; } });
     function judged(approved, current, at) {
       if (current) { return approved ? { state: "done", at: at } : { state: "open", at: null }; }
       return approved ? { state: "stale", at: null } : { state: "open", at: null };
@@ -2045,12 +2057,12 @@
         && (!isObject(doc.reviewEvidence) || (isObject(observed) && observed.unavailable !== true && observed.digest === native.digest))) {
       var detail = list(native.roundDetail).filter(isObject);
       var final = detail[detail.length - 1];
-      var captured = journalFor(doc, subject, { "review.evidence": true }).pop();
+      var captured = journalFor(doc, subject, KEPT).pop();
       if (final) { return judged(final.outcome === "approve" && approves(final.verdicts), true, captured ? captured.at : null); }
     }
     if (journaled.length) {
       var latest = journaled[journaled.length - 1];
-      return judged(approves(latest.review.verdicts), !boundary || (latest.id || 0) > (boundary.id || 0), text(latest.review.finishedAt) || latest.at);
+      return judged(approves(roundOf(latest).verdicts), !boundary || (latest.id || 0) > (boundary.id || 0), text(roundOf(latest).finishedAt) || latest.at);
     }
     return { state: "none", at: null };
   }

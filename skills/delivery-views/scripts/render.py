@@ -514,12 +514,12 @@ def native_review_summaries(document: dict) -> dict:
             if not isinstance(journal, list) or any(not isinstance(entry, dict) for entry in journal):
                 raise ValueError("malformed review journal")
             events = [entry for entry in journal if entry.get("subject") == subject
-                      and entry.get("kind") in ("review.round", "review.evidence")]
+                      and entry.get("kind") in ("review.round", *REVIEW_KEPT)]
             if any(type(entry.get("id")) is not int or not 0 < entry["id"] <= SAFE_INTEGER for entry in events):
                 raise ValueError("malformed review journal boundary")
-            evidence = next((entry for entry in reversed(events) if entry["kind"] == "review.evidence"), None)
+            evidence = next((entry for entry in reversed(events) if entry["kind"] in REVIEW_KEPT), None)
             boundary = max((entry.get("id", 0) for entry in events), default=0)
-            if evidence is not None and (evidence.get("reviewArtifact") != {
+            if evidence is not None and (_kept_review(evidence) != {
                     "digest": observation["digest"], "candidateRef": observation["candidateRef"]}
                     or evidence.get("id", 0) != boundary):
                 raise ValueError("review observation is stale")
@@ -646,6 +646,16 @@ def _texts_order(texts: dict, named: list[str]) -> list:
 
 
 COMMIT_ID = re.compile(r"^[0-9a-f]{40}$")
+# The entry that says a review was kept: review.recorded, with its digest and reviewed commit as facts, or, until the
+# sentence is removed, the sentence's review.evidence, which carries them beside the entry.
+REVIEW_KEPT = ("review.recorded", "review.evidence")
+
+
+def _kept_review(entry: dict) -> object:
+    data = entry.get("data")
+    if entry.get("kind") == "review.recorded" and isinstance(data, dict):
+        return {"digest": data.get("digest"), "candidateRef": data.get("candidateRef")}
+    return entry.get("reviewArtifact")
 
 
 def _facts_named(value: object, commits: list, changes: list) -> None:

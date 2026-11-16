@@ -1,6 +1,8 @@
 // "What happened" draws the story the narrator told, and words nothing itself. Each story here is the narrator's own,
 // for a named journal under tests/fixtures/narrator/, kept byte for byte beside it (tests.test_delivery_views_render
 // regenerates each and fails when one differs).
+process.env.TZ = "UTC";
+
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";

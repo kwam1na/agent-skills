@@ -619,7 +619,7 @@ PINNED_EMPTY_VIEWS = {
 }
 PINNED_VIEWS = {
     "delivery.md": "b5f72d94d7e66bcfea7be7b17c87123b8ffe405e43997a88f437d7cbe7b68abd",
-    "delivery.html": "2f6f961af8b25150713034b33bafeaac99ca0a4a0c8a8fb3db73cebedb37683e",
+    "delivery.html": "b027495ce5c9e236e081d3bae4aa2fa5d6e7beaefbb1cf25f62e4f8d40a80319",
 }
 
 
