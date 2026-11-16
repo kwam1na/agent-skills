@@ -21,7 +21,7 @@ CATALOGUE_MODULES = (
     "adoption", "bootstrap_qualification", "catalog", "compound_learning_corpus", "core_boundary", "corpus_copy",
     "cut_release", "declared_mechanics_corpus", "delivery_posture_vectors", "delivery_provider",
     "delivery_provider_rails_contract", "delivery_views", "delivery_views_adopter", "delivery_views_history",
-    "delivery_views_hosted_projection", "delivery_views_page", "delivery_views_plan", "delivery_views_plan_fixtures", "delivery_views_render",
+    "delivery_views_hosted", "delivery_views_hosted_projection", "delivery_views_page", "delivery_views_plan", "delivery_views_plan_fixtures", "delivery_views_render",
     "delivery_views_review_projection", "delivery_views_snapshots", "diagnosis", "documented_install_surface",
     "fault_injection", "forge_adapters", "historical_qualifications", "hooks", "host_exposure", "jira_profile", "lane_rows",
     "lane_ruling_corpus", "lead_wait", "lifecycle", "linear_profile", "linear_qualification", "measure_test_writes",
