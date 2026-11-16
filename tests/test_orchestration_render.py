@@ -2813,6 +2813,22 @@ class StoryViewTests(unittest.TestCase):
         embedded = json.loads(re.search(r'<script type="application/json" id="delivery-state">(.*?)</script>', page, re.S).group(1))
         self.assertEqual(embedded["story"], document["story"])
 
+    def test_the_markdown_view_shows_a_setback_with_its_cost_and_carries_one_that_still_stands(self) -> None:
+        for name, said in (
+            ("break-stops-a-piece", ["- 2026-11-16T09:08:00Z **A setback: the main line broke**, cost 17m 00s: A check failed on the main line too. "
+                                     "It held up A. It ended when the main line was repaired."]),
+            ("standing-break", ["- 2026-11-16T09:10:00Z **A setback: the main line broke**, still standing: The full run failed at d7daad0: "
+                                "The full run failed on the main line. It still stands.",
+                                "### B landed · 2026-11-16T09:50:00Z\n\n48m after it was picked up.\n\n- A setback still stands: the main line broke.\n"]),
+        ):
+            folder = ROOT / "tests" / "fixtures" / "narrator" / name
+            journal = [json.loads(line) for line in (folder / "journal.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+            story = render_state.narrator.narrate(journal, state=json.loads((folder / "state.json").read_text(encoding="utf-8")))
+            view = render_state.render_markdown({"state": json.loads(json.dumps(FIXED_STATE)), "journal": journal, "story": story})
+            for line in said:
+                with self.subTest(name=name, line=line):
+                    self.assertIn(line, view[view.index("## Story"):])
+
     def test_the_wrapper_tells_the_story_with_the_plan_beside_the_record(self) -> None:
         directory = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, directory, ignore_errors=True)

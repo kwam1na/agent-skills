@@ -315,6 +315,18 @@ class ScenarioTests(unittest.TestCase):
         plan = {"finish": [{"id": "stories", "label": "Every story"}, {"id": "release", "label": "Released"}, {"id": "docs", "label": "Docs"}]}
         [both] = [beat for beat in narrator.narrate(journal, state=state, plan=plan)["beats"] if beat["form"] == "finish"]
         self.assertEqual(both["words"], {"head": "Two finish lines were met", "line": "Every story and Released"})
+        # One step past "every": as many lines as the plan's with one the plan doesn't hold, or every line with one met twice.
+        for finishes, plan_ in ((["stories", "release", "elsewhere"], plan),
+                                (["stories", "release", "stories"], {"finish": plan["finish"][:2]})):
+            with self.subTest(finishes=finishes):
+                journal, state = fixture("never-landed")
+                last = journal.pop()
+                met = journal.pop()
+                for finish in finishes:
+                    journal.append({**met, "id": len(journal) + 1, "data": {"finish": finish}})
+                journal.append({**last, "id": len(journal) + 1})
+                [three] = [beat for beat in narrator.narrate(journal, state=state, plan=plan_)["beats"] if beat["form"] == "finish"]
+                self.assertEqual(three["words"]["head"], "Three finish lines were met")
 
     def test_no_story_shows_a_finish_lines_id(self) -> None:
         for name in NAMES:

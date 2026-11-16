@@ -120,6 +120,8 @@ test("a kind no page script names draws its label, mark and tab from the story a
   expect(row(all).querySelector(".g").className).toBe("g decide");
   expect(row(all).querySelector(".beat-said").textContent).toBe("The lead set it aside");
   expect(drawn(decisions)).toEqual([beat.id]);
+  // A chapter with nothing of the tab's in it is left out.
+  expect([...decisions.app.querySelectorAll("#happened [data-chapter]")].map((chapter) => chapter.getAttribute("data-chapter"))).toEqual([beat.chapter]);
 });
 
 test("a setback is one quiet sheet: why, what it held up, how it ended, and its cost as its only number", async () => {
@@ -132,6 +134,13 @@ test("a setback is one quiet sheet: why, what it held up, how it ended, and its 
   expect(thread.told.said && thread.told.heldUp).toBeTruthy();
   expect(sheet.querySelector(".setback-cost b").textContent).toBe("17m");
   expect(sheet.className).toContain("is-closed");
+  // With an earlier entry behind it, the sheet opens on what broke and why.
+  const caused = storied("thread-at-story");
+  const [causedThread] = caused.story.threads;
+  const [, why] = await open(caused, { steps: [{ click: '#happened [data-depth="headline"]' }] });
+  expect([...why.app.querySelectorAll(`#happened .setback[data-thread="${causedThread.id}"] .setback-part`)].map((part) => part.textContent))
+    .toEqual([causedThread.told.cause, causedThread.told.said, causedThread.told.ending]);
+  expect(causedThread.told.cause).toBeTruthy();
   const standing = storied("standing-break");
   const [, still] = await open(standing, { steps: [{ click: '#happened [data-depth="headline"]' }] });
   const open_ = still.app.querySelector("#happened .setback");

@@ -4,8 +4,8 @@ process.env.TZ = "UTC";
 
 import { test } from "node:test";
 
-import { REPLAYED_RUNS, expect, openPage, pageWithRuns } from "./support.mjs";
-import { item, minute, planFor, record, unit } from "./plan-fixtures.mjs";
+import { REPLAYED_RUNS, expect, openPage, pageWithRuns, told } from "./support.mjs";
+import { finishLine, item, minute, planFor, record, unit } from "./plan-fixtures.mjs";
 
 const NOW = "2026-10-30T12:00:00Z";
 const CONFIG = { spec: "delivery-views-config/1", runs: REPLAYED_RUNS };
@@ -84,4 +84,48 @@ test("the plan chapter reads a review round's verdicts from its facts", async ()
   asked[0].data.verdicts["lens.adversarial-testing"] = "changes";
   const app = await first(record({ queue: [item("A", "queued")], journal: asked }), plan);
   expect([...app.querySelectorAll("#plan .plan-all .plan-proof")].map((proof) => proof.textContent)[0]).toBe("Its review isn't approved yet.");
+});
+
+/** What the story says of one entry, as one line: its own beat's line, or its head when the line is empty. */
+function storyLine(document, id) {
+  const beat = told(document).story.beats.find((each) => each.form !== "thread" && each.altitudes.includes("everything") && each.entries.includes(id));
+  return beat.words.line || beat.words.head;
+}
+
+test("the attention rows and the base's flag take a stop's and a break's words from the story", async () => {
+  const plan = planFor([unit("A")], { finish: [], updated: "2026-10-30T09:00:00Z" });
+  const journal = [
+    entry(1, 10, "candidate.stopped", { reason: "check_failed", detail: "Its review is for an older head.", stage: "checking" }, "A"),
+    entry(2, 12, "base.broken", { source: "fullHealth", detail: "suite.Case.test_it failed.", head: "a".repeat(40), after: "A" }),
+  ];
+  for (const entries of [journal, reworded(journal)]) {
+    const document = record({ queue: [item("A", "stopped")], journal: entries });
+    const app = await first(document, plan);
+    const why = (title) => [...app.querySelectorAll("#now .attention li")].find((row) => row.querySelector(".a1").textContent === title).querySelector(".a2").textContent;
+    expect([why("Work A stopped"), why("The main line is broken")]).toEqual([storyLine(document, 1), storyLine(document, 2)]);
+    expect([...app.querySelectorAll("#plan .plan-needs li")].find((row) => row.querySelector(".a1").textContent === "The base is broken")
+      .querySelector(".a2").textContent).toBe(storyLine(document, 2));
+  }
+});
+
+test("the merge check's steps say what the story says of entries that carry facts and no sentence", async () => {
+  const journal = [
+    entry(1, 10, "candidate.handed", { head: item("A", "queued").head, changeRequest: "https://example.test/pull/1", rounds: 2, checks: ["lint"] }, "A"),
+    entry(2, 11, "check.started", {}, "A"),
+    entry(3, 12, "check.failed", { check: "suite", timedOut: false, failing: ["suite.Case.test_it"], more: 0, log: "logs/suite.log" }, "A", { because: [2] }),
+  ];
+  const document = record({ queue: [item("A", "queued")], journal });
+  const [, card] = await openPage(pageWithRuns(document, {}, { config: CONFIG }), { now: NOW, store: false, steps: [{ click: '.stop-btn[data-subject="A"]' }] });
+  const beats = told(document).story.beats.filter((beat) => beat.form === "entry");
+  const said = (id) => { const { words } = beats.find((beat) => beat.entries.includes(id)); return words.head + (words.line ? ": " + words.line : ""); };
+  expect([...card.app.querySelectorAll("#detail .mh li span")].map((step) => step.textContent)).toEqual([said(1), said(2), said(3)]);
+});
+
+test("a finish line met is told on the page by the plan's label, not the record's", async () => {
+  const plan = planFor([unit("A")], { finish: [finishLine("stories", { criteria: [], proofs: ["merged"] }, { label: "Every story lands" })], updated: "2026-10-30T09:00:00Z" });
+  const document = record({ queue: [item("A", "merged")], finish: [{ id: "stories", label: "The record's own words", text: "The record's own words", met: true }],
+    journal: [entry(1, 10, "finish.met", { finish: "stories" })] });
+  const app = await first(document, plan);
+  const row = [...app.querySelectorAll("#happened .beat")].find((beat) => beat.querySelector(".beat-said").textContent === "A finish line was met");
+  expect(row.querySelector(".beat-line").textContent).toBe("Every story lands");
 });
