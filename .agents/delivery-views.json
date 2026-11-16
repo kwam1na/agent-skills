@@ -32,6 +32,17 @@
   },
   "scrubEnv": [
     "LINEAR_API_KEY",
-    "GITHUB_TOKEN"
-  ]
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+    "CLOUDFLARE_API_TOKEN",
+    "CLOUDFLARE_API_KEY",
+    "CF_API_TOKEN",
+    "CF_API_KEY",
+    "AGENT_SKILLS_DELIVERY_PUBLISH_TOKEN"
+  ],
+  "hosted": {
+    "origin": "https://deliveries.v26technologies.com",
+    "repositoryId": "agent-skills-2efaeca6c2c8896344d9a976",
+    "tokenEnv": "AGENT_SKILLS_DELIVERY_PUBLISH_TOKEN"
+  }
 }

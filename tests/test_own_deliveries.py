@@ -97,7 +97,8 @@ class FreshClone(unittest.TestCase):
         shutil.rmtree(seed)
         python = str(Path(sys.executable).parent)
         cls.environment = {"PATH": os.pathsep.join([python, os.environ["PATH"]]), "HOME": cls.temporary.name,
-                           "PYTHONDONTWRITEBYTECODE": "1", "LINEAR_API_KEY": "fixture", "GITHUB_TOKEN": "fixture"}
+                           "PYTHONDONTWRITEBYTECODE": "1", "LINEAR_API_KEY": "fixture", "GITHUB_TOKEN": "fixture",
+                           "AGENT_SKILLS_DELIVERY_PUBLISH_TOKEN": "fixture-publishing-" + "a" * 32}
 
     def doctor(self, cwd: Path | None = None, *, without: tuple[str, ...] = ()) -> subprocess.CompletedProcess:
         environment = {key: value for key, value in self.environment.items() if key not in without}
@@ -111,6 +112,16 @@ class FreshClone(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertTrue(any(line.startswith("ok") and "release on the delivery base" in line for line in lines), done.stdout)
         self.assertTrue(any(line.startswith("ok") and "orchestration binding" in line for line in lines), done.stdout)
+
+    def test_missing_publishing_credential_warns_without_selecting_a_delivery(self) -> None:
+        done = self.doctor(without=("AGENT_SKILLS_DELIVERY_PUBLISH_TOKEN",))
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        warnings = [line for line in done.stdout.splitlines() if line.split()[0] not in ("ok", "skipped")]
+        self.assertEqual(len(warnings), 1, done.stdout + done.stderr)
+        self.assertRegex(warnings[0], r"^warn\s+hosted delivery: hosted: configured; no delivery selected; "
+                                     r"AGENT_SKILLS_DELIVERY_PUBLISH_TOKEN is unset;")
+        self.assertNotIn("Traceback", done.stdout + done.stderr)
+        self.assertFalse((self.clone / ".orchestration/state").exists())
 
     def test_a_missing_piece_is_named(self) -> None:
         done = self.doctor(without=("LINEAR_API_KEY",))
@@ -150,6 +161,12 @@ ATTESTED_ARCHIVES = {
     "linear-v2.2.0": "716a4fc4faf371d7ac5bff392958232610c7e1561e6879b28c63bfd2cb721e68",
     "linear-v2.3.0": "cf47a56998e6e9d599053523da596747ce318b294ff6da2f110a955f516d7ed5",
     "linear-v2.4.0": "40c95a2fce838307a7ba4598a6881a6fa126e2743a34387908cfb62151d076ff",
+    "linear-v2.5.0-rc.1": "1293e7f2082626bb31c41236efbda5a88e9a16c5b47894175b02cf2a4c263a34",
+    "linear-v2.5.0": "8bd3c1ad6bfd5320d665acbf6a2c09fc412f4cd94dab6b87a6d2a5a035c37440",
+    "linear-v2.5.1-rc.1": "781dcb94ef83d3fdd50a843a573179c820b9b1ee4f9ecc59bd2b56d22549c33f",
+    "linear-v2.5.1": "1ea6f84cf44dd40f0c4bb242dabcfbafa2ba673f3dd028dfcc5558552ba95f96",
+    "linear-v2.5.2-rc.1": "a1d890352faecaaf8cfc8813b6246154c40c4577cb2d642e0cd9c45d6ffd09f4",
+    "linear-v2.5.2": "85766f57568c0db1588b0f8a90441cac7a3b71a671c668acca866a8afcfaa331",
 }
 HOOK_COMMAND = 'python3 -B "${CLAUDE_PROJECT_DIR}/.agent-skills/current/__main__.py" hook claude-code %s || exit 1'
 
