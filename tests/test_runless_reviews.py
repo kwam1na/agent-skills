@@ -236,7 +236,7 @@ class RunlessReviewTests(unittest.TestCase):
                   "verdicts": {"lens.outcome-correctness": verdict, "lens.adversarial-testing": verdict},
                   "findings": {"P0": 0, "P1": 0, "P2": 0, "P3": 0}}
         state_tool.append_journal(self.directory, kind="review.round", subject="work-a", lane="lane-1", writer="lane",
-                                  summary=f"work-a: review round {number}", review=review)
+                                  data=review)
 
     def plan_work_a(self):
         self.lead({"planned": [{"subject": "work-a", "title": "Work A", "lane": "lane-1", "stage": "review"}]})
@@ -344,7 +344,7 @@ class ReviewEvidenceCheckTests(unittest.TestCase):
     def journal_rounds(self, count):
         for number in range(1, count + 1):
             state_tool.append_journal(self.directory, kind="review.round", subject="work-a", lane="lane-1",
-                                      summary=f"round {number}", review={
+                                      data={
                                           "round": number, "startedAt": "2026-01-01T00:00:00Z", "finishedAt": "2026-01-01T00:01:00Z",
                                           "verdicts": {"lens.outcome-correctness": "approve"},
                                           "findings": {"P0": 0, "P1": 0, "P2": 0, "P3": 0}})

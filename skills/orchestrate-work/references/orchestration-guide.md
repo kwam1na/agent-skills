@@ -1068,7 +1068,8 @@ this generation doesn't install, the printed command, the status line and "Needs
 file, and reads no CI or forge. It returns on the first thing needing the lead:
 
 - a journal entry after `--after` of kind `candidate.handed`, `check.failed`,
-  `candidate.merged`, `candidate.stopped`, `base.broken` or `blocker.recorded`;
+  `candidate.merged`, `candidate.stopped`, `base.broken`, `blocker.recorded` or
+  `serving.held`;
 - a lane in the `blocked` state;
 - machine pressure: five-minute load above `--load-multiple` times the cores
   (2 by default), free disk under `--min-free-bytes` (20 GiB), or swap grown by
@@ -1614,7 +1615,8 @@ binding declares may change.
   interrupted. A check that exits in that range with no signal sent cannot be
   told from a stopped one and reads as stopped. An exit of 128, one above the
   range, and a timeout are failures, as before. A stopped re-run journals
-  `base.rerun.stopped` in place of `base.rerun.finished`, joins no
+  `base.rerun.stopped` in place of `base.rerun.finished`, naming both heads
+  in its facts, the base's in `base` and the candidate's in `head`, joins no
   `meta.baseReruns`, journals no `base.broken`, and leaves the queue free: the
   candidate goes back to `queued` and is checked again without the lead, once
   for each pair of candidate head and base head, and the lead's wait does not
