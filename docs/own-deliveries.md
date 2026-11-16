@@ -63,6 +63,24 @@ It doesn't check `GITHUB_TOKEN`, and a missing one shows up when the forge snaps
 runs. The views scrub both from what they show, and the publisher writes the key to no
 output, log or ledger line.
 
+## Hosted progress
+
+This repository opts into `https://deliveries.v26technologies.com` through
+`.agents/delivery-views.json`. Each delivery has its own unlisted read-only link;
+the site's root lists nothing. The installed lifecycle starts its publisher and
+shows the link in its summary. Closing retains the acknowledged completed view.
+
+`AGENT_SKILLS_DELIVERY_PUBLISH_TOKEN` is a separate repository-scoped publishing
+credential, held in the login Keychain under service
+`v26.hosted-delivery-publishing`, account `agent-skills`. Retrieve it through the
+operator's approved Keychain access and supply the named variable in the
+environment of `lead-init`, or when starting or resuming `lead-run`. A running
+supervisor cannot receive a later shell export; restart it with the credential.
+The token belongs only in the publishing command's environment, never in source,
+arguments, delivery notes or share links. Cloudflare management credentials are
+not publishing credentials. Share the delivery's `/d/…` link; anyone receiving it
+can view its saved progress.
+
 ## Tracker updates
 
 The binding names run-delivery's tracker publisher, which posts this repository's
