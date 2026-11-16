@@ -115,9 +115,11 @@ class WriterGenerationTests(unittest.TestCase):
             scripts = generation / "skills/orchestrate-work/scripts"
             scripts.mkdir(parents=True)
             shutil.copy2(TOOL, scripts / "delivery_state.py")
+            shutil.copy2(SCRIPTS / "journal_words.py", scripts / "journal_words.py")
             schemas = scripts.parent / "references"
             schemas.mkdir()
             shutil.copy2(SCHEMA_FILE, schemas / "schemas.json")
+            shutil.copy2(SKILL / "references/journal-kinds.json", schemas / "journal-kinds.json")
             self.tools.append(scripts / "delivery_state.py")
         receipt = {"generation": "new", "release": self.identities[1],
                    "previous": {"generation": "old", "release": self.identities[0]}}

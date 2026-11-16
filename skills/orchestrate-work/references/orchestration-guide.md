@@ -127,13 +127,13 @@ An entry is `{id, at, kind, lane, subject, data}`, with `because`, `answers`
 and `occurredAt` when they apply. The state tool gives `id` and `at`; an entry's
 instant is its `occurredAt` when it has one, and its `at` otherwise.
 
-- **One registry describes every kind.** `references/journal-kinds.json`,
+- **One registry describes every kind.** [The registry](journal-kinds.json),
   schema `journal-kinds/1`, lists each kind with its `data` fields, its links,
   whether it opens a thread, its altitude, tone and label, its `head` and
   `line` words, a sentence that `explain`s it, and its tracker update. It is
   the only place a kind is described: the tools, the views and the tracker
-  table below take each kind from there, and `scripts/journal_words.py` turns
-  an entry into its head and line from it.
+  table below take each kind from there, and the skill's `journal_words.py`
+  script turns an entry into its head and line from it.
 - **Facts are typed; only a person's words are prose.** The prose fields are
   `text`, `why`, `detail`, `note`, `notes` and `title`, and nothing reads them
   to decide anything. Every other field is typed and checked: a commit is a

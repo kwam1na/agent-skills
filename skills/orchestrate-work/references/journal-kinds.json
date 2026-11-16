@@ -160,9 +160,10 @@
       "pattern": "^[0-9a-f]{32}$"
     },
     "url": {
+      "description": "A page's address.",
       "type": "string",
       "maxLength": 2048,
-      "pattern": "^https?://\\S+$"
+      "pattern": "^[a-z][a-z0-9+.-]*://\\S+$"
     },
     "stage": {
       "description": "The stage a piece stood at.",
