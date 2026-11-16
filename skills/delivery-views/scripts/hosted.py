@@ -26,6 +26,7 @@ import ssl
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -43,7 +44,7 @@ STATUS = 'hosted-status.json'
 OWNER = 'hosted-owner.json'
 LOCK = 'hosted-owner.lock'
 CONTROL = 'hosted-control.lock'
-PENDING = 'hosted-pending.json'
+PENDING_PREFIX = 'hosted-pending-'
 RETRY = 'hosted-retry.json'
 HEX = re.compile(r'^[a-f0-9]{64}$')
 KEY = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$')
@@ -51,6 +52,7 @@ CAPTURE_SECONDS, UPLOAD_SECONDS = 60, 30
 DEBOUNCE, MAX_DEFERRAL, CONFIRM_SECONDS = 2, 10, 30
 MAX_RESPONSE = 64 * 1024
 CHILDREN = set()
+CANCELLED = threading.Event()
 PS_ENV = {key:value for key,value in os.environ.items() if key in ('PATH','HOME')} | {'LC_ALL':'C','TZ':'UTC'}
 ERRORS = frozenset(('invalid_identifier invalid_sequence invalid_envelope invalid_json invalid_projection unauthorized '
  'not_found method_not_allowed lease_held resume_required writer_fenced lease_expired sequence_conflict '
@@ -62,7 +64,7 @@ SAFE_ERRORS = ERRORS | frozenset(('sidecar_unsafe sidecar_unreadable sidecar_ove
  'delivery_key_invalid identity_missing identity_mismatch session_regressed receipt_regressed receipt_conflict '
  'source_unavailable source_path capture_deadline source_invalid source_changed owner_identity_mismatch '
  'owner_stop_timeout status_corrupt source_missing retry_corrupt owner_start_failed owner_start_timeout '
- 'not_configured request_oversize configuration_or_source_invalid confirmation_invalid receipt_mismatch configuration_changed').split())
+ 'not_configured request_oversize configuration_or_source_invalid confirmation_invalid receipt_mismatch configuration_changed sequence_reconcile').split())
 
 class PublishError(RuntimeError):
     def __init__(self, code, *, transient=False):
@@ -208,14 +210,15 @@ def session(value):
 
 class Publisher:
     """One local owner. Caller holds LOCK for every mutation and network step."""
-    def __init__(self,state,config,key,api=None,*,secret_values=()):
+    def __init__(self,state,config,key,api=None,*,secret_values=(),alive=lambda:True):
         self.state,self.config,self.key,self.api,self.secrets=state,config,key,api,tuple(secret_values)
+        self.alive=alive
         if not isinstance(key,str) or not KEY.fullmatch(key):raise PublishError('delivery_key_invalid')
         try:self.identity=read_json(state/IDENTITY,optional=True)
         except PublishError:raise PublishError('identity_corrupt') from None
         if self.identity is None:
             # A status/pending without its identity is not permission to create another public link.
-            if any((state/name).exists() for name in (PENDING,STATUS,OWNER)):raise PublishError('identity_missing')
+            if any((state/name).exists() for name in (STATUS,OWNER)) or next(state.glob(PENDING_PREFIX+'*.json'),None):raise PublishError('identity_missing')
             self.identity={'spec':'hosted-delivery-identity/1','origin':config['origin'],'repositoryId':config['repositoryId'],
                 'deliveryKey':key,'publicId':secrets.token_hex(32),'ownerId':secrets.token_hex(32),
                 'epoch':None,'sequence':0,'receipt':None,'pending':None,'sessionRequest':None}
@@ -239,7 +242,7 @@ class Publisher:
                 p=d['pending']
                 if set(p)!={'epoch','sequence','digest','sourceFingerprint'} or not integer(p['epoch'],1) or not integer(p['sequence'],1):raise ValueError()
                 if any(not isinstance(p[k],str) or not HEX.fullmatch(p[k]) for k in ('digest','sourceFingerprint')):raise ValueError()
-                data=regular(self.state/PENDING,public.MAX_BYTES)
+                data=regular(self.pending_path(p['digest']),public.MAX_BYTES)
                 if data is None or hashlib.sha256(data).hexdigest()!=p['digest']:raise ValueError()
                 payload=json.loads(data);public.validate(payload,secret_values=self.secrets)
                 if payload['sourceFingerprint']!=p['sourceFingerprint']:raise ValueError()
@@ -251,7 +254,28 @@ class Publisher:
                     or request['ownerId']!=d['ownerId'] or request['deliveryKey']!=self.key
                     or request['mode']=='resume' and request['epoch']!=d['epoch']):raise ValueError()
         except (TypeError,KeyError,ValueError,public.ProjectionError,PublishError):raise PublishError('identity_corrupt') from None
-    def save(self):atomic(self.state/IDENTITY,self.identity)
+    def save(self):self.guard();atomic(self.state/IDENTITY,self.identity)
+    def pending_path(self,digest):return self.state/(PENDING_PREFIX+digest+'.json')
+    def guard(self):
+        if not self.alive():raise PublishError('source_missing')
+    def request(self,*args):
+        self.guard()
+        try:answer=self.api(*args)
+        except PublishError:
+            self.guard();raise
+        self.guard();return answer
+    def commit_request(self,*args):
+        try:return self.request(*args)
+        except PublishError as error:
+            if error.code in ('sequence_conflict','sequence_superseded','confirmation_conflict'):
+                # A surviving old request may have won an ambiguous race. Read
+                # the committed pointer before allocating the next sequence;
+                # never retry a conflicting body at an already-used sequence.
+                self.reconcile()
+                raise PublishError('sequence_reconcile',transient=True) from None
+            if error.code in ('writer_fenced','lease_expired'):
+                self.reconcile()  # no implicit resume or acquisition at a known epoch
+            raise
     def adopt(self,remote):
         remote=session(remote);d=self.identity
         if remote['ownerId']!=d['ownerId'] or remote['deliveryKey']!=self.key:raise PublishError('writer_fenced')
@@ -273,46 +297,53 @@ class Publisher:
         return remote
     def reconcile(self,*,resume=False):
         d=self.identity
-        try:remote=self.api('GET','status')
+        try:remote=self.request('GET','status')
         except PublishError as error:
             if error.code!='not_found' or d['epoch'] is not None:raise
             request={'mode':'acquire','deliveryKey':self.key,'ownerId':d['ownerId']}
             d['sessionRequest']=request;self.save()
-            remote=self.api('POST','session',public.encode(request))
+            remote=self.request('POST','session',public.encode(request))
         remote=self.adopt(remote)
         if remote['leaseUntil']<=int(time.time()*1000):
             if not resume:raise PublishError('resume_required')
             request={'mode':'resume','deliveryKey':self.key,'ownerId':d['ownerId'],'epoch':d['epoch']}
             d['sessionRequest']=request;self.save()
-            remote=self.adopt(self.api('POST','session',public.encode(request)))
+            remote=self.adopt(self.request('POST','session',public.encode(request)))
         return remote
     def step(self,collect,*,resume=False):
         self.check_identity()
         self.reconcile(resume=resume)
         # Reconciliation alone never confirms a source. Even a durable pending
         # body is re-collected before any snapshot/confirmation request.
+        self.guard()
         try:value=collect();public.validate(value,secret_values=self.secrets)
         except (public.ProjectionError,views.ConfigError,views.RunUnavailable,OSError,ValueError):
             raise PublishError('source_unavailable',transient=True) from None
+        self.guard()
         data=public.encode(value);digest=hashlib.sha256(data).hexdigest();d=self.identity
         previous=d['receipt']
         headers={'X-Writer-Epoch':str(d['epoch']),'X-Renderer-Version':RENDERER}
         if previous and previous['epoch']==d['epoch'] and previous['digest']==digest:
             headers.update({'X-Snapshot-Sequence':str(previous['sequence']),'X-Snapshot-Digest':digest})
-            answer=self.api('POST','confirm',public.encode({'sourceFingerprint':value['sourceFingerprint']}),headers)
+            answer=self.commit_request('POST','confirm',public.encode({'sourceFingerprint':value['sourceFingerprint']}),headers)
             if (not isinstance(answer,dict) or set(answer)!={'protocolVersion','sourceConfirmedAt','leaseUntil','receipt'}
                 or answer['protocolVersion']!=PROTOCOL or not integer(answer['sourceConfirmedAt']) or not integer(answer['leaseUntil'])
                 or receipt(answer['receipt'])!=previous):raise PublishError('confirmation_invalid')
             return {'state':'current','sourceConfirmedAt':answer['sourceConfirmedAt'],'receipt':previous}
         p=d['pending']
-        if not p or p['epoch']!=d['epoch'] or p['digest']!=digest:
+        if not p or p['epoch']!=d['epoch'] or p['digest']!=digest or p['sequence']<=d['sequence']:
             p={'epoch':d['epoch'],'sequence':d['sequence']+1,'digest':digest,'sourceFingerprint':value['sourceFingerprint']}
-            atomic(self.state/PENDING,data);d['pending']=p;self.save()
+            path=self.pending_path(digest)
+            existing=regular(path,public.MAX_BYTES)
+            if existing is not None and existing!=data:raise PublishError('identity_corrupt')
+            if existing is None:atomic(path,data)
+            d['pending']=p;self.save()
         atomic(self.state/STATUS,{'spec':'hosted-delivery-status/1','state':'pending'})
         headers.update({'X-Snapshot-Sequence':str(p['sequence']),'X-Snapshot-Digest':digest})
-        accepted=receipt(self.api('POST','snapshots',data,headers))
+        accepted=receipt(self.commit_request('POST','snapshots',data,headers))
         if not all(accepted[k]==p[k] for k in p):raise PublishError('receipt_mismatch')
         d['sequence']=accepted['sequence'];d['receipt']=accepted;d['pending']=None;self.save()
+        with contextlib.suppress(FileNotFoundError):self.pending_path(digest).unlink()
         return {'state':'current','sourceConfirmedAt':accepted['sourceConfirmedAt'],'receipt':accepted}
 
 
@@ -378,7 +409,7 @@ def collect(inputs,arguments=None):
         if remaining<=0:raise PublishError('capture_deadline',transient=True)
         scrub=set(config['scrubEnv'])|({config['hosted']['tokenEnv']} if config['hosted'] else set())
         answer=views.run_json([*argv,*args],timeout=min(config['runs']['timeoutSeconds'],remaining),
-                              scrub=list(scrub),cwd=root)
+                              scrub=list(scrub),cwd=root,new_session=False)
         trace[args]=answer
         return answer
     def cut():
@@ -400,12 +431,14 @@ def collect(inputs,arguments=None):
                     summary=render._read_run(run,run_id,rows[run_id],config['findings']['reportSpecs'])
                     if summary is None:raise PublishError('source_invalid',transient=True)
                     runs[run_id]=summary
-            # Re-read every selected input, not only a potentially stale run-list byte count.
-            before=copy.deepcopy(trace)
-            for args,answer in before.items():
-                if public.encode(run(*args))!=public.encode(answer):raise PublishError('source_changed',transient=True)
-        return public.project(doc,runs,config,source_fingerprint='0'*64,
+        value=public.project(doc,runs,config,source_fingerprint='0'*64,
               plan=render.read_plan_block(directory,doc),needs=render.read_needs_block(directory))
+        # Close the complete collection interval, including optional inputs and
+        # payload construction, rather than verifying APIs before those reads.
+        before=copy.deepcopy(trace)
+        for args,answer in before.items():
+            if public.encode(run(*args))!=public.encode(answer):raise PublishError('source_changed',transient=True)
+        return value
     def inventory():
         names=[str((directory/name).relative_to(root)) for name in selected_files(directory)]
         if arguments is not None:
@@ -421,16 +454,18 @@ def collect(inputs,arguments=None):
 
 
 def child_collect(arguments,inputs):
+    if CANCELLED.is_set():raise PublishError('source_missing')
     argv=[sys.executable,'-B',str(Path(__file__).resolve()),'collect','--config',arguments.config,
           '--binding',arguments.binding,'--state-dir',str(inputs.state_directory),'--key',arguments.key]
     scrub=set(inputs.config['scrubEnv'])|{inputs.config['hosted']['tokenEnv']}
-    try:return views.run_json(argv,timeout=CAPTURE_SECONDS,scrub=list(scrub),cwd=inputs.root,limit=public.MAX_BYTES,process_registry=CHILDREN)
+    try:return views.run_json(argv,timeout=CAPTURE_SECONDS,scrub=list(scrub),cwd=inputs.root,limit=public.MAX_BYTES,process_registry=CHILDREN,cancelled=CANCELLED)
     except views.RunUnavailable:raise PublishError('source_unavailable',transient=True) from None
 
 
 def child_transport(arguments,inputs):
     """Bound DNS, connect, upload and response parsing by one process deadline."""
     def request(method,operation,body=None,headers=None):
+        if CANCELLED.is_set():raise PublishError('source_missing')
         command=[sys.executable,'-B',str(Path(__file__).resolve()),'request','--config',arguments.config,
                  '--binding',arguments.binding,'--state-dir',str(inputs.state_directory),'--key',arguments.key]
         environment={k:v for k,v in os.environ.items() if k not in inputs.config['scrubEnv'] or k==inputs.config['hosted']['tokenEnv']}
@@ -439,6 +474,7 @@ def child_transport(arguments,inputs):
                                  stderr=subprocess.DEVNULL,start_new_session=True)
         CHILDREN.add(process)
         try:
+            if CANCELLED.is_set():raise PublishError('source_missing')
             try:output,_=process.communicate(public.encode(envelope),timeout=UPLOAD_SECONDS)
             except subprocess.TimeoutExpired:
                 views._stop(process);process.communicate(timeout=2)
@@ -514,6 +550,23 @@ def status(directory,config,key):
     return value
 
 
+@contextlib.contextmanager
+def monitor_liveness(alive,stop):
+    """Observe source loss even while the main thread waits on a recorded child."""
+    done=threading.Event()
+    CANCELLED.clear()
+    def observe():
+        while not done.wait(.1):
+            if not alive():
+                stop(None,None)
+                return
+    thread=threading.Thread(target=observe,daemon=True)
+    thread.start()
+    try:yield
+    finally:
+        done.set();thread.join(1);CANCELLED.clear()
+
+
 def watch(arguments,inputs):
     directory=inputs.state_directory;config=inputs.config
     generation_path=generation(arguments);resolved=generation_path.resolve()
@@ -528,6 +581,7 @@ def watch(arguments,inputs):
     def signal_stop(signum,frame):
         nonlocal running
         running=False
+        CANCELLED.set()
         for process in list(CHILDREN):
             if process.poll() is None:views._stop(process)
     signal.signal(signal.SIGTERM,signal_stop);signal.signal(signal.SIGINT,signal_stop)
@@ -536,7 +590,7 @@ def watch(arguments,inputs):
         token=os.environ.get(config['hosted']['tokenEnv'],'')
         secret_values=[value for name in set(config['scrubEnv'])|{config['hosted']['tokenEnv']}
                        if (value:=os.environ.get(name))]
-        publisher=Publisher(directory,config['hosted'],arguments.key,secret_values=secret_values)
+        publisher=Publisher(directory,config['hosted'],arguments.key,secret_values=secret_values,alive=lambda:running and alive())
         status(directory,config['hosted'],arguments.key)
         if not (directory/STATUS).exists():atomic(directory/STATUS,{'spec':'hosted-delivery-status/1','state':'pending'})
         atomic(directory/OWNER,{'pid':os.getpid(),'started':process_started(os.getpid()),'scriptDigest':script_digest,
@@ -546,41 +600,42 @@ def watch(arguments,inputs):
             publisher.api=child_transport(arguments,inputs)
         except PublishError as error:
             halted=True;atomic(directory/STATUS,{'spec':'hosted-delivery-status/1','state':'failed','code':error.code})
-        while running and alive():
-            now=time.monotonic()
-            request=read_json(directory/RETRY,optional=True)
-            if request is not None:
-                if not isinstance(request,dict) or set(request)!={'nonce','resume'} or not isinstance(request['nonce'],str) or not HEX.fullmatch(request['nonce']) or type(request['resume']) is not bool:raise PublishError('retry_corrupt')
-                if request['nonce']!=retry_seen:
-                    retry_seen=request['nonce'];resume=request['resume'];retry_at=0;schedule.next=now
-                    try:
-                        Transport(config['hosted']['origin'],config['hosted']['repositoryId'],publisher.identity['publicId'],token)
-                        publisher.api=child_transport(arguments,inputs);halted=False
-                    except PublishError as error:
-                        halted=True;atomic(directory/STATUS,{'spec':'hosted-delivery-status/1','state':'failed','code':error.code})
-            try:
-                fresh=load_inputs(arguments)
-                if fresh.config['hosted']!=config['hosted'] or fresh.state_directory!=directory:
-                    raise PublishError('configuration_changed')
-                publisher.secrets=tuple(value for name in set(fresh.config['scrubEnv'])|{config['hosted']['tokenEnv']}
-                                        if (value:=os.environ.get(name)))
-                inventory=selected_files(directory)
-                signature=[(name,(directory/name).stat().st_mtime_ns,(directory/name).stat().st_size)
-                           if (directory/name).exists() else (name,None) for name in inventory]
-                if signature!=previous:schedule.changed(now);previous=signature
-                if not halted and now>=retry_at and schedule.due(now):
-                    result=publisher.step(lambda:child_collect(arguments,fresh),resume=resume)
-                    resume=False;attempt=0;schedule.completed(time.monotonic())
-                    if alive():atomic(directory/STATUS,{'spec':'hosted-delivery-status/1',**result})
-            except (PublishError,public.ProjectionError,views.ConfigError,render.review_state.StateError,OSError) as error:
-                code=error.code if isinstance(error,PublishError) else 'source_unavailable'
-                transient=error.transient if isinstance(error,PublishError) else True
-                if alive():atomic(directory/STATUS,{'spec':'hosted-delivery-status/1','state':'retrying' if transient else 'failed','code':code})
-                if transient:retry_at=time.monotonic()+retry_delay(attempt);attempt+=1
-                else:halted=True
-            # Fixed short sleeps keep record/generation disappearance independent
-            # of a long retry interval and fixture cleanup.
-            time.sleep(.25)
+        with monitor_liveness(alive,signal_stop):
+            while running and alive():
+                now=time.monotonic()
+                request=read_json(directory/RETRY,optional=True)
+                if request is not None:
+                    if not isinstance(request,dict) or set(request)!={'nonce','resume'} or not isinstance(request['nonce'],str) or not HEX.fullmatch(request['nonce']) or type(request['resume']) is not bool:raise PublishError('retry_corrupt')
+                    if request['nonce']!=retry_seen:
+                        retry_seen=request['nonce'];resume=request['resume'];retry_at=0;schedule.next=now
+                        try:
+                            Transport(config['hosted']['origin'],config['hosted']['repositoryId'],publisher.identity['publicId'],token)
+                            publisher.api=child_transport(arguments,inputs);halted=False
+                        except PublishError as error:
+                            halted=True;atomic(directory/STATUS,{'spec':'hosted-delivery-status/1','state':'failed','code':error.code})
+                try:
+                    fresh=load_inputs(arguments)
+                    if fresh.config['hosted']!=config['hosted'] or fresh.state_directory!=directory:
+                        raise PublishError('configuration_changed')
+                    publisher.secrets=tuple(value for name in set(fresh.config['scrubEnv'])|{config['hosted']['tokenEnv']}
+                                            if (value:=os.environ.get(name)))
+                    inventory=selected_files(directory)
+                    signature=[(name,(directory/name).stat().st_mtime_ns,(directory/name).stat().st_size)
+                               if (directory/name).exists() else (name,None) for name in inventory]
+                    if signature!=previous:schedule.changed(now);previous=signature
+                    if not halted and now>=retry_at and schedule.due(now):
+                        result=publisher.step(lambda:child_collect(arguments,fresh),resume=resume)
+                        resume=False;attempt=0;schedule.completed(time.monotonic())
+                        if alive():atomic(directory/STATUS,{'spec':'hosted-delivery-status/1',**result})
+                except (PublishError,public.ProjectionError,views.ConfigError,render.review_state.StateError,OSError) as error:
+                    code=error.code if isinstance(error,PublishError) else 'source_unavailable'
+                    transient=error.transient if isinstance(error,PublishError) else True
+                    if alive():atomic(directory/STATUS,{'spec':'hosted-delivery-status/1','state':'retrying' if transient else 'failed','code':code})
+                    if transient:retry_at=time.monotonic()+retry_delay(attempt);attempt+=1
+                    else:halted=True
+                # Fixed short sleeps keep record/generation disappearance independent
+                # of a long retry interval and fixture cleanup.
+                time.sleep(.25)
         if directory.exists() and alive():atomic(directory/STATUS,{'spec':'hosted-delivery-status/1','state':'stopped'})
 
 

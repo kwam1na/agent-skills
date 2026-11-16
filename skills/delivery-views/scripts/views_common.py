@@ -241,6 +241,7 @@ def validate_config(value: object) -> dict:
             host = url.hostname or ""
             valid = (url.scheme == "https" and url.username is None and url.password is None
                      and url.port in (None, 443) and not url.query and not url.fragment
+                     and "?" not in origin and "#" not in origin
                      and url.path in ("", "/") and not re.search(r"[\s\\{}]", origin)
                      and "." in host and all(re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", label)
                                              for label in host.split(".")))
@@ -387,34 +388,37 @@ def _process_group() -> dict:
     return {"start_new_session": True}
 
 
-def _stop(process: subprocess.Popen) -> None:
+def _stop(process: subprocess.Popen, *, group: bool = True) -> None:
     """Stop a command and every process it started."""
     with contextlib.suppress(OSError):
         if os.name == "nt":
             subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)], stdin=subprocess.DEVNULL,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-        else:
+        elif group:
             os.killpg(process.pid, signal.SIGKILL)
     with contextlib.suppress(OSError):
         process.kill()
 
 
 def run_json(argv: list[str], *, timeout: float, scrub: list[str] = (), cwd: Path | None = None,
-             limit: int = OUTPUT_LIMIT_BYTES, process_registry: set | None = None) -> object:
+             limit: int = OUTPUT_LIMIT_BYTES, process_registry: set | None = None,
+             new_session: bool = True, cancelled: threading.Event | None = None) -> object:
     """Run a command in its own process group with stdin closed and the scrubbed variables
     removed, and return its stdout as JSON; RunUnavailable for a timeout, oversize output,
     a non-zero exit or output that is not JSON."""
-    if timeout <= 0:
+    if timeout <= 0 or cancelled is not None and cancelled.is_set():
         raise RunUnavailable("no time left")
     removed = set(scrub)
     environment = {name: value for name, value in os.environ.items() if name not in removed}
     try:
         process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                   env=environment, cwd=cwd, **_process_group())
+                                   env=environment, cwd=cwd, **(_process_group() if new_session else {}))
     except OSError as error:
         raise RunUnavailable(f"could not start: {error.strerror or error}") from None
     if process_registry is not None:
         process_registry.add(process)
+    if cancelled is not None and cancelled.is_set():
+        _stop(process, group=new_session)
     kept = bytearray()
     over = threading.Event()
 
@@ -427,7 +431,7 @@ def run_json(argv: list[str], *, timeout: float, scrub: list[str] = (), cwd: Pat
                 kept.extend(chunk)
                 if len(kept) > limit:
                     over.set()
-                    _stop(process)
+                    _stop(process, group=new_session)
                     return
 
     reader = threading.Thread(target=read, daemon=True)
@@ -436,15 +440,15 @@ def run_json(argv: list[str], *, timeout: float, scrub: list[str] = (), cwd: Pat
         try:
             code = process.wait(timeout)
         except subprocess.TimeoutExpired:
-            _stop(process)
+            _stop(process, group=new_session)
             raise RunUnavailable(f"timed out after {timeout:g}s") from None
         # The command has exited; anything it left behind holding stdout open is stopped.
         reader.join(1)
         if reader.is_alive():
-            _stop(process)
+            _stop(process, group=new_session)
             reader.join(1)
     finally:
-        _stop(process)
+        _stop(process, group=new_session)
         with contextlib.suppress(subprocess.TimeoutExpired):
             process.wait(1)
         reader.join(1)

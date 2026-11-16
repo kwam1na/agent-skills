@@ -876,7 +876,13 @@ of those credentials. Projection rejects recognizable local paths and keeps the
 shared allowlist, candidate/review identity and unavailable/clipping indicators.
 No scanner claims to identify every secret someone types into public prose.
 
-Pending bytes and their exact digest/epoch/sequence persist before transport.
+Pending bytes use immutable `hosted-pending-<sha256>.json` files. The identity
+pointer and its exact digest/epoch/sequence commit only after those bytes are
+durable, so an interrupted replacement preserves the previous referenced body.
+An archive needs the body the pending descriptor names, rather than every orphan
+from an interrupted pointer write. Source loss cancels active recorded child
+groups and prevents later session, collection or transport stages. Configured run
+commands remain in the collection child's owned group for this cleanup.
 After ambiguous acceptance, authenticated status reconciles the receipt and
 identity before any retry. A failed source collection never refreshes source
 freshness. Old receipt retries never masquerade as new confirmations. Lost

@@ -1,6 +1,8 @@
 """Portable publisher boundaries using a local receiver, never Cloudflare proof."""
 from __future__ import annotations
 import copy
+import contextlib
+import signal
 import hashlib
 import importlib.util
 import json
@@ -143,12 +145,84 @@ class PublisherTests(unittest.TestCase):
         self.api.session_value=bad
         with self.assertRaisesRegex(hosted.PublishError,'session_invalid'):self.publisher.step(lambda:copy.deepcopy(VALID))
 
+    def test_interrupted_pending_replacement_recovers_old_pointer_and_identity(self):
+        original_api=self.api
+        def reject(method,operation,body=None,headers=None):
+            if operation=='snapshots':raise hosted.PublishError('temporarily_unavailable',transient=True)
+            return original_api(method,operation,body,headers)
+        self.publisher.api=reject
+        with self.assertRaises(hosted.PublishError):self.publisher.step(lambda:copy.deepcopy(VALID))
+        old=(self.state/hosted.IDENTITY).read_bytes();public_id=self.publisher.identity['publicId']
+        changed=copy.deepcopy(VALID);changed['sourceFingerprint']='c'*64
+        original_atomic=hosted.atomic
+        def interrupted(path,value):
+            if path.name==hosted.IDENTITY and value.get('pending',{}).get('digest')==hashlib.sha256(hosted.public.encode(changed)).hexdigest():
+                raise OSError('fixture interruption between pending body and identity pointer')
+            return original_atomic(path,value)
+        with mock.patch.object(hosted,'atomic',side_effect=interrupted):
+            with self.assertRaises(OSError):self.publisher.step(lambda:changed)
+        self.assertEqual((self.state/hosted.IDENTITY).read_bytes(),old)
+        restarted=hosted.Publisher(self.state,self.config['hosted'],'APP-1',self.api)
+        restarted.step(lambda:changed)
+        self.assertEqual(restarted.identity['publicId'],public_id)
+        self.assertEqual(restarted.identity['receipt']['sourceFingerprint'],'c'*64)
+
+    def test_otherwise_valid_pending_body_corruption_is_rejected_before_transport(self):
+        self.api.lose=True
+        # First ambiguity occurs during acquisition; finish acquisition, then lose
+        # the snapshot acknowledgement to leave a real persisted pending body.
+        with self.assertRaises(hosted.PublishError):self.publisher.step(lambda:copy.deepcopy(VALID))
+        self.api.lose=True
+        with self.assertRaises(hosted.PublishError):self.publisher.step(lambda:copy.deepcopy(VALID))
+        identity=(self.state/hosted.IDENTITY).read_bytes()
+        pending=self.publisher.pending_path(self.publisher.identity['pending']['digest'])
+        hosted.Publisher(self.state,self.config['hosted'],'APP-1',self.api)
+        payload=json.loads(pending.read_bytes());payload['view']['title']='Otherwise valid changed title'
+        self.assertEqual(payload['sourceFingerprint'],VALID['sourceFingerprint']);hosted.public.validate(payload)
+        pending.write_bytes(hosted.public.encode(payload));tampered=pending.read_bytes();calls=len(self.api.calls)
+        with self.assertRaisesRegex(hosted.PublishError,'identity_corrupt'):
+            hosted.Publisher(self.state,self.config['hosted'],'APP-1',self.api)
+        self.assertEqual(len(self.api.calls),calls);self.assertEqual((self.state/hosted.IDENTITY).read_bytes(),identity)
+        self.assertEqual(pending.read_bytes(),tampered)
+
+    def test_disappearance_after_status_or_collection_prevents_later_mutations(self):
+        live=[True];calls=[]
+        def api(method,operation,body=None,headers=None):
+            calls.append(operation)
+            if operation=='status':live[0]=False;raise hosted.PublishError('not_found')
+            return self.api(method,operation,body,headers)
+        self.publisher.api=api;self.publisher.alive=lambda:live[0]
+        with self.assertRaisesRegex(hosted.PublishError,'source_missing'):self.publisher.step(lambda:copy.deepcopy(VALID))
+        self.assertEqual(calls,['status'])
+        live[0]=True;self.publisher.api=self.api
+        def disappear():live[0]=False;return copy.deepcopy(VALID)
+        with self.assertRaisesRegex(hosted.PublishError,'source_missing'):self.publisher.step(disappear)
+        self.assertFalse(any(call[1] in ('snapshots','confirm') for call in self.api.calls))
+
+    def test_conflicting_surviving_request_reconciles_and_allocates_a_new_sequence(self):
+        collided=[False]
+        def race(method,operation,body=None,headers=None):
+            if operation=='snapshots' and not collided[0]:
+                collided[0]=True
+                older=json.loads(body);older['sourceFingerprint']='e'*64
+                older_bytes=hosted.public.encode(older)
+                self.api(method,operation,older_bytes,{**headers,'X-Snapshot-Digest':hashlib.sha256(older_bytes).hexdigest()})
+                raise hosted.PublishError('sequence_conflict')
+            return self.api(method,operation,body,headers)
+        self.publisher.api=race
+        with self.assertRaisesRegex(hosted.PublishError,'sequence_reconcile') as error:self.publisher.step(lambda:copy.deepcopy(VALID))
+        self.assertTrue(error.exception.transient)
+        self.publisher.step(lambda:copy.deepcopy(VALID))
+        self.assertEqual(self.publisher.identity['sequence'],2)
+        self.assertEqual(self.publisher.identity['receipt']['sourceFingerprint'],VALID['sourceFingerprint'])
+        self.assertEqual(len([call for call in self.api.calls if call[1]=='session']),1)
+
 class ConfigTests(unittest.TestCase):
     def test_explicit_origins_and_environment_names_fail_closed(self):
         self.assertIsNone(views_common.validate_config({'spec':'delivery-views-config/1'})['hosted'])
         self.assertEqual(views_common.validate_config(CFG)['hosted'],CFG['hosted'])
         for origin in ['http://example.com','https://user:pass@example.com','https://example.com/path',
-                       'https://example.com?x=1','https://example.com#x','https://example.com\\@evil.com',
+                       'https://example.com?x=1','https://example.com#x','https://example.com?','https://example.com#','https://example.com\\@evil.com',
                        'https://example.com\n','https://{host}','https://127.0.0.1:443']:
             bad=copy.deepcopy(CFG);bad['hosted']['origin']=origin
             with self.subTest(origin=origin):
@@ -176,10 +250,20 @@ class ReceiverTests(unittest.TestCase):
                     self.send_response(302);self.send_header('Location',fixture.origin+'/leak');self.end_headers();return
                 if fixture.mode=='oversize':answer={'padding':'x'*(hosted.MAX_RESPONSE+1)}
                 else:
+                    if operation in ('snapshots','confirm'):
+                        if self.headers.get('X-Renderer-Version')!='delivery-line-map/1':
+                            self.send_response(422);self.send_header('Content-Type','application/json');self.end_headers();self.wfile.write(b'{"error":"unsupported_renderer"}');return
+                        if operation=='snapshots' and self.headers.get('X-Snapshot-Digest')!=hashlib.sha256(body).hexdigest():
+                            self.send_error(422);return
                     try:answer=fixture.api(self.command,operation,body,self.headers)
                     except hosted.PublishError as error:
                         self.send_response(401 if error.code=='unauthorized' else 404)
                         self.send_header('Content-Type','application/json');self.end_headers();self.wfile.write(json.dumps({'error':error.code}).encode());return
+                    if isinstance(answer,dict) and 'protocolVersion' in answer:
+                        answer['protocolVersion']='hosted-delivery-api/1'
+                        if 'rendererVersion' in answer:answer['rendererVersion']='delivery-line-map/1'
+                        if answer.get('receipt'):
+                            answer['receipt']['protocolVersion']='hosted-delivery-api/1';answer['receipt']['rendererVersion']='delivery-line-map/1'
                 if fixture.mode=='lost' and operation=='snapshots':
                     fixture.mode='normal';self.connection.shutdown(socket.SHUT_RDWR);self.connection.close();return
                 self.send_response(200);self.send_header('Content-Type','application/json');self.end_headers();self.wfile.write(json.dumps(answer).encode())
@@ -215,6 +299,27 @@ class ReceiverTests(unittest.TestCase):
         with self.assertRaises(hosted.PublishError) as error:self.transport('GET','status')
         self.assertEqual(str(error.exception),'unauthorized');self.assertFalse(error.exception.transient)
         with self.assertRaises(hosted.PublishError):hosted.Transport(self.origin,'repo_A','a'*64,TOKEN)
+
+    def test_actual_request_cli_child_reaches_receiver_with_literal_protocol(self):
+        (self.state/'.git').mkdir();(self.state/'views.json').write_text(json.dumps(CFG))
+        (self.state/'binding.json').write_text(json.dumps({'state':{'directory':'.'}}))
+        # Substitute only the socket connection inside the real request child.
+        # Production origin validation, dispatch, headers and receipt parsing all
+        # execute unchanged; no HTTP production-config exception is introduced.
+        (self.state/'sitecustomize.py').write_text(
+            'import http.client\nReal=http.client.HTTPConnection\n'
+            f'def fixture(host,port=None,timeout=None,context=None):\n assert host=="deliveries.example.com"\n return Real("127.0.0.1",{self.server.server_port},timeout=timeout)\n'
+            'http.client.HTTPSConnection=fixture\n')
+        args=SimpleNamespace(config='views.json',binding='binding.json',key='APP-1')
+        inputs=views_common.Inputs(self.state,views_common.validate_config(CFG),{'state':{'directory':'.'}},self.state)
+        self.publisher.api=hosted.child_transport(args,inputs)
+        with mock.patch.dict(os.environ,{'FIXTURE_PUBLISH_TOKEN':TOKEN,'PYTHONPATH':str(self.state)}):
+            result=self.publisher.step(lambda:copy.deepcopy(VALID))
+        self.assertEqual(result['receipt']['protocolVersion'],'hosted-delivery-api/1')
+        self.assertEqual(result['receipt']['rendererVersion'],'delivery-line-map/1')
+        self.assertEqual(result['receipt']['digest'],hashlib.sha256(hosted.public.encode(VALID)).hexdigest())
+        self.assertEqual([call[0] for call in self.observed],['status','session','snapshots'])
+        self.assertEqual(hosted.CHILDREN,set())
 
 
 class CollectionTests(unittest.TestCase):
@@ -274,6 +379,13 @@ class CollectionTests(unittest.TestCase):
             count+=1
             return {'runs':[{'runId':'run-1','bytes':count}]} if 'list' in argv else view
         with mock.patch.object(hosted.views,'run_json',side_effect=changing):
+            with self.assertRaisesRegex(hosted.PublishError,'source_changed'):hosted.collect(self.inputs)
+        version=['before']
+        def stable_until_optional(argv,**kwargs):
+            return {'runs':[{'runId':'run-1'}]} if 'list' in argv else {**view,'version':version[0]}
+        def final_optional(directory):version[0]='after';return None
+        with mock.patch.object(hosted.views,'run_json',side_effect=stable_until_optional), \
+             mock.patch.object(hosted.render,'read_needs_block',side_effect=final_optional):
             with self.assertRaisesRegex(hosted.PublishError,'source_changed'):hosted.collect(self.inputs)
 
     def prepare_watch(self):
@@ -387,11 +499,12 @@ class ProcessTests(unittest.TestCase):
                 else:self.gen.mkdir()
     def test_stop_checks_process_identity_and_lock_before_signalling(self):
         child=self.launch();record=hosted.read_json(self.state/hosted.OWNER)
-        bad={**record,'started':'a different process'}
-        hosted.atomic(self.state/hosted.OWNER,bad)
-        with mock.patch.object(hosted.os,'kill') as kill:
-            with self.assertRaisesRegex(hosted.PublishError,'owner_identity_mismatch'):hosted.stop(self.state)
-            kill.assert_not_called()
+        for bad in ({**record,'started':'a different process'},{**record,'scriptDigest':'f'*64}):
+            hosted.atomic(self.state/hosted.OWNER,bad)
+            self.assertFalse(hosted.process_matches(bad))
+            with mock.patch.object(hosted.os,'kill') as kill:
+                with self.assertRaisesRegex(hosted.PublishError,'owner_identity_mismatch'):hosted.stop(self.state)
+                kill.assert_not_called()
         hosted.atomic(self.state/hosted.OWNER,record)
         reaper=threading.Thread(target=child.wait,daemon=True);reaper.start()
         self.assertTrue(hosted.stop(self.state));reaper.join(1)
@@ -405,6 +518,7 @@ class ProcessTests(unittest.TestCase):
         with self.assertRaisesRegex(hosted.PublishError,'status_corrupt'):hosted.status(self.state,CFG['hosted'],'APP-1')
 
     def test_whole_upload_process_deadline_stops_only_its_recorded_child(self):
+        self.assertEqual((hosted.CAPTURE_SECONDS,hosted.UPLOAD_SECONDS),(60,30))
         args=SimpleNamespace(config='views.json',binding='binding.json',key='APP-1')
         inputs=views_common.Inputs(self.root,views_common.validate_config(CFG),{},self.state)
         real_popen=subprocess.Popen;started=[]
@@ -413,6 +527,11 @@ class ProcessTests(unittest.TestCase):
         with mock.patch.object(hosted.subprocess,'Popen',side_effect=sleeping),mock.patch.object(hosted,'UPLOAD_SECONDS',.1):
             with self.assertRaisesRegex(hosted.PublishError,'transport_timeout'):
                 hosted.child_transport(args,inputs)('GET','status')
+        self.assertEqual(len(started),1);self.assertIsNotNone(started[0].poll());self.assertEqual(hosted.CHILDREN,set())
+        args.state_dir=str(self.state)
+        started.clear()
+        with mock.patch.object(hosted.subprocess,'Popen',side_effect=sleeping),mock.patch.object(hosted,'CAPTURE_SECONDS',.1):
+            with self.assertRaisesRegex(hosted.PublishError,'source_unavailable'):hosted.child_collect(args,inputs)
         self.assertEqual(len(started),1);self.assertIsNotNone(started[0].poll());self.assertEqual(hosted.CHILDREN,set())
 
     def test_start_adopts_same_owner_and_old_retry_is_not_replayed_on_restart(self):
@@ -440,5 +559,89 @@ class ProcessTests(unittest.TestCase):
         self.assertEqual(done.returncode,0,done.stdout+done.stderr)
         self.assertEqual(hosted.read_json(self.state/hosted.IDENTITY)['publicId'],original)
         self.assertNotEqual(hosted.read_json(self.state/hosted.OWNER)['pid'],child.pid)
+
+    def launch_active(self,kind):
+        sentinel=self.root/'active-child.pid'
+        if sentinel.exists():sentinel.unlink()
+        if kind=='collection':
+            state=render.review_state.initial_state('Active collector')
+            state['planned']=[{'subject':'APP-1','title':'Active','lane':None,'stage':'building','runId':'run-1'}]
+            (self.state/'state.json').write_text(json.dumps(state))
+            run=self.root/'runs.py';run.write_text(f'import os,time\nfrom pathlib import Path\nPath({str(sentinel)!r}).write_text(str(os.getpid()))\ntime.sleep(30)\n')
+            config=copy.deepcopy(CFG);config['runs']={'argv':[sys.executable,str(run)],'timeoutSeconds':30}
+            (self.root/'views.json').write_text(json.dumps(config))
+            connection='''
+import http.client,io,json
+class Response:
+ def __init__(self,status,value):self.status=status;self.data=io.BytesIO(json.dumps(value).encode())
+ def read1(self,size):return self.data.read(size)
+ def getheader(self,name,default=''):return 'application/json'
+class Connection:
+ sock=None
+ def __init__(self,*a,**kw):pass
+ def request(self,method,path,body=None,headers=None):
+  if path.endswith('/status'):self.response=Response(404,dict(error='not_found'))
+  else:
+   request=json.loads(body);self.response=Response(200,dict(protocolVersion='hosted-delivery-api/1',deliveryKey=request['deliveryKey'],ownerId=request['ownerId'],epoch=1,sequence=0,leaseUntil=9999999999999,receipt=None))
+ def getresponse(self):return self.response
+ def close(self):pass
+http.client.HTTPSConnection=Connection
+'''
+        else:
+            (self.root/'views.json').write_text(json.dumps(CFG))
+            connection=f'''
+import http.client,os,time
+from pathlib import Path
+class Connection:
+ def __init__(self,*a,**kw):pass
+ def request(self,*a,**kw):Path({str(sentinel)!r}).write_text(str(os.getpid()));time.sleep(30)
+ def close(self):pass
+http.client.HTTPSConnection=Connection
+'''
+        (self.root/'sitecustomize.py').write_text(connection)
+        child=subprocess.Popen([sys.executable,'-B',str(SCRIPT),'watch',*self.arguments],cwd=self.root,
+            env={**os.environ,'FIXTURE_PUBLISH_TOKEN':TOKEN,'PYTHONPATH':str(self.root)},
+            stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
+        recorded=[None,None]
+        def cleanup():
+            if child.poll() is None:child.terminate()
+            try:child.communicate(timeout=2)
+            except subprocess.TimeoutExpired:child.kill();child.communicate(timeout=2)
+            pid,started=recorded
+            if pid and hosted.process_started(pid)==started:
+                with contextlib.suppress(ProcessLookupError):os.kill(pid,signal.SIGKILL)
+        self.addCleanup(cleanup)
+        deadline=time.monotonic()+8
+        while time.monotonic()<deadline:
+            if sentinel.exists():
+                pid=int(sentinel.read_text());recorded[:]=[pid,hosted.process_started(pid)]
+                self.assertIsNone(child.poll());self.assertIsNotNone(recorded[1])
+                self.assertTrue(hosted.locked(self.state/hosted.LOCK))
+                return child,pid
+            if child.poll() is not None:self.fail(child.communicate())
+            time.sleep(.02)
+        self.fail('fixture did not observe an active owned child')
+
+    def test_active_child_is_reaped_on_stop_and_source_or_generation_loss(self):
+        for mode,kind in [('source','request'),('generation','collection'),('stop','request')]:
+            with self.subTest(mode=mode):
+                child,pid=self.launch_active(kind)
+                if mode=='source':(self.state/'state.json').unlink()
+                elif mode=='generation':self.gen.rmdir()
+                else:
+                    reaper=threading.Thread(target=child.wait,daemon=True);reaper.start()
+                    self.assertTrue(hosted.stop(self.state));reaper.join(1)
+                child.wait(timeout=5)
+                self.assertEqual(child.returncode,0)
+                deadline=time.monotonic()+5
+                while hosted.process_started(pid) is not None and time.monotonic()<deadline:time.sleep(.02)
+                self.assertIsNone(hosted.process_started(pid));self.assertFalse(hosted.locked(self.state/hosted.LOCK))
+                if mode=='source':(self.state/'state.json').write_text(json.dumps(render.review_state.initial_state('Restored')))
+                if mode=='generation':self.gen.mkdir()
+                # The fake service returns a fresh epoch per fixture; keep each
+                # process scenario's private sidecars independent as production
+                # identity recovery is covered separately by the protocol tests.
+                for name in (hosted.IDENTITY,hosted.STATUS,hosted.OWNER):
+                    with contextlib.suppress(FileNotFoundError):(self.state/name).unlink()
 
 if __name__=='__main__':unittest.main()
