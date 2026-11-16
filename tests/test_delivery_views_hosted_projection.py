@@ -122,6 +122,43 @@ class ProjectionTests(unittest.TestCase):
         linked = public.project(doc, runs, cfg, source_fingerprint='1' * 64)
         self.assertEqual(linked['links']['changes']['https://github.com/example/app/pull/12']['label'], '#12')
 
+    def test_lead_listener_warning_omits_option_paths_without_dropping_the_need(self):
+        doc, _ = source()
+        prefix = ("The lead isn't listening: no lead-wait runs while lane-2 (working). Start one in the "
+                  "background: python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py "
+                  "--delivery APP-1 lead-wait --after 187 --timeout 1800.0 --poll 15.0 ")
+        local_options = [
+            '--output=/Users/operator/work/.orchestration/flow-log/APP-1.wait.json',
+            '--output=/tmp/wait.json', '--output="/Users/operator/work/wait.json"',
+            "--output='/tmp/wait.json'", '--output /tmp/wait.json',
+            r'--output=C:\work\wait.json', '--output=C:/work/wait.json',
+            r'--output=\\server\share\wait.json', '--output=~/work/wait.json',
+            '--output="~/work/wait.json"', '--output=./wait.json', '--output=../wait.json',
+            r'--output=.\wait.json', r'--output=..\wait.json',
+            '--output=.orchestration/wait.json', '--output=docs/wait.json',
+            r'--output=docs\wait.json', '--output=file:///tmp/wait.json',
+        ]
+        benign_options = ['--output=https://example.com/public/wait.json', '--timeout=1800.0',
+                          '--output=summary.json', '--mode=public', 'Review https://example.com/docs/wait.json']
+        for option in local_options + benign_options:
+            with self.subTest(option=option):
+                item = {'holding': False, 'source': 'lead-wait.json in the record', 'text': prefix + option,
+                        'clears': 'a running lead-wait, or nothing left working or queued'}
+                needs = {'running': True, 'at': '2026-11-15T00:00:00Z',
+                         'staleAfter': '2026-11-15T00:02:00Z', 'items': [item]}
+                value = public.project(doc, {}, config(), source_fingerprint='1' * 64, needs=needs)
+                projected = value['needs']['items'][0]
+                self.assertEqual(projected, {**item, 'text': public.OMITTED_LOCAL_REFERENCE}
+                                 if option in local_options else item)
+                self.assertEqual(needs['items'][0], item)  # private warning is retained
+                Draft202012Validator(public.SCHEMA).validate(value)
+                raw = copy.deepcopy(value); raw['needs']['items'][0]['text'] = item['text']
+                if option in local_options:
+                    with self.assertRaisesRegex(public.ProjectionError, '^snapshot.local_path$'):
+                        public.validate(raw)
+                else:
+                    public.validate(raw)
+
     def test_local_structural_references_fail_closed_instead_of_becoming_prose_markers(self):
         for key in ('candidateRef','runId'):
             doc,runs=source()

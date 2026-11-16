@@ -70,6 +70,21 @@
       "file": "valid-omitted-workflow-prose.json",
       "valid": true,
       "layer": "boundary"
+    },
+    {
+      "file": "invalid-option-path-unix.json",
+      "valid": false,
+      "layer": "boundary"
+    },
+    {
+      "file": "invalid-option-path-windows.json",
+      "valid": false,
+      "layer": "boundary"
+    },
+    {
+      "file": "invalid-option-path-relative.json",
+      "valid": false,
+      "layer": "boundary"
     }
   ]
 }

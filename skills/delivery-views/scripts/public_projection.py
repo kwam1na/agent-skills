@@ -29,7 +29,9 @@ SCHEMA = json.loads(SCHEMA_PATH.read_text(encoding='utf-8'))
 MAX_BYTES = 16 * 1024 * 1024
 MAX_SOURCE_BYTES = 128 * 1024 * 1024
 # Absolute workstation/temp paths and file URLs are never public view content.
-LOCAL_PATH = re.compile(r'(?:file://|(?:^|[\s"\'(])(?:/[A-Za-z0-9_.-]+/|[A-Za-z]:[\\/]|\\\\)|(?:^|\s)~[/\\]|(?:^|[\s"\'(])(?:\.?agents|\.orchestration|docs|scripts|skills|tests)/)')
+# Option assignments use the same local-reference boundary as quoted prose.
+# Explicit relative paths are local too; HTTPS URL slashes have no such boundary.
+LOCAL_PATH = re.compile(r'(?:file://|(?:^|[\s"\'(=])(?:/[A-Za-z0-9_.-]+/|[A-Za-z]:[\\/]|\\\\|~[/\\]|\.{1,2}[/\\]|(?:\.?agents|\.orchestration|docs|scripts|skills|tests)[/\\]))')
 CREDENTIAL_KEY = re.compile(r'^(?:password|token|secret|api[_-]?key|credential|authorization|cookie)$', re.I)
 OMITTED_LOCAL_REFERENCE = '[Local reference omitted]'
 PROSE_FIELDS = frozenset(('headline title text summary label description detail reason why waitingOn clears').split())
