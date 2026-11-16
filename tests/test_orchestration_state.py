@@ -6691,6 +6691,11 @@ class FactsReviewReaderTests(unittest.TestCase):
                                                data=merge)
         self.assertEqual((authorized["data"]["reviewed"], authorized["data"]["baseCommits"]), (HEAD_B, [HEAD_D]))
         self.assertRegex(authorized["data"]["token"], r"^[0-9a-f]{32}$")
+        # The token is the tool's own: one the caller gives is refused, and so is an authorization a lane writes.
+        for fields, code in (({"data": {**merge, "token": "0" * 32}}, "entry_invalid"), ({"data": merge, "writer": "lane"}, "writer_not_owned")):
+            with self.subTest(fields=fields), self.assertRaises(state_tool.StateError) as refused:
+                state_tool.append_journal(self.directory, kind="base.merge.authorized", subject="work-a", lane="lane-1", **fields)
+            self.assertEqual(refused.exception.code, code)
         state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head=HEAD_C, change_request="cr", rounds=2,
                            base_merge=merge)
         handed = state_tool.read_journal(self.directory)[-1]
