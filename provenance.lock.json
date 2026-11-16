@@ -165,7 +165,7 @@
       "outputs": [
         {
           "path": "skills/deliver-work/SKILL.md",
-          "sha256": "e18e0655702418838ea2ccb046fca9564134bceac35f799f384a0c9a4aabab2e"
+          "sha256": "f5d058a523f684eeb596013292c7e704c62954093bda966da64806643d8ea1e0"
         },
         {
           "path": "skills/deliver-work/agents/openai.yaml",
@@ -173,7 +173,7 @@
         },
         {
           "path": "skills/deliver-work/references/capability-contract.md",
-          "sha256": "f41bc821e57fe7cbe54346fcad991d4addb4320ebff2fb25ea007eb6c637d6fc"
+          "sha256": "2567903f6cddef01032245220e4250c6bfe3699845aaa21977fbe49842554688"
         }
       ],
       "owner": "agent-skills-corpus",

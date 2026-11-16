@@ -40,6 +40,33 @@ Mutating operations require a stable idempotency key. Repeating an accepted
 mutation with the same operation and key must return the same successful result
 without applying the mutation again.
 
+## Knowledge Library Operations
+
+The knowledge-library capability exposes only these neutral operations, both
+read-only:
+
+- `search-knowledge`
+- `read-knowledge`
+
+`search-knowledge` takes a `query`, which is non-empty text, and an optional
+`scope`, one name the adapter maps to its own filters. Its success returns
+`hits`, best first, at most the adapter's declared `maxHits`, which is between 1
+and 20. Each hit has exactly `itemRef`, `title` and `date`, and may have `kind`
+and `scope`, each free text. Zero hits is a success with an empty `hits` list.
+
+`read-knowledge` takes one `itemRef` from a hit. Its success returns that hit's
+fields plus `body`.
+
+Neither operation mutates anything, so neither needs an idempotency key. Both
+use the outcomes below. A `retry` carries the adapter's declared positive delay.
+A hit or item with a missing or extra field, more hits than `maxHits`, or a
+`date` that is not a calendar date normalizes to `malformed`.
+
+The capability is optional in every repository, and no repository authority
+makes it required. When it is absent, available but not configured, or blocked,
+its absence takes the complete core path, and the workflow reports that the
+library was not consulted.
+
 ## Outcomes
 
 Each invocation returns its requested operation and one typed outcome:

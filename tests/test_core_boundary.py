@@ -156,6 +156,14 @@ class ProviderBoundaryRuleTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertIsNotNone(FORBIDDEN.search(text))
 
+    def test_the_knowledge_library_providers_names_match_as_whole_words(self) -> None:
+        for text in ("hive", "Hive", "hive-mined", "Hive-Mined search", "qmd", "QMD query"):
+            with self.subTest(text=text):
+                self.assertIsNotNone(FORBIDDEN.search(text))
+        for text in ("archive", "archived", "beehives", "qmdx"):
+            with self.subTest(text=text):
+                self.assertIsNone(FORBIDDEN.search(text))
+
 
 if __name__ == "__main__":
     unittest.main()
