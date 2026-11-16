@@ -246,6 +246,25 @@ class ProjectionTests(unittest.TestCase):
         with self.assertRaisesRegex(public.ProjectionError, '^snapshot.configured_secret$'):
             public.validate(value, secret_values=['KNOWN-CANARY'])
 
+    def test_url_wrapper_types_distinguish_public_paths_from_local_suffixes(self):
+        doc, _ = source()
+        pairs = {'(': ')', '[': ']', '{': '}'}
+        for opening, balanced_closing in pairs.items():
+            for closing in (')', ']', '}'):
+                with self.subTest(opening=opening, closing=closing):
+                    text = f'Read [public](https://example.com/{opening}nested{closing}/Users/operator/private/wait.json)'
+                    balanced = closing == balanced_closing
+                    needs = {'running': True, 'at': '2026-11-15T00:00:00Z', 'staleAfter': '2026-11-15T00:02:00Z',
+                             'items': [{'holding': False, 'source': 'listener', 'text': text, 'clears': 'listener restored'}]}
+                    value = public.project(doc, {}, config(), source_fingerprint='1' * 64, needs=needs)
+                    self.assertEqual(value['needs']['items'][0]['text'], text if balanced else public.OMITTED_LOCAL_REFERENCE)
+                    self.assertEqual(needs['items'][0]['text'], text)
+                    value['needs']['items'][0]['text'] = text
+                    if balanced:
+                        public.validate(value)
+                    else:
+                        with self.assertRaisesRegex(public.ProjectionError, '^snapshot.local_path$'): public.validate(value)
+
     def test_completed_url_wrappers_leave_adjoining_local_prose_visible(self):
         doc, _ = source()
         private = ['[public](https://example.com/public_docs/file)/Users/operator/private/wait.json',

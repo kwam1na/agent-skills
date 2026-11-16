@@ -96,6 +96,17 @@ describe('ingestion boundary', () => {
         expect((await current(publicId)).status).toBe(privateReference ? 404 : 200);
       }
     });
+  it.each([['(', ')'], ['[', ']'], ['{', '}']].flatMap(([opening, balancedClosing]) =>
+    [')', ']', '}'].map(closing => ({ opening, closing, balanced: closing === balancedClosing }))))(
+    'distinguishes URL wrapper types $opening $closing', async ({ opening, closing, balanced }) => {
+      const publicId = id(); await session(publicId);
+      const body = fixture();
+      body.needs = { running: true, at: '2026-11-15T00:00:00Z', staleAfter: '2026-11-15T00:02:00Z',
+        items: [{ holding: false, source: 'listener', clears: 'listener restored',
+          text: `Read [public](https://example.com/${opening}nested${closing}/Users/operator/private/wait.json)` }] };
+      expect((await upload(publicId, 1, body)).status).toBe(balanced ? 200 : 400);
+      expect((await current(publicId)).status).toBe(balanced ? 200 : 404);
+    });
   it('serves the deployed entrypoint through local Worker, DO and R2 bindings', async () => {
     const publicId=id();
     const auth={'Authorization':`Bearer ${TOKEN}`,'Content-Type':'application/json'};
