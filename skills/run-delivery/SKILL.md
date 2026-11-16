@@ -68,6 +68,48 @@ python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py <co
 setup check, a first delivery as lead and as lane, host notes, the operating rules and troubleshooting. This page is
 the command reference.
 
+## Hosted delivery progress
+
+When the binding shelf's `.agents/delivery-views.json` enables `hosted`, `lead-init`
+and the supervisor start or adopt one independent hosted watcher. A normal
+`lead-run --resume` keeps its public identity and explicitly resumes its writer
+lease. Stopping the supervisor leaves this watcher alive. The watcher checks its
+record, generation and recorded PID identity; a generation transition replaces
+the verified owner. Generic renderers and tracker children receive no publishing
+credential. The detached supervisor receives that credential through a private
+pipe, never a command argument or a stored sidecar.
+Before the binding shelf names its credential, discovery git runs with a
+restricted OS/session environment. This also protects a token name changed on
+the shelf. Public prose containing recognizable local references carries a
+visible omission marker; raw uploaded paths and configured secrets still fail
+strict validation.
+
+Explicit lead status output, `doctor` and `view` show the hosted URL and local
+publication status. These links grant public read access. Supervisor logs do not
+print them. Local live views continue to run no publishers.
+
+After `close-finished` marks the same `delivery.closed` entry in the record and
+its archive, close records a durable terminal request. Publication adds at most
+30 seconds to local close. The independent watcher retries the frozen terminal
+cut for up to 10 minutes, then exits with `final-publication-pending`. Only a
+matching receipt for that finished cut yields `final-published`.
+
+Close notifies the existing owner before waiting for lifecycle control. The
+credential-free notification fixes the original retry deadline even under lock
+contention; repeated close commands do not extend it or replace an acknowledged
+cut. Live pending status keeps the known URL and preceding receipt. During
+active archive updates, status may briefly report bounded unavailability; stable
+post-exit reads still validate the archived identity and receipt strictly.
+
+The archive retains the identity, status, referenced pending bytes and frozen
+terminal cut. `view --archive PATH` needs no token and starts no uploader.
+From a configured checkout, `hosted-retry --archive PATH` reconciles and retries
+that exact terminal cut with the same public ID; add `--resume` only to resume
+an expired writer lease. It uses the checkout's trusted configuration and refuses
+an archive while its original watcher remains alive. A plain `hosted-retry`
+retries the current delivery. Publishing failures leave local delivery execution
+and tracker publishing independent.
+
 ## Integration bases
 
 From the standing base checkout, run `lead-setup KEY --plan PATH --integration BRANCH` with the usual
