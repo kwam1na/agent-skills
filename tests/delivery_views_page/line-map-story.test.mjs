@@ -28,8 +28,15 @@ function storied(name) {
   document.story = readJson(path.join(ROOT, "tests", "fixtures", "delivery-views", "story", `${name}.json`));
   return document;
 }
+// Each record renders once: a render starts a process, and most rows open the same few records.
+const rendered = new Map();
+function pageOf(document) {
+  const key = JSON.stringify(document);
+  if (!rendered.has(key)) rendered.set(key, pageWithRuns(document, {}, { config: CONFIG }));
+  return rendered.get(key);
+}
 function open(document, scenario = {}) {
-  return openPage(pageWithRuns(document, {}, { config: CONFIG }), { now: NOW, store: false, ...scenario });
+  return openPage(pageOf(document), { now: NOW, store: false, ...scenario });
 }
 const drawn = (snapshot) => [...snapshot.app.querySelectorAll("#happened [data-beat]")].map((row) => row.getAttribute("data-beat"));
 const held = (story, altitude) => story.beats.filter((beat) => beat.altitudes.includes(altitude)).map((beat) => beat.id);
@@ -68,7 +75,7 @@ test("the chapter opens on Story for an open delivery and on Headlines for a clo
   closed.story = { ...closed.story, state: "closed" };
   const [shut] = await open(closed);
   expect(shut.app.querySelector('#happened [data-depth="headline"]').getAttribute("aria-pressed")).toBe("true");
-  const page = pageWithRuns(open_, {}, { config: CONFIG });
+  const page = pageOf(open_);
   const chosen = await openPage(page, { now: NOW, store: false, rendered: page, steps: [{ click: '#happened [data-depth="everything"]' }] });
   const key = Object.keys(chosen.storage).find((name) => name.endsWith(":story-depth"));
   expect(chosen.storage[key]).toBe("everything");
@@ -158,7 +165,7 @@ test("a run of bookkeeping is the one run that folds, and opened lists each entr
 test("a write to a live record moves the story on an open page without a reload", async () => {
   const before = storied("standing-break");
   const after = storied("break-stops-a-piece");
-  const [first, pushed] = await openPage(pageWithRuns(before, {}, { config: CONFIG }), { now: NOW, store: { read: "pending" }, steps: [{ push: after }] });
+  const [first, pushed] = await openPage(pageOf(before), { now: NOW, store: { read: "pending" }, steps: [{ push: after }] });
   expect(first.app.querySelector("#happened .title").textContent).toBe(before.story.digest.words.head);
   expect(pushed.app.querySelector("#happened .title").textContent).toBe(after.story.digest.words.head);
   expect(drawn(pushed).sort()).toEqual(held(after.story, "story").sort());
