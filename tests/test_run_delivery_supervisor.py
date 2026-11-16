@@ -258,6 +258,23 @@ def state_tool(fx: Fixture, *argv) -> None:
        fx.tmp / "record", *argv, cwd=fx.main)
 
 
+def held_by_the_queue(fx: Fixture, words: str) -> None:
+    """The queue's hold on serving, as it journals it: serving.held with its facts."""
+    state_tool(fx, "journal", "--kind", "serving.held", "--data", json.dumps({"why": words}))
+
+
+def held_as_a_sentence(fx: Fixture, words: str) -> None:
+    """The hold as the queue wrote it before it had a kind of its own: a runner's blocker with only a sentence.
+
+    Written as a journal line directly, the one shape no tool writes any more."""
+    journal = fx.tmp / "record" / "journal.jsonl"
+    number = len(journal.read_text().splitlines()) + 1
+    entry = {"at": "2026-01-01T00:00:00Z", "id": number, "kind": "blocker.recorded", "lane": None, "subject": None,
+             "summary": words}
+    with journal.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n")
+
+
 def kinds(fx: Fixture, kind: str) -> list[dict]:
     return [e for e in record(fx)["journal"] if e["kind"] == kind]
 
@@ -2610,19 +2627,31 @@ class SupervisorPassTests(unittest.TestCase):
                                          json.dumps({"/meta/hold": {"reason": reason, "since": "2026-01-01T00:00:00Z"}}))
         # Cleared by the hold clearing, with no base.repaired.
         held("the setup broke")
-        state_tool(fx, "journal", "--kind", "blocker.recorded", "--summary", "Serving is held: the setup broke.")
+        held_by_the_queue(fx, "Serving is held: the setup broke.")
         self.holds_alone(fx, "Serving is held: the setup broke")
         runner = [item for item in passes(fx)[-1]["needsYou"] if "Serving is held" in item["text"]]
         self.assertEqual(len(runner), 1, passes(fx)[-1]["needsYou"])
+        self.assertTrue(runner[0]["source"].endswith("(serving.held)"), runner)
         self.assertTrue(runner[0]["clears"].startswith("the runner's hold clearing, journalling base.repaired, or "), runner)
         state_tool(fx, "patch", "--writer", "lead", "--version", str(record(fx)["state"]["version"]), "--set",
                    json.dumps({"/meta/hold": None}))
         self.assertFalse(any("Serving is held" in h for h in self.once(fx)["closeHeldBy"]))
         # Cleared by base.repaired, with the hold still set.
+        # Until the sentence goes, the hold the queue wrote as a blocker reads as before.
         held("the base broke")
-        state_tool(fx, "journal", "--kind", "blocker.recorded", "--summary", "Serving is held: the base broke.")
+        held_as_a_sentence(fx, "Serving is held: the base broke.")
         self.holds_alone(fx, "Serving is held: the base broke")
-        state_tool(fx, "journal", "--kind", "base.repaired", "--summary", "repaired")
+        runner = [item for item in passes(fx)[-1]["needsYou"] if "Serving is held" in item["text"]]
+        self.assertTrue(runner and runner[0]["clears"].startswith("the runner's hold clearing"), runner)
+        state_tool(fx, "journal", "--kind", "base.repaired", "--data", json.dumps({"source": "lead", "head": "a" * 40}))
+        self.assertFalse(any("Serving is held" in h for h in self.once(fx)["closeHeldBy"]))
+        # Resolved by the lead, as its needsYou item offers, with the hold still set and no repair after it.
+        self.assertTrue(record(fx)["state"]["meta"]["hold"])
+        held_by_the_queue(fx, "Serving is held: the base broke again.")
+        hold = kinds(fx, "serving.held")[-1]["id"]
+        self.assertTrue(any("Serving is held: the base broke again" in h for h in self.once(fx)["closeHeldBy"]))
+        code, out = fx.flow("lead-resolve", str(hold), "--why", "set up by hand", cwd=fx.main)
+        self.assertEqual(code, 0, out)
         self.assertFalse(any("Serving is held" in h for h in self.once(fx)["closeHeldBy"]))
 
     def test_a_merge_step_that_refuses_drafts_needs_the_grant(self) -> None:
@@ -2961,19 +2990,20 @@ class SupervisorPassTests(unittest.TestCase):
                 changes.write(json.dumps({"type": "change", "id": "c1", "kind": "removed", "subjects": ["FX-3"],
                                           "by": "lead", "why": "Out of scope.", "at": "2026-01-01T00:00:00Z"}) + "\n")
         # A lane's blocker holds it until lead-resolve resolves it.
-        state_tool(fx, "journal", "--kind", "blocker.recorded", "--summary", "the API is down")
+        state_tool(fx, "journal", "--kind", "blocker.recorded", "--data", json.dumps({"text": "the API is down"}))
         blocker = kinds(fx, "blocker.recorded")[-1]["id"]
         held = self.holds(fx)
         self.assertTrue(any(h.startswith(f"Blocker {blocker}") for h in held), held)
         # Only the runner's own blocker clears with its hold or base.repaired; this one clears with lead-resolve alone.
         mine = [item for item in passes(fx)[-1]["needsYou"] if item["text"].startswith(f"Blocker {blocker}")]
         self.assertEqual(len(mine), 1, passes(fx)[-1]["needsYou"])
+        self.assertIn("the API is down", mine[0]["text"])
         self.assertTrue(mine[0]["clears"].endswith(f"lead-resolve {blocker} --why TEXT"), mine)
         self.assertNotIn("runner's hold", mine[0]["clears"])
         self.assertFalse(any(h.startswith("not handed off") for h in held), held)
         # A broken base holds it until it's repaired; the runner's own blocker clears with base.repaired.
         state_tool(fx, "journal", "--kind", "base.broken", "--summary", "the base fails its check")
-        state_tool(fx, "journal", "--kind", "blocker.recorded", "--summary", "Serving is held: the base broke.")
+        held_by_the_queue(fx, "Serving is held: the base broke.")
         held = self.holds(fx)
         self.assertTrue(any(h.startswith("The delivery base is broken") for h in held), held)
         state_tool(fx, "journal", "--kind", "base.repaired", "--summary", "repaired")

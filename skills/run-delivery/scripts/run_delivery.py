@@ -9232,10 +9232,29 @@ def full_health_results(c, head: str) -> tuple[dict | None, bool]:
     return last, rerun
 
 
+# What holds the close and asks the lead: a blocker someone recorded, or the queue's hold on serving.
+HOLDING_KINDS = ("blocker.recorded", "serving.held")
+
+
+def runner_held(entry: dict) -> bool:
+    """Whether an entry is the queue's hold on serving: its own kind, or the sentence-only blocker it wrote before."""
+    if entry["kind"] == "serving.held":
+        return True
+    return (entry["kind"] == "blocker.recorded" and "data" not in entry and not entry.get("lane")
+            and not entry.get("subject") and entry.get("summary", "").startswith(RUNNER_HELD))
+
+
+def holding_words(entry: dict) -> str:
+    """What a holding entry says: its facts' words when it has them, its sentence otherwise."""
+    if "data" in entry:
+        return entry["data"].get("why" if entry["kind"] == "serving.held" else "text", "")
+    return entry.get("summary", "")
+
+
 def blocker_resolved(c, doc: dict, entry: dict, resolutions: set[int]) -> bool:
     if entry["id"] in resolutions:
         return True
-    if not entry.get("lane") and not entry.get("subject") and entry.get("summary", "").startswith(RUNNER_HELD):
+    if runner_held(entry):
         repaired = any(e["kind"] == "base.repaired" and e["id"] > entry["id"] for e in doc["journal"])
         return repaired or not doc["state"]["meta"].get("hold")
     return False
@@ -9316,12 +9335,12 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                           "for it if lead-accept can't take it"})
     resolutions = {entry.get("journal") for entry in read_log("resolutions", c.delivery)}
     for entry in doc["journal"]:
-        if entry["kind"] == "blocker.recorded" and not blocker_resolved(c, doc, entry, resolutions):
-            runners = not entry.get("lane") and not entry.get("subject") and entry.get("summary", "").startswith(RUNNER_HELD)
-            items.append({"holding": True, "source": f"journal entry {entry['id']} (blocker.recorded)",
+        if entry["kind"] in HOLDING_KINDS and not blocker_resolved(c, doc, entry, resolutions):
+            runners = runner_held(entry)
+            items.append({"holding": True, "source": f"journal entry {entry['id']} ({entry['kind']})",
                           "text": f"Blocker {entry['id']}"
                           + (f" ({entry.get('subject') or entry.get('lane')})" if entry.get("subject") or entry.get("lane")
-                             else "") + f": {entry.get('summary', '')[:300]}. Resolve it with {flow_command()} "
+                             else "") + f": {holding_words(entry)[:300]}. Resolve it with {flow_command()} "
                           f"lead-resolve {entry['id']} --why TEXT",
                           "clears": ("the runner's hold clearing, journalling base.repaired, or " if runners else "")
                           + f"{flow_command()} lead-resolve {entry['id']} --why TEXT"})
@@ -10756,8 +10775,9 @@ def lead_resolve(args) -> None:
     except ValueError:
         raise Stop(f"lead-resolve takes a journal id or full-health, not {args.id!r}")
     entry = next((e for e in doc["journal"] if e["id"] == number), None)
-    if entry is None or entry["kind"] != "blocker.recorded":
-        raise Stop(f"journal entry {number} isn't a blocker.recorded" + (f" ({entry['kind']})" if entry else ""))
+    if entry is None or entry["kind"] not in HOLDING_KINDS:
+        raise Stop(f"journal entry {number} isn't a blocker.recorded or serving.held"
+                   + (f" ({entry['kind']})" if entry else ""))
     resolutions = {r.get("journal") for r in read_log("resolutions", c.delivery)}
     if blocker_resolved(c, doc, entry, resolutions):
         raise Stop(f"blocker {number} is already resolved")
