@@ -2620,8 +2620,9 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         expect(remote_has(m, "feature/FX-2"), "the remote branch was deleted without the repository allowing it")
         cleaned = [e for e in map(json.loads, (fx.tmp / "record/journal.jsonl").read_text().splitlines())
                    if e.get("kind") == "cleanup.done" and e.get("subject") == "FX-2"]
-        expect(cleaned and cleaned[-1]["data"].get("changeRequest") == "https://forge.test/pr/1"
-               and cleaned[-1]["data"]["base"]["ref"] == "origin/feature/FX-1", cleaned)
+        expect(cleaned and cleaned[-1]["data"] == {
+                   "base": {"ref": "origin/feature/FX-1", "head": sh("git", "rev-parse", "origin/feature/FX-1", cwd=m).stdout.strip()},
+                   "head": head, "changeRequest": "https://forge.test/pr/1"}, cleaned)
         # Run again, with the remote branch still there: cleaned already, so nothing is said or journalled twice.
         code, out = fx.flow("lead-cleanup", "FX-2", cwd=m)
         again = [e for e in map(json.loads, (fx.tmp / "record/journal.jsonl").read_text().splitlines())
@@ -5418,6 +5419,13 @@ class RunDeliveryPlanTests(unittest.TestCase):
         entry = next(p for p in record["state"]["planned"] if p["subject"] == "FX-2")
         self.assertEqual(entry["stage"], "settled")
         self.assertEqual(record["state"]["queue"], [])
+        # The check names the no-change hand-off and says what it checked.
+        [handed] = [e for e in record["journal"] if e["kind"] == "candidate.handed"]
+        [check] = [e for e in record["journal"] if e["kind"] == "handoff.checked"]
+        self.assertEqual((check["subject"], check["data"], check["because"]), ("FX-2", {
+            "head": before, "rounds": 0, "afterMerge": False, "noChange": True,
+            "notes": ["its evidence names each of its criteria: one-loads, one-fails"]}, [handed["id"]]))
+        self.assertNotIn("answers", check)
         self.assertEqual(self.base(fx), before, "a base commit was made")
         self.assertEqual(sh("git", "ls-remote", "origin", "feature/FX-1", cwd=m).stdout.split()[0], before)
         # The plan keeps it, not removed, and counts every proof it owes done, as the line map and finish lines do.
@@ -6320,7 +6328,8 @@ if Path.cwd().name.endswith("-check") and not started.exists():
         [finished] = kinds(fx, "check.finished")
         [published] = kinds(fx, "base.published")
         self.assertLess(finished["id"], published["id"])
-        self.assertEqual(published["data"]["base"], {"ref": "origin/feature/FX-1", "head": head})
+        self.assertEqual(published["data"], {"base": {"ref": "origin/feature/FX-1", "head": head}, "from": before})
+        self.assertNotIn("because", published)
 
     def test_a_live_flake_declared_during_a_check_retries_only_matching_failures(self) -> None:
         from tests.test_run_delivery_supervisor import kinds, record

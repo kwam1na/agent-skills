@@ -314,7 +314,9 @@ class PeerDeliveryTests(unittest.TestCase):
         self.assertIn("FX-9 already claims src/one*", out)
         self.assertEqual(self.record(fx, fx.tmp / "record-FX-9")["state"]["extensions"]["claims"], ["src/one*"])
         [claimed] = [e for e in self.record(fx, fx.tmp / "record-FX-9")["journal"] if e["kind"] == "ownership.claimed"]
-        self.assertEqual((claimed["data"]["path"], claimed["data"]["base"]["ref"]), ("src/one*", "origin/feature/FX-1"))
+        self.assertEqual(claimed["data"], {"path": "src/one*", "base": {
+            "ref": "origin/feature/FX-1", "head": sh("git", "rev-parse", "origin/feature/FX-1", cwd=lead).stdout.strip()}})
+        self.assertNotIn("because", claimed)
         # FX-9's lane-1 holds src/one.txt through a region rather than a whole-file claim, and its FX-92 is queued.
         record9 = fx.tmp / "record-FX-9"
         self.patch(fx, record9, "lead", "--patch", json.dumps({"laneOwnership": {"lane-1": [], "lane-2": ["src/two*"]}}))

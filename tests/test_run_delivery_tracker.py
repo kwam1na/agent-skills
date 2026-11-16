@@ -3067,10 +3067,13 @@ class RegistryUpdateTests(unittest.TestCase):
         broken = {"kind": "base.broken", "subject": "EP-2", "lane": None, "data": {"source": "lead", "detail": "red"}}
         blocked = {"kind": "blocker.recorded", "subject": "EP-2", "lane": None, "data": {"text": "the API is down"}}
         started = {"kind": "check.started", "subject": "EP-2", "lane": None, "data": {}}
-        posted = self.posted(self.MERGED, broken, blocked, {**blocked, "subject": None}, started)
+        # A person's decision, with its facts and no mark, posts as any entry does, on its story or the epic.
+        decided = {"kind": "decision.recorded", "subject": "EP-2", "lane": None, "data": {"text": "Ship it", "why": "ready"}}
+        posted = self.posted(self.MERGED, broken, blocked, {**blocked, "subject": None}, started, decided,
+                             {**decided, "subject": None})
         self.assertEqual([(ticket, body.split(":")[0]) for ticket, body in posted],
                          [("EP-2", "Merged (lane-1)"), ("EP-1", "The delivery base is broken; the queue is stopped"),
-                          ("EP-2", "Blocked"), ("EP-1", "Blocked")])
+                          ("EP-2", "Blocked"), ("EP-1", "Blocked"), ("EP-2", "Decision"), ("EP-1", "Decision")])
         # With the copy moving the stop from its ticket to nowhere, its post stops; the landing's still goes.
         def unposted(kinds: dict) -> None:
             kinds["candidate.stopped"]["tracker"] = None

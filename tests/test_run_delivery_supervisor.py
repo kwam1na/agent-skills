@@ -2261,6 +2261,12 @@ class RegionOwnershipTests(unittest.TestCase):
         for branch, head in (("FX-1", base), ("FX-2", handed)):
             remote = sh("git", "ls-remote", "origin", f"refs/heads/feature/{branch}", cwd=fx.main)
             self.assertEqual(remote.stdout.split()[0], head)
+        # Stopped again, a second re-queue answers the latest stop, not the one the first already answered.
+        code, out = fx.flow("lead-accept", "--requeue", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        first, second = kinds(fx, "handoff.requeued")
+        stops = kinds(fx, "candidate.stopped")
+        self.assertEqual((first["answers"], second["answers"]), ([stops[-2]["id"]], [stops[-1]["id"]]))
 
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
@@ -2368,6 +2374,11 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertIn("(candidate.merged)", waiting[0]["source"])
         code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
         self.assertEqual(code, 0, out)
+        # Checked after its merge, the check still names the hand-off, not the merge recovered after it.
+        [check] = kinds(fx, "handoff.checked")
+        [handed] = kinds(fx, "candidate.handed")
+        self.assertEqual((check["data"]["afterMerge"], check["because"]), (True, [handed["id"]]))
+        self.assertLess(handed["id"], kinds(fx, "candidate.merged")[-1]["id"])
         last = self.once(fx)
         self.assertEqual([item for item in last["needsYou"] if "merged before you accepted" in item["text"]], [])
         self.assertFalse(wt.exists(), "the checkout outlived the lead's decision")
@@ -3915,6 +3926,10 @@ class SupervisorPostureTests(unittest.TestCase):
         named = decisions(fx, "posture_malformed")
         self.assertEqual(len(named), 1, named)
         self.assertIn("origin/feature/FX-1", named[0]["summary"])
+        # The declaration didn't take: it runs as under gate, and the code is part of why.
+        assert_facts(self, named[0], "posture.changed", {"from": "gate", "to": "gate", "source": "origin/feature/FX-1",
+                                                          "why": named[0]["summary"].split("under gate, ", 1)[1]})
+        self.assertTrue(named[0]["data"]["why"].startswith("posture_malformed: "), named[0])
         self.assertNotIn("closeOut", plan_of(fx))
 
     def test_the_delivery_s_base_decides_when_the_binding_names_another(self) -> None:
