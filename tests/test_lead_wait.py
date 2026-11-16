@@ -58,8 +58,8 @@ class Record:
             raise AssertionError(done.stdout + done.stderr)
         return json.loads(done.stdout)
 
-    def journal(self, kind: str, summary: str = "what happened") -> int:
-        return self.tool("journal", "--kind", kind, "--summary", summary)["entry"]["id"]
+    def journal(self, kind: str, summary: str = "what happened", *facts: str) -> int:
+        return self.tool("journal", "--kind", kind, "--summary", summary, *facts)["entry"]["id"]
 
     def add_lanes(self, *lanes: str) -> None:
         version = self.tool("show")["state"]["version"]
@@ -114,12 +114,20 @@ class EventTests(RecordCase):
             with self.subTest(kind=kind):
                 process = self.record.start_wait()
                 self.assert_running(process)
-                identifier = self.record.journal(kind, f"the {kind} summary")
+                # A blocker carries its facts too: its event tells them, in the registry's words.
+                facts = ("--text", "The lead must choose.") if kind == "blocker.recorded" else ()
+                identifier = self.record.journal(kind, f"the {kind} summary", *facts)
                 code, result = _finish(process)
                 self.assertEqual(code, 0)
                 self.assertEqual(result["woke"], "event")
                 self.assertEqual([(event["id"], event["kind"]) for event in result["events"]], [(identifier, kind)])
                 self.assertEqual(result["events"][0]["summary"], f"the {kind} summary")
+                if facts:
+                    self.assertEqual({key: result["events"][0][key] for key in ("data", "head", "line")},
+                                     {"data": {"text": "The lead must choose."}, "head": "Work was blocked",
+                                      "line": "The lead must choose."})
+                else:
+                    self.assertNotIn("data", result["events"][0])
                 self.assertEqual(result["through"], identifier)
 
     def test_a_stopped_base_rerun_does_not_end_a_running_wait(self) -> None:

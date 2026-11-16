@@ -190,7 +190,15 @@
             "result": "passed"
           }
         ],
-        "noChange": true
+        "noChange": true,
+        "carry": {
+          "from": "0123456789abcdef0123456789abcdef01234567",
+          "to": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "baseCommits": [
+            "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+          ]
+        }
       },
       "head": "Lane 1 handed off APP-12",
       "line": "No change needed, with unit and lint run by the lane"
@@ -201,12 +209,11 @@
       "subject": "APP-12",
       "data": {
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
-        "changeRequest": "https://github.com/example/app/pull/12",
-        "rounds": 2,
-        "checks": []
+        "checks": [],
+        "rounds": 0
       },
       "head": "Lane 1 handed off APP-12",
-      "line": "After 2 review rounds"
+      "line": "Ready"
     },
     {
       "kind": "candidate.handed",
@@ -214,9 +221,8 @@
       "subject": "APP-12",
       "data": {
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
-        "changeRequest": "https://github.com/example/app/pull/12",
-        "rounds": 2,
         "checks": [],
+        "rounds": 0,
         "noChange": true
       },
       "head": "Lane 1 handed off APP-12",
@@ -242,10 +248,18 @@
             "tree": "0123456789abcdef0123456789abcdef01234567",
             "result": "passed"
           }
-        ]
+        ],
+        "carry": {
+          "from": "0123456789abcdef0123456789abcdef01234567",
+          "to": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+          "digest": "abababababababababababababababababababababababababababababababab",
+          "baseCommits": [
+            "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+          ]
+        }
       },
       "head": "Lane 1 handed off APP-12",
-      "line": "After 2 review rounds, with unit and lint run by the lane"
+      "line": "Ready after 2 review rounds, with unit and lint run by the lane, its review carried from 0123456"
     },
     {
       "kind": "handoff.checked",
@@ -1792,25 +1806,22 @@
       "subject": "APP-12",
       "data": {
         "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
-        "changeRequest": "https://github.com/example/app/pull/12",
-        "rounds": 0,
-        "checks": []
+        "checks": [],
+        "rounds": 1
       },
       "head": "Lane 1 handed off APP-12",
-      "line": "After 0 review rounds"
+      "line": "Ready after 1 review round"
     },
     {
-      "kind": "candidate.handed",
+      "kind": "evidence.published",
       "lane": "lane-1",
       "subject": "APP-12",
       "data": {
-        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
-        "changeRequest": "https://github.com/example/app/pull/12",
-        "rounds": 1,
-        "checks": []
+        "url": "https://example.github.io/app/evidence/",
+        "clips": []
       },
-      "head": "Lane 1 handed off APP-12",
-      "line": "After 1 review round"
+      "head": "Evidence for APP-12 was published",
+      "line": "0 clips at https://example.github.io/app/evidence/"
     },
     {
       "kind": "check.carried",

@@ -815,8 +815,9 @@ def complete_base_move_locked(directory: Path, *, from_head: str, to_head: str, 
         current = read_state(directory)
         entries = read_journal(directory)
         summary = f"Base moved from {from_head} to {to_head} by merging {default_head}: {reason}"
+        facts = {"from": from_head, "to": to_head, "merged": default_head, "why": reason}
         entry = {"id": len(entries) + 1, "at": now(), "kind": "base.moved", "subject": None,
-                 "lane": None, "summary": summary}
+                 "lane": None, "summary": summary, "data": facts}
         errors = journal_errors([*entries, entry])
         if errors:
             raise StateError("entry_invalid", "; ".join(errors))
@@ -839,9 +840,16 @@ def complete_base_move_locked(directory: Path, *, from_head: str, to_head: str, 
             if current["meta"].get("writerGeneration") != running:
                 _note_change(directory, "writer-upgrade", version=updated["version"])
             _note_change(directory, "base-move", version=updated["version"])
-        if not any(item["kind"] == "base.moved" and item.get("summary") == summary for item in entries):
+        if not any(item["kind"] == "base.moved" and _same_move(item, facts, summary) for item in entries):
             _append_journal_locked(directory, updated, entries, entry)
         return updated
+
+
+def _same_move(entry: dict, facts: dict, summary: str) -> bool:
+    """Whether a base.moved entry records this move: by its commits when it carries facts, by its sentence otherwise."""
+    if "data" in entry:
+        return all(entry["data"].get(key) == facts[key] for key in ("from", "to", "merged"))
+    return entry.get("summary") == summary
 
 
 def upgrade_writer(directory: Path, *, expected: str, reason: str) -> dict:
@@ -1375,9 +1383,10 @@ def handoff(
         raise StateError("handoff_invalid", "; ".join(problems))
 
     carried = None
+    stopped = False
 
     def change(state: dict) -> dict:
-        nonlocal carried
+        nonlocal carried, stopped
         if lane not in [entry["id"] for entry in state["lanes"]]:
             raise StateError("writer_not_owned", f"there is no lane {lane}")
         if run is not None:
@@ -1393,6 +1402,7 @@ def handoff(
                 raise StateError("writer_not_owned", f"{subject} belongs to {authorized_lane}, not {lane}")
             if queued["stage"] not in ("queued", "stopped"):
                 raise StateError("handoff_invalid", f"{subject} is {queued['stage']}; hand it off once it stops")
+            stopped = queued["stage"] == "stopped"
             queued.update(stage="queued", lane=lane, head=head, syncedHead=None, checks=[], changeRequest=change_request)
             queued.pop("checkSelection", None)
             # A lead selection is for the head it was made at; new code is never checked with it.
@@ -1458,9 +1468,31 @@ def handoff(
     ran = f"; the lane ran {', '.join(checks)}" if checks else ""
     carry_text = (f"; review carried from {carried['from']} to {head} across base commits "
                   f"{', '.join(carried['baseCommits'])}" if carried else "")
-    append_journal(directory, kind="candidate.handed", lane=lane, subject=subject, review_carry=carried,
+    facts: dict = {"head": head, "changeRequest": change_request, "checks": list(checks or [])}
+    if rounds is not None:
+        facts["rounds"] = rounds
+    if evidence:
+        facts["evidence"] = [{key: entry[key] for key in EVIDENCE_FIELDS} for entry in evidence]
+    if carried:
+        facts["carry"] = dict(carried)
+    # A hand-off for a stopped piece answers the stop standing for it.
+    stop = standing_stop(read_journal(directory), subject) if stopped else None
+    append_journal(directory, kind="candidate.handed", lane=lane, subject=subject, review_carry=carried, data=facts,
+                   answers=[stop["id"]] if stop else None,
                    summary=f"{lane} handed {subject} at {head} ({change_request}){rounds_text}{proof}{ran}{waiting}{carry_text}")
     return item  # type: ignore[return-value]
+
+
+def standing_stop(journal: list[dict], subject: str) -> dict | None:
+    """The stop standing for a subject: its latest candidate.stopped, when no hand-off or merge has come since."""
+    for entry in reversed(journal):
+        if entry["subject"] != subject:
+            continue
+        if entry["kind"] == "candidate.stopped":
+            return entry
+        if entry["kind"] in ("candidate.handed", "candidate.merged"):
+            return None
+    return None
 
 
 NO_CHANGE_EVIDENCE = 4000
@@ -1507,6 +1539,7 @@ def no_change_handoff(directory: Path, *, lane: str, subject: str, base_head: st
     _, entry = _tool_write(directory, change)
     settled = entry["stage"] == "settled"
     append_journal(directory, kind="candidate.handed", lane=lane, subject=subject,
+                   data={"head": base_head, "checks": [], "noChange": True},
                    summary=f"{lane} handed {subject} with no change needed, its evidence run at base {base_head[:10]}"
                            + ("; settled" if settled else "; waiting for the lead to accept it"))
     return entry
@@ -1947,7 +1980,9 @@ def select_checks(directory: Path, subject: str, *, binding: dict, head: str | N
         summary = f"The lead selected checks for {subject} at {head}: {names}. Why: {reason}"
         if added:
             summary += ". Added: " + "; ".join(f"{entry['id']} ({entry['why']})" for entry in added)
-    append_journal(directory, kind="check.selected", subject=subject, lane=item.get("lane"), summary=summary)  # type: ignore[union-attr]
+    facts = None if clearing else {"head": head, "checks": [check["id"] for check in checks], "why": reason,  # type: ignore[union-attr]
+                                   "added": [{"id": entry["id"], "why": entry["why"]} for entry in added or []]}
+    append_journal(directory, kind="check.selected", subject=subject, lane=item.get("lane"), summary=summary, data=facts)  # type: ignore[union-attr]
     return item  # type: ignore[return-value]
 
 
@@ -1984,6 +2019,30 @@ def name_repair(directory: Path, subject: str, *, withdraw: bool = False) -> dic
     return _tool_write(directory, change)[1]  # type: ignore[return-value]
 
 
+def _base_broken(entry: dict) -> bool:
+    """Whether an entry is a base_broken stop or break: by its reason when it carries facts, by its sentence otherwise."""
+    if "data" in entry:
+        return entry["data"].get("reason") == "base_broken"
+    return entry.get("summary", "").startswith("base_broken:")
+
+
+def _broken_head(entry: dict) -> str | None:
+    """The base head a base_broken break names."""
+    if "data" in entry:
+        return entry["data"].get("head")
+    found = BROKEN_AT.findall(entry.get("summary", ""))
+    return found[-1] if found else None
+
+
+def _stopped_by(stop: dict, broken: dict, head: str | None) -> bool:
+    """Whether a stop was made by this break: it names the break as its cause, or its sentence names the break's head."""
+    if not _base_broken(stop):
+        return False
+    if "data" in stop:
+        return broken["id"] in stop.get("because", [])
+    return head is not None and head in BROKEN_AT.findall(stop.get("summary", ""))
+
+
 def repaired_state(state: dict, journal: list[dict]) -> dict | None:
     """The record once base.repaired is journaled after ``journal``, or None when nothing changes.
 
@@ -1991,10 +2050,9 @@ def repaired_state(state: dict, journal: list[dict]) -> dict | None:
     base.repaired is base_broken at the base head the latest base_broken entry names. Nothing else stopped moves.
     """
     since = max((entry["id"] for entry in journal if entry["kind"] == "base.repaired"), default=0)
-    breaks = [entry for entry in journal if entry["id"] > since and entry["kind"] == "base.broken"
-              and entry.get("summary", "").startswith("base_broken:")]
-    found = BROKEN_AT.findall(breaks[-1].get("summary", "")) if breaks else []
-    head = found[-1] if found else None
+    breaks = [entry for entry in journal if entry["id"] > since and entry["kind"] == "base.broken" and _base_broken(entry)]
+    broken = breaks[-1] if breaks else None
+    head = _broken_head(broken) if broken else None
     latest = {entry["subject"]: entry for entry in journal if entry["kind"] == "candidate.stopped" and entry["subject"]}
     updated = copy.deepcopy(state)
     changed = False
@@ -2002,8 +2060,8 @@ def repaired_state(state: dict, journal: list[dict]) -> dict | None:
         if item.pop("repair", None) is not None:
             changed = True
         stop = latest.get(item["subject"])
-        if (head is not None and item["stage"] == "stopped" and stop is not None and stop["id"] > since
-                and stop.get("summary", "").startswith("base_broken:") and head in BROKEN_AT.findall(stop.get("summary", ""))):
+        if (broken is not None and item["stage"] == "stopped" and stop is not None and stop["id"] > since
+                and _stopped_by(stop, broken, head)):
             item.update(stage="queued", checks=[])
             updated["lanes"] = lane_rows_put_back(updated, item["subject"])
             changed = True
@@ -2575,10 +2633,22 @@ def base_merge_evidence(
     return {"from": reviewed, "to": head, "digest": capture["reviewArtifact"]["digest"], "baseCommits": commits}
 
 
+def carry_of(entry: dict) -> dict | None:
+    """The review an entry carries, ``{from, to, digest, note}``: from its facts when it has them, else its old members."""
+    data = entry.get("data") or {}
+    if entry["kind"] == "review.carried" and "data" in entry:
+        return {key: data[key] for key in ("from", "to", "digest")} | {"note": data["why"]}
+    if entry["kind"] == "candidate.handed" and "carry" in data:
+        return {key: data["carry"][key] for key in ("from", "to", "digest")} | {"note": entry.get("summary", "")}
+    if "reviewCarry" in entry:
+        return {key: entry["reviewCarry"][key] for key in ("from", "to", "digest")} | {"note": entry.get("summary", "")}
+    return None
+
+
 def _standing_carry(journal: list[dict], subject: str, capture: dict) -> dict | None:
     """The lead's latest carry of a subject's capture, while it still holds: after that capture and its last round."""
-    carry = next((entry for entry in reversed(journal) if entry["subject"] == subject and "reviewCarry" in entry), None)
-    if carry is None or carry["reviewCarry"]["digest"] != capture["reviewArtifact"]["digest"] or carry["id"] < capture["id"]:
+    carry = next((entry for entry in reversed(journal) if entry["subject"] == subject and carry_of(entry)), None)
+    if carry is None or carry_of(carry)["digest"] != capture["reviewArtifact"]["digest"] or carry["id"] < capture["id"]:
         return None
     rounds = [entry["id"] for entry in journal if entry["subject"] == subject and entry["kind"] == "review.round"]
     return carry if not rounds or max(rounds) < carry["id"] else None
@@ -2613,7 +2683,7 @@ def carry_review(directory: Path, *, subject: str, from_head: str, to_head: str,
         if rounds and rounds[-1]["id"] > capture["id"]:
             raise StateError("carry_invalid", f"{subject}'s latest review round has not been captured")
         standing = _standing_carry(journal, subject, capture)
-        covered = standing["reviewCarry"]["to"] if standing else reference["candidateRef"]
+        covered = carry_of(standing)["to"] if standing else reference["candidateRef"]
         if from_head != covered:
             raise StateError("carry_invalid", f"{subject}'s evidence covers {covered}, not {from_head}")
         if to_head == from_head:
@@ -2654,7 +2724,7 @@ def review_observations(directory: Path, state: dict, journal: list[dict]) -> di
             # Bound to the reviewed head: a runner sync only merges the base in, under its own checks. A head the
             # lead carried the evidence to stands in for it while that carry holds.
             carry = _standing_carry(journal, subject, event) if subject in queued else None
-            if carry is not None and carry["reviewCarry"]["to"] != item.get("head"):
+            if carry is not None and carry_of(carry)["to"] != item.get("head"):
                 carry = None
             if subject in queued and item.get("head") != candidate and carry is None:
                 raise StateError("review_artifact_invalid", "review candidate is stale or unknown")
@@ -2671,8 +2741,8 @@ def review_observations(directory: Path, state: dict, journal: list[dict]) -> di
                 raise StateError("review_artifact_invalid", "the capture is not of the latest journaled round")
             observed[subject] = {"candidateRef": candidate, "digest": reference["digest"], "outcomes": outcomes}
             if carry is not None and item.get("head") != candidate:
-                observed[subject]["carried"] = {"from": carry["reviewCarry"]["from"], "to": carry["reviewCarry"]["to"],
-                                                "note": carry.get("summary", "")}
+                carried = carry_of(carry)
+                observed[subject]["carried"] = {"from": carried["from"], "to": carried["to"], "note": carried["note"]}
         except (StateError, OSError, ValueError, UnicodeError, RecursionError):
             observed[subject] = {"candidateRef": candidate, "unavailable": True}
     return observed
@@ -3571,9 +3641,16 @@ def _recover(directory: Path, recoveries: list[dict], changes: list[dict], repor
 
 def _journal_recovery(directory: Path, intent: dict) -> dict:
     return append_journal(directory, kind="candidate.merged", subject=intent["subject"], lane=intent["lane"],
-                          summary=intent["summary"], recovered=True, occurred_at=intent.get("occurredAt"),
+                          summary=intent["summary"], data=_recovery_facts(intent), recovered=True,
+                          occurred_at=intent.get("occurredAt"),
                           recovery=({"head": intent["head"], "changeRequest": intent["changeRequest"]}
                                     if "changeRequest" in intent else None))
+
+
+def _recovery_facts(intent: dict) -> dict:
+    """A recovered merge's facts: its head, and the source identity a late hand-off can't duplicate."""
+    # Always named, so a merge the runner journaled, which carries no recovery, is never taken for this one.
+    return {"head": intent["head"], "recovery": {"head": intent["head"], "changeRequest": intent.get("changeRequest")}}
 
 
 def _read_recovery(directory: Path) -> dict | None:
@@ -3676,9 +3753,32 @@ def _finish_intent(directory: Path, intent: dict, finished: list[dict], reports:
             _tool_write(directory, lambda state: next(entry for entry in state["queue"]
                                                       if entry["subject"] == intent["subject"]).pop("pending", None))
         # A merge the runner journaled went through the queue, so its acceptance was not skipped.
-        if intent["summary"].endswith(WAIT_BYPASSED) and (not journaled or any(entry.get("summary") == intent["summary"] for entry in entries)):
+        if intent["summary"].endswith(WAIT_BYPASSED) and (not journaled or any(_from_intent(entry, intent) for entry in entries)):
             reports.append(_bypass_report(intent["subject"]))
     (directory / RECOVERY_FILE).unlink(missing_ok=True)
+
+
+def _from_intent(entry: dict, intent: dict) -> bool:
+    """Whether a merge entry is the one this recovery intent journaled: by its facts, or by its sentence."""
+    if "data" in entry:
+        return entry["data"] == _recovery_facts(intent)
+    return entry.get("summary") == intent["summary"]
+
+
+def wait_events(entries: list[dict]) -> list[dict]:
+    """What ``wait`` tells of each entry: who and what, its facts, and its head and line in the registry's words."""
+    registry = kinds_registry() if any("data" in entry for entry in entries) else None
+    events = []
+    for entry in entries:
+        event = {key: entry.get(key) for key in ("id", "kind", "lane", "subject", "summary")}
+        if "data" in entry:
+            event["data"] = entry["data"]
+            try:
+                event.update(journal_words.words(entry, registry))
+            except journal_words.WordsError:
+                pass  # An entry whose words can't be made still tells its facts.
+        events.append(event)
+    return events
 
 
 def binding_state(path: Path) -> dict:
@@ -4481,6 +4581,22 @@ def _refuse_record_path(directory: Path, output: Path) -> None:
         raise StateError("output_invalid", f"{output.name} is one of the record's own files: write the snapshot elsewhere")
 
 
+def _snapshot_note(entry: dict, source: str, note: str) -> bool:
+    """Whether an entry notes this source's snapshot: by its kind and source with facts, by its sentence otherwise."""
+    if "data" in entry:
+        return entry["kind"] in ("snapshot.stale", "snapshot.retaken") and entry["data"].get("source") == source
+    return entry.get("summary", "").startswith(note)
+
+
+def _snapshot_retaken(entry: dict, again: str) -> bool:
+    return entry["kind"] == "snapshot.retaken" if "data" in entry else entry.get("summary") == again
+
+
+def _snapshot_stale(entry: dict, summary: str) -> bool:
+    # A stale note with facts names only its source; while one stands, the outage is already noted.
+    return entry["kind"] == "snapshot.stale" if "data" in entry else entry.get("summary") == summary
+
+
 def take_snapshot(directory: Path, member: dict, output: Path, *, source: str, max_age: float,
                   cwd: Path | None = None) -> dict:
     """Take the ``source`` snapshot with the binding's command, or keep the last one.
@@ -4524,19 +4640,19 @@ def take_snapshot(directory: Path, member: dict, output: Path, *, source: str, m
                 reason = ("the command's snapshot is too old" if error.code == "snapshot_stale"
                           else f"the command's snapshot is not a valid {source} snapshot")
                 detail = str(error)
-    last = next((entry for entry in reversed(read_journal(directory)) if entry.get("summary", "").startswith(note)), None)
+    last = next((entry for entry in reversed(read_journal(directory)) if _snapshot_note(entry, source, note)), None)
     if reason is None:
         try:
             _write_atomically(Path(output), dumps(snapshot))
         except OSError as error:
             raise StateError("output_invalid", f"cannot write {Path(output).name}: {error.strerror or error}") from None
-        if last is not None and last.get("summary") != again:
+        if last is not None and not _snapshot_retaken(last, again):
             # Say the outage ended, so the next failure is noted again.
             append_journal(directory, kind="decision.recorded", summary=again)
         return {"ok": True, "taken": True, "output": str(output), "items": len(snapshot["items"]),
                 "takenAt": snapshot["takenAt"], **_cleanup_note(cleanup)}
     summary = f"{note} {reason}; the last snapshot stands"
-    if last is None or last.get("summary") != summary:
+    if last is None or not _snapshot_stale(last, summary):
         append_journal(directory, kind="decision.recorded", summary=summary)
     result = {"ok": True, "taken": False, "reason": reason, "fallback": Path(output).is_file(), **_cleanup_note(cleanup)}
     if detail and detail != reason:
@@ -5015,7 +5131,7 @@ def wait_for_lead(
             return (WAIT_EXPIRED_EXIT if woke == "expired" else 0), {
                 "ok": True,
                 "woke": woke,
-                "events": [{key: entry.get(key) for key in ("id", "kind", "lane", "subject", "summary")} for entry in events],
+                "events": wait_events(events),
                 "blockedLanes": [{key: lanes[token].get(key) for key in ("id", "focus", "waitingOn")} for token in newly_blocked],
                 "pressure": pressure,
                 "quietLanes": [quiet[token] for token in sorted(set(quiet) - set(seen_quiet or ()))],

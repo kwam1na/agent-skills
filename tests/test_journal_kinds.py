@@ -57,7 +57,7 @@ TABLE = {
     "review.round": ("S", "note", "round startedAt finishedAt verdicts findings refused? restarts?", "", "-"),
     "review.recorded": ("B", "note", "digest candidateRef", "", "-"),
     "review.carried": ("S", "decision", "from to digest baseCommits? *why*", "", "ticket: Review carried"),
-    "candidate.handed": ("S", "ready", "head changeRequest rounds checks evidence? noChange?", "answers:candidate.stopped",
+    "candidate.handed": ("S", "ready", "head changeRequest? rounds? checks evidence? noChange? carry?", "answers:candidate.stopped",
                          "ticket: Handed off and queued"),
     "handoff.checked": ("S", "decision", "head rounds afterMerge noChange *notes*", "cause", "-"),
     "handoff.accepted": ("S", "decision", "settled", "", "ticket: Accepted"),
@@ -330,9 +330,11 @@ class WordsTests(unittest.TestCase):
         described = registry()
         handed = {"kind": "candidate.handed", "lane": "lane-1", "subject": "APP-12",
                   "data": {"head": HEAD, "changeRequest": "https://example.org/pr/1", "rounds": 2, "checks": []}}
-        self.assertEqual(words_tool.words(handed, described)["line"], "After 2 review rounds")
+        self.assertEqual(words_tool.words(handed, described)["line"], "Ready after 2 review rounds")
         handed["data"]["checks"] = ["unit"]
-        self.assertEqual(words_tool.words(handed, described)["line"], "After 2 review rounds, with unit run by the lane")
+        self.assertEqual(words_tool.words(handed, described)["line"], "Ready after 2 review rounds, with unit run by the lane")
+        handed["data"]["rounds"] = 0
+        self.assertEqual(words_tool.words(handed, described)["line"], "Ready, with unit run by the lane")
         merged = {"kind": "candidate.merged", "lane": None, "subject": "APP-12", "data": {"head": HEAD}}
         self.assertEqual(words_tool.words(merged, described), {"head": "APP-12 landed", "line": "At 4e66a05"})
 
@@ -434,9 +436,9 @@ class JournalFactsTests(unittest.TestCase):
              {"base": {"ref": "integrate/delivery-story", "head": BASE_HEAD}}),
             ("candidate.stopped", {"reason": "gave_up", "detail": "It stopped."}, "/data/reason: not one of the allowed values",
              {"reason": "interrupted", "detail": "A run ended while APP-12 was checking."}),
-            ("candidate.handed", {"head": HEAD, "changeRequest": "pr-12", "rounds": 1, "checks": []},
-             "/data/changeRequest: does not match",
-             {"head": HEAD, "changeRequest": "https://github.com/example/app/pull/12", "rounds": 1, "checks": []}),
+            ("candidate.handed", {"head": HEAD, "changeRequest": "", "rounds": 1, "checks": []},
+             "/data/changeRequest: shorter than 1",
+             {"head": HEAD, "changeRequest": "pr-12", "rounds": 1, "checks": []}),
         ]
         for kind, wrong, expected, right in cases:
             with self.subTest(kind=kind, wrong=wrong):
