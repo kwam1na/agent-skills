@@ -27,7 +27,8 @@ class LaneRowCase(MergeQueueTestCase):
         return next(entry for entry in state_tool.read_state(self.record.state)["lanes"] if entry["id"] == lane)
 
     def handed(self, subject: str = "feature") -> None:
-        state_tool.append_journal(self.record.state, kind="candidate.handed", subject=subject, lane="lane-1", summary="handed off")
+        state_tool.append_journal(self.record.state, kind="candidate.handed", subject=subject, lane="lane-1",
+                                  data={"head": "a" * 40, "checks": []})
 
 
 class TheQueueWritesTheRow(LaneRowCase):
