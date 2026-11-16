@@ -205,6 +205,43 @@ class LifecycleTests(unittest.TestCase):
         self.c=SimpleNamespace(root=self.root,main=self.root,state=self.state,release=ROOT,delivery='APP-1',
             flow_log=self.root/'flow',flow_raw={'cleanup':{'archive':str(self.root/'archives')}},
             shelf=SimpleNamespace(json=lambda name:self.views if name=='.agents/delivery-views.json' else {'state':{'directory':'state'}}))
+    def test_global_hosted_doctor_is_read_only_before_a_delivery_is_selected(self):
+        unselected=SimpleNamespace(delivery=None,release=ROOT,shelf=self.c.shelf)
+        doctor=SimpleNamespace(c=unselected,not_applicable=lambda detail:('skipped-ok',detail))
+        module=flow.hosted_module(ROOT)
+        before=sorted(path.relative_to(self.root) for path in self.root.rglob('*'))
+        with mock.patch.object(flow,'HOSTED_TOKENS',{}), \
+             mock.patch.object(module,'status',side_effect=AssertionError('unselected delivery has no status')), \
+             mock.patch.object(module,'read_terminal',side_effect=AssertionError('no selected record')), \
+             mock.patch.object(flow,'run',side_effect=AssertionError('diagnosis must not start a child')):
+            for present in (True,False):
+                with self.subTest(token_present=present),mock.patch.dict(os.environ,
+                        {'FIXTURE_PUBLISH_TOKEN':TOKEN} if present else {},clear=True):
+                    flow.HOSTED_TOKENS.clear()
+                    verdict,detail=flow.Doctor.hosted(doctor)
+                    self.assertEqual(verdict,'ok' if present else 'warn')
+                    self.assertIn('configured',detail)
+                    self.assertIn('no delivery selected',detail)
+                    self.assertEqual('FIXTURE_PUBLISH_TOKEN is unset' in detail,not present)
+                    self.assertNotIn(TOKEN,detail)
+            self.views['hosted']['origin']='http://invalid.example.com'
+            self.assertEqual(flow.Doctor.hosted(doctor),
+                ('wrong','hosted configuration is invalid; correct .agents/delivery-views.json'))
+            self.views.pop('hosted')
+            self.assertEqual(flow.Doctor.hosted(doctor),('skipped-ok','hosted publishing is disabled'))
+        self.assertEqual(sorted(path.relative_to(self.root) for path in self.root.rglob('*')),before)
+    def test_selected_hosted_doctor_keeps_published_status_and_missing_token_warning(self):
+        publisher=hosted.Publisher(self.state,self.views['hosted'],'APP-1',FakeAPI())
+        hosted.atomic(self.state/hosted.STATUS,{'spec':'hosted-delivery-status/1',
+            **publisher.step(lambda:copy.deepcopy(VALID))})
+        before={p.name:p.read_bytes() for p in self.state.iterdir() if p.is_file()}
+        doctor=SimpleNamespace(c=self.c)
+        with mock.patch.object(flow,'HOSTED_TOKENS',{}),mock.patch.dict(os.environ,{},clear=True):
+            verdict,detail=flow.Doctor.hosted(doctor)
+        self.assertEqual(verdict,'warn')
+        self.assertIn('hosted: current '+CFG['hosted']['origin']+'/d/'+publisher.identity['publicId'],detail)
+        self.assertIn('FIXTURE_PUBLISH_TOKEN is unset',detail)
+        self.assertEqual({p.name:p.read_bytes() for p in self.state.iterdir() if p.is_file()},before)
     def test_binding_shelf_config_is_materialized_and_only_uploader_receives_token(self):
         applied=self.root/'.agent-skills';applied.mkdir();other=self.root/'other-generation';other.mkdir()
         (applied/'current').symlink_to(other)
