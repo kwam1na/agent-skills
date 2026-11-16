@@ -168,6 +168,10 @@
         {
           "id": "v26-3519-5",
           "text": "Prepare and review the exact non-secret production Wrangler custom-domain configuration and deployment procedure before main integration. This includes hosted/delivery-viewer/wrangler.jsonc for deliveries.v26technologies.com. Do not provision, release, deploy or claim live proof in packaging; V26-3520 remains active through the published candidate adopter and real hosted scenarios."
+        },
+        {
+          "id": "v26-3519-6",
+          "text": "Restore target standing settings and installed generation at final integration, then retain only the reviewed three hosted Python catalogue additions, six service catalogue additions and exact service reader. Assert all other binding/selection fields and existing catalogue/readers equal target, refuse differing ID collisions, and verify receipt/projection equality separately. Update and test the documented recipe without carrying integration-specific operational settings into main."
         }
       ]
     },

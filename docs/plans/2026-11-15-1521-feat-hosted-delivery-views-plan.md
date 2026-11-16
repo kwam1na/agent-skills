@@ -362,6 +362,8 @@ Cloudflare resource IDs and the next admissible release version are execution-ti
 5. Covers recorded clarification c9. The hosted collection fixture uses the production atomic state-write protocol. A deterministic concurrent liveness-read interleaving preserves continuous updates, while deliberately malformed-source coverage remains explicit. Preserve the original failed queue run and candidate/base diagnosis.
 **Verification:** Installed-archive proof is recorded separately from source tests and service CI; no fixture result is described as live proof. The bounded qualification repair also owns `tests/test_delivery_views_hosted.py`. Clarification c10 places production source/configuration preparation here: review the non-secret `hosted/delivery-viewer/wrangler.jsonc` custom domain and deployment procedure before main integration. U7 remains open through published-candidate adoption and actual hosted proof; packaging performs no provisioning, release or deployment.
 
+**Integration preservation (c11):** Restore the target's standing settings and installed generation, then preserve only the reviewed additions of three hosted Python catalogue checks, six service catalogue checks and the exact service reader. Assert equality with target for every other binding/selection field and existing catalogue/reader entry, refuse differing ID collisions, and verify installed receipt/projection equality separately. This retains approved capability wiring without retaining integration-specific operational policy.
+
 ### U7. Deploy and prove a real adopter delivery
 
 **Goal:** Make the custom-domain viewer operational and prove its intended off-machine behavior.
