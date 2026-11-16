@@ -209,7 +209,7 @@ class PrReviewCase(unittest.TestCase):
         """The journaled decisions' summaries, which carry what lead-accept checked."""
         journal = self.fx.tmp / "record/journal.jsonl"
         entries = [json.loads(line) for line in journal.read_text().splitlines()]
-        return "\n".join(e.get("summary", "") for e in entries if e.get("kind") == "decision.recorded")
+        return "\n".join(e.get("summary", "") for e in entries if e.get("kind") in ("decision.recorded", "handoff.checked"))
 
 
 class LegacyCharacterizationTests(PrReviewCase):

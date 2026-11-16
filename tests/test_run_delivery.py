@@ -1960,7 +1960,7 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         record = json.loads((fx.tmp / "record/state.json").read_text())
         self.assertEqual([p["subject"] for p in record["planned"]].count("FX-4"), 1, record["planned"])
         journal = [json.loads(line) for line in (fx.tmp / "record/journal.jsonl").read_text().splitlines()]
-        added = [e for e in journal if e.get("subject") == "FX-4" and "added to the delivery as planned work" in e["summary"]]
+        added = [e for e in journal if e.get("subject") == "FX-4" and e["kind"] == "story.added"]
         self.assertEqual(len(added), 1, added)
 
     def test_a_lead_write_that_never_lands_says_so_after_its_bound(self) -> None:
@@ -2132,6 +2132,10 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         self.assertIn("review carry refused: the base merge changes lane-owned file src/app.txt", out)
         self.assertTrue(self.shown(fx.tmp / "record")["state"]["queue"][0]["pending"])
         flow("lead-own", "--revoke", "src/app.txt", "--lane", "lane-1")
+        owned = [(e["kind"], e["lane"], e["data"], e.get("because"), e.get("answers")) for e in self.shown(record)["journal"]
+                 if e["kind"] in ("ownership.granted", "ownership.revoked") and "span" not in e["data"]]
+        self.assertEqual(owned, [("ownership.granted", "lane-1", {"path": "src/app.txt"}, None, None),
+                                 ("ownership.revoked", "lane-1", {"path": "src/app.txt"}, None, None)])
 
         self.assertTrue(state("show")["reviewEvidence"]["FX-2"]["unavailable"])
         flow("lead-accept", "FX-2")
@@ -2240,8 +2244,10 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         journal = [json.loads(line) for line in (fx.tmp / "record/journal.jsonl").read_text().splitlines()]
         expect(sum(e["kind"] == "review.round" for e in journal) == 1, "a second reduce journaled again")
         round_entry = next(e for e in journal if e["kind"] == "review.round")
-        expect("refused attempt" in round_entry["summary"] and "restart" in round_entry["summary"],
-               f"the journal doesn't carry the round's history: {round_entry['summary']}")
+        expect({k: round_entry["data"].get(k) for k in ("round", "refused", "restarts")} == {"round": 1, "refused": 1, "restarts": 1}
+               and {k: v for k, v in round_entry["data"].items() if k not in ("refused", "restarts")} == round_entry["review"]
+               and "because" not in round_entry and "answers" not in round_entry,
+               f"the journal doesn't carry the round's history: {round_entry}")
         (wt / "src/one.txt").write_text("one fixed\n")
         commit(wt, "FX-2: fix")
         code, out = flow_run("review-prepare", "FX-2", "--round", "2", cwd=wt)
@@ -2617,12 +2623,14 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         expect((fx.tmp / "evidence/FX-2/gates.json").exists(), "the lane's evidence wasn't kept")
         expect(remote_has(m, "feature/FX-2"), "the remote branch was deleted without the repository allowing it")
         cleaned = [e for e in map(json.loads, (fx.tmp / "record/journal.jsonl").read_text().splitlines())
-                   if e.get("kind") == "decision.recorded" and e.get("subject") == "FX-2"]
-        expect(cleaned and "https://forge.test/pr/1 merged at" in cleaned[-1]["summary"], cleaned)
+                   if e.get("kind") == "cleanup.done" and e.get("subject") == "FX-2"]
+        expect(cleaned and cleaned[-1]["data"] == {
+                   "base": {"ref": "origin/feature/FX-1", "head": sh("git", "rev-parse", "origin/feature/FX-1", cwd=m).stdout.strip()},
+                   "head": head, "changeRequest": "https://forge.test/pr/1"}, cleaned)
         # Run again, with the remote branch still there: cleaned already, so nothing is said or journalled twice.
         code, out = fx.flow("lead-cleanup", "FX-2", cwd=m)
         again = [e for e in map(json.loads, (fx.tmp / "record/journal.jsonl").read_text().splitlines())
-                 if e.get("kind") == "decision.recorded" and e.get("subject") == "FX-2"]
+                 if e.get("kind") == "cleanup.done" and e.get("subject") == "FX-2"]
         expect(code == 0 and "FX-2: cleaned" not in out and len(again) == len(cleaned), f"cleaned twice: {out}")
         # A story whose tips are on the base is cleaned by ancestry, with no forge call, as before.
         wt3 = fx.lane("FX-3")
@@ -2707,7 +2715,7 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         expect(code == 2 and "delivery.closed" in out, f"closed before delivery.closed: {out}")
         state_tool = fx.release / "skills/orchestrate-work/scripts/delivery_state.py"
         sh(sys.executable, "-B", state_tool, "--dir", fx.tmp / "record", "journal", "--kind", "delivery.closed",
-           "--summary", "closed", cwd=m)
+           "--data", "{}", cwd=m)
         # reconcile sweeps: this delivery's is stopped, one naming another delivery is left alone
         (fx.tmp / "bin").mkdir()
         (fx.tmp / "bin/flow.py").write_text("import time\ntime.sleep(600)\n")
@@ -2828,8 +2836,9 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         expect(entry == {"subject": "FX-4", "title": "S1b: Thing four", "lane": "lane-1", "stage": "planned"},
                f"the new story isn't planned work for its lane: {state['planned']}")
         expect(not any(f["id"] == "FX-4" for f in state["followups"]), f"it's still a follow-up: {state['followups']}")
-        added = [e for e in show()["journal"] if e.get("kind") == "decision.recorded" and e.get("subject") == "FX-4"]
-        expect(len(added) == 1, f"the addition isn't journaled once: {added}")
+        added = [e for e in show()["journal"] if e.get("kind") == "story.added" and e.get("subject") == "FX-4"]
+        expect(len(added) == 1 and added[0]["data"] == {"title": "Thing four", "why": "planned work for lane-1"}
+               and "because" not in added[0] and "answers" not in added[0], f"the addition isn't journaled once: {added}")
         code, out = flow_run("lead-brief", cwd=m)
         expect(code == 0 and "registered" not in out and len(show()["state"]["planned"]) == 3,
                f"a second lead-brief registered it again: {out}")
@@ -2943,6 +2952,13 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         expect(code == 1 and "no evidence page is published" in out, f"an unpublished page counted as current: {out}")
         code, out = flow_run("lead-evidence", "published", "--url", "https://pages.test/e", "--out", page, cwd=wt)
         expect(code == 0, out)
+        [shown] = [e for e in map(json.loads, (fx.tmp / "record/journal.jsonl").read_text().splitlines())
+                   if e["kind"] == "evidence.published"]
+        clips = sorted((page / "videos").glob("*.mp4"))
+        expect(shown["data"] == {"url": "https://pages.test/e", "clips": [
+            {"name": clip.name, "digest": hashlib.sha256(clip.read_bytes()).hexdigest()} for clip in clips]} and clips
+            and "because" not in shown and "answers" not in shown,
+            f"the published page's facts: {shown}")
         code, out = flow_run("lead-evidence", "status", cwd=wt)
         expect(code == 0 and "current" in out, f"the published page wasn't current: {out}")
         flow_run("app-video", "FX-2", "failing", "--mode", "fail", "--path", "/one", "--fail", "/api/one$", cwd=wt)
@@ -3576,7 +3592,7 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         code, out = fx.flow("lead-init", cwd=fx.main)
         self.assertEqual(code, 0, out)
         sh(sys.executable, "-B", fx.release / "skills/orchestrate-work/scripts/delivery_state.py", "--dir", fx.tmp / "record",
-           "journal", "--kind", "delivery.closed", "--summary", "closed", cwd=fx.main)
+           "journal", "--kind", "delivery.closed", "--data", "{}", cwd=fx.main)
         home = fx.tmp / "home"
         home.mkdir()
         fx.env = {**fx.env, "HOME": str(home)}
@@ -4194,7 +4210,7 @@ class RunDeliveryReleaseAndNamesTests(unittest.TestCase):
         home.mkdir()
         state = fx.tmp / "record"
         sh(sys.executable, "-B", fx.release / "skills/orchestrate-work/scripts/delivery_state.py", "--dir", state,
-           "journal", "--kind", "delivery.closed", "--summary", "closed", cwd=m)
+           "journal", "--kind", "delivery.closed", "--data", "{}", cwd=m)
         bin_dir = fx.tmp / "bin"
         bin_dir.mkdir()
         for name in ("flow.py", "run_delivery.py", "merge_queue.py", "render_state.py", "notflow.py"):
@@ -5409,6 +5425,13 @@ class RunDeliveryPlanTests(unittest.TestCase):
         entry = next(p for p in record["state"]["planned"] if p["subject"] == "FX-2")
         self.assertEqual(entry["stage"], "settled")
         self.assertEqual(record["state"]["queue"], [])
+        # The check names the no-change hand-off and says what it checked.
+        [handed] = [e for e in record["journal"] if e["kind"] == "candidate.handed"]
+        [check] = [e for e in record["journal"] if e["kind"] == "handoff.checked"]
+        self.assertEqual((check["subject"], check["data"], check["because"]), ("FX-2", {
+            "head": before, "rounds": 0, "afterMerge": False, "noChange": True,
+            "notes": ["its evidence names each of its criteria: one-loads, one-fails"]}, [handed["id"]]))
+        self.assertNotIn("answers", check)
         self.assertEqual(self.base(fx), before, "a base commit was made")
         self.assertEqual(sh("git", "ls-remote", "origin", "feature/FX-1", cwd=m).stdout.split()[0], before)
         # The plan keeps it, not removed, and counts every proof it owes done, as the line map and finish lines do.
@@ -5630,9 +5653,8 @@ class RunDeliveryPlanTests(unittest.TestCase):
             self.assertNotIn("has no `why`", out)
         self.assertEqual(changes(), [("added", ["FX-4"], "A lane found the gap.", "lead-plan")],
                          "registration recorded the story a second time")
-        added = [e for e in self.record(fx)["journal"]
-                 if e.get("subject") == "FX-4" and "added to the delivery as planned work" in e["summary"]]
-        self.assertEqual(len(added), 1, added)
+        added = [e for e in self.record(fx)["journal"] if e.get("subject") == "FX-4" and e["kind"] == "story.added"]
+        self.assertEqual([e["data"] for e in added], [{"title": "Thing four", "why": "A lane found the gap."}])
 
     def test_registration_waits_for_the_plans_lock_so_a_whole_story_add_is_never_registered_twice(self) -> None:
         fx = self.fixture()
@@ -6310,8 +6332,10 @@ if Path.cwd().name.endswith("-check") and not started.exists():
         self.assertEqual(sh("git", "ls-remote", "origin", "refs/heads/feature/FX-1", cwd=m).stdout.split()[0], head)
         self.assertEqual(record(fx)["state"]["queue"][0]["stage"], "checked")
         [finished] = kinds(fx, "check.finished")
-        [published] = [e for e in kinds(fx, "decision.recorded") if "Published" in e["summary"]]
+        [published] = kinds(fx, "base.published")
         self.assertLess(finished["id"], published["id"])
+        self.assertEqual(published["data"], {"base": {"ref": "origin/feature/FX-1", "head": head}, "from": before})
+        self.assertNotIn("because", published)
 
     def test_a_live_flake_declared_during_a_check_retries_only_matching_failures(self) -> None:
         from tests.test_run_delivery_supervisor import kinds, record
@@ -6330,6 +6354,9 @@ if Path.cwd().name.endswith("-check") and not started.exists():
                     self.assertEqual(code, 0, out)
                     [flake] = record(fx)["state"]["liveFlakes"]
                     self.assertEqual((flake["baseHead"], flake["check"]), (remote, check_id))
+                    [declared] = kinds(fx, "flake.declared")
+                    self.assertEqual(declared["data"], {"flake": "FX-17", "check": check_id, "head": remote})
+                    self.assertEqual((declared.get("because"), declared.get("answers")), (None, None))
                 finally:
                     release.touch()
                     result, _ = runner.communicate(timeout=30)
@@ -6451,7 +6478,7 @@ class BaseMoveTests(unittest.TestCase):
         state["meta"]["baseHead"] = old
         (fx.record / "state.json").write_text(json.dumps(state, indent=2) + "\n")
         sh(sys.executable, "-B", state_script, "--dir", fx.record, "journal", "--kind", "candidate.merged",
-           "--subject", "FX-0", "--lane", "lane-1", "--summary", f"Historical fixture merge at {old}", cwd=m)
+           "--subject", "FX-0", "--lane", "lane-1", "--data", json.dumps({"head": old}), cwd=m)
         app = (default / "src/app.txt").read_text().splitlines()
         app[0 if conflict else -1] = "default branch work"
         (default / "src/app.txt").write_text("\n".join(app) + "\n")
@@ -6558,7 +6585,7 @@ tool.main(sys.argv[2:])
         directory = fx.record
         files = [directory / name for name in ("state.json", "journal.jsonl", "changes.jsonl")]
         before = [path.read_bytes() for path in files]
-        write = ["--dir", str(directory), "journal", "--kind", "decision.recorded", "--summary", "Writer admission"]
+        write = ["--dir", str(directory), "journal", "--kind", "decision.recorded", "--text", "Writer admission", "--why", "a test\'s decision"]
         refused = sh(sys.executable, "-B", new_state, *write, cwd=fx.main, check=False)
         self.assertEqual(json.loads(refused.stdout)["code"], "writer_generation_mismatch")
         self.assertEqual([path.read_bytes() for path in files], before)
@@ -7404,6 +7431,10 @@ class RunDeliverySetupTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         before = (fx.tmp / "record/state.json").read_bytes()
         started = self.record(fx)["journal"][0]["at"]
+        [record_started] = [e for e in self.record(fx)["journal"] if e["kind"] == "record.started"]
+        self.assertEqual(record_started["data"], {"base": {
+            "ref": "origin/feature/FX-1", "head": sh("git", "rev-parse", "origin/feature/FX-1", cwd=fx.main).stdout.strip()}})
+        self.assertEqual((record_started.get("because"), record_started.get("answers")), (None, None))
         code, out = fx.flow("lead-init", cwd=fx.main)
         self.assertEqual(code, 2, out)
         self.assertIn("already holds a record: delivery FX-1 on origin/feature/FX-1", out)
@@ -7413,8 +7444,8 @@ class RunDeliverySetupTests(unittest.TestCase):
         # The base named is the one the record started on, from its own journal.
         shutil.rmtree(fx.tmp / "record")
         fx.call("state_tool", "init", "--headline", "earlier", cwd=fx.main)
-        fx.call("state_tool", "journal", "--kind", "decision.recorded", "--summary",
-                "Record starts at base 0123456 on origin/release-1. Lanes merge through the runner.", cwd=fx.main)
+        sentence_line(fx.tmp / "record", "decision.recorded",
+                      "Record starts at base 0123456 on origin/release-1. Lanes merge through the runner.")
         code, out = fx.flow("lead-init", cwd=fx.main)
         self.assertEqual(code, 2, out)
         self.assertIn("already holds a record: delivery earlier on origin/release-1", out)
@@ -9069,12 +9100,12 @@ class RunDeliveryAdoptionGuideTests(unittest.TestCase):
         self.assertEqual([(q["subject"], q["stage"]) for q in state["state"]["queue"]], [("FX-2", "merged")])
         kinds = [e["kind"] for e in state["journal"]]
         self.assertIn("review.evidence", kinds)
-        accepted = [e for e in state["journal"] if e["kind"] == "decision.recorded" and e.get("subject") == "FX-2"
-                    and e["summary"].startswith("Hand-off checked as a claim")]
+        accepted = [e for e in state["journal"] if e["kind"] == "handoff.checked" and e.get("subject") == "FX-2"]
         self.assertEqual(len(accepted), 1, "the hand-off was never accepted")
-        self.assertEqual(kinds[-1], "delivery.closed")
+        self.assertEqual((kinds[-1], state["journal"][-1]["data"]), ("delivery.closed", {}))
         met = [e for e in state["journal"] if e["kind"] == "finish.met"]
-        self.assertEqual([e.get("subject") for e in met], ["greeting"], "the finish line wasn't met once, by its proofs")
+        self.assertEqual([(e.get("subject"), e["data"]) for e in met], [("greeting", {"finish": "greeting"})],
+                         "the finish line wasn't met once, by its proofs")
         self.assertFalse(lane.exists(), "the lane's checkout outlived its merge")
         # The operator's checkout was clean and on the base, so the close-out fast-forwarded it.
         self.assertEqual((repo / "src/greeting.txt").read_text(), "Hello\n")
@@ -9580,7 +9611,7 @@ class StateReadInProcessTests(unittest.TestCase):
         self.addCleanup(lambda: [sys.modules.pop(name) for name in list(sys.modules) if name.startswith("delivery_state_reader_")])
         self.record = self.folder / "record"
         sh(sys.executable, "-B", self.STATE, "--dir", self.record, "init", "--headline", "a delivery")
-        sh(sys.executable, "-B", self.STATE, "--dir", self.record, "journal", "--kind", "decision.recorded", "--summary", "one entry")
+        sh(sys.executable, "-B", self.STATE, "--dir", self.record, "journal", "--kind", "decision.recorded", "--text", "one entry", "--why", "a test\'s decision")
 
     def printed(self) -> dict:
         return json.loads(sh(sys.executable, "-B", self.STATE, "--dir", self.record, "show").stdout)
@@ -9607,7 +9638,7 @@ class StateReadInProcessTests(unittest.TestCase):
             self.assertEqual(self.tool.load_state(), printed)
             self.assertEqual(self.tool.journal_entries("decision.recorded", None), printed["journal"])
             # What another command wrote since is read, by the one module the first read loaded.
-            sh(sys.executable, "-B", self.STATE, "--dir", self.record, "journal", "--kind", "decision.recorded", "--summary", "two")
+            sh(sys.executable, "-B", self.STATE, "--dir", self.record, "journal", "--kind", "decision.recorded", "--text", "two", "--why", "a test\'s decision")
             self.assertEqual(len(self.tool.load_state()["journal"]), 2)
         self.assertEqual(list(self.tool.STATE_READERS), [str(self.STATE)])
         self.assertEqual(bytecode_under(self.STATE.parent), [], "the read left bytecode beside the state tool")
@@ -10154,6 +10185,8 @@ class LaneStartAndReadinessTests(unittest.TestCase):
                          {"lane-1": ["src/one*"], "lane-2": ["src/two*"]})
         code, out = fx.flow("lead-own", "--lane", "lane-1", "--move", "src/two*", "--from", "lane-2", cwd=fx.main)
         self.assertEqual(code, 0, out)
+        [moved] = [e for e in self.record(fx)["journal"] if e["kind"] == "ownership.granted"]
+        self.assertEqual((moved["lane"], moved["data"]), ("lane-1", {"path": "src/two*", "movedFrom": "lane-2"}))
         code, out = fx.flow("lead-assign", "FX-3", "--lane", "lane-1", "--title", "Lane 1", cwd=fx.main)
         self.assertEqual(code, 0, out)
         self.assertIn("lane-1 started it: now building", self.started(fx))
@@ -10277,7 +10310,9 @@ class LaneStartAndReadinessTests(unittest.TestCase):
         _, out = self.assign(fx, "--force")
         self.assertIn("FX-3 is in To Be Refined: \"Start work\" isn't offered", out)
         self.assertIn("lane-start FX-3", out)
-        self.assertEqual([e["subject"] for e in self.record(fx)["journal"] if e["kind"] == "lane.assigned"], ["FX-3"])
+        [assigned] = [e for e in self.record(fx)["journal"] if e["kind"] == "lane.assigned"]
+        self.assertEqual((assigned["subject"], assigned["lane"], assigned["data"]), ("FX-3", "lane-2", {"title": "Thing two"}))
+        self.assertNotIn("because", assigned)
 
     def test_a_story_with_no_snapshot_is_assigned_and_both_commands_say_readiness_wasnt_checked(self) -> None:
         fx = self.delivery(assign=False)
@@ -11123,6 +11158,99 @@ class FinishLineWordingTests(unittest.TestCase):
         ):
             with self.subTest(file="adopting", phrase=phrase):
                 self.assertIn(phrase, adopting)
+
+
+def sentence_line(record: Path, kind: str, words: str, subject: str | None = None, lane: str | None = None) -> None:
+    """An entry as a writer journaled it before it wrote facts: only a sentence, written as a journal line directly."""
+    journal = record / "journal.jsonl"
+    number = len(journal.read_text().splitlines()) + 1 if journal.exists() else 1
+    entry = {"at": "2026-01-01T00:00:00Z", "id": number, "kind": kind, "lane": lane, "subject": subject, "summary": words}
+    with journal.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n")
+
+
+class FactReaderTests(unittest.TestCase):
+    """Each reader of a journal entry reads its facts when it has them, the same whatever its prose says, and its
+    sentence when it has only that."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        spec = importlib.util.spec_from_file_location("run_delivery_for_fact_readers",
+                                                      ROOT / "skills/run-delivery/scripts/run_delivery.py")
+        cls.tool = importlib.util.module_from_spec(spec)
+        previous = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        try:
+            spec.loader.exec_module(cls.tool)
+        finally:
+            sys.dont_write_bytecode = previous
+
+    def test_the_base_a_record_started_on_is_read_from_its_facts_or_its_first_decision(self) -> None:
+        started = {"id": 1, "kind": "record.started", "data": {"base": {"ref": "origin/release-2", "head": "a" * 40}}}
+        prose = {"id": 2, "kind": "decision.recorded", "data": {
+            "text": "Record starts at base 0123456 on origin/other.", "why": "other text"}}
+        self.assertEqual(self.tool.record_base([started, prose]), "origin/release-2")
+        said = {"id": 1, "kind": "decision.recorded", "summary": "Record starts at base 0123456 on origin/release-1. More."}
+        self.assertEqual(self.tool.record_base([said]), "origin/release-1")
+        self.assertIsNone(self.tool.record_base([prose]))
+        self.assertIsNone(self.tool.record_base([]))
+
+    def test_a_breach_is_found_by_its_finding_or_by_the_opening_of_its_sentence(self) -> None:
+        finding = {"story": "FX-2", "finding": "lens-r1-1", "title": "the cap is unpinned"}
+        facts = {"id": 3, "kind": "deferral.breached", "subject": "FX-2",
+                 "data": {"finding": "lens-r1-1", "title": "other text"}}
+        said = {"id": 3, "kind": "blocker.recorded", "subject": "FX-2", "summary": self.tool.BREACH.format(**finding)}
+        for entry in (facts, said):
+            with self.subTest(facts="data" in entry):
+                self.assertTrue(self.tool.breach_of(entry, finding))
+                self.assertFalse(self.tool.breach_of(entry, {**finding, "finding": "lens-r1-2"}))
+                self.assertFalse(self.tool.breach_of(entry, {**finding, "story": "FX-3"}))
+        # A person's blocker whose words open as a breach's is not one.
+        self.assertFalse(self.tool.breach_of({**said, "data": {"text": said["summary"]}}, finding))
+        self.assertEqual(self.tool.holding_words(facts),
+                         self.tool.BREACH.format(**{**finding, "title": "other text"}))
+
+    def test_a_decision_or_a_blocker_without_words_is_refused_before_anything_is_journaled(self) -> None:
+        journaled = []
+        with mock.patch.object(self.tool, "state_tool", lambda *argv, **_: journaled.append(argv)):
+            for why in (None, "", "   ", "\t\n"):
+                with self.subTest(why=why):
+                    with self.assertRaises(self.tool.Stop) as refused:
+                        self.tool.lead_decide(types.SimpleNamespace(text="Ship it", why=why, because=None, subject=None))
+                    self.assertIn("--why is required", str(refused.exception))
+            for text in ("", "  "):
+                with self.subTest(text=text):
+                    with self.assertRaises(self.tool.Stop):
+                        self.tool.lead_decide(types.SimpleNamespace(text=text, why="why", because=None, subject=None))
+                    with self.assertRaises(self.tool.Stop):
+                        self.tool.lead_block(types.SimpleNamespace(text=text, because=None, subject=None))
+        self.assertEqual(journaled, [])
+
+    def test_the_skill_names_lead_decide_and_lead_block_as_the_way_to_record_a_decision_or_a_blocker(self) -> None:
+        normal = lambda path: " ".join((ROOT / path).read_text(encoding="utf-8").split())
+        skill = normal("skills/run-delivery/SKILL.md")
+        for phrase in ("| Lead | `lead-decide --text T --why W [--because N] [--subject KEY]` |",
+                       "It is the way to record a decision. It refuses a reason that is absent, empty or only spaces",
+                       "| Lead | `lead-block --text T [--because N] [--subject KEY]` |",
+                       "It is the way to record a blocker"):
+            with self.subTest(phrase=phrase[:40]):
+                self.assertIn(phrase, skill)
+        self.assertIn("Record a decision, and why you made it, with `lead-decide`, and a blocker with `lead-block`",
+                      normal("skills/run-delivery/references/adopting.md"))
+        self.assertIn("which the publisher reads each run and keeps no copy of", normal("skills/run-delivery/references/config.md"))
+
+    def test_a_resolution_without_its_reason_writes_nothing_to_the_flow_log_or_the_journal(self) -> None:
+        written = []
+        with mock.patch.multiple(self.tool, cfg=lambda: types.SimpleNamespace(), load_state=lambda: written.append("read"),
+                                 state_tool=lambda *a, **_: written.append(a), append_log=lambda *a: written.append(a),
+                                 append_full_health=lambda *a: written.append(a)):
+            for target in ("12", "full-health"):
+                for why in ("", "   "):
+                    with self.subTest(target=target, why=why):
+                        with self.assertRaises(self.tool.Stop) as refused:
+                            self.tool.lead_resolve(types.SimpleNamespace(id=target, why=why))
+                        self.assertIn("--why is required", str(refused.exception))
+        self.assertEqual(written, [])
 
 
 if __name__ == "__main__":
