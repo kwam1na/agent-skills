@@ -814,7 +814,7 @@ in `resolvedFindings` as `closed`, `fixed` or `withdrawn`; one listed as
 `deferred` or `open`, listed by another lens, or not listed stays deferred, and
 the close-out files its follow-up. A delivery file that declares
 `"noDeferrals": true` takes no deferrals: a finding still deferred when its
-story merges is journalled as a `blocker.recorded` on the story, shown in
+story merges is journalled as a `deferral.breached` on the story, shown in
 "Needs you" and holding the close until the lead resolves it with
 `lead-resolve`, and no follow-up is filed for it.
 

@@ -9978,7 +9978,7 @@ def breach_of(entry: dict, finding: dict) -> bool:
 
 
 def deferral_breaches(c, doc: dict) -> list[str]:
-    """Under noDeferrals, journal a blocker for each finding a merged story's review still holds deferred, once each:
+    """Under noDeferrals, journal a deferral.breached for each finding a merged story's review still holds deferred, once each:
     the lead resolves it with lead-resolve, and no follow-up is filed for it."""
     if not c.no_deferrals:
         return []

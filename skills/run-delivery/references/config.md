@@ -240,7 +240,7 @@ checks may need no file at all.
   "finish": [ { "id": "acs", "text": "Every acceptance criterion met on the delivery base" } ],
   "planReview": { "lenses": ["lens.outcome-correctness", "lens.adversarial-testing"] }, // the plan's own review
   "noDeferrals": true,                        // optional: the delivery takes no deferrals. A finding still deferred
-                                              // when its story merges is a blocker.recorded the lead resolves with
+                                              // when its story merges is a deferral.breached the lead resolves with
                                               // lead-resolve, never a follow-up; false or absent, it is filed as one
                                               // It also has each round brief ask a lens to say "nothing left
                                               // unfixed", refuses a hand-off whose last round's evidence holds a
