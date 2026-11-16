@@ -160,6 +160,10 @@
         {
           "id": "v26-3519-3",
           "text": "Installed-archive proof is recorded separately from source tests and service CI; no fixture result is described as live proof."
+        },
+        {
+          "id": "v26-3519-4",
+          "text": "Correct the existing hosted collection fixture to use production atomic state replacement, with a deterministic concurrent-read regression for continuous updates and explicit malformed-source rejection. Preserve the failed V26-3527 queue evidence; review and qualify this bounded sensor correction in packaging before final integration."
         }
       ]
     },
