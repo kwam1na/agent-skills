@@ -295,7 +295,7 @@ class ScenarioTests(unittest.TestCase):
         [stopped] = [thread for thread in story["threads"] if thread["opening"] == by_kind(journal, "candidate.stopped")[0]]
         [carried] = [chapter for chapter in story["chapters"] if stopped["id"] in chapter["standing"]]
         self.assertEqual(carried["subject"], journal[stopped["opening"] - 1]["subject"])
-        self.assertEqual(carried["words"]["standing"], [{"thread": stopped["id"], "text": "V26-3264 was stopped".replace("V26-3264", carried["subject"]),
+        self.assertEqual(carried["words"]["standing"], [{"thread": stopped["id"], "text": f"{carried['subject']} was stopped",
                                                           "until": stopped["closedAt"]}])
         self.assertLess(stopped["closedAt"], carried["at"])
 
