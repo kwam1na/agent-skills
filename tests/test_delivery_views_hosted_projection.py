@@ -139,9 +139,19 @@ class ProjectionTests(unittest.TestCase):
             r'--output=docs\wait.json', '--output=file:///tmp/wait.json',
             '--output=.agent-skills/current/wait.json',
             'python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py',
+            'Read `/Users/operator/private/wait.json`', 'Inspect `docs/private-plan.md`',
+            '--output=`/Users/operator/private/wait.json`', '`--output=/Users/operator/private/wait.json`',
+            'Read “/Users/operator/private/wait.json”',
+            'Read ‘.agent-skills/current/run.py’', 'Output:/Users/operator/private/wait.json',
+            '[/Users/operator/private/wait.json]', '[docs/private-plan.md]',
+            r'Output:[C:\work\wait.json]', 'Read “~/work/wait.json”', 'Read `../wait.json`',
+            '{docs/private-plan.md}', '<./wait.json>', 'Output;/tmp/wait.json', 'Output,/tmp/wait.json',
         ]
         benign_options = ['--output=https://example.com/public/wait.json', '--timeout=1800.0',
-                          '--output=summary.json', '--mode=public', 'Review https://example.com/docs/wait.json']
+                          '--output=summary.json', '--mode=public', 'Review https://example.com/docs/wait.json',
+                          '`https://example.com/docs/wait.json`', '“https://example.com/docs/wait.json”',
+                          '[https://example.com/docs/wait.json]', '‘https://example.com/docs/wait.json’',
+                          '<https://example.com/docs/wait.json>', 'Output:summary.json', '[ready]', '`--mode=public`']
         # Exercise the actual private executable separately: it must not mask
         # failures in option detection or turn harmless control rows into omissions.
         actual_warning = prefix + '--timeout=1800.0'

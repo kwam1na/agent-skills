@@ -68,7 +68,7 @@ export function parse(bytes: Uint8Array): unknown {
   catch { return fail('invalid_json'); }
 }
 // Keep the local-reference boundary aligned with public_projection.py, including option assignments.
-const localPath = /(?:file:\/\/|(?:^|[\s"'(=])(?:\/[A-Za-z0-9_.-]+\/|[A-Za-z]:[\\/]|\\\\|~[/\\]|\.{1,2}[/\\]|(?:\.?agents|\.agent-skills|\.orchestration|docs|scripts|skills|tests)[/\\]))/;
+const localPath = /(?:file:\/\/|(?:^|[\s"'()`“”‘’\[\]{}<>=:;,])(?:\/[A-Za-z0-9_.-]+\/|[A-Za-z]:[\\/]|\\\\|~[/\\]|\.{1,2}[/\\]|(?:\.?agents|\.agent-skills|\.orchestration|docs|scripts|skills|tests)[/\\]))/;
 const credentialKey = /^(?:password|token|secret|api[_-]?key|credential|authorization|cookie)$/i;
 function scan(value: unknown): void {
   if (typeof value === 'number' && (!Number.isFinite(value) || Math.abs(value) > Number.MAX_SAFE_INTEGER)) fail('invalid_projection');

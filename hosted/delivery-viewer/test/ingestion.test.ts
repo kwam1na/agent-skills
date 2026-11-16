@@ -43,8 +43,18 @@ describe('ingestion boundary', () => {
     [String.raw`--output=docs\wait.json`, false], ['--output=file:///tmp/wait.json', false],
     ['--output=.agent-skills/current/wait.json', false],
     ['python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py', false],
+    ['Read `/Users/operator/private/wait.json`', false], ['Inspect `docs/private-plan.md`', false],
+    ['--output=`/Users/operator/private/wait.json`', false], ['`--output=/Users/operator/private/wait.json`', false],
+    ['Read “/Users/operator/private/wait.json”', false],
+    ['Read ‘.agent-skills/current/run.py’', false], ['Output:/Users/operator/private/wait.json', false],
+    ['[/Users/operator/private/wait.json]', false], ['[docs/private-plan.md]', false],
+    [String.raw`Output:[C:\work\wait.json]`, false], ['Read “~/work/wait.json”', false], ['Read `../wait.json`', false],
+    ['{docs/private-plan.md}', false], ['<./wait.json>', false], ['Output;/tmp/wait.json', false], ['Output,/tmp/wait.json', false],
     ['--output=https://example.com/public/wait.json', true], ['--timeout=1800.0', true],
     ['--output=summary.json', true], ['--mode=public', true], ['Review https://example.com/docs/wait.json', true],
+    ['`https://example.com/docs/wait.json`', true], ['“https://example.com/docs/wait.json”', true],
+    ['[https://example.com/docs/wait.json]', true], ['‘https://example.com/docs/wait.json’', true],
+    ['<https://example.com/docs/wait.json>', true], ['Output:summary.json', true], ['[ready]', true], ['`--mode=public`', true],
   ])('independently scans option-bearing public prose: %s', async (text, valid) => {
     const publicId = id(); await session(publicId);
     const body = fixture(); body.document.state.meta.headline = text;
