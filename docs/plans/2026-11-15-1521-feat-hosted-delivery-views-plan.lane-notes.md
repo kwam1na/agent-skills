@@ -9,3 +9,10 @@ Each releasable corpus change includes its catalog/profile/output-list edits and
 Reviews: declare the standard four-round delivery bound, run the two mandated lenses, and add risk-relevant security/API/reliability reviewers as needed; do not manufacture review evidence. Review prepared checkouts independently and reduce actual results. Aim to close all actionable in-contract notes rather than defer. Collect findings before fixing and rerun affected proof once.
 
 Push/open draft PR/handoff only through run-delivery; no lane merges, tags a release, deploys production, rewrites the delivery file, or changes final tracking state. Product deployment and release are lead-owned after evidence. Give the lead head, PR, owned files, proving checks, risks and complete review result.
+
+
+## Authorized remediation follow-up
+
+Kwamina authorized V26-3527 after the original V26-3518 terminal four-round result. Preserve that original partial unit and all review artifacts. V26-3527 adopts its retained source candidate, resolves the three open findings and owns the complete lifecycle/c1 outcome. It is a distinct tracked follow-up with a two-round maximum declared before review, not a fifth or grace round of V26-3518.
+
+For every run-delivery command for V26-3527, including prepare/reduce/gate/handoff and lead acceptance, set RUN_DELIVERY_CONFIG to the lead's explicit .orchestration/flow-log/V26-3527.run-delivery.json. That file copies the standing configuration with review.bound=2; ordinary repository and other story review limits remain unchanged. The lead verified the resolved limit before assignment. Retain the original four reviewer results as related context and honor their approval conditions in the follow-up's full assessment.
