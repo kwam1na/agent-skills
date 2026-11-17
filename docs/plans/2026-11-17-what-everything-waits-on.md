@@ -594,7 +594,19 @@ nothing itself.
 
 ### V26-3568. Draw a setback's thread by its state, and fold long check lists in the story
 
-Lane 2, tier 2, after V26-3554. Added mid-delivery: The operator approved a live mock of setback threads drawn by their state, and asked to include folding long check lists, in this delivery
+Lane 2, tier 3, after V26-3554. Test-first. Files: `skills/delivery-views/assets/line-map.js`,
+`skills/delivery-views/assets/line-map.css`, `skills/orchestrate-work/references/journal-kinds.json`,
+`tests/fixtures/journal-kinds/vectors.json` and `tests/delivery_views_page/line-map-threads.test.mjs`.
+
+Added mid-delivery. The operator approved a live mock of setback threads drawn by their state, and asked to include
+folding long check lists.
+
+A thread's margin line takes the story thread's state: the held colour while open, and the page's neutral hairline
+once closed. The row with the thread's opening entry carries a small ring on the line, and the row with its closing
+entry a short end tick, so adjacent setbacks read as separate. A beat whose line names checks, such as
+`handoff.checked` and `check.selected`, says their count and why they were chosen in its line, and lists the names in
+its fold. Its words change in the registry and its vectors, not in the page. Every mark is drawn from the story's
+existing thread facts.
 
 ## Calls made
 
