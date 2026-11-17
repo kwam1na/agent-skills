@@ -84,23 +84,41 @@ The shape:
    - `since` is an instant when the record knows one. It is never a duration measured to now.
    - `needsSomeone` is set by Decision 12.
    - `words` is the one sentence.
-   The function reads no clock, no network and no file outside the record it is given. The same record always gives
-   the same waits.
+   The function reads no clock and no network. The only files it reads are the record it is given and the template
+   table of Decision 4. The same record and table always give the same waits. A scenario proves it: with the clock's
+   functions, the network and every file open other than those two replaced by ones that raise, `waits` still runs.
 2. **The record carries what the derivation needs.** A planned entry gains two optional members: `after`, the keys
    the plan orders before it, and `files`, the paths its plan section names. Both come from the delivery file and the
    plan, and `lead-init`, `lead-brief`, the reconcile sweep and `lead-assign` fill them wherever a planned entry is
    entered or found without them. A story without them gets no order or files wait. Absent members are not an error,
-   so a record written by an older release reads unchanged.
+   so a record written by an older release reads unchanged. The scenarios prove the writers, not only the
+   derivation: each of the four is run on a real plan and delivery file, and the waits are derived from the record it
+   wrote.
+2a. **What counts as holding a file.** A story waits on files when a file its `files` names is in another lane's
+   whole-file grant (`laneOwnership`), and that lane has an unlanded story whose own `files` name the same file. The
+   wait names that story. Nothing else gives a `files` wait:
+   - a grant to the story's own lane;
+   - a grant on paths the story does not name;
+   - a grant whose lane has no unlanded story naming the file, as when the work has landed and the grant has not yet
+     been revoked;
+   - a region grant (`laneRegions`), because lanes share a region-granted file by design.
 3. **Cross-delivery facts come from the supervisor.** Another delivery's claims and stories, and the merge slot's
    holder and waiters, are outside the record. Each supervisor pass reads them and writes `peer-waits.json` beside
    the record, as `delivery-peer-waits/1` with `staleAfter`, the way it writes `needs-you.json`. It holds this
-   delivery's waits on others and others' waits on this one, in the same shape. A renderer adds them to the
-   record's own waits while the file is fresh. With no file, or a stale one, it adds nothing and says nothing about
-   other deliveries.
+   delivery's waits on others and others' waits on this one, in the same shape, worded from the same table. A
+   renderer adds them to the record's own waits while the file is fresh. With no file, or a stale one, it adds
+   nothing and says nothing about other deliveries.
+3a. **The merge slot says what it is held for.** `merge_slot` takes what its caller is doing (`doing`: `push`,
+   `sync`, `upgrade`, `check`, `merge` or `release`, plus the subject when there is one), and writes it into both the
+   holder file and the waiter file. Every caller passes it: `lead-sync`, `lead-upgrade-writer` and `lead-push` in
+   `run_delivery.py`, and the runner in `merge_queue.py`. A holder or waiter file without `doing`, written by an older
+   release, reads as "is using the main line", with no subject.
 4. **One sentence, made in one place.** `words` is filled by `waits` from one table of templates in
    `skills/orchestrate-work/references/wait-words.json`, in the registry's template forms (a short commit, a lane's
-   name, a ticket, a list). Every view prints `words` and builds no sentence of its own. A test points the table's
-   path at a copy with one changed template and finds the change on every view.
+   name, a ticket, a list). The table holds every sentence this plan names: each case's, the holder side's, and the
+   two "Needs you" forms. Every view prints `words` and builds no sentence of its own. A test points the table's path
+   at a copy in which every template carries its own marker. Each sentence on each of the three views must then carry
+   its own template's marker, and no view may show a wait sentence without one.
 5. **`next` gives the same answer.** `next_for_lane` takes its order and files reasons from `waits`, and keeps
    adding the tracker's `blockedBy` when a snapshot exists. A story `next` calls blocked is a story the views show
    as waiting, for the same reason.
@@ -133,9 +151,10 @@ The lane's side:
 
 7. **A lane state `waiting`.** A lane row may be `waiting`, and then its `waitingOn` must be a subject the record
    holds. The lane sets it through `focus --state waiting --waiting-on KEY`. Anything else is refused, naming the
-   field. When that subject lands or settles, the state tool returns the row to the state it rested from, with
-   `waitingOn` cleared, in the same write that records the landing. The `wait` event for the landing names the lane
-   it freed.
+   field. A `waiting` state with no `--waiting-on` is refused too. Setting `waiting` keeps the row's prior state in
+   its existing `restedFrom` member. When that subject lands or settles, the state tool returns the row to the state
+   in `restedFrom`, with `waitingOn` cleared, in the same write that records the landing or settlement. The `wait`
+   event for the landing names the lane it freed.
 8. **`wait` does not wake on a planned wait.** A `waiting` row is not a blocked one, and `wait` neither wakes on it
    nor counts it as quiet. A `waiting` row is not in "Needs you" and does not hold the close.
 9. **`lead-accept` settles the row.** After an acceptance, the accepted lane's row is `idle` with `waitingOn` naming
@@ -153,7 +172,8 @@ Where it is said:
     - On the thing that holds: a line naming who waits on it, under its detail panel and its row. For another
       delivery: "V26-3700's V26-3701 waits on this delivery's claim on `render.py`."
     - On the tracker: only a lead's hold, as `story.held` posting to the story's ticket under "Waiting", and its
-      clearing. Derived waits post nothing, because they change with every pass.
+      clearing by `lead-hold --clear`. A hold ended by assignment posts nothing of its own, because the assignment's
+      "Started" post follows it. Derived waits post nothing, because they change with every pass.
 12. **"Needs you" shows a wait only when someone must act.** There is no clock. A wait is progress while what it
     waits on is moving. It sets `needsSomeone` in two cases, and only these reach "Needs you", shown and never
     holding the close:
@@ -161,7 +181,9 @@ Where it is said:
       this case the existing item for that thing gains the count of what waits on it, for example "V26-3537 was
       stopped. 2 pieces wait on it.", and no second item is added.
     - Nothing holds the story any more. It is planned, every wait has ended, it is not held, and its lane is idle.
-      The item reads "V26-3538 is free to start. Lane 1 is idle."
+      The item reads "V26-3538 is free to start. Lane 1 is idle." A lane counts as idle in its `idle` state, including
+      one Decision 9 left waiting on its accepted story's merge.
+    A wait on something that is moving, such as a story in review, checking or queued, has `needsSomeone` false.
 13. **The story chapter.** A derived wait is present tense and is neither a thread nor a beat: it is not in the
     narrator's story. A lead's `story.held` is a beat at the story altitude with its text, and `story.unheld` is
     bookkeeping. V26-3555's round start is a beat at the story altitude, and a lens's return is bookkeeping.
@@ -177,6 +199,10 @@ The review round:
     - `review.round` answers its `review.started`.
     - A round is running from its latest `review.started` until a `review.round` for it, a later `review.started`
       for the story, or the story leaving review: handed, settled or reassigned.
+    - A lens result is journalled at most once, whichever of the pass and `review-reduce` sees it first. `restart` is
+      true on a start that `--restart` wrote, and false otherwise.
+    - The `review` cause in `waits` is derived from these entries, and the review card's headline is that wait's
+      `words`.
 15. **A lens saying what it is doing mid-round is out of scope.** Nothing writes it today, and this delivery adds no
     channel for it. The card shows "reading" and how long the round has run.
 
@@ -234,93 +260,138 @@ Pins that go stale, and the story that re-derives them:
 - The lane states in `schemas.json` and wherever `tests/test_orchestration_state.py` and `tests/test_lane_rows.py`
   list them: V26-3426.
 - The planned entry's members: V26-3552.
+- The merge slot's holder and waiter file members, wherever `tests/test_run_delivery_peers.py` and
+  `tests/test_merge_queue.py` assert them: V26-3554.
 - Goldens under `tests/fixtures/delivery-views/` that show a planned stop, a lane row or a review card: the story
   that changes what they show, each change named in its hand-off.
 
 ## Scenarios
 
-For `waits`, each from a fixture record, in-process:
+Each row names the freeing event or refusal it proves. A refusal leaves the record unchanged and names what is wrong.
 
-- A planned story ordered after one in review gives one `order` wait naming that story and its round. Once that
-  story is merged in the fixture, the story has no wait.
-- A planned story ordered after a settled story has no wait.
-- A planned story whose files lane 2 owns for an unmerged story gives a `files` wait naming lane 2 and that story.
-  Once the lead moves the files, it has none.
-- A story that waits for both reasons gives both, in order.
-- A planned story without `after` and `files` gives no order or files wait, and no error.
-- A lane `waiting` on a story gives a `lane` wait. When that story merges, the row returns to the state it rested
-  from, in the same write.
-- An idle lane whose next planned story waits shows that story's wait under the lane.
-- A story the lead holds gives a `held` wait with the lead's text. Assigning the story ends it with nothing
-  journalled. Clearing it journals `story.unheld`, which answers the hold.
-- A story whose blocker is stopped sets `needsSomeone`, and the stop's "Needs you" item counts it.
-- A planned story with no wait left, not held, whose lane is idle, is "free to start" in "Needs you" and does not
-  hold the close. With its lane busy, it is not in "Needs you".
-- The same fixture gives the same waits twice, with the clock's functions replaced by ones that raise.
+For the writers of `after` and `files`, on a real plan and delivery file, in V26-3552:
 
-For `waiting` lanes and acceptance:
+- `lead-init`, then `lead-brief`, on a plan with a story ordered after two keys and a `Files:` sentence give that
+  planned entry exactly those `after` keys and those `files`.
+- On a record whose planned entry lacks both members, the reconcile sweep fills them, and so does `lead-assign`.
+- From the record `lead-init` wrote, with neither `after` key landed, `waits` gives the story one `order` wait for
+  each key. A story with neither member gives no order or files wait, and no error.
 
-- `focus --state waiting --waiting-on` with an unknown subject is refused, naming the field.
+For `waits`, from fixture records, in-process, in V26-3552:
+
+- An `order` wait on a story in review names that story and its round, and has `needsSomeone` false. When that
+  story merges, the wait ends. When it settles instead, the wait ends too.
+- With two `after` keys, landing only the first leaves one `order` wait, on the second.
+- A `files` wait, by Decision 2a: lane 2's whole-file grant on a file the story names, with lane 2's unlanded story
+  naming it, gives a wait on that story. When that story merges, the wait ends. When the lead moves the file to the
+  story's own lane instead, it ends too.
+- No `files` wait arises in any of these cases: lane 2's grant covers only paths the story does not name; the grant
+  is to the story's own lane; lane 2's story naming the file has merged and the grant still stands; or lane 2 holds
+  the file only by a region grant.
+- A story that waits for both reasons gives both, in the table's order.
+- `lead-hold` gives a `held` wait with the lead's text, and journals `story.held`. Assigning the story ends the wait
+  and journals nothing more. `lead-hold --clear` journals `story.unheld`, which answers the hold.
+- A held story with an unlanded `after` key gives both waits, in the table's order.
+- `lead-hold` is refused, each time with the record unchanged, for: a landed key, a settled key, a key not in the
+  record, `--text ''` and `--text '  '`.
+- `story.held` and `story.unheld` each post once to the story's ticket under "Waiting". A supervisor pass that
+  derives an `order` wait posts nothing.
+- `needsSomeone` is set for a wait whose blocker is stopped, for one whose blocker's lane is blocked on the lead, and
+  for one whose blocker is itself in "Needs you". In each case "Needs you" holds exactly one item for the blocker,
+  carrying the count of what waits on it. That item does not hold the close.
+- "Free to start" applies to a planned story with no wait left, not held, on an idle lane. It is in "Needs you" and
+  does not hold the close. It is not in "Needs you" in any of these cases: the story's lane is busy; the story is
+  held; it still has a wait; or its lane is the idle lane Decision 9 left after an acceptance and the story has a
+  wait.
+- With the clock's functions, the network and every other file open replaced by ones that raise, the same fixture
+  gives the same waits twice.
+- `next` on a fixture with no tracker snapshot reports a story with only an `order` wait, and a story with only a
+  `files` wait, as blocked, for the same `cause` and `on` that `waits` returns. It reports a story with no wait as not
+  blocked. With a snapshot, it still adds the tracker's `blockedBy`.
+
+For `waiting` lanes and acceptance, in V26-3426:
+
+- Characterization first: a `blocked` lane wakes `wait`, is in "Needs you", holds the close and is counted as quiet
+  when unmoved. All four stay true afterwards.
+- `focus --state waiting --waiting-on KEY` for a known key writes the row. With an unknown key it is refused, naming
+  the field, and with no `--waiting-on` it is refused too.
 - A `waiting` lane does not wake `wait`, is not counted as quiet, is not in "Needs you" and does not hold the close.
-  A `blocked` lane still does all four.
-- After `lead-accept`, the lane is `idle`, waiting on the accepted key, and clears when it merges.
+- A lane that rested from `working` returns to `working` when its subject merges, in the same write. A lane that
+  rested from `idle` returns to `idle`. A lane waiting on a subject that settles returns as well. The `wait` event
+  for the landing names the freed lane.
+- An idle lane whose next planned story waits shows that story's wait under the lane.
+- After `lead-accept`, the lane is `idle`, waiting on the accepted key, and clears to `null` when that key merges.
 
-For other deliveries, on the existing two-delivery fixture:
+For the review round, in V26-3555:
+
+- `review-prepare` journals `review.started` with its round, head, lenses, `restart: false`, and the lane's `--why`,
+  or no `why` when none was given. A `--restart` journals a new start with `restart: true`.
+- Two lens results, one written before a supervisor pass and one after it, then a second pass, then
+  `review-reduce`, give exactly one `review.lens.returned` per lens. A result that fails the identity check is never
+  journalled. `review-reduce` then journals the round, which answers the start.
+- `waits` gives a story with a `review.started` and one `review.lens.returned` of two lenses one `review` wait, with
+  the round, the head and "1 of 2 back". The card's headline equals that wait's `words`.
+- After a restart's new start, the old start no longer gives a running round. None is running either after the
+  story is handed with a round never reduced, after it is settled, or after it is reassigned.
+
+For other deliveries, on `PeerDeliveryTests`' existing two-delivery fixture, in V26-3554:
 
 - A planned story whose file the peer claims gives a `claim` wait naming the peer and its story, in this delivery's
   `peer-waits.json`. The peer's file names this delivery as waiting on its claim. Releasing the claim clears both on
-  the next pass.
-- A `lead-push` waiting on the slot the peer holds gives a `slot` wait naming the peer, what it holds the slot for,
-  and since when. The holder's file names the waiter. Both clear when the slot is released.
-- A stale `peer-waits.json` adds nothing to any view.
+  the next pass. So does the peer delivery closing while its claim is still listed.
+- With the peer holding the slot for a check of a named piece, this delivery's `lead-push` gives a `slot` wait
+  naming the peer, "check of" that piece, and since when. The same holds for `lead-sync` and for
+  `lead-upgrade-writer`. The runner's front piece, waiting on the slot, gives a `slot` wait for the piece. The
+  holder's file names each waiter and what it is doing, and both sides clear when the slot is released.
+- A holder file without `doing` reads as "is using the main line".
+- A fresh `peer-waits.json` shows the `claim` sentence, the `slot` sentence and the holder side's line on the page,
+  the Markdown view and the built-in page. The same file past `staleAfter`, and no file at all, each show nothing
+  about other deliveries.
 
-For the review round:
+For the views, in each story for its own cases:
 
-- `review-prepare` journals `review.started` with its round, head, lenses and the lane's `--why`, or no `why`.
-- A lens result written mid-round is journalled once as `review.lens.returned` by the next pass. A result that fails
-  the identity check is not.
-- `review-reduce` journals a returned lens the pass missed, then the round, which answers the start.
-- A restart's new `review.started` ends the old one's running state. A story handed with a round never reduced shows
-  no round running.
-
-For the views:
-
-- Each case's sentence appears where Decision 11 says, on the page, the Markdown view and the built-in page, and is
+- Each case's sentence appears where Decision 11 says, on the page, the Markdown view and the built-in page. It is
   gone after the event that frees it, with no reload on the page.
-- With `wait-words.json` pointed at a copy with one changed template, every view shows the changed words.
-- The review card while a round runs shows "Round N under way", the head, how long ago it started, a chip of lenses
-  back, the lane's reason when given, one row per lens, and earlier notes folded. It settles to today's card when the
-  round is reduced.
+- The marker test of Decision 4 passes for every template the story adds. V26-3552 adds the test and covers its own
+  templates. Each later story extends it to its own.
+- While a round runs, the review card shows "Round N under way", the head, how long ago it started, a chip of
+  lenses back, the lane's reason when given, one row per lens, and earlier notes folded. It settles to today's card
+  when the round is reduced.
 - Under reduced motion nothing moves.
 
 ## Units and order
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | V26-3552, V26-3426 | `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/references/schemas.json`, `skills/orchestrate-work/references/wait-words.json`, `skills/orchestrate-work/scripts/render_state.py`, `skills/orchestrate-work/references/orchestration-guide.md`, `skills/orchestrate-work/SKILL.md`, `skills/run-delivery/templates/lane-brief.md`, `tests/test_waits.py`, `tests/fixtures/waits/`, `tests/test_lane_rows.py`, `tests/test_lead_wait.py`, `tests/test_orchestration_state.py`, `tests/test_orchestration_render.py` |
-| 1 | 2 | V26-3555 | `skills/delivery-views/scripts/review_projection.py`, `skills/orchestrate-work/scripts/narrator.py`, `tests/test_delivery_views_review_projection.py`, `tests/test_narrator.py`, `tests/fixtures/narrator/` |
-| 2 | 2 | V26-3554 | `tests/test_run_delivery_peers.py` |
+| 1 | 1 | V26-3552, V26-3426 | `skills/orchestrate-work/references/wait-words.json`, `skills/orchestrate-work/references/orchestration-guide.md`, `skills/orchestrate-work/SKILL.md`, `skills/run-delivery/templates/lane-brief.md`, `tests/test_waits.py`, `tests/fixtures/waits/`, `tests/test_lane_rows.py`, `tests/test_lead_wait.py`, `tests/test_orchestration_state.py` |
+| 1 | 2 | V26-3555 | `skills/delivery-views/scripts/review_projection.py`, `skills/orchestrate-work/scripts/narrator.py`, `tests/test_waits_review.py`, `tests/test_delivery_views_review_projection.py`, `tests/test_narrator.py`, `tests/fixtures/narrator/` |
+| 2 | 2 | V26-3554 | `skills/orchestrate-work/scripts/merge_queue.py`, `tests/test_merge_queue.py`, `tests/test_run_delivery_peers.py` |
 
 Shared by region, granted by the lead with `lead-own --region` when each story is assigned and revoked when it
 lands:
 
+- `skills/orchestrate-work/scripts/delivery_state.py` and `skills/orchestrate-work/scripts/render_state.py`
+- `skills/orchestrate-work/references/schemas.json`
 - `skills/run-delivery/scripts/run_delivery.py`
 - `skills/delivery-views/assets/line-map.js`, `skills/delivery-views/assets/line-map.css` and
   `skills/delivery-views/scripts/render.py`
 - `skills/orchestrate-work/references/journal-kinds.json`, `tests/fixtures/journal-kinds/vectors.json`,
   `tests/test_journal_kinds.py`, `tests/test_journal_shape.py` and `tests/test_run_delivery_tracker.py`
-- `tests/test_run_delivery.py` and `tests/test_run_delivery_supervisor.py`
+- `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py` and `tests/test_orchestration_render.py`
 - `tests/test_delivery_views_page.py`, `tests/test_delivery_views_render.py` and the goldens under
   `tests/fixtures/delivery-views/`
 
-A story's new page test file under `tests/delivery_views_page/` is a whole-file claim of its lane. `provenance.lock.json`
-is regenerable: each story takes the lock side that lists its new files and runs the writer, as `AGENTS.md`
-describes.
+`wait-words.json` is created by V26-3552, so lane 1 claims it whole. When V26-3552 lands, the lead revokes that
+claim and grants each later story a region of it, so each story adds its templates in a region of its own. A story's new page test file under `tests/delivery_views_page/` is a whole-file claim of its lane.
+`provenance.lock.json` is regenerable: each story takes the lock side that lists its new files and runs the writer,
+as `AGENTS.md` describes.
 
 Lane 1 and lane 2 start at once. V26-3552 lays down the shape, the record's new members, the derivation and the
-templates, so V26-3426 and V26-3554 build on it. V26-3555 touches only the review side and its two kinds, so it does
-not wait. When V26-3552 has landed, lane 1 goes on to V26-3426. Lane 2 goes on to V26-3554 when both V26-3552 and
-V26-3555 have landed.
+table, and V26-3426 and V26-3554 build on it. V26-3555 builds its kinds, their journalling and the card at once,
+reading the journal. Its `review` cause in `waits`, the card's headline from `words`, and its lines on the Markdown
+view and the built-in page need `waits`. So V26-3555 hands off only after V26-3552 has landed: the lead authorizes a
+base merge with `lead-authorize-base-merge`, and the lane merges and finishes on that base. When V26-3552 has landed,
+lane 1 goes on to V26-3426. Lane 2 goes on to V26-3554 when both V26-3552 and V26-3555 have landed.
 
 ## Stories
 
@@ -332,14 +403,15 @@ Lane 1, tier 1, not blocked. Test-first. Files: `skills/orchestrate-work/scripts
 `skills/orchestrate-work/references/journal-kinds.json`, `skills/run-delivery/scripts/run_delivery.py`,
 `skills/delivery-views/assets/line-map.js`, `skills/delivery-views/scripts/render.py`, `tests/test_waits.py`,
 `tests/fixtures/waits/`, `tests/test_orchestration_state.py`, `tests/test_orchestration_render.py`,
-`tests/test_journal_kinds.py`, `tests/test_journal_shape.py`, `tests/test_run_delivery_tracker.py` and
-`tests/test_run_delivery.py`.
+`tests/test_journal_kinds.py`, `tests/test_journal_shape.py`, `tests/test_run_delivery_tracker.py`,
+`tests/test_run_delivery.py`, `tests/test_delivery_views_page.py` and `tests/fixtures/delivery-views/`.
 
-Write `waits` by Decisions 1, 4 and 5 for the `order`, `files` and `held` cases, and `wait-words.json` with every
-case's template, including those V26-3426, V26-3554 and V26-3555 will use. Give planned entries `after` and `files`
-by Decision 2, filled by `lead-init`, `lead-brief`, the sweep and `lead-assign`. Add `lead-hold`, `story.held` and
-`story.unheld` by Decision 6. Set `needsSomeone` and add the two "Needs you" forms by Decision 12. Show the sentence
-on the page, the Markdown view and the built-in page by Decision 11. `next` takes its reasons from `waits`.
+Write `waits` by Decisions 1, 2a, 4 and 5 for the `order`, `files` and `held` cases, with the marker test. Write
+`wait-words.json` with this story's templates and the two "Needs you" forms. Give planned entries `after` and
+`files` by Decision 2, filled by `lead-init`, `lead-brief`, the sweep and `lead-assign`. Add `lead-hold`,
+`story.held` and `story.unheld` by Decision 6. Set `needsSomeone` and add the two "Needs you" forms by Decision 12.
+Show the sentence on the page, the Markdown view and the built-in page by Decision 11. `next` takes its reasons from
+`waits`.
 
 Acceptance criteria:
 
@@ -354,13 +426,14 @@ Acceptance criteria:
 
 Lane 1, tier 2, after V26-3552. Characterization-first. Files: `skills/orchestrate-work/scripts/delivery_state.py`,
 `skills/orchestrate-work/references/schemas.json`, `skills/orchestrate-work/references/orchestration-guide.md`,
-`skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/templates/lane-brief.md`,
-`skills/delivery-views/assets/line-map.js`, `tests/test_lane_rows.py`, `tests/test_lead_wait.py`,
+`skills/orchestrate-work/references/wait-words.json`, `skills/run-delivery/scripts/run_delivery.py`,
+`skills/run-delivery/templates/lane-brief.md`, `skills/delivery-views/assets/line-map.js`,
+`skills/orchestrate-work/scripts/render_state.py`, `tests/test_lane_rows.py`, `tests/test_lead_wait.py`,
 `tests/test_orchestration_state.py`, `tests/test_run_delivery.py` and `tests/test_run_delivery_supervisor.py`.
 
-Pin today's `blocked` behaviour first: it wakes `wait`, it is in "Needs you", and it holds the close. Then add
-`waiting` by Decisions 7 and 8, make `lead-accept` settle the row by Decision 9, and change the brief by Decision 10.
-The lane's `lane` wait comes from `waits`, in V26-3552's templates.
+Pin today's `blocked` behaviour first. Then add `waiting` by Decisions 7 and 8, make `lead-accept` settle the row by
+Decision 9, and change the brief by Decision 10. The lane's `lane` wait comes from `waits`, with its templates added
+to the table and to the marker test.
 
 Acceptance criteria:
 
@@ -371,17 +444,19 @@ Acceptance criteria:
 ### V26-3555. Show a review round while it is running
 
 Lane 2, tier 1, not blocked. Test-first. Files: `skills/orchestrate-work/references/journal-kinds.json`,
-`skills/run-delivery/scripts/run_delivery.py`, `skills/delivery-views/scripts/review_projection.py`,
-`skills/delivery-views/scripts/render.py`, `skills/delivery-views/assets/line-map.js`,
-`skills/delivery-views/assets/line-map.css`, `skills/orchestrate-work/scripts/narrator.py`,
+`skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/scripts/render_state.py`,
+`skills/orchestrate-work/references/wait-words.json`, `skills/run-delivery/scripts/run_delivery.py`,
+`skills/delivery-views/scripts/review_projection.py`, `skills/delivery-views/scripts/render.py`,
+`skills/delivery-views/assets/line-map.js`, `skills/delivery-views/assets/line-map.css`,
+`skills/orchestrate-work/scripts/narrator.py`, `tests/test_waits_review.py`,
 `tests/test_delivery_views_review_projection.py`, `tests/test_narrator.py`, `tests/fixtures/narrator/`,
 `tests/test_journal_kinds.py`, `tests/test_journal_shape.py`, `tests/test_run_delivery_tracker.py`,
-`tests/test_run_delivery.py` and `tests/test_delivery_views_page.py`.
+`tests/test_run_delivery.py`, `tests/test_orchestration_render.py` and `tests/test_delivery_views_page.py`.
 
 Add `review.started` and `review.lens.returned` by Decision 14, journalled by `review-prepare`, the supervisor's pass
 and `review-reduce`. The narrator reads them by Decision 13. The review card follows the direction on the ticket.
-The story's `review` wait is the card's headline, read from `waits` once V26-3552 has landed. Until then, the card
-reads the journal directly.
+After the authorized base merge that brings V26-3552 in, add the `review` cause to `waits` with its template. Then
+make the card's headline that wait's `words`, and show it on the Markdown view and the built-in page.
 
 Acceptance criteria:
 
@@ -399,14 +474,16 @@ Acceptance criteria:
 ### V26-3554. Show a wait on another delivery sharing the base, in both deliveries
 
 Lane 2, tier 2, after V26-3552 and V26-3555. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`,
-`skills/orchestrate-work/scripts/delivery_state.py`, `skills/delivery-views/scripts/render.py`,
+`skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/scripts/merge_queue.py`,
+`skills/orchestrate-work/references/wait-words.json`, `skills/delivery-views/scripts/render.py`,
 `skills/delivery-views/assets/line-map.js`, `skills/orchestrate-work/scripts/render_state.py`,
-`tests/test_run_delivery_peers.py` and `tests/test_run_delivery_supervisor.py`.
+`skills/orchestrate-work/references/schemas.json`, `tests/test_run_delivery_peers.py`, `tests/test_merge_queue.py`, `tests/test_run_delivery_supervisor.py`,
+`tests/test_delivery_views_render.py`, `tests/test_orchestration_render.py` and `tests/test_delivery_views_page.py`.
 
-Write `peer-waits.json` by Decision 3 for the `claim` and `slot` cases, on both sides, from the peers registry, each
-peer's claims and planned files, and the merge slot's holder and waiter files. The renderers add it while fresh. The
-merge slot's waiter file gains what the waiter is doing, if it lacks it, so the holder can name it.
-`delivery_state.py` is touched only where the slot's waiter file is written.
+Make the merge slot say what it is held for, by Decision 3a, in `merge_slot` and every caller. Write
+`peer-waits.json` by Decision 3 for the `claim` and `slot` cases, on both sides, from the peers registry, each peer's
+claims and planned files, and the slot's holder and waiter files. The renderers add it while fresh. The templates go
+in the table and the marker test.
 
 Acceptance criteria:
 
@@ -435,3 +512,5 @@ Settled by this plan, for the lenses to test:
    13).
 6. Only a lead's hold posts to the tracker (Decision 11).
 7. Two lanes, with region claims on the shared files, rather than one lane running all four stories in sequence.
+8. V26-3555 starts at once and finishes on a base that holds V26-3552, through an authorized base merge, rather
+   than starting only after V26-3552 lands.
