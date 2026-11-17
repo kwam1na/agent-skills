@@ -11465,6 +11465,103 @@ def older_shape_errors(*entries: dict) -> list[str]:
     return delivery_state.journal_errors(list(entries))
 
 
+class AddedCatalogueEntryTests(unittest.TestCase):
+    """A story's own catalogue entry is nameable from its committed head: an id the base's catalogue lacks, held by
+    the binding at the head and not a binding check's, is an added entry; a working-tree edit, a binding that doesn't
+    parse and an id in neither catalogue add nothing."""
+
+    BINDING = ".agents/orchestration.json"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.tool = fresh_tool("run_delivery_for_added_entries")
+
+    @staticmethod
+    def entry(name: str, argv: str = "tools/check.py") -> dict:
+        return {"id": name, "argv": ["python3", "-B", argv], "cwd": ".", "reasons": [name], "prerequisites": []}
+
+    def setUp(self) -> None:
+        self.repo = Path(tempfile.mkdtemp(prefix="run-delivery-added-"))
+        self.addCleanup(shutil.rmtree, self.repo, True)
+        sh("git", "init", "-q", cwd=self.repo)
+        self.base = {"alwaysRun": [self.entry("validate-registry")], "fallback": [self.entry("full-suite")],
+                     "selection": {"lead": True, "catalogue": [self.entry("tests.test_run_delivery")]}}
+        self.write(self.base)
+        commit(self.repo, "base")
+        self.c = types.SimpleNamespace(binding=copy.deepcopy(self.base))
+
+    def write(self, binding: dict | str) -> None:
+        path = self.repo / self.BINDING
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(binding if isinstance(binding, str) else json.dumps(binding, indent=2) + "\n")
+
+    def head_adds(self, *entries: dict) -> dict:
+        head = copy.deepcopy(self.base)
+        head["selection"]["catalogue"] += list(entries)
+        return head
+
+    def added(self) -> dict:
+        return self.tool.catalogue_additions(self.c, "HEAD", cwd=self.repo)
+
+    def refusal(self, text: str, added: dict) -> str:
+        with self.assertRaises(self.tool.Stop) as stop:
+            self.tool.check_ids(self.c, text, "--checks", added)
+        return str(stop.exception)
+
+    def test_an_entry_the_head_commits_is_accepted_and_shown_as_added(self) -> None:
+        self.write(self.head_adds(self.entry("tests.test_new")))
+        (self.repo / "tests").mkdir()
+        (self.repo / "tests/test_new.py").write_text("# new\n")
+        commit(self.repo, "the story adds a module and its entry")
+        added = self.added()
+        self.assertEqual(added, {"tests.test_new": self.entry("tests.test_new")})
+        ran = self.tool.check_ids(self.c, "tests.test_run_delivery,tests.test_new", "--checks", added)
+        self.assertEqual(ran, ["tests.test_run_delivery", "tests.test_new"])
+        self.assertEqual(self.tool.checks_shown(ran, added),
+                         "tests.test_run_delivery, tests.test_new (added by this story)")
+
+    def test_an_entry_only_in_the_working_tree_adds_nothing(self) -> None:
+        self.write(self.head_adds(self.entry("tests.test_new")))
+        added = self.added()
+        self.assertEqual(added, {})
+        self.assertIn("tests.test_new", self.refusal("tests.test_run_delivery,tests.test_new", added))
+
+    def test_a_head_binding_that_does_not_parse_or_is_missing_adds_nothing(self) -> None:
+        for name, spoil in (("unparseable", lambda: self.write("{not json")),
+                            ("not an object", lambda: self.write("[]")),
+                            ("missing", lambda: (self.repo / self.BINDING).unlink())):
+            with self.subTest(name):
+                spoil()
+                commit(self.repo, name)
+                added = self.added()
+                self.assertEqual(added, {})
+                self.assertIn("tests.test_new", self.refusal("tests.test_new", added))
+                self.write(self.base)
+                commit(self.repo, "back")
+
+    def test_an_id_in_neither_catalogue_is_refused_naming_both(self) -> None:
+        self.write(self.head_adds(self.entry("tests.test_new")))
+        commit(self.repo, "adds one")
+        said = self.refusal("tests.test_nowhere", self.added())
+        self.assertIn("--checks names checks in neither the base's catalogue nor the one at the candidate's head: "
+                      "tests.test_nowhere (the base's has tests.test_run_delivery; the head adds tests.test_new)", said)
+        self.assertIn("the head adds none)", self.refusal("tests.test_nowhere", {}))
+
+    def test_a_binding_checks_id_or_a_base_id_is_never_an_added_entry(self) -> None:
+        redefined = self.entry("tests.test_run_delivery", "tools/other.py")
+        self.write(self.head_adds(self.entry("validate-registry"), self.entry("full-suite")))
+        head = json.loads((self.repo / self.BINDING).read_text())
+        head["selection"]["catalogue"][0] = redefined
+        self.write(head)
+        commit(self.repo, "reuses a binding check's id and redefines a base entry")
+        added = self.added()
+        self.assertEqual(added, {})
+        self.assertIn("validate-registry", self.refusal("validate-registry", added))
+        # The base's own id stands, as the base defines it.
+        self.assertEqual(self.tool.check_ids(self.c, "tests.test_run_delivery", "--checks", added),
+                         ["tests.test_run_delivery"])
+
+
 class FactReaderTests(unittest.TestCase):
     """Each reader of a journal entry reads its facts, the same whatever its prose says; an entry with only a
     sentence is refused at the journal, so no reader sees one."""
