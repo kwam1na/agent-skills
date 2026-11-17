@@ -162,6 +162,10 @@
         {
           "id": "v26-3565-2",
           "text": "c2: The same hand-off is accepted when the lane owns the listing file, and a hand-off that only refreshes digests is accepted for any lane."
+        },
+        {
+          "id": "v26-3565-3",
+          "text": "c3: lead-assign warns when a story's plan section names a new file the listing would name and the lane doesn't own the listing file."
         }
       ],
       "after": [
