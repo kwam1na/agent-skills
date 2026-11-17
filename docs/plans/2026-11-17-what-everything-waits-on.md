@@ -592,6 +592,10 @@ Holding rows come first at full weight. Red appears only on a stopped stop. Each
 (lane, subject, state, blocker, since, holding), and its words come from `wait-words.json`, so the page words
 nothing itself.
 
+### V26-3568. Draw a setback's thread by its state, and fold long check lists in the story
+
+Lane 2, tier 2, after V26-3554. Added mid-delivery: The operator approved a live mock of setback threads drawn by their state, and asked to include folding long check lists, in this delivery
+
 ## Calls made
 
 The operator settled these on 2026-11-17, before drafting.

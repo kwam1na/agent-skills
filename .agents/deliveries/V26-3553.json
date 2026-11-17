@@ -231,6 +231,20 @@
       "after": [
         "V26-3426"
       ]
+    },
+    "V26-3568": {
+      "title": "Draw a setback's thread by its state, and fold long check lists in the story",
+      "lane": "lane-2",
+      "why": "The operator approved a live mock of setback threads drawn by their state, and asked to include folding long check lists, in this delivery",
+      "criteria": [
+        {
+          "id": "v26-3568-1",
+          "text": "c1: A closed thread's margin line is drawn neutral, and an open thread's line stays in the held colour."
+        }
+      ],
+      "after": [
+        "V26-3554"
+      ]
     }
   },
   "finish": [
