@@ -302,6 +302,10 @@
         {
           "id": "v26-3574-4",
           "text": "c4: The confirmation sentence counts each ending, naming the commits for fixed notes."
+        },
+        {
+          "id": "v26-3574-5",
+          "text": "c5: When the raising round's finding isn't on the page, the row shows the resolution as its line, as it does today."
         }
       ],
       "after": [
