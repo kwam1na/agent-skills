@@ -150,6 +150,7 @@ instant is its `occurredAt` when it has one, and its `at` otherwise.
 
   | An entry of this kind | may answer one of this kind |
   | --- | --- |
+  | `review.round` | `review.started` |
   | `candidate.handed` | `candidate.stopped` |
   | `handoff.requeued` | `candidate.stopped` |
   | `base.repaired` | `base.broken` |
@@ -199,6 +200,8 @@ the lead and the lanes make them instead, as the commands print them.
 | `story.added` | On the epic: the piece the lead added to the plan, its title, and why. | the epic | Story added |
 | `lane.assigned` | On the ticket: it moves to started, naming the lane and what it delivers. | the ticket | Started |
 | `review.round` | None: a lane posts each round on its own ticket, as its brief says, and the lead posts the integration review's rounds on the epic. | nowhere | - |
+| `review.started` | None: a lane posts each round on its own ticket once it is reduced, and the round in flight shows in the record and the views. | nowhere | - |
+| `review.lens.returned` | None: the verdict posts with the round's own update, and the reviewer's return shows in the record and the views. | nowhere | - |
 | `review.recorded` | None: the lane already posted each captured round on its own ticket; the evidence shows in the record and the views. | nowhere | - |
 | `review.carried` | On the ticket: the lead carried the review from the head it covered to the queued head, and why it still covers the piece. | the ticket | Review carried |
 | `candidate.handed` | On the ticket: the hand-off checked as a claim and queued, with its change request, reviewed head and review rounds. | the ticket | Handed off and queued |

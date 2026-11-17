@@ -10,7 +10,7 @@ and lens charters), found in the installed generation it runs from. It reads the
 
 Lane:
   lane-start     <key> [--base B]
-  review-prepare <key> --round N [--grace] [--restart]
+  review-prepare <key> --round N [--grace] [--restart] [--why TEXT]
   review-reduce  <key> --round N
   gate           <key>
   build          <key>
@@ -1618,6 +1618,9 @@ def review_prepare(args) -> None:
     key = c.require(args.key)
     release_tuple()  # refuse an unidentified generation before anything is discarded, checked out or written
     n = args.round
+    why = getattr(args, "why", None)
+    if why is not None and not why.strip():
+        raise Stop("--why is empty: give the round's reason, or leave --why out")
     folder = review_dir(key)
     if n < 1 or n > c.bound + 1:
         raise Stop(f"round {n} is outside 1..{c.bound} (plus one grace round)")
@@ -1669,6 +1672,12 @@ def review_prepare(args) -> None:
         path = folder / f"brief-r{n}-{short}.md"
         path.write_text(brief(key, n, lens, candidate, tree, merge_base, checkout, prior, prior_candidate))
         briefs.append((lens, path, result_path(folder, n, short)))
+    # The round in flight, journaled before its meta: a failed write leaves the round unprepared, to prepare again.
+    started = {"round": n, "head": candidate, "lenses": list(c.lenses), "restart": bool(previous),
+               **({"moved": int(git("rev-list", "--count", f"{prior_candidate}..{candidate}"))} if prior_candidate else {}),
+               **({"why": why.strip()} if why is not None else {})}
+    state_tool("journal", "--writer", "lane", "--kind", "review.started", "--subject", key, "--lane", lane,
+               "--data", json.dumps(started))
     meta_path.write_text(json.dumps({"round": n, "candidate": candidate, "tree": tree, "startedAt": now(),
                                      "lenses": list(c.lenses), "attempts": attempts, "restarts": restarts}, indent=2))
     append_log("prepares", key, {"round": n, "candidate": candidate, "restart": bool(previous)})
@@ -1810,8 +1819,84 @@ def ensure_journaled(key: str, outcome: dict, lane: str, doc: dict) -> None:
              "verdicts": verdicts, "findings": counts,
              **({"refused": outcome["attempts"]} if outcome.get("attempts") else {}),
              **({"restarts": len(outcome["restarts"])} if outcome.get("restarts") else {})}
+    start = latest_start(doc, key, n)
     state_tool("journal", "--writer", "lane", "--kind", "review.round", "--subject", key, "--lane", lane,
-               "--data", json.dumps(facts))
+               "--data", json.dumps(facts), *(("--answers", str(start["id"])) if start else ()))
+
+
+def latest_start(doc: dict, key: str, n: int | None = None) -> dict | None:
+    """The story's latest review.started, when it is for round `n` (any round when `n` is None)."""
+    start = next((e for e in reversed(doc["journal"]) if e.get("kind") == "review.started" and e.get("subject") == key), None)
+    return start if start is not None and (n is None or start["data"]["round"] == n) else None
+
+
+def carried_findings(prior: list[dict], lens: str) -> set[str]:
+    """The lens's findings still open from earlier rounds: each round's result must say what became of them."""
+    carried: set[str] = set()
+    for r in prior:
+        for e in r["entries"]:
+            if e["lens"] == lens:
+                carried |= {f["id"] for f in e["result"].get("findings", []) if f.get("state") != "deferred"}
+                carried -= {x["id"] for x in e["result"].get("resolvedFindings", e["result"].get("resolutions", []))
+                            if x.get("state") in CLOSED}
+    return carried
+
+
+def read_result(path: Path) -> object:
+    """A lens's saved final message as JSON, a fenced block included; raises ValueError when it isn't JSON."""
+    return json.loads(re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", path.read_bytes().decode()))
+
+
+def journal_returns(key: str, folder: Path, doc: dict) -> list[str]:
+    """Each lens result of the story's round in flight that matches its brief, journaled once as review.lens.returned.
+
+    The round in flight is the latest review.started, while no review.round answers it. A result that doesn't match
+    its brief is never journaled, so the lens's next result for the same brief is; a restart's new start journals
+    its lenses afresh. Both the supervisor's pass and review-reduce call it, so whichever sees a result first
+    journals it."""
+    start = latest_start(doc, key)
+    if start is None or any(e.get("kind") == "review.round" and e.get("subject") == key and start["id"] in e.get("answers", [])
+                            for e in doc["journal"]):
+        return []
+    n = start["data"]["round"]
+    meta_path = folder / f"round-{n}.meta.json"
+    if not meta_path.exists() or (folder / f"round-{n}.json").exists():
+        return []
+    meta = json.loads(meta_path.read_text())
+    if meta.get("candidate") != start["data"]["head"]:
+        return []
+    back = {e["data"]["lens"] for e in doc["journal"] if e.get("kind") == "review.lens.returned"
+            and e.get("subject") == key and e["id"] > start["id"]}
+    prior = [json.loads(p.read_text()) for p in round_files(folder) if int(p.stem.split("-")[1]) < n]
+    journaled = []
+    for lens, (short, _) in cfg().lenses.items():
+        path = result_path(folder, n, short)
+        if lens in back or lens not in start["data"]["lenses"] or not path.exists():
+            continue
+        try:
+            result = read_result(path)
+        except (ValueError, UnicodeDecodeError):
+            continue
+        if check_result(result, key=key, lens=lens, short=short, n=n, meta=meta, carried=carried_findings(prior, lens)):
+            continue
+        findings = {p: sum(1 for f in result["findings"] if f.get("severity") == p) for p in SEVERITIES}
+        facts = {"round": n, "lens": lens, "verdict": "approve" if result["outcome"] == "aligned" else "changes",
+                 "findings": findings}
+        state_tool("journal", "--writer", "lane", "--kind", "review.lens.returned", "--subject", key,
+                   "--lane", start["lane"], "--data", json.dumps(facts))
+        journaled.append(f"{key} {lens}")
+    return journaled
+
+
+def journal_lens_returns(c) -> list[str]:
+    """The supervisor's pass: each running round's new lens results, read from its lane's checkout."""
+    doc = load_state()
+    journaled = []
+    for key in sorted({e["subject"] for e in doc["journal"] if e.get("kind") == "review.started" and e.get("subject")}):
+        folder = c.lane_checkout(key) / c.work / "review" / key
+        if folder.is_dir():
+            journaled += journal_returns(key, folder, doc)
+    return journaled
 
 
 def round_history_text(outcome: dict) -> str:
@@ -1874,23 +1959,14 @@ def review_reduce(args) -> None:
         if not path.exists():
             problems.append(f"{lens}: missing {path}; save its subagent's final JSON there")
             continue
-        raw = path.read_bytes()
-        digests[lens] = hashlib.sha256(raw).hexdigest()
-        text = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", raw.decode())
+        digests[lens] = hashlib.sha256(path.read_bytes()).hexdigest()
         try:
-            result = json.loads(text)
+            result = read_result(path)
         except json.JSONDecodeError as error:
             problems.append(f"{lens}: {path.name} is not JSON ({error})")
             bad.add(lens)
             continue
-        carried: set[str] = set()
-        for r in prior:
-            for e in r["entries"]:
-                if e["lens"] == lens:
-                    carried |= {f["id"] for f in e["result"].get("findings", []) if f.get("state") != "deferred"}
-                    carried -= {x["id"] for x in e["result"].get("resolvedFindings", e["result"].get("resolutions", []))
-                                if x.get("state") in CLOSED}
-        own = check_result(result, key=key, lens=lens, short=short, n=n, meta=meta, carried=carried)
+        own = check_result(result, key=key, lens=lens, short=short, n=n, meta=meta, carried=carried_findings(prior, lens))
         if own:
             bad.add(lens)
             problems += [f"{lens}: {p}" for p in own]
@@ -1962,6 +2038,7 @@ def review_reduce(args) -> None:
         _validator().validate_review_outcomes([*prior, outcome], key, meta["candidate"])
     except Exception as error:
         refuse(set(c.lenses), f"the release's validator refuses the round: {error}")
+    journal_returns(key, folder, load_state())  # any result the supervisor's pass hasn't journaled yet
     done_path.write_text(json.dumps(outcome, indent=1) + "\n")
     if status != "unresolved":  # another round reuses each lens's checkout; an aligned or bounded review is done with it
         for lens, (short, _) in c.lenses.items():
@@ -10740,6 +10817,7 @@ class Supervisor:
 
         steps = (("reconcile", reconcile_once), ("cleanup", cleanup), ("fullHealth", lambda: post_merge_step(c, self.once)),
                  ("peers", lambda: self.peer_merges(entry)),
+                 ("lenses", lambda: journal_lens_returns(c)),
                  ("finish", lambda: journal_finish_met(c, load_state())),
                  ("deferrals", lambda: deferral_breaches(c, load_state())),
                  ("publish", lambda: render_views(c, only="publishers")), ("needs", derive),
@@ -12279,6 +12357,7 @@ def main(argv: list[str] | None = None) -> None:
     p = command(sub, "review-prepare"); p.add_argument("key"); p.add_argument("--round", type=int, required=True)
     p.add_argument("--grace", action="store_true"); p.add_argument("--restart", action="store_true")
     p.set_defaults(fn=review_prepare)
+    p.add_argument("--why", help="the lane's reason for this round, shown with the round while it runs")
     p = command(sub, "review-reduce"); p.add_argument("key"); p.add_argument("--round", type=int, required=True)
     p.set_defaults(fn=review_reduce)
     p = command(sub, "plan-review", help="review the plan before it is approved: prepare, reduce or end a round")

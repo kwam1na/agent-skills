@@ -2211,13 +2211,16 @@ def append_journal(
                          "and this registry has none")
     if not isinstance(data, dict):
         raise StateError("entry_invalid", "an entry carries its facts in data, a JSON object")
-    if writer == "runner" and kind == REVIEW_KIND:
-        raise StateError("kind_not_owned", f"the runner never writes {REVIEW_KIND}: the lead or the lane records its review")
+    # A lane journals its own review: a round starting, each lens back, and the round reduced.
+    LANE_REVIEW_KINDS = ("review.started", "review.lens.returned", REVIEW_KIND)
+    if writer == "runner" and kind in LANE_REVIEW_KINDS:
+        raise StateError("kind_not_owned", f"the runner never writes {kind}: the lead or the lane records its review")
     with file_lock(directory / STATE_LOCK):
         current = read_state(directory, for_write=True)
         if writer == "lane":
-            if kind != REVIEW_KIND:
-                raise StateError("writer_not_owned", f"a lane journals only {REVIEW_KIND}; the tool journals its hand-off")
+            if kind not in LANE_REVIEW_KINDS:
+                raise StateError("writer_not_owned", f"a lane journals only its review ({', '.join(LANE_REVIEW_KINDS)}); "
+                                 "the tool journals its hand-off")
             owner = next((entry.get("assignedLane", entry["lane"]) if entry["stage"] == "stopped" else entry["lane"]
                           for entry in [*current["queue"], *current.get("planned", [])] if entry["subject"] == subject), None)
             if lane is None or owner != lane:

@@ -560,7 +560,9 @@
       "because": {
         "required": false
       },
-      "answers": [],
+      "answers": [
+        "review.started"
+      ],
       "opensThread": false,
       "words": {
         "head": "Review round {round} on {subject}",
@@ -569,6 +571,88 @@
       "explain": "The reviewers read the piece once and each gave a verdict. A piece goes on only when every reviewer approves.",
       "tracker": null,
       "instruction": "None: a lane posts each round on its own ticket, as its brief says, and the lead posts the integration review's rounds on the epic."
+    },
+    "review.started": {
+      "altitude": "story",
+      "tone": "note",
+      "label": "Review round started",
+      "data": {
+        "round": {
+          "type": "round"
+        },
+        "head": {
+          "type": "commit"
+        },
+        "lenses": {
+          "type": "names"
+        },
+        "restart": {
+          "type": "flag"
+        },
+        "moved": {
+          "type": "count",
+          "optional": true
+        },
+        "why": {
+          "type": "prose",
+          "optional": true
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": {
+          "by": "restart",
+          "cases": {
+            "true": "Review round {round} started again on {subject}"
+          },
+          "otherwise": "Review round {round} started on {subject}"
+        },
+        "line": "At {head:commit}, read by {lenses:list}[, {moved:count:commit} since the last round][. {why}]"
+      },
+      "explain": "A review round began: the reviewers are reading the piece at one commit.",
+      "tracker": null,
+      "instruction": "None: a lane posts each round on its own ticket once it is reduced, and the round in flight shows in the record and the views."
+    },
+    "review.lens.returned": {
+      "altitude": "bookkeeping",
+      "tone": "note",
+      "label": "Reviewer back",
+      "data": {
+        "round": {
+          "type": "round"
+        },
+        "lens": {
+          "type": "name"
+        },
+        "verdict": {
+          "type": "name"
+        },
+        "findings": {
+          "type": "findings"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": {
+          "by": "verdict",
+          "cases": {
+            "approve": "{lens} approved round {round} of {subject}"
+          },
+          "otherwise": "{lens} asked for changes on round {round} of {subject}"
+        },
+        "line": "Findings: {findings.P0} P0, {findings.P1} P1, {findings.P2} P2 and {findings.P3} P3"
+      },
+      "explain": "One reviewer finished reading the round and gave its verdict.",
+      "tracker": null,
+      "instruction": "None: the verdict posts with the round's own update, and the reviewer's return shows in the record and the views."
     },
     "review.recorded": {
       "altitude": "bookkeeping",
