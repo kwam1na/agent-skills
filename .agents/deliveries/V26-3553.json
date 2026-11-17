@@ -306,6 +306,10 @@
         {
           "id": "v26-3574-5",
           "text": "c5: When the raising round's finding isn't on the page, the row shows the resolution as its line, as it does today."
+        },
+        {
+          "id": "v26-3574-6",
+          "text": "c6: The rows' and lenses' open state survives a redraw, as other folds on the card do."
         }
       ],
       "after": [
