@@ -67,7 +67,13 @@ class SuiteBudgetTests(unittest.TestCase):
         command = f".venv/bin/python scripts/run-tests.py --workers {WORKERS} --budget tests/suite-budget.json"
         for name in ("AGENTS.md", "README.md"):
             with self.subTest(name):
-                self.assertIn(command, (ROOT / name).read_text(encoding="utf-8"))
+                text = " ".join((ROOT / name).read_text(encoding="utf-8").split())
+                self.assertIn(command, text)
+                # Going over is reported with the tag and holds nothing; only a failing run does.
+                self.assertRegex(text, r"does not hold the release: the tag's annotation says the run went over")
+                self.assertNotRegex(text, r"(?i)release waits|back inside")
+        self.assertIn("A change that adds tests keeps the suite inside the budget",
+                      " ".join((ROOT / "AGENTS.md").read_text(encoding="utf-8").split()))
 
 
 if __name__ == "__main__":

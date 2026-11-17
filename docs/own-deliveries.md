@@ -379,12 +379,12 @@ readers. The catalogue IDs are `hosted.install`, `hosted.typecheck`, `hosted.bui
 keep service installation out of unrelated Python checks. Use supported Node
 22.22.2+ or 24.15+ on the merge runner's PATH, and install Chromium's operating
 system prerequisites there. The separate Ubuntu service CI installs them itself.
-The lead must verify its exact main-push result alongside corpus Ubuntu and
-cut-release before publishing a candidate or deploying. The service and the
+The lead must verify its exact main-push result before publishing a candidate or
+deploying; the corpus's own CI jobs inform and hold neither. The service and the
 publishing generation move together: a snapshot or renderer version change
 deploys the service in the same step that applies the generation (hosted
 deliveries, "Versions move together"). An absent/red service
-job is not replaced by a green corpus job. The lead owns the budgeted macOS
+job is not replaced by a green corpus job or a passing local suite. The lead owns the budgeted macOS
 Python 3.11 full suite; packaging lanes run only focused checks.
 
 Installed-archive qualification from local builds is not published-candidate

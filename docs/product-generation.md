@@ -180,8 +180,8 @@ git tag -a v1.2.3 -m "What an adopter needs to know" <merged-commit>
 git push origin v1.2.3
 ```
 
-Tag a commit CI ran on as the tip of a push to `main`, such as a merge commit. Any
-other commit has no CI run to read, so it publishes nothing.
+Tag a commit merged to `main`; a merge commit is the usual one. A commit that is not
+on `main` publishes nothing.
 
 The annotation opens the release notes, ahead of the digest table and the generated
 list of merged change requests. The release workflow:
@@ -190,25 +190,22 @@ list of merged change requests. The release workflow:
   than every existing version tag, or whose commit does not equal or descend from the
   highest one's. Backports to an older line are unsupported;
 - stops if the release already exists, because a release is never replaced;
-- requires the Ubuntu job and `cut-release` to have succeeded in CI's run on the exact
-  tagged commit, waiting a bounded time for either still in progress. A missing run, or
-  a run where either failed or is missing, publishes nothing. CI's macOS job only
-  informs: a run red, cancelled or still going because of it neither allows nor blocks a
-  release. It can delay one only where a gating job is absent while it still runs:
-  publishing cannot tell a job yet to appear from one that never will, so it waits its
-  bound and then refuses;
 - runs `scripts/cut-release.py` on the tagged tree, attests every output file, and
   publishes them all.
 
 A final becomes latest. A candidate is a prerelease and never does.
 
-CI on `main` informs and does not block a merge, because `main` is unprotected. A merge
-can land on red, and it falls to whoever merges to read the result, because a red
-Ubuntu job or `cut-release` on `main` blocks the next release.
+The workflow reads no CI result and runs no suite. A release rests on whoever tags:
+before tagging, they run the full suite locally on macOS with Python 3.11, as
+[`AGENTS.md`](../AGENTS.md) describes, and it must pass. The release job cannot verify
+it. A run that passes every test and goes over the suite's time budget does not hold
+the release; the tag's annotation says it went over.
 
-Before tagging, whoever tags runs the full suite locally on macOS with Python 3.11, as
-[`AGENTS.md`](../AGENTS.md) describes. The release job cannot verify it. Windows is not
-validated.
+CI on `main` informs. It does not block a merge, because `main` is unprotected, and it
+does not block a release, because the release workflow does not read it. A merge can
+land on red, and it falls to whoever merges to read the result and fix it. CI's macOS
+job runs on pushes to `main`, and on a change request with the `full-matrix` label.
+Windows is not validated.
 
 Never move or reuse a release tag. A version tag that never published may be deleted to
 clear the ordering guard, which is neither, and the refusal says so.
