@@ -1095,6 +1095,21 @@ def with_story(document: dict, plan: object) -> dict:
         return document
 
 
+def with_waits(document: dict) -> dict:
+    """The record with what everything waits on and who waits on each story, as the state tool derives them, for a
+    record given without them; the page prints these sentences and words none of its own. One they cannot be derived
+    from is left without."""
+    if isinstance(document.get("waits"), list):
+        return document
+    try:
+        found = review_state.waits(document)
+        holding = review_state.waited_on(document, found)
+        # Left out when there are none, so a record that waits on nothing reads as it did.
+        return {**document, **({"waits": found} if found else {}), **({"waitedOn": holding} if holding else {})}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return document
+
+
 def line_map_data(document: object, runs: dict, config: dict, *, theme_key: str, history: str | None,
                   plan: dict | None = None, needs: dict | None = None, story: bool = True) -> dict:
     """The shared bounded view data; local HTML and public projection consume the same cut. Without ``story``, the
@@ -1122,7 +1137,8 @@ def line_map_data(document: object, runs: dict, config: dict, *, theme_key: str,
     reviews = {key: bounded["native:" + key] for key in reviews}
     document = {key: value for key, value in document.items() if key != "reviewEvidence"}
     if story:
-        document = with_story(document, plan.get("plan") if isinstance(plan, dict) else None)
+        # The waits go with the story: a cut that publishes no story says nothing the lead wrote about a hold either.
+        document = with_waits(with_story(document, plan.get("plan") if isinstance(plan, dict) else None))
     view = {
         "title": config["title"],
         "themeKey": theme_key,

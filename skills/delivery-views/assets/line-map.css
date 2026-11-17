@@ -430,6 +430,7 @@ a.issue-link { color: inherit; cursor: pointer; }
 .left-groups li:hover .left-title, .left-title:focus-visible { text-decoration: underline; text-decoration-color: var(--edge); text-underline-offset: 3px; }
 .left-groups li:hover .left-ring { background: color-mix(in oklab, var(--c) 35%, transparent); }
 .left-state { font-size: 12px; color: var(--faint); white-space: nowrap; }
+.left-wait { grid-column: 3 / -1; font-size: 12px; color: var(--faint); overflow-wrap: anywhere; }
 .left-groups .left-more { display: block; padding-left: 22px; font-size: 12px; color: var(--faint); }
 .after { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 24px; padding-top: 8px; }
 .after div { border-top: 2px solid var(--hair); padding-top: 12px; color: var(--soft); font-size: 15px; }
@@ -461,7 +462,7 @@ a.issue-link { color: inherit; cursor: pointer; }
 .chapter-head time, .beat time { font: 400 12px/16px var(--mono); color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .chapter-head time { display: inline-flex; gap: 6px; }
 .chapter-of.is-landing .chapter-head h3 { color: var(--landed); }
-.chapter-line { margin: 0; color: var(--soft); max-width: 68ch; overflow-wrap: anywhere; }
+.chapter-of .chapter-line { margin: 0; color: var(--soft); max-width: 68ch; overflow-wrap: anywhere; }
 .chapter-when { margin: 0; font-size: 13px; color: var(--faint); }
 .chapter-standing { margin: 0; font-size: 13px; color: var(--held); overflow-wrap: anywhere; }
 .chapter-standing.is-ended { color: var(--faint); }

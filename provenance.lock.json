@@ -210,11 +210,11 @@
         },
         {
           "path": "skills/delivery-views/assets/line-map.css",
-          "sha256": "140086cb48051de9f343c41c999b59f54e4695678a31ffcb49be0290fd0f5d28"
+          "sha256": "6eab15fd353d03c2fcfe8f1a58994ebfcaf5a0a490e1ff1dcf2a5e41b62de762"
         },
         {
           "path": "skills/delivery-views/assets/line-map.js",
-          "sha256": "40b739ec568c96d7cc3d570eef44bd311f6972f0cf9c2307aebbc09de8a8c7d6"
+          "sha256": "50796b303f9d69e6bbf4aa5007011087f7d9e897f7ce9fca5f55963e5ea212e0"
         },
         {
           "path": "skills/delivery-views/assets/run-summary.css",
@@ -242,7 +242,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/render.py",
-          "sha256": "bd4ce47fd59f96c025247e83e877bbbdcd494f7828b0afe6bf92be51ce490835"
+          "sha256": "480e9f25b1147826f4665ffbbcdadadbd71af203e1ebdd385117f44df2c6adaf"
         },
         {
           "path": "skills/delivery-views/scripts/review_projection.py",
@@ -514,23 +514,27 @@
         },
         {
           "path": "skills/orchestrate-work/references/journal-kinds.json",
-          "sha256": "fa56d9aab9ea0e226d859f85ca49a5965452b98a5e977e5fc758bf06b999798d"
+          "sha256": "97ef056279fd2070eb7794fdf178fce5de4658a78829d3087aa932ea8715fbba"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "545ed79e934cfeb1814254cdf70b7745f30da4a2cfcb4341177554901c481348"
+          "sha256": "4f5558bb8f352ee92ba946965f12751fa9783026b8dd4a373a30b1180c0fceba"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
-          "sha256": "b63fbad96a11a615463a878e67bf464502e8c2284fed28ebbc7acbb21ecd69ef"
+          "sha256": "58912850111f330f75e1ae8b1b37554f50d0970463ced8a042901f057728663f"
         },
         {
           "path": "skills/orchestrate-work/references/story.schema.json",
           "sha256": "e0294c91e4a8917ffa8e945c13d1fa12cdad948e19900129f323c10e2ee1128f"
         },
         {
+          "path": "skills/orchestrate-work/references/wait-words.json",
+          "sha256": "9793a96ac533a02dae6ba03889a04b7909985c8b52c0a5572996757c76ce111b"
+        },
+        {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "3e5384d66c27b37043a9ffaa7f69c6ad072bb8f245cfb791d273c27cdc4c9774"
+          "sha256": "c611e0f55d9a57d6c25e19ae4064ef1e538f93e027c9e2e59b56c766d8353756"
         },
         {
           "path": "skills/orchestrate-work/scripts/journal_words.py",
@@ -550,7 +554,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/render_state.py",
-          "sha256": "0309fa8b5afbb17cad17fb51592390a2ec29732cc23c721067967641f0a12110"
+          "sha256": "16f4d69cbe2914efd6cf93045990618db6db0bf66960dd36043012d9c57bb652"
         }
       ],
       "owner": "delivery-agent/user-delegated",
@@ -1079,7 +1083,7 @@
       "outputs": [
         {
           "path": "skills/run-delivery/SKILL.md",
-          "sha256": "465d6390fc09286a10dd7f785b8dbd0c79daa4f3652e57fa276a79076ecdbfbf"
+          "sha256": "2cfe92de73d21151e0fc6c4553f341f234203dc8803a99421bc612f3ee8e57e4"
         },
         {
           "path": "skills/run-delivery/adapters/forge_bitbucket.py",
@@ -1119,7 +1123,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "a81345b4c6f5d6dcdc20281104dea768d5fedbbc9db45d5e68233fe66d5ff0b4"
+          "sha256": "6a4de8032890f0c2a69810072ab11943cafd30f01522633155336b168ba149cb"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",

@@ -3318,7 +3318,7 @@ def run_delivery_module(name: str):
     return module
 
 
-LISTENER = "The lead isn't listening"
+LISTENER = "can't reach the lead"
 
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
@@ -3368,7 +3368,7 @@ class LeadListenerTests(unittest.TestCase):
         don't: the listener's items, from the list."""
         page = fx.tmp / "record/line-map.html"
         needs_file = fx.tmp / "record/needs-you.json"
-        mine = lambda items: [item for item in items if item["text"].startswith(LISTENER)]
+        mine = lambda items: [item for item in items if LISTENER in item["text"]]
 
         def agree():
             if not page.exists() or not needs_file.exists():
@@ -3463,8 +3463,10 @@ class LeadListenerTests(unittest.TestCase):
         state_tool(fx, "focus", "--lane", "lane-1", "--text", "x", "--state", "working")
         found = self.shown(fx, True)
         self.assertEqual(len(found), 1, found)
-        self.assertIn("no lead-wait runs while lane-1 (working)", found[0]["text"])
-        self.assertIn("--delivery FX-1 lead-wait --after ", found[0]["text"])
+        # The item says what the lead won't hear, in the table's words; the status line keeps the command.
+        self.assertEqual(found[0]["text"], "Lane 1 can't reach the lead. A hand-off or question from it will wait unseen "
+                                           "until the lead is watching again.")
+        self.assertEqual(found[0]["clears"], "the lead is watching again")
         self.assertEqual((found[0]["source"], found[0]["holding"]), ("lead-wait.json in the record", False))
         code, out = fx.flow("lead-hints", cwd=fx.main)
         self.assertIn("the lead isn't listening: no lead-wait runs while lane-1 (working)", out)

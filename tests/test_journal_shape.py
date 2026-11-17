@@ -106,6 +106,8 @@ INVENTORY = {
         _key("Supervisor.peer_merges", {"peer.merged"}): 1,
         _key("lead_decide", {"decision.recorded"}): 1,
         _key("lead_block", {"blocker.recorded"}): 1,
+        _key("lead_hold", {"story.held"}): 1,
+        _key("lead_hold", {"story.unheld"}): 1,
         _key("lead_resolve", {"fullhealth.rerun"}): 1,
         _key("lead_resolve", {"blocker.resolved"}): 1,
         _key("requeue", {"handoff.requeued"}): 1,

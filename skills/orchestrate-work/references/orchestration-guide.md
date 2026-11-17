@@ -158,6 +158,7 @@ instant is its `occurredAt` when it has one, and its `at` otherwise.
   | `blocker.resolved` | `blocker.recorded` |
   | `blocker.resolved` | `deferral.breached` |
   | `lease.released` | `lease.granted` |
+  | `story.unheld` | `story.held` |
 
   `candidate.stopped`, `base.broken` and `blocker.recorded` open a thread, a
   stop only when it leaves the piece stopped, and the first entry answering the
@@ -250,6 +251,8 @@ the lead and the lanes make them instead, as the commands print them.
 | `decision.recorded` | On the ticket the decision concerns, or the epic: what, why, and who decided, the operator or the lead. A deferred finding links its follow-up item. | the ticket, or the epic | Decision |
 | `lease.granted` | On the ticket whose work needs the lease: the lease, its holder and when it will be released. | the ticket, or the epic | Lease granted |
 | `lease.released` | On the same ticket: the lease is released. | the ticket, or the epic | Lease released |
+| `story.held` | On the ticket: the lead's reason, in the lead's words. | the ticket | Waiting |
+| `story.unheld` | On the ticket: the lead has cleared its reason, and the story is free to go on. | the ticket | Waiting |
 | `release.started` | None: the release posts once it finishes. | nowhere | - |
 | `release.finished` | On the epic: the release shipped, its commit and targets, and who approved it. | the epic | Released |
 | `finish.met` | On the epic: the finish line and the evidence that met it. | the epic | Finish line met |
@@ -309,6 +312,20 @@ decision. Lanes post on their own tickets at the points the lane brief names.
   exists is a lead defect, recorded as a decision.
 - When two lanes must agree a shared contract, route the agreement through the
   lead, and record it as a decision.
+- What a planned story waits on is derived, never stored: `waits` in the state
+  tool reads the record and says it in one sentence from
+  [the table of wait sentences](wait-words.json), which every view prints as it is. A story
+  waits on each key in its planned entry's `after` that has not landed, and on
+  an unlanded story of another lane whose whole-file grant covers a file both
+  stories' `files` name. An idle lane says what its next story waits on. Each
+  wait goes away when what frees it happens, with no action from anyone.
+- For a reason only the lead knows, hold the story: `story.held` with the
+  reason in `data.text`, answered by `story.unheld` when the lead clears it. A
+  hold also ends when the story is assigned, and nothing more is journalled.
+- A wait reaches "Needs you" only when someone must act: what it waits on is
+  stopped, blocked on the lead, or in "Needs you" itself, whose item then says
+  how many pieces wait on it; or nothing holds a planned story any more and its
+  lane is idle, so it is free to start. Neither holds the close.
 
 ### 4. Run the queue
 
@@ -1056,9 +1073,9 @@ never disagree:
   with the exact `lead-wait` to start in the background: the last wait's `restart`, so nothing journalled since that
   wait read is missed, or, with none, one after the journal's last entry. While one listens they name it instead, and
   they print nothing about it when nothing works or is queued.
-- The supervisor's "Needs you", and so the live view, says "The lead isn't listening" with that command while a lane
-  works or a candidate is queued and no lease is live, and every lead command's status line says the lead isn't
-  listening. A running `lead-wait` clears both.
+- The supervisor's "Needs you", and so the live view, says which lanes the lead won't hear, in the table of wait
+  sentences' words and with no command, while a lane works or a candidate is queued and no lease is live, and every
+  lead command's status line says the lead isn't listening, with that command. A running `lead-wait` clears both.
 
 Where this generation installs host hooks, run-delivery's `lead.may-stop` hook also holds a lead's stop while a lane
 works or a candidate is queued and no `lead-wait` listens, and journals `hook.held`, which never wakes a `wait`; its

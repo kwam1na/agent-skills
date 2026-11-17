@@ -261,9 +261,19 @@ class ProjectionTests(unittest.TestCase):
         linked = public.project(doc, runs, cfg, source_fingerprint='1' * 64)
         self.assertEqual(linked['links']['changes']['https://github.com/example/app/pull/12']['label'], '#12')
 
-    def test_lead_listener_warning_omits_option_paths_without_dropping_the_need(self):
+    def test_the_lead_listener_item_projects_as_it_is_written(self):
         doc, _ = source()
-        prefix = ("The lead isn't listening: no lead-wait runs while lane-2 (working). Start one in the "
+        item = {'holding': False, 'source': 'lead-wait.json in the record',
+                'text': "Lane 1 and lane 2 can't reach the lead. A hand-off or question from them will wait unseen "
+                        "until the lead is watching again.", 'clears': 'the lead is watching again'}
+        needs = {'running': True, 'at': '2026-11-15T00:00:00Z', 'staleAfter': '2026-11-15T00:02:00Z', 'items': [item]}
+        value = public.project(doc, {}, config(), source_fingerprint='1' * 64, needs=needs)
+        self.assertEqual(value['needs']['items'], [item])
+        public.validate(value)
+
+    def test_a_need_naming_a_command_omits_option_paths_without_dropping_the_need(self):
+        doc, _ = source()
+        prefix = ("The lead's wake: lane-2 (working). Start one in the "
                   "background: python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py "
                   "--delivery APP-1 lead-wait --after 187 --timeout 1800.0 --poll 15.0 ")
         local_options = [
@@ -300,7 +310,7 @@ class ProjectionTests(unittest.TestCase):
         for option in local_options + benign_options:
             with self.subTest(option=option):
                 item = {'holding': False, 'source': 'lead-wait.json in the record', 'text': prefix + option,
-                        'clears': 'a running lead-wait, or nothing left working or queued'}
+                        'clears': 'the lead is watching again'}
                 needs = {'running': True, 'at': '2026-11-15T00:00:00Z',
                          'staleAfter': '2026-11-15T00:02:00Z', 'items': [item]}
                 value = public.project(doc, {}, config(), source_fingerprint='1' * 64, needs=needs)

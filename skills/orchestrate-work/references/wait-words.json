@@ -1,0 +1,76 @@
+{
+  "schemaVersion": "wait-words/1",
+  "description": "Every sentence a wait is said in. delivery_state.waits fills each from the fields it derives, in journal_words' template forms; no view words a wait itself. A template may instead be {\"by\": field, \"cases\": {value: template}, \"otherwise\": template}.",
+  "stages": {
+    "description": "Where the story a wait names stands, by its stage in the record.",
+    "templates": {
+      "where": {
+        "by": "stage",
+        "cases": {
+          "planned": "It hasn't started.",
+          "building": "It is being built.",
+          "review": "It is in review[, round {round}].",
+          "handed": "It waits for the lead to accept it.",
+          "queued": "It is in the queue.",
+          "syncing": "It is being checked.",
+          "synced": "It is being checked.",
+          "checking": "It is being checked.",
+          "checked": "It is checked and about to merge.",
+          "merging": "It is merging.",
+          "stopped": "It was stopped."
+        },
+        "otherwise": "It is {stage}."
+      }
+    }
+  },
+  "waits": {
+    "description": "A story's wait, by its cause.",
+    "templates": {
+      "order": "Waits for {on:ticket} to land. {where}",
+      "files": "Waits for {on:ticket} to land. {onLane:lane} holds {files:list} for it.",
+      "held": "Held by the lead: {text}"
+    }
+  },
+  "lanes": {
+    "description": "An idle lane whose next story waits, by that story's cause.",
+    "templates": {
+      "order": "{subject:lane} is next on {next:ticket}, which waits for {on:ticket} to land.",
+      "files": "{subject:lane} is next on {next:ticket}, which waits for {on:ticket} to land. {onLane:lane} holds {files:list} for it.",
+      "held": "{subject:lane} is next on {next:ticket}, which the lead holds: {text}"
+    }
+  },
+  "holding": {
+    "description": "Under the story others wait on.",
+    "templates": {
+      "story": "Waited on by {by:list:ticket}."
+    }
+  },
+  "needsYou": {
+    "description": "The two forms a wait reaches \"Needs you\" in, and the item for a stopped story no other item names.",
+    "templates": {
+      "count": {
+        "by": "count",
+        "cases": {
+          "1": "1 piece waits on it."
+        },
+        "otherwise": "{count} pieces wait on it."
+      },
+      "free": "{subject:ticket} is free to start. {lane:lane} is idle.",
+      "stopped": "{subject:ticket} was stopped."
+    }
+  },
+  "listening": {
+    "description": "The \"Needs you\" item while no lead-wait runs and something needs the lead to listen: the lanes still at work, by name, the first as a sentence starts it.",
+    "templates": {
+      "text": {
+        "by": "count",
+        "cases": {
+          "0": "A piece in the queue can't reach the lead. If it lands or stops, nothing will tell the lead until it is watching again.",
+          "1": "{lanes:list} can't reach the lead. A hand-off or question from it will wait unseen until the lead is watching again."
+        },
+        "otherwise": "{lanes:list} can't reach the lead. A hand-off or question from them will wait unseen until the lead is watching again."
+      },
+      "clears": "the lead is watching again"
+    }
+  }
+}

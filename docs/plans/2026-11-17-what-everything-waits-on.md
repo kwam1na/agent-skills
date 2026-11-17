@@ -529,6 +529,92 @@ Acceptance criteria:
 - `c4` Both sides read it from the same facts, in the shape the epic settles for "waits on".
 - `c5` When the claim is released or the check ends, both sides clear with no action from either lead.
 
+### V26-3565. Catch a provenance listing change at hand-off, not in the merge queue
+
+Lane 3, tier 2, after V26-3566. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`,
+`skills/orchestrate-work/scripts/merge_queue.py`, `skills/run-delivery/templates/lane-brief.md`,
+`skills/run-delivery/SKILL.md`, `skills/run-delivery/references/adopting.md`, `tests/test_run_delivery.py` and
+`tests/test_merge_queue.py`.
+
+Added mid-delivery. The merge queue stopped V26-3552 after its acceptance, because the story added a shipped file to
+`provenance.lock.json`'s listing and its lane didn't own the lock (decision 131). Nothing caught it earlier. The
+operator asked to add the fix to this delivery.
+
+`handoff` runs the queue's listing check (`check_shared_outputs` and `check_listing`) before it records anything. It
+refuses a candidate that changes a regenerable listing its lane doesn't own, with the queue's guidance: the file, the
+outputs added or removed, and the grant to ask the lead for. It reuses the queue's code rather than copying it. A
+digest-only refresh stays free for any lane. The lane brief states the rule once. It names each regenerable listing
+from the binding's `regenerable.listings`, never this repository's `provenance.lock.json` by name, and says nothing
+when the binding declares none.
+
+The story stays independent of this repository's layout. `provenance.lock.json` is only the case that exposed the
+gap. A `lead-assign` warning was considered and left out: no binding says which new files a listing will take on, so
+the warning would either hard-code this repository's rule or warn on every new file.
+
+### V26-3566. Let lead-plan drop one criterion, and refuse a flag a change doesn't use
+
+Lane 3, tier 1, not blocked. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`,
+`skills/delivery-views/assets/line-map.js`, `skills/run-delivery/SKILL.md`, `tests/test_run_delivery.py` and
+`tests/delivery_views_page/line-map-plan.test.mjs`.
+
+Added mid-delivery. Plan change c13 removed V26-3565 when the lead meant to drop one of its criteria:
+`lead-plan change --kind removed` removes whole stories and silently ignores `--criterion`, and no kind drops a
+single criterion. The operator asked to add the fix to this delivery.
+
+`lead-plan change` refuses any flag its kind doesn't use, naming the flag, before it writes anything. `--kind removed`
+with `--criterion` drops that one criterion as a recorded change with its reason. It refuses a criterion the story
+lacks, and the story's last criterion. The plan chapter strikes a dropped criterion through and shows its reason, as
+it does for a removed story.
+
+### V26-3567. Show what needs someone as one list, in the lanes' own visual language
+
+Lane 1, tier 3, after V26-3426. Test-first. Files: `skills/delivery-views/assets/line-map.js`,
+`skills/delivery-views/assets/line-map.css`, `skills/orchestrate-work/references/wait-words.json`,
+`skills/run-delivery/scripts/run_delivery.py`, `tests/delivery_views_page/line-map-needs-you.test.mjs` and
+`tests/test_run_delivery_supervisor.py`.
+
+Added mid-delivery. The operator approved a live mock of "Needs you" in the lanes' visual language, merged with
+"Needs attention", and asked to add it to this delivery.
+
+"Needs attention" goes, and its blocked-lane items become rows of one list. The page's reader is the operator, but
+many items need the lead, so the list names who must act rather than saying "you". Its heading is neutral. It opens
+with one sentence counting the items by who must act and how many hold up the finish, for example "1 thing needs the
+lead, and it's holding up the finish.", replacing the "Holds the close" and "Shown only" headers. Each row's meta
+line opens with who acts: **You** for the operator, **The lead**, or a lane by name. Rows that need the operator come
+first. On the page, "you" always means the reader, and the lead is always named. Each row has:
+- a faint stroke of its lane's line, with the story's stop as the line chart draws it and its short key beneath;
+- for a wait, the blocker's stop in its own lane's colour, joined by a hairline;
+- a short headline, one softer line of why, and a meta line with "Holding up the finish" for holding items and what
+  clears it;
+- "for <age>" in a right-aligned column, with the clock time on hover.
+
+Holding rows come first at full weight. Red appears only on a stopped stop. Each "Needs you" item carries its facts
+(lane, subject, state, blocker, since, holding), and its words come from `wait-words.json`, so the page words
+nothing itself.
+
+### V26-3568. Draw a setback's thread by its state, and fold long check lists in the story
+
+Lane 2, tier 3, after V26-3554. Test-first. Files: `skills/delivery-views/assets/line-map.js`,
+`skills/delivery-views/assets/line-map.css`, `skills/orchestrate-work/references/journal-kinds.json`,
+`tests/fixtures/journal-kinds/vectors.json` and `tests/delivery_views_page/line-map-threads.test.mjs`.
+
+Added mid-delivery. The operator approved a live mock of setback threads drawn by their state, and asked to include
+folding long check lists.
+
+A thread's margin line takes the story thread's state: the held colour while open, and the page's neutral hairline
+once closed. The row with the thread's opening entry carries a small ring on the line, and the row with its closing
+entry a short end tick, so adjacent setbacks read as separate. A beat whose line names checks, such as
+`handoff.checked` and `check.selected`, says their count and why they were chosen in its line, and lists the names in
+its fold. Its words change in the registry and its vectors, not in the page. Every mark is drawn from the story's
+existing thread facts.
+
+It also fixes the Checking card's finishing animation, folded in at the operator's request. Each record write
+rebuilds the card from scratch ([`line-map.js`](skills/delivery-views/assets/line-map.js), around the running row), so a
+finishing check's hand-off is cut short: the arc filling, the tick or cross, the hold and the turn, about two seconds
+in all (`SETTLE_MS`, `HOLD_MS`, `TURN_OUT_MS`, `TURN_IN_MS`). Two-second hosted checks interrupt every one. A redraw
+mid-hand-off keeps the animating row and queues the next result. Checks that finish faster than the animation get a
+shortened one, so the card never falls behind the record.
+
 ## Calls made
 
 The operator settled these on 2026-11-17, before drafting.

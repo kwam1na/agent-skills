@@ -382,6 +382,25 @@
     return node;
   }
 
+  // What a thing waits on, and who waits on it: the state tool's sentences, printed as they are and never worded here.
+  // The story a wait names is linked where the sentence names it.
+  function waitsOf(doc, name, subject) {
+    return list(doc[name]).filter(function (wait) { return isObject(wait) && wait.subject === subject && typeof wait.words === "string"; });
+  }
+  function waitWords(doc, subject) {
+    return waitsOf(doc, "waits", subject).concat(waitsOf(doc, "waitedOn", subject)).map(function (wait) { return wait.words; });
+  }
+  function waitLine(tag, cls, wait) {
+    var node = el(tag, cls);
+    var named = typeof wait.on === "string" && wait.on !== "lead" ? wait.on : "";
+    var at = named ? wait.words.indexOf(named) : -1;
+    if (at < 0) { return add(node, wait.words); }
+    return add(node, wait.words.slice(0, at), issue(named), wait.words.slice(at + named.length));
+  }
+  function waitLines(doc, subject, tag, cls) {
+    return waitsOf(doc, "waits", subject).concat(waitsOf(doc, "waitedOn", subject)).map(function (wait) { return waitLine(tag, cls, wait); });
+  }
+
   /** A piece that is done: merged through the queue, or planned work the lead settled with no change needed. */
   function isLanded(piece) { return piece.planned ? piece.item.stage === "settled" : piece.item.stage === "merged"; }
   /** Every piece of work on the record, in the order it lands: the queue, then the planned work. */
@@ -1474,7 +1493,9 @@
         var button = el("button", "stop-btn " + kind + (landing ? " landing" : ""));
         button.type = "button";
         button.setAttribute("data-subject", key);
-        button.setAttribute("aria-label", titleOf(doc, piece.item) + ", " + (kind === "unlanded" ? "Not landed" : pieceWords(doc, piece.item)));
+        var waiting = kind === "unlanded" ? [] : waitWords(doc, key);
+        button.setAttribute("aria-label", titleOf(doc, piece.item) + ", " + (kind === "unlanded" ? "Not landed" : pieceWords(doc, piece.item)) +
+          (waiting.length ? ". " + waiting.join(" ") : ""));
         button.setAttribute("aria-pressed", String(selected === key));
         var show = function () { selected = key; showDetail(doc, piece, colours, nowSubject); };
         button.addEventListener("click", show);
@@ -1616,7 +1637,7 @@
       stage.appendChild(when);
     }
     add(line, " · ", stage);
-    var nodes = [owner, el("div", "d1", titleOf(doc, item)), line];
+    var nodes = [owner, el("div", "d1", titleOf(doc, item)), line].concat(unlanded ? [] : waitLines(doc, subject, "div", "d2 d-wait"));
     var inPlan = planStop(doc, subject);
     if (inPlan) { nodes.push(inPlan); }
     var batch = item.stage !== "merged" && !unlanded && batchNow(doc, pieces(doc));
@@ -1876,6 +1897,7 @@
         var doing = text(lane.focus) || text(focus[lane.id]);
         if (doing) { who.appendChild(el("p", "doing", doing)); }
         if (text(lane.focus) && !closed) { who.appendChild(rowAge(lane)); }
+        if (!closed) { waitLines(doc, lane.id, "p", "doing wait").forEach(function (line) { who.appendChild(line); }); }
         var st = add(el("div", "st"), closed ? el("span", "chip done", "Finished") : el("span", "chip" + (LANE_WORDS[lane.state] ? " " + lane.state : ""), LANE_WORDS[lane.state] || "Unknown"));
         if (closed) { /* what a lane last waited on or how long it has held is over */ }
         else if (lane.waitingOn) { st.appendChild(el("span", "on waiting", "waiting on " + text(lane.waitingOn))); }
@@ -1952,6 +1974,7 @@
         title.type = "button";
         title.setAttribute("aria-label", "Show " + titleOf(doc, piece.item) + " on the line");
         var row = add(el("li"), ring, key ? issue(key) : null, title, el("span", "left-state", pieceWords(doc, piece.item)));
+        waitLines(doc, key, "span", "left-wait").forEach(function (line) { row.appendChild(line); });
         row.addEventListener("click", function (event) {
           if (event.target && event.target.closest && event.target.closest("a")) { return; }
           var stop = [].filter.call(parts.line.querySelectorAll(".stop-btn"), function (button) { return button.getAttribute("data-subject") === key; })[0];
