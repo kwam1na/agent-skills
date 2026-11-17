@@ -543,8 +543,13 @@ operator asked to add the fix to this delivery.
 `handoff` runs the queue's listing check (`check_shared_outputs` and `check_listing`) before it records anything. It
 refuses a candidate that changes a regenerable listing its lane doesn't own, with the queue's guidance: the file, the
 outputs added or removed, and the grant to ask the lead for. It reuses the queue's code rather than copying it. A
-digest-only refresh stays free for any lane. `lead-assign` warns when a story's plan section names a new file the
-listing would name and the lane doesn't own the listing file. The lane brief says the same in one rule.
+digest-only refresh stays free for any lane. The lane brief states the rule once. It names each regenerable listing
+from the binding's `regenerable.listings`, never this repository's `provenance.lock.json` by name, and says nothing
+when the binding declares none.
+
+The story stays independent of this repository's layout. `provenance.lock.json` is only the case that exposed the
+gap. A `lead-assign` warning was considered and left out: no binding says which new files a listing will take on, so
+the warning would either hard-code this repository's rule or warn on every new file.
 
 ## Calls made
 
