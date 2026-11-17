@@ -22,6 +22,12 @@ from tests.test_run_delivery import (CONTEXT_TODO, POSIX_ONLY, Fixture, bytecode
                                      setup_delivery, sh, write_results)
 from tests.test_waits import (MARK, PRODUCT_ROOT, WORDS, config, journal, marked, planned, record, render_state,
                               state_tool, views)
+from tests.test_waits import run_delivery as waits_run_delivery
+
+# tests.test_run_delivery's own imports load the state tool under its plain name. The waits tests' lazy imports read
+# that name, so it goes back to theirs, as it stands when this module is not imported.
+sys.modules.update({"delivery_state": state_tool, "render_state": render_state, "run_delivery": waits_run_delivery,
+                    "delivery_views_render": views})
 
 RUN_QUIETLY = True
 
