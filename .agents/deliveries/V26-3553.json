@@ -281,6 +281,20 @@
       "after": [
         "V26-3554"
       ]
+    },
+    "V26-3574": {
+      "title": "Lead each confirmed note with what was found, and fold the fix beneath it",
+      "lane": "lane-3",
+      "why": "The operator approved a mock of the round card's confirmed notes, aligned with V26-3555's findings redesign, in this delivery",
+      "criteria": [
+        {
+          "id": "v26-3574-1",
+          "text": "c1: A confirmed note's row leads with its finding's summary and priority from the round that raised it. Its resolution, evidence and id show only when the row is opened."
+        }
+      ],
+      "after": [
+        "V26-3565"
+      ]
     }
   },
   "finish": [
