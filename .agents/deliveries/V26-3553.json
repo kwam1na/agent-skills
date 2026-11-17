@@ -210,6 +210,10 @@
         {
           "id": "v26-3567-2",
           "text": "c2: The list opens with the sentence counting items and those holding up the finish, with no group headers."
+        },
+        {
+          "id": "v26-3567-3",
+          "text": "c3: Each row shows its lane's stop (and a wait's blocker) as the line chart draws them, a headline, a why, what clears it and 'for <age>', with the words taken from the word table and the age from the record."
         }
       ],
       "after": [
