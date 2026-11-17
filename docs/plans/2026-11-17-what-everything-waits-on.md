@@ -531,7 +531,20 @@ Acceptance criteria:
 
 ### V26-3565. Catch a provenance listing change at hand-off, not in the merge queue
 
-Lane 1, tier 1, after V26-3426. Added mid-delivery: The operator asked to add it to this delivery: V26-3552 was stopped by the merge queue after acceptance for a provenance listing change its lane didn't own (decision 131), and nothing caught it earlier
+Lane 1, tier 3, after V26-3426. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`,
+`skills/orchestrate-work/scripts/merge_queue.py`, `skills/run-delivery/templates/lane-brief.md`,
+`skills/run-delivery/SKILL.md`, `skills/run-delivery/references/adopting.md`, `tests/test_run_delivery.py` and
+`tests/test_merge_queue.py`.
+
+Added mid-delivery. The merge queue stopped V26-3552 after its acceptance, because the story added a shipped file to
+`provenance.lock.json`'s listing and its lane didn't own the lock (decision 131). Nothing caught it earlier. The
+operator asked to add the fix to this delivery.
+
+`handoff` runs the queue's listing check (`check_shared_outputs` and `check_listing`) before it records anything. It
+refuses a candidate that changes a regenerable listing its lane doesn't own, with the queue's guidance: the file, the
+outputs added or removed, and the grant to ask the lead for. It reuses the queue's code rather than copying it. A
+digest-only refresh stays free for any lane. `lead-assign` warns when a story's plan section names a new file the
+listing would name and the lane doesn't own the listing file. The lane brief says the same in one rule.
 
 ## Calls made
 
