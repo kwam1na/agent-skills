@@ -1,0 +1,100 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3431",
+  "headline": "V26-3431: let a story's checks include a catalogue entry it adds itself",
+  "plan": "docs/plans/2026-11-17-checks-a-story-adds.md",
+  "laneBrief": "docs/plans/2026-11-17-checks-a-story-adds.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-17-checks-a-story-adds.lane-notes.md"
+  },
+  "context": {
+    "sections": [
+      "Decisions"
+    ]
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "skills/run-delivery/scripts/run_delivery.py",
+        "skills/run-delivery/SKILL.md",
+        "tests/test_run_delivery.py",
+        "tests/test_run_delivery_supervisor.py",
+        "tests/test_own_deliveries.py",
+        ".agents/orchestration.json",
+        "docs/own-deliveries.md",
+        "catalog.json",
+        "profiles/*"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3431": {
+      "title": "Let a story add its test module's catalogue entry without the lead listing it first, and catch a module nobody catalogued",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "c1",
+          "text": "A lane can name the test module its story creates in `handoff --checks` before the module's catalogue entry is on the base."
+        },
+        {
+          "id": "c2",
+          "text": "The lead can select that check with `lead-accept --checks`, and the queue runs it at the handed head."
+        },
+        {
+          "id": "c3",
+          "text": "An uncatalogued test module fails a named guard."
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "The story",
+      "text": "V26-3431 lands on main through the merge queue",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the base head after the landing, inside tests/suite-budget.json",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "readyPullRequests": true,
+    "grantedBy": "Kwamina",
+    "grantedOn": "2026-11-17"
+  },
+  "approvals": [
+    {
+      "id": "approval-1",
+      "text": "The operator has approved delivering this plan on `main`, with one lane granted push and draft change requests, and the lead granted ready change requests.",
+      "state": "done",
+      "who": "Kwamina"
+    }
+  ],
+  "outOfScope": [
+    "The state tool's `select` and its validation, which already take objects.",
+    "Selecting a check that is in no catalogue at all, through `lead-accept`. A JSON list through the state tool's `select` still does that.",
+    "A catalogue guard in `doctor` for other adopters. The guard is this repository's test.",
+    "The orchestration guide and the lane brief template. Both belong to another live delivery on this base, V26-3553. This change is described in run-delivery's own `SKILL.md` and in `docs/own-deliveries.md`, and the template's line stays true."
+  ],
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  }
+}
