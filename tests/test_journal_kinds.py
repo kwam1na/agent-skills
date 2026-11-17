@@ -482,6 +482,35 @@ class JournalFactsTests(unittest.TestCase):
         self.assertEqual(self.append("decision.recorded", {"text": "Carry it", "why": "It holds."})["data"]["why"], "It holds.")
         self.assertEqual(self.append("blocker.recorded", {"text": "The lead must choose."})["data"]["text"], "The lead must choose.")
 
+    def test_what_the_registry_cannot_say_of_a_story_s_entries_is_refused_each_by_its_own_rule(self) -> None:
+        def entry(kind: str, data: dict, **fields: object) -> dict:
+            return {"id": 1, "at": "2026-11-16T10:00:00Z", "kind": kind, "lane": "lane-1", "subject": "APP-12", "data": data, **fields}
+        authorized = {"reviewed": HEAD, "baseCommits": [BASE_HEAD], "token": "0" * 32}
+        carry = {"from": HEAD, "to": BASE_HEAD, "digest": "a" * 64, "baseCommits": [BASE_HEAD]}
+        handed = {"head": BASE_HEAD, "checks": [], "carry": carry}
+        recovered = {"head": HEAD, "recovery": {"head": HEAD, "changeRequest": None}}
+        # Each in its right form is accepted.
+        for kind, data, fields in (("base.merge.authorized", authorized, {}), ("candidate.handed", handed, {}),
+                                   ("candidate.merged", recovered, {"occurredAt": None}),
+                                   ("review.recorded", {"digest": "a" * 64, "candidateRef": HEAD}, {})):
+            with self.subTest(kind=kind):
+                self.assertEqual(state_tool.journal_errors([entry(kind, data, **fields)]), [])
+        for name, wrong, expected in (
+                ("an authorization without its lane", entry("base.merge.authorized", authorized, lane=None),
+                 "a base merge authorization names a lane and base commits"),
+                ("an authorization with no base commits", entry("base.merge.authorized", {**authorized, "baseCommits": []}),
+                 "a base merge authorization names a lane and base commits"),
+                ("an authorization about no story", entry("base.merge.authorized", authorized, subject=None),
+                 "a base.merge.authorized names its story"),
+                ("a capture about no story", entry("review.recorded", {"digest": "a" * 64, "candidateRef": HEAD}, subject=None),
+                 "a review.recorded names its story"),
+                ("a hand-off's carry with no base commits", entry("candidate.handed", {**handed, "carry": {**carry, "baseCommits": []}}),
+                 "a base merge carry names its base commits"),
+                ("a recovery never recovered", entry("candidate.merged", recovered),
+                 "only a recovered merge carries source identity")):
+            with self.subTest(name):
+                self.assertEqual(state_tool.journal_errors([wrong]), [f"entry 1: {expected}"])
+
     def test_an_entry_may_say_when_it_happened_but_not_after_it_was_journaled(self) -> None:
         started = {"id": 1, "at": "2026-11-16T10:00:00Z", "kind": "check.started", "lane": None, "subject": "APP-12", "data": {}}
         finished = {"id": 2, "at": "2026-11-16T10:05:00Z", "kind": "check.finished", "lane": None, "subject": "APP-12",

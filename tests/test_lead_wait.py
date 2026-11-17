@@ -1057,6 +1057,13 @@ class LeaseTests(unittest.TestCase):
                 self.assertEqual(flow.listener_needed({**state, "queue": [{"subject": "A", "stage": stage}]}),
                                  [f"A ({stage})"])
 
+    def test_a_held_stop_names_the_same_lanes_and_pieces_as_its_facts(self) -> None:
+        lane = lambda name, state: {"id": name, "state": state}
+        state = {"lanes": [lane("lane-1", "idle"), lane("lane-2", "done"), lane("lane-3", "working"), lane("lane-4", "handed")],
+                 "queue": [{"subject": "A", "stage": "merged"}, {"subject": "B", "stage": "queued"}, {"subject": "C", "stage": "stopped"}]}
+        self.assertEqual(flow.listener_facts(state), {"lanes": ["lane-3", "lane-4"], "pieces": ["B", "C"]})
+        self.assertEqual(flow.listener_facts({"lanes": [lane("lane-1", "idle")], "queue": []}), {"lanes": [], "pieces": []})
+
 
 class StandingTextTests(unittest.TestCase):
     def assert_phrases(self, path: Path, *phrases: str) -> None:

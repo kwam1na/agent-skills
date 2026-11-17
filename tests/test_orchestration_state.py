@@ -6710,6 +6710,14 @@ class FactsReviewReaderTests(unittest.TestCase):
         self.assertEqual(state_tool.carry_of(state_tool.read_journal(self.directory)[-1]),
                          {"from": HEAD_B, "to": HEAD_C, "digest": carry["digest"],
                           "note": f"Ready after 2 review rounds, its review carried from {HEAD_B[:7]}"})
+        # Words that can't be made leave the carry its review, with no note.
+        registry = json.loads(state_tool.journal_words.REGISTRY_FILE.read_text(encoding="utf-8"))
+        registry["kinds"]["candidate.handed"]["words"]["line"] = "{nothing}"
+        planted = self.root / "journal-kinds.json"
+        planted.write_text(json.dumps(registry), encoding="utf-8")
+        with mock.patch.object(state_tool.journal_words, "REGISTRY_FILE", planted):
+            self.assertEqual(state_tool.carry_of(state_tool.read_journal(self.directory)[-1]),
+                             {"from": HEAD_B, "to": HEAD_C, "digest": carry["digest"], "note": ""})
         found = self.evidence()
         self.assertEqual((found["evidence"], found["carriedFrom"], found["carriedTo"]), ("captured", HEAD_B, HEAD_C))
 

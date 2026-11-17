@@ -189,11 +189,11 @@ class Walk:
         if entry is not None and SENTENCE in [key.value for key in entry.keys if isinstance(key, ast.Constant)]:
             return True
         func = call.func
-        if isinstance(func, ast.Attribute) and func.attr == "journal" and len(call.args) > 2:
+        if isinstance(func, ast.Attribute) and func.attr == "journal" and (
+                len(call.args) > 2 or len(call.args) == 2 and _worded(call.args[1])):
+            # The runner's helper takes (kind, subject): words where its subject goes are its old sentence.
             return True
-        return any(isinstance(node, ast.Constant) and node.value == f"--{SENTENCE}"
-                   for sequence in [call.args, *(n.elts for n in call.args if isinstance(n, (ast.List, ast.Tuple)))]
-                   for node in sequence)
+        return f"--{SENTENCE}" in _constants(call)
 
     def _walk(self, call: ast.Call, function: str, seen: set[str], kind: ast.expr | None = None) -> None:
         line = call.lineno
@@ -317,6 +317,17 @@ def problems(name: str, source: str, inventory: Counter | None = None) -> list[s
     return said
 
 
+def _worded(node: ast.expr) -> bool:
+    """Words written out: a string literal or an f-string."""
+    return isinstance(node, ast.JoinedStr) or isinstance(node, ast.Constant) and isinstance(node.value, str)
+
+
+def _constants(call: ast.Call) -> set[str]:
+    """Every string a call's arguments hold, however deep: in a list, a starred list or either branch of a choice."""
+    return {node.value for argument in call.args for node in ast.walk(argument)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)}
+
+
 def sentences_in_tests(path: Path, source: str) -> list[str]:
     """A test that journals a sentence: ``summary=`` to append_journal, or ``--summary`` on a journal command line."""
     found = []
@@ -327,10 +338,9 @@ def sentences_in_tests(path: Path, source: str) -> list[str]:
         name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else None
         if name == "append_journal" and any(word.arg == SENTENCE for word in node.keywords):
             found.append(f"{path.name}:{node.lineno}: passes a sentence to append_journal")
-        for sequence in [node.args, *(n.elts for n in node.args if isinstance(n, (ast.List, ast.Tuple)))]:
-            words = [item.value if isinstance(item, ast.Constant) else None for item in sequence]
-            if "journal" in words and f"--{SENTENCE}" in words:
-                found.append(f"{path.name}:{node.lineno}: passes --{SENTENCE} to the journal command")
+        held = _constants(node)
+        if "journal" in held and f"--{SENTENCE}" in held:
+            found.append(f"{path.name}:{node.lineno}: passes --{SENTENCE} to the journal command")
     return found
 
 
@@ -385,6 +395,15 @@ class JournalShapeWalkTests(unittest.TestCase):
                                   else ('"candidate.vanished"', "writes candidate.vanished, which the registry does not list"))
                 said = self.planted(name, anchor, call.format(kind=kind, sentence=""))
                 self.assertTrue(any(expected in problem for problem in said), (kind, said))
+        # The runner's helper given its old sentence where its subject now goes, and a sentence in a starred choice on a
+        # command line, each fail too.
+        for name, anchor, call in (("merge_queue.py", "    def carry(", 'self.journal("finish.met", "Said", data={})'),
+                                   ("merge_queue.py", "    def carry(", 'self.journal("finish.met", f"Said {self.base}", data={})'),
+                                   ("run_delivery.py", "def lead_flake(",
+                                    'state_tool("journal", "--kind", "finish.met", "--data", "{}", *(["--summary", "Said"] if c else []))')):
+            with self.subTest(planted=call):
+                said = self.planted(name, anchor, call)
+                self.assertTrue(any("passes a sentence" in problem for problem in said), said)
         # A helper that passes on a sentence with the kind it was given fails at its own call.
         helper = self.sources["run_delivery.py"].replace(
             'state_tool("journal", "--kind", kind, "--data", json.dumps(facts))',
@@ -417,7 +436,8 @@ class JournalShapeWalkTests(unittest.TestCase):
         for planted, expected in (
                 ('state_tool.append_journal(directory, kind="flake.declared", data={}, summary="Said")', "passes a sentence to append_journal"),
                 ('self.tool("journal", "--kind", "flake.declared", "--summary", "Said")', "passes --summary to the journal command"),
-                ('subprocess.run([*tool, "journal", "--kind", "flake.declared", "--summary", "Said"])', "passes --summary to the journal command")):
+                ('subprocess.run([*tool, "journal", "--kind", "flake.declared", "--summary", "Said"])', "passes --summary to the journal command"),
+                ('self.tool("journal", "--kind", "flake.declared", *(["--summary", "Said"] if said else []))', "passes --summary to the journal command")):
             with self.subTest(planted=planted):
                 found = sentences_in_tests(Path("test_planted.py"), planted)
                 self.assertEqual(len(found), 1, found)

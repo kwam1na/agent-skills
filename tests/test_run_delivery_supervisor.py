@@ -382,6 +382,31 @@ class DeferredFindingTests(unittest.TestCase):
     as closed, fixed or withdrawn; any other deferral is still deferred, and is filed once, or is a breach under
     noDeferrals."""
 
+    def test_a_breach_whose_follow_up_has_no_title_is_still_journalled_with_one(self) -> None:
+        tool = loaded_run_delivery(self, "run_delivery_for_a_blank_breach")
+        c = types.SimpleNamespace(no_deferrals=True)
+        doc = {"state": {"queue": [{"subject": "S", "stage": "merged"}]}, "journal": []}
+        written: list[tuple] = []
+        with mock.patch.object(tool, "deferred_findings", return_value=[{"story": "S", "finding": "F1", "title": "  "}]), \
+                mock.patch.object(tool, "state_tool", side_effect=lambda *args, **_: written.append(args)):
+            tool.deferral_breaches(c, doc)
+        self.assertEqual(written, [("journal", "--kind", "deferral.breached", "--subject", "S",
+                                    "--data", json.dumps({"finding": "F1", "title": "no title given"}))])
+
+    def test_an_entry_whose_words_cannot_be_made_is_still_said_and_posted_under_its_kind(self) -> None:
+        tool = loaded_run_delivery(self, "run_delivery_for_unworded_entries")
+        words = tool.tracker_publisher.journal_words
+        registry = json.loads(Path(words.REGISTRY_FILE).read_text(encoding="utf-8"))
+        registry["kinds"]["finish.met"]["words"] = {"head": "{finish} met at {nothing}", "line": "{nothing}"}
+        planted = Path(self.enterContext(tempfile.TemporaryDirectory())) / "journal-kinds.json"
+        planted.write_text(json.dumps(registry), encoding="utf-8")
+        entry = {"id": 1, "at": "2026-11-16T10:00:00Z", "kind": "finish.met", "lane": None, "subject": "acs", "data": {"finish": "acs"}}
+        self.assertEqual(tool.entry_said(entry), "acs")
+        self.assertEqual(tool.tracker_publisher.said(entry), "A finish line was met\n\nacs")
+        with mock.patch.object(words, "REGISTRY_FILE", planted):
+            self.assertEqual(tool.entry_said(entry), "finish.met")
+            self.assertEqual(tool.tracker_publisher.said(entry), "finish.met")
+
     def setUp(self) -> None:
         self.tool = loaded_run_delivery(self, "run_delivery_for_deferred_findings")
         self.tmp = Path(tempfile.mkdtemp(prefix="deferred-findings-"))

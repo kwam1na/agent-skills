@@ -989,7 +989,8 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         self.assertEqual((carried[0]["subject"], carried[0]["data"]), ("FX-2", {
             "from": reviewed, "to": queued, "digest": captured["data"]["digest"], "why": "only a fixture changed"}))
         self.assertEqual((carried[0].get("because"), carried[0].get("answers")), (None, None))
-        self.assertRegex(out, r"\ncarried: \S")
+        # The carry is said in its kind's words: the registry's head and line, with this carry's own facts.
+        self.assertIn(f"\ncarried: The review of FX-2 was carried\n\nFrom {reviewed[:7]} to {queued[:7]}. only a fixture changed\n", out)
 
     # -- the merge queue's review gate -----------------------------------------------------------------
 

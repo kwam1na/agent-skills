@@ -7506,10 +7506,11 @@ def accept_story(c, args) -> None:
     evidence = [e for e in doc["journal"] if e.get("kind") == "review.recorded" and e.get("subject") == key]
     carried_review = None
     if not evidence or evidence[-1]["data"]["candidateRef"] != head:
+        # A hand-off whose journal entry never landed carries nothing, and the evidence is then not for the head.
         hand = next((entry for entry in reversed(doc["journal"])
-                     if entry["subject"] == key and entry["kind"] == "candidate.handed"), {})
-        carry = hand["data"].get("carry", {})
-        if evidence and carry.get("baseCommits") and carry.get("to") == head and hand.get("lane") == item["lane"]:
+                     if entry["subject"] == key and entry["kind"] == "candidate.handed"), None)
+        carry = hand["data"].get("carry", {}) if hand else {}
+        if evidence and carry.get("baseCommits") and carry.get("to") == head and hand["lane"] == item["lane"]:
             validator = _validator()
             try:
                 expected = validator.base_merge_evidence(
