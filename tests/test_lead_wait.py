@@ -1138,7 +1138,8 @@ class StandingTextTests(unittest.TestCase):
             "A lease is live while its pid is alive and its `updatedAt` is under 180 seconds old",
             "`lead-init`, `lead-assign`, `lead-accept` and `lead-run --resume` end, while a lane works or a candidate is "
             "queued, with the exact `lead-wait` to start in the background",
-            "says \"The lead isn't listening\" with that command",
+            "says which lanes the lead won't hear, in the table of wait sentences' words and with no command",
+            "every lead command's status line says the lead isn't listening, with that command",
             "A running `lead-wait` clears both",
             "On a host whose own hooks this generation doesn't install, the printed command, the status line and "
             "\"Needs you\" are what keep the rule.",
@@ -1153,7 +1154,7 @@ class StandingTextTests(unittest.TestCase):
             "A lead never ends its turn while a lane works or a candidate is queued unless `lead-wait` runs in the "
             "background",
             "end with the exact `lead-wait` to start",
-            "say \"The lead isn't listening\"",
+            "say which lanes the lead won't hear, in the words of orchestrate-work's table of wait sentences, with no command",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, rows[0])

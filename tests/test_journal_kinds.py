@@ -106,6 +106,8 @@ TABLE = {
     "decision.recorded": ("H", "decision", "*text* *why*", "", "ticket-or-epic: Decision"),
     "lease.granted": ("S", "note", "lease holder", "", "ticket-or-epic: Lease granted"),
     "lease.released": ("S", "note", "lease holder", "answers:lease.granted", "ticket-or-epic: Lease released"),
+    "story.held": ("S", "decision", "*text*", "", "ticket: Waiting"),
+    "story.unheld": ("S", "note", "", "answers:story.held", "ticket: Waiting"),
     "release.started": ("H", "note", "head", "", "-"),
     "release.finished": ("H", "landed", "head failedAt?", "cause", "epic: Released"),
     "finish.met": ("H", "landed", "finish", "", "epic: Finish line met"),

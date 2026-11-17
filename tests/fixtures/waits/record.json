@@ -1,0 +1,144 @@
+{
+  "state": {
+    "schemaVersion": "delivery-state/1",
+    "version": 12,
+    "meta": {
+      "headline": "What everything waits on",
+      "updatedAt": "2026-11-17T12:00:00Z",
+      "baseHead": "a3f1c2e4b5d6978011223344556677889900aabb",
+      "releasedHead": null,
+      "checking": {
+        "now": null,
+        "next": []
+      }
+    },
+    "lanes": [
+      {
+        "id": "lane-1",
+        "title": "Waits",
+        "focus": "",
+        "state": "idle",
+        "waitingOn": null,
+        "since": "2026-11-17T10:00:00Z"
+      },
+      {
+        "id": "lane-2",
+        "title": "Renderer",
+        "focus": "the review card",
+        "state": "reviewing",
+        "waitingOn": null,
+        "since": "2026-11-17T10:00:00Z"
+      },
+      {
+        "id": "lane-3",
+        "title": "Peers",
+        "focus": "",
+        "state": "idle",
+        "waitingOn": null,
+        "since": "2026-11-17T10:00:00Z"
+      }
+    ],
+    "queue": [],
+    "laneOwnership": {
+      "lane-1": [
+        "skills/waits.py"
+      ],
+      "lane-2": [
+        "skills/render.py",
+        "skills/views/*"
+      ],
+      "lane-3": [
+        "skills/peers.py"
+      ]
+    },
+    "planned": [
+      {
+        "subject": "APP-1",
+        "title": "Show the review card",
+        "lane": "lane-2",
+        "stage": "review",
+        "files": [
+          "skills/render.py",
+          "skills/views/card.js"
+        ]
+      },
+      {
+        "subject": "APP-2",
+        "title": "Say what a story waits on",
+        "lane": "lane-1",
+        "stage": "planned",
+        "after": [
+          "APP-1"
+        ],
+        "files": [
+          "skills/waits.py"
+        ]
+      },
+      {
+        "subject": "APP-3",
+        "title": "Show the waits on the page",
+        "lane": "lane-3",
+        "stage": "planned",
+        "files": [
+          "skills/render.py",
+          "skills/peers.py"
+        ]
+      },
+      {
+        "subject": "APP-4",
+        "title": "Let a lane wait",
+        "lane": "lane-2",
+        "stage": "planned"
+      }
+    ],
+    "finish": [],
+    "followups": [],
+    "leases": [],
+    "extensions": {}
+  },
+  "journal": [
+    {
+      "id": 1,
+      "at": "2026-11-17T09:00:00Z",
+      "kind": "record.started",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "base": {
+          "ref": "origin/main",
+          "head": "a3f1c2e4b5d6978011223344556677889900aabb"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "at": "2026-11-17T10:00:00Z",
+      "kind": "lane.assigned",
+      "lane": "lane-2",
+      "subject": "APP-1",
+      "data": {
+        "title": "Show the review card"
+      }
+    },
+    {
+      "id": 3,
+      "at": "2026-11-17T11:00:00Z",
+      "kind": "review.round",
+      "lane": "lane-2",
+      "subject": "APP-1",
+      "data": {
+        "round": 1
+      }
+    },
+    {
+      "id": 4,
+      "at": "2026-11-17T11:30:00Z",
+      "kind": "review.round",
+      "lane": "lane-2",
+      "subject": "APP-1",
+      "data": {
+        "round": 2
+      }
+    }
+  ]
+}

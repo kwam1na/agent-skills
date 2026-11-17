@@ -795,6 +795,26 @@ class Scenarios:
         self.assertEqual(sum("journal entry 1 " in text for text in d.comments(EPIC)), 1, "the record's start posts to the epic once")
         self.assertFalse(any(f"journal entry {lane_posted['id']} " in text for text in comments))
 
+    def test_a_hold_and_its_clearing_post_under_waiting_and_a_derived_wait_posts_nothing(self) -> None:
+        d = self.delivery()
+        d.ticket("EP-2")
+        d.ticket("EP-3")
+        # EP-3 is ordered after EP-2, which hasn't landed: a wait every pass derives, and none posts.
+        d.planned[-1]["after"] = ["EP-2"]
+        self.published(d)
+        self.assertEqual(d.comments("EP-3"), [])
+        held = d.entry("story.held", "EP-3", {"text": "waits for the operator's call on the budget"})
+        cleared = d.entry("story.unheld", "EP-3", {}, answers=[held["id"]])
+        self.published(d)
+        self.published(d)  # A second run changes nothing.
+        comments = d.comments("EP-3")
+        for entry in (held, cleared):
+            self.assertEqual(d.outcomes(entry["id"]), ["comment"], entry)
+            [text] = [text for text in comments if f"journal entry {entry['id']} " in text]
+            self.assertIn("Waiting", text)
+        self.assertIn("waits for the operator's call on the budget", comments[0])
+        self.assertEqual(len(comments), 2, "only the hold and its clearing post to the ticket")
+
     def test_a_transient_failure_stops_the_run_and_the_next_posts_from_there(self) -> None:
         d = self.delivery()
         d.ticket("EP-2")

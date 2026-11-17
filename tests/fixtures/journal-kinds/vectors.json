@@ -1649,6 +1649,24 @@
       "line": "The guide named a file the skill does not ship."
     },
     {
+      "kind": "story.held",
+      "lane": null,
+      "subject": "APP-13",
+      "data": {
+        "text": "Waits for the operator's call on the budget"
+      },
+      "head": "The lead held APP-13",
+      "line": "Waits for the operator's call on the budget"
+    },
+    {
+      "kind": "story.unheld",
+      "lane": null,
+      "subject": "APP-13",
+      "data": {},
+      "head": "The lead cleared the hold on APP-13",
+      "line": ""
+    },
+    {
       "kind": "lease.granted",
       "lane": "lane-1",
       "subject": "APP-12",

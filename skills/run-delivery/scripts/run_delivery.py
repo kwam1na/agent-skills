@@ -23,6 +23,7 @@ Lead:
   lead-authorize-base-merge <key> --reviewed HEAD --base COMMIT...
   lead-carry-review <key> --from HEAD --to HEAD --reason TEXT
   lead-decide --text T --why W [--because N] [--subject KEY] | lead-block --text T [--because N] [--subject KEY]
+  lead-hold <key> --text T | lead-hold <key> --clear
   lead-push [--wait-seconds N] | lead-flake --check ID [--test REGEX ...] --ref REF
 Merge queue:
   pr-review-current --branch B --head H [--wait]   (a reviewGate: exit 0 only for a current, passing review.pr review)
@@ -6490,7 +6491,8 @@ def lead_init(args) -> None:
     if problems:
         raise Stop(f"lead-init refuses until each of these is fixed (doctor --delivery {c.delivery} reports them too):"
                    + "".join(f"\n  - {problem}" for problem in problems))
-    planned = [planned_entry(c, key) for key in c.stories]
+    sections = plan_sections(c.shelf.text(c.plan) or "")
+    planned = [planned_entry(c, key, sections) for key in c.stories]
     # The record's finish items take no other keys: covers, label and at are the plan's.
     finish = [{"id": f["id"], "text": f["text"], "met": False} for f in c.finish]
     ownership = c.effective_ownership({})
@@ -6613,10 +6615,35 @@ def slot_line(c) -> str:
     return f"{c.base_branch}'s merge slot is free"
 
 
-def planned_entry(c, key: str) -> dict:
+def planned_entry(c, key: str, sections: list | None = None) -> dict:
     s = c.stories[key]
     return {"subject": key, "title": f"{c.label(key)}: {s['title']}" if s.get("label") else s["title"],
-            "lane": s["lane"], "stage": "planned"}
+            "lane": s["lane"], "stage": "planned", **plan_members(c, key, sections)}
+
+
+def plan_members(c, key: str, sections: list | None = None) -> dict:
+    """What the record's waits are derived from, for one story: `after`, the keys its delivery-file story is ordered
+    after, and `files`, the paths its plan section's `Files:` sentence names. Each is left out when it has none."""
+    if sections is None:
+        sections = plan_sections(c.shelf.text(c.plan) or "")
+    after = list(c.stories[key].get("after") or [])
+    files = section_files(story_section(sections, key) or "")
+    return {**({"after": after} if after else {}), **({"files": files} if files else {})}
+
+
+def with_plan_members(c, planned: list[dict]) -> list[dict] | None:
+    """The planned work with each delivery-file story's missing `after` and `files` filled in, or None when none lacks
+    what the plan gives it. A member already there is kept as it stands."""
+    sections = plan_sections(c.shelf.text(c.plan) or "")
+    filled, changed = [], False
+    for entry in planned:
+        if entry["subject"] in c.stories:
+            missing = {name: value for name, value in plan_members(c, entry["subject"], sections).items()
+                       if name not in entry}
+            if missing:
+                entry, changed = {**entry, **missing}, True
+        filled.append(entry)
+    return filled if changed else None
 
 
 class Unreasoned(Stop):
@@ -6696,14 +6723,16 @@ def _register_stories(c) -> list[str]:
         state = doc["state"]
         added.clear()
         added.extend(unregistered(c, state))
+        # A planned entry found without the plan's order or files, as an older release wrote it, gains them here.
+        planned = with_plan_members(c, state.get("planned", [])) or state.get("planned", [])
         if not added:
-            return None
+            return None if planned is state.get("planned", []) else {"planned": planned}
         problems = unreasoned_problems(c, added)
         if problems:
             raise unreasoned_refusal(c, problems)
         followups = [f for f in state["followups"] if f["id"] not in added and f.get("reference") not in added]
-        return {"planned": [*state.get("planned", []), *(planned_entry(c, key) for key in added)], "followups": followups}
-    if patch_from(compute, "the stories added to the delivery") is None:
+        return {"planned": [*planned, *(planned_entry(c, key) for key in added)], "followups": followups}
+    if patch_from(compute, "the stories added to the delivery") is None or not added:
         return []
     for key in added:
         state_tool("journal", "--kind", "story.added", "--subject", key, "--data", json.dumps(story_added(c, key)))
@@ -9646,10 +9675,7 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                           + f"{flow_command()} lead-resolve {entry['id']} --why TEXT"})
     needed = listener_needed(doc["state"])
     if needed and lead_listener(c.state) is None:
-        items.append({"holding": False, "source": f"{LEAD_WAIT_LEASE} in the record",
-                      "text": f"The lead isn't listening: no lead-wait runs while {', '.join(needed)}. Start one in the "
-                      f"background: {lead_wait_command(c, doc)}",
-                      "clears": "a running lead-wait, or nothing left working or queued"})
+        items.append({"holding": False, "source": f"{LEAD_WAIT_LEASE} in the record", **listening_words(c, doc["state"])})
     for name in flapping:
         items.append({"holding": True, "source": f"the supervisor's {name}", "clears": f"the {name} staying up",
                       "text": f"The supervisor's {name} won't stay up; its log is "
@@ -9661,7 +9687,81 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
             items.append({"holding": True, "source": "acceptance", "text": f"Accepted as drafts while the merge step "
                           f"refuses drafts: {', '.join(drafts)}. Mark each ready, then lead-accept --requeue it if it "
                           "stopped", "clears": "marking each ready, then lead-accept --requeue for one that stopped"})
-    return items
+    return items + waits_needing(c, doc, items)
+
+
+def lane_named(lane: str) -> str:
+    """A lane as a sentence names it: lane-1 is "lane 1"; a lane with another name is called by it."""
+    numbered = re.fullmatch(r"lane-([0-9]+)", lane)
+    return f"lane {numbered.group(1)}" if numbered else lane
+
+
+def listening_words(c, state: dict) -> dict:
+    """The "Needs you" item's text and what clears it while no lead-wait runs, from the table of wait sentences: the
+    lanes still at work, by name. The lead's own status line keeps the command that starts one."""
+    scripts = str(c.release / "skills/orchestrate-work/scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import delivery_state
+    table = delivery_state.load_wait_words()
+    lanes = [lane_named(lane) for lane in listener_facts(state)["lanes"]]
+    # The first lane starts the sentence.
+    lanes = [lane[:1].upper() + lane[1:] for lane in lanes[:1]] + lanes[1:]
+    return {"text": delivery_state.wait_said(table, "listening", "text", {"lanes": lanes, "count": len(lanes)}),
+            "clears": delivery_state.wait_said(table, "listening", "clears", {})}
+
+
+def needs_about(doc: dict, item: dict) -> set[str]:
+    """The lanes and stories a "Needs you" item is about, read from where it comes from."""
+    source = item["source"]
+    if source.endswith("'s state"):
+        return {source[:-len("'s state")]}
+    found = re.match(r"journal entry ([0-9]+) ", source)
+    if not found:
+        return set()
+    entry = next((e for e in doc["journal"] if e["id"] == int(found.group(1))), None) or {}
+    return {name for name in (entry.get("subject"), entry.get("lane")) if name}
+
+
+def waits_needing(c, doc: dict, items: list[dict]) -> list[dict]:
+    """What the record's waits add to "Needs you", only where someone has to act: the item for a piece that others wait
+    on and that needs someone gains how many wait on it, a stopped piece no item names gets one, and a planned story
+    nothing holds on an idle lane is free to start. None of these holds the close. Changes ``items`` in place, and
+    returns the items it adds."""
+    scripts = str(c.release / "skills/orchestrate-work/scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import delivery_state
+    about = [needs_about(doc, item) for item in items]
+    found = delivery_state.waits(doc, needing={name for names in about for name in names})
+    table = delivery_state.load_wait_words()
+    lanes = {row["id"] for row in doc["state"]["lanes"]}
+    pieces = {item["subject"]: item for item in [*doc["state"]["queue"], *doc["state"].get("planned", [])]}
+    counted: dict[str, list[str]] = {}
+    for wait in found:
+        if wait["needsSomeone"] and wait["subject"] not in lanes and wait["subject"] not in counted.get(wait["on"], []):
+            counted.setdefault(wait["on"], []).append(wait["subject"])
+    added = []
+    for on, waiting in counted.items():
+        count = delivery_state.wait_said(table, "needsYou", "count", {"count": len(waiting)})
+        piece = pieces.get(on) or {}
+        lane = piece.get("assignedLane", piece.get("lane")) if piece.get("stage") == "stopped" else piece.get("lane")
+        named = next((item for item, names in zip(items, about) if on in names), None) \
+            or next((item for item, names in zip(items, about) if lane and lane in names), None)
+        if named is not None:
+            named["text"] = f"{named['text'].rstrip()} {count}"
+        elif piece.get("stage") == "stopped":
+            added.append({"holding": False, "source": f"{on}'s waits", "clears": f"{on} put back, landing or settling",
+                          "text": delivery_state.wait_said(table, "needsYou", "stopped", {"subject": on}) + " " + count})
+    for free in delivery_state.free_to_start(doc, found, words=table):
+        # A story free to start is in "Needs you" itself, so what waits on it is counted on its item.
+        waiting = list(dict.fromkeys(wait["subject"] for wait in found
+                                     if wait["on"] == free["subject"] and wait["subject"] not in lanes))
+        said = free["words"] + (" " + delivery_state.wait_said(table, "needsYou", "count", {"count": len(waiting)})
+                                if waiting else "")
+        added.append({"holding": False, "source": f"{free['subject']}'s waits", "text": said,
+                      "clears": f"{free['subject']} assigned, held, or waiting again"})
+    return added
 
 
 NEEDS_FILE = "needs-you.json"
@@ -11094,6 +11194,43 @@ def lead_block(args) -> None:
     print(f"recorded blocker {number}; resolve it with {flow_command()} lead-resolve {number} --why TEXT")
 
 
+def lead_hold(args) -> None:
+    """Record why the lead holds a planned story, as story.held, or clear the hold, as story.unheld. A hold also ends
+    when the story is assigned, with nothing more journalled. Refused, with nothing written, for a story the record
+    doesn't hold or that has landed or settled, a hold on a story already started, and an empty or space-only
+    reason."""
+    c = cfg()
+    doc = load_state()
+    state = doc["state"]
+    queued = next((item for item in state["queue"] if item["subject"] == args.key), None)
+    planned = next((item for item in state.get("planned", []) if item["subject"] == args.key), None)
+    if queued is None and planned is None:
+        raise Stop(f"{args.key} is not in the record: there is nothing to hold")
+    if (queued or {}).get("stage") == "merged":
+        raise Stop(f"{args.key} has landed: there is nothing to hold")
+    if (planned or {}).get("stage") == "settled":
+        raise Stop(f"{args.key} has settled with no change: there is nothing to hold")
+    scripts = str(c.release / "skills/orchestrate-work/scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import delivery_state
+    standing = delivery_state._holds(doc["journal"]).get(args.key)
+    if args.clear:
+        if standing is None:
+            raise Stop(f"the lead holds no hold on {args.key}: there is nothing to clear")
+        done = state_tool("journal", "--kind", "story.unheld", "--subject", args.key, "--data", "{}",
+                          "--answers", str(standing["id"]))
+        print(f"cleared the hold on {args.key} (journal entry {journal_id(done)})")
+        return
+    if planned is None or planned["stage"] != "planned":
+        # Only a story not yet started waits on the lead's reason, so a hold is shown only there; a clear is still taken.
+        raise Stop(f"{args.key} has started: there is nothing to hold back")
+    text = worded(args.text, "--text")
+    done = state_tool("journal", "--kind", "story.held", "--subject", args.key, "--data", json.dumps({"text": text}))
+    print(f"recorded the hold on {args.key} (journal entry {journal_id(done)}); it ends when {args.key} is assigned, "
+          f"or with {flow_command()} lead-hold {args.key} --clear")
+
+
 def lead_resolve(args) -> None:
     """Resolve the blocker a journal entry records, or ask the next pass to rerun a failed fullHealth, with the lead's
     reason. The resolution is the flow log's; the journal says so."""
@@ -12450,6 +12587,12 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--because", help="earlier journal ids it is blocked because of, comma-separated")
     p.add_argument("--subject", help="the story it blocks, whose ticket it posts on; the epic when absent")
     p.set_defaults(fn=lead_block)
+    p = command(sub, "lead-hold", help="record why the lead holds a planned story, or clear the hold")
+    p.add_argument("key", help="the story the lead holds")
+    held = p.add_mutually_exclusive_group(required=True)
+    held.add_argument("--text", help="why the story waits, in the lead's words")
+    held.add_argument("--clear", action="store_true", help="clear the lead's hold, which story.unheld records")
+    p.set_defaults(fn=lead_hold)
     p = command(sub, "lead-resolve", help="resolve a recorded blocker, or rerun a failed fullHealth")
     p.add_argument("id", help="the blocker's journal id, or full-health to rerun a failed fullHealth")
     p.add_argument("--why", required=True)
