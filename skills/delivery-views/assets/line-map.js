@@ -1711,8 +1711,11 @@
         var data = entry.kind === "review.lens.returned" && isObject(entry.data) ? entry.data : null;
         if (data && data.round === said.round && typeof data.lens === "string") { back[data.lens] = { verdict: data.verdict, findings: data.findings, at: entry.at }; }
       });
+      // The card's headline is the story's review wait, as the state tool says it; without one the card words its own.
+      var waiting = waitsOf(doc, "waits", subject).filter(function (wait) { return wait.cause === "review"; })[0];
       return { round: said.round, head: said.head, at: start.at, lenses: list(said.lenses).filter(function (lens) { return typeof lens === "string"; }),
-        back: back, why: text(said.why) || null, moved: typeof said.moved === "number" ? said.moved : null };
+        back: back, why: text(said.why) || null, moved: typeof said.moved === "number" ? said.moved : null,
+        headline: waiting ? waiting.words : null };
     }
     if (typeof item.runId !== "string" || item.runId === "") {
       var native = Object.prototype.hasOwnProperty.call(nativeReviews, item.subject) ? nativeReviews[item.subject] : null;

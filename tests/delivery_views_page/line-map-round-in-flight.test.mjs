@@ -50,7 +50,7 @@ test("a first round under way shows its head, since when, the lane's reason and 
                       data: { round: 1, lens: LENSES[1], verdict: "changes", findings: { P0: 0, P1: 2, P2: 0, P3: 0 } } });
   const [, shown, updated] = await openPage(pageWithRuns(doc), { now: NOW, steps: [pick, { push: back }] });
   const app = shown.app;
-  expect(app.querySelector(".run-story").textContent).toBe("Round 1 under way");
+  expect(app.querySelector(".run-story").textContent).toBe("In review: round 1 under way at aaaaaaa, 0 of 2 lenses back.");
   expect(app.querySelector(".run-last")).toBeNull();
   expect(app.querySelectorAll(".run-bead").length).toBe(1);
   expect(app.querySelector(".run-bead.is-running .run-pick").getAttribute("aria-pressed")).toBe("true");
@@ -85,7 +85,7 @@ test("over finished rounds, the last is dated beneath with the commits since, an
   const [, running, opened, finished] = await openPage(pageWithRuns(doc), { now: NOW, steps: [pick, { click: ".run-earlier > summary" },
                                                                                                  { click: ".run-pick", index: 1 }] });
   const app = running.app;
-  expect(app.querySelector(".run-story").textContent).toBe("Round 3 under way");
+  expect(app.querySelector(".run-story").textContent).toBe("In review: round 3 under way at ccccccc, 0 of 2 lenses back.");
   expect(app.querySelector(".run-last").textContent).toBe("Round 2 approved bbbbbbb · 11 commits since");
   expect(app.querySelectorAll(".run-bead").length).toBe(3);
   expect(app.querySelector(".run-card.is-running .run-reading-at").textContent).toContain("Reviewing ccccccc");
@@ -148,6 +148,26 @@ test("a restart, a hand-off, a settlement or a reassignment leaves no round show
     expect([name, shown.app.querySelector(".run-bead.is-running")]).toEqual([name, null]);
     expect([name, shown.app.textContent.includes("under way")]).toEqual([name, false]);
   }
+});
+
+test("the card's headline is the story's review wait as the record says it, and follows it in place", async () => {
+  const said = (back) => ({ subject: "WORK-1", on: "lane-1", cause: "review", stage: "review", frees: "ended", since: "2026-11-17T10:00:00Z",
+                            needsSomeone: false, words: `In review: round 1 under way at aaaaaaa, ${back} of 2 lenses back.` });
+  const doc = record([started("2026-11-17T10:00:00Z", { round: 1, head: A })]);
+  doc.waits = [said(0)];
+  const back = structuredClone(doc);
+  back.journal.push({ id: 3, at: "2026-11-17T10:08:00Z", kind: "review.lens.returned", lane: "lane-1", subject: "WORK-1",
+                      data: { round: 1, lens: LENSES[1], verdict: "approve", findings: { P0: 0, P1: 0, P2: 0, P3: 0 } } });
+  back.waits = [{ ...said(1), subject: "WORK-2", words: "Another story's wait." }, said(1),
+                { ...said(1), cause: "order", words: "An order wait." }];
+  const [, shown, updated] = await openPage(pageWithRuns(doc), { now: NOW, steps: [pick, { push: back }] });
+  expect(shown.app.querySelector(".run-story").textContent).toBe("In review: round 1 under way at aaaaaaa, 0 of 2 lenses back.");
+  expect(updated.app.querySelector(".run-story").textContent).toBe("In review: round 1 under way at aaaaaaa, 1 of 2 lenses back.");
+  // Once the round is reduced the card settles, whatever wait a stale record still carries.
+  const done = structuredClone(back);
+  done.journal.push({ id: 4, lane: "lane-1", subject: "WORK-1", ...reduced("2026-11-17T10:10:00Z", 1, [2]) });
+  const [, , settled] = await openPage(pageWithRuns(doc), { now: NOW, steps: [pick, { push: done }] });
+  expect(settled.app.querySelector(".run-card.is-running")).toBeNull();
 });
 
 test("the round in flight's bead breathes on the page's tempo, and nothing moves under reduced motion", () => {

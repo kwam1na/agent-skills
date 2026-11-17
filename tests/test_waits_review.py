@@ -1,20 +1,27 @@
 """A review round in flight: review-prepare journals its start, each lens result that matches its brief is journaled
-once as it comes back, by the supervisor's pass or by review-reduce, and the reduced round answers its start.
+once as it comes back, by the supervisor's pass or by review-reduce, and the reduced round answers its start. While it
+runs, the story waits on it, in one sentence every view prints.
 
-The cases drive the installed release's commands on the characterization fixture, as `tests.test_run_delivery` does.
+The round's cases drive the installed release's commands on the characterization fixture, as `tests.test_run_delivery`
+does. The wait's are derived in-process from the waits fixture, as `tests.test_waits` derives the others.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests.test_run_delivery import (CONTEXT_TODO, POSIX_ONLY, Fixture, bytecode_under, commit, installed_release,
                                      setup_delivery, sh, write_results)
+from tests.test_waits import (MARK, PRODUCT_ROOT, WORDS, config, journal, marked, planned, record, render_state,
+                              state_tool, views)
 
 RUN_QUIETLY = True
 
@@ -117,14 +124,19 @@ class RoundInFlightTests(unittest.TestCase):
         code, out = fx.flow("lead-run", "--once", cwd=fx.main)
         self.assertEqual(code, 0, out)
         self.assertEqual(self.journal(fx, "review.lens.returned"), [])
-        # The lens's own result, saved before a pass: that pass journals it. The other lens's file, half saved, is
-        # not JSON: the pass skips it and goes on.
-        write_results(review, 1, "FX-2", lenses, only=0)
-        short1 = lenses[1][1][0]
-        (review / f"result-r1-{short1}.json").write_text('{"schemaVersion": "review-lens-res')
+        # The first lens's file, half saved, is not JSON: the pass skips it and goes on to the second lens, whose own
+        # result, saved before the pass, it journals. A pass that let the half-saved file raise would journal nothing.
+        short0 = lenses[0][1][0]
+        (review / f"result-r1-{short0}.json").write_text('{"schemaVersion": "review-lens-res')
+        write_results(review, 1, "FX-2", lenses, only=1)
         code, out = fx.flow("lead-run", "--once", cwd=fx.main)
         self.assertEqual(code, 0, out)
-        self.assertEqual([e["data"]["lens"] for e in self.journal(fx, "review.lens.returned")], [first])
+        self.assertEqual([e["data"]["lens"] for e in self.journal(fx, "review.lens.returned")], [second])
+        # Saved whole, the first lens's result is journaled by the next pass, and the second's is not again.
+        write_results(review, 1, "FX-2", lenses, only=0)
+        code, out = fx.flow("lead-run", "--once", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertEqual([e["data"]["lens"] for e in self.journal(fx, "review.lens.returned")], [second, first])
         # A restart's new start journals its lenses afresh: the first lens's result, saved again, is journaled again.
         code, out = fx.flow("review-prepare", "FX-2", "--round", "1", "--restart", cwd=wt)
         self.assertEqual(code, 0, out)
@@ -134,8 +146,8 @@ class RoundInFlightTests(unittest.TestCase):
         code, out = fx.flow("lead-run", "--once", cwd=fx.main)
         self.assertEqual(code, 0, out)
         again = self.journal(fx, "review.lens.returned")
-        self.assertEqual([e["data"]["lens"] for e in again], [first, first])
-        self.assertGreater(again[1]["id"], restart["id"])
+        self.assertEqual([e["data"]["lens"] for e in again], [second, first, first])
+        self.assertGreater(again[2]["id"], restart["id"])
         # The other lens's, saved after it: the next pass journals that one alone, and a pass with nothing new nothing.
         write_results(review, 1, "FX-2", lenses, only=1)
         for _ in range(2):
@@ -143,14 +155,147 @@ class RoundInFlightTests(unittest.TestCase):
             self.assertEqual(code, 0, out)
         returned = self.journal(fx, "review.lens.returned")
         self.assertEqual([(e["data"]["lens"], e["data"]["verdict"], e["data"]["round"]) for e in returned],
-                         [(first, "approve", 1), (first, "approve", 1), (second, "approve", 1)])
+                         [(second, "approve", 1), (first, "approve", 1), (first, "approve", 1), (second, "approve", 1)])
         self.assertEqual({e["lane"] for e in returned}, {"lane-1"})
         # review-reduce finds both journaled, and journals only the round, which answers the restart's start.
         code, out = fx.flow("review-reduce", "FX-2", "--round", "1", cwd=wt)
         self.assertEqual(code, 0, out)
-        self.assertEqual(len(self.journal(fx, "review.lens.returned")), 3)
+        self.assertEqual(len(self.journal(fx, "review.lens.returned")), 4)
         [reduced] = self.journal(fx, "review.round")
         self.assertEqual(reduced["answers"], [restart["id"]])
+
+
+OC, AT = "lens.outcome-correctness", "lens.adversarial-testing"
+HEAD = "a1b2c3d" + "e" * 33
+
+
+def started(document: dict, round: int = 3, *, restart: bool = False) -> dict:
+    """APP-1's lane starts a round of two lenses at HEAD."""
+    return journal(document, "review.started", "APP-1", {"round": round, "head": HEAD, "lenses": [OC, AT],
+                                                         "restart": restart}, lane="lane-2")
+
+
+def returned(document: dict, lens: str, round: int = 3) -> dict:
+    return journal(document, "review.lens.returned", "APP-1", {
+        "round": round, "lens": lens, "verdict": "approve", "findings": {"P0": 0, "P1": 0, "P2": 0, "P3": 0}},
+        lane="lane-2")
+
+
+def reviewing(document: dict) -> list[dict]:
+    return [wait for wait in state_tool.waits(document) if wait["cause"] == "review"]
+
+
+class ReviewWaitTests(unittest.TestCase):
+    """A story in review waits on its round from the round's start until it is reduced, restarted or abandoned."""
+
+    def test_a_round_with_one_of_two_lenses_back_is_one_review_wait_on_the_storys_lane(self) -> None:
+        document = record()
+        start = started(document)
+        returned(document, OC)
+        returned(document, OC)
+        self.assertEqual(reviewing(document), [{
+            "subject": "APP-1", "on": "lane-2", "cause": "review", "stage": "review", "frees": "ended",
+            "since": start["at"], "needsSomeone": False,
+            "words": "In review: round 3 under way at a1b2c3d, 1 of 2 lenses back."}])
+        # The round is the story's own: nothing reads as waited on by it.
+        self.assertEqual(state_tool.waited_on(document, state_tool.waits(document)),
+                         state_tool.waited_on(record(), state_tool.waits(record())))
+        returned(document, AT)
+        self.assertEqual(reviewing(document)[0]["words"], "In review: round 3 under way at a1b2c3d, 2 of 2 lenses back.")
+
+    def test_a_lens_counts_only_for_the_round_and_start_it_returned_to(self) -> None:
+        document = record()
+        returned(document, OC)
+        started(document)
+        returned(document, OC, round=2)
+        journal(document, "review.lens.returned", "APP-1", {"round": 3, "lens": "lens.other", "verdict": "approve",
+                                                            "findings": {"P0": 0, "P1": 0, "P2": 0, "P3": 0}})
+        journal(document, "review.lens.returned", "APP-2", {"round": 3, "lens": OC, "verdict": "approve",
+                                                            "findings": {"P0": 0, "P1": 0, "P2": 0, "P3": 0}})
+        self.assertIn("0 of 2 lenses back", reviewing(document)[0]["words"])
+
+    def test_the_wait_ends_when_the_round_is_reduced_restarted_handed_or_reassigned(self) -> None:
+        for end in ("answers", "round", "handed", "assigned"):
+            with self.subTest(end=end):
+                document = record()
+                start = started(document)
+                returned(document, OC)
+                if end == "answers":
+                    journal(document, "review.round", "APP-1", {"round": 9})["answers"] = [start["id"]]
+                elif end == "round":
+                    journal(document, "review.round", "APP-1", {"round": 3})
+                elif end == "handed":
+                    journal(document, "candidate.handed", "APP-1", {"head": HEAD})
+                else:
+                    journal(document, "lane.assigned", "APP-1", {"title": "Again"})
+                self.assertEqual(reviewing(document), [])
+        # Another story's reduction ends nothing.
+        document = record()
+        started(document)
+        journal(document, "review.round", "APP-2", {"round": 3})
+        self.assertEqual(len(reviewing(document)), 1)
+        # A restart's new start is the round in flight, with no lens back yet.
+        document = record()
+        started(document)
+        returned(document, OC)
+        again = started(document, restart=True)
+        [wait] = reviewing(document)
+        self.assertEqual((wait["since"], wait["words"]),
+                         (again["at"], "In review: round 3 under way at a1b2c3d, 0 of 2 lenses back."))
+
+    def test_a_story_settled_or_not_started_has_no_review_wait(self) -> None:
+        for stage in ("settled", "planned"):
+            with self.subTest(stage=stage):
+                document = record()
+                started(document)
+                planned(document, "APP-1")["stage"] = stage
+                self.assertEqual(reviewing(document), [])
+        document = record()
+        started(document)
+        planned(document, "APP-1")["stage"] = "building"
+        self.assertEqual(len(reviewing(document)), 1)
+
+
+class ReviewMarkerTests(unittest.TestCase):
+    """With the table marked, the review wait's sentence carries its template's marker on every view, which print it
+    and word none of it themselves."""
+
+    def setUp(self) -> None:
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        copied = Path(folder.name) / "wait-words.json"
+        copied.write_text(json.dumps(marked(json.loads(WORDS.read_text(encoding="utf-8"))), ensure_ascii=False),
+                          encoding="utf-8")
+        for module in (state_tool, views.review_state):
+            patcher = mock.patch.object(module, "WAIT_WORDS_FILE", copied)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.document = record()
+        started(self.document)
+        returned(self.document, OC)
+        [wait] = [wait for wait in render_state.with_waits(self.document)["waits"] if wait["cause"] == "review"]
+        self.words = wait["words"]
+
+    def test_the_sentence_carries_its_own_marker(self) -> None:
+        self.assertEqual(MARK.search(self.words).group(1), "waits.review")
+        self.assertEqual(self.words, "⟦waits.review⟧ In review: round 3 under way at a1b2c3d, 1 of 2 lenses back.")
+
+    def test_the_markdown_view_shows_it_under_the_story(self) -> None:
+        shown = render_state.render_markdown(self.document)
+        story = shown[shown.index("\n- APP-1:"):].split("\n- ")[1]
+        self.assertIn(f"\n  - {render_state._markdown_text(self.words)}", story)
+
+    def test_the_built_in_page_and_the_live_page_carry_it_and_word_none_of_it(self) -> None:
+        page = render_state.render_static_page(self.document)
+        raw = re.search(r'<script type="application/json" id="delivery-state">(.*?)</script>', page, re.S).group(1)
+        embedded = json.loads(raw)
+        self.assertIn(self.words, [wait["words"] for wait in embedded["waits"]])
+        data = views.line_map_data(self.document, {}, config(), theme_key="t", history=None)
+        self.assertIn(self.words, [wait["words"] for wait in data["document"]["waits"]])
+        for script in (page.replace(raw, ""),
+                       (PRODUCT_ROOT / "skills/delivery-views/assets/line-map.js").read_text(encoding="utf-8"),
+                       (PRODUCT_ROOT / "skills/delivery-views/assets/run-summary.js").read_text(encoding="utf-8")):
+            self.assertNotIn("under way at", script)
 
 
 if __name__ == "__main__":
