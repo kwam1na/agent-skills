@@ -184,6 +184,10 @@
         {
           "id": "v26-3566-2",
           "text": "c2: --kind removed with --criterion drops only that criterion, records the change with its reason, and leaves the story and its other criteria in place."
+        },
+        {
+          "id": "v26-3566-3",
+          "text": "c3: Dropping a criterion the story lacks, or its last one, is refused and nothing is written."
         }
       ],
       "after": [
