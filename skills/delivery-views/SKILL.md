@@ -84,6 +84,12 @@ page follows every record write; opened as a file, it shows the record as it
 was rendered. A history renderer declared in the same binding (`render.py
 history`) is linked from its footer.
 
+What happened tells the delivery's story at three depths, one row for each beat: its
+time, its mark, its sentence and its tone's word. A row opens to nothing; the ticket,
+the commit, in full or cut short, and the change request its sentence names are
+links, and they lead to the evidence. Only a run of bookkeeping folds, listing its
+entries.
+
 A piece whose queue or planned element names a `runId` shows that run in its
 detail: its review rounds as a track, and a card for the picked round. With
 `runs` configured, the renderer appends these arguments to its argv and reads
@@ -337,12 +343,12 @@ you".
 The page embeds the validated plan and derives record proofs from each pushed
 record, so the chapter redraws as The line does. A producer writes `plan.json`
 only when its content, apart from `updated`, changed: atomically first, then a
-decision entry in the delivery journal whose summary starts "Plan updated:",
-names the new `updated` value and says what changed. That moves the record, so
+`plan.updated` entry in the delivery journal, whose facts name the new
+`updated` value and what changed. That moves the record, so
 the live server renders the page again from the new file.
 
 A page the live server serves follows that entry with no reload. When the latest
-"Plan updated:" entry names an `updated` value other than the plan in use, the
+`plan.updated` entry names an `updated` value other than the plan in use, the
 page fetches its own address and takes the plan from the block the renderer
 embedded there, so the renderer's validation is the only validation. It redraws
 with the reader's open folds and scroll position kept, and adds nothing to what
@@ -874,6 +880,16 @@ uploader scans all projected text for its configured secret values before writin
 pending bytes or sending them; collection and run-command children receive none
 of those credentials. Projection rejects recognizable local paths in structural
 references and raw uploads; named prose fields use a visible omission marker.
+The journal publishes each entry's id, time, occurrence time, kind, lane and
+subject, the kind one the registry of kinds lists, and none of its facts, links or
+words: only a review round keeps its round, times, verdicts and finding counts. No
+link the page offers comes from an entry's facts, and a batch's membership is not
+published. A kind the registry gains later publishes no facts until the snapshot's
+schema names them. The projection is what publishes only registered kinds; the
+receiver does not police kinds, so a new kind needs no service deploy. The story
+is not published, so the hosted page says what happened is not published there.
+The schema is `hosted-delivery-snapshot/2`; a reader given the older version
+refuses it.
 No-change settlement evidence is ordinary prose: local references use that marker
 without changing the private evidence or the recorded settlement identity and times.
 This includes option-assigned Unix, Windows, home and explicit relative paths,

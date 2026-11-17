@@ -3,7 +3,7 @@ import validateSchema from './generated-validator.js';
 export const MAX_BYTES = 16 * 1024 * 1024;
 export const LEASE_MS = 180_000;
 export const STALE_MS = 120_000;
-export const RENDERER = 'delivery-line-map/1';
+export const RENDERER = 'delivery-line-map/2';
 export const ID = /^[a-f0-9]{64}$/;
 export const REPOSITORY = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
 export const KEY = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;

@@ -570,6 +570,47 @@ class LinkTests(unittest.TestCase):
                                   config(forges=[forge, self.EXAMPLE["forges"][0]]))["changes"]
         self.assertEqual(links[other], {"label": "#180", "href": other, "repository": "another/repo"})
 
+    def test_a_native_review_and_an_entrys_facts_name_commits_and_the_story_is_told_unless_left_out(self) -> None:
+        reviewed, handed = "b" * 40, "c" * 40
+        document = {"state": {"queue": [{"subject": "APP-12"}]}, "journal": [
+            {"id": 1, "at": "2026-11-16T10:00:00Z", "kind": "candidate.handed", "lane": "lane-1", "subject": "APP-12",
+             "data": {"head": handed, "checks": [], "changeRequest": "#36"}}]}
+        reviews = {"APP-12": {"roundDetail": [{"candidateRef": reviewed}]}}
+        links = render.page_links(document, {}, self.EXAMPLE, reviews)
+        self.assertEqual(set(links["commits"]), {reviewed, handed})
+        self.assertEqual(set(links["changes"]), {"#36"})
+        self.assertEqual(set(render.page_links(document, {}, self.EXAMPLE)["commits"]), {handed})
+        told = render.line_map_data(document, {}, self.EXAMPLE, theme_key="local", history=None)
+        self.assertEqual(told["document"]["story"]["schemaVersion"], "story/1")
+        untold = render.line_map_data(document, {}, self.EXAMPLE, theme_key="local", history=None, story=False)
+        self.assertNotIn("story", untold["document"])
+
+    def test_a_commit_a_facts_words_name_cut_short_is_linked_and_a_plain_word_or_number_is_not(self) -> None:
+        commits, changes = [], []
+        render._facts_named({"text": "Reverted 1a2b3c4 and deadbeef7, not 1234567, decafbad or 1a2b3c",
+                             "why": "See 0123456789abcdef0123456789abcdef01234567 too."}, commits, changes)
+        # A full id is a commit only as a fact of its own: in words, an id cut short is taken, and a full one is not.
+        self.assertEqual(commits, ["1a2b3c4", "deadbeef7"])
+        self.assertEqual(changes, [])
+        forge = self.EXAMPLE["forges"][0]
+        for sha in ("1a2b3c4", "a" * 39, "a" * 40):
+            with self.subTest(sha=sha):
+                self.assertEqual(views_common.commit_link(sha, forge), f"https://bitbucket.org/example/app/commits/{sha}")
+        for sha in ("1a2b3c", "a" * 41, "1A2B3C4", "1a2b3c4 "):
+            with self.subTest(sha=sha):
+                self.assertIsNone(views_common.commit_link(sha, forge))
+        document = {"state": {"queue": [{"subject": "APP-12"}]}, "journal": [
+            {"id": 1, "at": "2026-11-16T10:00:00Z", "kind": "decision.recorded", "lane": None, "subject": "APP-12",
+             "data": {"text": "Keep 1a2b3c4", "why": "It holds."}}]}
+        self.assertEqual(render.page_links(document, {}, self.EXAMPLE)["commits"],
+                         {"1a2b3c4": "https://bitbucket.org/example/app/commits/1a2b3c4"})
+
+    def test_the_skill_says_a_row_opens_to_nothing_and_its_sentence_links_its_evidence(self) -> None:
+        text = " ".join((Path(__file__).resolve().parents[1] / "skills/delivery-views/SKILL.md").read_text(encoding="utf-8").split())
+        self.assertIn("A row opens to nothing; the ticket, the commit, in full or cut short, and the change request its "
+                      "sentence names are links, and they lead to the evidence. Only a run of bookkeeping folds, listing "
+                      "its entries.", text)
+
     def test_with_no_tracker_or_forge_nothing_is_linked(self) -> None:
         document = {"state": {"queue": [{"subject": "APP-12", "changeRequest": "#34"}]}}
         self.assertEqual(render.page_links(document, {}, config()), {"issues": {}, "changes": {}, "commits": {}})
@@ -1005,6 +1046,34 @@ class NeedsBlockTests(unittest.TestCase):
             with self.subTest(bad=bad):
                 self.write(self.listed([bad]))
                 self.assertEqual(render.read_needs_block(self.state), {"unreadable": True})
+
+STORIES = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "delivery-views" / "story"
+NARRATED = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "narrator"
+# The narrator's journals whose stories the page's tests draw, each kept beside them as the narrator tells it.
+# Each names only invented pieces, so the corpus keeps no ticket id.
+STORY_NAMES = ("standing-break", "thread-at-story", "bookkeeping-run", "batch-of-three", "decision-on-a-break", "break-stops-a-piece")
+
+
+def narrated(name: str) -> bytes:
+    """A named journal's story, as the narrator tells it, in the bytes its fixture holds."""
+    folder = NARRATED / name
+    journal = [json.loads(line) for line in (folder / "journal.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    state = json.loads((folder / "state.json").read_text(encoding="utf-8")) if (folder / "state.json").is_file() else None
+    plan = json.loads((folder / "plan.json").read_text(encoding="utf-8")) if (folder / "plan.json").is_file() else None
+    story = render.narrator.narrate(journal, state=state, plan=plan)
+    return (json.dumps(story, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+
+
+class StoryFixtureTests(unittest.TestCase):
+    """The stories the page's tests draw are the narrator's, byte for byte, for named journals of its own."""
+
+    def test_each_story_the_page_draws_is_the_narrators_for_its_journal(self) -> None:
+        self.assertEqual(sorted(path.name for path in STORIES.glob("*.json")), sorted(f"{name}.json" for name in STORY_NAMES))
+        for name in STORY_NAMES:
+            with self.subTest(name=name):
+                self.assertEqual((STORIES / f"{name}.json").read_bytes(), narrated(name),
+                                 f"tests/fixtures/delivery-views/story/{name}.json is not the narrator's story; write it again from its journal")
+
 
 if __name__ == "__main__":
     unittest.main()

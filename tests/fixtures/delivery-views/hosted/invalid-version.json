@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "hosted-delivery-snapshot/2",
+  "schemaVersion": "hosted-delivery-snapshot/3",
   "sourceFingerprint": "1111111111111111111111111111111111111111111111111111111111111111",
   "document": {
     "state": {
@@ -26,8 +26,7 @@
         "kind": "review.round",
         "lane": "one",
         "subject": "APP-1",
-        "summary": "Dissent",
-        "review": {
+        "data": {
           "round": 1,
           "verdicts": {
             "lens.security": "changes"

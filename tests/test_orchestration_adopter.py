@@ -204,9 +204,9 @@ class FixtureAdopter:
         extra = ["--element", element] if element else []
         return self.state_tool("patch", "--writer", "lead", "--version", str(version), *extra, "--patch", json.dumps(changes))
 
-    def journal(self, kind: str, summary: str, *, lane: str | None = None, subject: str | None = None) -> None:
+    def journal(self, kind: str, facts: dict, *, lane: str | None = None, subject: str | None = None) -> None:
         extra = (["--lane", lane] if lane else []) + (["--subject", subject] if subject else [])
-        self.state_tool("journal", "--kind", kind, "--summary", summary, *extra)
+        self.state_tool("journal", "--kind", kind, "--data", json.dumps(facts), *extra)
 
     def show(self) -> dict:
         return self.state_tool("show")
@@ -260,7 +260,7 @@ class FixtureAdopterTests(unittest.TestCase):
                   "since": since} for n, subject in enumerate(SUBJECTS, start=1)]
         adopter.lead_patch({"lanes": lanes})
         for lane in lanes:
-            adopter.journal("lane.assigned", f"Assigned {lane['title']}", lane=lane["id"])
+            adopter.journal("lane.assigned", {"title": lane["title"]}, lane=lane["id"], subject=lane["title"])
 
         # Each lane hands its candidate over; the lead records the reviewed head.
         heads = {
@@ -275,7 +275,7 @@ class FixtureAdopterTests(unittest.TestCase):
                                           (2, "approve", {"P0": 0, "P1": 0, "P2": 0, "P3": 1})):
             moment = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
             adopter.state_tool("journal", "--kind", "review.round", "--subject", "alpha-copy", "--lane", "lane-1",
-                               "--review", json.dumps({"round": number, "startedAt": moment, "finishedAt": moment,
+                               "--data", json.dumps({"round": number, "startedAt": moment, "finishedAt": moment,
                                                        "verdicts": {"outcome": verdict, "adversarial": verdict},
                                                        "findings": findings}))
         queue = [{
@@ -285,7 +285,7 @@ class FixtureAdopterTests(unittest.TestCase):
         } for n, subject in enumerate(SUBJECTS, start=1)]
         adopter.lead_patch({"queue": queue})
         for item in queue:
-            adopter.journal("candidate.handed", f"Handed {item['subject']}", lane=item["lane"], subject=item["subject"])
+            adopter.journal("candidate.handed", {"head": item["head"], "checks": []}, lane=item["lane"], subject=item["subject"])
         self.assertFalse((adopter.state / "delivery.md").exists(), "nothing renders until the runner first writes")
 
         # S5: the second lane pushes again after its head was reviewed and recorded.
@@ -329,12 +329,11 @@ class FixtureAdopterTests(unittest.TestCase):
         self.assertQueueRow(view, "beta-copy", "stopped")
         self.assertQueueRow(view, "alpha-rewrite", "queued")
         self.assertIn(f"candidate{text('_')}moved", view)
-        self.assertIn(f"base{text('_')}moved", view)
+        self.assertIn(text("alpha-copy was stopped: trunk moved to"), view)
 
         # The lead reviews the new head and re-queues the second candidate on it.
         adopter.lead_patch({"head": unreviewed}, "queue[subject=beta-copy]")
-        adopter.journal("candidate.handed", "Handed beta-copy at its reviewed new head", lane="lane-2",
-                        subject="beta-copy")
+        adopter.journal("candidate.handed", {"head": unreviewed, "checks": []}, lane="lane-2", subject="beta-copy")
 
         # S2: while this run goes, the provider is down for any change to src/beta.txt,
         # so the second candidate is checked through the fallback.
@@ -396,7 +395,7 @@ class FixtureAdopterTests(unittest.TestCase):
         # 4. The lane fixes the third candidate on top of the new base, and the lead re-queues it.
         fixed = adopter.lane_change("alpha-rewrite", {"src/alpha.txt": "alpha two, rewritten\n"}, fresh=True)
         adopter.lead_patch({"head": fixed}, "queue[subject=alpha-rewrite]")
-        adopter.journal("candidate.handed", "Handed alpha-rewrite again", lane="lane-3", subject="alpha-rewrite")
+        adopter.journal("candidate.handed", {"head": fixed, "checks": []}, lane="lane-3", subject="alpha-rewrite")
         # The view is redrawn only when the runner next writes; the state already holds the new head.
         self.assertIn(text(fixed), render_state.render_markdown(adopter.show()))
 
@@ -410,16 +409,16 @@ class FixtureAdopterTests(unittest.TestCase):
         self.assertEqual(last["baseHead"], broken_base)
         self.assertEqual(adopter.item("alpha-rewrite")["stage"], "stopped")
         self.assertQueueRow(adopter.view(), "alpha-rewrite", "stopped")
-        self.assertIn(f"base{text('.')}broken", adopter.view())
+        self.assertIn(text("The main line broke: lint"), adopter.view())
 
         # The lead fixes forward and makes lint run on every candidate from now on.
         binding = adopter.binding()
         lint = {"id": "lint", "argv": [sys.executable, "-B", "tools/lint.py", "src"], "cwd": ".",
                 "reasons": ["the base broke without it"], "prerequisites": []}
         binding["alwaysRun"] = [lint]
-        adopter.push_to_base({"src/beta.txt": "beta three\n"}, "Fix the base forward", binding)
-        adopter.journal("base.repaired", "Fixed the base forward")
-        adopter.journal("decision.recorded", "lint runs on every candidate")
+        repaired = adopter.push_to_base({"src/beta.txt": "beta three\n"}, "Fix the base forward", binding)
+        adopter.journal("base.repaired", {"source": "lead", "head": repaired, "why": "Fixed the base forward."})
+        adopter.journal("decision.recorded", {"text": "lint runs on every candidate", "why": "The base broke without it."})
 
         # 6. The re-run, with the provider up: it defers lint to alwaysRun, so the
         # check the base broke without runs from the binding, with no fallback.
@@ -447,7 +446,7 @@ class FixtureAdopterTests(unittest.TestCase):
         self.assertEqual([(target["id"], target["state"], target["approvedBy"]) for target in released["release"]["targets"]],
                          [("package", "passed", None), ("publish", "passed", "the operator, in chat")])
         self.assertIn(f"released head {text(released_head)}", adopter.view())
-        adopter.journal("delivery.closed", "Three candidates merged and released")
+        adopter.journal("delivery.closed", {})
 
         # 8. Both built-in views render from the final state.
         for output in ("delivery.md", "delivery.html"):
@@ -460,8 +459,8 @@ class FixtureAdopterTests(unittest.TestCase):
         final = adopter.document()
         page = (adopter.state / "delivery.html").read_text(encoding="utf-8")
         embedded = re.search(r'<script type="application/json" id="delivery-state">(.*?)</script>', page, re.S)
-        self.assertEqual(json.loads(embedded.group(1)), final)
-        self.assertEqual(adopter.view(), render_state.render_markdown(final))
+        self.assertEqual(json.loads(embedded.group(1)), render_state.with_story(final, adopter.state))
+        self.assertEqual(adopter.view(), render_state.render_markdown(render_state.with_story(final, adopter.state)))
 
         # Each stop's stats: the recorded rounds for the first, the lanes' reports for the others.
         stats = final["stats"]
@@ -566,8 +565,8 @@ class FixtureAdopterTests(unittest.TestCase):
         failed = adopter.state_tool("tracker-snapshot", "--binding", str(path), "--output", str(output))
         self.assertEqual((failed["taken"], failed["fallback"]), (False, True))
         self.assertIn("no item epic-1", failed["detail"])
-        notes = [entry for entry in adopter.show()["journal"] if entry["summary"].startswith("tracker-snapshot:")]
-        self.assertEqual(len(notes), 1)
+        notes = [entry for entry in adopter.show()["journal"] if entry["kind"] == "snapshot.stale"]
+        self.assertEqual([note["data"] for note in notes], [{"source": "tracker", "cause": "exited", "exitCode": 1}])
         self.assertFalse(adopter.state_tool("reconcile", "--snapshot", str(output))["drift"])
 
 
@@ -611,8 +610,9 @@ class FixtureAdopterTests(unittest.TestCase):
         journal = adopter.show()["journal"]
         retried = [entry for entry in journal if entry["kind"] == "check.retried"]
         self.assertEqual(len(retried), 1)
-        self.assertIn("FLAKE-7", retried[0]["summary"])
-        self.assertIn("test_launcher_cancel", retried[0]["summary"])
+        self.assertEqual({key: retried[0]["data"][key] for key in ("check", "flake", "onBase")},
+                         {"check": "suite", "flake": ["FLAKE-7"], "onBase": False})
+        self.assertIn("test_launcher_cancel", retried[0]["data"]["failing"])
         history = adopter.show()["state"]["meta"]["checkHistory"]
         self.assertEqual(history["checks"]["suite"]["flakes"], 1)
 
@@ -629,8 +629,7 @@ class FixtureAdopterTests(unittest.TestCase):
         view = adopter.view()
         self.assertIn(text("failing test_source_beta"), view)
         self.assertIn(text(f"log {suite_entry['log']}"), view)
-        self.assertIn(text("test_launcher_cancel"), view)
-        self.assertIn(text("check.retried"), view)
+        self.assertIn(text("suite ran again: Known as flaky: FLAKE-7"), view)
 
     def test_lanes_hand_off_through_the_tool_and_serve_lands_everything_without_the_lead(self) -> None:
         adopter = FixtureAdopter(self.root)
@@ -651,7 +650,7 @@ class FixtureAdopterTests(unittest.TestCase):
             adopter.state_tool("focus", "--lane", lane, "--text", f"Building {subject}", "--state", "working")
             head = adopter.lane_change(subject, files)
             adopter.state_tool("journal", "--writer", "lane", "--lane", lane, "--subject", subject, "--kind",
-                               "review.round", "--review", json.dumps({
+                               "review.round", "--data", json.dumps({
                                    "round": 1, "startedAt": "2026-10-21T09:10:00Z", "finishedAt": "2026-10-21T09:20:00Z",
                                    "verdicts": {"outcome": "approve", "adversarial": "approve"},
                                    "findings": {"P0": 0, "P1": 0, "P2": 0, "P3": 1}}))
@@ -842,7 +841,7 @@ class FixtureAdopterTests(unittest.TestCase):
                          ("merged", hand_merged, "change 4"))
         recorded = adopter.show()["journal"][-1]
         self.assertEqual((recorded["kind"], recorded["subject"]), ("candidate.merged", "delta-copy"))
-        self.assertIn(hand_merged, recorded["summary"])
+        self.assertEqual(recorded["data"], {"head": hand_merged, "recovery": {"head": hand_merged, "changeRequest": "change 4"}})
 
         # Render: the binding's publisher receives exactly the record the views are drawn from.
         binding = str(adopter.operator / ".agents/orchestration.json")
@@ -850,13 +849,13 @@ class FixtureAdopterTests(unittest.TestCase):
         adopter.tool(WRAPPER, "--dir", str(adopter.state), "--binding", binding)
         shown = adopter.show()
         self.assertEqual(json.loads(mirror.read_text(encoding="utf-8")),
-                         {key: value for key, value in shown.items() if key != "publication"})
+                         render_state.with_story({key: value for key, value in shown.items() if key != "publication"}, adopter.state))
         self.assertFalse((adopter.state / "outbox").exists(), "nothing is left for anyone to post by hand")
 
         # The next pass finds no drift, and a new entry reaches the publisher on the next render.
         again = adopter.state_tool("reconcile", *snapshots)
         self.assertEqual((again["drift"], again["changes"], again["summary"]), (False, [], "no drift"))
-        adopter.journal("delivery.closed", "The hand-merged candidate is recorded")
+        adopter.journal("delivery.closed", {})
         adopter.tool(WRAPPER, "--dir", str(adopter.state), "--binding", binding)
         published = json.loads(mirror.read_text(encoding="utf-8"))
         self.assertEqual((published["journal"][-1]["kind"], published["journal"][-1]["id"]),
@@ -910,10 +909,10 @@ class FixtureAdopterLiveViewTests(unittest.TestCase):
         self.assertTrue(documents, "the page got the record as it connected")
 
         written = time.monotonic()
-        adopter.journal("decision.recorded", "The live view follows the record")
+        adopter.journal("decision.recorded", {"text": "The live view follows the record", "why": "It is served live."})
         while time.monotonic() < written + 3:
             if documents and documents[-1]["journal"] and \
-                    documents[-1]["journal"][-1]["summary"] == "The live view follows the record":
+                    documents[-1]["journal"][-1]["data"].get("text") == "The live view follows the record":
                 break
             time.sleep(0.05)
         else:
@@ -972,14 +971,16 @@ class BindingBasesSchemaTests(unittest.TestCase):
 
 class AdopterNeutralityTests(unittest.TestCase):
     def tool_sources(self) -> list[Path]:
-        return [*sorted(SCRIPTS.glob("*.py")), ROOT / "skills/orchestrate-work/references/schemas.json"]
+        return [*sorted(SCRIPTS.glob("*.py")), ROOT / "skills/orchestrate-work/references/journal-kinds.json",
+                ROOT / "skills/orchestrate-work/references/schemas.json"]
 
     def fixture_files(self) -> list[Path]:
         return sorted(path for path in FIXTURE.rglob("*") if path.is_file())
 
     def test_the_tools_assume_no_adopter_default(self) -> None:
         self.assertEqual([path.name for path in self.tool_sources()],
-                         ["delivery_state.py", "merge_queue.py", "region_ownership.py", "render_state.py", "schemas.json"])
+                         ["delivery_state.py", "journal_words.py", "merge_queue.py", "narrator.py", "region_ownership.py",
+                          "render_state.py", "journal-kinds.json", "schemas.json"])
         for path in self.tool_sources():
             contents = path.read_text(encoding="utf-8")
             for name, pattern in ADOPTER_DEFAULTS:

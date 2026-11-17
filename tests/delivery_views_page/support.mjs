@@ -114,6 +114,11 @@ export function renderHistoryPage(document, { config, runsCommands = null, expor
   }
 }
 
+/** A snapshot's text, as a golden pins it: every chapter, the story's included, as the page draws it. */
+export function pageText(app) {
+  return app.textContent ?? "";
+}
+
 /** One embedded JSON block of a page, parsed. */
 export function block(page, id) {
   const found = new RegExp(`<script type="application/json" id="${id}">([^<]*)</script>`).exec(page);
@@ -326,6 +331,14 @@ export function pageWithRuns(document, runs = {}, { config = { spec: "delivery-v
 /** The renderer's summary of a run view and its inventory row, with round reports when readings are given. */
 export function summarize(view, listed, readings = null, reportSpecs = undefined) {
   return JSON.parse(tool({ summarize: { view, listed, readings, ...(reportSpecs ? { reportSpecs } : {}) } }));
+}
+/** orchestrate-work's built-in page for a record, its story told with the registry at `registry` when given. */
+export function builtinPage(document, registry = null) {
+  return tool({ builtin: { document, registry } });
+}
+/** A record as the live server sends it: with the story the narrator tells of it. */
+export function told(document) {
+  return JSON.parse(tool({ told: document }));
 }
 /** A value as the page embeds it. */
 export function embedded(value) {

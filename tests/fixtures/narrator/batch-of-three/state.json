@@ -1,0 +1,26 @@
+{
+  "queue": [
+    {
+      "subject": "A",
+      "title": "Work A",
+      "stage": "checking"
+    },
+    {
+      "subject": "B",
+      "title": "Work B",
+      "stage": "checking"
+    },
+    {
+      "subject": "C",
+      "title": "Work C",
+      "stage": "checking"
+    },
+    {
+      "subject": "D",
+      "title": "Work D",
+      "stage": "checking"
+    }
+  ],
+  "planned": [],
+  "finish": []
+}

@@ -308,17 +308,14 @@ class LeadMayStopTests(HookCase):
         self.assertEqual(self.stop(fx)["verdict"], "block")
         held = self.held(fx)
         self.assertEqual(len(held), 1, held)
-        self.assertIsNone(held[0]["lane"])
-        self.assertIn("lead.may-stop returned block: the lead's stop was held while no lead-wait listened",
-                      held[0]["summary"])
-        self.assertIn("lane-1 (working)", held[0]["summary"])
+        self.assertEqual((held[0]["lane"], held[0]["subject"], held[0]["data"]),
+                         (None, None, {"hook": "lead.may-stop", "verdict": "block", "lanes": ["lane-1"], "pieces": []}))
         self.assertEqual(self.stop(fx, stop_hook_active=True)["verdict"], "block")
         self.assertEqual(len(self.held(fx)), 1)
         self.mode(fx, lead_may_stop="warn")
         self.assertEqual(self.stop(fx)["verdict"], "warn")
         self.assertEqual(len(self.held(fx)), 2)
-        self.assertIn("lead.may-stop returned warn: the lead stopped with a warning while no lead-wait listened",
-                      self.held(fx)[-1]["summary"])
+        self.assertEqual(self.held(fx)[-1]["data"], {"hook": "lead.may-stop", "verdict": "warn", "lanes": ["lane-1"], "pieces": []})
         self.lease(fx, os.getpid(), 5)
         self.assertEqual(self.stop(fx), {"verdict": "allow"})
         self.assertEqual(len(self.held(fx)), 2)
@@ -439,7 +436,7 @@ class DeliveryOrientTests(HookCase):
         fx = self.fixture()
         self.assign(fx)
         journal, focus, handed, tracker = HOSTILE
-        self.state_tool(fx, "journal", "--kind", "decision.recorded", "--subject", "FX-2", "--summary", journal)
+        self.state_tool(fx, "journal", "--kind", "decision.recorded", "--subject", "FX-2", "--text", journal, "--why", journal)
         self.state_tool(fx, "focus", "--lane", "lane-1", "--text", focus, "--state", "working")
         self.state_tool(fx, "handoff", "--lane", "lane-1", "--subject", "FX-2", "--no-change", "--base-head", "b" * 40,
                         "--evidence-text", handed)

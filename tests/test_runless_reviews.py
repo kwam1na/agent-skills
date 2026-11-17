@@ -53,10 +53,10 @@ class RunlessReviewTests(unittest.TestCase):
         self.assertEqual(self.capture(files), captured)
         self.assertEqual((self.directory / state_tool.JOURNAL_FILE).read_bytes(), before)
         event = state_tool.read_journal(self.directory)[-1]
-        self.assertEqual(event["kind"], "review.evidence")
-        artifact = self.directory / "review-artifacts" / (event["reviewArtifact"]["digest"] + ".json")
+        self.assertEqual((event["kind"], set(event["data"])), ("review.recorded", {"digest", "candidateRef"}))
+        artifact = self.directory / "review-artifacts" / (event["data"]["digest"] + ".json")
         raw = artifact.read_bytes()
-        self.assertEqual(hashlib.sha256(raw).hexdigest(), event["reviewArtifact"]["digest"])
+        self.assertEqual(hashlib.sha256(raw).hexdigest(), event["data"]["digest"])
         self.assertEqual([base64.b64decode(row) for row in json.loads(raw)["outcomes"]], [p.read_bytes() for p in files])
         shown = state_tool.show(self.directory)
         self.assertIsNone(shown["state"]["queue"][0]["runId"])
@@ -70,7 +70,7 @@ class RunlessReviewTests(unittest.TestCase):
     def test_missing_tampered_oversized_and_candidate_mismatch_are_unavailable(self):
         self.lead({"queue": [fixtures.queue_item("work-a", head=fixtures.HEAD_B)]})
         self.capture()
-        ref = state_tool.read_journal(self.directory)[-1]["reviewArtifact"]
+        ref = state_tool.read_journal(self.directory)[-1]["data"]
         path = self.directory / "review-artifacts" / (ref["digest"] + ".json")
         original = path.read_bytes()
         for data in (None, b"{}", b"x" * (state_tool.REVIEW_ARTIFACT_LIMIT + 1)):
@@ -192,12 +192,12 @@ class RunlessReviewTests(unittest.TestCase):
     def test_failed_reads_count_toward_shared_budget(self):
         self.lead({"queue": [fixtures.queue_item("work-a", head=fixtures.HEAD_B)]})
         self.capture()
-        ref = state_tool.read_journal(self.directory)[-1]["reviewArtifact"]
+        ref = state_tool.read_journal(self.directory)[-1]["data"]
         path = self.directory / "review-artifacts" / (ref["digest"] + ".json")
         valid_bytes = path.read_bytes()
         path.write_bytes(b"x" * (state_tool.REVIEW_ARTIFACT_LIMIT + 1))
         state = {"queue": [fixtures.queue_item(s, head=fixtures.HEAD_B) for s in ("a", "b", "c", "d")]}
-        journal = [{"kind":"review.evidence", "subject":s, "id":i+1, "reviewArtifact":ref} for i,s in enumerate(("a", "b", "c", "d"))]
+        journal = [{"kind":"review.recorded", "subject":s, "id":i+1, "data":ref} for i,s in enumerate(("a", "b", "c", "d"))]
         reads, original = [], Path.open
         class Meter:
             def __init__(self, stream): self.stream = stream
@@ -214,8 +214,8 @@ class RunlessReviewTests(unittest.TestCase):
         bad_path.write_bytes(path.read_bytes())
         path.write_bytes(valid_bytes)
         state["queue"].insert(0, fixtures.queue_item("work-a", head=fixtures.HEAD_B))
-        for entry in journal: entry["reviewArtifact"] = bad_ref
-        journal.insert(0, {"kind":"review.evidence","subject":"work-a","id":5,"reviewArtifact":ref})
+        for entry in journal: entry["data"] = bad_ref
+        journal.insert(0, {"kind":"review.recorded","subject":"work-a","id":5,"data":ref})
         reads.clear()
         with patch.object(Path, "open", lambda p,*a,**kw: Meter(original(p,*a,**kw))):
             observed = state_tool.review_observations(self.directory, state, journal)
@@ -227,7 +227,7 @@ class RunlessReviewTests(unittest.TestCase):
         self.lead({"queue": [fixtures.queue_item("work-a", head=fixtures.HEAD_B)]})
         self.capture()
         journal = state_tool.read_journal(self.directory)
-        journal.append({"id":journal[-1]["id"]+1,"kind":"review.round","subject":"work-a"})
+        journal.append({"id":journal[-1]["id"]+1,"kind":"review.round","subject":"work-a","data":{}})
         result = state_tool.review_observations(self.directory, state_tool.read_state(self.directory), journal)
         self.assertTrue(result["work-a"]["unavailable"])
 
@@ -236,7 +236,7 @@ class RunlessReviewTests(unittest.TestCase):
                   "verdicts": {"lens.outcome-correctness": verdict, "lens.adversarial-testing": verdict},
                   "findings": {"P0": 0, "P1": 0, "P2": 0, "P3": 0}}
         state_tool.append_journal(self.directory, kind="review.round", subject="work-a", lane="lane-1", writer="lane",
-                                  summary=f"work-a: review round {number}", review=review)
+                                  data=review)
 
     def plan_work_a(self):
         self.lead({"planned": [{"subject": "work-a", "title": "Work A", "lane": "lane-1", "stage": "review"}]})
@@ -273,7 +273,7 @@ class RunlessReviewTests(unittest.TestCase):
         self.planned_round(2)
         self.planned_round(3)
         journal = state_tool.read_journal(self.directory)
-        evidence = next(entry for entry in journal if entry["kind"] == "review.evidence")
+        evidence = next(entry for entry in journal if entry["kind"] == "review.recorded")
         moved = [entry for entry in journal if entry is not evidence] + [{**evidence, "id": journal[-1]["id"] + 1}]
         observed = state_tool.review_observations(self.directory, state_tool.read_state(self.directory), moved)
         self.assertTrue(observed["work-a"]["unavailable"])
@@ -344,7 +344,7 @@ class ReviewEvidenceCheckTests(unittest.TestCase):
     def journal_rounds(self, count):
         for number in range(1, count + 1):
             state_tool.append_journal(self.directory, kind="review.round", subject="work-a", lane="lane-1",
-                                      summary=f"round {number}", review={
+                                      data={
                                           "round": number, "startedAt": "2026-01-01T00:00:00Z", "finishedAt": "2026-01-01T00:01:00Z",
                                           "verdicts": {"lens.outcome-correctness": "approve"},
                                           "findings": {"P0": 0, "P1": 0, "P2": 0, "P3": 0}})

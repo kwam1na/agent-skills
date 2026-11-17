@@ -1,0 +1,5 @@
+{"id": 1, "at": "2026-11-16T09:00:00Z", "kind": "record.started", "lane": null, "subject": null, "data": {"base": {"ref": "integrate/delivery-story", "head": "1405df66cbe219b0bf6355bc3d60361a8376b6b4"}}}
+{"id": 2, "at": "2026-11-16T09:01:00Z", "kind": "lease.granted", "lane": null, "subject": null, "data": {"lease": "dev-backend", "holder": "lead"}}
+{"id": 3, "at": "2026-11-16T09:02:00Z", "kind": "snapshot.stale", "lane": null, "subject": null, "data": {"source": "tracker"}}
+{"id": 4, "at": "2026-11-16T09:05:00Z", "kind": "lease.released", "lane": null, "subject": null, "data": {"lease": "dev-backend", "holder": "lead"}, "answers": [2]}
+{"id": 5, "at": "2026-11-16T09:06:00Z", "kind": "snapshot.retaken", "lane": null, "subject": null, "data": {"source": "tracker"}, "answers": [3]}

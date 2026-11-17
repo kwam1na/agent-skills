@@ -1,0 +1,8 @@
+{"id": 1, "at": "2026-11-16T09:00:00Z", "kind": "record.started", "lane": null, "subject": null, "data": {"base": {"ref": "integrate/delivery-story", "head": "1405df66cbe219b0bf6355bc3d60361a8376b6b4"}}}
+{"id": 2, "at": "2026-11-16T09:01:00Z", "kind": "lane.assigned", "lane": "lane-1", "subject": "A", "data": {"title": "Work A"}}
+{"id": 3, "at": "2026-11-16T09:05:00Z", "kind": "candidate.handed", "lane": "lane-1", "subject": "A", "data": {"head": "c40e0e23516f1d6a0739aeebb738bbc8495a5e08", "changeRequest": "https://github.com/acme/shop/pull/102", "rounds": 2, "checks": ["tests.test_one"]}}
+{"id": 4, "at": "2026-11-16T09:06:00Z", "kind": "check.started", "lane": "lane-1", "subject": "A", "data": {}}
+{"id": 5, "at": "2026-11-16T09:09:00Z", "kind": "check.failed", "lane": "lane-1", "subject": "A", "data": {"check": "tests.test_one", "timedOut": false, "failing": ["tests.test_one.Case.test_it"], "more": 0, "log": "logs/A-tests.test_one.log"}, "because": [4]}
+{"id": 6, "at": "2026-11-16T09:10:00Z", "kind": "candidate.stopped", "lane": "lane-1", "subject": "A", "data": {"reason": "check_failed", "detail": "Its checks failed."}, "because": [5]}
+{"id": 7, "at": "2026-11-16T09:20:00Z", "kind": "candidate.handed", "lane": "lane-1", "subject": "A", "data": {"head": "e825ec5d34e749695be2c5f18e95bb57b716f317", "changeRequest": "https://github.com/acme/shop/pull/106", "rounds": 2, "checks": ["tests.test_one"]}, "answers": [6]}
+{"id": 8, "at": "2026-11-16T09:30:00Z", "kind": "handoff.requeued", "lane": "lane-1", "subject": "A", "data": {"head": "0f0af8314afb86ad47ab9d5a553c013393d33222"}, "answers": [6]}

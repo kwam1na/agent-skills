@@ -116,6 +116,7 @@ from delivery_state import (  # noqa: E402
     RECOVERY_QUARANTINE, STATE_FILE, STATE_LOCK, StateError,
     dumps, load_schema, merge_slot_path, show, slot_holder,
 )
+import narrator  # noqa: E402
 
 
 DEFAULT_RENDERERS = (
@@ -468,13 +469,62 @@ def render_markdown(document: dict) -> str:
     rows = [f"- {_markdown_text(lease['id'])}: {_markdown_text(lease['holder'])} since {_markdown_text(lease['since'])}" for lease in state["leases"]]
     lines += _markdown_section("Leases", rows, "No leases held.")
 
-    rows = [
-        f"- {_markdown_number(entry['id'])} {_markdown_text(entry['at'])} {_markdown_text(entry['kind'])}"
-        f" · lane {_markdown_text(entry['lane'])} · subject {_markdown_text(entry['subject'])}: {_markdown_text(entry['summary'])}"
-        for entry in reversed(document["journal"])
-    ]
-    lines += _markdown_section("Journal", rows, "The journal is empty.")
+    lines += _markdown_story(document)
     return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def _markdown_story(document: dict) -> list[str]:
+    """The story's beats, chapter by chapter, newest first: what the narrator says, not what the journal stores."""
+    story = _told(document).get("story")
+    if not isinstance(story, dict):
+        return _markdown_section("Story", [], "The story could not be told from this record.")
+    digest = story["digest"]["words"]
+    lines = ["## Story", "", _markdown_text(digest["head"]) + ((" " + _markdown_text(digest["line"])) if digest["line"] else ""), ""]
+    beats = {beat["id"]: beat for beat in story["beats"]}
+    threads = {thread["id"]: thread for thread in story["threads"]}
+    if not story["chapters"]:
+        lines += ["The journal is empty.", ""]
+    for chapter in reversed(story["chapters"]):
+        words = chapter["words"]
+        lines += [f"### {_markdown_text(words['head'])} · {_markdown_text(chapter['at'])}", ""]
+        if words["line"]:
+            lines += [_markdown_text(words["line"]), ""]
+        rows = [f"- {_markdown_text(standing['text'])}" + (f", until {_markdown_text(standing['until'])}" if standing["until"] else "")
+                for standing in words["standing"]]
+        for beat in reversed([beats[name] for name in chapter["beats"]]):
+            if beat["form"] == "thread":
+                thread = threads[beat["thread"]]
+                cost = f", cost {_duration(thread['cost'])}" if thread["cost"] is not None else ", still standing"
+                rows.append(f"- {_markdown_text(beat['at'])} **{_markdown_text(beat['words']['head'])}**{cost}: {_markdown_text(beat['words']['line'])}")
+            else:
+                said = beat["words"]["line"]
+                rows.append(f"- {_markdown_text(beat['at'])} {_markdown_text(beat['words']['head'])}" + (f": {_markdown_text(said)}" if said else ""))
+        lines += rows + ([""] if rows else [])
+    return lines
+
+
+def _told(document: dict) -> dict:
+    """A document given straight to a view, not through the wrapper, with its story told here."""
+    if isinstance(document.get("story"), dict) or not isinstance(document.get("journal"), list):
+        return document
+    try:
+        return {**document, "story": narrator.narrate(document["journal"], state=document.get("state"))}
+    except (ValueError, KeyError, TypeError):
+        return document
+
+
+def with_story(shown: dict, directory: Path) -> dict:
+    """The record with its story, as every view and the live stream carry it. A story that cannot be told is left out."""
+    plan = None
+    try:
+        read = json.loads((directory / PLAN_FILE).read_text(encoding="utf-8"))
+        plan = read if isinstance(read, dict) else None
+    except (OSError, ValueError):
+        pass
+    try:
+        return {**shown, "story": narrator.narrate(shown["journal"], state=shown["state"], plan=plan)}
+    except (ValueError, KeyError, TypeError):
+        return shown
 
 
 # The built-in static page. It embeds the state as escaped JSON and draws it
@@ -814,11 +864,27 @@ _PAGE_PROGRAM = """
       return row(show(lease.id) + ": " + show(lease.holder), "Since " + show(lease.since));
     }));
 
-    parts.push(el("h2", "Journal"));
-    parts.push(list("ol", doc.journal.slice().reverse(), "The journal is empty.", function (entry) {
-      return row(show(entry.summary),
-        show(entry.at) + " \\u00b7 lane " + show(entry.lane) + " \\u00b7 subject " + show(entry.subject), entry.kind);
-    }));
+    parts.push(el("h2", "Story"));
+    var story = isObject(doc.story) ? doc.story : null;
+    if (!story) {
+      parts.push(el("p", "The story could not be told from this record.", "empty"));
+      return parts;
+    }
+    parts.push(el("p", show(story.digest.words.head) + (story.digest.words.line ? " " + show(story.digest.words.line) : "")));
+    var beats = {};
+    story.beats.forEach(function (beat) { beats[beat.id] = beat; });
+    if (!story.chapters.length) { parts.push(el("p", "The journal is empty.", "empty")); }
+    story.chapters.slice().reverse().forEach(function (chapter) {
+      parts.push(el("h3", show(chapter.words.head) + " \\u00b7 " + show(chapter.at)));
+      if (chapter.words.line) { parts.push(el("p", show(chapter.words.line))); }
+      var told = chapter.words.standing.map(function (standing) {
+        return { words: { head: show(standing.text) + (standing.until ? ", until " + show(standing.until) : ""), line: "" }, at: "", label: "Still standing" };
+      }).concat(chapter.beats.map(function (name) { return beats[name]; }).reverse());
+      parts.push(list("ol", told, "Nothing more happened in this chapter.", function (beat) {
+        return row(show(beat.words.head), (beat.at ? show(beat.at) : "") + (beat.words.line ? (beat.at ? " \\u00b7 " : "") + show(beat.words.line) : ""),
+          beat.label !== beat.words.head ? beat.label : undefined);
+      }));
+    });
     return parts;
   }
 
@@ -928,6 +994,7 @@ def render_static_page(document: dict, *, live: bool = False, flags: tuple[str, 
                        banner: str | None = None) -> str:
     """The page. `banner` is the supervisor's banner markup, given only when the view reads a status file."""
     adapter = f"<script>\n{_LIVE_ADAPTER}\n</script>\n" if live else ""
+    document = _told(document)
     return (
         "<!doctype html>\n"
         '<html lang="en">\n'
@@ -1352,7 +1419,7 @@ def render(directory: Path, config: object) -> tuple[int, dict]:
     except ConfigError as error:
         return 2, {"ok": False, "code": "config_invalid", "error": str(error)}
     try:
-        shown = show(directory)
+        shown = with_story(show(directory), directory)
         document = dumps(shown).encode("utf-8")
     except StateError as error:
         return 2, {"ok": False, "code": error.code, "error": str(error)}
@@ -1659,7 +1726,7 @@ class LiveView:
     def read(self) -> dict | None:
         """The record, or None while it cannot be read: half-written, unreadable, or not yet there."""
         try:
-            return show(self.directory)
+            return with_story(show(self.directory), self.directory)
         except (StateError, OSError, ValueError):
             return None
 

@@ -287,7 +287,9 @@
       "kind": "lane.assigned",
       "lane": "payments",
       "subject": "V26-2358",
-      "summary": "payments assigned V26-2358"
+      "data": {
+        "title": "Hold the cart through a payment redirect"
+      }
     },
     {
       "at": "2026-10-22T04:10:00Z",
@@ -295,7 +297,12 @@
       "kind": "candidate.handed",
       "lane": "payments",
       "subject": "V26-2358",
-      "summary": "payments handed V26-2358 at 1111111 (athena#1101) after 2 review rounds"
+      "data": {
+        "head": "1111111111111111111111111111111111111111",
+        "changeRequest": "athena#1101",
+        "rounds": 2,
+        "checks": []
+      }
     },
     {
       "at": "2026-10-22T04:12:00Z",
@@ -303,7 +310,7 @@
       "kind": "check.started",
       "lane": "payments",
       "subject": "V26-2358",
-      "summary": "Checking Hold the cart through a payment redirect"
+      "data": {}
     },
     {
       "at": "2026-10-22T04:26:00Z",
@@ -311,7 +318,9 @@
       "kind": "candidate.merged",
       "lane": "payments",
       "subject": "V26-2358",
-      "summary": "Merged V26-2358 at 2222222"
+      "data": {
+        "head": "2222222222222222222222222222222222222222"
+      }
     },
     {
       "at": "2026-10-22T04:30:00Z",
@@ -319,7 +328,7 @@
       "kind": "check.started",
       "lane": "storefront",
       "subject": "V26-2360",
-      "summary": "Checking Show a calm message when the card is declined"
+      "data": {}
     },
     {
       "at": "2026-10-22T04:44:00Z",
@@ -327,7 +336,10 @@
       "kind": "candidate.stopped",
       "lane": "storefront",
       "subject": "V26-2360",
-      "summary": "Stopped V26-2360: checkout end-to-end failed, 2 tests (declined card shows the retry button, declined card keeps the cart)"
+      "data": {
+        "reason": "check_failed",
+        "detail": "Checkout end-to-end failed, 2 tests (declined card shows the retry button, declined card keeps the cart)"
+      }
     },
     {
       "at": "2026-10-22T04:45:00Z",
@@ -335,7 +347,10 @@
       "kind": "lease.granted",
       "lane": null,
       "subject": null,
-      "summary": "dev-backend leased to lead for convex codegen"
+      "data": {
+        "lease": "dev-backend",
+        "holder": "lead"
+      }
     },
     {
       "at": "2026-10-22T04:50:00Z",
@@ -343,7 +358,9 @@
       "kind": "blocker.recorded",
       "lane": "backend",
       "subject": "V26-2365",
-      "summary": "backend is blocked on the dev backend lease"
+      "data": {
+        "text": "Backend is blocked on the dev backend lease"
+      }
     },
     {
       "at": "2026-10-22T05:00:00Z",
@@ -351,7 +368,10 @@
       "kind": "decision.recorded",
       "lane": null,
       "subject": null,
-      "summary": "Payments retries land before the copy changes"
+      "data": {
+        "text": "Payments retries land before the copy changes",
+        "why": "The lead recorded the call."
+      }
     },
     {
       "at": "2026-10-22T05:04:00Z",
@@ -359,7 +379,7 @@
       "kind": "check.started",
       "lane": "payments",
       "subject": "V26-2361",
-      "summary": "Checking Retry card payments once on a dropped connection"
+      "data": {}
     }
   ],
   "status": {

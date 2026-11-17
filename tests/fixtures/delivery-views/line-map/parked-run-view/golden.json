@@ -291,7 +291,9 @@
           "kind": "lane.assigned",
           "lane": "payments",
           "subject": "V26-2358",
-          "summary": "payments assigned V26-2358"
+          "data": {
+            "title": "Hold the cart through a payment redirect"
+          }
         },
         {
           "at": "2026-10-22T04:10:00Z",
@@ -299,7 +301,12 @@
           "kind": "candidate.handed",
           "lane": "payments",
           "subject": "V26-2358",
-          "summary": "payments handed V26-2358 at 1111111 (athena#1101) after 2 review rounds"
+          "data": {
+            "head": "1111111111111111111111111111111111111111",
+            "changeRequest": "athena#1101",
+            "rounds": 2,
+            "checks": []
+          }
         },
         {
           "at": "2026-10-22T04:12:00Z",
@@ -307,7 +314,7 @@
           "kind": "check.started",
           "lane": "payments",
           "subject": "V26-2358",
-          "summary": "Checking Hold the cart through a payment redirect"
+          "data": {}
         },
         {
           "at": "2026-10-22T04:26:00Z",
@@ -315,7 +322,9 @@
           "kind": "candidate.merged",
           "lane": "payments",
           "subject": "V26-2358",
-          "summary": "Merged V26-2358 at 2222222"
+          "data": {
+            "head": "2222222222222222222222222222222222222222"
+          }
         },
         {
           "at": "2026-10-22T04:30:00Z",
@@ -323,7 +332,7 @@
           "kind": "check.started",
           "lane": "storefront",
           "subject": "V26-2360",
-          "summary": "Checking Show a calm message when the card is declined"
+          "data": {}
         },
         {
           "at": "2026-10-22T04:44:00Z",
@@ -331,7 +340,10 @@
           "kind": "candidate.stopped",
           "lane": "storefront",
           "subject": "V26-2360",
-          "summary": "Stopped V26-2360: checkout end-to-end failed, 2 tests (declined card shows the retry button, declined card keeps the cart)"
+          "data": {
+            "reason": "check_failed",
+            "detail": "Checkout end-to-end failed, 2 tests (declined card shows the retry button, declined card keeps the cart)"
+          }
         },
         {
           "at": "2026-10-22T04:45:00Z",
@@ -339,7 +351,10 @@
           "kind": "lease.granted",
           "lane": null,
           "subject": null,
-          "summary": "dev-backend leased to lead for convex codegen"
+          "data": {
+            "lease": "dev-backend",
+            "holder": "lead"
+          }
         },
         {
           "at": "2026-10-22T04:50:00Z",
@@ -347,7 +362,9 @@
           "kind": "blocker.recorded",
           "lane": "backend",
           "subject": "V26-2365",
-          "summary": "backend is blocked on the dev backend lease"
+          "data": {
+            "text": "Backend is blocked on the dev backend lease"
+          }
         },
         {
           "at": "2026-10-22T05:00:00Z",
@@ -355,7 +372,10 @@
           "kind": "decision.recorded",
           "lane": null,
           "subject": null,
-          "summary": "Payments retries land before the copy changes"
+          "data": {
+            "text": "Payments retries land before the copy changes",
+            "why": "The lead recorded the call."
+          }
         },
         {
           "at": "2026-10-22T05:04:00Z",
@@ -363,7 +383,7 @@
           "kind": "check.started",
           "lane": "payments",
           "subject": "V26-2361",
-          "summary": "Checking Retry card payments once on a dropped connection"
+          "data": {}
         }
       ],
       "status": {
@@ -391,6 +411,468 @@
           "position": 1,
           "expectedStart": "2026-10-22T05:19:22Z"
         }
+      },
+      "story": {
+        "schemaVersion": "story/1",
+        "state": "open",
+        "digest": {
+          "landed": 1,
+          "pieces": 8,
+          "startedAt": "2026-10-22T03:05:00Z",
+          "closedAt": null,
+          "took": null,
+          "setbacks": {
+            "closed": 0,
+            "cost": 0,
+            "standing": [
+              {
+                "thread": "t1",
+                "openedAt": "2026-10-22T04:44:00Z"
+              },
+              {
+                "thread": "t2",
+                "openedAt": "2026-10-22T04:50:00Z"
+              }
+            ]
+          },
+          "decisions": 1,
+          "words": {
+            "head": "One of eight pieces landed so far.",
+            "line": "Two setbacks still stand. The lead made one decision."
+          }
+        },
+        "chapters": [
+          {
+            "id": "c1",
+            "form": "start",
+            "subject": null,
+            "pieceTitle": null,
+            "at": "2026-10-22T03:05:00Z",
+            "entries": [
+              1,
+              2,
+              3
+            ],
+            "beats": [
+              "b1",
+              "b2",
+              "b3"
+            ],
+            "standing": [],
+            "notLanded": [],
+            "words": {
+              "head": "Getting started",
+              "line": "Payments lane picked up V26-2358.",
+              "standing": []
+            }
+          },
+          {
+            "id": "c2",
+            "form": "landing",
+            "subject": "V26-2358",
+            "pieceTitle": "Hold the cart through a payment redirect",
+            "at": "2026-10-22T04:26:00Z",
+            "entries": [
+              4
+            ],
+            "beats": [
+              "b4"
+            ],
+            "standing": [],
+            "notLanded": [],
+            "words": {
+              "head": "V26-2358 landed",
+              "line": "1h 21m after it was picked up, after 2 review rounds.",
+              "standing": []
+            }
+          },
+          {
+            "id": "c3",
+            "form": "finish",
+            "subject": null,
+            "pieceTitle": null,
+            "at": "2026-10-22T05:04:00Z",
+            "entries": [
+              5,
+              6,
+              7,
+              8,
+              9,
+              10
+            ],
+            "beats": [
+              "b5",
+              "b6",
+              "b7",
+              "b8",
+              "b9",
+              "b10",
+              "b11",
+              "b12"
+            ],
+            "standing": [],
+            "notLanded": [],
+            "words": {
+              "head": "Finishing",
+              "line": "V26-2360, V26-2361, V26-2362, V26-2363, V26-2364, V26-2365 and V26-2366 are still to land.",
+              "standing": []
+            }
+          }
+        ],
+        "beats": [
+          {
+            "id": "b1",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T03:05:00Z",
+            "entries": [
+              1
+            ],
+            "thread": null,
+            "kind": "lane.assigned",
+            "tone": "note",
+            "label": "Picked up",
+            "words": {
+              "head": "Payments lane picked up V26-2358",
+              "line": "Hold the cart through a payment redirect"
+            },
+            "explain": "The lead gave a piece to a lane, which starts work on it.",
+            "items": []
+          },
+          {
+            "id": "b2",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T04:10:00Z",
+            "entries": [
+              2
+            ],
+            "thread": null,
+            "kind": "candidate.handed",
+            "tone": "ready",
+            "label": "Handed off",
+            "words": {
+              "head": "Payments lane handed off V26-2358",
+              "line": "Ready after 2 review rounds"
+            },
+            "explain": "A lane says its piece is ready. The lead checks the claim before anything is run on it.",
+            "items": []
+          },
+          {
+            "id": "b3",
+            "chapter": "c1",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T04:12:00Z",
+            "entries": [
+              3
+            ],
+            "thread": null,
+            "kind": "check.started",
+            "tone": "note",
+            "label": "Checking",
+            "words": {
+              "head": "Checks started on V26-2358",
+              "line": ""
+            },
+            "explain": "The queue began running a piece's checks.",
+            "items": []
+          },
+          {
+            "id": "b4",
+            "chapter": "c2",
+            "form": "entry",
+            "altitudes": [
+              "headline",
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T04:26:00Z",
+            "entries": [
+              4
+            ],
+            "thread": null,
+            "kind": "candidate.merged",
+            "tone": "landed",
+            "label": "Landed",
+            "words": {
+              "head": "V26-2358 landed",
+              "line": "At 2222222"
+            },
+            "explain": "A piece reached the main line.",
+            "items": []
+          },
+          {
+            "id": "b5",
+            "chapter": "c3",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T04:30:00Z",
+            "entries": [
+              5
+            ],
+            "thread": null,
+            "kind": "check.started",
+            "tone": "note",
+            "label": "Checking",
+            "words": {
+              "head": "Checks started on V26-2360",
+              "line": ""
+            },
+            "explain": "The queue began running a piece's checks.",
+            "items": []
+          },
+          {
+            "id": "b6",
+            "chapter": "c3",
+            "form": "thread",
+            "altitudes": [
+              "headline"
+            ],
+            "at": "2026-10-22T04:44:00Z",
+            "entries": [
+              6
+            ],
+            "thread": "t1",
+            "kind": "candidate.stopped",
+            "tone": "problem",
+            "label": "Setback",
+            "words": {
+              "head": "A setback: V26-2360 was stopped",
+              "line": "Checkout end-to-end failed, 2 tests (declined card shows the retry button, declined card keeps the cart). It still stands."
+            },
+            "explain": "The queue stopped a piece before it landed. It stays stopped until a new hand-off or the lead answers it.",
+            "items": []
+          },
+          {
+            "id": "b7",
+            "chapter": "c3",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T04:44:00Z",
+            "entries": [
+              6
+            ],
+            "thread": "t1",
+            "kind": "candidate.stopped",
+            "tone": "problem",
+            "label": "Stopped",
+            "words": {
+              "head": "V26-2360 was stopped",
+              "line": "Checkout end-to-end failed, 2 tests (declined card shows the retry button, declined card keeps the cart)"
+            },
+            "explain": "The queue stopped a piece before it landed. It stays stopped until a new hand-off or the lead answers it.",
+            "items": []
+          },
+          {
+            "id": "b8",
+            "chapter": "c3",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T04:45:00Z",
+            "entries": [
+              7
+            ],
+            "thread": null,
+            "kind": "lease.granted",
+            "tone": "note",
+            "label": "Lease taken",
+            "words": {
+              "head": "lead took the dev-backend lease",
+              "line": ""
+            },
+            "explain": "Someone took a shared resource that only one may use at a time.",
+            "items": []
+          },
+          {
+            "id": "b9",
+            "chapter": "c3",
+            "form": "thread",
+            "altitudes": [
+              "headline"
+            ],
+            "at": "2026-10-22T04:50:00Z",
+            "entries": [
+              8
+            ],
+            "thread": "t2",
+            "kind": "blocker.recorded",
+            "tone": "problem",
+            "label": "Setback",
+            "words": {
+              "head": "A setback: work was blocked on V26-2365",
+              "line": "Backend is blocked on the dev backend lease. It still stands."
+            },
+            "explain": "Work cannot go on until someone answers or acts.",
+            "items": []
+          },
+          {
+            "id": "b10",
+            "chapter": "c3",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T04:50:00Z",
+            "entries": [
+              8
+            ],
+            "thread": "t2",
+            "kind": "blocker.recorded",
+            "tone": "problem",
+            "label": "Blocked",
+            "words": {
+              "head": "Work was blocked on V26-2365",
+              "line": "Backend is blocked on the dev backend lease"
+            },
+            "explain": "Work cannot go on until someone answers or acts.",
+            "items": []
+          },
+          {
+            "id": "b11",
+            "chapter": "c3",
+            "form": "entry",
+            "altitudes": [
+              "headline",
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T05:00:00Z",
+            "entries": [
+              9
+            ],
+            "thread": null,
+            "kind": "decision.recorded",
+            "tone": "decision",
+            "label": "Decision",
+            "words": {
+              "head": "Payments retries land before the copy changes",
+              "line": "The lead recorded the call."
+            },
+            "explain": "The lead or the operator made a call, and said why.",
+            "items": []
+          },
+          {
+            "id": "b12",
+            "chapter": "c3",
+            "form": "entry",
+            "altitudes": [
+              "story",
+              "everything"
+            ],
+            "at": "2026-10-22T05:04:00Z",
+            "entries": [
+              10
+            ],
+            "thread": null,
+            "kind": "check.started",
+            "tone": "note",
+            "label": "Checking",
+            "words": {
+              "head": "Checks started on V26-2361",
+              "line": ""
+            },
+            "explain": "The queue began running a piece's checks.",
+            "items": []
+          }
+        ],
+        "threads": [
+          {
+            "id": "t1",
+            "chapter": "c3",
+            "beat": "b6",
+            "opening": 6,
+            "closing": null,
+            "openedAt": "2026-10-22T04:44:00Z",
+            "closedAt": null,
+            "cost": null,
+            "state": "open",
+            "entries": [
+              6
+            ],
+            "cause": [],
+            "heldUp": [],
+            "told": {
+              "cause": null,
+              "said": "Checkout end-to-end failed, 2 tests (declined card shows the retry button, declined card keeps the cart).",
+              "heldUp": null,
+              "ending": "It still stands."
+            },
+            "words": {
+              "head": "A setback: V26-2360 was stopped",
+              "line": "Checkout end-to-end failed, 2 tests (declined card shows the retry button, declined card keeps the cart). It still stands."
+            }
+          },
+          {
+            "id": "t2",
+            "chapter": "c3",
+            "beat": "b9",
+            "opening": 8,
+            "closing": null,
+            "openedAt": "2026-10-22T04:50:00Z",
+            "closedAt": null,
+            "cost": null,
+            "state": "open",
+            "entries": [
+              8
+            ],
+            "cause": [],
+            "heldUp": [],
+            "told": {
+              "cause": null,
+              "said": "Backend is blocked on the dev backend lease.",
+              "heldUp": null,
+              "ending": "It still stands."
+            },
+            "words": {
+              "head": "A setback: work was blocked on V26-2365",
+              "line": "Backend is blocked on the dev backend lease. It still stands."
+            }
+          }
+        ],
+        "tones": [
+          {
+            "tone": "landed",
+            "word": "Landed"
+          },
+          {
+            "tone": "ready",
+            "word": "Ready to check"
+          },
+          {
+            "tone": "decision",
+            "word": "Decision"
+          },
+          {
+            "tone": "problem",
+            "word": "Setback"
+          },
+          {
+            "tone": "note",
+            "word": "Other update"
+          }
+        ]
       }
     },
     "delivery-runs": {
@@ -474,20 +956,20 @@
       ]
     }
   },
-  "initialText": "NowThe lineWhoWhat's leftWhat happenedParkedCheckout resilience · V26-23541 of 8 pieces have landed.Last landed: Hold the cart through a payment redirect, 44m ago.Being checked now3/6Retry card payments once on a dropped connectionIn progress1Running storefront build · 2m 30s of about 4mstorefront build2m 30s / ~4m 00sWaiting2waiting: checkout end-to-endwaiting: payments behavior scenariosCompleted3passed: webapp typecheckpassed: checkout unit testsreused: convex audit3 of 6 checks done · started 6m agoUp next: Keep the order number on the receipt page · Record the payment provider's referenceNeeds attentionShow a calm message when the card is declined stoppedcheckout end-to-end failed: declined card shows the retry button, declined card keeps the cartBackend is blockedWaiting on the dev backend leaseV26-2359its change request closed without mergingThe forge is not answeringgh answered HTTP 502. Last read 12m ago.StartPieces landedFinish line metSaved view · updated just now · base aaaaaaaThe lineEvery piece of work merges into one main line.Each row is one lane's work, in the order it lands. Point at or tap a stop to see what it carries.Payments1 of 2 landed2358#11012361#1106Storefront0 of 3 landed2360#11042362#11072364#1109Backend0 of 2 landed2363#11082365Not yet assigned0 of 1 landed2366Finish line1/8 landed1/3 metPayments laneRetry card payments once on a dropped connectionV26-2361 · #1106 · Being checked before merge · Checking since 6 minutes agoA dropped connection during card payment retries once, without charging twice.Approved on round 2 · 1 serious note, 2 moderate notes, 1 minor note raised134:40 am2118 min laterRound 2ApprovedTestingCorrectness1 note1 minorWaiting on Lead inputNow: verifyWaiting · 1m3 review roundsMerge check · Check started 6 minutes ago · 1 step5:04 amChecking Retry card payments once on a dropped connectionLandedBeing checkedReady to checkIn progressNot startedWaiting for the lead to acceptStoppedBoth landedWho's doing what3 of 4 lanes are working right now.Each lane is a separate session working in parallel on its own part of the work.PaymentsV26-2361 card retry, in the merge queueNo time recordedHanded overfor 30mStorefrontV26-2364 checkout copy, review round 2No time recordedIn reviewfor 40mBackendV26-2365 webhook replayNo time recordedBlockedwaiting on the dev backend leaseOperationsStanding byfor 2h 10mLeasesdev-backend held by lead for 25mWhat's left7pieces to go1 of 8 pieces have landed.3with Storefront1with Payments2with Backend1not yet assignedThe finish lineMetA dropped connection during payment never charges twiceNextEvery payment state shows a clear next stepThenThe webhook replay recovers a missed paymentWhat happenedThe story so far, newest first.LandedReady to checkDecisionProblemOther updateEverythingDecisionsLandedProblems5:04 amChecking Retry card payments once on a dropped connectionCheck started · Payments · V26-23615:00 amPayments retries land before the copy changesDecision4:50 ambackend is blocked on the dev backend leaseBlocker · Backend · V26-23654:45 amdev-backend leased to lead for convex codegenLease granted4:44 amStopped V26-2360: checkout end-to-end failed, 2 tests (declined card shows the retry button, declined card keeps the cart)Stopped · Storefront · V26-23604:30 amChecking Show a calm message when the card is declinedCheck started · Storefront · V26-23604:26 amMerged V26-2358 at 2222222Landed · Payments · V26-23584:12 amChecking Hold the cart through a payment redirectCheck started · Payments · V26-2358Show all 10Parked for later1 thing found and set aside.V26-2370Measure checkout drop-off by payment statePast deliveries and runs",
+  "initialText": "NowThe lineWhoWhat's leftWhat happenedParkedCheckout resilience · V26-23541 of 8 pieces have landed.Checking · V26-23613/6Retry card payments once on a dropped connectionRunning storefront build · 2m 30s of about 4mstorefront build2m 30s / ~4m 00s3 done, 2 waiting · started 6m agoWaiting2waiting: checkout end-to-endwaiting: payments behavior scenariosCompleted3passed: webapp typecheckpassed: checkout unit testsreused: convex auditUp next: Keep the order number on the receipt page · Record the payment provider's referenceNeeds attentionShow a calm message when the card is declined stoppedcheckout end-to-end failed: declined card shows the retry button, declined card keeps the cartBackend is blockedWaiting on the dev backend leaseV26-2359its change request closed without mergingThe forge is not answeringgh answered HTTP 502. Last read 12m ago.StartPieces landedFinish line metLast landedHold the cart through a payment redirectV26-2358 · 44 minutes agoSaved viewUpdated just nowbase aaaaaaaThe lineEvery piece of work merges into one main line.Each row is one lane's work, in the order it lands. Point at or tap a stop to see what it carries.Payments1 of 2 landed2358#11012361#1106Storefront0 of 3 landed2360#11042362#11072364#1109Backend0 of 2 landed2363#11082365Not yet assigned0 of 1 landed2366Finish line1/8 landed1/3 metPayments laneRetry card payments once on a dropped connectionV26-2361 · #1106 · Being checked before merge · Checking since 6 minutes agoA dropped connection during card payment retries once, without charging twice.Approved on round 2 · 1 serious note, 2 moderate notes, 1 minor note raised134:40 am2118 min laterRound 2ApprovedTestingCorrectness1 note1 minorWaiting on Lead inputNow: verifyWaiting · 1m3 review roundsMerge check · Checking 6 minutes ago · 1 step5:04 amChecks started on V26-2361LandedBeing checkedReady to checkIn progressNot startedWaiting for the lead to acceptStoppedBoth landedWho's doing what3 of 4 lanes are working right now.Each lane is a separate session working in parallel on its own part of the work.PaymentsV26-2361 card retry, in the merge queueNo time recordedHanded overfor 30mStorefrontV26-2364 checkout copy, review round 2No time recordedIn reviewfor 40mBackendV26-2365 webhook replayNo time recordedBlockedwaiting on the dev backend leaseOperationsStanding byfor 2h 10mLeasesdev-backend held by lead for 25mWhat's left7pieces to go1 of 8 pieces have landed.V26-2360Show a calm message when the card is declinedStopped, waiting for its laneV26-2361Retry card payments once on a dropped connectionBeing checked before mergeV26-2362Keep the order number on the receipt pageBeing checked before mergeV26-2363Record the payment provider's referenceReady, waiting to be checkedV26-2364Checkout copy for every payment stateIn reviewV26-2365Replay a missed payment webhookBeing builtV26-2366Refund a partial paymentNot startedThe finish lineMetA dropped connection during payment never charges twiceNextEvery payment state shows a clear next stepThenThe webhook replay recovers a missed paymentWhat happenedOne of eight pieces landed so far.Two setbacks still stand. The lead made one decision.LandedReady to checkDecisionSetbackOther updateHeadlinesStoryEverythingAllDecisionsLandingsSetbacksFinishing5:04 amV26-2360, V26-2361, V26-2362, V26-2363, V26-2364, V26-2365 and V26-2366 are still to land.5:04 amChecks started on V26-2361Checking5:00 amPayments retries land before the copy changesThe lead recorded the call.Decision4:50 amWork was blocked on V26-2365Backend is blocked on the dev backend leaseBlocked4:45 amlead took the dev-backend leaseLease taken4:44 amV26-2360 was stoppedCheckout end-to-end failed, 2 tests (declined card shows the retry button, declined card keeps the cart)Stopped4:30 amChecks started on V26-2360CheckingV26-2358 landed4:26 amHold the cart through a payment redirect1h 21m after it was picked up, after 2 review rounds.4:26 amV26-2358 landedAt 2222222LandedGetting started3:05 amPayments lane picked up V26-2358.4:12 amChecks started on V26-2358Checking4:10 amPayments lane handed off V26-2358Ready after 2 review roundsHanded off3:05 amPayments lane picked up V26-2358Hold the cart through a payment redirectPicked upParked for later1 thing found and set aside.V26-2370Measure checkout drop-off by payment statePast deliveries and runs",
   "details": {
     "V26-2358": {
-      "detail": "Payments laneHold the cart through a payment redirectV26-2358 · #1101 · Landed 44 minutes agoWaiting · 2mCheck to merge · 14m2 review roundsIn all: 1h 21mMerge check · Landed 44 minutes ago · 3 steps4:10 ampayments handed V26-2358 at 1111111 (athena#1101) after 2 review rounds4:12 amChecking Hold the cart through a payment redirect4:26 amMerged V26-2358 at 2222222"
+      "detail": "Payments laneHold the cart through a payment redirectV26-2358 · #1101 · Landed 44 minutes agoWaiting · 2mCheck to merge · 14m2 review roundsIn all: 1h 21mMerge check · Landed 44 minutes ago · 3 steps4:10 amPayments lane handed off V26-2358: Ready after 2 review rounds4:12 amChecks started on V26-23584:26 amV26-2358 landed: At 2222222"
     },
     "V26-2361": {
-      "detail": "Payments laneRetry card payments once on a dropped connectionV26-2361 · #1106 · Being checked before merge · Checking since 6 minutes agoA dropped connection during card payment retries once, without charging twice.Approved on round 2 · 1 serious note, 2 moderate notes, 1 minor note raised134:40 am2118 min laterRound 2ApprovedTestingCorrectness1 note1 minorWaiting on Lead inputNow: verifyWaiting · 1m3 review roundsMerge check · Check started 6 minutes ago · 1 step5:04 amChecking Retry card payments once on a dropped connection",
+      "detail": "Payments laneRetry card payments once on a dropped connectionV26-2361 · #1106 · Being checked before merge · Checking since 6 minutes agoA dropped connection during card payment retries once, without charging twice.Approved on round 2 · 1 serious note, 2 moderate notes, 1 minor note raised134:40 am2118 min laterRound 2ApprovedTestingCorrectness1 note1 minorWaiting on Lead inputNow: verifyWaiting · 1m3 review roundsMerge check · Checking 6 minutes ago · 1 step5:04 amChecks started on V26-2361",
       "rounds": [
         "Round 1Changes requestedTestingCorrectnessapproved3 notes1 serious2 moderate",
         "Round 2ApprovedTestingCorrectness1 note1 minor"
       ]
     },
     "V26-2360": {
-      "detail": "Storefront laneShow a calm message when the card is declinedV26-2360 · #1104 · Stopped, waiting for its lane · Stopped 26 minutes agocheckout end-to-end failed: declined card shows the retry button, declined card keeps the cartMerge check · Stopped 26 minutes ago · 2 steps4:30 amChecking Show a calm message when the card is declined4:44 amStopped V26-2360: checkout end-to-end failed, 2 tests (declined card shows the retry button, declined card keeps the cart)"
+      "detail": "Storefront laneShow a calm message when the card is declinedV26-2360 · #1104 · Stopped, waiting for its lane · Stopped 26 minutes agocheckout end-to-end failed: declined card shows the retry button, declined card keeps the cartMerge check · Stopped 26 minutes ago · 2 steps4:30 amChecks started on V26-23604:44 amV26-2360 was stopped: Checkout end-to-end failed, 2 tests (declined card shows the retry button, declined card keeps the cart)"
     },
     "V26-2362": {
       "detail": "Storefront laneKeep the order number on the receipt pageV26-2362 · #1107 · Being checked before merge · Time unknownNeeds the lead first: convex codegen"

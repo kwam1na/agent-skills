@@ -665,6 +665,42 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_journal_kinds",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_journal_kinds.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_journal_kinds.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_journal_shape",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_journal_shape.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_journal_shape.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_knowledge_library",
         "argv": [
           ".venv/bin/python",
@@ -840,6 +876,24 @@
         "cwd": ".",
         "reasons": [
           "The tests in tests/test_merge_queue.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_narrator",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_narrator.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_narrator.py."
         ],
         "prerequisites": [],
         "timeoutSeconds": 3600

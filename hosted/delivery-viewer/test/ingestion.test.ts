@@ -139,6 +139,14 @@ describe('ingestion boundary', () => {
     expect((await request(route(publicId, 'snapshots'), { method: 'POST', headers, body: '{}' })).status).toBe(422);
     expect((await request(route(publicId, 'snapshots'), { method: 'POST', headers: {...headers, 'Content-Type': 'text/html'}, body: '<html>' })).status).toBe(415);
     expect((await request(route(publicId, 'snapshots'), { method: 'POST', headers: {...headers, 'X-Renderer-Version': 'future'}, body: '{}' })).status).toBe(422);
+    // The renderer before this one is refused by name too, with a body that is otherwise accepted: the service and the
+    // publisher move together.
+    const valid = JSON.stringify(fixture());
+    const exact = { ...headers, 'X-Snapshot-Digest': await digest(new TextEncoder().encode(valid)) };
+    const previous = await request(route(publicId, 'snapshots'), { method: 'POST', headers: {...exact, 'X-Renderer-Version': 'delivery-line-map/1'}, body: valid });
+    expect(previous.status).toBe(422);
+    expect(JSON.stringify(await previous.json())).toContain('unsupported_renderer');
+    expect((await current(publicId)).status).toBe(404);
     expect((await upload(publicId, 1, '[['.repeat(65))).status).toBe(400);
     expect((await upload(publicId, 1, '{"bad":')).status).toBe(400);
     expect((await current(publicId)).status).toBe(404);

@@ -74,13 +74,13 @@ test("the fold draws the track and each round's card, with the closing commit of
     ["Round 1, asked for changes, 4 serious notes", "Round 2, asked for changes, 1 serious note", "Round 3, approved, nothing raised"]);
   // The newest round is picked: it raised nothing and confirmed round 2's finding fixed in round 3's commit.
   expect(fold.querySelector(".run-card").textContent).toBe(
-    "Reviewed candidate 3333333Round 3ApprovedTestingCorrectnessNothing new raisedConfirmed 1 earlier note fixed in 3333333" +
-    "CorrectnessThe off-by-one is corrected: scenario 6 reads rounds 2 to 10.fixedc2-1 · The off-by-one is corrected: scenario 6 reads rounds 2 to 10.");
+    "Reviewed at 3333333Round 3ApprovedTestingCorrectnessNothing new raisedThis round confirmed 1 earlier note fixed in 3333333." +
+    "CorrectnessThe off-by-one is corrected: scenario 6 reads rounds 2 to 10.fixedc2-1");
   const [, , first] = await openPage(render(document, plan), { now: NOW, store: false,
     steps: [{ toggle: FOLD }, { click: `${FOLD} .run-pick`, index: 0 }] });
   expect(first.app.querySelector(`${FOLD} .run-card`).textContent).toBe(
-    "Reviewed candidate 1111111Round 1Changes requestedTestingSeriousA review past the caps blocks the plan write.CorrectnessSerious · 3" +
-    "The fold has no valid shape.The guarantees conflict.The caps block every plan write.All 4 fixed in 2222222 · confirmed round 2");
+    "Reviewed at 1111111Round 1Changes requestedTestingSeriousA review past the caps blocks the plan write.CorrectnessSerious · 3" +
+    "The fold has no valid shape.The guarantees conflict.The caps block every plan write.All 4 of this round's notes were fixed in 2222222, and round 2 confirmed them.");
 });
 
 test("a fold entry reads as its rounds with their counts, and an entry says what it doesn't list", async () => {
@@ -92,7 +92,7 @@ test("a fold entry reads as its rounds with their counts, and an entry says what
   expect([...fold.querySelectorAll(".run-dot")].map((dot) => dot.textContent)).toEqual(["1", "2–10", "11", "12"]);
   expect(fold.querySelectorAll(".run-pick")[1].getAttribute("aria-label")).toBe("Rounds 2–10, asked for changes, 9 serious notes, 2 moderate notes");
   expect(snaps[2].app.querySelector(`${FOLD} .run-card`).textContent).toBe(
-    "Reviewed candidate aaaaaaaRounds 2–10Changes requestedTestingapprovedCorrectness11 notes9 serious2 moderate" +
+    "Reviewed at aaaaaaaRounds 2–10Changes requestedTestingapprovedCorrectness11 notes9 serious2 moderate" +
     "This entry folds 9 rounds and doesn't list 11 findings or 7 closures.");
   expect(snaps[3].app.querySelector(`${FOLD} .run-clipped`).textContent).toBe("This round doesn't list 5 findings, and some of its texts were shortened.");
 });
@@ -114,7 +114,7 @@ test("blocking approvals raise one flag naming each, after a broken base, until 
   expect(flagWhy(app)).toEqual(["Product Owner signs off the copy; Security reviews the token scope"]);
   expect(app.querySelector("#plan .plan-calm")).toBeNull();
   const broken = structuredClone(document);
-  broken.journal.push({ id: 99, at: "2026-10-30T11:00:00Z", kind: "base.broken", subject: null, summary: "main is red" });
+  broken.journal.push({ id: broken.journal.length + 1, at: "2026-10-30T11:00:00Z", kind: "base.broken", lane: null, subject: null, data: { source: "queue", detail: "Main is red" } });
   expect(flags(await shown(broken, plan))).toEqual(["The base is broken", "Approvals are blocking work"]);
   // One done: the other still blocks. Both done: the calm line returns, and the fold counts nothing ahead.
   plan.approvals[0].state = "done";

@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://agent-skills.dev/schemas/hosted-delivery-snapshot/1",
-  "title": "hosted-delivery-snapshot/1",
+  "$id": "https://agent-skills.dev/schemas/hosted-delivery-snapshot/2",
+  "title": "hosted-delivery-snapshot/2",
   "type": "object",
   "additionalProperties": false,
   "properties": {
     "schemaVersion": {
-      "const": "hosted-delivery-snapshot/1"
+      "const": "hosted-delivery-snapshot/2"
     },
     "sourceFingerprint": {
       "type": "string",
@@ -727,160 +727,30 @@
         "journal": {
           "type": "array",
           "items": {
-            "title": "delivery-journal/1",
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "id": {
-                "type": "integer",
-                "minimum": 1
-              },
-              "at": {
-                "type": "string",
-                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
-                "maxLength": 65536
-              },
-              "kind": {
-                "enum": [
-                  "lane.assigned",
-                  "review.round",
-                  "candidate.handed",
-                  "check.started",
-                  "check.finished",
-                  "check.failed",
-                  "check.retried",
-                  "check.reused",
-                  "check.carried",
-                  "candidate.merged",
-                  "candidate.stopped",
-                  "base.verified",
-                  "base.broken",
-                  "base.repaired",
-                  "base.rerun.started",
-                  "base.rerun.finished",
-                  "base.rerun.stopped",
-                  "base.flaky",
-                  "lease.granted",
-                  "lease.released",
-                  "release.started",
-                  "release.finished",
-                  "finish.met",
-                  "decision.recorded",
-                  "blocker.recorded",
-                  "delivery.closed",
-                  "review.evidence",
-                  "check.selected",
-                  "selection.refused",
-                  "hook.held",
-                  "base.moved",
-                  "peer.merged"
-                ]
-              },
-              "lane": {
-                "anyOf": [
-                  {
-                    "type": "null"
-                  },
-                  {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 65536
-                  }
-                ]
-              },
-              "subject": {
-                "anyOf": [
-                  {
-                    "type": "null"
-                  },
-                  {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 65536
-                  }
-                ]
-              },
-              "summary": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 65536
-              },
-              "review": {
+            "title": "hosted journal entry",
+            "description": "An entry's identity, kind and times, never its facts, its links or its words: only a review round keeps its round, times, verdicts and finding counts. The kind is any name: the projection publishes only kinds the registry of kinds lists, and the receiver does not police kinds.",
+            "anyOf": [
+              {
                 "type": "object",
                 "additionalProperties": false,
+                "required": [
+                  "id",
+                  "at",
+                  "kind",
+                  "lane",
+                  "subject"
+                ],
                 "properties": {
-                  "round": {
+                  "id": {
                     "type": "integer",
                     "minimum": 1
                   },
-                  "startedAt": {
+                  "at": {
                     "type": "string",
                     "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
                     "maxLength": 65536
                   },
-                  "finishedAt": {
-                    "type": "string",
-                    "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
-                    "maxLength": 65536
-                  },
-                  "verdicts": {
-                    "type": "object",
-                    "additionalProperties": {
-                      "enum": [
-                        "approve",
-                        "changes"
-                      ]
-                    },
-                    "maxProperties": 10000
-                  },
-                  "findings": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "P0": {
-                        "type": "integer",
-                        "minimum": 0
-                      },
-                      "P1": {
-                        "type": "integer",
-                        "minimum": 0
-                      },
-                      "P2": {
-                        "type": "integer",
-                        "minimum": 0
-                      },
-                      "P3": {
-                        "type": "integer",
-                        "minimum": 0
-                      }
-                    },
-                    "maxProperties": 10000
-                  }
-                },
-                "maxProperties": 10000
-              },
-              "occurredAt": {
-                "anyOf": [
-                  {
-                    "type": "string",
-                    "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
-                    "maxLength": 65536
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "recovery": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "head": {
-                    "type": "string",
-                    "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$",
-                    "maxLength": 65536
-                  },
-                  "changeRequest": {
+                  "lane": {
                     "anyOf": [
                       {
                         "type": "null"
@@ -891,60 +761,154 @@
                         "maxLength": 65536
                       }
                     ]
-                  }
-                },
-                "maxProperties": 10000
-              },
-              "reviewCarry": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "from": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 2048
                   },
-                  "to": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 2048
+                  "subject": {
+                    "anyOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 65536
+                      }
+                    ]
                   },
-                  "digest": {
-                    "type": "string",
-                    "pattern": "^[0-9a-f]{64}$",
-                    "maxLength": 65536
+                  "kind": {
+                    "const": "review.round"
                   },
-                  "baseCommits": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$",
-                      "maxLength": 65536
+                  "data": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "round": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "startedAt": {
+                        "type": "string",
+                        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+                        "maxLength": 65536
+                      },
+                      "finishedAt": {
+                        "type": "string",
+                        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+                        "maxLength": 65536
+                      },
+                      "verdicts": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "enum": [
+                            "approve",
+                            "changes"
+                          ]
+                        },
+                        "maxProperties": 10000
+                      },
+                      "findings": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "P0": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "P1": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "P2": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "P3": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        },
+                        "maxProperties": 10000
+                      }
                     },
-                    "maxItems": 10000
+                    "maxProperties": 10000
+                  },
+                  "occurredAt": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+                        "maxLength": 65536
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
-                },
-                "maxProperties": 10000
+                }
               },
-              "reviewArtifact": {
+              {
                 "type": "object",
                 "additionalProperties": false,
+                "required": [
+                  "id",
+                  "at",
+                  "kind",
+                  "lane",
+                  "subject"
+                ],
                 "properties": {
-                  "digest": {
+                  "id": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "at": {
                     "type": "string",
-                    "pattern": "^[0-9a-f]{64}$",
+                    "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
                     "maxLength": 65536
                   },
-                  "candidateRef": {
+                  "lane": {
+                    "anyOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 65536
+                      }
+                    ]
+                  },
+                  "subject": {
+                    "anyOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 65536
+                      }
+                    ]
+                  },
+                  "kind": {
                     "type": "string",
-                    "minLength": 1,
-                    "maxLength": 2048
+                    "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)+$",
+                    "maxLength": 256
+                  },
+                  "occurredAt": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+                        "maxLength": 65536
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
-                },
-                "maxProperties": 10000
+                }
               }
-            },
-            "maxProperties": 10000
+            ]
           },
           "maxItems": 10000
         },

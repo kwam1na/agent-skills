@@ -38,10 +38,11 @@
   var connection = "saved";
   var shown = embedded;
   var selected = null;
-  var feedFilter = "all";
-  var feedAll = false;
+  // What the reader picked to show of the story: a tone to filter by, and a depth this visit, until it is remembered.
+  var storyFilter = "all";
+  var storyDepthChosen = null;
   // What the page last showed, so a change can be animated rather than just swapped in.
-  var prev = { runningCheck: null, stages: null, feed: null, progress: null, lanes: null, open: null, byLane: null, parked: null, dots: null, selected: null, lineScroll: null,
+  var prev = { runningCheck: null, stages: null, story: null, progress: null, lanes: null, open: null, byLane: null, parked: null, dots: null, selected: null, lineScroll: null,
     checkingHeight: null };
   var lastGood = null;
   var nativeReviews = {};
@@ -181,6 +182,19 @@
     if (date.toDateString() === yesterday.toDateString()) { return "yesterday at " + time; }
     return "on " + MONTHS[date.getMonth()] + " " + date.getDate();
   }
+  // A length of time as a person says it: "less than a minute", "40 minutes", "9 hours", "an hour 20 minutes", "3 days".
+  function spokenDuration(total) {
+    if (typeof total !== "number" || !isFinite(total) || total < 0) { return ""; }
+    var minutes = Math.round(total / 60);
+    if (minutes < 1) { return "less than a minute"; }
+    if (minutes < 60) { return minutes === 1 ? "a minute" : minutes + " minutes"; }
+    var hours = Math.floor(minutes / 60), rest = minutes % 60;
+    if (hours < 48) {
+      return (hours === 1 ? "an hour" : hours + " hours") + (rest ? " " + rest + (rest === 1 ? " minute" : " minutes") : "");
+    }
+    var days = Math.round(hours / 24);
+    return days + " days";
+  }
   /** How long something has held, or "" when its start is unreadable or still ahead. */
   function heldFor(at) {
     var then = seconds(at);
@@ -219,10 +233,6 @@
   var RAN = table({ running: true, passed: true, failed: true, timed_out: true });
   var STEP_WORDS = table({ pending: "waiting", running: "running", passed: "passed", failed: "failed", skipped: "skipped", timed_out: "timed out", reused: "reused" });
   var DONE = table({ passed: true, failed: true, skipped: true, timed_out: true, reused: true });
-  var GLYPH = table({
-    "candidate.merged": "merge", "candidate.handed": "ready", "decision.recorded": "decide",
-    "blocker.recorded": "stop", "candidate.stopped": "stop", "base.broken": "stop"
-  });
   // One drawn set, each mark centred in the same box, so none depends on how a font sizes a symbol.
   var MARKS = table({
     merge: '<circle cx="7" cy="7" r="4.5" fill="currentColor"/>',
@@ -260,29 +270,12 @@
     node.innerHTML = '<svg viewBox="0 0 14 14" aria-hidden="true">' + MARKS[tone] + "</svg>";
     return node;
   }
-  var KIND_WORDS = table({
-    "lane.assigned": "Assigned", "review.round": "Review round", "candidate.handed": "Handed over", "check.started": "Check started",
-    "check.finished": "Check finished", "check.failed": "Check failed", "check.retried": "Check retried", "check.reused": "Check reused", "check.carried": "Check carried", "candidate.merged": "Landed",
-    "candidate.stopped": "Stopped", "base.broken": "Base broken", "base.repaired": "Base repaired", "base.rerun.started": "Rerun on the main line", "base.rerun.finished": "Rerun verdict", "base.rerun.stopped": "Rerun stopped", "base.flaky": "Flaky on the main line", "base.verified": "Base verified", "peer.merged": "Peer merged",
-    "selection.refused": "Checks refused", "hook.held": "Stop flagged", "lease.granted": "Lease granted",
-    "lease.released": "Lease released", "release.started": "Release started", "release.finished": "Release finished",
-    "finish.met": "Finish line met", "decision.recorded": "Decision", "blocker.recorded": "Blocker", "delivery.closed": "Delivery closed"
-  });
-  var TABS = [["all", "Everything"], ["decisions", "Decisions"], ["landed", "Landed"], ["problems", "Problems"]];
-  function inTab(entry, tab) {
-    if (tab === "decisions") { return entry.kind === "decision.recorded"; }
-    if (tab === "landed") { return entry.kind === "candidate.merged"; }
-    if (tab === "problems") { return entry.kind === "blocker.recorded" || entry.kind === "check.failed" || entry.kind === "candidate.stopped" || entry.kind === "base.broken"; }
-    return true;
-  }
-
   // The chapters are built once; each draw fills them.
   var CHAPTERS = [["now", "Now"], ["line", "The line"], ["who", "Who"], ["left", "What's left"], ["happened", "What happened"], ["parked", "Parked"]];
   // The plan sits after the work ahead and before the history, and only when the renderer embedded one.
   if (PLAN) { CHAPTERS.splice(4, 0, ["plan", "The plan"]); }
   var parts = Object.create(null);
   // The lead's check choices the reader has opened, by subject.
-  var chosenOpen = Object.create(null);
   var rail = el("nav", "rail");
   rail.setAttribute("aria-label", "Chapters");
   app.replaceChildren(rail);
@@ -490,21 +483,19 @@
   }
   /**
    * The pieces checked as one batch right now, or null. The runner journals one batch start per member,
-   * one after another with the same summary; that run is the batch while every piece in checks belongs to
+   * each naming the batch's members; that is the batch while every piece in checks belongs to
    * it. Members that already landed from it stay listed; a member sent back to the queue drops out, and so
    * does one checked again on its own since.
    */
   function batchNow(doc, all) {
-    // Only check starts decide: the latest must be a batch start, and the run is the starts before it with the
-    // same summary. Other entries between them, such as a lane's note, neither end nor break the run.
+    // Only check starts decide: the latest must be a batch start, which names its members. Other entries after it,
+    // such as a lane's note, change nothing.
     var starts = list(doc.journal).filter(function (entry) { return isObject(entry) && entry.kind === "check.started"; });
     var last = starts[starts.length - 1];
-    if (!last || !/ as one batch$/.test(text(last.summary))) { return null; }
+    if (!last) { return null; }
     var members = [];
-    for (var i = starts.length - 1; i >= 0 && starts[i].summary === last.summary; i -= 1) {
-      var subject = starts[i].subject === undefined || starts[i].subject === null ? "" : String(starts[i].subject);
-      if (members.indexOf(subject) < 0) { members.unshift(subject); }
-    }
+    // A start names its batch's members, in order; one with no batch is a piece checked alone.
+    list(isObject(last.data) ? last.data.batch : null).forEach(function (subject) { if (typeof subject === "string" && members.indexOf(subject) < 0) { members.push(subject); } });
     if (members.length < 2) { return null; }
     var queued = all.filter(function (piece) { return !piece.planned; }).map(function (piece) { return piece.item; });
     var inChecks = queued.filter(function (item) { return IN_CHECKS[item.stage]; });
@@ -543,6 +534,15 @@
     var missing = plan ? liveUnits().filter(function (unit) { return !all.some(function (piece) { return piece.item.subject === unit.subject; }); }).length : 0;
     return { landed: landed, total: meant.length + missing, placed: meant.length };
   }
+  // A review round's own record: its facts.
+  function roundOf(entry) {
+    return isObject(entry.data) && entry.kind === "review.round" ? entry.data : null;
+  }
+  // The entry that says a review was kept, and what it names, from its facts.
+  var KEPT = table({ "review.recorded": true });
+  function keptReview(entry) {
+    return entry.kind === "review.recorded" && isObject(entry.data) ? { digest: entry.data.digest, candidateRef: entry.data.candidateRef } : null;
+  }
   function journalFor(doc, subject, kinds) {
     return list(doc.journal).filter(function (entry) { return isObject(entry) && entry.subject === subject && (!kinds || kinds[entry.kind]); });
   }
@@ -563,14 +563,18 @@
     else if (!all.length) { add(title, "Nothing on the line yet."); }
     else if (landed === all.length) { add(title, "Every piece has landed."); }
     else { add(title, el("b", null, landed + " of " + all.length), " pieces have landed."); }
-    var kicker = add(el("div", "kicker"), el("span", "headline", text(meta.headline) || pageTitle()));
+    var outcome = plan && isObject(plan.outcome) ? text(plan.outcome.summary) : "";
+    var headline = text(meta.headline) || pageTitle();
+    // The outcome is said once, under the headline: a record headline that only repeats it leaves the kicker to the ticket.
+    var kicker = el("div", "kicker");
+    if (headline !== outcome) { add(kicker, el("span", "headline", headline)); }
     // The tracker item the delivery's work is listed under, linked when the renderer linked it.
-    if (text(meta.trackerParent)) { add(kicker, " · ", issue(text(meta.trackerParent))); }
+    if (text(meta.trackerParent)) { add(kicker, kicker.firstChild ? " · " : null, issue(text(meta.trackerParent))); }
+    else if (!kicker.firstChild) { add(kicker, el("span", "headline", pageTitle())); }
     var nodes = [kicker, title];
+    if (outcome) { nodes.push(el("p", "plan-now", outcome)); }
     var status = sayLine(doc, all);
     if (status) { nodes.push(el("p", "say", status)); }
-    var planLine = planNow(doc);
-    if (planLine) { nodes.push(planLine); }
     var panel = closed ? null : checkingPanel(doc, all);
     if (panel) { nodes.push(panel); }
     var needs = attention(doc);
@@ -580,7 +584,8 @@
     var partway = closeStoppedPartway(doc, closed);
     if (partway) { nodes.push(partway); }
     nodes.push(journey(doc, all, closed ? tally.landed : landed));
-    nodes.push(since(meta, closed));
+    // Under the line, the same three facts in one shape: what landed last, how much of the plan is proven, and the record's state.
+    nodes.push(add(el("div", "facts"), lastLanded(doc, all), planNow(doc), since(doc, meta, closed)));
     var was = prev.checkingHeight;
     inner.replaceChildren.apply(inner, nodes);
     // A live update that changes the sheet's height, a check starting or a failure listed, eases it there instead of jumping.
@@ -596,14 +601,27 @@
     var status = isObject(doc.status) ? doc.status : {};
     if (status.source === "override" && text(status.text)) { return text(status.text); }
     var merges = list(doc.journal).filter(function (entry) { return isObject(entry) && entry.kind === "candidate.merged"; });
-    var landed = merges.filter(function (entry) { return seconds(eventTime(entry)) !== null; })
-      .sort(function (a, b) { return seconds(eventTime(a)) - seconds(eventTime(b)) || a.id - b.id; }).pop();
-    if (landed) {
-      var item = all.filter(function (piece) { return piece.item.subject === landed.subject; })[0];
-      return "Last landed: " + (item ? titleOf(doc, item.item) : text(landed.subject)) + ", " + ago(eventTime(landed)) + ".";
-    }
+    if (latestMerge(doc)) { return ""; }
     if (merges.length) { return "Work has landed; merge time unknown."; }
     return all.length ? "Nothing has landed yet." : "";
+  }
+  function latestMerge(doc) {
+    return list(doc.journal).filter(function (entry) { return isObject(entry) && entry.kind === "candidate.merged" && seconds(eventTime(entry)) !== null; })
+      .sort(function (a, b) { return seconds(eventTime(a)) - seconds(eventTime(b)) || a.id - b.id; }).pop();
+  }
+  /** One fact under the line: a quiet label, what it says, and a quieter line of detail. */
+  function fact(cls, label, value, detail) {
+    return add(el("div", "fact" + (cls ? " " + cls : "")), add(el("div", "fact-label"), label), add(el("div", "fact-value"), value),
+      detail ? add(el("div", "fact-detail"), detail) : null);
+  }
+  /** The piece that landed last, by its title, with its ticket and when. */
+  function lastLanded(doc, all) {
+    var landed = latestMerge(doc);
+    if (!landed) { return null; }
+    var item = all.filter(function (piece) { return piece.item.subject === landed.subject; })[0];
+    var when = spoken(eventTime(landed));
+    var detail = text(landed.subject) ? add(el("span"), issue(text(landed.subject)), when ? " · " + when : null) : when;
+    return fact("", "Last landed", item ? titleOf(doc, item.item) : text(landed.subject), detail);
   }
 
   /** A check's row in the checking sheet: its mark (a ring whose arc turns while it runs) and what it is doing. */
@@ -771,7 +789,10 @@
       add(box, el("div", "ck-batch-note", "One test run for all of them; each lands only if it matches what was tested."));
     } else {
       var waitsOnRerun = byId[current.subject] && rerunOf(doc, byId[current.subject]);
-      add(box, add(el("div", "ck-h"), el("span", "ck-dot"), el("span", "ck-h-words", waitsOnRerun ? RERUN_WORDS : "Being checked now")));
+      // The piece by its ticket, then one word for what is happening to it.
+      var words = add(el("span", "ck-h-words"), waitsOnRerun ? RERUN_WORDS : "Checking");
+      if (text(current.subject)) { add(words, " · ", issue(text(current.subject))); }
+      add(box, add(el("div", "ck-h"), el("span", "ck-dot"), words));
       add(box, el("div", "ck-t", byId[current.subject] ? titleOf(doc, byId[current.subject]) : text(current.title) || text(current.subject)));
     }
     // The run failed and the queue is re-running the failing checks on the main line, to tell whose failure it is.
@@ -786,35 +807,10 @@
     var chosenNotes = [];
     // One note says which checks the lead chose by hand; in a batch, one note covers every piece the lead chose for.
     function chosenFold(key, words, body) {
-      var fold = add(el("details", "ck-chosen"), el("summary", null, words), body);
-      // A redraw keeps a note open that the reader opened. The note slides open and closed itself, clipping its own
-      // words, and the sheet follows its height; closing stays open until the slide ends, so nothing vanishes first.
-      fold.open = chosenOpen[key] === true;
-      var summary = fold.querySelector("summary");
-      summary.addEventListener("click", function (event) {
-        event.preventDefault();
-        var open = !fold.open;
-        chosenOpen[key] = open;
-        var from = runHeldHeight(fold);
-        if (open) {
-          fold.open = true;
-          runEaseHeight(fold, from);
-          // Measured once the slide ends, so a live redraw does not replay it from the closed height.
-          var opening = typeof fold.getAnimations === "function" ? fold.getAnimations()[0] : null;
-          if (opening && opening.finished) { opening.finished.then(function () { prev.checkingHeight = box.offsetHeight; }, function () {}); }
-        } else if (!runMotionWanted(fold)) {
-          fold.open = false;
-        } else {
-          // Closed, the note is its summary alone, one line, so the slide ends at that one line's height.
-          var line = parseFloat(getComputedStyle(summary).lineHeight) || 18;
-          fold.style.overflow = "hidden";
-          var closing = fold.animate([{ height: from + "px" }, { height: line + "px" }],
-            { id: "run-height", duration: runEaseDuration(from, line), easing: RUN_EASING });
-          closing.onfinish = function () { fold.style.overflow = ""; fold.open = false; prev.checkingHeight = box.offsetHeight; };
-          closing.oncancel = function () { fold.style.overflow = ""; };
-        }
-        prev.checkingHeight = box.offsetHeight;
-      });
+      // The page's shared fold: it slides, clipping its own words, and is rebuilt open when the reader left it open. The
+      // sheet's height is taken again once the slide ends, so a live redraw does not replay it from the closed height.
+      var fold = runFold(add(el("details", "ck-chosen"), el("summary", null, words), body),
+        { key: "checking:" + key, oneLine: true, onSettle: function () { prev.checkingHeight = box.offsetHeight; } });
       return fold;
     }
     var chosenItems = (batch || (byId[current.subject] ? [byId[current.subject]] : [])).filter(function (item) {
@@ -859,7 +855,10 @@
         steps.some(function (step) { return step.state === "passed" || step.state === "reused"; });
       if (allPassed && !(batch && batch.some(function (item) { return item.stage === "merged"; }))) {
         head.querySelector(".ck-dot").className = "ck-dot is-done";
-        head.querySelector(".ck-h-words").textContent = batch ? "All checks passed · " + batch.length + " pieces" : "All checks passed";
+        // One piece keeps its ticket beside the words; a batch names how many.
+        var said = head.querySelector(".ck-h-words");
+        if (batch || !said.firstChild || said.firstChild.nodeType !== 3) { said.textContent = batch ? "All checks passed · " + batch.length + " pieces" : "All checks passed"; }
+        else { said.firstChild.data = "All checks passed"; }
       }
       var failedSteps = steps.filter(function (step) { return step.state === "failed" || step.state === "timed_out"; });
       var failed = failedSteps.length;
@@ -916,7 +915,6 @@
       var finished = shownBefore && !runningSteps.some(function (step) { return text(step.label) === shownBefore; })
         ? steps.filter(function (step) { return text(step.label) === shownBefore && DONE[step.state]; })[0] : null;
       prev.runningCheck = runningSteps.length ? { run: runId, label: text(runningSteps[0].label) } : null;
-      if (groups && runningSteps.length) { add(box, add(el("div", "ck-group-h"), "In progress", el("span", "ck-group-n", String(runningSteps.length)))); }
       runningSteps.forEach(function (step, i) {
         var row = runRow(step);
         box.appendChild(row);
@@ -934,15 +932,23 @@
         box.appendChild(rest);
         handOff(rest, finished, null);
       }
-      if (groups) { groups.forEach(function (node) { box.appendChild(node); }); }
       var running = steps.filter(function (step) { return step.state === "running"; }).length;
       var tally = function (state) { return steps.filter(function (step) { return step.state === state; }).length; };
       var counts = failed
         ? [tally("passed") + " passed", tally("reused") ? tally("reused") + " reused" : "", tally("skipped") ? tally("skipped") + " skipped" : "", failed + " failed",
           running ? running + " running" : "", steps.length - done - running ? steps.length - done - running + " waiting" : ""].filter(Boolean).join(", ")
         : done + " of " + steps.length + " checks done";
-      add(box, el("div", "ck-s", counts +
-        (ago(current.startedAt) ? " · started " + ago(current.startedAt) : "")));
+      var began = ago(current.startedAt) ? " · started " + ago(current.startedAt) : "";
+      if (groups && groups.length) {
+        // The running checks are the sheet's rows; what waits and what is done rest in one line, opened to read by name.
+        var waiting = steps.length - done - running;
+        var rest = el("div", "ck-rest");
+        groups.forEach(function (node) { rest.appendChild(node); });
+        // The same fold as the lead's note below it, so both open and close alike.
+        add(box, chosenFold("rest:" + runId, [done ? done + " done" : "", waiting ? waiting + " waiting" : ""].filter(Boolean).join(", ") + began, rest));
+      } else {
+        add(box, el("div", "ck-s", counts + began));
+      }
     } else if (ago(current.startedAt)) {
       add(box, el("div", "ck-s", "Started " + ago(current.startedAt)));
     }
@@ -1082,17 +1088,21 @@
       return startedAt === null || (at !== null && at >= startedAt);
     });
     var used = [];
-    // The words of a note, without the punctuation around them, so a check id matches only as a whole word.
-    function names(summary) {
-      var words = text(summary).split(/\s+/);
-      // Each word as written and without the punctuation around it, so a label that itself ends in punctuation still matches.
-      return words.concat(words.map(function (word) { return word.replace(/^[("'\x60\[]+/, "").replace(/[)"'\x60\],;:.!?]+$/, ""); }));
+    // The failures journaled for each check, by the check they name, so a note with facts is found by what it was caused by.
+    var failedBy = Object.create(null);
+    list(doc.journal).forEach(function (entry) {
+      if (isObject(entry) && entry.kind === "check.failed" && isObject(entry.data) && typeof entry.data.check === "string") { failedBy[String(entry.id)] = entry.data.check; }
+    });
+    // Whether a note is about a check: it names the check's failure among its causes.
+    function about(entry, label) {
+      if (!label) { return false; }
+      return list(entry.because).some(function (id) { return failedBy[String(id)] === label; });
     }
     function note(entry, label) {
       used.push(entry);
-      // Under its own check a note need not name the check again, so a leading "check: " is dropped.
-      var words = text(entry.summary);
-      if (label && words.indexOf(label + ": ") === 0) { words = words.slice(label.length + 2); }
+      // In the story's words: what the lead said, and why.
+      var said = entryWords(doc, entry);
+      var words = said.head + (said.line ? ". " + said.line : "");
       return add(el("div", "ck-note"), glyph(entry.kind === "blocker.recorded" ? "stop" : "decide"), add(el("span"), words));
     }
     var ul = el("ul", "ck-fails");
@@ -1110,7 +1120,7 @@
       var body = add(el("div", "ck-fb"), head);
       var tests = list(record.failures).map(text).filter(Boolean);
       if (tests.length) { body.appendChild(add(el("div", "ck-tests"), el("span", "ck-k", "Failing: "), tests.join(", "))); }
-      notes.filter(function (entry) { return label && names(entry.summary).indexOf(label) >= 0; }).forEach(function (entry) { body.appendChild(note(entry, label)); });
+      notes.filter(function (entry) { return about(entry, label); }).forEach(function (entry) { body.appendChild(note(entry, label)); });
       if (text(record.log)) { body.appendChild(add(el("div", "ck-log"), el("span", "ck-k", "Log: "), text(record.log))); }
       var entry = add(el("li", step.state === "timed_out" ? "timed_out" : "failed"), mark, body);
       entry.setAttribute("data-check", label);
@@ -1139,11 +1149,11 @@
     list(state.queue).filter(function (item) { return isObject(item) && item.stage === "stopped"; }).forEach(function (item) {
       var why = failures(item);
       var stopped = journalFor(doc, item.subject, { "candidate.stopped": true }).pop();
-      row("stop", titleOf(doc, item) + " stopped", why.length ? why.join("; ") : stopped ? text(stopped.summary) : "No reason recorded.");
+      row("stop", titleOf(doc, item) + " stopped", why.length ? why.join("; ") : stopped ? toldLine(doc, stopped) : "No reason recorded.");
     });
     var baseEvents = list(doc.journal).filter(function (entry) { return isObject(entry) && (entry.kind === "base.broken" || entry.kind === "base.repaired"); });
     var lastBase = baseEvents[baseEvents.length - 1];
-    if (lastBase && lastBase.kind === "base.broken" && (!isObject(meta.hold) || closedEntry(doc))) { row("stop", "The main line is broken", text(lastBase.summary) || "No reason recorded."); }
+    if (lastBase && lastBase.kind === "base.broken" && (!isObject(meta.hold) || closedEntry(doc))) { row("stop", "The main line is broken", toldLine(doc, lastBase) || "No reason recorded."); }
     list(state.lanes).filter(function (lane) { return isObject(lane) && lane.state === "blocked" && !closedEntry(doc); }).forEach(function (lane) {
       row("wait", (names[lane.id] || text(lane.id)) + " is blocked", lane.waitingOn ? "Waiting on " + text(lane.waitingOn) : "No reason recorded.");
     });
@@ -1267,24 +1277,42 @@
     return box;
   }
 
-  function since(meta, closed) {
+  function since(doc, meta, closed) {
     // A closed delivery isn't expected to update, so silence isn't a warning; losing the page's connection still is.
     if (closed && (connection === "live" || connection === "connected" || connection === "saved")) {
       var closedAt = seconds(eventTime(closed));
       // An unreadable time, or one ahead of this clock, has no honest "ago".
-      var words = closedAt !== null && closedAt <= Date.now() / 1000 ? "Closed " + ago(eventTime(closed)) : "Closed";
-      return add(el("div", "since closed"), el("i"), [words].concat(meta.baseHead ? ["base " + short(meta.baseHead)] : []).join(" · "));
+      var words = closedAt !== null && closedAt <= Date.now() / 1000 ? "Closed " + spoken(eventTime(closed)) : "Closed";
+      // The record's first entry is the start; a journal that no longer holds it has no honest total.
+      var first = list(doc.journal).filter(isObject)[0];
+      var startedAt = first && first.id === 1 ? seconds(first.at) : null;
+      var took = closedAt !== null && startedAt !== null && closedAt >= startedAt ? spokenDuration(closedAt - startedAt) : "";
+      var when = words === "Closed" ? "" : words.replace(/^Closed /, "");
+      var said = [when, took ? (when ? "after " : "took ") + took : ""].filter(Boolean).join(", ");
+      var head = null;
+      if (meta.baseHead) {
+        // Where the work ended up: the main line's last commit, opened on the forge when the renderer gave its address.
+        var href = commitHref(meta.baseHead);
+        var sha = el(href ? "a" : "span", href ? "issue-link head" : "head", short(meta.baseHead));
+        if (href) {
+          sha.setAttribute("href", href);
+          sha.setAttribute("target", "_blank");
+          sha.setAttribute("rel", "noopener noreferrer");
+          sha.setAttribute("aria-label", "Open the final commit " + short(meta.baseHead));
+        }
+        head = add(el("span"), "final commit ", sha);
+      }
+      return fact("since closed", add(el("span"), el("i"), "Closed"), said || (head ? head : "Nothing more will land"), said ? head : null);
     }
     var updated = seconds(meta.updatedAt);
     var stale = updated !== null && Date.now() / 1000 - updated > 90 * 60;
     var cls = connection === "live" || connection === "connected" ? "live" : connection === "saved" ? "" : "down";
-    var box = el("div", "since " + (stale ? "stale" : cls));
     var words = { live: "Live", connected: "Connected, waiting for updates", down: "Reconnecting. Showing the last update.",
       unreadable: "Live record unreadable. Showing the saved view.", failed: "Live, but the latest update could not be shown", saved: "Saved view" };
-    var bits = [words[connection] || words.saved];
-    if (updated !== null) { bits.push(stale ? "no update for " + ago(meta.updatedAt).replace(" ago", "") : "updated " + ago(meta.updatedAt)); }
-    if (meta.baseHead) { bits.push("base " + short(meta.baseHead)); }
-    return add(box, el("i"), bits.join(" · "));
+    var moved = updated === null ? "" : stale ? "No update for " + ago(meta.updatedAt).replace(" ago", "") : "Updated " + spoken(meta.updatedAt);
+    var base = meta.baseHead ? add(el("span"), "base ", el("span", "head", short(meta.baseHead))) : null;
+    return fact("since " + (stale ? "stale" : cls), add(el("span"), el("i"), words[connection] || words.saved), moved || base || "No update recorded",
+      moved ? base : null);
   }
 
   /* 2. The line */
@@ -1324,6 +1352,73 @@
     if (finish.length) { shape(svg, "text", { class: "mg-count", x: finishX + 3, y: trunkY + 52, "text-anchor": "end" }, met + "/" + finish.length + " met"); }
     return svg;
   }
+  /**
+   * The line in motion, while the delivery is open. What has landed is still. A piece being built, reviewed or checked
+   * has its lane drawn solid up to its stop and no further. The piece being checked fires packets from
+   * its stop, along its lane, through the turn and down the main line toward the finish line, as one steady stream that
+   * is fuller the more checks are running: the run is trying the way the piece will take. Nothing here says anything the stops and the checking sheet
+   * don't, so it is hidden from assistive technology, and it is not drawn at all for a reader who asked for less motion
+   * or once the delivery has closed.
+   */
+  // The stream keeps the page's beat (--beat in the stylesheet): a swell is a whole number of beats long.
+  var FLOW_SPEED = 72, BEAT_MS = 1200;
+  function drawFlow(track, flows, laneCount, running) {
+    var old = track.querySelector(".line-flow");
+    if (old) { old.remove(); }
+    var width = track.clientWidth, height = track.clientHeight;
+    if (!flows.length || !width || reduced() || typeof track.getBoundingClientRect !== "function") { return; }
+    var svg = document.createElementNS(SVG, "svg");
+    svg.setAttribute("class", "line-flow");
+    svg.setAttribute("viewBox", "0 0 " + width + " " + height);
+    svg.setAttribute("width", String(width));
+    svg.setAttribute("height", String(height));
+    svg.setAttribute("aria-hidden", "true");
+    track.appendChild(svg);
+    if (typeof svg.animate !== "function") { svg.remove(); return; }
+    var origin = track.getBoundingClientRect();
+    var top = parseFloat(getComputedStyle(track).paddingTop) || 0;
+    var mergeX = width - MERGE_WIDTH, joinX = mergeX + 100, finishX = mergeX + MERGE_WIDTH - 14;
+    var trunkY = top + LINE_STOP_Y + (laneCount - 1) * LINE_PITCH / 2;
+    // One unbroken stream: a swell of light runs down it at an even pace, with no gap anywhere along it. More running
+    // checks bring the swells closer, never faster. Each swell builds slowly and ends at a bright head, so the eye reads
+    // which way it runs.
+    var beats = Math.max(2, 5 - Math.max(1, running));
+    var wave = Math.round(FLOW_SPEED * BEAT_MS / 1000 * beats);
+    var SWELL = [[0, .12], [.4, .2], [.8, .78], [.9, .78], [1, .12]];
+    function stream(id, cls, colour, d, from, to, fadeStops) {
+      var light = shape(svg, "linearGradient", { id: id + "-light", gradientUnits: "userSpaceOnUse", spreadMethod: "repeat", x1: 0, y1: 0, x2: wave, y2: 0 });
+      SWELL.forEach(function (stop) { shape(light, "stop", { class: cls + "-light", offset: stop[0], "stop-opacity": stop[1] }).style.setProperty("--c", colour); });
+      // Run from the document's own clock, not from this draw, so a live redraw carries on without a jump; every stream
+      // shares the one pace and spacing, so a swell passes from a lane onto the main line without a break.
+      shape(light, "animateTransform", { attributeName: "gradientTransform", type: "translate", from: "0 0", to: wave + " 0", begin: "0s",
+        dur: (beats * BEAT_MS / 1000).toFixed(2) + "s", repeatCount: "indefinite" });
+      var fade = shape(svg, "linearGradient", { id: id + "-fade", gradientUnits: "userSpaceOnUse", x1: from, y1: 0, x2: to, y2: 0 });
+      fadeStops.forEach(function (stop) { shape(fade, "stop", { offset: stop[0], "stop-color": "#fff", "stop-opacity": stop[1] }); });
+      var mask = shape(svg, "mask", { id: id + "-mask", maskUnits: "userSpaceOnUse", x: 0, y: 0, width: width, height: height });
+      shape(mask, "rect", { x: 0, y: 0, width: width, height: height, fill: "url(#" + id + "-fade)" });
+      shape(svg, "path", { class: cls, d: d, stroke: "url(#" + id + "-light)", mask: "url(#" + id + "-mask)" }).style.setProperty("--c", colour);
+    }
+    var firing = flows.filter(function (flow) { return flow.fires; });
+    // On its lane a stream is the lane's colour, rising out of the stop and running to where the lanes join.
+    firing.forEach(function (flow) {
+      var at = flow.button.getBoundingClientRect();
+      var x = at.left + at.width / 2 - origin.left, y = top + LINE_STOP_Y + flow.row * LINE_PITCH;
+      stream("flow-" + flow.row, "flow-shot", flow.colour, "M" + x + " " + y + "H" + (mergeX + 12) + "C" + (mergeX + 64) + " " + y + " " + (joinX - 52) + " " +
+        trunkY + " " + joinX + " " + trunkY, x, joinX, [[0, 0], [.2, 1], [1, 1]]);
+    });
+    // Past the join the streams are one, in the main line's own colour, thinning away before the finish line.
+    if (firing.length) {
+      stream("flow-trunk", "flow-trunk", "", "M" + joinX + " " + trunkY + "H" + finishX, joinX, finishX, [[0, 1], [.45, 1], [1, 0]]);
+    }
+    flows.forEach(function (flow) {
+      var box = flow.button.getBoundingClientRect();
+      var to = box.left - origin.left - 5, from = flow.from === null ? flow.left - origin.left : flow.from.getBoundingClientRect().right - origin.left + 5;
+      var y = top + LINE_STOP_Y + flow.row * LINE_PITCH;
+      if (to - from < 18) { return; }
+      var dots = shape(svg, "path", { class: "flow-approach", d: "M" + from + " " + y + "H" + to });
+      dots.style.setProperty("--c", flow.colour);
+    });
+  }
   function drawLine(doc, all) {
     var inner = parts.line;
     var names = laneNames(doc);
@@ -1353,7 +1448,8 @@
     var keys = all.map(function (piece) { return subjectOf(piece.item); });
     var shared = /^(.*-)[^-]+$/.exec(keys[0] || "");
     var prefix = shared && keys.length > 1 && keys.every(function (key) { return key.indexOf(shared[1]) === 0 && key.length > shared[1].length; }) ? shared[1] : "";
-    lanes.forEach(function (lane) {
+    var flows = [];
+    lanes.forEach(function (lane, laneIndex) {
       var items = all.filter(function (piece) { return (piece.item.lane || "") === lane; });
       var row = el("div", "line");
       row.style.setProperty("--c", colours[lane]);
@@ -1385,6 +1481,10 @@
         button.addEventListener("mouseenter", show);
         button.addEventListener("focus", show);
         buttons.push(button);
+        if (kind === "active" || kind === "now" || kind === "ready") {
+          flows.push({ fires: kind === "now", button: button, row: laneIndex, colour: colours[lane], stops: stops,
+            from: i > 0 ? buttons[buttons.length - 2] : null });
+        }
         // The change request sits under the ticket once one is open, and opens it.
         var ticket = issue(key, prefix ? key.slice(prefix.length) : key);
         if (prefix) { ticket.setAttribute("aria-label", key); }
@@ -1412,6 +1512,16 @@
     if (box.scrollWidth > box.clientWidth) { box.scrollLeft = box.scrollWidth - box.clientWidth - (prev.lineScroll || 0); }
     box.addEventListener("scroll", function () { prev.lineScroll = Math.max(0, box.scrollWidth - box.clientWidth - box.scrollLeft); });
     prev.stages = stages;
+    // The motion is measured from the drawn rows, so it is laid once they are in the page, and again when their width changes.
+    if (prev.flowWatch) { prev.flowWatch.disconnect(); prev.flowWatch = null; }
+    if (!closedEntry(doc)) {
+      var layFlow = function () {
+        flows.forEach(function (flow) { flow.left = flow.stops.getBoundingClientRect().left; });
+        drawFlow(track, flows, lanes.length, current ? list(current.steps).filter(function (step) { return isObject(step) && step.state === "running"; }).length : 0);
+      };
+      layFlow();
+      if (typeof ResizeObserver === "function") { prev.flowWatch = new ResizeObserver(layFlow); prev.flowWatch.observe(track); }
+    }
     var pick = all.filter(function (piece) { return subjectOf(piece.item) === selected; })[0] ||
       all.filter(function (piece) { return stopKind(piece, nowSubject) === "now"; })[0] ||
       all.filter(function (piece) { return stopKind(piece, nowSubject) === "held"; })[0] ||
@@ -1441,7 +1551,7 @@
     }
     else if (item.stage === "review") {
       label = "In review since"; basis = "Recorded review round start";
-      event = last("review.round"); at = event && isObject(event.review) ? event.review.startedAt : null;
+      event = last("review.round"); at = event && roundOf(event) ? roundOf(event).startedAt : null;
     } else if (item.stage === "queued") {
       label = "Handed over"; basis = "Recorded hand-off"; event = handedIndex >= 0 ? own[handedIndex] : null;
     } else if (item.stage === "checking" && rerunOf(doc, item)) {
@@ -1458,8 +1568,9 @@
     } else if (item.stage === "merged") {
       label = "Landed"; basis = "Merge occurrence"; event = last("candidate.merged");
       if (!event) {
-        event = own.filter(function (entry) { return entry.kind === "candidate.merged" && isObject(entry.recovery)
-          && entry.recovery.head === (item.syncedHead || item.head) && entry.recovery.changeRequest === (item.changeRequest || null); }).pop();
+        event = own.filter(function (entry) {
+          var recovery = entry.kind === "candidate.merged" && isObject(entry.data) && isObject(entry.data.recovery) ? entry.data.recovery : null;
+          return recovery && recovery.head === (item.syncedHead || item.head) && recovery.changeRequest === (item.changeRequest || null); }).pop();
       }
     } else if (item.stage === "merging" || item.stage === "syncing" || item.stage === "synced") {
       label = "Time"; basis = "No durable transition time recorded";
@@ -1545,11 +1656,11 @@
 
   // The candidate a stop's review evidence must name. A handed stop's is its head. A planned stop has no head before
   // hand-off, so it is the candidate its latest capture names; the record keeps a capture only when it is of the
-  // lane's latest journaled round, and the stop's review.round and review.evidence boundary must still end on it.
+  // lane's latest journaled round, and the stop's review.round and review.recorded boundary must still end on it.
   function reviewedCandidate(doc, item, evidence) {
     var queued = list(doc.state.queue).some(function (entry) { return isObject(entry) && entry.subject === item.subject; });
     if (queued) { return item.head; }
-    return evidence && isObject(evidence.reviewArtifact) ? evidence.reviewArtifact.candidateRef : undefined;
+    return evidence && keptReview(evidence) ? keptReview(evidence).candidateRef : undefined;
   }
   function isPlanned(doc, item) {
     return list(doc.state.planned).some(function (entry) { return isObject(entry) && entry.subject === item.subject; })
@@ -1561,9 +1672,9 @@
   function runFor(doc, item) {
     if (typeof item.runId !== "string" || item.runId === "") {
       var native = Object.prototype.hasOwnProperty.call(nativeReviews, item.subject) ? nativeReviews[item.subject] : null;
-      var events = journalFor(doc, item.subject, { "review.round": true, "review.evidence": true });
+      var events = journalFor(doc, item.subject, { "review.round": true, "review.recorded": true });
       var boundary = events.reduce(function (last, event) { return Math.max(last, event.id || 0); }, 0);
-      var evidence = events.filter(function (event) { return event.kind === "review.evidence"; }).slice(-1)[0];
+      var evidence = events.filter(function (event) { return KEPT[event.kind]; }).slice(-1)[0];
       var observation = isObject(doc.reviewEvidence) ? doc.reviewEvidence[item.subject] : undefined;
       if (!native && !events.length) {
         return isPlanned(doc, item) && !closedEntry(doc)
@@ -1576,14 +1687,14 @@
       var covers = carried ? carried.to : (isObject(native) ? native.candidateRef : undefined);
       if (!isObject(native) || native.unavailable === true || typeof candidate !== "string" || covers !== candidate
           || native.journalId !== boundary
-          || (evidence && (!isObject(evidence.reviewArtifact) || evidence.reviewArtifact.digest !== native.digest))
+          || (evidence && (!keptReview(evidence) || keptReview(evidence).digest !== native.digest))
           || (isObject(doc.reviewEvidence) && (!isObject(observation) || observation.unavailable === true || observation.digest !== native.digest))) {
         return el("div", "d-run-none", "Review evidence unavailable or stale for this candidate." + (isPlanned(doc, item) && !closedEntry(doc)
           ? " Its rounds show here again once the lane's review-reduce records its latest round." : ""));
       }
       var nativeBox = el("div", "d-run");
       if (carried) { nativeBox.appendChild(el("div", "d-run-carried", "Carried by the lead. " + text(carried.note))); }
-      nativeBox.appendChild(runSummaryNode(native, { lenses: VIEW.lenses }));
+      nativeBox.appendChild(runSummaryNode(native, { commitHref: commitHref, lenses: VIEW.lenses }));
       return nativeBox;
     }
     if (VIEW.runs !== true) { return null; }
@@ -1591,7 +1702,8 @@
     if (!isObject(summary) || summary.unavailable === true) { return el("div", "d-run-none", "Run " + item.runId + " unavailable."); }
     var journaled = {};
     journalFor(doc, item.subject, { "review.round": true }).forEach(function (entry) {
-      if (isObject(entry.review) && isObject(entry.review.verdicts)) { journaled[entry.review.round] = entry.review.verdicts; }
+      var round = roundOf(entry);
+      if (round && isObject(round.verdicts)) { journaled[round.round] = round.verdicts; }
     });
     // The run's own verdicts stand. A lens the run gives no verdict for, or calls unknown, takes the one the record's
     // review.round entry journaled for that round, and a round the run gives no outcome for takes one from those verdicts.
@@ -1664,42 +1776,32 @@
     return box;
   }
 
-  var HISTORY = table({ "candidate.handed": "Handed over", "check.started": "Check started", "check.finished": "Check finished", "check.failed": "Check failed", "check.retried": "Retried", "check.reused": "Reused", "check.carried": "Check carried", "base.rerun.started": "Rerun on the main line", "base.rerun.finished": "Rerun verdict", "base.rerun.stopped": "Rerun stopped", "candidate.stopped": "Stopped", "candidate.merged": "Landed" });
-  var historyOpen = Object.create(null);
+  // The steps of a piece's merge check: which kinds belong to it. What each says, and its label, come from the story.
+  var HISTORY = table({ "candidate.handed": true, "check.started": true, "check.finished": true, "check.failed": true, "check.retried": true,
+    "check.reused": true, "check.carried": true, "base.rerun.started": true, "base.rerun.finished": true, "base.rerun.stopped": true,
+    "candidate.stopped": true, "candidate.merged": true });
+  /** One step as the story tells it: its head and line. */
+  function stepSaid(doc, entry) {
+    var words = entryWords(doc, entry);
+    return words.head + (words.line ? ": " + words.line : "");
+  }
   function historyFor(doc, item) {
     var rows = journalFor(doc, item.subject, HISTORY);
     if (!rows.length) { return null; }
     var box = el("details", "mh");
-    if (historyOpen[item.subject]) { box.open = true; }
-    // The steps slide open and closed instead of appearing at once; closing waits for the slide before it closes.
-    function slide(open) {
-      // Remembered now, not on the toggle event, which fires later: a redraw in between would rebuild it as it was.
-      historyOpen[item.subject] = open;
-      var from = runHeldHeight(box);
-      box.open = open;
-      if (open) { runEaseHeight(box, from); return; }
-      if (!runMotionWanted(box)) { return; }
-      box.open = true;
-      var closed = summary.offsetHeight;
-      box.style.overflow = "hidden";
-      var easing = box.animate([{ height: from + "px" }, { height: closed + "px" }], { id: "run-height", duration: runEaseDuration(from, closed), easing: RUN_EASING });
-      easing.onfinish = function () { box.style.overflow = ""; box.open = false; };
-      easing.oncancel = function () { box.style.overflow = ""; };
-    }
     var last = rows[rows.length - 1];
     var summary = el("summary");
-    add(summary, "Merge check", el("span", "mh-sub", " · " + (HISTORY[last.kind] || "") + " " + (spoken(eventTime(last)) || "time unknown") + " · " + rows.length + (rows.length === 1 ? " step" : " steps")));
+    add(summary, "Merge check", el("span", "mh-sub", " · " + (entryWords(doc, last).label || "") + " " + (spoken(eventTime(last)) || "time unknown") + " · " + rows.length + (rows.length === 1 ? " step" : " steps")));
     var ol = el("ol");
     rows.slice(-8).forEach(function (entry) {
       var li = el("li", entry.kind === "candidate.merged" ? "in" : entry.kind === "candidate.stopped" ? "bad" : "");
       var time = el("time", null, clock(eventTime(entry)) || "Time unknown");
       time.setAttribute("datetime", text(eventTime(entry)));
-      add(li, time, el("span", null, text(entry.summary)));
+      add(li, time, el("span", null, stepSaid(doc, entry)));
       ol.appendChild(li);
     });
-    summary.addEventListener("click", function (event) { event.preventDefault(); slide(!box.open); });
     add(box, summary, ol);
-    return box;
+    return runFold(box, { key: "history:" + item.subject });
   }
 
   /* 3. Who */
@@ -1800,15 +1902,37 @@
         dots.appendChild(unplaced);
       }
       nodes.push(dots);
-      var names = laneNames(doc);
-      var byLane = Object.create(null);
-      open.forEach(function (piece) { var lane = piece.item.lane || ""; byLane[lane] = (byLane[lane] || 0) + 1; });
-      var groups = el("div", "left-groups");
-      Object.keys(byLane).forEach(function (lane) {
-        var changed = prev.byLane && prev.byLane[lane] !== undefined && prev.byLane[lane] !== byLane[lane] && !reduced();
-        groups.appendChild(add(el("div"), el("b", changed ? "changed" : null, String(byLane[lane])), lane ? "with " + (names[lane] || lane) : "not yet assigned"));
+      // What is left, piece by piece: its lane's ring, its ticket, its title and where it stands. A lane is named by the
+      // piece it is on, so a count per lane read as a count of that piece.
+      var LEFT_SHOWN = 8;
+      var groups = el("ul", "left-groups");
+      open.slice(0, LEFT_SHOWN).forEach(function (piece) {
+        var ring = el("i", "left-ring");
+        ring.style.setProperty("--c", colours[piece.item.lane || ""] || "var(--soft)");
+        ring.setAttribute("aria-hidden", "true");
+        var key = subjectOf(piece.item);
+        // The row goes to the line with its stop picked; the title is the button a keyboard reaches, and the ticket
+        // keeps its own link.
+        var title = el("button", "left-title", titleOf(doc, piece.item));
+        title.type = "button";
+        title.setAttribute("aria-label", "Show " + titleOf(doc, piece.item) + " on the line");
+        var row = add(el("li"), ring, key ? issue(key) : null, title, el("span", "left-state", pieceWords(doc, piece.item)));
+        row.addEventListener("click", function (event) {
+          if (event.target && event.target.closest && event.target.closest("a")) { return; }
+          var stop = [].filter.call(parts.line.querySelectorAll(".stop-btn"), function (button) { return button.getAttribute("data-subject") === key; })[0];
+          if (!stop) { return; }
+          stop.click();
+          var section = parts.line.closest ? parts.line.closest(".chapter") || parts.line : parts.line;
+          if (typeof section.scrollIntoView === "function") { section.scrollIntoView({ behavior: reduced() ? "auto" : "smooth", block: "start" }); }
+          // The stop is pointed out by its ticket's card, as if pointed at, once the page has stopped moving: a scroll
+          // hides the card, so it is shown after the last one. It goes with the reader's next scroll.
+          var point = function () { if (stop.isConnected) { showCard(stop, key); } };
+          if (typeof addEventListener === "function" && "onscrollend" in window) { addEventListener("scrollend", point, { once: true }); }
+          setTimeout(point, reduced() ? 50 : 900);
+        });
+        groups.appendChild(row);
       });
-      prev.byLane = byLane;
+      if (open.length > LEFT_SHOWN) { groups.appendChild(el("li", "left-more", "and " + (open.length - LEFT_SHOWN) + " more")); }
       if (!closedOut) { nodes.push(groups); }
     }
     var finish = list(doc.state.finish).filter(isObject);
@@ -1882,9 +2006,9 @@
   function reviewProof(doc, subject, item) {
     var handed = journalFor(doc, subject, { "candidate.handed": true });
     var boundary = handed.length > 1 ? handed[handed.length - 2] : null;
-    var journaled = journalFor(doc, subject, { "review.round": true }).filter(function (entry) { return isObject(entry.review); });
+    var journaled = journalFor(doc, subject, { "review.round": true }).filter(function (entry) { return roundOf(entry) !== null; });
     var overlay = Object.create(null);
-    journaled.forEach(function (entry) { if (isObject(entry.review.verdicts)) { overlay[entry.review.round] = entry.review.verdicts; } });
+    journaled.forEach(function (entry) { var round = roundOf(entry); if (isObject(round.verdicts)) { overlay[round.round] = round.verdicts; } });
     function judged(approved, current, at) {
       if (current) { return approved ? { state: "done", at: at } : { state: "open", at: null }; }
       return approved ? { state: "stale", at: null } : { state: "open", at: null };
@@ -1907,12 +2031,12 @@
         && (!isObject(doc.reviewEvidence) || (isObject(observed) && observed.unavailable !== true && observed.digest === native.digest))) {
       var detail = list(native.roundDetail).filter(isObject);
       var final = detail[detail.length - 1];
-      var captured = journalFor(doc, subject, { "review.evidence": true }).pop();
+      var captured = journalFor(doc, subject, KEPT).pop();
       if (final) { return judged(final.outcome === "approve" && approves(final.verdicts), true, captured ? captured.at : null); }
     }
     if (journaled.length) {
       var latest = journaled[journaled.length - 1];
-      return judged(approves(latest.review.verdicts), !boundary || (latest.id || 0) > (boundary.id || 0), text(latest.review.finishedAt) || latest.at);
+      return judged(approves(roundOf(latest).verdicts), !boundary || (latest.id || 0) > (boundary.id || 0), text(roundOf(latest).finishedAt) || latest.at);
     }
     return { state: "none", at: null };
   }
@@ -1989,13 +2113,13 @@
   }
   function timesChanged(count) { return "plan changed " + count + (count === 1 ? " time" : " times"); }
 
-  /** The line under Now's headline: the outcome, and how much of the plan is proven. */
+  /** How much of the plan is proven, opening the plan chapter. */
   function planNow(doc) {
     if (!plan) { return null; }
     var counts = planCounts(doc);
-    var link = el("a", "plan-now-link", counts.proven + " of " + counts.total + " criteria proven · " + timesChanged(list(plan.changes).length));
+    var link = el("a", "plan-now-link", counts.proven + " of " + counts.total + " criteria proven");
     link.setAttribute("href", "#plan");
-    return add(el("p", "plan-now"), el("span", "plan-now-outcome", text(isObject(plan.outcome) ? plan.outcome.summary : "")), " ", link);
+    return fact("", "Plan", link, timesChanged(list(plan.changes).length).replace(/^plan /, ""));
   }
 
   /** The criteria a finish line covers, or null when it covers proofs only, over every unit. */
@@ -2031,8 +2155,13 @@
       };
       var covered = coveredCriteria(counts.units, line.covers);
       if (covered === null && !kinds.length) {
-        return add(el("div", "plan-meter" + (met ? " met" : "")), add(el("div", "pm-head"), el("span", "pm-label", label), el("span", "pm-state", met ? "Met" : "Not met")),
-          el("div", "pm-count", "Recorded by the lead, not counted from proofs"));
+        // Nothing to count: the lead marks it, so its bar is all or nothing and its line says whose word it is.
+        var marked = el("div", "pm-bar");
+        var whole = el("i", "pm-done");
+        whole.style.width = met ? "100%" : "0%";
+        marked.appendChild(whole);
+        return add(el("div", "plan-meter" + (met ? " met" : "")), add(el("div", "pm-head"), el("span", "pm-label", label), el("span", "pm-state", met ? "Met" : "Not yet")),
+          marked, el("div", "pm-count", met ? "Marked met by the lead" : "The lead marks this one"));
       }
       var rows = covered === null ? counts.units : covered.map(function (criterion) { return criterion.unit; });
       if (covered === null) { noun = "units"; }
@@ -2044,14 +2173,16 @@
     var open = met && line && either < total;
     var counted = !met && line && total > 0 && either === total;
     var box = el("div", "plan-meter" + (open ? " open" : met ? " met" : ""));
-    var head = add(el("div", "pm-head"), el("span", "pm-label", label), el("span", "pm-state", open ? "Met, proofs open" : met ? "Met" : counted ? "Not marked met" : "Not met"));
+    var head = add(el("div", "pm-head"), el("span", "pm-label", label), el("span", "pm-state", open ? "Met, proofs open" : met ? "Met" : counted ? "Ready to mark" : "Not yet"));
     var bar = el("div", "pm-bar");
     var full = el("i", "pm-done");
     var waived = el("i", "pm-waived");
     full.style.width = (total ? done / total * 100 : 0) + "%";
     waived.style.width = (total ? (either - done) / total * 100 : 0) + "%";
     add(bar, full, waived);
-    var words = line ? measured + ": " + done + " of " + total + " " + noun + (either > done ? ", " + (either - done) + " more by waiver" : "") : "Not in the plan";
+    // The count first, then what it counts: "10 of 21 criteria · review, merged".
+    var words = line ? done + " of " + total + " " + noun + (kinds.length ? " · " + measured.toLowerCase() : " proven") +
+      (either > done ? ", " + (either - done) + " more by waiver" : "") : "Not in the plan";
     return add(box, head, bar, el("div", "pm-count", words));
   }
   /** One meter per finish line: the plan's, in order, then any the record has that the plan does not. */
@@ -2081,7 +2212,7 @@
     var flags = [];
     var changes = list(plan.changes).filter(isObject);
     var events = list(doc.journal).filter(function (entry) { return isObject(entry) && (entry.kind === "base.broken" || entry.kind === "base.repaired"); });
-    if (baseBroken(doc)) { flags.push({ title: "The base is broken", why: text(events[events.length - 1].summary) || "No reason recorded.", fix: "Repair the base; nothing lands until it is." }); }
+    if (baseBroken(doc)) { flags.push({ title: "The base is broken", why: toldLine(doc, events[events.length - 1]) || "No reason recorded.", fix: "Repair the base; nothing lands until it is." }); }
     // Only an approval the lead marked blocking needs the engineer; one that is merely ahead stays in its fold.
     var blocking = list(plan.approvals).filter(function (entry) { return isObject(entry) && entry.blocking === true && entry.state === "waiting"; });
     if (blocking.length) { flags.push({ title: "Approvals are blocking work", why: blocking.map(function (entry) { return text(entry.text); }).join("; "), fix: blocking.length === 1 ? "Give or refuse this approval." : "Give or refuse each approval." }); }
@@ -2146,19 +2277,41 @@
     return add(box, el("div", "ah", closed ? "Left open at close" : "The plan needs attention"), ul);
   }
 
-  /** A proof as its label and state; a finished one shows its label alone. */
-  function proofLine(proof, kind) {
-    var node = el("span", "plan-proof " + proof.state);
-    add(node, el("span", "pp-kind", kindLabel(kind)), el("span", "pp-state", proof.words));
-    return node;
+  /**
+   * A proof still owed, as a sentence about the piece, in the words its panel on the line uses; a waived one keeps its
+   * label and says so.
+   */
+  function proofLine(proof, kind, closed) {
+    var state = proof.states[kind];
+    if (state.state === "waived") { return add(el("span", "plan-proof waived"), el("span", "pp-kind", kindLabel(kind)), el("span", "pp-state", state.words)); }
+    return el("span", "plan-proof " + state.state + (proofStuck(kind, proof) ? " stuck" : ""), proofSaid(kind, proof, closed));
   }
   /** Where a unit stands in one phrase: proven, or whether it merged and how many proofs are still open. */
   function unitStanding(proof) {
     if (proof.settled) { return "Closed, no change needed"; }
     if (proof.proven) { return proof.waived ? "Proven, with a waiver" : "Proven"; }
     var open = proof.owed.filter(function (kind) { return proof.states[kind].state !== "done" && proof.states[kind].state !== "waived"; });
-    return (proof.owed.indexOf("merged") >= 0 && proof.states.merged.state === "done" ? "Merged, " : "") + open.length + " open";
+    return (proof.owed.indexOf("merged") >= 0 && proof.states.merged.state === "done" ? "Merged, " : "") + open.length + (open.length === 1 ? " proof left" : " proofs left");
   }
+  /**
+   * The next proof a unit owes, as a sentence about the piece: "It still has to merge." Once the delivery has closed
+   * nothing more will happen to it, so the sentence says what never did: "It never merged."
+   */
+  function proofSaid(kind, proof, closed) {
+    var state = proof.states[kind], words = state.words;
+    if (kind === "merged") { return closed ? "It never merged." : "It still has to merge."; }
+    if (kind === "handed") {
+      return words === "stopped" ? "Its checks stopped it." : closed ? "It was never handed off."
+        : words === "waiting for the lead to accept" ? "It's waiting for the lead to accept it." : "It hasn't been handed off yet.";
+    }
+    if (kindSource(kind) === "producer") {
+      return kindLabel(kind) + (state.state === "stale" ? " was done for an earlier commit." : closed ? " was never done." : " is still to do.");
+    }
+    return state.state === "stale" ? "Its approval is for an earlier commit." : state.state === "none" ? "No review is recorded for it."
+      : closed ? "Its review was never approved." : "Its review isn't approved yet.";
+  }
+  /** Whether the next proof is held up, not just still ahead: done for another commit, or stopped. */
+  function proofStuck(kind, proof) { return proof.states[kind].state === "stale" || proof.states[kind].words === "stopped"; }
   function unitRow(proof, kinds, asApproved) {
     var unit = proof.unit;
     var row = el("div", "plan-unit" + (unit.removed === true ? " removed" : proof && proof.proven ? " proven" : ""));
@@ -2173,8 +2326,16 @@
       var owed = kinds.filter(function (kind) { return list(unit.proofs).indexOf(kind.id) >= 0; });
       function finished(kind) { return proof.states[kind.id].state === "done"; }
       var cells = el("div", "pu-proofs");
-      // What is still open comes first; what is finished reads as one quiet line after it.
-      owed.filter(function (kind) { return !finished(kind); }).concat(owed.filter(finished)).forEach(function (kind) { cells.appendChild(proofLine(proof.states[kind.id], kind.id)); });
+      // What is still open comes first, a sentence each; what is finished reads as one quiet line after it.
+      var over = Boolean(shown && closedEntry(shown));
+      owed.filter(function (kind) { return !finished(kind); }).forEach(function (kind) { cells.appendChild(proofLine(proof, kind.id, over)); });
+      var finishedKinds = owed.filter(finished);
+      if (finishedKinds.length && !proof.proven) {
+        cells.appendChild(el("span", "plan-proof done", "Done: " + finishedKinds.map(function (kind) { return kindLabel(kind.id).toLowerCase(); }).join(", ")));
+      } else if (finishedKinds.length) {
+        cells.appendChild(el("span", "plan-proof done", finishedKinds.map(function (kind) { return kindLabel(kind.id); }).join(" · ")));
+      }
+      if (owed.some(function (kind) { return !finished(kind) && proofStuck(kind.id, proof); })) { row.classList.add("stuck"); }
       status.appendChild(cells);
     }
     return add(row, name, criteria, status);
@@ -2187,11 +2348,14 @@
     var summary = el("summary", null, label);
     if (count !== null) { summary.appendChild(el("span", "pf-count", String(count))); }
     add(box, summary, body);
-    box.addEventListener("toggle", function () { planFolds[name] = box.open; rememberFolds(); });
-    return box;
+    return runFold(box, { onChange: function (open) { planFolds[name] = open; rememberFolds(); } });
   }
   /** Before and after as one text, with what was dropped struck and what was added marked, word by word. */
   function redline(before, after) {
+    // Marks are for a rewording, where they show which words moved. Text with nothing before it is simply new, and text
+    // with nothing after it simply gone: marking every word would say only what the change's heading already does.
+    if (!text(before).trim()) { return el("div", "redline", text(after)); }
+    if (!text(after).trim()) { return add(el("div", "redline"), el("del", null, text(before))); }
     var a = text(before).split(/(\s+)/), b = text(after).split(/(\s+)/);
     var table2 = [];
     for (var i = a.length; i >= 0; i -= 1) {
@@ -2338,11 +2502,13 @@
   function servedLive() {
     return isObject(globalThis.deliveryStateStore) && typeof fetch === "function" && typeof location === "object" && /^https?:$/.test(location.protocol);
   }
-  /** The `updated` value of the latest "Plan updated:" decision in a record, or null. */
+  /** The `updated` value of the latest plan update in a record, as its plan.updated entry names it, or null. */
   function planNamedBy(doc) {
-    var updates = list(doc.journal).filter(function (entry) { return isObject(entry) && entry.kind === "decision.recorded" && /^Plan updated:/.test(text(entry.summary)); });
-    var latest = updates.length ? /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/.exec(text(updates[updates.length - 1].summary)) : null;
-    return latest ? latest[0] : null;
+    var updates = list(doc.journal).filter(function (entry) {
+      return isObject(entry) && entry.kind === "plan.updated" && isObject(entry.data) && typeof entry.data.updated === "string";
+    });
+    var newest = updates[updates.length - 1];
+    return newest ? newest.data.updated : null;
   }
   // Whether an answer holds the plan named, or one the record has yet to name: the file is written before its entry.
   function planMeets(held, named) { return isObject(held) && typeof held.updated === "string" && (held.updated === named || laterThan(held.updated, named)); }
@@ -2453,11 +2619,19 @@
     var title = add(el("h2", "title plan-title"), planTitle(doc, counts));
     // A record says when the producer rewrote the plan. A live page fetches it and speaks only if that fails; a static
     // page holds the plan it was rendered with.
+    var behind = null;
     if (live ? planBehind : named && named !== plan.updated) {
-      title.appendChild(el("span", "plan-reload", live ? "The plan shown is out of date." : "The plan changed. Reload to see it."));
+      // Said under the headline, not in it: what is wrong, and the one thing the reader can do about it.
+      var again = el("button", null, "Reload the page");
+      again.type = "button";
+      again.addEventListener("click", function () { if (typeof location === "object" && typeof location.reload === "function") { location.reload(); } });
+      behind = add(el("p", "plan-reload"), el("span", null, live ? "The plan has changed, and this page couldn't load the new one." : "The plan has changed since this page was made."), again);
+      behind.setAttribute("role", "status");
     }
     var review = planReview();
-    nodes.push(title, el("p", "say plan-outcome", text(isObject(plan.outcome) ? plan.outcome.summary : "")));
+    nodes.push(title);
+    if (behind) { nodes.push(behind); }
+    nodes.push(el("p", "say plan-outcome", text(isObject(plan.outcome) ? plan.outcome.summary : "")));
     if (review) { nodes.push(approvalLine(review)); }
     var closeOut = isObject(plan.closeOut) && plan.closeOut.fullHealth === "skipped" ? plan.closeOut : null;
     if (closeOut) {
@@ -2471,9 +2645,12 @@
       var ul = el("ul", "plan-open");
       open.forEach(function (unit) {
         var proof = counts.proofs[text(unit.subject)];
-        var next = proof.next ? kindLabel(proof.next) + ": " + proof.states[proof.next].words : "";
-        var li = add(el("li"), issue(text(unit.subject), unitName(unit)), el("span", "po-title", text(unit.title)),
-          el("span", "po-next", next + (proof.handed ? "" : closedEntry(doc) ? " · never handed off" : " · before hand-off")));
+        // The same words as the piece's panel on the line: how many proofs are left, then the next one as a sentence.
+        var over = Boolean(closedEntry(doc));
+        var said = proof.next ? proofSaid(proof.next, proof, over) : "";
+        if (!proof.handed && proof.next !== "handed") { said += (said ? " " : "") + (over ? "It was never handed off." : "It hasn't been handed off yet."); }
+        var li = add(el("li", proof.next && proofStuck(proof.next, proof) ? "stuck" : null), issue(text(unit.subject), unitName(unit)), el("span", "po-title", text(unit.title)),
+          add(el("span", "po-next"), el("b", null, unitStanding(proof)), said ? " · " + said : null));
         li.setAttribute("tabindex", "-1");
         planRows[text(unit.subject)] = li;
         ul.appendChild(li);
@@ -2562,9 +2739,10 @@
     if (!unit) { return null; }
     var proof = planProofs(doc, [unit])[subject];
     var removed = unit.removed === true;
-    var box = add(el("div", "d-plan-row" + (!removed && proof.proven ? " proven" : removed ? " removed" : "")),
+    var box = add(el("div", "d-plan-row" + (!removed && proof.proven ? " proven" : removed ? " removed" : "") +
+      (!removed && proof.next && proofStuck(proof.next, proof) ? " stuck" : "")),
       el("span", "pu-standing", removed ? "Removed from the plan" : unitStanding(proof)));
-    if (!removed && proof.next) { box.appendChild(el("span", "d-plan-next", kindLabel(proof.next) + ": " + proof.states[proof.next].words)); }
+    if (!removed && proof.next) { box.appendChild(el("span", "d-plan-next", proofSaid(proof.next, proof, Boolean(closedEntry(doc))))); }
     var go = el("button", "d-plan", "See in the plan");
     go.type = "button";
     go.setAttribute("data-plan-unit", subject);
@@ -2587,59 +2765,240 @@
   }
 
   /* 5. What happened */
+  // The story the narrator told of this record, which the renderer embedded and the live stream sends with each record.
+  // The page draws it and words no entry itself: every head, line, label, mark and tab below comes from the story.
+  var DEPTHS = [["headline", "Headlines"], ["story", "Story"], ["everything", "Everything"]];
+  // What to show among the story, each the beats of one tone: the tabs for decisions, landings and problems, kept.
+  var FILTERS = [["all", "All"], ["decisions", "Decisions"], ["landed", "Landings"], ["problems", "Setbacks"]];
+  var FILTER_TONE = table({ decisions: "decision", landed: "landed", problems: "problem" });
+  // A beat's mark, by its tone: the story says what kind of moment it is, and the page has one mark for each.
+  var MARK_OF = table({ landed: "merge", ready: "ready", decision: "decide", problem: "stop", note: "note" });
+  /** A tone's mark, as a beat and the legend both draw it; a tone the page doesn't know draws as a note. */
+  function toneMark(tone) { return glyph(MARK_OF[tone] || "note"); }
+  var DEPTH_KEY = (typeof VIEW.themeKey === "string" && VIEW.themeKey ? VIEW.themeKey.replace(/:theme$/, "") : "delivery-views") + ":story-depth";
+  function storyOf(doc) {
+    var story = isObject(doc.story) ? doc.story : null;
+    return story && Array.isArray(story.chapters) && Array.isArray(story.beats) && Array.isArray(story.threads) && isObject(story.digest) ? story : null;
+  }
+  // The reader's depth: theirs once chosen, else Story while the delivery runs and Headlines once it has closed.
+  function storyDepth(story) {
+    var chosen = null;
+    try { chosen = localStorage.getItem(DEPTH_KEY); } catch (error) { chosen = null; }
+    if (DEPTHS.some(function (depth) { return depth[0] === chosen; })) { return chosen; }
+    return storyDepthChosen || (story.state === "closed" ? "headline" : "story");
+  }
+  // The beat that tells one entry in full, by the entry's id, or null when the story holds none for it.
+  var toldBy = typeof WeakMap === "function" ? new WeakMap() : null;
+  function beatOf(doc, id) {
+    var story = storyOf(doc);
+    if (!story) { return null; }
+    var found = toldBy && toldBy.get(story);
+    if (!found) {
+      found = Object.create(null);
+      story.beats.forEach(function (beat) {
+        if (isObject(beat) && beat.form !== "thread" && list(beat.altitudes).indexOf("everything") >= 0) {
+          list(beat.entries).forEach(function (entry) { found[String(entry)] = beat; });
+        }
+      });
+      if (toldBy) { toldBy.set(story, found); }
+    }
+    return found[String(id)] || null;
+  }
+  /**
+   * An entry's words, as the story tells them: its own beat's, or, in a beat that tells several, its own line among
+   * them. An entry the story doesn't hold, from a record told before it had one, has no words yet.
+   */
+  function entryWords(doc, entry) {
+    var beat = beatOf(doc, entry.id);
+    if (beat && beat.form === "entry") { return { head: text(beat.words.head), line: text(beat.words.line), label: text(beat.label) }; }
+    var item = beat ? list(beat.items).filter(function (each) { return isObject(each) && each.entry === entry.id; })[0] : null;
+    if (item) { return { head: text(item.words.head), line: text(item.words.line), label: text(beat.label) }; }
+    if (beat) { return { head: text(beat.words.head), line: text(beat.words.line), label: text(beat.label) }; }
+    return { head: "", line: "", label: "" };
+  }
+  /** What an entry says, as one line: its story line, or its head when its line is empty. */
+  function toldLine(doc, entry) { var words = entryWords(doc, entry); return words.line || words.head; }
+  /** A commit the words name, as a link to it on the forge when the page was given its address: cut short to read. */
+  function commitRef(sha) {
+    var href = commitHref(sha);
+    var commit = el(href ? "a" : "code", "fact-ref", short(sha));
+    if (href) {
+      commit.setAttribute("href", href);
+      commit.setAttribute("target", "_blank");
+      commit.setAttribute("rel", "noopener noreferrer");
+      commit.setAttribute("aria-label", "Open commit " + short(sha));
+    }
+    return commit;
+  }
+  /**
+   * The story's words, made readable without changing what they say: each ticket id they name links to its ticket, so
+   * a reader can open it or see its card as anywhere else on the page; a full commit id is cut short and opens on the
+   * forge; and a change request's address shows as its number. The ids are the record's own, the ones the renderer gave
+   * addresses for.
+   */
+  function linked(words) {
+    var said = text(words);
+    var ids = Object.keys(LINKS.issues || {}).filter(function (id) { return id && said.indexOf(id) >= 0; })
+      .sort(function (a, b) { return b.length - a.length; });
+    var tickets = ids.length ? "|(?:^|[^\\w-])(" + ids.map(function (id) { return id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }).join("|") + ")(?![\\w-])" : "";
+    // A commit is named in full or cut short; a short one links only when it begins exactly one commit the page knows.
+    var pattern = new RegExp("(\\b[0-9a-f]{7,40}\\b)|(https?:\\/\\/[^\\s)]+)" + tickets, "g");
+    var nodes = [], last = 0, found;
+    while ((found = pattern.exec(said))) {
+      var match = found[1] || found[2] || found[3];
+      var at = found.index + found[0].indexOf(match);
+      if (at > last) { nodes.push(said.slice(last, at)); }
+      if (found[1]) {
+        var named = found[1].length === 40 ? [found[1]] : Object.keys(LINKS.commits || {}).filter(function (sha) { return sha.indexOf(found[1]) === 0; });
+        nodes.push(named.length === 1 ? commitRef(named[0]) : found[1]);
+      } else if (found[2]) {
+        // Punctuation that ends the sentence is not part of the address.
+        var address = found[2].replace(/[.,;:]+$/, "");
+        nodes.push(changeTarget(address) ? changeLink(address) : address);
+        if (address.length < found[2].length) { nodes.push(found[2].slice(address.length)); }
+      } else {
+        nodes.push(issue(found[3]));
+      }
+      last = at + match.length;
+    }
+    if (last < said.length) { nodes.push(said.slice(last)); }
+    return nodes;
+  }
+  function timeOf(instant) {
+    var parts = clockParts(instant);
+    var time = parts ? add(el("time"), el("span", "t-clock", parts.time), parts.day ? el("span", "t-day", parts.day) : null) : el("time");
+    time.setAttribute("datetime", text(instant));
+    if (parts) { time.setAttribute("aria-label", clock(instant)); }
+    return time;
+  }
+  /** One beat as a row: its time, its mark and its words in full. Its ticket, commit and change request are links in the words. */
+  function beatRow(doc, story, beat, fresh, depth) {
+    var threads = story.threads.filter(function (thread) { return isObject(thread) && thread.id === beat.thread; });
+    // Below the headline a setback's entries keep their places in time, tied by a thin line in the margin.
+    var li = el("li", "beat is-" + text(beat.tone) + (beat.thread && beat.form !== "thread" && depth !== "headline" ? " threaded" : "") + (fresh ? " fresh" : ""));
+    li.setAttribute("data-beat", text(beat.id));
+    if (beat.thread) { li.setAttribute("data-thread", text(beat.thread)); }
+    if (beat.form === "thread" && threads.length) { return setbackSheet(doc, beat, threads[0], li); }
+    var words = add(el("span", "beat-words"), add.apply(null, [el("span", "beat-said")].concat(linked(beat.words.head))),
+      text(beat.words.line) ? add.apply(null, [el("span", "beat-line")].concat(linked(beat.words.line))) : null);
+    var body = el("div", "beat-body");
+    if (beat.form === "bookkeeping") {
+      // The one run that folds: opened, it lists each of its entries in that entry's own words.
+      var listed = el("ul", "beat-items");
+      list(beat.items).forEach(function (item) {
+        if (isObject(item) && isObject(item.words)) {
+          listed.appendChild(add(el("li"), text(item.words.head), text(item.words.line) ? el("span", "beat-line", " " + text(item.words.line)) : null));
+        }
+      });
+      var fold = add(el("details", "beat-fold"), add(el("summary", "beat-head"), words), listed);
+      body.appendChild(runFold(fold, { key: "beat:" + text(beat.id) + ":" + list(beat.entries)[0] }));
+    } else {
+      body.appendChild(add(el("div", "beat-head"), words));
+    }
+    add(li, timeOf(beat.at), toneMark(beat.tone), add(body, el("span", "beat-label", text(beat.label))));
+    return li;
+  }
+  /**
+   * A setback, told once: what broke, why, what it held up and how it ended, on one quiet sheet whose only number is
+   * its cost. One still standing says since when, and breathes on the page's slow pulse.
+   */
+  function setbackSheet(doc, beat, thread, li) {
+    li.className = "beat setback " + (thread.state === "open" ? "is-standing" : "is-closed");
+    var told = isObject(thread.told) ? thread.told : {};
+    var sheet = el("div", "setback-sheet");
+    var words = add(el("div", "setback-words"), add.apply(null, [el("div", "setback-head")].concat(linked(beat.words.head))));
+    // Its cause, its own line, what it held up and how it ended, each a sentence that says which it is.
+    [told.cause, told.said, told.heldUp, told.ending].forEach(function (part) {
+      if (text(part)) { words.appendChild(add.apply(null, [el("p", "setback-part")].concat(linked(part)))); }
+    });
+    var cost = thread.state === "closed" && typeof thread.cost === "number"
+      ? add(el("div", "setback-cost"), el("b", null, duration(thread.cost)), el("span", null, (clock(thread.openedAt) || "") + " to " + (clock(thread.closedAt) || "")))
+      : add(el("div", "setback-cost is-standing"), el("b", null, "Still standing"), el("span", null, "since " + (clock(thread.openedAt) || "a time unknown")));
+    add(li, timeOf(beat.at), toneMark(beat.tone), add(el("div", "beat-body"), add(el("div", "beat-head"), add(sheet, words, cost))));
+    return li;
+  }
+  // Exactly the beats the story holds at a depth, and among them the tone the reader chose.
+  function beatShown(beat, depth, filter) {
+    if (!isObject(beat) || list(beat.altitudes).indexOf(depth) < 0) { return false; }
+    return filter === "all" || beat.tone === FILTER_TONE[filter];
+  }
+  /** What each mark on the page means: one entry for each tone among the beats in view, in the story's words. */
+  function storyLegend(story, depth) {
+    var present = Object.create(null);
+    story.beats.forEach(function (beat) { if (beatShown(beat, depth, storyFilter)) { present[text(beat.tone)] = true; } });
+    var legend = el("div", "story-legend");
+    list(story.tones).filter(function (tone) { return isObject(tone) && present[text(tone.tone)]; }).forEach(function (tone) {
+      legend.appendChild(add(el("span"), toneMark(text(tone.tone)), text(tone.word)));
+    });
+    return legend.childNodes.length ? legend : null;
+  }
   function drawHappened(doc) {
     var inner = parts.happened;
-    var names = laneNames(doc);
-    var entries = list(doc.journal).filter(isObject).slice().reverse();
-    var legend = el("div", "feed-legend");
-    [["merge", "Landed"], ["ready", "Ready to check"], ["decide", "Decision"], ["stop", "Problem"], ["note", "Other update"]].forEach(function (entry) {
-      legend.appendChild(add(el("span"), glyph(entry[0]), entry[1]));
-    });
-    var tabs = el("div", "tabs");
-    tabs.setAttribute("role", "group");
-    tabs.setAttribute("aria-label", "Show");
-    TABS.forEach(function (tab) {
-      var button = el("button", null, tab[1]);
-      button.type = "button";
-      button.setAttribute("aria-pressed", String(feedFilter === tab[0]));
-      button.setAttribute("data-tab", tab[0]);
-      button.addEventListener("click", function () { var focus = focusMark(); feedFilter = tab[0]; feedAll = false; drawHappened(shown); refocus(focus); });
-      tabs.appendChild(button);
-    });
-    var rows = entries.filter(function (entry) { return inTab(entry, feedFilter); });
-    var visible = feedAll ? rows : rows.slice(0, 8);
-    var ul = el("ul", "feed");
-    if (!rows.length) { ul.appendChild(el("li", "waiting", "Nothing here yet.")); }
-    visible.forEach(function (entry) {
-      var key = text(entry.at) + "|" + String(entry.id);
-      var li = el("li", prev.feed && !prev.feed[key] && !reduced() ? "fresh" : "");
-      // The clock time first, and under it, quieter, the day when it is not today; read out whole.
-      var parts = clockParts(entry.at);
-      var time = parts ? add(el("time"), el("span", "t-clock", parts.time), parts.day ? el("span", "t-day", parts.day) : null) : el("time");
-      time.setAttribute("datetime", text(entry.at));
-      if (parts) { time.setAttribute("aria-label", clock(entry.at)); }
-      var who = el("span", "who", [KIND_WORDS[entry.kind] || text(entry.kind), entry.lane ? names[entry.lane] || text(entry.lane) : ""].filter(Boolean).join(" · "));
-      if (text(entry.subject)) { add(who, " · ", issue(text(entry.subject))); }
-      add(li, time, glyph(GLYPH[entry.kind] || "note"), add(el("p", null, text(entry.summary)), who));
-      ul.appendChild(li);
-    });
-    var seen = Object.create(null);
-    entries.forEach(function (entry) { seen[text(entry.at) + "|" + String(entry.id)] = true; });
-    prev.feed = seen;
-    var nodes = [el("div", "kicker", "What happened"), el("h2", "title", "The story so far, newest first."), legend, tabs, ul];
-    if (!feedAll && rows.length > visible.length) {
-      var more = el("button", "more", "Show all " + rows.length);
-      more.type = "button";
-      more.addEventListener("click", function () {
-        feedAll = true;
-        drawHappened(shown);
-        // The button is gone once everything shows; focus moves to the first entry it revealed.
-        var first = parts.happened.querySelectorAll(".feed li")[visible.length];
-        if (first) { first.setAttribute("tabindex", "-1"); first.setAttribute("data-revealed", ""); first.focus({ preventScroll: true }); }
-      });
-      nodes.push(more);
+    var from = runHeldHeight(inner);
+    var story = storyOf(doc);
+    if (!story) {
+      inner.replaceChildren(el("div", "kicker", "What happened"), el("h2", "title", "The story could not be told from this record."));
+      return;
     }
-    inner.replaceChildren.apply(inner, nodes);
+    var depth = storyDepth(story);
+    var seen = Object.create(null);
+    story.beats.forEach(function (beat) { if (isObject(beat)) { seen[beatKey(beat)] = true; } });
+    var switches = add(el("div", "story-bar"), choice("Depth", DEPTHS, depth, function (picked) {
+      storyDepthChosen = picked;
+      try { localStorage.setItem(DEPTH_KEY, picked); } catch (error) { /* chosen until the page reloads */ }
+    }, "depth"), choice("Show", FILTERS, storyFilter, function (picked) { storyFilter = picked; }, "tab"));
+    var beats = Object.create(null);
+    story.beats.forEach(function (beat) { if (isObject(beat)) { beats[text(beat.id)] = beat; } });
+    var ol = el("ol", "story");
+    story.chapters.slice().reverse().forEach(function (chapter) {
+      if (!isObject(chapter) || !isObject(chapter.words)) { return; }
+      var shownBeats = list(chapter.beats).map(function (name) { return beats[text(name)]; })
+        .filter(function (beat) { return beatShown(beat, depth, storyFilter); }).reverse();
+      var standing = list(chapter.words.standing).filter(isObject);
+      if (storyFilter !== "all" && !shownBeats.length && !(storyFilter === "problems" && standing.length) && !(storyFilter === "landed" && chapter.form === "landing")) { return; }
+      var li = el("li", "chapter-of is-" + text(chapter.form));
+      li.setAttribute("data-chapter", text(chapter.id));
+      var heading = add(el("div", "chapter-head"), add.apply(null, [el("h3")].concat(linked(chapter.words.head))), timeOf(chapter.at));
+      li.appendChild(heading);
+      // The piece that landed, by its title, then how long it took to land; each on its own line.
+      if (text(chapter.pieceTitle)) { li.appendChild(el("p", "chapter-line", text(chapter.pieceTitle))); }
+      if (text(chapter.words.line)) { li.appendChild(el("p", chapter.pieceTitle ? "chapter-when" : "chapter-line", text(chapter.words.line))); }
+      standing.forEach(function (carried) {
+        li.appendChild(add.apply(null, [el("p", "chapter-standing" + (carried.until ? " is-ended" : ""))].concat(linked(carried.text),
+          [carried.until ? ", until " + (clock(carried.until) || "a time unknown") + "." : ""])));
+      });
+      if (shownBeats.length) {
+        var ul = el("ul", "beats");
+        shownBeats.forEach(function (beat) { ul.appendChild(beatRow(doc, story, beat, prev.story && !prev.story[beatKey(beat)] && !reduced(), depth)); });
+        li.appendChild(ul);
+      }
+      ol.appendChild(li);
+    });
+    if (!ol.childNodes.length) { ol.appendChild(el("li", "waiting", "Nothing here yet.")); }
+    prev.story = seen;
+    var digest = isObject(story.digest.words) ? story.digest.words : { head: "", line: "" };
+    // A part the story doesn't hold, a digest line or a legend, is left out rather than drawn as nothing.
+    inner.replaceChildren();
+    add(inner, el("div", "kicker", "What happened"), el("h2", "title", text(digest.head)),
+      text(digest.line) ? el("p", "say", text(digest.line)) : null, storyLegend(story, depth), switches, ol);
+    // Depth changes density in place: the chapter eases from the height it had, on the shared fold's motion.
+    runEaseHeight(inner, from);
+  }
+  function beatKey(beat) { return text(beat.form) + ":" + list(beat.entries).join(","); }
+  /** A small group of buttons choosing one of its options, drawn again on a pick. */
+  function choice(label, options, current, pick, data) {
+    var group = el("div", "tabs" + (data === "depth" ? " depth" : " filter"));
+    group.setAttribute("role", "group");
+    group.setAttribute("aria-label", label);
+    options.forEach(function (option) {
+      var button = el("button", null, option[1]);
+      button.type = "button";
+      button.setAttribute("aria-pressed", String(current === option[0]));
+      button.setAttribute("data-" + data, option[0]);
+      button.addEventListener("click", function () { var focus = focusMark(); pick(option[0]); drawHappened(shown); refocus(focus); });
+      group.appendChild(button);
+    });
+    return group;
   }
 
   /* 6. Parked */
@@ -2684,6 +3043,29 @@
     drawHappened(doc);
     drawParked(doc);
     refocus(focus);
+    keepPace();
+  }
+  /**
+   * A redraw rebuilds the marks that turn or pulse, and a rebuilt mark would start its turn over, which reads as a
+   * stutter every time the record is written or the clock ticks. Each looping animation is set to the page's own clock
+   * instead, so a mark drawn again carries on from where the last one was.
+   */
+  function onPace(animation) {
+    var timing = animation.effect && typeof animation.effect.getTiming === "function" ? animation.effect.getTiming() : null;
+    // A mark held still where it was, as a settling check's is, is left there.
+    if (!timing || timing.iterations !== Infinity || !animation.animationName || animation.startTime === 0 || animation.playState === "paused") { return; }
+    try { animation.startTime = 0; } catch (error) { /* an animation that cannot be moved keeps its own start */ }
+  }
+  function keepPace() {
+    if (typeof document.getAnimations === "function") { document.getAnimations().forEach(onPace); }
+  }
+  // A mark drawn outside a full redraw, as a stop's detail or a check's row is, joins the same clock as it starts, before
+  // its first frame is painted.
+  if (typeof document.addEventListener === "function") {
+    document.addEventListener("animationstart", function (event) {
+      var node = event.target;
+      if (node && typeof node.getAnimations === "function") { node.getAnimations({ subtree: true }).forEach(onPace); }
+    }, true);
   }
   // A redraw replaces the stops, links and tabs; keyboard focus stays on the one it was on.
   function focusMark() {

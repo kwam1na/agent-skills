@@ -740,7 +740,7 @@ class LivePlanTests(unittest.TestCase):
         moved = self.state / "plan.json.next"
         moved.write_text(json.dumps(value))
         moved.replace(self.state / "plan.json")
-        subprocess.run([*self.tool, "journal", "--kind", "decision.recorded", "--summary", f"Plan updated: {updated}; a change"],
+        subprocess.run([*self.tool, "journal", "--kind", "plan.updated", "--data", json.dumps({"updated": updated, "changed": ["units"]})],
                        check=True, capture_output=True, cwd=self.state.parent)
 
     def until(self, address: str, met) -> dict:

@@ -22,6 +22,7 @@ Lead:
   lead-accept <key> [--accept-blocked LABEL ...] [--accept-restarts] | ship | adapter-test
   lead-authorize-base-merge <key> --reviewed HEAD --base COMMIT...
   lead-carry-review <key> --from HEAD --to HEAD --reason TEXT
+  lead-decide --text T --why W [--because N] [--subject KEY] | lead-block --text T [--because N] [--subject KEY]
   lead-push [--wait-seconds N] | lead-flake --check ID [--test REGEX ...] --ref REF
 Merge queue:
   pr-review-current --branch B --head H [--wait]   (a reviewGate: exit 0 only for a current, passing review.pr review)
@@ -1800,16 +1801,17 @@ def ensure_recorded(key: str, outcome: dict, lane: str, folder: Path) -> None:
 
 def ensure_journaled(key: str, outcome: dict, lane: str, doc: dict) -> None:
     n = outcome["round"]
-    if any(e.get("kind") == "review.round" and e.get("subject") == key and e["review"]["round"] == n
+    if any(e.get("kind") == "review.round" and e.get("subject") == key and e["data"]["round"] == n
            for e in doc["journal"]):
         return
     verdicts, counts = round_counts(outcome)
-    review = {"round": n, "startedAt": outcome["startedAt"], "finishedAt": outcome["finishedAt"],
-              "verdicts": verdicts, "findings": counts}
-    extra = round_history_text(outcome)
+    # The facts are the round and its history.
+    facts = {"round": n, "startedAt": outcome["startedAt"], "finishedAt": outcome["finishedAt"],
+             "verdicts": verdicts, "findings": counts,
+             **({"refused": outcome["attempts"]} if outcome.get("attempts") else {}),
+             **({"restarts": len(outcome["restarts"])} if outcome.get("restarts") else {})}
     state_tool("journal", "--writer", "lane", "--kind", "review.round", "--subject", key, "--lane", lane,
-               "--review", json.dumps(review),
-               *(["--summary", f"Round {n}: " + ", ".join(f"{k} {v}" for k, v in verdicts.items()) + f"; {extra}"] if extra else []))
+               "--data", json.dumps(facts))
 
 
 def round_history_text(outcome: dict) -> str:
@@ -3306,8 +3308,9 @@ def lead_evidence(args) -> None:
         record = {"url": args.url, "at": now(), "clips": clips,
                   **{k: kept.get(k, {} if k == "notes" else None) for k in ("title", "intro", "notes")}}
         (c.state.parent / "evidence-page.json").write_text(json.dumps(record, indent=2) + "\n")
-        state_tool("journal", "--kind", "decision.recorded", "--summary",
-                   f"Evidence page published at {args.url} with {len(clips)} before/after clip(s).", check=False)
+        state_tool("journal", "--kind", "evidence.published", "--data",
+                   json.dumps({"url": args.url, "clips": [{"name": name, "digest": sha} for name, sha in clips.items()]}),
+                   check=False)
         print(f"recorded the evidence page {args.url} ({len(clips)} clips); link it from the epic and each story")
         return
     if args.action == "status":
@@ -4432,10 +4435,9 @@ def lead_authorize_base_merge(args) -> None:
         if not is_ancestor(base, c.base_ref) or is_ancestor(base, reviewed):
             raise Stop(f"{base} must be on {c.base_ref} and outside the reviewed head's history")
     authorization = {"reviewed": reviewed, "baseCommits": bases}
-    recorded = state_tool("journal", "--writer", "lead", "--kind", "decision.recorded", "--subject", key, "--lane", lane,
-                          "--base-merge-authorization", json.dumps(authorization),
-                          "--summary", f"Authorized {lane} to merge base commits {', '.join(bases)} into {key} from {reviewed}")
-    token = json.loads(recorded.stdout)["entry"]["baseMergeAuthorization"]["token"]
+    recorded = state_tool("journal", "--writer", "lead", "--kind", "base.merge.authorized", "--subject", key, "--lane", lane,
+                          "--data", json.dumps(authorization))
+    token = json.loads(recorded.stdout)["entry"]["data"]["token"]
     print(f"{key}: authorized base merges from {reviewed}. Run in the lane checkout, in this order:")
     for base in bases:
         print(shlex.join(["git", "merge", "--no-ff", "--no-log", "-m", f"{key}: Merge delivery base",
@@ -4505,7 +4507,7 @@ def verify_base_merge(c, key: str, lane: str, reviewed: str, head: str, doc: dic
     if not history:
         raise Stop("the handed head has no base merge after review")
     grants = [entry for entry in doc["journal"] if entry["subject"] == key and entry["lane"] == lane
-              and entry.get("baseMergeAuthorization", {}).get("reviewed") == reviewed]
+              and entry["kind"] == "base.merge.authorized" and entry["data"].get("reviewed") == reviewed]
     prior = reviewed
     base_commits = []
     for merge in history:
@@ -4519,8 +4521,8 @@ def verify_base_merge(c, key: str, lane: str, reviewed: str, head: str, doc: dic
         # immutable merge commit. A caller-controlled commit date proves no ordering.
         trailers = git("-c", "trailer.separators=:", "show", "-s",
                        "--format=%(trailers:key=Delivery-Base-Merge,valueonly)", merge).splitlines()
-        if not any(base in entry["baseMergeAuthorization"]["baseCommits"]
-                   and trailers == [entry["baseMergeAuthorization"]["token"]] for entry in grants):
+        if not any(base in entry["data"]["baseCommits"]
+                   and trailers == [entry["data"]["token"]] for entry in grants):
             raise Stop(f"the lead did not authorize {key} to merge {base} from {reviewed} before the merge")
         old_base = git("merge-base", c.base_ref, prior)
         new_base = git("merge-base", c.base_ref, merge)
@@ -5141,10 +5143,10 @@ def check_plan(plan: dict, c) -> None:
         raise Stop(f"the plan this delivery file makes holds {size} bytes, over the 1 MiB a plan may hold")
 
 
-def rebuild_plan(c, mark: bool = False) -> str | None:
+def rebuild_plan(c) -> str | None:
     """Rebuild plan.json under the lock. Writes it, atomically, only when its content apart from `updated` changed,
-    then journals the write so the live view re-renders. Returns what changed, or None when nothing did. With
-    `mark`, a plan change the lead made, the journal entry is marked for the tracker publisher to post."""
+    then journals the write as plan.updated so the live view re-renders. Returns what changed, or None when nothing
+    did."""
     if not (c.state / "state.json").exists():
         return None
     with plan_lock(c):
@@ -5166,18 +5168,13 @@ def rebuild_plan(c, mark: bool = False) -> str | None:
         same = lambda a, b: {k: v for k, v in a.items() if k != "updated"} == {k: v for k, v in b.items() if k != "updated"}
         if old is not None and same(old, plan):
             return None
-        moved = "first build" if old is None else "changed " + ", ".join(
-            key for key in sorted({*plan, *old}) if key != "updated" and old.get(key) != plan.get(key))
+        changed = [] if old is None else [
+            key for key in sorted({*plan, *old}) if key != "updated" and old.get(key) != plan.get(key)]
         temporary = path.with_name(f".{PLAN_FILE}.{os.getpid()}.tmp")
         temporary.write_text(json.dumps(plan, indent=2) + "\n")
         os.replace(temporary, path)
-        summary = f"Plan updated: {plan['updated']}; {moved}"
-        if mark:
-            with marked_decision(c) as written:
-                written.append(journal_id(state_tool("journal", "--kind", "decision.recorded", "--summary", summary)))
-        else:
-            state_tool("journal", "--kind", "decision.recorded", "--summary", summary)
-        return moved
+        state_tool("journal", "--kind", "plan.updated", "--data", json.dumps({"updated": plan["updated"], "changed": changed}))
+        return "changed " + ", ".join(changed) if changed else "first build"
 
 
 def rebuild_plan_quietly(c) -> str:
@@ -5413,9 +5410,8 @@ def lead_plan(args) -> None:
                                                      if key not in (f["id"], f.get("reference"))]},
                                  "the added story's planned work")
             if patched is not None:
-                state_tool("journal", "--kind", "decision.recorded", "--subject", key, "--summary",
-                           f"{key} added to the delivery as planned work for {c.lane_of(key)}")
-        rebuild_plan(c, mark=True)
+                state_tool("journal", "--kind", "story.added", "--subject", key, "--data", json.dumps(story_added(c, key, change.get("why"))))
+        rebuild_plan(c)
     print(f"recorded {ids}: {args.kind} {', '.join(change['subjects']) or change.get('finish', '')}".rstrip())
     print(f"committed the delivery file{' and the plan' if plan_text is not None else ''}; push it so lanes see it: "
           f"{plan_publish_command(c)}")
@@ -5490,6 +5486,14 @@ def record_started(c, journal: list[dict]) -> str:
     return datetime.datetime.fromtimestamp(stamp, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def record_base(journal: list[dict]) -> str | None:
+    """The base ref a record started on: its record.started's base."""
+    for entry in journal:
+        if entry.get("kind") == "record.started":
+            return entry["data"]["base"]["ref"]
+    return None
+
+
 def stale_record(c) -> str | None:
     """What an earlier lead-init left where this one would start: a record, a supervisor's lock, or a plan snapshot.
     A lead-plan change made before lead-init, and plan.lock, are this delivery's own and don't count."""
@@ -5503,9 +5507,7 @@ def stale_record(c) -> str | None:
             return f"{c.state} already holds a record the state tool can't read ({unreadable}); {fix}"
         meta, journal = doc["state"]["meta"], doc["journal"]
         name = meta.get("trackerParent") or meta.get("headline") or "with no name"
-        recorded = next((re.search(r"^Record starts at base \S+ on (\S+?)\.(?: |$)", e.get("summary", ""))
-                         for e in journal if e.get("kind") == "decision.recorded"), None)
-        base = recorded.group(1) if recorded else c.base_ref if name == c.delivery else "an unrecorded base"
+        base = record_base(journal) or (c.base_ref if name == c.delivery else "an unrecorded base")
         return f"{c.state} already holds a record: delivery {name} on {base}, started {record_started(c, journal)}; {fix}"
     lock = supervisor_lock_path(c)
     if lock.exists():
@@ -6459,7 +6461,7 @@ def lead_carry_review(args) -> None:
     if done.returncode != 0:
         said = f"{answer['code']}: {answer.get('error', '')}" if answer.get("code") else (done.stderr or done.stdout).strip()
         raise Stop(f"the state tool refused the carry: {said}")
-    print(f"carried: {answer.get('entry', {}).get('summary', '')}")
+    print(f"carried: {tracker_publisher.said(answer['entry'])}" if isinstance(answer.get("entry"), dict) else "carried")
 
 
 def lead_init(args) -> None:
@@ -6500,13 +6502,8 @@ def lead_init(args) -> None:
     for line in replace_record(c) if args.replace else []:
         print(line)
     state_tool("init", "--headline", c.raw.get("headline", c.delivery), "--seed", json.dumps(seed))
-    lease = (f" The {c.in_app.get('lease', 'in-app')} lease is granted on demand through run-delivery app-check's OS lock,"
-             " held only for a lane's own in-app checks.") if c.in_app else ""
-    shipping = (f" The tooling never ships: the product branch is built from {', '.join(c.ship['paths'])} of the "
-                "delivery base.") if c.ship else ""
-    state_tool("journal", "--kind", "decision.recorded", "--summary",
-               f"Record starts at base {git('rev-parse', '--short', c.base_ref)} on {c.base_ref}. Lanes merge "
-               f"through the runner; hand-offs wait for the lead's acceptance.{shipping}{lease}")
+    state_tool("journal", "--kind", "record.started",
+               "--data", json.dumps({"base": {"ref": c.base_ref, "head": git("rev-parse", c.base_ref)}}))
     if plan_declared(c):
         with plan_lock(c):
             if not any(entry["type"] == "snapshot" for entry in read_plan_log(c)):
@@ -6709,8 +6706,7 @@ def _register_stories(c) -> list[str]:
     if patch_from(compute, "the stories added to the delivery") is None:
         return []
     for key in added:
-        state_tool("journal", "--kind", "decision.recorded", "--subject", key, "--summary",
-                   f"{key} added to the delivery as planned work for {c.lane_of(key)}")
+        state_tool("journal", "--kind", "story.added", "--subject", key, "--data", json.dumps(story_added(c, key)))
     if records_changes(c):
         for key in added:
             change = {"kind": "added", "subjects": [key], "by": "lead", "title": c.stories[key]["title"],
@@ -7247,11 +7243,16 @@ def lead_push(args) -> None:
                 # Older plan worktrees may have any branch name. Keep their plan-only scope.
                 check_lead_plan_commits(c, current, head)
             git("push", c.remote, f"{head}:refs/heads/{c.base_branch}")
-            state_tool("journal", "--kind", "decision.recorded", "--summary",
-                       f"Published {c.base_branch} from {current} to {head} under the merge queue lock.")
+            state_tool("journal", "--kind", "base.published", "--data", json.dumps({"base": {"ref": c.base_ref, "head": head}, "from": current}))
     except delivery_state.StateError as error:
         raise Stop(f"{error.code}: {error}") from None
     print(f"published {c.remote}/{c.base_branch} at {head[:12]}")
+
+
+def story_added(c, key: str, why: str | None = None) -> dict:
+    """A story.added's facts: the story's title, and why it joins, from the change or the delivery file."""
+    why = why or c.stories[key].get("why") or f"planned work for {c.lane_of(key)}"
+    return {"title": c.stories[key]["title"], "why": why}
 
 
 def lead_flake(args) -> None:
@@ -7273,7 +7274,7 @@ def lead_flake(args) -> None:
 
     patch_from(declare, f"the live flake for {args.check}")
     summary = f"Declared live flake {args.ref} for {args.check} at {base}"
-    state_tool("journal", "--kind", "decision.recorded", "--summary", summary)
+    state_tool("journal", "--kind", "flake.declared", "--data", json.dumps({"flake": args.ref, "check": args.check, "head": base}))
     print(summary)
 
 
@@ -7349,7 +7350,8 @@ def change_regions(c, args) -> None:
     patch_from(compute, f"region ownership of {path}")
     action = "revoked" if args.revoke_region else "granted"
     change = f"{action} {args.lane}'s {path} [{args.start}, {args.end}) at {base_head}"
-    state_tool("journal", "--kind", "decision.recorded", "--summary", change)
+    state_tool("journal", "--kind", f"ownership.{action}", "--lane", args.lane, "--data", json.dumps(
+        {"path": path, "span": {"first": args.start, "after": args.end}, "base": {"ref": args.base, "head": base_head}}))
     print(change)
 
 
@@ -7409,7 +7411,9 @@ def change_ownership(c, args) -> None:
     change = f"{args.lane} owns {pattern}" + (f", moved from {args.source}" if args.source else "")
     if args.revoke:
         change = f"revoked {args.lane}'s claim for {pattern}"
-    state_tool("journal", "--kind", "decision.recorded", "--summary", change)
+    facts = {"path": pattern, **({"movedFrom": args.source} if args.source and not args.revoke else {})}
+    state_tool("journal", "--kind", "ownership.revoked" if args.revoke else "ownership.granted", "--lane", args.lane,
+               "--data", json.dumps(facts))
     print(change)
 
 
@@ -7491,8 +7495,7 @@ def lead_assign(args) -> None:
     print_peer_claims(c, [path for key in keys for path in story_named_files(c, key, tracked)])
     # One entry per story, so each ticket's start is its own, made when its lane begins it.
     for key in keys:
-        state_tool("journal", "--kind", "lane.assigned", "--lane", args.lane, "--subject", key, "--summary",
-                   f"{args.lane} assigned {key}: {c.stories[key]['title']}" + (f" ({args.note})" if args.note else ""))
+        state_tool("journal", "--kind", "lane.assigned", "--lane", args.lane, "--subject", key, "--data", json.dumps({"title": c.stories[key]["title"], **({"note": args.note} if args.note else {})}))
     said = [line + ("; assigned anyway (--force)" if state == "not-ready" else "")
             for state, line in readiness.values() if line]
     if said:
@@ -7540,7 +7543,8 @@ def change_claims(c, args) -> None:
 
     patch_from(compute, f"{c.delivery}'s claim of {pattern}")
     change = f"{c.delivery} claims {pattern} on {c.base_branch}: a peer's lead-assign and lead-accept warn of it"
-    state_tool("journal", "--kind", "decision.recorded", "--summary", change)
+    state_tool("journal", "--kind", "ownership.claimed", "--data", json.dumps(
+        {"path": pattern, "base": {"ref": c.base_ref, "head": git("rev-parse", c.base_ref)}}))
     print(change)
 
 
@@ -7592,6 +7596,16 @@ def print_peer_claims(c, files: list[str]) -> None:
         print()
 
 
+def handed_entry(doc: dict, key: str) -> int:
+    """The journal id of the story's latest hand-off, which its check names as its cause; its merge when it was
+    merged with no hand-off journaled."""
+    for kind in ("candidate.handed", "candidate.merged"):
+        found = [e["id"] for e in doc["journal"] if e["kind"] == kind and e.get("subject") == key]
+        if found:
+            return found[-1]
+    raise Stop(f"{key} has no hand-off or merge in the journal for its check to name")
+
+
 def accept_no_change(c, key: str, entry: dict) -> None:
     """Accept a no-change hand-off: its evidence ran at a head the base still holds, and names every one of the story's
     criteria. The record then holds the story settled: never queued, never removed, counted as done."""
@@ -7617,12 +7631,12 @@ def accept_no_change(c, key: str, entry: dict) -> None:
         for problem in problems:
             print(f"  - {problem}")
         sys.exit(1)
+    # The check is journaled first, naming the hand-off, so the acceptance after it can name the check.
+    state_tool("journal", "--kind", "handoff.checked", "--subject", key, "--because", str(handed_entry(load_state(), key)), "--data", json.dumps(
+                   {"head": base_head, "rounds": 0, "afterMerge": False, "noChange": True,
+                    "notes": [f"its evidence names each of its criteria: {', '.join(criteria)}"]}))
     state_tool("handoff", "--accept", key)
     append_log("acceptance", key, {"head": base_head, "noChange": True, "ready": False, "blocked": {}})
-    state_tool("journal", "--kind", "decision.recorded", "--subject", key, "--summary",
-               f"No-change hand-off checked as a claim: its evidence ran at {base_head[:10]}, which {c.base_branch} "
-               f"holds, and names each of its criteria ({', '.join(criteria)}). Settled with no change needed; no base "
-               "commit is made.")
     rebuild_plan(c)
     print(f"accepted {key}: settled with no change needed")
 
@@ -7733,23 +7747,24 @@ def accept_story(c, args) -> None:
     if not merged and remote_head(branch) != head:
         problems.append(f"{c.remote}/{branch} is not at the handed head {head[:10]}")
     rounds = [e for e in doc["journal"] if e.get("kind") == "review.round" and e.get("subject") == key]
-    numbers = [e["review"]["round"] for e in rounds]
+    numbers = [e["data"]["round"] for e in rounds]
     if len(numbers) != len(set(numbers)):
         problems.append(f"round numbers journaled more than once: {sorted(numbers)}")
     if item.get("reportedRounds") != len(set(numbers)):
         problems.append(f"the hand-off reports {item.get('reportedRounds')} rounds; the journal has {len(set(numbers))}")
-    last = max(rounds, key=lambda e: e["review"]["round"], default=None)
-    if not last or set(last["review"]["verdicts"]) != set(c.lenses) or set(last["review"]["verdicts"].values()) != {"approve"}:
+    last = max(rounds, key=lambda e: e["data"]["round"], default=None)
+    if not last or set(last["data"]["verdicts"]) != set(c.lenses) or set(last["data"]["verdicts"].values()) != {"approve"}:
         problems.append("the last journaled round is not approved by every lens")
     if last and c.no_deferrals:
-        print_evidence_notes(key, last["review"]["round"])
-    evidence = [e for e in doc["journal"] if e.get("kind") == "review.evidence" and e.get("subject") == key]
+        print_evidence_notes(key, last["data"]["round"])
+    evidence = [e for e in doc["journal"] if e.get("kind") == "review.recorded" and e.get("subject") == key]
     carried_review = None
-    if not evidence or evidence[-1]["reviewArtifact"]["candidateRef"] != head:
+    if not evidence or evidence[-1]["data"]["candidateRef"] != head:
+        # A hand-off whose journal entry never landed carries nothing, and the evidence is then not for the head.
         hand = next((entry for entry in reversed(doc["journal"])
-                     if entry["subject"] == key and entry["kind"] == "candidate.handed"), {})
-        carry = hand.get("reviewCarry", {})
-        if evidence and carry.get("baseCommits") and carry.get("to") == head and hand.get("lane") == item["lane"]:
+                     if entry["subject"] == key and entry["kind"] == "candidate.handed"), None)
+        carry = hand["data"].get("carry", {}) if hand else {}
+        if evidence and carry.get("baseCommits") and carry.get("to") == head and hand["lane"] == item["lane"]:
             validator = _validator()
             try:
                 expected = validator.base_merge_evidence(
@@ -7917,6 +7932,12 @@ def accept_story(c, args) -> None:
         # A selection still standing would be what the runner runs: the fallback the lead chose wouldn't.
         state_tool("select", "--subject", key, "--clear")
         decisions.append(f"cleared the lead selection recorded at {str(before.get('head'))[:10]}, so the fallback runs")
+    review_note = (f"review captured at {carried_review['from']} and carried to {head}"
+                   if carried_review else "review evidence captured at that head")
+    # The check is journaled first, naming the hand-off, so the acceptance after it can name the check.
+    state_tool("journal", "--kind", "handoff.checked", "--subject", key, "--because", str(handed_entry(load_state(), key)), "--data", json.dumps(
+                   {"head": head, "rounds": len(set(numbers)), "afterMerge": merged, "noChange": False,
+                    "notes": [review_note, *decisions]}))
     if not merged:
         authorization = _validator().handoff_authorization(doc["state"], item)
         region_paths = {claim["path"] for claim in doc["state"].get("laneRegions", [])}
@@ -7925,16 +7946,6 @@ def accept_story(c, args) -> None:
     # What the plan's producer proofs are judged by: the accepted head and the in-app items accepted as blocked.
     append_log("acceptance", key, {"head": head, "ready": ready, "blocked": {label: reason for label, reason in
                                                                            blocked.items() if label in accepted_blocked}})
-    review_note = (f"review captured at {carried_review['from']} and carried to {head}"
-                   if carried_review else "review evidence captured at that head")
-    state_tool("journal", "--kind", "decision.recorded", "--subject", key, "--summary",
-               (f"Hand-off checked as a claim after its merge: its PR merged at {head[:10]} into {c.base_branch}, "
-                f"{len(set(numbers))} round(s) journaled, last approved by every lens, {review_note}, gates and in-app evidence current; its files could not be checked against "
-                f"{lane}'s." if merged else
-                f"Hand-off checked as a claim: {c.remote}/{branch} at {head[:10]}, its PR open at that head into "
-                f"{c.base_branch}, {len(set(numbers))} round(s) journaled, last approved by every lens, {review_note}, "
-                f"files within {lane}'s, gates and in-app evidence current.")
-               + (" " + "; ".join(decisions) + "." if decisions else ""))
     # Accepted already: a plan its registration can't rebuild now (a story added without its reason) says why, and
     # the next rebuild catches up.
     try:
@@ -8054,8 +8065,14 @@ def clean_story(key: str) -> tuple[str, list[str], list[str]]:
         left = [line for line in left if "deleteRemoteBranches is not true" not in line]
         return ("waiting" if left else "nothing"), [], left
     done = ([merged_by] if merged_by else []) + done
-    state_tool("journal", "--kind", "decision.recorded", "--subject", key, "--summary",
-               f"Cleaned up {key} after it merged into {c.base_branch}: " + "; ".join(done + left) + ".", check=False)
+    # The facts name the base it was cleaned against, the story's tip that was removed, and the change request whose
+    # merge let a squash-merged story go.
+    tip = next(iter(tips.values()), None)
+    request = (next((q for q in load_state()["state"]["queue"] if q["subject"] == key), {}).get("changeRequest")
+               if merged_by else None)
+    state_tool("journal", "--kind", "cleanup.done", "--subject", key, "--data", json.dumps({"base": {"ref": c.base_ref, "head": git("rev-parse", c.base_ref)},
+                                     **({"head": tip} if tip else {}), **({"changeRequest": request} if request else {})}),
+               check=False)
     return "cleaned", done, left
 
 
@@ -8363,10 +8380,6 @@ SUPERVISOR_PASS_SECONDS = 60
 # A child restarted this many times within the window won't stay up, and says so in "Needs you".
 CHILD_FLAPS, CHILD_FLAP_SECONDS = 3, 600
 SUPERVISOR_WAIT_SECONDS = 120
-# The runner's own blocker, which the hold clearing or base.repaired resolves (merge_queue.py writes it).
-RUNNER_HELD = "Serving is held:"
-# How the state tool's journal entry ends for a merge recovered before the lead accepted it.
-MERGE_SKIPPED_ACCEPTANCE = " before the lead accepted it"
 LANE_DONE = ("idle", "done")
 
 
@@ -8827,15 +8840,26 @@ def lane_moved_off(doc: dict, item: dict, words: dict | None = None) -> bool:
     return bool(later)
 
 
+# What the lead journals about a story once it settles it: its check or acceptance, its clean-up, its re-queue, or a
+# decision about it.
+SETTLING_KINDS = ("decision.recorded", "handoff.checked", "handoff.accepted", "cleanup.done", "handoff.requeued")
+
+
+def skipped_acceptance(entry: dict) -> bool:
+    """Whether a candidate.merged was recovered from the forge before the lead accepted it."""
+    return entry["data"].get("acceptanceSkipped") is True
+
+
 def unaccepted_merge(doc: dict, item: dict) -> dict | None:
-    """The merge entry of a story recovered from the forge before the lead accepted it, while no decision follows it."""
+    """The merge entry of a story recovered from the forge before the lead accepted it, while nothing the lead journals
+    to settle the story follows it."""
     subject = item["subject"]
     if item["stage"] != "merged":
         return None
     merges = [e for e in doc["journal"] if e["kind"] == "candidate.merged" and e.get("subject") == subject]
-    if not merges or not merges[-1].get("summary", "").endswith(MERGE_SKIPPED_ACCEPTANCE):
+    if not merges or not skipped_acceptance(merges[-1]):
         return None
-    if any(e["kind"] == "decision.recorded" and e.get("subject") == subject and e["id"] > merges[-1]["id"] for e in doc["journal"]):
+    if any(e["kind"] in SETTLING_KINDS and e.get("subject") == subject and e["id"] > merges[-1]["id"] for e in doc["journal"]):
         return None
     return None if any(entry.get("head") == item["head"] for entry in read_log("acceptance", subject)) else merges[-1]
 
@@ -8919,14 +8943,15 @@ def finished_lines(c, plan: dict, doc: dict) -> list[str]:
     return ready
 
 
-FINISH_MET_SAID = "Every criterion it covers has its proofs done."
+def finish_met_names(entry: dict, line: str) -> bool:
+    """Whether a finish.met is about this finish line: by its subject, or its facts' finish."""
+    return entry.get("subject") == line or entry["data"].get("finish") == line
 
 
 def journal_finish_met(c, doc: dict) -> list[str]:
     """Mark and journal each finish line whose criteria and proofs are all done, once: a line the lead already
     marked or journalled by hand is left as it is, and so is one the supervisor marked before and finds unmarked,
-    which the lead unmarked. Its marks are kept in the flow log; a line it journalled is one it marked, as an older
-    generation kept no log."""
+    which the lead unmarked. Its marks are kept in the flow log."""
     plan = load_json(c.state / PLAN_FILE)
     if not plan:
         return []
@@ -8936,18 +8961,15 @@ def journal_finish_met(c, doc: dict) -> list[str]:
     for line in doc["state"]["finish"]:
         if line["id"] not in ready:
             continue
-        journalled = [e for e in doc["journal"] if e["kind"] == "finish.met" and (e.get("subject") == line["id"] or re.search(
-            rf"(?<![\w-]){re.escape(line['id'])}(?![\w-])", e.get("summary", "")))]
-        if line["id"] in marked or any(e.get("subject") == line["id"] and e.get("summary", "").endswith(FINISH_MET_SAID)
-                                       for e in journalled):
+        journalled = [e for e in doc["journal"] if e["kind"] == "finish.met" and finish_met_names(e, line["id"])]
+        if line["id"] in marked:
             continue
         if not line.get("met"):
             patch_from(lambda fresh, line=line: {"finish": [{**entry, "met": True} if entry["id"] == line["id"] else entry
                                                             for entry in fresh["state"]["finish"]]},
                        f"finish line {line['id']} met")
         if not journalled:
-            state_tool("journal", "--kind", "finish.met", "--subject", line["id"], "--summary",
-                       f"{line['id']}: {line['text']} {FINISH_MET_SAID}")
+            state_tool("journal", "--kind", "finish.met", "--subject", line["id"], "--data", json.dumps({"finish": line["id"]}))
             said.append(f"finish line {line['id']} met")
         # Logged last, so a pass whose journal failed leaves the line for the next pass to journal.
         append_log("finish", c.delivery, {"line": line["id"]})
@@ -9099,6 +9121,12 @@ def listener_needed(state: dict) -> list[str]:
     """What needs the lead to listen: each lane that isn't idle or done, and each candidate not yet merged."""
     return ([f"{lane['id']} ({lane.get('state')})" for lane in state.get("lanes", []) if lane.get("state") not in LANE_DONE]
             + [f"{item['subject']} ({item.get('stage')})" for item in state.get("queue", []) if item.get("stage") != "merged"])
+
+
+def listener_facts(state: dict) -> dict:
+    """The same, as a held stop's facts: the lanes still working and the pieces still to land, by name."""
+    return {"lanes": [lane["id"] for lane in state.get("lanes", []) if lane.get("state") not in LANE_DONE],
+            "pieces": [item["subject"] for item in state.get("queue", []) if item.get("stage") != "merged"]}
 
 
 def wait_output(c) -> Path:
@@ -9366,12 +9394,11 @@ def lead_may_stop(payload: dict) -> dict:
                           f"({', '.join(c.delivery for c in seat.configs)}), so which one this session leads can't be "
                           "told; lead each from its own checkout.")
     if payload.get("stop_hook_active") is not True:
-        for c, _, needed in missing:
-            what = "the lead's stop was held" if verdict == "block" else "the lead stopped with a warning"
-            summary = f"lead.may-stop returned {verdict}: {what} while no lead-wait listened, with {', '.join(needed)}"
+        for c, doc, needed in missing:
             tool = c.release / "skills/orchestrate-work/scripts/delivery_state.py"
             done = run([sys.executable, "-B", str(tool), "--dir", str(c.state), "journal", "--kind", HOOK_HELD,
-                        "--summary", summary], check=False, timeout=10)
+                        "--data", json.dumps({"hook": "lead.may-stop", "verdict": verdict, **listener_facts(doc["state"])})],
+                       check=False, timeout=10)
             if done.returncode != 0:
                 print(f"run-delivery: {HOOK_HELD} not journalled in {c.delivery}: "
                       f"{(done.stderr or done.stdout).strip()[-300:]}", file=sys.stderr)
@@ -9499,10 +9526,35 @@ def full_health_results(c, head: str) -> tuple[dict | None, bool]:
     return last, rerun
 
 
+# What holds the close and asks the lead: a blocker someone recorded, or the queue's hold on serving.
+HOLDING_KINDS = ("blocker.recorded", "serving.held", "deferral.breached")
+
+
+def runner_held(entry: dict) -> bool:
+    """Whether an entry is the queue's hold on serving."""
+    return entry["kind"] == "serving.held"
+
+
+def entry_said(entry: dict) -> str:
+    """What an entry says, to show: its kind's line in the registry's words, or its head when the line is empty."""
+    try:
+        made = tracker_publisher.journal_words.words(entry)
+    except tracker_publisher.journal_words.WordsError:
+        return entry["kind"]
+    return made["line"] or made["head"]
+
+
+def holding_words(entry: dict) -> str:
+    """What a holding entry says, from its facts."""
+    if entry["kind"] == "deferral.breached":
+        return BREACH.format(finding=entry["data"]["finding"], story=entry.get("subject"), title=entry["data"]["title"])
+    return entry["data"].get("why" if entry["kind"] == "serving.held" else "text", "")
+
+
 def blocker_resolved(c, doc: dict, entry: dict, resolutions: set[int]) -> bool:
     if entry["id"] in resolutions:
         return True
-    if not entry.get("lane") and not entry.get("subject") and entry.get("summary", "").startswith(RUNNER_HELD):
+    if runner_held(entry):
         repaired = any(e["kind"] == "base.repaired" and e["id"] > entry["id"] for e in doc["journal"])
         return repaired or not doc["state"]["meta"].get("hold")
     return False
@@ -9555,13 +9607,13 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
         if posture and posture["posture"] == "focused":
             said = posture_said(posture)
             items.append({"holding": False, "source": source,
-                          "text": f"The delivery base is broken: {events[-1].get('summary', '')[:300]}. It holds nothing "
+                          "text": f"The delivery base is broken: {entry_said(events[-1])[:300]}. It holds nothing "
                           f"while the base declares the focused posture on {said['source']} ({said['reason'][:200]}), "
                           "and serve still waits for base.repaired",
                           "clears": "journalling base.repaired, or a fullHealth pass once the base returns to gate"})
         else:
             items.append({"holding": True, "source": source,
-                          "text": f"The delivery base is broken: {events[-1].get('summary', '')[:300]}. "
+                          "text": f"The delivery base is broken: {entry_said(events[-1])[:300]}. "
                           "Repair it: name a queued candidate as its repair with delivery_state.py repair --subject KEY, "
                           "which serve takes first and alone, or land the fix by hand and journal base.repaired; the "
                           "candidates the break stopped resume on base.repaired, with no --requeue",
@@ -9579,16 +9631,16 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
         if merge:
             items.append({"holding": True, "source": f"journal entry {merge['id']} (candidate.merged)",
                           "text": f"{item['subject']} merged before you accepted it, and its checkout is kept until you decide",
-                          "clears": f"{flow_command()} lead-accept {item['subject']}, or journalling decision.recorded "
-                          "for it if lead-accept can't take it"})
+                          "clears": f"{flow_command()} lead-accept {item['subject']}, or {flow_command()} lead-decide "
+                          f"--subject {item['subject']} if lead-accept can't take it"})
     resolutions = {entry.get("journal") for entry in read_log("resolutions", c.delivery)}
     for entry in doc["journal"]:
-        if entry["kind"] == "blocker.recorded" and not blocker_resolved(c, doc, entry, resolutions):
-            runners = not entry.get("lane") and not entry.get("subject") and entry.get("summary", "").startswith(RUNNER_HELD)
-            items.append({"holding": True, "source": f"journal entry {entry['id']} (blocker.recorded)",
+        if entry["kind"] in HOLDING_KINDS and not blocker_resolved(c, doc, entry, resolutions):
+            runners = runner_held(entry)
+            items.append({"holding": True, "source": f"journal entry {entry['id']} ({entry['kind']})",
                           "text": f"Blocker {entry['id']}"
                           + (f" ({entry.get('subject') or entry.get('lane')})" if entry.get("subject") or entry.get("lane")
-                             else "") + f": {entry.get('summary', '')[:300]}. Resolve it with {flow_command()} "
+                             else "") + f": {holding_words(entry)[:300]}. Resolve it with {flow_command()} "
                           f"lead-resolve {entry['id']} --why TEXT",
                           "clears": ("the runner's hold clearing, journalling base.repaired, or " if runners else "")
                           + f"{flow_command()} lead-resolve {entry['id']} --why TEXT"})
@@ -9676,9 +9728,9 @@ def append_full_health(c, entry: dict) -> str:
     return rebuild_plan_quietly(c)
 
 
-def journal_posture(c, summary: str) -> None:
-    with marked_decision(c) as written:
-        written.append(journal_id(state_tool("journal", "--kind", "decision.recorded", "--summary", summary)))
+def journal_posture(c, kind: str, facts: dict) -> None:
+    """A note of the close-out's posture: posture.changed, or fullhealth.skipped, which the registry posts on the epic."""
+    state_tool("journal", "--kind", kind, "--data", json.dumps(facts))
 
 
 def note_posture(c, posture: dict) -> str | None:
@@ -9692,10 +9744,11 @@ def note_posture(c, posture: dict) -> str | None:
     if not (moved or named):
         return None
     if moved:
-        journal_posture(c, f"The delivery posture changed from {before} to {posture['posture']} on {said['source']}: "
-                        f"{said['reason']}")
+        journal_posture(c, "posture.changed", {"from": before, "to": posture["posture"], "source": said["source"],
+                                              "why": said["reason"]})
     if named:
-        journal_posture(c, f"fullHealth runs as under gate, {code}: {said['reason']}")
+        # A declaration that didn't take: fullHealth runs as under gate, whatever was declared.
+        journal_posture(c, "posture.changed", {"from": before or "gate", "to": "gate", "source": said["source"], "why": f"{code}: {said['reason']}"})
     return append_full_health(c, {"head": posture["baseTipSha"], "code": code, **said})
 
 
@@ -9716,7 +9769,8 @@ def record_focused(c, posture: dict) -> str:
         if not (latest and latest.get("skipped") and latest.get("head") == head
                 and all(latest.get(key) == said[key] for key in said)):
             if not any(e.get("skipped") for e in entries):
-                journal_posture(c, words)
+                journal_posture(c, "fullhealth.skipped", {"head": head, "posture": said["posture"],
+                                                                 "source": said["source"], "why": said["reason"]})
             rebuilt = append_full_health(c, {"head": head, "skipped": True, **said})
     return words + (f"; {rebuilt}" if "not rebuilt" in rebuilt else "")
 
@@ -9728,8 +9782,8 @@ def full_health_timeout(binding: dict) -> int:
 
 
 def full_health_break(entry: dict) -> bool:
-    """Whether a base.broken is the one a fullHealth run journalled, which a later pass of it repairs."""
-    return entry["kind"] == "base.broken" and entry.get("summary", "").startswith("fullHealth failed")
+    """Whether a base.broken is the one a fullHealth run journalled, which a later pass of it repairs, by its source."""
+    return entry["kind"] == "base.broken" and entry["data"].get("source") == "fullHealth"
 
 
 def base_breaks_standing(journal: list[dict]) -> list[dict]:
@@ -9841,11 +9895,15 @@ def record_full_health(c, head: str, result: str, out: str, posture: dict, merge
         append_full_health(c, {"head": head, "result": result, "output": out[-2000:], "posture": "gate",
                                "code": posture["code"], "merge": merge, "journalThrough": through,
                                **({"tests": flaky} if flaky else {})})
+    # The facts name the full head and the merge the run follows.
+    facts: dict = {"source": "fullHealth", "head": head, **({"after": merge["subject"]} if merge and merge.get("subject") else {})}
+    answers: list[int] = []
     if result == "failed":
-        kind, words = "base.broken", f"fullHealth failed at {head[:10]} {after}: {out.strip()[-300:] or 'no output'}"
+        kind = "base.broken"
+        facts["detail"] = out.strip()[-300:] or "no output"
     elif result == "flaky":
         kind = "base.flaky"
-        words = f"fullHealth failed at {head[:10]} {after}, and its failing tests passed alone: {', '.join(flaky or [])}"
+        facts["failing"] = list(flaky or [])
     else:
         # A repair only of a break fullHealth found: a pass never confirms a break the queue found, which the lead does.
         # After a flaky run, which repairs nothing, a pass repairs the fullHealth break that still stands, if one does.
@@ -9853,8 +9911,12 @@ def record_full_health(c, head: str, result: str, out: str, posture: dict, merge
         standing = latest == "flaky" and base_breaks_standing(doc["journal"])
         repairs = (latest == "failed" or standing) and only_full_health_breaks(doc["journal"])
         kind = "base.repaired" if repairs else "base.verified"
-        words = f"fullHealth passed at {head[:10]} {after}"
-    state_tool("journal", "--kind", kind, "--summary", words,
+        if repairs:
+            # A repair answers every break standing, so each setback closes at it.
+            answers = [e["id"] for e in base_breaks_standing(doc["journal"])]
+            facts.pop("after", None)
+    state_tool("journal", "--kind", kind, "--data", json.dumps(facts),
+               *(["--answers", ",".join(map(str, answers))] if answers else []),
                *(["--subject", merge["subject"]] if merge and merge.get("subject") else []))
     return result == "passed", f"fullHealth {result} at {head[:10]}{named}"
 
@@ -10178,8 +10240,14 @@ def deferred_findings(c) -> list[dict]:
 BREACH = "Deferred finding {finding} of {story} is still deferred at merge, and this delivery takes no deferrals: {title}"
 
 
+def breach_of(entry: dict, finding: dict) -> bool:
+    """Whether an entry is the breach journalled for this deferred finding: a deferral.breached naming it."""
+    return (entry.get("subject") == finding["story"] and entry["kind"] == "deferral.breached"
+            and entry["data"]["finding"] == finding["finding"])
+
+
 def deferral_breaches(c, doc: dict) -> list[str]:
-    """Under noDeferrals, journal a blocker for each finding a merged story's review still holds deferred, once each:
+    """Under noDeferrals, journal a deferral.breached for each finding a merged story's review still holds deferred, once each:
     the lead resolves it with lead-resolve, and no follow-up is filed for it."""
     if not c.no_deferrals:
         return []
@@ -10188,12 +10256,10 @@ def deferral_breaches(c, doc: dict) -> list[str]:
     for finding in deferred_findings(c):
         if finding["story"] not in merged:
             continue
-        opening = BREACH.format(**finding).split(" is still deferred")[0] + " is still deferred"
-        if any(e["kind"] == "blocker.recorded" and e.get("subject") == finding["story"]
-               and e.get("summary", "").startswith(opening) for e in doc["journal"]):
+        if any(breach_of(e, finding) for e in doc["journal"]):
             continue
-        state_tool("journal", "--kind", "blocker.recorded", "--subject", finding["story"], "--summary",
-                   BREACH.format(**finding))
+        state_tool("journal", "--kind", "deferral.breached", "--subject", finding["story"],
+                   "--data", json.dumps({"finding": finding["finding"], "title": finding["title"].strip() or "no title given"}))
         said.append(f"blocker: deferred finding {finding['finding']} of {finding['story']}")
     return said
 
@@ -10218,8 +10284,10 @@ def followups_step(c, doc: dict) -> tuple[bool, str]:
         missing = [f for f in deferred_findings(c) if f"{f['story']}-{f['finding']}" not in have]
     for finding in missing:
         with marked_decision(c, followup=finding) as written:
-            written.append(journal_id(state_tool("journal", "--kind", "decision.recorded", "--subject",
-                                                 finding["story"], "--summary", FOLLOWUP.format(**finding))))
+            written.append(journal_id(state_tool("journal", "--kind", "followup.filed", "--subject",
+                                                 finding["story"], "--data", json.dumps({"finding": finding["finding"], "followup":
+                                                                       f"{finding['story']}-{finding['finding']}",
+                                                                       "title": finding["title"]}))))
     if missing:
         patch_from(lambda fresh: {"followups": [*fresh["state"]["followups"],
                                                 *({"id": f"{f['story']}-{f['finding']}", "title": f["title"],
@@ -10278,10 +10346,7 @@ def closed_step(c) -> tuple[bool, str]:
     closed = latest_close(doc["journal"])
     if closed is None:
         skip = full_health_skip(c)
-        skipped = (f" fullHealth was skipped under the {skip['posture']} posture declared on {skip['source']}: "
-                   f"{skip['reason']}" if skip else "")
-        state_tool("journal", "--kind", "delivery.closed", "--summary",
-                   f"{c.delivery} closed: every story merged or removed, every finish line met, and nothing holding.{skipped}")
+        state_tool("journal", "--kind", "delivery.closed", "--data", json.dumps({"skipped": True} if skip else {}))
         render_views(c)
         doc = load_state()
         closed = latest_close(doc["journal"])
@@ -10759,7 +10824,8 @@ class Supervisor:
                         if hit:
                             lane = c.lane_of(key, state)
                             state_tool("journal", "--kind", "peer.merged", "--subject", key,
-                                       *(["--lane", lane] if lane else []), "--summary", summary)
+                                       *(["--lane", lane] if lane else []), "--data",
+                                       json.dumps({"peer": peer["key"], "head": commit, "files": hit}))
                             said.append(summary)
                     # Kept at once, so a supervisor stopped mid-pass doesn't journal this merge again.
                     append_log("peers", c.delivery, {"peer": peer["key"], "through": merged["id"]})
@@ -10769,8 +10835,8 @@ class Supervisor:
         return "; ".join(said) or "nothing new"
 
     def peer_merge_files(self, peer: dict, merged: dict) -> tuple[str, set[str]] | None:
-        """The commit a peer's merge made and the files it changed. The head comes from the entry, the runner's or one
-        recovered from a forge snapshot ("at <head>"), else from the peer's queue. The commit is the base's
+        """The commit a peer's merge made and the files it changed. The head comes from the entry's facts, the runner's or one
+        recovered from a forge snapshot, else from the peer's queue. The commit is the base's
         first-parent commit whose tree is that head's, diffed against its first parent. For a merge no such commit
         matches, even once the base is fetched (a merge commit, a squash of a head behind the base, or one too far
         back), it is the head, diffed against its merge base with the base. The fetch comes first because nothing else
@@ -10778,10 +10844,10 @@ class Supervisor:
         it runs a check. An entry that names no head changed nothing this can see. None while the head isn't in this
         repository, even after the fetch, so a later pass reads it again."""
         c = self.c
-        head = re.search(r"\bat ([0-9a-f]{40})\b", merged.get("summary") or "")
+        head = merged["data"].get("head")
         item = next((q for q in json_object(Path(peer["state"]) / "state.json").get("queue") or []
                      if isinstance(q, dict) and q.get("subject") == merged.get("subject")), {})
-        synced = head.group(1) if head else item.get("syncedHead") or item.get("head")
+        synced = head or item.get("syncedHead") or item.get("head")
         if not isinstance(synced, str) or not synced:
             return "", set()
         def on_base() -> str | None:
@@ -10999,10 +11065,42 @@ def moved_head_stands(c, doc: dict, head: str, last: dict | None) -> str:
     return "; ".join(stands) if stands else "nothing stands: no run is running or due, and no base.broken awaits repair"
 
 
+def worded(value: str | None, name: str) -> str:
+    """A person's words for a decision or a blocker: refused when absent, empty or only spaces."""
+    if value is None or not value.strip():
+        raise Stop(f"{name} is required: say it in words, not empty or only spaces")
+    return value
+
+
+def causes(value: str | None) -> list[str]:
+    """The `--because` ids, passed on as the state tool takes them, or nothing when none are given."""
+    return ["--because", value] if value else []
+
+
+def lead_decide(args) -> None:
+    """Record what the lead decided and why, as decision.recorded, naming the entries it was decided because of."""
+    text, why = worded(args.text, "--text"), worded(args.why, "--why")
+    done = state_tool("journal", "--kind", "decision.recorded", "--text", text, "--why", why, *causes(args.because), *(["--subject", args.subject] if args.subject else []))
+    print(f"recorded decision {journal_id(done)}")
+
+
+def lead_block(args) -> None:
+    """Record what blocks the work, as blocker.recorded, naming the entries it was blocked because of; lead-resolve
+    resolves it."""
+    text = worded(args.text, "--text")
+    done = state_tool("journal", "--kind", "blocker.recorded", "--text", text, *causes(args.because),
+                      *(["--subject", args.subject] if args.subject else []))
+    number = journal_id(done)
+    print(f"recorded blocker {number}; resolve it with {flow_command()} lead-resolve {number} --why TEXT")
+
+
 def lead_resolve(args) -> None:
     """Resolve the blocker a journal entry records, or ask the next pass to rerun a failed fullHealth, with the lead's
     reason. The resolution is the flow log's; the journal says so."""
     c = cfg()
+    # Refused before anything is written, so a reason the journal would refuse never leaves a resolution or a rerun in
+    # the flow log without its entry.
+    args.why = worded(args.why, "--why")
     doc = load_state()
     if args.id == "full-health":
         # The base head as the remote has it, so a failed head the base has moved past reads as moved.
@@ -11022,9 +11120,10 @@ def lead_resolve(args) -> None:
             raise Stop(f"a rerun of fullHealth at {head[:10]} is already asked for; it runs {when}")
         with plan_lock(c):
             append_full_health(c, {"rerun": True, "head": head, "why": args.why})
-        with marked_decision(c) as written:
-            written.append(journal_id(state_tool("journal", "--kind", "decision.recorded", "--summary",
-                                                 f"fullHealth at {head[:10]} runs again {when}: {args.why}")))
+        # The request names the break it would repair, when one stands, and answers nothing: only the pass repairs.
+        standing = [e["id"] for e in base_breaks_standing(doc["journal"]) if full_health_break(e)]
+        state_tool("journal", "--kind", "fullhealth.rerun", "--data", json.dumps({"head": head, "why": args.why}),
+                   *(["--because", ",".join(map(str, standing))] if standing else []))
         print(f"asked for a rerun of fullHealth at {head[:10]}, which runs {when}")
         return
     try:
@@ -11032,16 +11131,18 @@ def lead_resolve(args) -> None:
     except ValueError:
         raise Stop(f"lead-resolve takes a journal id or full-health, not {args.id!r}")
     entry = next((e for e in doc["journal"] if e["id"] == number), None)
-    if entry is None or entry["kind"] != "blocker.recorded":
-        raise Stop(f"journal entry {number} isn't a blocker.recorded" + (f" ({entry['kind']})" if entry else ""))
+    if entry is None or entry["kind"] not in HOLDING_KINDS:
+        raise Stop(f"journal entry {number} isn't a blocker.recorded, serving.held or deferral.breached"
+                   + (f" ({entry['kind']})" if entry else ""))
     resolutions = {r.get("journal") for r in read_log("resolutions", c.delivery)}
     if blocker_resolved(c, doc, entry, resolutions):
         raise Stop(f"blocker {number} is already resolved")
     append_log("resolutions", c.delivery, {"journal": number, "why": args.why})
-    with marked_decision(c) as written:
-        written.append(journal_id(state_tool("journal", "--kind", "decision.recorded", "--summary",
-                                             f"Blocker {number} resolved: {args.why}",
-                                             *(["--subject", entry["subject"]] if entry.get("subject") else []))))
+    # The resolution answers the blocker it names, and no other entry. The queue's hold is a serving.held, which no
+    # entry may answer: the resolution then names it as its cause instead.
+    link = "--because" if entry["kind"] == "serving.held" else "--answers"
+    state_tool("journal", "--kind", "blocker.resolved", "--data", json.dumps({"why": args.why}), link, str(number),
+               *(["--subject", entry["subject"]] if entry.get("subject") else []))
     print(f"resolved blocker {number}")
 
 
@@ -11066,8 +11167,9 @@ def requeue(c, key: str) -> None:
         return ["--element", f"queue[subject={key}]", "--set", json.dumps({"/stage": "queued", "/checks": []})]
     patch_from(back_to_queued, f"{key}'s re-queue", writer="runner")
     item = found[0]
-    state_tool("journal", "--kind", "decision.recorded", "--subject", key, "--summary",
-               f"{key} re-queued at {item['head'][:10]} once its stop was resolved, with no new hand-off")
+    # The re-queue answers the stop it resolves, which closes that setback.
+    stops = [e["id"] for e in load_state()["journal"] if e["kind"] == "candidate.stopped" and e.get("subject") == key]
+    state_tool("journal", "--kind", "handoff.requeued", "--subject", key, "--data", json.dumps({"head": item["head"]}), *(["--answers", str(stops[-1])] if stops else []))
     print(f"re-queued {key}; the runner takes it again")
 
 
@@ -12337,6 +12439,17 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--at", help="the commit to run at; the base head on the remote when absent")
     p.add_argument("extra", nargs=argparse.REMAINDER, help="after --, arguments appended to the fullHealth argv")
     p.set_defaults(fn=lead_suite)
+    p = command(sub, "lead-decide", help="record a decision and why it was made")
+    p.add_argument("--text", required=True, help="what was decided, in the lead's words")
+    p.add_argument("--why", required=True, help="why it was decided, in the lead's words")
+    p.add_argument("--because", help="earlier journal ids it was decided because of, comma-separated")
+    p.add_argument("--subject", help="the story it is about, whose ticket it posts on; the epic when absent")
+    p.set_defaults(fn=lead_decide)
+    p = command(sub, "lead-block", help="record a blocker, which lead-resolve resolves")
+    p.add_argument("--text", required=True, help="what blocks the work, in the lead's words")
+    p.add_argument("--because", help="earlier journal ids it is blocked because of, comma-separated")
+    p.add_argument("--subject", help="the story it blocks, whose ticket it posts on; the epic when absent")
+    p.set_defaults(fn=lead_block)
     p = command(sub, "lead-resolve", help="resolve a recorded blocker, or rerun a failed fullHealth")
     p.add_argument("id", help="the blocker's journal id, or full-health to rerun a failed fullHealth")
     p.add_argument("--why", required=True)

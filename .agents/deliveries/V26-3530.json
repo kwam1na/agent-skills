@@ -1,0 +1,396 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3530",
+  "headline": "V26-3530: let a delivery tell its own story",
+  "plan": "docs/plans/2026-11-16-structured-journal-entries.md",
+  "laneBrief": "docs/plans/2026-11-16-structured-journal-entries.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-16-structured-journal-entries.lane-notes.md"
+  },
+  "context": {
+    "sections": [
+      "Design direction",
+      "Decisions"
+    ]
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "skills/orchestrate-work/references/schemas.json",
+        "skills/orchestrate-work/references/journal-kinds.json",
+        "skills/orchestrate-work/scripts/delivery_state.py",
+        "skills/orchestrate-work/scripts/journal_words.py",
+        "skills/orchestrate-work/references/orchestration-guide.md",
+        "skills/orchestrate-work/SKILL.md",
+        "tests/test_orchestration_state.py",
+        "tests/test_merge_occurrence.py",
+        "tests/test_orchestration_adopter.py",
+        "tests/test_lane_rows.py",
+        "tests/test_runless_reviews.py",
+        "tests/test_lead_wait.py",
+        "tests/test_journal_kinds.py",
+        "tests/fixtures/journal-kinds/*"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "skills/delivery-views/*",
+        "tests/delivery_views_page/*",
+        "tests/fixtures/delivery-views/*",
+        "tests/test_delivery_views_page.py",
+        "tests/test_delivery_views_render.py",
+        "tests/test_delivery_views_history.py",
+        "tests/test_delivery_views_plan.py",
+        "skills/orchestrate-work/scripts/narrator.py",
+        "skills/orchestrate-work/references/story.schema.json",
+        "tests/test_narrator.py",
+        "tests/fixtures/narrator/*",
+        "skills/orchestrate-work/scripts/render_state.py",
+        "tests/test_orchestration_render.py",
+        "tests/test_delivery_views_adopter.py",
+        "tests/test_delivery_views_plan_fixtures.py",
+        "tests/test_delivery_views_review_projection.py",
+        "tests/test_delivery_views_snapshots.py"
+      ]
+    },
+    "lane-3": {
+      "owns": [
+        "skills/orchestrate-work/scripts/merge_queue.py",
+        "tests/test_merge_queue.py",
+        "skills/run-delivery/scripts/run_delivery.py",
+        "skills/run-delivery/scripts/tracker_publisher.py",
+        "skills/run-delivery/SKILL.md",
+        "skills/run-delivery/references/*",
+        "tests/test_run_delivery.py",
+        "tests/test_run_delivery_supervisor.py",
+        "tests/test_run_delivery_peers.py",
+        "tests/test_run_delivery_hooks.py",
+        "tests/test_run_delivery_tracker.py"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3531": {
+      "title": "Land the page rework the story chapter is built on",
+      "lane": "lane-2",
+      "criteria": [
+        {
+          "id": "v26-3531-1",
+          "text": "The goldens and re-derived pins are captured from the committed claude/live-view-ui tree in a commit of their own, before any page source changes. Every later change to page source in the story is a named defect fix with a test that was red before it. The hand-off lists those fixes, and the captured goldens change only where a listed fix says so."
+        },
+        {
+          "id": "v26-3531-2",
+          "text": "Every test under tests/delivery_views_page/ and every tests/test_delivery_views*.py module passes, with each changed pin's reason given in the hand-off as deliberate or as a defect fixed."
+        },
+        {
+          "id": "v26-3531-3",
+          "text": "The registry and provenance checks pass."
+        }
+      ]
+    },
+    "V26-3532": {
+      "title": "Keep facts and causes in the journal, described by one registry of kinds",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "v26-3532-1",
+          "text": "Every kind in the plan's table is in the registry with each column's value, and the journal schema accepts those kinds, plus the bridge's until the bridge is removed. No registered kind begins x., and none of bookkeeping altitude has the problem tone."
+        },
+        {
+          "id": "v26-3532-2",
+          "text": "Each refusal in the plan's record scenarios, other than the old shape's, is refused as stated with nothing appended, and each has its accepted form beside it."
+        },
+        {
+          "id": "v26-3532-3",
+          "text": "The vectors hold, for every kind, each bracketed part both present and absent and each variant, and a test fails for a bracket or variant no vector reaches. Each form has vectors at its edges: counts of 0, 1 and 2; lists of 0, 1, 2 and 3; a duration under a minute and over an hour. journal_words gives every vector's words."
+        },
+        {
+          "id": "v26-3532-4",
+          "text": "With the registry's path pointed at a copy that holds one extra kind and one changed head, the state tool appends the extra kind and journal_words gives the changed words."
+        },
+        {
+          "id": "v26-3532-5",
+          "text": "The guide describes the entry's shape, typed and prose fields, links and their allowed pairs, altitudes, and how a kind is added, and its tracker table equals the registry's."
+        }
+      ]
+    },
+    "V26-3533": {
+      "title": "Narrate a delivery from its journal",
+      "lane": "lane-2",
+      "after": [
+        "V26-3531",
+        "V26-3532"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3533-1",
+          "text": "Each narrator scenario's fixture gives the story the scenario states."
+        },
+        {
+          "id": "v26-3533-2",
+          "text": "last-delivery's headline story is kept as a golden file, which the lead reads and accepts at hand-off."
+        },
+        {
+          "id": "v26-3533-3",
+          "text": "Every fixture narrated with the clock's functions replaced by ones that raise gives its story, and an open record's story holds no duration measured to now."
+        },
+        {
+          "id": "v26-3533-4",
+          "text": "Every story the narrator writes in its tests validates against story.schema.json, and a story with a missing or unknown member is refused by that schema."
+        },
+        {
+          "id": "v26-3533-5",
+          "text": "Every beat names the entries it tells, every entry is in exactly one beat at the everything altitude, and every entry a thread holds names that thread."
+        },
+        {
+          "id": "v26-3533-6",
+          "text": "With the registry's path pointed at a copy in which a fourth kind opens a thread, an entry of that kind opens one."
+        }
+      ]
+    },
+    "V26-3534": {
+      "title": "Write the state tool's own entries as facts, and read them as facts",
+      "lane": "lane-1",
+      "after": [
+        "V26-3532"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3534-1",
+          "text": "For each of the state tool's calls in the inventory, a test appends through that call and asserts the entry's kind, the exact value of every field, and its links. An acceptance with no handoff.checked journaled is appended with no cause, and one with it names it."
+        },
+        {
+          "id": "v26-3534-2",
+          "text": "A hand-off for a subject with a stop standing answers that stop, and one for a subject with none answers nothing."
+        },
+        {
+          "id": "v26-3534-3",
+          "text": "Each of the five readers, in a case where it finds what it looks for, gives the same result when every prose field of the entries it reads is replaced by other text, on entries that carry data and no sentence. It reads an entry that has only a sentence as before."
+        },
+        {
+          "id": "v26-3534-4",
+          "text": "A wait event carries data and the entry's head and line, and with the registry's path pointed at a copy with a changed head, carries the changed words."
+        }
+      ]
+    },
+    "V26-3535": {
+      "title": "Write the merge queue's entries as facts, with their causes",
+      "lane": "lane-3",
+      "after": [
+        "V26-3532"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3535-1",
+          "text": "For each of the queue's calls in the inventory, a test appends through that call and asserts the entry's kind, the exact value of every field, and its links."
+        },
+        {
+          "id": "v26-3535-2",
+          "text": "For a candidate stopped by a failed check, and for a base broken after a rerun, following because from the stop or the break reaches the check's start. A stop for base_broken names the break. An interrupted stop and a break no rerun declared name no cause. A named repair's merge answers the break. A batch member queued again and a refused piece left queued carry requeued, and a piece left stopped does not."
+        },
+        {
+          "id": "v26-3535-3",
+          "text": "Every stop carries a reason from the queue's enum, the interrupted stop included."
+        },
+        {
+          "id": "v26-3535-4",
+          "text": "A batch's entries list its subjects in batch; a single candidate's carry none."
+        },
+        {
+          "id": "v26-3535-5",
+          "text": "The rerun's reader, in a case where it finds what it looks for, gives the same result when every prose field of the entries it reads is replaced by other text, on entries that carry data and no sentence."
+        }
+      ]
+    },
+    "V26-3536": {
+      "title": "Write run-delivery's entries as facts, and let the lead say why",
+      "lane": "lane-3",
+      "after": [
+        "V26-3535"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3536-1",
+          "text": "For each of run-delivery's calls in the inventory, a test appends through that call and asserts the entry's kind, the exact value of every field, and its links."
+        },
+        {
+          "id": "v26-3536-2",
+          "text": "A re-queue answers its stop, a resolution answers its blocker, and a fullHealth rerun request names the standing break and answers nothing. A resolution of a deferral breach, made through lead-resolve, answers that breach and no other entry."
+        },
+        {
+          "id": "v26-3536-3",
+          "text": "lead-decide refuses a decision whose reason is absent, empty or only spaces."
+        },
+        {
+          "id": "v26-3536-4",
+          "text": "Each of the seven readers, in a case where it finds what it looks for, gives the same result when every prose field of the entries it reads is replaced by other text, on entries that carry data and no sentence. It reads an entry that has only a sentence as before. The deferral-breach reader's case takes its resolution from the lead-resolve call, not from an entry built by hand."
+        },
+        {
+          "id": "v26-3536-5",
+          "text": "A tracker post for a landing and for a stop is under the registry's heading and in its words, and with the registry's path pointed at a copy that changes both, the post changes with them. One kind for each destination posts where the registry says: its ticket; the epic; either, both with a subject and without; and a kind with none posts nothing. With the copy moving a kind from its ticket to nowhere, that kind's post stops."
+        }
+      ]
+    },
+    "V26-3537": {
+      "title": "Show the story on every view",
+      "lane": "lane-2",
+      "after": [
+        "V26-3533",
+        "V26-3534",
+        "V26-3535",
+        "V26-3536"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3537-1",
+          "text": "At each altitude the page shows exactly the beats the story holds for it, with a thread drawn once at the headline altitude."
+        },
+        {
+          "id": "v26-3537-2",
+          "text": "A beat opens to its entries' fields, linked, and its kind's explanation."
+        },
+        {
+          "id": "v26-3537-3",
+          "text": "Given a story that carries a kind no page script names, the page draws that kind's label, mark and tab from the story alone."
+        },
+        {
+          "id": "v26-3537-4",
+          "text": "The story documents the page's tests draw are the narrator's output for named journals under tests/fixtures/narrator/, and a Python test regenerates each and fails when it differs by a byte."
+        },
+        {
+          "id": "v26-3537-5",
+          "text": "The journals the real queue and run-delivery code write, for a stop then a re-queue and for a break a rerun declared then its repair, each narrate to one closed thread with the expected cost. The journals come from records existing test classes already build."
+        },
+        {
+          "id": "v26-3537-6",
+          "text": "A write to a live record changes the story on an open page without a reload."
+        },
+        {
+          "id": "v26-3537-7",
+          "text": "The Markdown view and the built-in page show the story's beats, and with the registry's path pointed at a copy with a changed head, show the changed words. The history page reads a new-shape archive and names an old-shape one, in one test."
+        },
+        {
+          "id": "v26-3537-8",
+          "text": "Each view's reader of an entry, in a case where it finds what it looks for, gives the same result when every prose field of the entries it reads is replaced by other text, on entries that carry data and no sentence: the checking sheet's batch, the plan chapter's plan update, a stop's notes, and any other the story finds in skills/delivery-views/ and render_state.py, listed in its hand-off."
+        }
+      ]
+    },
+    "V26-3538": {
+      "title": "Remove the sentence",
+      "lane": "lane-1",
+      "after": [
+        "V26-3537"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3538-1",
+          "text": "An entry with a summary or without data is refused, naming the release that reads it, and a record with an empty journal is accepted."
+        },
+        {
+          "id": "v26-3538-2",
+          "text": "Neither delivery-journal/2 nor any registry shape has a summary member."
+        },
+        {
+          "id": "v26-3538-3",
+          "text": "The walk of Decision 26 passes on the three scripts and on tests/. Planted in each of the three call shapes, and once through a helper that passes a kind on, it fails for a call given a sentence, for a kind outside its rules, and for a call the inventory does not hold. It fails for a test that journals a sentence."
+        },
+        {
+          "id": "v26-3538-4",
+          "text": "No reader keeps a path for an entry without data: each reader's sentence-only case from the readers' stories is now a refusal at the journal."
+        },
+        {
+          "id": "v26-3538-5",
+          "text": "The guide names no sentence on an entry."
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "Every story",
+      "text": "Each of the eight stories lands on integrate/delivery-story through the merge queue, or closes with its reason recorded",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the integration candidate, inside tests/suite-budget.json",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "merge-ready",
+      "label": "Ready to merge",
+      "text": "A change request from the integration candidate into main is open and not merged",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "design-shown",
+      "label": "Design shown",
+      "text": "The new design is running on a real record for the operator to see before anything merges",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "readyPullRequests": true,
+    "grantedBy": "Kwamina",
+    "grantedOn": "2026-11-16"
+  },
+  "approvals": [
+    {
+      "id": "approval-1",
+      "text": "The operator has approved delivering this plan once its lenses align, with the three lanes of the last delivery, each granted what it needs to land its stories.",
+      "state": "done",
+      "who": "Kwamina"
+    },
+    {
+      "id": "approval-2",
+      "text": "The lead reads the registry's words and explanations as V26-3532 hands them off, and the last delivery's headline story as V26-3533 hands it off, and accepts them or sends them back. The operator sees both in the design.",
+      "state": "waiting"
+    },
+    {
+      "id": "approval-3",
+      "text": "The operator sees the design running before anything merges into `main`, and the merge is theirs.",
+      "state": "waiting"
+    },
+    {
+      "id": "approval-4",
+      "text": "The lead holds the operator's authority to make the judgement calls that land the delivery on its integration branch, and records each as a decision with its reason. Raising a number in `tests/suite-budget.json` is not among them.",
+      "state": "done",
+      "who": "Kwamina"
+    }
+  ],
+  "outOfScope": [
+    "Reading or converting `delivery-journal/1`. Records already archived stay as files; the history page lists those it cannot read by name, with the release that wrote them.",
+    "An adopter's own kinds. The `x.` prefix is reserved and nothing more.",
+    "A model writing any part of the story.",
+    "The other chapters of the live page, beyond taking their labels from the registry where they show a kind.",
+    "This repository's own binding and settings. No story edits `.agents/` or `catalog.json`; the lead writes catalog and profile wording once, at integration.",
+    "Merging into `main`, tagging a candidate, applying it here and running a delivery on it. All follow the operator's look at the design, by Decision 28."
+  ],
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  },
+  "baseBranch": "integrate/delivery-story",
+  "integrationTarget": "main"
+}

@@ -6,7 +6,7 @@ import { readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 
-import { CORPUS, RENDER, REPLAYED_RUNS, ROOT, block, embedded, expect, openPage, pageWithRuns, readJson, renderIn, repository, runSync, summarize } from "./support.mjs";
+import { CORPUS, RENDER, REPLAYED_RUNS, ROOT, block, embedded, expect, openPage, pageWithRuns, readJson, renderIn, repository, runSync, summarize, told } from "./support.mjs";
 import { FIX, readings, reportView } from "./round-reports.mjs";
 
 const SOURCE = path.join(CORPUS, "source");
@@ -66,16 +66,18 @@ test("opts in to the live server and loads nothing but its three faces", async (
   const head = page.slice(0, page.indexOf("</head>"));
   expect(head).toContain('<meta name="delivery-state-live">');
   expect(page.indexOf('<meta name="delivery-state-live">')).toBeLessThan(page.indexOf("<script"));
-  expect(page).not.toMatch(/\ssrc=|@import|url\(/);
+  // A url() names a part of the page itself, such as the gradient a checked stop's stream is drawn with, never an address.
+  expect(page).not.toMatch(/\ssrc=|@import|url\((?!#)/);
   const hrefs = page.match(/\shref="[^"]*"/g);
   expect(hrefs).toHaveLength(1);
   expect(hrefs[0]).toMatch(/^ href="https:\/\/fonts\.googleapis\.com\/css2\?/);
-  // The only other addresses are the links the renderer worked out from the configuration, for ticket ids and
-  // change requests, each the configured tracker's or forge's template filled in.
+  // The only other addresses are the links the renderer worked out from the configuration, for ticket ids, change
+  // requests and commits such as the base head, each the configured tracker's or forge's template filled in.
   const links = block(page, "delivery-links");
   const linked = [...Object.values(links.issues), ...Object.values(links.changes).map((change) => change.href), ...Object.values(links.commits)];
   expect(linked.length).toBeGreaterThan(10);
-  expect(linked.every((href) => /^https:\/\/(tracker\.example\/issue\/PAY-[0-9]+|github\.com\/acme\/shop\/pull\/[0-9]+)$/.test(href))).toBe(true);
+  expect(Object.keys(links.commits)).toContain(fixtureDocument().state.meta.baseHead);
+  expect(linked.every((href) => /^https:\/\/(tracker\.example\/issue\/PAY-[0-9]+|github\.com\/acme\/shop\/(pull\/[0-9]+|commit\/[0-9a-f]{40}))$/.test(href))).toBe(true);
   const addresses = [...new Set(page.match(/https:\/\/[a-z.]+\/[^"\s]*/g))];
   expect(addresses.filter((address) => !address.startsWith("https://fonts.googleapis.com/css2?")).sort())
     .toEqual([...new Set(linked)].sort());
@@ -93,9 +95,10 @@ test("draws the run as a line map, chapter by chapter", async () => {
   // The tracker item the delivery is listed under opens in the tracker.
   expect(now.querySelector(".kicker a")?.getAttribute("href")).toBe("https://tracker.example/issue/PAY-2354");
   expect(now.querySelector("h1")?.textContent).toBe("1 of 8 pieces have landed.");
-  expect(now.querySelector(".say")?.textContent).toBe("Last landed: Hold the cart through a payment redirect, 44m ago.");
+  // What landed last is one of the chapter's facts: its title, then its ticket and how long ago.
+  expect(now.querySelector(".fact")?.textContent).toBe("Last landedHold the cart through a payment redirectPAY-2358 · 44 minutes ago");
   const checking = now.querySelector(".checking").textContent;
-  expect(checking).toContain("Being checked now");
+  expect(now.querySelector(".checking .ck-h-words")?.textContent).toBe("Checking · PAY-2361");
   expect(checking).toContain("Retry card payments once on a dropped connection");
   // Up to twelve checks read in groups: the running one in its own row, then those waiting, then those completed.
   expect(now.querySelector(".ck-run .sr")?.textContent).toContain("Running storefront build");
@@ -103,7 +106,8 @@ test("draws the run as a line map, chapter by chapter", async () => {
     ["pending", "pending", "passed", "passed", "reused"]);
   expect(checking).toContain("Running storefront build · 2m 30s of about 4m");
   expect(checking).not.toContain("longer than usual");
-  expect(checking).toContain("3 of 6 checks done · started 6m ago");
+  expect(now.querySelector(".checking .ck-count")?.textContent).toBe("3/6");
+  expect(now.querySelector(".checking .ck-chosen > summary")?.textContent).toBe("3 done, 2 waiting · started 6m ago");
   expect(checking).toContain("Up next: Keep the order number on the receipt page · Record the payment provider's reference");
   const attention = now.querySelector(".attention").textContent;
   expect(attention).toContain("Show a calm message when the card is declined stopped");
@@ -112,7 +116,7 @@ test("draws the run as a line map, chapter by chapter", async () => {
   expect(attention).toContain("Waiting on the dev backend lease");
   expect(attention).toContain("its change request closed without merging");
   expect(attention).toContain("The forge is not answering");
-  expect(now.querySelector(".since")?.textContent).toContain("Saved view · updated just now · base aaaaaaa");
+  expect(now.querySelector(".since")?.textContent).toBe("Saved viewUpdated just nowbase aaaaaaa");
 
   // The line: one row per lane, a stop per piece, drawn by where the piece stands.
   const line = chapter("line");
@@ -152,18 +156,34 @@ test("draws the run as a line map, chapter by chapter", async () => {
     "ThenThe webhook replay recovers a missed payment",
   ]);
 
-  // What happened: newest first, marked by kind, eight at a time.
+  // What happened: the story, opening at its Story depth while the delivery runs, chapters newest first, each beat in
+  // full, and the landing marked as one.
   const happened = chapter("happened");
-  const entries = [...happened.querySelectorAll(".feed li")];
-  expect(entries).toHaveLength(8);
-  expect(entries[0].textContent).toContain("Checking Retry card payments once on a dropped connection");
-  const landed = entries.find((entry) => entry.textContent?.includes("Merged PAY-2358"));
-  expect(landed.querySelector(".g")?.className).toBe("g merge");
-  expect(landed.textContent).toContain("Landed · Payments · PAY-2358");
-  expect(happened.querySelector(".more")?.textContent).toBe("Show all 10");
+  const story = block(render(fixtureDocument()), "delivery-state").story;
+  const beats = [...happened.querySelectorAll(".beat")];
+  expect(beats.map((beat) => beat.getAttribute("data-beat")).sort()).toEqual(story.beats.filter((beat) => beat.altitudes.includes("story")).map((beat) => beat.id).sort());
+  expect([...happened.querySelectorAll(".chapter-of")].map((chapter) => chapter.getAttribute("data-chapter"))).toEqual(story.chapters.map((chapter) => chapter.id).reverse());
+  expect(beats.filter((beat) => beat.querySelector(".g")?.className === "g merge")).toHaveLength(1);
+  expect(happened.querySelector(".title").textContent).toBe(story.digest.words.head);
 
   // Parked: the follow-ups.
   expect(chapter("parked").textContent).toContain("Measure checkout drop-off by payment state");
+});
+
+test("What's left lists eight pieces and counts the rest, and a row picks its piece on the line", async () => {
+  const document = fixtureDocument();
+  const queued = document.state.queue.find((entry) => entry.stage === "queued");
+  for (const number of [2380, 2381, 2382]) {
+    document.state.queue.push({ ...queued, subject: `PAY-${number}`, title: `Piece ${number}`, order: number, head: null, changeRequest: null });
+  }
+  const pressed = (snapshot) => [...snapshot.app.querySelectorAll('.stop-btn[aria-pressed="true"]')].map((stop) => stop.getAttribute("data-subject"));
+  const [shown, picked] = await open(document, { steps: [{ click: "#left .left-groups li:nth-child(3) .left-title" }] });
+  const rows = [...shown.app.querySelectorAll("#left .left-groups > li:not(.left-more)")];
+  expect(rows).toHaveLength(8);
+  expect(shown.app.querySelector("#left .left-more")?.textContent).toBe("and 2 more");
+  const subject = rows[2].querySelector("[data-ticket]").getAttribute("data-ticket");
+  expect(pressed(shown)).not.toEqual([subject]);
+  expect(pressed(picked)).toEqual([subject]);
 });
 
 test("says when the checks being run were chosen by the lead, with the lead's reason", async () => {
@@ -201,11 +221,11 @@ test("says when the piece being checked runs on the fallback because the lead ch
 
 test("in a batch, the fallback note names the pieces on the fallback, or says it is every piece", async () => {
   const document = fixtureDocument();
-  const summary = "Checking Retry card payments once on a dropped connection, Keep the order number on the receipt page as one batch";
+  const members = { batch: ["PAY-2361", "PAY-2362"] };
   document.state.queue[3].stage = "checking";
   document.journal.push(
-    { at: "2026-10-22T05:05:00Z", id: 43, kind: "check.started", lane: "payments", subject: "PAY-2361", summary },
-    { at: "2026-10-22T05:05:00Z", id: 44, kind: "check.started", lane: "storefront", subject: "PAY-2362", summary },
+    { at: "2026-10-22T05:05:00Z", id: 11, kind: "check.started", lane: "payments", subject: "PAY-2361", data: members },
+    { at: "2026-10-22T05:05:00Z", id: 12, kind: "check.started", lane: "storefront", subject: "PAY-2362", data: members },
   );
   const fallback = { by: "provider", fallback: ["full-suite"] };
   const piece = (subject) => document.state.queue.find((entry) => entry.subject === subject);
@@ -227,7 +247,7 @@ test("shows a ticket's own title and summary when its id is hovered, wherever th
     steps: [
       { hover: '#line .stop-label [data-ticket="PAY-2361"]' },
       { leave: '#line .stop-label [data-ticket="PAY-2361"]' },
-      { hover: '#happened .who [data-ticket="PAY-2358"]' },
+      { hover: '#happened .beat [data-ticket="PAY-2358"]' },
       { hover: '#parked [data-ticket="PAY-2370"]' },
       { hover: '#line .stop-label [data-ticket="PAY-2360"]' },
     ],
@@ -282,15 +302,20 @@ test("puts failed checks first, says the piece won't merge from this run, and se
   document.state.queue[2].checks = ids.map((id, index) => ({
     id, state: states[index], ...(states[index] === "failed" ? { log: `logs/00${index}-${id}.log` } : {}), ...(index === 9 ? { failures: ["harness-behavior stop.log"], detail: "exit 1 after 2 retries" } : {}),
   }));
+  // Each failure the queue journaled, and the lead's notes, each naming among its causes the failure it is about.
+  const failed = (id, at, index) => ({ at, id, kind: "check.failed", lane: "payments", subject: "PAY-2361", because: [10],
+    data: { check: ids[index], timedOut: false, failing: [], more: 0, log: `logs/00${index}-${ids[index]}.log` } });
+  const note = (id, at, kind, subject, data, because) => ({ at, id, kind, lane: null, subject, data, ...(because ? { because } : {}) });
   document.journal.push(
-    { at: "2026-10-22T05:06:00Z", id: 21, kind: "blocker.recorded", lane: null, subject: "PAY-2361", summary: `Already failing on main: ${ids[3]}, the motion inventory test.` },
-    { at: "2026-10-22T05:06:30Z", id: 22, kind: "decision.recorded", lane: null, subject: "PAY-2361", summary: `Load flake, not a code failure: \`${ids[9]}\`.` },
-    { at: "2026-10-22T05:07:00Z", id: 23, kind: "decision.recorded", lane: null, subject: "PAY-2361", summary: "Verdict: this will not merge from this run." },
-    { at: "2026-10-22T05:07:30Z", id: 24, kind: "decision.recorded", lane: null, subject: "PAY-2363", summary: `About another piece: ${ids[3]}.` },
-    // Names a longer id that starts with a failed one: it is not about that check.
-    { at: "2026-10-22T04:20:00Z", id: 26, kind: "blocker.recorded", lane: null, subject: "PAY-2361", summary: `From an earlier run: ${ids[3]}.` },
-    { at: "not a time", id: 27, kind: "blocker.recorded", lane: null, subject: "PAY-2361", summary: `Undated: ${ids[3]}!` },
-    { at: "2026-10-22T05:08:00Z", id: 25, kind: "decision.recorded", lane: null, subject: "PAY-2361", summary: `Unrelated: ${ids[9]}.publishing passed.` },
+    failed(11, at(4), 3), failed(12, at(19), 9),
+    note(13, "2026-10-22T05:06:00Z", "blocker.recorded", "PAY-2361", { text: "Already failing on main, the motion inventory test" }, [11]),
+    note(14, "2026-10-22T05:06:30Z", "decision.recorded", "PAY-2361", { text: "Load flake, not a code failure", why: "It passed alone on a quiet machine." }, [12]),
+    note(15, "2026-10-22T05:07:00Z", "decision.recorded", "PAY-2361", { text: "Verdict: this will not merge from this run", why: "Two checks failed." }),
+    // Caused by a failure on this piece, but about another piece: it stays out.
+    note(16, "2026-10-22T05:07:30Z", "decision.recorded", "PAY-2363", { text: "About another piece", why: "It shares the check." }, [11]),
+    note(17, "2026-10-22T04:20:00Z", "blocker.recorded", "PAY-2361", { text: "From an earlier run" }, [11]),
+    // Its words name a failed check, but nothing ties it to that check's failure: it is a note about the piece.
+    note(18, "2026-10-22T05:08:00Z", "decision.recorded", "PAY-2361", { text: `Unrelated: ${ids[9]}`, why: "Publishing passed." }),
   );
   const [{ app }] = await open(document);
   const checking = app.querySelector(".checking");
@@ -305,7 +330,10 @@ test("puts failed checks first, says the piece won't merge from this run, and se
   const skewed = JSON.parse(JSON.stringify(document));
   skewed.state.meta.checking.now.steps[2].finishedAt = "2026-10-22T04:20:00Z";
   skewed.state.meta.checking.now.steps[12].startedAt = "2026-10-22T06:00:00Z";
+  // A note with no readable time is left out too.
+  skewed.journal.push(note(19, "not a time", "blocker.recorded", "PAY-2361", { text: "Undated" }, [11]));
   const [{ app: skewedApp }] = await open(skewed);
+  expect([...skewedApp.querySelectorAll(".ck-fails li")].map((failure) => failure.querySelectorAll(".ck-note").length)).toEqual([1, 1]);
   const values = [...skewedApp.querySelectorAll(".run-line *")].flatMap((node) => [...node.attributes].map((attribute) => attribute.value));
   expect(values.filter((value) => /NaN|Infinity/.test(value))).toEqual([]);
   expect(skewedApp.querySelectorAll(".run-line .rl-seg")).toHaveLength(13);
@@ -345,16 +373,15 @@ test("puts failed checks first, says the piece won't merge from this run, and se
   const failures = [...checking.querySelectorAll(".ck-fails li")];
   expect(failures.map((failure) => failure.querySelector(".ck-f")?.textContent)).toEqual([`Failed: ${ids[3]}`, `Failed: ${ids[9]}`]);
   expect(failures[0].querySelector(".ck-log")?.textContent).toBe(`Log: logs/003-${ids[3]}.log`);
-  expect([...failures[0].querySelectorAll(".ck-note")].map((note) => note.textContent)).toEqual([`Already failing on main: ${ids[3]}, the motion inventory test.`]);
+  expect([...failures[0].querySelectorAll(".ck-note")].map((note) => note.textContent)).toEqual(["Work was blocked on PAY-2361. Already failing on main, the motion inventory test"]);
   expect(failures[1].textContent).toContain("Failing: harness-behavior stop.log");
   expect(failures[1].textContent).toContain("exit 1 after 2 retries");
-  // Notes from before this run, or with no readable time, are left out.
+  // Notes from before this run are left out.
   expect(checking.textContent).not.toContain("From an earlier run");
-  expect(checking.textContent).not.toContain("Undated");
-  expect([...failures[1].querySelectorAll(".ck-note")].map((note) => note.textContent)).toEqual([`Load flake, not a code failure: \`${ids[9]}\`.`]);
+  expect([...failures[1].querySelectorAll(".ck-note")].map((note) => note.textContent)).toEqual(["Load flake, not a code failure. It passed alone on a quiet machine."]);
   // A note on the piece that names no failed check follows the list; another piece's note stays out.
   expect([...checking.querySelectorAll(".ck-more .ck-note")].map((note) => note.textContent)).toEqual([
-    "Verdict: this will not merge from this run.", `Unrelated: ${ids[9]}.publishing passed.`]);
+    "Verdict: this will not merge from this run. Two checks failed.", `Unrelated: ${ids[9]}. Publishing passed.`]);
   expect(checking.textContent).not.toContain("About another piece");
   expect(checking.querySelectorAll(".ck-step")).toHaveLength(0);
   expect(checking.textContent).toContain("9 passed, 1 reused, 2 failed, 1 running, 7 waiting");
@@ -409,19 +436,22 @@ test("names each check by the title its provider gave, by its id where none was 
   expect(pushed.app.querySelector(".ck-run.settled .ck-run-name")?.textContent).toBe("Storefront build <img src=x onerror=alert(1)> passed");
 });
 
-test("words a passed post-merge fullHealth and a provider's refused selection in the history, not as raw kinds", async () => {
+test("draws a passed post-merge fullHealth and a provider's refused selection in the history, never as raw kinds", async () => {
   const document = fixtureDocument();
   document.journal.push(
-    { at: "2026-10-22T05:08:00Z", id: 45, kind: "base.verified", summary: "fullHealth passed at the base head PAY-2358's merge reached" },
-    { at: "2026-10-22T05:09:00Z", id: 46, kind: "selection.refused", lane: "payments", subject: "PAY-2361",
-      summary: "The provider refused PAY-2361's checks: no checks match the diff" },
+    { at: "2026-10-22T05:08:00Z", id: 11, kind: "base.verified", lane: null, subject: null,
+      data: { source: "fullHealth", head: "a".repeat(40), after: "PAY-2358" } },
+    { at: "2026-10-22T05:09:00Z", id: 12, kind: "selection.refused", lane: "payments", subject: "PAY-2361",
+      data: { detail: "The provider refused PAY-2361's checks: no checks match the diff" } },
   );
   const [shown] = await open(document);
-  const words = [...shown.app.querySelectorAll("#happened .who")].map((who) => who.textContent);
-  expect(words).toContain("Base verified");
-  expect(words).toContain("Checks refused · Payments · PAY-2361");
+  // The feed's words are the story chapter's: only that it draws both entries is pinned, and that neither is a raw kind.
+  for (const at of ["2026-10-22T05:08:00Z", "2026-10-22T05:09:00Z"]) {
+    expect(shown.app.querySelector(`#happened .beat > time[datetime="${at}"]`) !== null).toBe(true);
+  }
+  const words = shown.app.querySelector("#happened .story").textContent;
   for (const raw of ["base.verified", "selection.refused"]) {
-    expect(words.some((word) => word.includes(raw))).toBe(false);
+    expect(words.includes(raw)).toBe(false);
   }
 });
 
@@ -432,13 +462,15 @@ test("says a piece whose check failed is waiting on the main line's rerun, on th
   Object.assign(building, { state: "failed", finishedAt: "2026-10-22T05:06:50Z" });
   now.baseRerun = { startedAt: "2026-10-22T05:07:00Z", checks: ["storefront build"] };
   document.journal.push(
-    { at: "2026-10-22T05:06:55Z", id: 40, kind: "check.failed", lane: "payments", subject: "PAY-2361", summary: "Check failed: storefront build" },
-    { at: "2026-10-22T05:07:00Z", id: 41, kind: "base.rerun.started", lane: "payments", subject: "PAY-2361", summary: "Rerunning storefront build on main" },
+    { at: "2026-10-22T05:06:55Z", id: 11, kind: "check.failed", lane: "payments", subject: "PAY-2361", because: [10],
+      data: { check: "storefront build", timedOut: false, failing: ["build.Step.test_bundle"], more: 0, log: "logs/storefront-build.log" } },
+    { at: "2026-10-22T05:07:00Z", id: 12, kind: "base.rerun.started", lane: "payments", subject: "PAY-2361", because: [11],
+      data: { checks: ["storefront build"], base: { ref: "main", head: "a".repeat(40) } } },
   );
   const steps = [{ click: '.stop-btn[data-subject="PAY-2361"]' }];
   const [first, shown] = await open(document, { steps });
   const checking = first.app.querySelector(".checking");
-  expect(checking.querySelector(".ck-h-words")?.textContent).toBe("Failed, waiting on the main line's rerun");
+  expect(checking.querySelector(".ck-h-words")?.textContent).toBe("Failed, waiting on the main line's rerun · PAY-2361");
   expect(checking.querySelector(".ck-rerun")?.textContent)
     .toBe("Rerunning storefront build on the main line, to tell whether it fails there too · started 3 minutes ago");
   expect(checking.querySelector(".ck-verdict")?.textContent).toMatch(/^Won't merge from this run\./);
@@ -449,16 +481,16 @@ test("says a piece whose check failed is waiting on the main line's rerun, on th
   expect(meta.querySelector(".d-stage-time").getAttribute("aria-label")).toBe("Recorded base rerun start: 2026-10-22T05:07:00Z");
   // The piece's merge check lists the rerun after the failure, and names it as the last step.
   const history = shown.app.querySelector("#detail .mh");
-  expect(history.querySelector("summary .mh-sub").textContent).toMatch(/^ · Rerun on the main line 3 minutes ago · /);
+  expect(history.querySelector("summary .mh-sub").textContent).toMatch(/^ · Trying the main line 3 minutes ago · /);
   expect([...history.querySelectorAll("li span")].map((row) => row.textContent).slice(-2))
-    .toEqual(["Check failed: storefront build", "Rerunning storefront build on main"]);
-  // Its verdict reads as one in the feed and as the merge check's last step.
+    .toEqual(["storefront build failed: Failing: build.Step.test_bundle", "Checking the main line too: storefront build, at aaaaaaa"]);
+  // Its verdict is drawn in the feed and reads as the merge check's last step.
   const verdict = JSON.parse(JSON.stringify(document));
-  verdict.journal.push({ at: "2026-10-22T05:09:00Z", id: 42, kind: "base.rerun.finished", lane: "payments", subject: "PAY-2361",
-    summary: "Base re-run on main after 120s: storefront build passed: the failure is the candidate's" });
+  verdict.journal.push({ at: "2026-10-22T05:09:00Z", id: 13, kind: "base.rerun.finished", lane: "payments", subject: "PAY-2361", because: [12],
+    data: { base: { ref: "main", head: "a".repeat(40) }, seconds: 120, verdict: "candidate_failed", results: [{ check: "storefront build", result: "passed" }] } });
   const [, verdictShown] = await open(verdict, { steps });
-  expect([...verdictShown.app.querySelectorAll(".who")].map((who) => who.textContent)).toContain("Rerun verdict · Payments · PAY-2361");
-  expect(verdictShown.app.querySelector("#detail .mh summary .mh-sub").textContent).toMatch(/^ · Rerun verdict a minute ago · /);
+  expect(verdictShown.app.querySelector('#happened .beat > time[datetime="2026-10-22T05:09:00Z"]') !== null).toBe(true);
+  expect(verdictShown.app.querySelector("#detail .mh summary .mh-sub").textContent).toMatch(/^ · Main line tried a minute ago · /);
   // Rendered between the panel's write and the started entry, the wait's time comes from the panel.
   const unjournaled = JSON.parse(JSON.stringify(document));
   unjournaled.journal = unjournaled.journal.filter((entry) => entry.kind !== "base.rerun.started");
@@ -472,11 +504,11 @@ test("says a piece whose check failed is waiting on the main line's rerun, on th
     .toBe("Retry card payments once on a dropped connection, Checked, about to merge");
   // A batch keeps its own header, and the rerun line still says the run is waiting on the main line.
   const batch = JSON.parse(JSON.stringify(document));
-  const summary = "Checking Retry card payments once on a dropped connection, Keep the order number on the receipt page as one batch";
+  const members = { batch: ["PAY-2361", "PAY-2362"] };
   batch.state.queue[3].stage = "checking";
   batch.journal.push(
-    { at: "2026-10-22T05:05:00Z", id: 43, kind: "check.started", lane: "payments", subject: "PAY-2361", summary },
-    { at: "2026-10-22T05:05:00Z", id: 44, kind: "check.started", lane: "storefront", subject: "PAY-2362", summary },
+    { at: "2026-10-22T05:05:00Z", id: 13, kind: "check.started", lane: "payments", subject: "PAY-2361", data: members },
+    { at: "2026-10-22T05:05:00Z", id: 14, kind: "check.started", lane: "storefront", subject: "PAY-2362", data: members },
   );
   const [batchShown] = await open(batch);
   expect(batchShown.app.querySelector(".checking .ck-h-words")?.textContent).toBe("Being checked together · 2 pieces");
@@ -485,7 +517,7 @@ test("says a piece whose check failed is waiting on the main line's rerun, on th
   // The same failure before the rerun starts, or once it is over, is a check that failed, not a wait on the main line.
   delete document.state.meta.checking.now.baseRerun;
   const [before] = await open(document);
-  expect(before.app.querySelector(".checking .ck-h-words")?.textContent).toBe("Being checked now");
+  expect(before.app.querySelector(".checking .ck-h-words")?.textContent).toBe("Checking · PAY-2361");
   expect(before.app.querySelector(".checking .ck-rerun")).toBeNull();
   expect(before.app.querySelector('.stop-btn[data-subject="PAY-2361"]').getAttribute("aria-label"))
     .toBe("Retry card payments once on a dropped connection, Being checked before merge");
@@ -497,12 +529,16 @@ test("says a piece whose check failed is waiting on the main line's rerun, on th
     .toBe("Retry card payments once on a dropped connection, Being checked before merge");
 });
 
-test("matches a note to a check whose name ends in punctuation", async () => {
+test("puts a note under a check whose name ends in punctuation, by the failure the note names", async () => {
   const document = fixtureDocument();
   document.state.meta.checking.now.steps[1] = { label: "lint(webapp)", state: "failed" };
-  document.journal.push({ at: "2026-10-22T05:06:00Z", id: 50, kind: "decision.recorded", lane: null, subject: "PAY-2361", summary: "Flaky: lint(webapp) passes alone" });
+  document.journal.push(
+    { at: "2026-10-22T05:05:30Z", id: 11, kind: "check.failed", lane: "payments", subject: "PAY-2361", because: [10],
+      data: { check: "lint(webapp)", timedOut: false, failing: [], more: 0, log: "logs/lint-webapp.log" } },
+    { at: "2026-10-22T05:06:00Z", id: 12, kind: "decision.recorded", lane: null, subject: "PAY-2361", because: [11],
+      data: { text: "Flaky", why: "It passes alone." } });
   const [{ app }] = await open(document);
-  expect(app.querySelector(".ck-fails li .ck-note")?.textContent).toBe("Flaky: lint(webapp) passes alone");
+  expect([...app.querySelectorAll('.ck-fails li[data-check="lint(webapp)"] .ck-note')].map((note) => note.textContent)).toEqual(["Flaky. It passes alone."]);
 });
 
 test("drops the chips for the failed-first list even when there are only a few checks", async () => {
@@ -530,7 +566,7 @@ test("never lets record text become markup", async () => {
   document.state.queue[0].title = HOSTILE;
   document.state.lanes[0].focus = HOSTILE;
   document.state.lanes[0].title = HOSTILE;
-  document.journal[0].summary = HOSTILE;
+  document.journal[0].data = { title: HOSTILE, note: HOSTILE };
   // The tracker's own words win over the record's titles, so they are made hostile too.
   document.state.tickets["PAY-2361"] = { title: HOSTILE, summary: HOSTILE };
   const page = render(document);
@@ -661,7 +697,7 @@ test("lists each reviewer's findings on its round, and on the confirming round t
   ]);
   // Each severity is said once, as a band over its findings.
   expect([...one.querySelectorAll(".run-band")].map((band) => band.textContent)).toEqual(["Serious", "Moderate", "Moderate"]);
-  expect(one.querySelector(".run-settled")?.textContent).toBe("1 of 3 fixed in abc1234 · confirmed round 2 · 1 open");
+  expect(one.querySelector(".run-settled")?.textContent).toBe("1 of this round's 3 notes was fixed in abc1234, and round 2 confirmed it. 1 is still open.");
   // Counts are the findings' own, so the card does not repeat them.
   expect(one.querySelector(".run-card-notes")).toBeNull();
   // Round 2, the confirming round, names the fix it confirmed, linked to its commit.
@@ -672,7 +708,7 @@ test("lists each reviewer's findings on its round, and on the confirming round t
     ["Correctness", [["run-finding is-p3", "The retry log line repeats the order id.", null]]],
   ]);
   expect(two.querySelector(".run-reviewer .run-quiet")?.textContent).toBe("nothing raised");
-  expect(two.querySelector(".run-settled")?.textContent).toBe("Confirmed 1 earlier note fixed in abc1234, 1 earlier note settled otherwise");
+  expect(two.querySelector(".run-settled")?.textContent).toBe("This round confirmed 1 earlier note fixed in abc1234, and 1 settled another way.");
   const link = two.querySelector(".run-settled a.run-commit");
   expect(link.getAttribute("href")).toBe(`https://github.com/acme/shop/commit/${FIX}`);
   expect(link.getAttribute("rel")).toBe("noopener noreferrer");
@@ -743,8 +779,8 @@ test("shows the latest round when the picked one is past the run's rounds", asyn
 
 test("takes a round's lens verdicts from the record's review.round entry only when the run gives none", async () => {
   const document = fixtureDocument();
-  const entry = (round, verdicts) => ({ at: "2026-10-22T04:59:00Z", id: 90 + round, kind: "review.round", lane: "payments",
-    subject: "PAY-2361", summary: `payments review round ${round} on PAY-2361`, review: { round, verdicts } });
+  const entry = (round, verdicts) => ({ at: "2026-10-22T04:59:00Z", id: 10 + round, kind: "review.round", lane: "payments",
+    subject: "PAY-2361", data: { round, startedAt: "2026-10-22T04:50:00Z", finishedAt: "2026-10-22T04:59:00Z", verdicts, findings: { P0: 0, P1: 0, P2: 0, P3: 0 } } });
   document.journal.push(entry(1, { "lens.outcome-correctness": "approve", "lens.adversarial-testing": "changes" }), entry(2, { "lens.outcome-correctness": "changes" }));
   const summary = { runId: "run-7", ticket: null, open: true, status: null, startedAt: null, lastAt: null, durationSeconds: null, rounds: 2, findings: null,
     roundDetail: [
@@ -759,9 +795,9 @@ test("takes a round's lens verdicts from the record's review.round entry only wh
 
 test("fills a lens the run leaves out or calls unknown from the record, keeps the run's own, and reads a missing outcome from them", async () => {
   const document = fixtureDocument();
-  document.journal.push({ at: "2026-10-22T04:59:00Z", id: 91, kind: "review.round", lane: "payments", subject: "PAY-2361",
-    summary: "payments review round 1 on PAY-2361",
-    review: { round: 1, verdicts: { "lens.outcome-correctness": "changes", "lens.adversarial-testing": "approve", "lens.perf": "approve" } } });
+  document.journal.push({ at: "2026-10-22T04:59:00Z", id: 11, kind: "review.round", lane: "payments", subject: "PAY-2361",
+    data: { round: 1, startedAt: "2026-10-22T04:50:00Z", finishedAt: "2026-10-22T04:59:00Z",
+      verdicts: { "lens.outcome-correctness": "changes", "lens.adversarial-testing": "approve", "lens.perf": "approve" }, findings: { P0: 0, P1: 0, P2: 0, P3: 0 } } });
   const summary = { runId: "run-7", ticket: null, open: true, status: null, startedAt: null, lastAt: null, durationSeconds: null, rounds: 1, findings: null,
     roundDetail: [{ round: 1, at: "2026-10-22T04:40:00Z", outcome: null, findings: null,
       verdicts: { "lens.outcome-correctness": "approve", "lens.adversarial-testing": "unknown" } }] };
@@ -860,8 +896,9 @@ test("marks what changed since the last update, as the earlier map did", async (
   later.state.meta.checking = { now: null, next: [] };
   later.state.lanes[1].state = "handed";
   later.state.followups.push({ id: "f-new", title: "Show the retry count to support", reference: "PAY-2399" });
-  later.journal.push({ at: "2026-10-22T05:09:00Z", id: 11, kind: "candidate.merged", lane: "payments", subject: "PAY-2361", summary: "Merged PAY-2361" });
-  const [, pushed] = await open(fixtureDocument(), { store: { read: "pending" }, steps: [{ push: later }] });
+  later.journal.push({ at: "2026-10-22T05:09:00Z", id: 11, kind: "candidate.merged", lane: "payments", subject: "PAY-2361", data: { head: "6".repeat(40) } });
+  // Pushed as the live server sends a record: with the story the narrator tells of it.
+  const [, pushed] = await open(fixtureDocument(), { store: { read: "pending" }, steps: [{ push: told(later) }] });
   const app = pushed.app;
   // The stop that just landed lands, and the line between it and the one before draws itself in.
   expect(app.querySelector('.stop-btn[data-subject="PAY-2361"]')?.className).toContain("landing");
@@ -870,21 +907,22 @@ test("marks what changed since the last update, as the earlier map did", async (
   expect(app.querySelector(".left-number")?.textContent).toBe("6pieces to go");
   expect(app.querySelectorAll(".dots i.closing")).toHaveLength(1);
   expect([...app.querySelectorAll(".person.changed h3")].map((name) => name.textContent)).toEqual(["Storefront"]);
-  expect(app.querySelector("#happened .feed li.fresh")?.textContent).toContain("Merged PAY-2361");
+  // The story's new beat arrives as a new row does; the beats it already held stay as they were.
+  expect([...app.querySelectorAll("#happened .beat.fresh > time")].map((time) => time.getAttribute("datetime"))).toEqual(["2026-10-22T05:09:00Z"]);
   expect([...app.querySelectorAll(".parked li.fresh")].map((item) => item.textContent)).toEqual(["PAY-2399Show the retry count to support"]);
-  expect(app.querySelector(".say")?.textContent).toBe("Last landed: Retry card payments once on a dropped connection, 1m ago.");
+  expect(app.querySelector("#now .fact")?.textContent).toBe("Last landedRetry card payments once on a dropped connectionPAY-2361 · a minute ago");
 });
 
 test("shows pieces checked as one batch together, each with its change request", async () => {
   // As the runner writes a batch: every member in checks, one journal start per member, each with its own time.
   const batch = () => {
     const document = fixtureDocument();
-    const summary = "Checking Retry card payments once on a dropped connection, Keep the order number on the receipt page as one batch";
+    const members = { batch: ["PAY-2361", "PAY-2362"] };
     document.state.queue[3].stage = "checking";
     document.state.meta.checking.now.title = "Batch of 2: PAY-2361, PAY-2362";
     document.journal.push(
-      { at: "2026-10-22T05:05:00.120431Z", id: 11, kind: "check.started", lane: "payments", subject: "PAY-2361", summary },
-      { at: "2026-10-22T05:05:00.187902Z", id: 12, kind: "check.started", lane: "storefront", subject: "PAY-2362", summary },
+      { at: "2026-10-22T05:05:00.120431Z", id: 11, kind: "check.started", lane: "payments", subject: "PAY-2361", data: members },
+      { at: "2026-10-22T05:05:00.187902Z", id: 12, kind: "check.started", lane: "storefront", subject: "PAY-2362", data: members },
     );
     return document;
   };
@@ -908,37 +946,38 @@ test("shows pieces checked as one batch together, each with its change request",
   const split = batch();
   split.state.queue[3].stage = "queued";
   const [{ app: splitApp }] = await open(split);
-  expect(splitApp.querySelector(".ck-h .ck-h-words")?.textContent).toBe("Being checked now");
+  expect(splitApp.querySelector(".ck-h .ck-h-words")?.textContent).toBe("Checking · PAY-2361");
   // A failed batch still lands the pieces ahead of the one that broke it; the failures carry every member's logs.
   const failing = batch();
   failing.state.meta.checking.now.steps = [{ label: "shop.check.aa", state: "failed" }, { label: "shop.check.bb", state: "running" }];
   failing.state.queue[3].checks = [{ id: "shop.check.aa", state: "failed", log: "logs/batch-aa.log" }];
-  failing.journal.push({ at: "2026-10-22T05:06:00Z", id: 40, kind: "blocker.recorded", lane: null, subject: "PAY-2362", summary: "shop.check.aa fails on the receipt page." });
+  failing.journal.push({ at: "2026-10-22T05:05:50Z", id: 13, kind: "check.failed", lane: "storefront", subject: "PAY-2362", because: [12],
+    data: { check: "shop.check.aa", timedOut: false, failing: [], more: 0, log: "logs/batch-aa.log" } },
+  { at: "2026-10-22T05:06:00Z", id: 14, kind: "blocker.recorded", lane: null, subject: "PAY-2362", because: [13], data: { text: "shop.check.aa fails on the receipt page." } });
   const [{ app: failingApp }] = await open(failing);
   expect(failingApp.querySelector(".ck-verdict")?.textContent).toBe(
     "The batch won't land as one. 1 failed · 1 still to run · the pieces ahead of the one that broke it can still land");
   expect(failingApp.querySelector(".ck-fails li")?.textContent).toContain("Log: logs/batch-aa.log");
-  expect(failingApp.querySelector(".ck-fails li .ck-note")?.textContent).toBe("shop.check.aa fails on the receipt page.");
+  expect(failingApp.querySelector(".ck-fails li .ck-note")?.textContent).toBe("Work was blocked on PAY-2362. shop.check.aa fails on the receipt page.");
 
   // A member carried out of a failed batch and checked again on its own is not in the old batch any more.
   const carried = batch();
   carried.state.queue[2].stage = "merged";
   carried.state.meta.checking.now = { subject: "PAY-2362", title: "Keep the order number on the receipt page", startedAt: "2026-10-22T05:09:00Z", steps: [] };
-  carried.journal.push({ at: "2026-10-22T05:09:00.004211Z", id: 13, kind: "check.started", lane: "storefront", subject: "PAY-2362", summary: "Checking Keep the order number on the receipt page" });
+  carried.journal.push({ at: "2026-10-22T05:09:00.004211Z", id: 13, kind: "check.started", lane: "storefront", subject: "PAY-2362", data: {} });
   const [{ app: carriedApp }] = await open(carried);
-  expect(carriedApp.querySelector(".ck-h .ck-h-words")?.textContent).toBe("Being checked now");
+  expect(carriedApp.querySelector(".ck-h .ck-h-words")?.textContent).toBe("Checking · PAY-2362");
   expect(carriedApp.querySelector("#detail .d-batch")).toBeNull();
-  // The same batch started twice in a row counts each member once, and a lane's note between the starts
-  // does not split the batch.
+  // The same batch started twice counts each member once, and a lane's note between the starts changes nothing.
   const twice = batch();
   const [first, second] = twice.journal.slice(-2);
-  twice.journal.splice(twice.journal.length - 1, 0, { at: "2026-10-22T05:05:00.150000Z", id: 30, kind: "decision.recorded", lane: "ops", subject: null, summary: "A note" });
-  twice.journal.push({ ...first, id: 31 }, { ...second, id: 32 });
+  twice.journal.push({ ...first, id: 13 }, { at: "2026-10-22T05:05:00.150000Z", id: 14, kind: "decision.recorded", lane: "ops", subject: null,
+    data: { text: "A note", why: "The lane said so." } }, { ...second, id: 15 });
   const [{ app: twiceApp }] = await open(twice);
   expect(twiceApp.querySelector(".ck-h .ck-h-words")?.textContent).toBe("Being checked together · 2 pieces");
   // Pieces in checks that the latest batch start does not cover are not a batch either.
   const [{ app: solo }] = await open(fixtureDocument());
-  expect(solo.querySelector(".ck-h .ck-h-words")?.textContent).toBe("Being checked now");
+  expect(solo.querySelector(".ck-h .ck-h-words")?.textContent).toBe("Checking · PAY-2361");
 });
 
 test("keeps a hand-over the lead has not accepted apart from the work ready to check", async () => {
@@ -956,7 +995,7 @@ test("keeps a hand-over the lead has not accepted apart from the work ready to c
 test("shows a lead's status whole, and a broken main line as needing attention", async () => {
   const document = fixtureDocument();
   document.status = { source: "override", text: "Pausing merges · back after the deploy", expiresAt: "2026-10-22T06:00:00Z" };
-  document.journal.push({ at: "2026-10-22T05:08:00Z", id: 12, kind: "base.broken", lane: null, subject: null, summary: "Typecheck fails on main" });
+  document.journal.push({ at: "2026-10-22T05:08:00Z", id: 11, kind: "base.broken", lane: null, subject: null, data: { source: "queue", detail: "Typecheck fails on main" } });
   const [{ app }] = await open(document);
   expect(app.querySelector(".say")?.textContent).toBe("Pausing merges · back after the deploy");
   expect(app.querySelector(".attention")?.textContent).toContain("The main line is brokenTypecheck fails on main");
@@ -977,15 +1016,16 @@ test("keeps a newer push over a late read, and works with a store that cannot su
   expect(headline(noStatus)).toBe("Pushed");
 });
 
-test("keeps the chosen stop, the open history and keyboard focus through an update", async () => {
+test("keeps the chosen stop, the open history, every open fold and keyboard focus through an update", async () => {
   const later = fixtureDocument();
   later.state.meta.headline = "Later";
+  const page = render(fixtureDocument());
   // Opening the history by its summary moves focus there; focus goes back to the stop before the update.
   const [, chosen, opened, , pushed] = await open(fixtureDocument(), {
     store: { read: "pending" },
     steps: [{ click: '.stop-btn[data-subject="PAY-2358"]' }, { click: "#detail details.mh summary" },
       { click: '.stop-btn[data-subject="PAY-2358"]' }, { push: later }],
-  });
+  }, page);
   const pressed = (snapshot) => [...snapshot.app.querySelectorAll('.stop-btn[aria-pressed="true"]')].map((stop) => stop.getAttribute("data-subject"));
   expect(pressed(chosen)).toEqual(["PAY-2358"]);
   expect(chosen.app.querySelector("#detail .d1")?.textContent).toBe("Hold the cart through a payment redirect");
@@ -993,6 +1033,11 @@ test("keeps the chosen stop, the open history and keyboard focus through an upda
   expect(pressed(pushed)).toEqual(["PAY-2358"]);
   expect(pushed.app.querySelector("#detail details.mh")?.hasAttribute("open")).toBe(true);
   expect(pushed.focused).toBe("PAY-2358");
+  // Every fold is the page's one fold, and each keeps its own place: the checking sheet's list stays open too.
+  const [, sheet, redrawn] = await open(fixtureDocument(), {
+    store: { read: "pending" }, steps: [{ click: "#now .ck-chosen > summary" }, { push: later }] }, page);
+  expect(sheet.app.querySelector("#now .ck-chosen")?.hasAttribute("open")).toBe(true);
+  expect(redrawn.app.querySelector("#now .ck-chosen")?.hasAttribute("open")).toBe(true);
 });
 
 test("draws again on a status only when the connection changes, so an open card stays open", async () => {
@@ -1078,31 +1123,32 @@ test("leaves a pull request URL with a trailing slash, and a URL off the forge's
   ]);
 });
 
-test("filters the story by tab and shows all of it on request, keeping focus on the tab", async () => {
-  const [, everything, landed, problems, back] = await open(fixtureDocument(), {
-    steps: [{ click: "#happened .more" }, { click: '#happened [data-tab="landed"]' }, { click: '#happened [data-tab="problems"]' }, { click: '#happened [data-tab="all"]' }],
+test("filters the story by tab, each the beats of one tone, keeping focus on the tab", async () => {
+  const story = block(render(fixtureDocument()), "delivery-state").story;
+  const [, decisions, landed, problems, back] = await open(fixtureDocument(), {
+    steps: [{ click: '#happened [data-tab="decisions"]' }, { click: '#happened [data-tab="landed"]' }, { click: '#happened [data-tab="problems"]' },
+      { click: '#happened [data-tab="all"]' }],
   });
-  const [, decisions] = await open(fixtureDocument(), { steps: [{ click: '#happened [data-tab="decisions"]' }] });
-  expect([...decisions.app.querySelectorAll("#happened .feed li .g")].map((mark) => mark.className)).toEqual(["g decide"]);
-  const count = (snapshot) => snapshot.app.querySelectorAll("#happened .feed li").length;
-  expect(count(everything)).toBe(10);
-  // "Show all" removes itself; focus moves to the first entry it revealed.
-  expect(everything.focused).toBe("li");
-  expect(everything.app.querySelectorAll("#happened .feed li")[8]?.hasAttribute("data-revealed")).toBe(true);
-  expect(count(landed)).toBe(1);
+  const shown = (snapshot) => [...snapshot.app.querySelectorAll("#happened [data-beat]")].map((row) => row.getAttribute("data-beat")).sort();
+  const toned = (tone) => story.beats.filter((beat) => beat.altitudes.includes("story") && (!tone || beat.tone === tone)).map((beat) => beat.id).sort();
+  expect(shown(decisions)).toEqual(toned("decision"));
+  expect(shown(landed)).toEqual(toned("landed"));
+  expect(shown(problems)).toEqual(toned("problem"));
+  expect(shown(back)).toEqual(toned(null));
+  expect(toned("decision").length && toned("landed").length && toned("problem").length).toBeTruthy();
   expect(landed.focused).toBe("landed");
   expect(landed.app.querySelector('#happened [data-tab="landed"]')?.getAttribute("aria-pressed")).toBe("true");
-  expect(count(problems)).toBe(2);
-  expect(count(back)).toBe(8);
   expect(back.focused).toBe("all");
 });
 
 test("names a failed check among the problems while its stop is still being worked out", async () => {
   const document = fixtureDocument();
-  document.journal.push({ id: 99, at: "2026-10-22T07:00:00Z", kind: "check.failed", lane: null, subject: null, summary: "Check failed: suite (failing test_alpha; log logs/suite.log)" });
+  document.journal.push({ id: 11, at: "2026-10-22T07:00:00Z", kind: "check.failed", lane: "payments", subject: "PAY-2361", because: [10],
+    data: { check: "suite", timedOut: false, failing: ["test_alpha"], more: 0, log: "logs/suite.log" } });
   const [, problems] = await open(document, { steps: [{ click: '#happened [data-tab="problems"]' }] });
-  const entry = [...problems.app.querySelectorAll("#happened .feed li")].find((row) => row.textContent.includes("test_alpha"));
-  expect(entry?.textContent).toContain("Check failed");
+  const entry = [...problems.app.querySelectorAll("#happened .beat")].find((row) => row.textContent.includes("test_alpha"));
+  expect(entry?.querySelector(".beat-said").textContent).toBe("suite failed");
+  expect(entry?.querySelector(".g").className).toBe("g stop");
 });
 
 test("finds nothing for record values that name built-in properties, and keeps them out of class names", async () => {
@@ -1136,7 +1182,9 @@ test("reads unreadable times as unknown, never as the start of time", async () =
   document.state.lanes[3].since = "a while back";
   document.state.leases[0].since = null;
   const [{ app }] = await open(document);
-  expect(app.querySelector(".since")?.textContent).toBe("Saved view · base aaaaaaa");
+  // With no readable update time, the base head is the fact's value and nothing says when.
+  expect(app.querySelector(".since .fact-value")?.textContent).toBe("base aaaaaaa");
+  expect(app.querySelector(".since .fact-detail")).toBeNull();
   expect(app.querySelector(".ck-run .sr")?.textContent).toBe("Running storefront build");
   expect(app.querySelector(".leases")?.textContent).toBe("dev-backend held by lead");
   expect(app.querySelectorAll(".person")[3]?.querySelector(".on")).toBeNull();
@@ -1151,13 +1199,13 @@ test("draws checks as chips up to twelve, says a run is stale after ninety minut
   document.state.meta.checking.now.steps = steps(13);
   expect((await open(document))[0].app.querySelector(".ck-bar")).not.toBeNull();
   document.state.meta.updatedAt = "2026-10-22T03:40:00Z";
-  expect((await open(document))[0].app.querySelector(".since")?.className.trim()).toBe("since");
+  expect((await open(document))[0].app.querySelector(".since")?.className.trim()).toBe("fact since");
   document.state.meta.updatedAt = "2026-10-22T03:41:00Z";
-  expect((await open(document))[0].app.querySelector(".since")?.className.trim()).toBe("since");
+  expect((await open(document))[0].app.querySelector(".since")?.className.trim()).toBe("fact since");
   document.state.meta.updatedAt = "2026-10-22T03:39:00Z";
   const stale = (await open(document))[0].app.querySelector(".since");
-  expect(stale.className).toBe("since stale");
-  expect(stale.textContent).toContain("no update for 1h 31m");
+  expect(stale.className).toBe("fact since stale");
+  expect(stale.querySelector(".fact-value").textContent).toBe("No update for 1h 31m");
 });
 
 test("follows the live server through the adapter it injects into the page", async () => {

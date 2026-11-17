@@ -23,6 +23,12 @@ Each case directory holds:
   its detail panel after a click on it, plus the text of each round card after a
   click on each round of its run.
 
+The page has since been reworked on purpose, and its goldens follow it:
+`tests/delivery_views_page/recapture-goldens.mjs` re-derives each case's page text, detail panels, plan folds and the
+compared blocks from the page as it stands, with the clock, stops and folds its golden names. The links block is left as
+captured, since no row compares it. A recapture is committed apart from any page change. The page text is the whole
+page's, the story's "What happened" included: its words are the narrator's, told from each case's journal.
+
 The cases:
 
 | Case | Document | Runs |
@@ -32,7 +38,7 @@ The cases:
 | `parked-round-reports` | the parked fixture record | round reports with findings, fixes and a confirming round |
 | `parked-round-report-unreadable` | the parked fixture record | as above, with round 2's report unreadable |
 | `delivery-records-epic` | a real delivery record of nine merged pieces | their three recorded runs |
-| `round-card-record` | a record built with the state tool for the two pieces that landed the round card | their two recorded runs, one with stored findings |
+| `round-card-record` | a record built with the state tool for the two pieces that landed the round card, its entries since rewritten as facts | their two recorded runs, one with stored findings |
 
 Real records and run listings named the capturing machine's home directory; the
 capture replaced it with `~/` in its inputs before rendering, so inputs and

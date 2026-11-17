@@ -193,7 +193,9 @@ class LinkTests(unittest.TestCase):
         sha = "0123456789abcdef0123456789abcdef01234567"
         self.assertEqual(views.commit_link(sha, self.forge), f"https://bitbucket.org/example/app/commits/{sha}")
         self.assertIsNone(views.commit_link(sha.upper(), self.forge))
-        self.assertIsNone(views.commit_link("0123456", self.forge))
+        # A commit cut short links as a forge opens one: seven characters at least.
+        self.assertEqual(views.commit_link("0123456", self.forge), "https://bitbucket.org/example/app/commits/0123456")
+        self.assertIsNone(views.commit_link("012345", self.forge))
 
     def test_placeholder_values_are_encoded(self) -> None:
         template = "https://example.org/a/{key}/b"

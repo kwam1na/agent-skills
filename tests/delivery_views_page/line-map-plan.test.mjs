@@ -29,12 +29,16 @@ const flags = (app) => [...app.querySelectorAll("#plan .plan-needs .a1")].map((n
 const flagWhy = (app) => [...app.querySelectorAll("#plan .plan-needs .a2")].map((node) => node.textContent);
 const title = (app) => app.querySelector("#plan .plan-title").firstChild.textContent;
 const openRows = (app) => [...app.querySelectorAll("#plan .plan-open li")].map((row) => row.textContent);
-/** Each owed proof of a unit in the all-units grid, by its kind's label: its state class and its words. */
+/**
+ * The owed proofs of a unit in the all-units grid, in the order shown, each as its state classes and its words: every
+ * open proof is a sentence of its own, first; a waived one keeps its kind's label beside its words; and what is
+ * finished reads as one line after them.
+ */
 function proofs(app, subject) {
   const row = [...app.querySelectorAll("#plan .plan-all .plan-unit")]
     .find((entry) => entry.querySelector("[data-ticket]").getAttribute("data-ticket") === subject);
-  return Object.fromEntries([...row.querySelectorAll(".plan-proof")]
-    .map((line) => [line.querySelector(".pp-kind").textContent, `${line.className.replace("plan-proof ", "")}: ${line.querySelector(".pp-state").textContent}`]));
+  return [...row.querySelectorAll(".plan-proof")].map((line) => `${line.className.replace("plan-proof ", "")}: ${line.querySelector(".pp-kind")
+    ? `${line.querySelector(".pp-kind").textContent}, ${line.querySelector(".pp-state").textContent}` : line.textContent}`);
 }
 
 /** A delivery of units that are each approved, handed off and merged, with two finish lines the record also has. */
@@ -97,19 +101,20 @@ test("opens with only what the engineer acts on, and folds the rest behind count
   expect(title(app)).toBe("28 of 29 criteria proven, 1 by waiver.");
   expect(app.querySelector("#plan .plan-outcome").textContent).toBe("Shoppers can pay again after a dropped connection.");
   expect(flags(app)).toEqual(["A finish line no longer covers the plan", "A change touches open work"]);
-  expect(openRows(app)).toEqual(["CART-105Cart step 5Merged: not merged yet"]);
+  expect(openRows(app)).toEqual(["CART-105Cart step 52 proofs left · It still has to merge."]);
   expect(app.querySelector("#plan .plan-meter")).toBeNull();
   expect([...app.querySelectorAll("#left .plan-meter")].map((meter) => meter.textContent)).toEqual(
-    ["Every cart criterion mergedNot metMerged: 13 of 14 criteria", "Checked in the appNot metIn-app check: 27 of 29 criteria, 1 more by waiver"]);
+    ["Every cart criterion mergedNot yet13 of 14 criteria · merged", "Checked in the appNot yet27 of 29 criteria · in-app check, 1 more by waiver"]);
   // Nothing else shows until a fold opens: six folds, each closed, each with its count.
   const folds = [...inner.querySelectorAll(":scope > .plan-folds > .plan-fold")];
   expect(folds.map((fold) => fold.querySelector("summary").textContent)).toEqual(
     ["All units20", "Changes since approval7", "Waived proofs1", "Approvals ahead1", "Out of scope3", "The full outcome"]);
   expect(folds.every((fold) => fold.tagName === "DETAILS" && !fold.open)).toBe(true);
   expect(app.querySelectorAll("#plan details").length).toBe(6);
-  // Now names what is being built and how much is proven, and links to the chapter.
-  const now = app.querySelector("#now .plan-now");
-  expect(now.textContent).toBe("Shoppers can pay again after a dropped connection. 28 of 29 criteria proven · plan changed 7 times");
+  // Now names what is being built under its headline, and how much is proven in its Plan fact, which links to the chapter.
+  expect(app.querySelector("#now .plan-now").textContent).toBe("Shoppers can pay again after a dropped connection.");
+  const now = app.querySelector("#now .facts .plan-now-link").closest(".fact");
+  expect(now.textContent).toBe("Plan28 of 29 criteria provenchanged 7 times");
   expect(now.querySelector("a").getAttribute("href")).toBe("#plan");
   // What's left shows the meters in place of its list.
   expect(app.querySelector("#left .after")).toBeNull();
@@ -128,7 +133,7 @@ test("the title says every criterion is proven only when each is and the base is
   app = await first(waived.document, waived.plan);
   expect(title(app)).toBe("Every criterion is proven, 1 by waiver.");
 
-  const broken = proven(["A", "B"], { extraSteps: [[40, "base.broken", null, { summary: "The base fails its checks" }]] });
+  const broken = proven(["A", "B"], { extraSteps: [[40, "base.broken", null, { data: { detail: "The base fails its checks" } }]] });
   app = await first(broken.document, broken.plan);
   expect(title(app)).toBe("2 of 2 criteria proven.");
   expect(flags(app)).toEqual(["The base is broken"]);
@@ -143,7 +148,7 @@ test("the title says every criterion is proven only when each is and the base is
 test("each of the eight flags shows on its own, in order when several hold, and nothing needs you otherwise", async () => {
   const cases = [];
   // 2. The last base event is a break.
-  cases.push(["base", proven(["A"], { extraSteps: [[40, "base.broken", null, { summary: "Base red" }]] }), ["The base is broken"], ["Base red"]]);
+  cases.push(["base", proven(["A"], { extraSteps: [[40, "base.broken", null, { data: { detail: "Base red" } }]] }), ["The base is broken"], ["Base red"]]);
   // 3. Work in the record that the plan has no unit for, queued or planned.
   const stray = proven(["A"]);
   stray.document.state.queue.push(item("STRAY-1", "queued"));
@@ -240,8 +245,8 @@ test("a finish line's meter shows whether the record met it, and every line only
   const app = await first(document, plan);
   expect(title(app)).toBe("Every criterion is proven.");
   expect([...app.querySelectorAll("#left .plan-meter")].map((meter) => [meter.className, meter.textContent])).toEqual([
-    ["plan-meter met", "Line landedMetMerged: 2 of 2 units"], ["plan-meter", "Line checkedNot marked metIn-app check: 2 of 2 criteria"],
-    ["plan-meter", "A line the plan lacksNot metNot in the plan"]]);
+    ["plan-meter met", "Line landedMet2 of 2 units · merged"], ["plan-meter", "Line checkedReady to mark2 of 2 criteria · in-app check"],
+    ["plan-meter", "A line the plan lacksNot yetNot in the plan"]]);
   expect(app.querySelectorAll("#left .plan-meter")[2].querySelector(".pm-done").style.width).toBe("0%");
 });
 
@@ -253,7 +258,7 @@ test("a change stops touching open work once the unit's review approves after it
     changes: [{ id: "c1", at: minute(30), kind: "changed", subjects: ["A"], by: "lead", why: "Moved." }] });
   const app = await first(after.document, after.plan);
   expect(flags(app)).toEqual([]);
-  expect(openRows(app)).toEqual(["AWork AMerged: not merged yet"]);
+  expect(openRows(app)).toEqual(["AWork A1 proof left · It still has to merge."]);
   // A removed unit is never open work.
   const removed = proven(["A", "B"], { queue: [item("A", "merged"), item("B", "queued")],
     changes: [{ id: "c1", at: minute(30), kind: "removed", subjects: ["B"], by: "operator", why: "Not needed." }] });
@@ -271,33 +276,33 @@ test("record proofs follow the record's own shapes: hand-offs, stops, acceptance
   // A hand-off after a merge supersedes it: handed again, not merged, and the new round reviews the new head.
   await shape("re-handed", record({ queue: [item("A", "queued", { head: headOf("A", 1) })], journal: journal([[10, "approve", "A"],
     [11, "candidate.handed", "A"], [12, "candidate.merged", "A"], [20, "approve", "A", { round: 2 }], [21, "candidate.handed", "A"]]) }), plan(["A"]), "A",
-  { Review: "done: approved", "Handed off": "done: done", Merged: "open: not merged yet" });
+  ["open: It still has to merge.", "done: Done: review, handed off"]);
   await shape("stopped", record({ queue: [item("A", "stopped")], journal: journal([[10, "approve", "A"], [11, "candidate.handed", "A"],
-    [12, "candidate.stopped", "A"]]) }), plan(["A"]), "A", { Review: "done: approved", "Handed off": "open: stopped", Merged: "open: not merged yet" });
+    [12, "candidate.stopped", "A"]]) }), plan(["A"]), "A", ["open stuck: Its checks stopped it.", "open: It still has to merge.", "done: Done: review"]);
   await shape("pending", record({ queue: [item("A", "queued", { pending: true })], journal: journal([[10, "approve", "A"], [11, "candidate.handed", "A"]]) }),
-    plan(["A"]), "A", { Review: "done: approved", "Handed off": "open: waiting for the lead to accept", Merged: "open: not merged yet" });
+    plan(["A"]), "A", ["open: It's waiting for the lead to accept it.", "open: It still has to merge.", "done: Done: review"]);
   // A merge recorded outside the queue can leave the flag set; what merged is past waiting.
   await shape("merged, flag left set", record({ queue: [item("A", "merged", { pending: true })], journal: journal([[10, "approve", "A"], [11, "candidate.handed", "A"],
-    [12, "candidate.merged", "A"]]) }), plan(["A"]), "A", { Review: "done: approved", "Handed off": "done: done", Merged: "done: done" });
+    [12, "candidate.merged", "A"]]) }), plan(["A"]), "A", ["done: Review · Handed off · Merged"]);
   const batch = record({ queue: [item("A", "merged"), item("B", "merged")], journal: journal([[10, "approve", "A"], [11, "approve", "B"],
-    [12, "candidate.handed", "A"], [13, "candidate.handed", "B"], [14, "check.started", null, { summary: "Checking A, B together" }],
+    [12, "candidate.handed", "A"], [13, "candidate.handed", "B"], [14, "check.started", null, { data: { batch: ["A", "B"] } }],
     [15, "candidate.merged", "A"], [15, "candidate.merged", "B"]]) });
   for (const subject of ["A", "B"]) {
-    await shape(`batch ${subject}`, batch, plan(["A", "B"]), subject, { Review: "done: approved", "Handed off": "done: done", Merged: "done: done" });
+    await shape(`batch ${subject}`, batch, plan(["A", "B"]), subject, ["done: Review · Handed off · Merged"]);
   }
   // A merge the runner could not verify stops the item and breaks the base: merged stays open until the record shows it.
   await shape("merged_unverified", record({ queue: [item("A", "stopped")], journal: journal([[10, "approve", "A"], [11, "candidate.handed", "A"],
-    [12, "base.broken", "A", { summary: "merged_unverified: main is not the synced tree" }], [12, "candidate.stopped", "A"]]) }), plan(["A"]), "A",
-  { Review: "done: approved", "Handed off": "open: stopped", Merged: "open: not merged yet" });
+    [12, "base.broken", "A", { data: { reason: "merged_unverified", detail: "Main is not the synced tree" } }], [12, "candidate.stopped", "A"]]) }), plan(["A"]), "A",
+  ["open stuck: Its checks stopped it.", "open: It still has to merge.", "done: Done: review"]);
   // A run-backed unit reads its run's latest round, with the journal's verdicts laid over a round the run gives none.
   const runRecord = (stage = "merged") => record({ queue: [item("A", stage, { runId: "run-a" })], journal: journal([[10, "changes", "A"],
     [11, "approve", "A", { round: 2 }], [12, "candidate.handed", "A"], [13, "candidate.merged", "A"]]) });
   const run = (rounds) => ({ "run-a": { runId: "run-a", roundDetail: rounds } });
-  await shape("run approves", runRecord(), plan(["A"]), "A", { Review: "done: approved", "Handed off": "done: done", Merged: "done: done" },
+  await shape("run approves", runRecord(), plan(["A"]), "A", ["done: Review · Handed off · Merged"],
     { runs: run([{ round: 1, at: minute(10), outcome: "changes", verdicts: {} }, { round: 2, at: minute(11), outcome: "approve", verdicts: {} }]) });
-  await shape("run asks for changes", runRecord(), plan(["A"]), "A", { Review: "open: not approved yet", "Handed off": "done: done", Merged: "done: done" },
+  await shape("run asks for changes", runRecord(), plan(["A"]), "A", ["open: Its review isn't approved yet.", "done: Done: handed off, merged"],
     { runs: run([{ round: 3, at: minute(11), outcome: "changes", verdicts: { "lens.outcome-correctness": "approve", "lens.adversarial-testing": "changes" } }]) });
-  await shape("run approves another head", runRecord(), plan(["A"]), "A", { Review: "stale: approved for another head", "Handed off": "done: done", Merged: "done: done" },
+  await shape("run approves another head", runRecord(), plan(["A"]), "A", ["stale stuck: Its approval is for an earlier commit.", "done: Done: handed off, merged"],
     { runs: run([{ round: 2, at: minute(11), candidateRef: headOf("A", 9), outcome: "approve",
       verdicts: { "lens.outcome-correctness": "approve", "lens.adversarial-testing": "approve" } }]) });
   // A run round that names no candidate counts only after the hand-off before the current one.
@@ -305,33 +310,38 @@ test("record proofs follow the record's own shapes: hand-offs, stops, acceptance
     [11, "candidate.handed", "A"], [12, "candidate.stopped", "A"], [20, "candidate.handed", "A"]]) });
   const approving = { "lens.outcome-correctness": "approve", "lens.adversarial-testing": "approve" };
   await shape("run round before the last hand-off", rehandedRun, plan(["A"]), "A",
-    { Review: "stale: approved for another head", "Handed off": "done: done", Merged: "open: not merged yet" },
+    ["stale stuck: Its approval is for an earlier commit.", "open: It still has to merge.", "done: Done: handed off"],
     { runs: run([{ round: 1, at: minute(10), outcome: "approve", verdicts: approving }]) });
   await shape("run round after the last hand-off", rehandedRun, plan(["A"]), "A",
-    { Review: "done: approved", "Handed off": "done: done", Merged: "open: not merged yet" },
+    ["open: It still has to merge.", "done: Done: review, handed off"],
     { runs: run([{ round: 2, at: minute(15), outcome: "approve", verdicts: approving }]) });
   // Verdicts the configuration names by the lens's name count as that lens's.
-  await shape("run verdicts by lens name", runRecord(), plan(["A"]), "A", { Review: "done: approved", "Handed off": "done: done", Merged: "done: done" },
+  await shape("run verdicts by lens name", runRecord(), plan(["A"]), "A", ["done: Review · Handed off · Merged"],
     { runs: run([{ round: 2, at: minute(11), outcome: "approve", verdicts: { Correctness: "approve", Testing: "approve" } }]) });
   // An approval recorded before the previous hand-off approved an older head: stale, from the journal alone.
   await shape("stale head", record({ queue: [item("A", "queued", { head: headOf("A", 2) })], journal: journal([[10, "approve", "A"],
     [11, "candidate.handed", "A"], [12, "candidate.stopped", "A"], [20, "candidate.handed", "A"]]) }), plan(["A"]), "A",
-  { Review: "stale: approved for another head", "Handed off": "done: done", Merged: "open: not merged yet" });
+  ["stale stuck: Its approval is for an earlier commit.", "open: It still has to merge.", "done: Done: handed off"]);
   await shape("merged", record({ queue: [item("A", "merged")], journal: journal([[10, "approve", "A"], [11, "candidate.handed", "A"],
-    [12, "candidate.merged", "A"]]) }), plan(["A"]), "A", { Review: "done: approved", "Handed off": "done: done", Merged: "done: done" });
+    [12, "candidate.merged", "A"]]) }), plan(["A"]), "A", ["done: Review · Handed off · Merged"]);
   await shape("no review", record({ queue: [item("A", "queued")], journal: journal([[11, "candidate.handed", "A"]]) }), plan(["A"]), "A",
-    { Review: "none: not recorded", "Handed off": "done: done", Merged: "open: not merged yet" });
+    ["none: No review is recorded for it.", "open: It still has to merge.", "done: Done: handed off"]);
   // Rounds the lane only reported carry no verdicts.
   await shape("reported rounds only", record({ queue: [item("A", "queued", { reportedRounds: 3 })], journal: journal([[11, "candidate.handed", "A"]]) }),
-    plan(["A"]), "A", { Review: "none: not recorded", "Handed off": "done: done", Merged: "open: not merged yet" });
+    plan(["A"]), "A", ["none: No review is recorded for it.", "open: It still has to merge.", "done: Done: handed off"]);
   await shape("one lens of two", record({ queue: [item("A", "merged")], journal: journal([[10, "review.round", "A", { verdicts: { "lens.outcome-correctness": "approve" } }],
-    [11, "candidate.handed", "A"], [12, "candidate.merged", "A"]]) }), plan(["A"]), "A", { Review: "open: not approved yet", "Handed off": "done: done", Merged: "done: done" });
+    [11, "candidate.handed", "A"], [12, "candidate.merged", "A"]]) }), plan(["A"]), "A", ["open: Its review isn't approved yet.", "done: Done: handed off, merged"]);
   for (const [name, actual, expected] of rows) expect([name, actual]).toEqual([name, expected]);
 
   // The stale head's open row says what is missing.
   const app = await first(record({ queue: [item("A", "queued", { head: headOf("A", 2) })], journal: journal([[10, "approve", "A"],
     [11, "candidate.handed", "A"], [20, "candidate.handed", "A"]]) }), plan(["A"]));
-  expect(openRows(app)).toEqual(["AWork AReview: approved for another head"]);
+  expect(openRows(app)).toEqual(["AWork A2 proofs left · Its approval is for an earlier commit."]);
+  // A proof that can't move until someone acts marks its open row as stuck.
+  expect([...app.querySelectorAll("#plan .plan-open li")].map((row) => row.className)).toEqual(["stuck"]);
+  // And so does its row in the all-units grid.
+  const cell = [...app.querySelectorAll("#plan .plan-all .plan-unit")].find((entry) => entry.querySelector("[data-ticket]")?.getAttribute("data-ticket") === "A");
+  expect(cell.classList.contains("stuck")).toBe(true);
   expect(title(app)).toBe("0 of 1 criteria proven.");
 });
 
@@ -341,21 +351,21 @@ test("producer evidence counts at face value before hand-off and goes stale when
   const plan = planFor([unit("A")], { kinds, evidence });
   // Planned, not handed: the evidence counts as it stands, and the open row says it is before hand-off.
   let app = await first(record({ planned: [{ subject: "A", title: "Work A", lane: "lane-1", stage: "building" }], journal: journal([[10, "approve", "A"]]) }), plan);
-  expect(proofs(app, "A")["In-app check"]).toBe("done: done");
-  expect(openRows(app)).toEqual(["AWork AHanded off: not handed off yet · before hand-off"]);
+  expect(proofs(app, "A")).toEqual(["open: It hasn't been handed off yet.", "open: It still has to merge.", "done: Done: review, in-app check"]);
+  expect(openRows(app)).toEqual(["AWork A2 proofs left · It hasn't been handed off yet."]);
   // Handed off at the head the evidence names: done.
   app = await first(record({ queue: [item("A", "queued")], journal: journal([[10, "approve", "A"], [11, "candidate.handed", "A"]]) }), plan);
-  expect(proofs(app, "A")["In-app check"]).toBe("done: done");
+  expect(proofs(app, "A")).toEqual(["open: It still has to merge.", "done: Done: review, handed off, in-app check"]);
   // Handed off again at a new head: stale, and not done.
   app = await first(record({ queue: [item("A", "merged", { head: headOf("A", 3) })], journal: journal([[10, "approve", "A"], [11, "candidate.handed", "A"],
     [12, "candidate.stopped", "A"], [13, "approve", "A", { round: 2 }], [14, "candidate.handed", "A"], [15, "candidate.merged", "A"]]) }), plan);
-  expect(proofs(app, "A")).toEqual({ Review: "done: approved", "Handed off": "done: done", Merged: "done: done", "In-app check": "stale: for another head" });
-  expect(openRows(app)).toEqual(["AWork AIn-app check: for another head"]);
+  expect(proofs(app, "A")).toEqual(["stale stuck: In-app check was done for an earlier commit.", "done: Done: review, handed off, merged"]);
+  expect(openRows(app)).toEqual(["AWork AMerged, 1 proof left · In-app check was done for an earlier commit."]);
   expect(title(app)).toBe("0 of 1 criteria proven.");
   // No entry at all is to do.
   app = await first(record({ queue: [item("A", "merged")], journal: journal([[10, "approve", "A"], [11, "candidate.handed", "A"], [12, "candidate.merged", "A"]]) }),
     planFor([unit("A")], { kinds }));
-  expect(proofs(app, "A")["In-app check"]).toBe("todo: to do");
+  expect(proofs(app, "A")).toEqual(["todo: In-app check is still to do.", "done: Done: review, handed off, merged"]);
 });
 
 test("real record shapes: a native review observation, then candidates the runner synced onto a moved base and merged", async () => {
@@ -372,7 +382,9 @@ test("real record shapes: a native review observation, then candidates the runne
   // Handed off: the native unit's observation of its head is available; the other unit's review is its journal's.
   const handed = await shape("handed");
   expect(handed.document.reviewEvidence["native-sync"].unavailable).toBeUndefined();
-  const waiting = { Review: "done: approved", "Handed off": "done: done", Merged: "open: not merged yet", "In-app check": "done: done" };
+  const waiting = ["open: It still has to merge.", "done: Done: review, handed off, in-app check"];
+  // The same unit with its review open: it is the review's sentence that comes first, and the review leaves the done line.
+  const reviewOpen = ["open: Its review isn't approved yet.", "open: It still has to merge.", "done: Done: handed off, in-app check"];
   expect(handed.rows).toEqual({ "journal-sync": waiting, "native-sync": waiting });
   // Synced onto the moved base: the runner moved syncedHead, the observation stays bound to the handed head it reviewed,
   // and both units keep their review and producer proofs, compared with the handed head.
@@ -383,7 +395,7 @@ test("real record shapes: a native review observation, then candidates the runne
   expect(synced.document.reviewEvidence["native-sync"].unavailable).toBeUndefined();
   expect(synced.document.reviewEvidence["native-sync"].candidateRef).toBe(native.head);
   expect(synced.rows["native-sync"]).toEqual(waiting);
-  const landed = { Review: "done: approved", "Handed off": "done: done", Merged: "done: done", "In-app check": "done: done" };
+  const landed = ["done: Review · Handed off · Merged · In-app check"];
   expect(synced.rows["journal-sync"]).toEqual(landed);
   // A live push that hands the native unit off again at a new head: the observation the page holds is of the old head,
   // so the review falls to the journal, whose approval came before the previous hand-off.
@@ -392,15 +404,15 @@ test("real record shapes: a native review observation, then candidates the runne
   const moved = rehanded.state.queue.find((entry) => entry.subject === "native-sync");
   moved.head = headOf("native-sync", 5);
   const last = rehanded.journal[rehanded.journal.length - 1];
-  rehanded.journal.push({ id: last.id + 1, at: last.at, kind: "candidate.handed", lane: moved.lane, subject: "native-sync", summary: "Handed off again" });
+  rehanded.journal.push({ id: last.id + 1, at: last.at, kind: "candidate.handed", lane: moved.lane, subject: "native-sync", data: { head: moved.head, checks: [] } });
   delete rehanded.reviewEvidence;
   const heads = Object.fromEntries(handedDocument.state.queue.map((entry) => [entry.subject, entry.head]));
   const livePlan = planFor([unit("journal-sync"), unit("native-sync")], { kinds,
     evidence: Object.fromEntries(Object.entries(heads).map(([subject, head]) => [subject, { app: { state: "done", head } }])) });
   const pushed = await open(render(handedDocument, livePlan), { store: { read: "pending" }, steps: [{ push: rehanded }] });
-  expect(proofs(pushed[0].app, "native-sync").Review).toBe("done: approved");
-  expect(proofs(pushed[1].app, "native-sync")).toEqual({ Review: "stale: approved for another head", "Handed off": "done: done",
-    Merged: "open: not merged yet", "In-app check": "stale: for another head" });
+  expect(proofs(pushed[0].app, "native-sync")).toEqual(waiting);
+  expect(proofs(pushed[1].app, "native-sync")).toEqual(["stale stuck: Its approval is for an earlier commit.", "open: It still has to merge.",
+    "stale stuck: In-app check was done for an earlier commit.", "done: Done: handed off"]);
   // An available observation of the head that does not approve, or lacks a required lens, leaves the review open.
   const handedPage = render(handedDocument, livePlan);
   const observation = block(handedPage, "delivery-reviews");
@@ -415,23 +427,22 @@ test("real record shapes: a native review observation, then candidates the runne
     const changed = rewritten(change);
     expect(changed === handedPage).toBe(false);
     const [shown] = await open(changed);
-    expect([name, proofs(shown.app, "native-sync").Review]).toEqual([name, "open: not approved yet"]);
+    expect([name, proofs(shown.app, "native-sync")]).toEqual([name, reviewOpen]);
   }
   // A pushed record whose observation is unavailable, or whose digest is not the one the page holds, is no
   // observation: the journal's latest round answers, here asking for changes.
   const disagreeing = (evidence) => {
     const pushedRecord = structuredClone(handedDocument);
     const previous = pushedRecord.journal[pushedRecord.journal.length - 1];
-    pushedRecord.journal.push({ id: previous.id + 1, at: previous.at, kind: "review.round", lane: "lane-2", subject: "native-sync", summary: "native-sync: review round 3",
-      review: { round: 3, startedAt: previous.at, finishedAt: previous.at, verdicts: Object.fromEntries(LENSES.map((lens) => [lens, "changes"])), findings: { P0: 0, P1: 1, P2: 0, P3: 0 } } });
+    pushedRecord.journal.push({ id: previous.id + 1, at: previous.at, kind: "review.round", lane: "lane-2", subject: "native-sync", data: { round: 3, startedAt: previous.at, finishedAt: previous.at, verdicts: Object.fromEntries(LENSES.map((lens) => [lens, "changes"])), findings: { P0: 0, P1: 1, P2: 0, P3: 0 } } });
     pushedRecord.reviewEvidence["native-sync"] = evidence(pushedRecord.reviewEvidence["native-sync"]);
     return pushedRecord;
   };
-  for (const [name, evidence, expected] of [["consistent", (entry) => entry, "done: approved"],
-    ["another digest", (entry) => ({ ...entry, digest: "0".repeat(64) }), "open: not approved yet"],
-    ["unavailable", (entry) => ({ ...entry, unavailable: true }), "open: not approved yet"]]) {
+  for (const [name, evidence, expected] of [["consistent", (entry) => entry, waiting],
+    ["another digest", (entry) => ({ ...entry, digest: "0".repeat(64) }), reviewOpen],
+    ["unavailable", (entry) => ({ ...entry, unavailable: true }), reviewOpen]]) {
     const live = await open(handedPage, { store: { read: "pending" }, steps: [{ push: disagreeing(evidence) }] });
-    expect([name, proofs(live[1].app, "native-sync").Review]).toEqual([name, expected]);
+    expect([name, proofs(live[1].app, "native-sync")]).toEqual([name, expected]);
   }
   // Merged: both stay proven.
   const merged = await shape("merged");
@@ -444,29 +455,27 @@ test("a live page redraws the chapter from each pushed record, and says when the
   const page = render(document, plan);
   const landed = structuredClone(document);
   landed.state.queue[3].stage = "merged";
-  landed.journal.push({ id: 12, at: minute(30), kind: "review.round", lane: "lane-1", subject: "PAY-4", summary: "PAY-4: review round 2",
-    review: { round: 2, startedAt: minute(30), finishedAt: minute(30), verdicts: Object.fromEntries(LENSES.map((lens) => [lens, "approve"])), findings: { P0: 0, P1: 0, P2: 0, P3: 0 } } },
-  { id: 13, at: minute(31), kind: "candidate.merged", lane: "lane-1", subject: "PAY-4", summary: "Merged PAY-4" });
+  landed.journal.push({ id: 12, at: minute(30), kind: "review.round", lane: "lane-1", subject: "PAY-4", data: { round: 2, startedAt: minute(30), finishedAt: minute(30), verdicts: Object.fromEntries(LENSES.map((lens) => [lens, "approve"])), findings: { P0: 0, P1: 0, P2: 0, P3: 0 } } },
+  { id: 13, at: minute(31), kind: "candidate.merged", lane: "lane-1", subject: "PAY-4", data: { head: headOf("PAY-4") } });
   const replanned = structuredClone(landed);
-  replanned.journal.push({ id: 14, at: minute(40), kind: "decision.recorded", lane: null, subject: null,
-    summary: "Plan updated: 2026-10-30T13:00:00Z; added PAY-5" });
+  replanned.journal.push({ id: replanned.journal.length + 1, at: minute(40), kind: "plan.updated", lane: null, subject: null, data: { updated: "2026-10-30T13:00:00Z", changed: ["units"] } });
   const snaps = await open(page, { store: { read: "pending" }, steps: [{ push: landed }, { push: replanned }] });
   const [before, merged, notice] = snaps.map((snapshot) => snapshot.app);
   expect(title(before)).toBe("4 of 6 criteria proven.");
   expect(before.querySelector(".plan-reload")).toBeNull();
   expect(title(merged)).toBe("Every criterion is proven.");
   expect(merged.querySelector("#plan .plan-open")).toBeNull();
-  expect(merged.querySelector("#now .plan-now").textContent).toContain("6 of 6 criteria proven");
+  expect(merged.querySelector("#now .facts .plan-now-link").textContent).toBe("6 of 6 criteria proven");
   expect(merged.querySelector(".plan-reload")).toBeNull();
-  expect(notice.querySelector("#plan .plan-title .plan-reload").textContent).toBe("The plan changed. Reload to see it.");
+  expect(notice.querySelector("#plan .plan-title + .plan-reload").textContent).toBe("The plan has changed since this page was made.Reload the page");
   // A page rendered after that entry, from the plan it names, shows no notice.
   const [again] = await open(render(replanned, { ...plan, updated: "2026-10-30T13:00:00Z" }));
   expect(again.app.querySelector(".plan-reload")).toBeNull();
-  // Only the latest "Plan updated:" decision counts: here it names the plan this page holds. Another kind of entry
-  // saying the same words is no plan write.
+  // Only the latest plan update counts: here it names the plan this page holds. Another kind of entry saying the
+  // same words is no plan write.
   const settled = structuredClone(replanned);
-  settled.journal.push({ id: 15, at: minute(41), kind: "decision.recorded", lane: null, subject: null, summary: `Plan updated: ${plan.updated}; reverted` },
-    { id: 16, at: minute(42), kind: "blocker.recorded", lane: null, subject: null, summary: "Plan updated: 2026-10-30T14:00:00Z; not a plan write" });
+  settled.journal.push({ id: 15, at: minute(41), kind: "plan.updated", lane: null, subject: null, data: { updated: plan.updated, changed: ["units"] } },
+    { id: 16, at: minute(42), kind: "blocker.recorded", lane: null, subject: null, data: { text: "Plan updated: 2026-10-30T14:00:00Z; not a plan write" } });
   const later = await open(page, { store: { read: "pending" }, steps: [{ push: replanned }, { push: settled }] });
   expect(later[1].app.querySelector(".plan-reload")).toBeTruthy();
   expect(later[2].app.querySelector(".plan-reload")).toBeNull();
@@ -480,13 +489,14 @@ function replanning() {
   const { document, plan } = recordOnlyDelivery();
   const changed = { ...plan, updated: "2026-10-30T13:00:00Z", outcome: { ...plan.outcome, summary: "The outcome the changed plan states." } };
   const replanned = structuredClone(document);
-  replanned.journal.push({ id: 14, at: minute(40), kind: "decision.recorded", lane: null, subject: null, summary: `Plan updated: ${changed.updated}; a unit changed` });
+  replanned.journal.push({ id: replanned.journal.length + 1, at: minute(40), kind: "plan.updated", lane: null, subject: null, data: { updated: changed.updated, changed: ["units"] } });
   return { document, plan, page: render(document, plan), changed, replanned, after: render(replanned, changed) };
 }
 const outcome = (app) => app.querySelector("#plan .plan-outcome").textContent;
-const planNote = (app) => app.querySelector("#plan .plan-title .plan-reload")?.textContent ?? null;
-const OUT_OF_DATE = "The plan shown is out of date.";
-const RELOAD = "The plan changed. Reload to see it.";
+// Said under the headline, with the one thing the reader can do about it.
+const planNote = (app) => app.querySelector("#plan .plan-title + .plan-reload")?.textContent ?? null;
+const OUT_OF_DATE = "The plan has changed, and this page couldn't load the new one.Reload the page";
+const RELOAD = "The plan has changed since this page was made.Reload the page";
 /** A live page, its timers a hundred times quicker. */
 function live(page, rendered, steps, extra = {}) {
   return open(page, { store: { read: "pending" }, quicker: 100, rendered, steps, ...extra });
@@ -624,7 +634,7 @@ test("a live page holding a later plan than the record names keeps asking, then 
   const { document, plan } = recordOnlyDelivery();
   // The plan file is written before its journal entry, so a render can hold a plan the record doesn't name yet.
   const lagging = structuredClone(document);
-  lagging.journal.push({ id: 14, at: minute(40), kind: "decision.recorded", lane: null, subject: null, summary: "Plan updated: 2026-10-30T13:00:00Z; a unit changed" });
+  lagging.journal.push({ id: lagging.journal.length + 1, at: minute(40), kind: "plan.updated", lane: null, subject: null, data: { updated: "2026-10-30T13:00:00Z", changed: ["units"] } });
   const held = render(document, { ...plan, updated: "2026-10-30T14:00:00Z" });
   const snaps = await live(held, held, [{ push: lagging }, { asked: 15 }, { push: lagging }, QUIET]);
   expect(snaps.fetched).toHaveLength(15);
@@ -635,7 +645,7 @@ test("a live page holding a later plan than the record names keeps asking, then 
 test("a plan a server still rendering hasn't reached yet is taken when it arrives, however early the page asked", async () => {
   const { document, plan } = recordOnlyDelivery();
   const restored = structuredClone(document);
-  restored.journal.push({ id: 14, at: minute(40), kind: "decision.recorded", lane: null, subject: null, summary: `Plan updated: ${plan.updated}; restored` });
+  restored.journal.push({ id: restored.journal.length + 1, at: minute(40), kind: "plan.updated", lane: null, subject: null, data: { updated: plan.updated, changed: ["units"] } });
   const later = { ...plan, updated: "2026-10-30T14:00:00Z", outcome: { ...plan.outcome, summary: "The later plan's outcome." } };
   const held = render(document, later);
   const server = holding((n) => (n <= 3 ? held : render(restored, plan)), 4);
@@ -648,10 +658,11 @@ test("a plan a server still rendering hasn't reached yet is taken when it arrive
 
 test("a name the page rested on is followed again when the record comes back to it", async () => {
   const { document, plan } = recordOnlyDelivery();
-  const name = (record, id, stamp) => { const next = structuredClone(record); next.journal.push({ id, at: minute(40 + id), kind: "decision.recorded", lane: null, subject: null, summary: `Plan updated: ${stamp}; a change` }); return next; };
-  const first = name(document, 14, "2026-10-30T13:00:00Z");
-  const third = name(first, 15, "2026-10-30T15:00:00Z");
-  const fourth = name(third, 16, "2026-10-30T13:00:00Z");
+  const name = (record, stamp) => { const next = structuredClone(record); const id = next.journal.length + 1;
+    next.journal.push({ id, at: minute(40 + id), kind: "plan.updated", lane: null, subject: null, data: { updated: stamp, changed: ["units"] } }); return next; };
+  const first = name(document, "2026-10-30T13:00:00Z");
+  const third = name(first, "2026-10-30T15:00:00Z");
+  const fourth = name(third, "2026-10-30T13:00:00Z");
   const held = render(document, { ...plan, updated: "2026-10-30T14:00:00Z" });
   const latest = render(third, { ...plan, updated: "2026-10-30T15:00:00Z" });
   const restored = render(fourth, { ...plan, updated: "2026-10-30T13:00:00Z", outcome: { ...plan.outcome, summary: "The restored outcome." } });
@@ -664,7 +675,7 @@ test("a name the page rested on is followed again when the record comes back to 
 test("once out of date, an answer holding the plan in use says it is current after all", async () => {
   const { document, plan } = recordOnlyDelivery();
   const lagging = structuredClone(document);
-  lagging.journal.push({ id: 14, at: minute(40), kind: "decision.recorded", lane: null, subject: null, summary: "Plan updated: 2026-10-30T13:00:00Z; a unit changed" });
+  lagging.journal.push({ id: lagging.journal.length + 1, at: minute(40), kind: "plan.updated", lane: null, subject: null, data: { updated: "2026-10-30T13:00:00Z", changed: ["units"] } });
   const held = render(document, { ...plan, updated: "2026-10-30T14:00:00Z" });
   const server = downThenHeld(held);
   const snaps = await live(held, server.rendered, [{ push: lagging }, { ...STALL, asked: 1 }, { ...server.release, asked: 2 }], { quicker: 500 });
@@ -695,7 +706,7 @@ test("a later plan that can't be drawn goes back too, with the note", async () =
 test("each newly named plan gets its own patience", async () => {
   const { page, replanned } = replanning();
   const again = structuredClone(replanned);
-  again.journal.push({ id: 15, at: minute(41), kind: "decision.recorded", lane: null, subject: null, summary: "Plan updated: 2026-10-30T13:30:00Z; another change" });
+  again.journal.push({ id: again.journal.length + 1, at: minute(41), kind: "plan.updated", lane: null, subject: null, data: { updated: "2026-10-30T13:30:00Z", changed: ["units"] } });
   // The fifteenth ask is still waiting when the record names the next plan, so its answer is that plan's first try.
   const server = holding(() => page, 15, 29, 30);
   const snaps = await live(page, server.rendered,
@@ -708,7 +719,7 @@ test("a live page takes an earlier plan when the server holds the one the record
   const { document, plan } = recordOnlyDelivery();
   // A restored file keeps its old stamp, or a producer's clock is behind: the record still names what is current.
   const restored = structuredClone(document);
-  restored.journal.push({ id: 14, at: minute(40), kind: "decision.recorded", lane: null, subject: null, summary: `Plan updated: ${plan.updated}; restored` });
+  restored.journal.push({ id: restored.journal.length + 1, at: minute(40), kind: "plan.updated", lane: null, subject: null, data: { updated: plan.updated, changed: ["units"] } });
   const later = { ...plan, updated: "2026-10-30T14:00:00Z", outcome: { ...plan.outcome, summary: "The later plan's outcome." } };
   const snaps = await live(render(document, later), render(restored, plan), [{ push: restored }, SETTLE]);
   expect(outcome(snaps[0].app)).toBe("The later plan's outcome.");
@@ -719,7 +730,7 @@ test("a live page takes an earlier plan when the server holds the one the record
 test("a newly named plan clears the note and asks again at once, not after the long wait", async () => {
   const { page, plan, changed, replanned } = replanning();
   const again = structuredClone(replanned);
-  again.journal.push({ id: 15, at: minute(41), kind: "decision.recorded", lane: null, subject: null, summary: "Plan updated: 2026-10-30T13:30:00Z; another change" });
+  again.journal.push({ id: again.journal.length + 1, at: minute(41), kind: "plan.updated", lane: null, subject: null, data: { updated: "2026-10-30T13:30:00Z", changed: ["units"] } });
   const second = render(again, { ...changed, updated: "2026-10-30T13:30:00Z", outcome: { ...plan.outcome, summary: "The second change's outcome." } });
   let asked = 0;
   // At this speed a new ask comes in 50ms and the long wait takes 1500ms, so the last step ends inside the long wait.
@@ -743,7 +754,7 @@ test("a push during an ask starts no second ask, and the answer still lands", as
 test("an answer arriving after the record stopped naming another plan is dropped", async () => {
   const { page, plan, replanned, after } = replanning();
   const settled = structuredClone(replanned);
-  settled.journal.push({ id: 15, at: minute(41), kind: "decision.recorded", lane: null, subject: null, summary: `Plan updated: ${plan.updated}; reverted` });
+  settled.journal.push({ id: settled.journal.length + 1, at: minute(41), kind: "plan.updated", lane: null, subject: null, data: { updated: plan.updated, changed: ["units"] } });
   let release;
   const held = new Promise((resolve) => { release = resolve; });
   const snaps = await live(page, () => held, [{ push: replanned }, SETTLE, { push: settled }, { run: () => release(after) }, QUIET]);
@@ -825,7 +836,8 @@ test("a static page has no server to ask, and keeps the note", async () => {
 test("open folds survive the refresh", async () => {
   const { page, replanned, after } = replanning();
   const units = '#plan .plan-fold[data-fold="units"]';
-  const snaps = await live(page, after, [{ toggle: units }, { push: replanned }, SETTLE]);
+  // Opened as a reader opens it, by its summary.
+  const snaps = await live(page, after, [{ click: `${units} > summary` }, { push: replanned }, SETTLE]);
   expect(snaps[1].app.querySelector(units).hasAttribute("open")).toBe(true);
   expect(outcome(snaps[3].app)).toBe("The outcome the changed plan states.");
   expect(snaps[3].app.querySelector(units).hasAttribute("open")).toBe(true);
@@ -885,7 +897,8 @@ test("each fold stays open across redraws and is remembered, with or without sto
   const page = render(document, plan);
   const names = ["units", "changes", "waived", "approvals", "out", "outcome"];
   for (const storage of [true, false]) {
-    const steps = [...names.map((name) => ({ toggle: `.plan-fold[data-fold="${name}"]` })), { push: document }];
+    // Each opened as a reader opens it, by its summary.
+    const steps = [...names.map((name) => ({ click: `.plan-fold[data-fold="${name}"] > summary` })), { push: document }];
     // Storage needs an address; the page is served at its /view/ address, as the live server serves it.
     const snaps = await open(page, { store: { read: "pending" }, ...(storage ? { rendered: page } : { storage: false }), steps });
     const last = snaps[snaps.length - 1].app;
@@ -908,8 +921,8 @@ test("each stop on the line opens its unit in the chapter, in the open list or i
   let snaps = await open(page, { steps: [{ click: '.stop-btn[data-subject="CART-105"]' }, { click: "#detail .d-plan" }] });
   expect(snaps[1].app.querySelector("#detail .d-plan").textContent).toBe("See in the plan");
   expect(snaps[1].app.querySelector("#detail .d-plan-row").className).toBe("d-plan-row");
-  expect(snaps[1].app.querySelector("#detail .d-plan-row .pu-standing").textContent).toBe("2 open");
-  expect(snaps[1].app.querySelector("#detail .d-plan-next").textContent).toBe("Merged: not merged yet");
+  expect(snaps[1].app.querySelector("#detail .d-plan-row .pu-standing").textContent).toBe("2 proofs left");
+  expect(snaps[1].app.querySelector("#detail .d-plan-next").textContent).toBe("It still has to merge.");
   expect(snaps[2].focused).toBe("li");
   expect(snaps[2].app.querySelector('.plan-fold[data-fold="units"]').open).toBe(false);
   snaps = await open(page, { steps: [{ click: '.stop-btn[data-subject="CART-101"]' }, { click: "#detail .d-plan" }] });
@@ -948,38 +961,43 @@ test("on a phone each unit is a card with labelled proofs, and both themes colou
     const defined = rule(scope);
     for (const token of tokens.filter((name) => !["display", "text", "ease", "mono"].includes(name))) expect([scope, token, defined.includes(`--${token}:`)]).toEqual([scope, token, true]);
   }
-  // Every owed proof names its kind, since one status column carries them all.
+  // Every owed proof names its kind, since one status column carries them all: here each is done, and the one done line
+  // names each.
   const { document, plan } = recordOnlyDelivery();
   const app = await first(document, plan);
   const row = app.querySelector(".plan-all .plan-unit");
-  expect([...row.querySelectorAll(".plan-proof .pp-kind")].map((node) => node.textContent).sort()).toEqual(["Handed off", "Merged", "Review"]);
+  expect([...row.querySelectorAll(".plan-proof")].map((node) => node.textContent)).toEqual(["Review · Handed off · Merged"]);
   const inApp = inAppDelivery();
-  expect((await first(inApp.document, inApp.plan)).querySelector(".plan-all .plan-unit").querySelectorAll(".plan-proof")).toHaveLength(4);
+  expect([...(await first(inApp.document, inApp.plan)).querySelector(".plan-all .plan-unit").querySelectorAll(".plan-proof")].map((node) => node.textContent))
+    .toEqual(["Review · Handed off · Merged · In-app check"]);
 });
 
 test("each unit's status says where it stands, puts what is open first, and its name carries its ticket", async () => {
   const cell = (app, subject) => [...app.querySelectorAll("#plan .plan-all .plan-unit")]
     .find((entry) => entry.querySelector("[data-ticket]").getAttribute("data-ticket") === subject);
   const standing = (app, subject) => cell(app, subject).querySelector(".pu-standing").textContent;
-  const order = (app, subject) => [...cell(app, subject).querySelectorAll(".plan-proof .pp-kind")].map((node) => node.textContent);
+  // Each open proof is a sentence of its own, first; what is finished reads as one line after them.
+  const order = (app, subject) => [...cell(app, subject).querySelectorAll(".plan-proof")].map((node) => node.textContent);
   const plan = planFor([unit("A"), unit("B"), unit("C", { label: "Card retry" })], { finish: [] });
   const app = await first(record({
     queue: [item("A", "merged"), item("B", "merged", { head: headOf("B", 1) }), item("C", "queued", { pending: true })],
     journal: journal([[10, "approve", "A"], [11, "candidate.handed", "A"], [12, "candidate.merged", "A"], [13, "approve", "B"], [14, "candidate.handed", "B"],
-      [15, "candidate.merged", "B"], [16, "candidate.handed", "B", { head: headOf("B", 1) }], [17, "approve", "C"], [18, "candidate.handed", "C"]]) }), plan);
+      [15, "candidate.merged", "B"], [16, "candidate.handed", "B", { data: { head: headOf("B", 1) } }], [17, "approve", "C"], [18, "candidate.handed", "C"]]) }), plan);
   expect(standing(app, "A")).toBe("Proven");
   expect(cell(app, "A").classList.contains("proven")).toBe(true);
-  expect(order(app, "A")).toEqual(["Review", "Handed off", "Merged"]);
-  expect(standing(app, "B")).toBe("Merged, 1 open");
-  expect(order(app, "B")).toEqual(["Review", "Handed off", "Merged"]);
-  expect(standing(app, "C")).toBe("2 open");
-  expect(order(app, "C")).toEqual(["Handed off", "Merged", "Review"]);
+  expect(order(app, "A")).toEqual(["Review · Handed off · Merged"]);
+  expect(standing(app, "B")).toBe("Merged, 1 proof left");
+  expect(order(app, "B")).toEqual(["Its approval is for an earlier commit.", "Done: handed off, merged"]);
+  expect(standing(app, "C")).toBe("2 proofs left");
+  expect(order(app, "C")).toEqual(["It's waiting for the lead to accept it.", "It still has to merge.", "Done: review"]);
+  // Only the unit a stale or stopped proof holds up is marked stuck: not a proven one, nor one whose open proofs can move.
+  expect(["A", "B", "C"].map((subject) => cell(app, subject).classList.contains("stuck"))).toEqual([false, true, false]);
   expect(cell(app, "C").querySelector(".pu-key").textContent).toBe("C");
   expect(cell(app, "A").querySelector(".pu-key")).toBeNull();
   expect(app.querySelector("#plan .plan-grid-head").textContent).toBe("UnitCriteriaStatus");
 });
 
-test("a meter names what it counts, a line with nothing to count has no bar, and met with open proofs says both", async () => {
+test("a meter names what it counts, a line with nothing to count is the lead's mark with an all-or-nothing bar, and met with open proofs says both", async () => {
   const { document, plan } = proven(["A", "B"], { finish: [finishLine("landed", { criteria: "all", proofs: ["merged"] }, { label: "Landed" }),
     finishLine("everything", { criteria: "all", proofs: [] }, { label: "Everything" }), finishLine("closed", { criteria: [], proofs: [] }, { label: "Closed out" }),
     finishLine("closed-early", { criteria: [], proofs: [] }, { label: "Not closed" })], queue: [item("A", "merged"), item("B", "queued")] });
@@ -988,9 +1006,10 @@ test("a meter names what it counts, a line with nothing to count has no bar, and
   const app = await first(document, plan);
   const meters = [...app.querySelectorAll("#left .plan-meter")];
   expect(meters.map((meter) => [meter.className, meter.textContent])).toEqual([
-    ["plan-meter open", "LandedMet, proofs openMerged: 1 of 2 criteria"], ["plan-meter", "EverythingNot metProven: 1 of 2 criteria"],
-    ["plan-meter met", "Closed outMetRecorded by the lead, not counted from proofs"], ["plan-meter", "Not closedNot metRecorded by the lead, not counted from proofs"]]);
-  expect(meters.map((meter) => meter.querySelector(".pm-bar") !== null)).toEqual([true, true, false, false]);
+    ["plan-meter open", "LandedMet, proofs open1 of 2 criteria · merged"], ["plan-meter", "EverythingNot yet1 of 2 criteria proven"],
+    ["plan-meter met", "Closed outMetMarked met by the lead"], ["plan-meter", "Not closedNot yetThe lead marks this one"]]);
+  // A line with nothing to count is whole when the lead marked it met and empty until then, never part-way.
+  expect(meters.map((meter) => meter.querySelector(".pm-bar .pm-done").style.width)).toEqual(["50%", "50%", "100%", "0%"]);
 });
 
 test("a closed delivery reads as closed, and work resuming after the close reopens it", async () => {
@@ -1006,8 +1025,10 @@ test("a closed delivery reads as closed, and work resuming after the close reope
 
   const app = await first(closing([...landed, close]), plan);
   expect(app.querySelector("#now .title").textContent).toBe("Delivered.");
-  expect(app.querySelector("#now .since").className).toBe("since closed");
-  expect(app.querySelector("#now .since").textContent).toMatch(/^Closed /);
+  expect(app.querySelector("#now .since").className).toBe("fact since closed");
+  // Its state is a fact of its own: the label says closed, and the value when and after how long.
+  expect(app.querySelector("#now .since .fact-label").textContent).toBe("Closed");
+  expect(app.querySelector("#now .since .fact-value").textContent).toBe("5 hours ago, after 30 minutes");
   expect(app.querySelector("#now .attention")).toBeNull();
   expect(app.querySelector("#left .left-number")).toBeNull();
   expect(app.querySelector("#left .title").textContent).toBe("Nothing left to land.");
@@ -1072,20 +1093,25 @@ test("what a closed delivery claims holds in every state the record can leave it
     expect([kind, titleOf(await first(closing([...landed, close, [50, kind, "A"]], [item("A", "merged")])))]).toEqual([kind, "Every piece has landed."]);
   }
   for (const kind of ["review.round", "check.finished", "decision.recorded", "candidate.merged"]) {
-    expect([kind, titleOf(await first(closing([...landed, close, [50, kind, "A", kind === "review.round" ? { review: { round: 2 } } : {}]], [item("A", "merged")])))]).toEqual([kind, "Delivered."]);
+    expect([kind, titleOf(await first(closing([...landed, close, [50, kind, "A", kind === "review.round" ? { round: 2 } : {}]], [item("A", "merged")])))]).toEqual([kind, "Delivered."]);
   }
 
   // Losing the page's connection still shows, and a close time the clock can't call past stands alone.
   const closedRecord = closing([...landed, close], [item("A", "merged")]);
   const [connected, lost] = await open(render(closedRecord), { store: { read: "pending" }, steps: [{ push: closedRecord }, { status: false }] }).then((snaps) => [snaps[1], snaps[2]]);
-  expect(connected.app.querySelector("#now .since").className).toBe("since closed");
+  expect(connected.app.querySelector("#now .since").className).toBe("fact since closed");
   expect(lost.app.querySelector("#now .since").textContent).toContain("Reconnecting. Showing the last update.");
   const future = closing([...landed], [item("A", "merged")]);
-  future.journal.push({ id: 90, at: "2999-01-01T00:00:00Z", kind: "delivery.closed", lane: null, subject: "A", summary: "closed" });
-  expect((await first(future)).querySelector("#now .since").textContent).toMatch(/^Closed( · base \w+)?$/);
+  future.journal.push({ id: future.journal.length + 1, at: "2999-01-01T00:00:00Z", kind: "delivery.closed", lane: null, subject: "A", data: {} });
+  // Ahead of the clock it has no "ago"; its total is still the record's own, between two times it holds.
+  expect((await first(future)).querySelector("#now .since .fact-value").textContent).toMatch(/^took \d+ days$/);
+  // A journal that no longer holds its first entry has no honest total, only when it closed.
+  const trimmed = closing([...landed, close], [item("A", "merged")]);
+  trimmed.journal = trimmed.journal.slice(1);
+  expect((await first(trimmed)).querySelector("#now .since .fact-value").textContent).toMatch(/^\d+ hours ago$/);
   const timeless = closing([...landed], [item("A", "merged")]);
-  timeless.journal.push({ id: 90, at: null, kind: "delivery.closed", lane: null, subject: "A", summary: "closed" });
-  expect((await first(timeless)).querySelector("#now .since").textContent).toMatch(/^Closed( · base \w+)?$/);
+  timeless.journal.push({ id: timeless.journal.length + 1, at: null, kind: "delivery.closed", lane: null, subject: "A", data: {} });
+  expect((await first(timeless)).querySelector("#now .since").textContent).toBe("ClosedNothing more will land");
 });
 
 test("a closed delivery's bar, dots, stops, legend and attention all agree with its count", async () => {
@@ -1097,7 +1123,7 @@ test("a closed delivery's bar, dots, stops, legend and attention all agree with 
   document.state.finish = [];
   document.estimates = { C: { position: 1, expectedStart: minute(99) } };
   document.state.meta = { ...document.state.meta, sources: { tracker: { status: "stale", reason: "gone" } }, hold: { reason: "paused" } };
-  document.journal.push({ id: 90, at: minute(30), kind: "base.broken", lane: null, subject: null, summary: "Main is red" }, { ...document.journal.find((entry) => entry.kind === "delivery.closed"), id: 91, at: minute(41) });
+  document.journal.push({ id: document.journal.length + 1, at: minute(30), kind: "base.broken", lane: null, subject: null, data: { source: "queue", detail: "Main is red" } }, { ...document.journal.find((entry) => entry.kind === "delivery.closed"), id: document.journal.length + 2, at: minute(41) });
   const plan = planFor(["A", "B", "C", "D", "E", "F"].map((subject) => unit(subject)), { finish: [] });
   const [shown, stop] = await open(render(document, plan), { steps: [{ click: '.stop-btn[data-subject="C"]' }] });
   const app = shown.app;
@@ -1158,11 +1184,11 @@ test("standing and stop wording hold without a merged proof, with a waiver besid
   const without = await first(record({ queue: [item("A", "queued")], journal: journal(landed) }), noMerged);
   const standing = (app, subject) => [...app.querySelectorAll("#plan .plan-all .plan-unit")]
     .find((entry) => entry.querySelector("[data-ticket]").getAttribute("data-ticket") === subject).querySelector(".pu-standing").textContent;
-  expect(standing(without, "B")).toBe("1 open");
+  expect(standing(without, "B")).toBe("1 proof left");
 
   const waived = proven(["A"], { kinds: [...RECORD_KINDS, APP_KIND], queue: [item("A", "queued")], extraSteps: [],
     evidence: { A: { app: { state: "waived", head: headOf("A"), reason: "No device." } } } });
-  expect(standing(await first(waived.document, waived.plan), "A")).toBe("1 open");
+  expect(standing(await first(waived.document, waived.plan), "A")).toBe("1 proof left");
 
   const removedPlan = planFor([unit("A", { removed: true })], { finish: [] });
   const [, removedStop] = await open(render(record({ queue: [item("A", "merged")], journal: journal([...landed, [12, "candidate.merged", "A"]]) }), removedPlan), { steps: [{ click: '.stop-btn[data-subject="A"]' }] });
@@ -1172,7 +1198,7 @@ test("standing and stop wording hold without a merged proof, with a waiver besid
   const settled = proven(["A", "B"], { kinds: [...RECORD_KINDS, APP_KIND], finish: [finishLine("checked", { criteria: "all", proofs: ["app"] }, { label: "Checked" })],
     evidence: { A: { app: { state: "waived", head: headOf("A"), reason: "No device." } }, B: { app: { state: "waived", head: headOf("B"), reason: "No device." } } } });
   settled.document.state.finish = [{ id: "checked", text: "Checked", met: false }];
-  expect((await first(settled.document, settled.plan)).querySelector("#left .plan-meter .pm-state").textContent).toBe("Not marked met");
+  expect((await first(settled.document, settled.plan)).querySelector("#left .plan-meter .pm-state").textContent).toBe("Ready to mark");
 });
 
 test("a waived proof is settled on a meter, a removed unit owes nothing, and a full count not marked met says so", async () => {
@@ -1246,14 +1272,16 @@ test("a plan unit's review proof holds at the head the lead carried its evidence
     const entry = document.state.queue.find((item) => item.subject === "native-sync");
     entry.head = next;
     const last = document.journal[document.journal.length - 1];
-    document.journal.push({ id: last.id + 1, at: last.at, kind: "candidate.handed", lane: entry.lane, subject: "native-sync", summary: "Handed off again" });
+    document.journal.push({ id: last.id + 1, at: last.at, kind: "candidate.handed", lane: entry.lane, subject: "native-sync", data: { head: entry.head, checks: [] } });
     if (carried) { document.reviewEvidence["native-sync"].carried = carried; }
     return document;
   };
   const plan = planFor([unit("journal-sync"), unit("native-sync")], { kinds });
   const carry = { from: reviewed, to: next, note: "The lead carried native-sync's review: only a fixture changed" };
-  const review = async (document) => proofs(await first(document, plan), "native-sync").Review;
-  expect(await review(moved(carry))).toBe("done: approved");
-  expect(await review(moved(null))).toBe("stale: approved for another head");
-  expect(await review(moved({ ...carry, to: headOf("native-sync", 8) }))).toBe("stale: approved for another head");
+  const review = async (document) => proofs(await first(document, plan), "native-sync");
+  const approved = ["open: It still has to merge.", "todo: In-app check is still to do.", "done: Done: review, handed off"];
+  const stale = ["stale stuck: Its approval is for an earlier commit.", "open: It still has to merge.", "todo: In-app check is still to do.", "done: Done: handed off"];
+  expect(await review(moved(carry))).toEqual(approved);
+  expect(await review(moved(null))).toEqual(stale);
+  expect(await review(moved({ ...carry, to: headOf("native-sync", 8) }))).toEqual(stale);
 });

@@ -29,6 +29,7 @@ import copy
 import datetime
 import fnmatch
 import functools
+import importlib.util
 import json
 import math
 import posixpath
@@ -50,6 +51,18 @@ if os.name == "nt":
     import msvcrt
 else:
     import fcntl
+
+
+def _sibling(name: str):
+    # Loaded by its own path, so a copy of this script beside another release's reads its own registry.
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().parent / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# What describes each kind of journal entry: read through journal_words.REGISTRY_FILE, which a test may replace.
+journal_words = _sibling("journal_words")
 
 
 STATE_FILE = "state.json"
@@ -91,7 +104,17 @@ RUNNER_LANE = ("focus", "state", "waitingOn", "since")
 # A review round is the lead's or a lane's record of its own review; the runner
 # never reviews, so it never writes one.
 REVIEW_KIND = "review.round"
+# The lead's authorization of a base merge into a story branch, whose token the tool adds.
+AUTHORIZATION_KIND = "base.merge.authorized"
+# The capture of a lane's own review outcomes, kept for display and for a carry.
+CAPTURE_KIND = "review.recorded"
+# Kinds that are about one story, and say which.
+SUBJECT_KINDS = (CAPTURE_KIND, "review.carried", AUTHORIZATION_KIND)
 SEVERITIES = ("P0", "P1", "P2", "P3")
+# The releases that read a journal in the older shape, whose entries carry a sentence, or no data.
+OLD_JOURNAL_READER = "a 2.x release"
+# Kinds an adopter's own registry may name; this one never does.
+RESERVED_PREFIX = "x."
 LOCK_TIMEOUT_SECONDS = 30.0
 
 # Arrays whose elements a patch may select, and the field that names each one.
@@ -115,8 +138,6 @@ HANDOFF_QUEUE = ("evidence", "acceptedRegionPaths")
 SELECT_QUEUE = ("leadSelection",)
 # Written only by the lead's repair command, and cleared by the tool when base.repaired is journaled.
 REPAIR_QUEUE = ("repair",)
-# The base head a base_broken stop names: its detail ends "also fails on <base> at <head>".
-BROKEN_AT = re.compile(r" at ([0-9a-f]{40}(?:[0-9a-f]{24})?)\b")
 EVIDENCE_FIELDS = ("check", "definition", "head", "tree", "result")
 EVIDENCE_COMMIT = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
 EVIDENCE_DEFINITION = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -595,10 +616,15 @@ def state_errors(state: object) -> list[str]:
     return errors
 
 
-def journal_errors(entries: list[object]) -> list[str]:
-    schema = load_schema("delivery-journal/1")
+def journal_errors(entries: list[object], registry: dict | None = None) -> list[str]:
+    schema = load_schema("delivery-journal/2")
+    registry = kinds_registry() if registry is None else registry
     errors = []
     for index, entry in enumerate(entries):
+        if isinstance(entry, dict) and ("summary" in entry or "data" not in entry):
+            errors.append(f"entry {index + 1}: in the older journal shape, with a sentence or without data, "
+                          f"which {OLD_JOURNAL_READER} reads: close the delivery under that release")
+            continue
         found = validate(entry, schema)
         errors.extend(f"entry {index + 1}{error}" for error in found)
         if isinstance(entry, dict) and entry.get("id") != index + 1:
@@ -609,41 +635,83 @@ def journal_errors(entries: list[object]) -> list[str]:
             except ValueError:
                 # The pattern admits dates that do not exist; the stats read every time.
                 errors.append(f"entry {index + 1}/at: not a real time")
+            problems = _kind_problems(entry, entries[:index], registry)
+            errors.extend(f"entry {index + 1}{problem}" for problem in problems)
+            if problems:
+                continue
             errors.extend(f"entry {index + 1}: {problem}" for problem in _review_problems(entry))
-            if (entry["kind"] == "review.evidence") != ("reviewArtifact" in entry) or (entry["kind"] == "review.evidence" and entry["subject"] is None):
-                errors.append(f"entry {index + 1}: review.evidence names its subject and artifact")
-            if "baseMergeAuthorization" in entry:
-                if (entry["kind"] != "decision.recorded" or not entry["subject"] or not entry["lane"]
-                        or not entry["baseMergeAuthorization"]["baseCommits"]):
-                    errors.append(f"entry {index + 1}: a base merge authorization names a story, lane and base commits")
-            if "reviewCarry" in entry:
-                expected = "candidate.handed" if "baseCommits" in entry["reviewCarry"] else "decision.recorded"
-                if (entry["kind"] != expected or not entry["subject"]
-                        or expected == "candidate.handed" and not entry["reviewCarry"]["baseCommits"]):
-                    message = ("only a decision about a subject carries its review" if expected == "decision.recorded"
-                               else "a base merge carry belongs to a hand-off naming its story and base commits")
-                    errors.append(f"entry {index + 1}: {message}")
+            if entry["kind"] in SUBJECT_KINDS and not entry["subject"]:
+                errors.append(f"entry {index + 1}: a {entry['kind']} names its story")
+            if entry["kind"] == AUTHORIZATION_KIND and (not entry["lane"] or not entry["data"]["baseCommits"]):
+                errors.append(f"entry {index + 1}: a base merge authorization names a lane and base commits")
+            if "baseCommits" in entry["data"].get("carry", {}) and not entry["data"]["carry"]["baseCommits"]:
+                errors.append(f"entry {index + 1}: a base merge carry names its base commits")
             if "occurredAt" in entry:
-                if entry["kind"] != "candidate.merged":
-                    errors.append(f"entry {index + 1}: only a merge carries occurredAt")
                 if entry["occurredAt"] is not None:
                     try:
                         if _parse_time(entry["occurredAt"], exact=True) > _parse_time(entry["at"], exact=True):
                             errors.append(f"entry {index + 1}: occurrence follows observation")
                     except ValueError:
                         errors.append(f"entry {index + 1}/occurredAt: not a real time")
-            if "recovery" in entry and (entry["kind"] != "candidate.merged" or "occurredAt" not in entry):
+            if "recovery" in entry["data"] and "occurredAt" not in entry:
                 errors.append(f"entry {index + 1}: only a recovered merge carries source identity")
     return errors
 
 
+def kinds_registry() -> dict:
+    """The registry of kinds, read where journal_words finds it, with its types checked as schemas."""
+    try:
+        registry = journal_words.load_registry()
+        for name, node in registry["types"].items():
+            _check_schema(node, f"journal-kinds types/{name}", {"$defs": registry["types"]})
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
+        raise StateError("registry_invalid", f"the registry of kinds at {journal_words.REGISTRY_FILE} cannot be read: {error}") from None
+    return registry
+
+
+def data_schema(kind: dict) -> dict:
+    """The schema a kind's data has, its fields typed by the registry's types."""
+    return {"type": "object", "additionalProperties": False,
+            "required": [name for name, field in kind["data"].items() if not field.get("optional")],
+            "properties": {name: {"$ref": f"#/$defs/{field['type']}"} for name, field in kind["data"].items()}}
+
+
+def _kind_problems(entry: dict, earlier: list[object], registry: dict) -> list[str]:
+    """What the registry says about one entry: its kind, its facts and its links."""
+    kind = entry["kind"]
+    if kind.startswith(RESERVED_PREFIX):
+        return [f"/kind: {kind} is reserved: kinds beginning {RESERVED_PREFIX} are an adopter's own, and this registry has none"]
+    described = registry["kinds"].get(kind)
+    if described is None:
+        return [f"/kind: no kind named {kind} in the registry"]
+    # A pointer is relative to data: "/" is data itself, "/head" its head.
+    problems = ["/data" + (error[1:] if error.startswith("/:") else error)
+                for error in _errors(entry["data"], data_schema(described), {"$defs": registry["types"]}, ())]
+    if described["because"]["required"] and not entry.get("because"):
+        problems.append(f"/because: a {kind} names what caused it")
+    earlier_kinds = {item.get("id"): item.get("kind") for item in earlier if isinstance(item, dict)}
+    for link in ("because", "answers"):
+        ids = entry.get(link, [])
+        if len(set(ids)) != len(ids):
+            problems.append(f"/{link}: names an entry twice")
+        for target in ids:
+            if target not in earlier_kinds or target >= entry["id"]:
+                problems.append(f"/{link}: entry {target} is not an earlier entry of this journal")
+            elif link == "answers" and earlier_kinds[target] not in described["answers"]:
+                problems.append(f"/answers: a {kind} does not answer a {earlier_kinds[target]}")
+    return problems
+
+
+def review_round(entry: dict) -> dict:
+    """A review round's own record, its facts."""
+    return entry["data"]
+
+
 def _review_problems(entry: dict) -> list[str]:
-    """What the schema cannot say about a review round."""
-    review = entry.get("review")
+    """What the registry cannot say about a review round, whose facts it has checked."""
     if entry["kind"] != REVIEW_KIND:
-        return [] if review is None else [f"only a {REVIEW_KIND} entry carries a review"]
-    if review is None:
-        return [f"a {REVIEW_KIND} entry carries its review"]
+        return []
+    review = entry["data"]
     problems = []
     if entry["subject"] is None:
         problems.append(f"a {REVIEW_KIND} entry names the candidate it reviewed")
@@ -736,9 +804,9 @@ def complete_base_move_locked(directory: Path, *, from_head: str, to_head: str, 
     with file_lock(directory / WRITER_LOCK), file_lock(directory / STATE_LOCK):
         current = read_state(directory)
         entries = read_journal(directory)
-        summary = f"Base moved from {from_head} to {to_head} by merging {default_head}: {reason}"
+        facts = {"from": from_head, "to": to_head, "merged": default_head, "why": reason}
         entry = {"id": len(entries) + 1, "at": now(), "kind": "base.moved", "subject": None,
-                 "lane": None, "summary": summary}
+                 "lane": None, "data": facts}
         errors = journal_errors([*entries, entry])
         if errors:
             raise StateError("entry_invalid", "; ".join(errors))
@@ -761,9 +829,14 @@ def complete_base_move_locked(directory: Path, *, from_head: str, to_head: str, 
             if current["meta"].get("writerGeneration") != running:
                 _note_change(directory, "writer-upgrade", version=updated["version"])
             _note_change(directory, "base-move", version=updated["version"])
-        if not any(item["kind"] == "base.moved" and item["summary"] == summary for item in entries):
+        if not any(item["kind"] == "base.moved" and _same_move(item, facts) for item in entries):
             _append_journal_locked(directory, updated, entries, entry)
         return updated
+
+
+def _same_move(entry: dict, facts: dict) -> bool:
+    """Whether a base.moved entry records this move, by its commits."""
+    return all(entry["data"].get(key) == facts[key] for key in ("from", "to", "merged"))
 
 
 def upgrade_writer(directory: Path, *, expected: str, reason: str) -> dict:
@@ -810,7 +883,7 @@ def read_state(directory: Path, *, for_write: bool = False) -> dict:
 def _journal_text(directory: Path) -> tuple[str, int]:
     """The journal's complete lines, and the byte length they occupy.
 
-    Lines end only at "\n": a summary may carry other line separators. A
+    Lines end only at "\n": an entry's words may carry other line separators. A
     final segment without its newline is an append that never finished; it is
     left out, and the next append replaces it.
     """
@@ -1297,9 +1370,10 @@ def handoff(
         raise StateError("handoff_invalid", "; ".join(problems))
 
     carried = None
+    stopped = False
 
     def change(state: dict) -> dict:
-        nonlocal carried
+        nonlocal carried, stopped
         if lane not in [entry["id"] for entry in state["lanes"]]:
             raise StateError("writer_not_owned", f"there is no lane {lane}")
         if run is not None:
@@ -1315,6 +1389,7 @@ def handoff(
                 raise StateError("writer_not_owned", f"{subject} belongs to {authorized_lane}, not {lane}")
             if queued["stage"] not in ("queued", "stopped"):
                 raise StateError("handoff_invalid", f"{subject} is {queued['stage']}; hand it off once it stops")
+            stopped = queued["stage"] == "stopped"
             queued.update(stage="queued", lane=lane, head=head, syncedHead=None, checks=[], changeRequest=change_request)
             queued.pop("checkSelection", None)
             # A lead selection is for the head it was made at; new code is never checked with it.
@@ -1373,16 +1448,30 @@ def handoff(
         return copy.deepcopy(item)
 
     _, item = _tool_write(directory, change)
-    waiting = "; waiting for the lead to accept it" if item.get("pending") else ""
-    rounds_text = f" after {rounds} review rounds" if rounds is not None else ""
-    proof = "".join(f"; suite evidence for {entry['check']} ({entry['result']}) at {entry['head']}"
-                    for entry in evidence or [])
-    ran = f"; the lane ran {', '.join(checks)}" if checks else ""
-    carry_text = (f"; review carried from {carried['from']} to {head} across base commits "
-                  f"{', '.join(carried['baseCommits'])}" if carried else "")
-    append_journal(directory, kind="candidate.handed", lane=lane, subject=subject, review_carry=carried,
-                   summary=f"{lane} handed {subject} at {head} ({change_request}){rounds_text}{proof}{ran}{waiting}{carry_text}")
+    facts: dict = {"head": head, "changeRequest": change_request, "checks": list(checks or [])}
+    if rounds is not None:
+        facts["rounds"] = rounds
+    if evidence:
+        facts["evidence"] = [{key: entry[key] for key in EVIDENCE_FIELDS} for entry in evidence]
+    if carried:
+        facts["carry"] = dict(carried)
+    # A hand-off for a stopped piece answers the stop standing for it.
+    stop = standing_stop(read_journal(directory), subject) if stopped else None
+    append_journal(directory, kind="candidate.handed", lane=lane, subject=subject, data=facts,
+                   answers=[stop["id"]] if stop else None)
     return item  # type: ignore[return-value]
+
+
+def standing_stop(journal: list[dict], subject: str) -> dict | None:
+    """The stop standing for a subject: its latest candidate.stopped, when no hand-off or merge has come since."""
+    for entry in reversed(journal):
+        if entry["subject"] != subject:
+            continue
+        if entry["kind"] == "candidate.stopped":
+            return entry
+        if entry["kind"] in ("candidate.handed", "candidate.merged"):
+            return None
+    return None
 
 
 NO_CHANGE_EVIDENCE = 4000
@@ -1427,10 +1516,8 @@ def no_change_handoff(directory: Path, *, lane: str, subject: str, base_head: st
         return copy.deepcopy(planned)
 
     _, entry = _tool_write(directory, change)
-    settled = entry["stage"] == "settled"
     append_journal(directory, kind="candidate.handed", lane=lane, subject=subject,
-                   summary=f"{lane} handed {subject} with no change needed, its evidence run at base {base_head[:10]}"
-                           + ("; settled" if settled else "; waiting for the lead to accept it"))
+                   data={"head": base_head, "checks": [], "noChange": True})
     return entry
 
 
@@ -1492,10 +1579,26 @@ def accept_handoff(directory: Path, subject: str, authorization: dict | None = N
         return copy.deepcopy(item)
 
     _, item = _tool_write(directory, change)
-    said = (f"Accepted the hand-off of {subject}: settled with no change needed" if item.get("stage") == "settled"
-            else f"Accepted the hand-off of {subject}")
-    append_journal(directory, kind="decision.recorded", subject=subject, summary=said)
+    # The acceptance names the check the lead journaled for this hand-off, when there is one.
+    checked = _handoff_checked(read_journal(directory), subject)
+    append_journal(directory, kind="handoff.accepted", subject=subject, data={"settled": item.get("stage") == "settled"},
+                   because=[checked["id"]] if checked else None)
     return item  # type: ignore[return-value]
+
+
+def latest_handoff(journal: list[dict], subject: str) -> dict | None:
+    """A subject's latest hand-off entry, or None."""
+    return next((entry for entry in reversed(journal)
+                 if entry["kind"] == "candidate.handed" and entry["subject"] == subject), None)
+
+
+def _handoff_checked(journal: list[dict], subject: str) -> dict | None:
+    """The handoff.checked journaled for a subject's latest hand-off, or None when none was."""
+    handed = latest_handoff(journal, subject)
+    if handed is None:
+        return None
+    return next((entry for entry in reversed(journal) if entry["kind"] == "handoff.checked"
+                 and entry["subject"] == subject and handed["id"] in entry.get("because", [])), None)
 
 
 @writer_operation
@@ -1528,8 +1631,9 @@ def reject_handoff(directory: Path, subject: str, reason: str) -> dict:
         return back
 
     _, back = _tool_write(directory, change)
-    append_journal(directory, kind="decision.recorded", subject=subject, lane=back["lane"],  # type: ignore[index]
-                   summary=f"Rejected the hand-off of {subject}: {reason}")
+    handed = latest_handoff(read_journal(directory), subject)
+    append_journal(directory, kind="handoff.rejected", subject=subject, lane=back["lane"],  # type: ignore[index]
+                   data={"why": reason}, because=[handed["id"]] if handed else None)
     return back  # type: ignore[return-value]
 
 
@@ -1862,14 +1966,11 @@ def select_checks(directory: Path, subject: str, *, binding: dict, head: str | N
         return copy.deepcopy(item)
 
     _, item = _tool_write(directory, change)
-    if clearing:
-        summary = f"Cleared the lead's check selection for {subject}; the provider selects its checks"
-    else:
-        names = ", ".join(check["id"] for check in checks)  # type: ignore[union-attr]
-        summary = f"The lead selected checks for {subject} at {head}: {names}. Why: {reason}"
-        if added:
-            summary += ". Added: " + "; ".join(f"{entry['id']} ({entry['why']})" for entry in added)
-    append_journal(directory, kind="check.selected", subject=subject, lane=item.get("lane"), summary=summary)  # type: ignore[union-attr]
+    facts = {} if clearing else {
+        "head": head, "checks": [check["id"] for check in checks], "why": reason,  # type: ignore[union-attr]
+        "added": [{"id": entry["id"], "why": entry["why"]} for entry in added or []]}
+    append_journal(directory, kind="check.selection.cleared" if clearing else "check.selected", subject=subject,
+                   lane=item.get("lane"), data=facts)  # type: ignore[union-attr]
     return item  # type: ignore[return-value]
 
 
@@ -1906,6 +2007,27 @@ def name_repair(directory: Path, subject: str, *, withdraw: bool = False) -> dic
     return _tool_write(directory, change)[1]  # type: ignore[return-value]
 
 
+def _base_broken(entry: dict) -> bool:
+    """Whether an entry is a base_broken stop or break, by its reason."""
+    return entry["data"].get("reason") == "base_broken"
+
+
+def _broken_head(entry: dict) -> str | None:
+    """The base head a base_broken break names."""
+    return entry["data"].get("head")
+
+
+def _stopped_by(stop: dict, broken: dict, head: str | None, entries: dict[int, dict]) -> bool:
+    """Whether a stop was made by this break: it names as its cause this break or a base_broken break at the head this
+    one names. ``entries`` are the journal's entries by id."""
+    if not _base_broken(stop):
+        return False
+    causes = [entries[number] for number in stop.get("because", []) if number in entries]
+    return any(cause["id"] == broken["id"] or (
+        head is not None and cause["kind"] == "base.broken" and _base_broken(cause) and _broken_head(cause) == head)
+        for cause in causes)
+
+
 def repaired_state(state: dict, journal: list[dict]) -> dict | None:
     """The record once base.repaired is journaled after ``journal``, or None when nothing changes.
 
@@ -1913,19 +2035,19 @@ def repaired_state(state: dict, journal: list[dict]) -> dict | None:
     base.repaired is base_broken at the base head the latest base_broken entry names. Nothing else stopped moves.
     """
     since = max((entry["id"] for entry in journal if entry["kind"] == "base.repaired"), default=0)
-    breaks = [entry for entry in journal if entry["id"] > since and entry["kind"] == "base.broken"
-              and entry["summary"].startswith("base_broken:")]
-    found = BROKEN_AT.findall(breaks[-1]["summary"]) if breaks else []
-    head = found[-1] if found else None
+    breaks = [entry for entry in journal if entry["id"] > since and entry["kind"] == "base.broken" and _base_broken(entry)]
+    broken = breaks[-1] if breaks else None
+    head = _broken_head(broken) if broken else None
     latest = {entry["subject"]: entry for entry in journal if entry["kind"] == "candidate.stopped" and entry["subject"]}
+    entries = {entry["id"]: entry for entry in journal}
     updated = copy.deepcopy(state)
     changed = False
     for item in updated["queue"]:
         if item.pop("repair", None) is not None:
             changed = True
         stop = latest.get(item["subject"])
-        if (head is not None and item["stage"] == "stopped" and stop is not None and stop["id"] > since
-                and stop["summary"].startswith("base_broken:") and head in BROKEN_AT.findall(stop["summary"])):
+        if (broken is not None and item["stage"] == "stopped" and stop is not None and stop["id"] > since
+                and _stopped_by(stop, broken, head, entries)):
             item.update(stage="queued", checks=[])
             updated["lanes"] = lane_rows_put_back(updated, item["subject"])
             changed = True
@@ -2070,19 +2192,25 @@ def append_journal(
     directory: Path,
     *,
     kind: str,
-    summary: str,
+    data: dict,
+    because: list[int] | None = None,
+    answers: list[int] | None = None,
     lane: str | None = None,
     subject: str | None = None,
-    review: dict | None = None,
     writer: str | None = None,
     recovered: bool = False,
     occurred_at: str | None = None,
-    recovery: dict | None = None,
-    review_artifact: dict | None = None,
-    review_carry: dict | None = None,
-    base_merge_authorization: dict | None = None,
 ) -> dict:
-    """Append one entry. ``writer`` is "runner" when the runner writes; the lead and lanes leave it unset."""
+    """Append one entry. ``writer`` is "runner" when the runner writes; the lead and lanes leave it unset.
+
+    ``data`` holds the kind's facts, in the shape the registry gives it, and ``because`` and ``answers``
+    name earlier entries by id. A base.merge.authorized entry's token is the tool's own, added here.
+    """
+    if isinstance(kind, str) and kind.startswith(RESERVED_PREFIX):
+        raise StateError("kind_reserved", f"{kind} is reserved: kinds beginning {RESERVED_PREFIX} are an adopter's own, "
+                         "and this registry has none")
+    if not isinstance(data, dict):
+        raise StateError("entry_invalid", "an entry carries its facts in data, a JSON object")
     if writer == "runner" and kind == REVIEW_KIND:
         raise StateError("kind_not_owned", f"the runner never writes {REVIEW_KIND}: the lead or the lane records its review")
     with file_lock(directory / STATE_LOCK):
@@ -2095,39 +2223,34 @@ def append_journal(
             if lane is None or owner != lane:
                 raise StateError("writer_not_owned", f"{subject} is not {lane}'s work")
         entries = read_journal(directory)
-        if base_merge_authorization is not None:
-            if not isinstance(base_merge_authorization, dict):
-                raise StateError("entry_invalid", "base merge authorization must be a JSON object")
-            if writer is not None or kind != "decision.recorded":
+        if kind == AUTHORIZATION_KIND:
+            if writer is not None:
                 raise StateError("writer_not_owned", "only the lead authorizes a base merge")
+            if "token" in data:
+                raise StateError("entry_invalid", "a base merge authorization's token is the tool's own")
             item = next((row for row in [*current["queue"], *current.get("planned", [])]
                          if row["subject"] == subject), None)
             if item is None or item.get("assignedLane", item["lane"]) != lane or item["stage"] == "merged":
                 raise StateError("carry_invalid", "base merge authorization must name the current lane of active work")
-            aligned_capture(directory, entries, subject, lane, base_merge_authorization.get("reviewed"))
+            aligned_capture(directory, entries, subject, lane, data.get("reviewed"))
+            data = {**data, "token": uuid.uuid4().hex}
         entry = {
             "id": len(entries) + 1,
             "at": now(),
             "kind": kind,
             "lane": lane,
             "subject": subject,
-            "summary": summary,
+            "data": data,
         }
-        if review is not None:
-            entry["review"] = review
+        if because:
+            entry["because"] = list(because)
+        if answers:
+            entry["answers"] = list(answers)
         if recovered:
             entry["occurredAt"] = occurred_at
-        if recovery is not None:
-            entry["recovery"] = recovery
             if not any(item["stage"] == "merged" and _same_recovered_merge(entry, item)
                        for item in current["queue"]):
                 raise StateError("recovery_identity", "candidate identity changed before recovery journal append")
-        if review_artifact is not None:
-            entry["reviewArtifact"] = review_artifact
-        if review_carry is not None:
-            entry["reviewCarry"] = review_carry
-        if base_merge_authorization is not None:
-            entry["baseMergeAuthorization"] = {**base_merge_authorization, "token": uuid.uuid4().hex}
         return _append_journal_locked(directory, current, entries, entry)
 
 
@@ -2414,9 +2537,9 @@ def capture_review(directory: Path, *, subject: str, candidate: str, outcomes: l
             if item is None or item.get("runId"):
                 raise StateError("review_artifact_invalid", "capture names existing work without a product run")
             previous = next((entry for entry in reversed(read_journal(directory))
-                             if entry["subject"] == subject and entry["kind"] == "review.evidence"), None)
+                             if entry["subject"] == subject and entry["kind"] == CAPTURE_KIND), None)
             if previous is not None:
-                old_ref = previous["reviewArtifact"]
+                old_ref = previous["data"]
                 old_raw = _read_review_file(_review_artifact_path(directory, old_ref["digest"]), REVIEW_ARTIFACT_LIMIT)
                 if hashlib.sha256(old_raw).hexdigest() != old_ref["digest"]:
                     raise StateError("review_artifact_invalid", "retained review history is damaged")
@@ -2433,27 +2556,25 @@ def capture_review(directory: Path, *, subject: str, candidate: str, outcomes: l
                 raise StateError("review_artifact_invalid", "existing review artifact differs from its digest")
             if not path.exists():
                 _write_atomically(path, raw.decode("utf-8"))
-            return append_journal(directory, kind="review.evidence", subject=subject, lane=item.get("lane"),
-                                  summary="Native review outcomes captured for display; no admission authority",
-                                  review_artifact=reference)
+            return append_journal(directory, kind=CAPTURE_KIND, subject=subject, lane=item.get("lane"), data=reference)
     except (OSError, ValueError, UnicodeError, RecursionError) as error:
         raise StateError("review_artifact_invalid", "native review artifact could not be read or stored") from error
 
 
 def aligned_capture(directory: Path, journal: list[dict], subject: str, lane: str, reviewed: str) -> tuple[dict, int]:
     entries = [entry for entry in journal if entry["subject"] == subject]
-    capture = next((entry for entry in reversed(entries) if entry["kind"] == "review.evidence"), None)
+    capture = next((entry for entry in reversed(entries) if entry["kind"] == CAPTURE_KIND), None)
     latest = next((entry for entry in reversed(entries) if entry["kind"] == "review.round"), None)
     if (capture is None or latest is None or capture["lane"] != lane or latest["lane"] != lane
-            or latest["id"] >= capture["id"] or capture["reviewArtifact"]["candidateRef"] != reviewed):
+            or latest["id"] >= capture["id"] or capture["data"]["candidateRef"] != reviewed):
         raise StateError("carry_invalid", "the handing lane needs its latest captured review at the exact reviewed head")
-    reference = capture["reviewArtifact"]
+    reference = capture["data"]
     data = _read_review_file(_review_artifact_path(directory, reference["digest"]), REVIEW_ARTIFACT_LIMIT)
     if hashlib.sha256(data).hexdigest() != reference["digest"]:
         raise StateError("carry_invalid", "the captured review artifact is damaged")
     outcomes = _review_outcomes(_review_json(data), subject, reviewed)
-    verdicts = latest["review"]["verdicts"]
-    if (outcomes[-1]["outcome"] != "aligned" or latest["review"]["round"] != len(outcomes)
+    verdicts = review_round(latest)["verdicts"]
+    if (outcomes[-1]["outcome"] != "aligned" or review_round(latest)["round"] != len(outcomes)
             or set(verdicts.values()) != {"approve"} or set(verdicts) != {e["lens"] for e in outcomes[-1]["entries"]}):
         raise StateError("carry_invalid", "the captured review must match the last aligned round")
     return capture, len(outcomes)
@@ -2470,17 +2591,32 @@ def base_merge_evidence(
         raise StateError("carry_invalid", "base merge evidence needs exact commit ids and a new head")
     capture, count = aligned_capture(directory, journal, subject, lane, reviewed)
     allowed = {commit for entry in journal if entry["id"] > capture["id"] and entry["subject"] == subject
-               and entry["lane"] == lane and entry.get("baseMergeAuthorization", {}).get("reviewed") == reviewed
-               for commit in entry["baseMergeAuthorization"]["baseCommits"]}
+               and entry["lane"] == lane and entry["kind"] == AUTHORIZATION_KIND and entry["data"]["reviewed"] == reviewed
+               for commit in entry["data"]["baseCommits"]}
     if rounds != count or not set(commits) <= allowed:
         raise StateError("carry_invalid", "the handed base commits and review rounds must match the lead authorization")
-    return {"from": reviewed, "to": head, "digest": capture["reviewArtifact"]["digest"], "baseCommits": commits}
+    return {"from": reviewed, "to": head, "digest": capture["data"]["digest"], "baseCommits": commits}
+
+
+def carry_of(entry: dict) -> dict | None:
+    """The review an entry carries, ``{from, to, digest, note}``: the lead's carry, with its reason, or a base merge's,
+    told in its hand-off's words."""
+    data = entry["data"]
+    if entry["kind"] == "review.carried":
+        return {key: data[key] for key in ("from", "to", "digest")} | {"note": data["why"]}
+    if entry["kind"] == "candidate.handed" and "carry" in data:
+        try:
+            note = journal_words.words(entry, kinds_registry())["line"]
+        except (journal_words.WordsError, StateError):
+            note = ""  # A carry whose words can't be made still carries its review.
+        return {key: data["carry"][key] for key in ("from", "to", "digest")} | {"note": note}
+    return None
 
 
 def _standing_carry(journal: list[dict], subject: str, capture: dict) -> dict | None:
     """The lead's latest carry of a subject's capture, while it still holds: after that capture and its last round."""
-    carry = next((entry for entry in reversed(journal) if entry["subject"] == subject and "reviewCarry" in entry), None)
-    if carry is None or carry["reviewCarry"]["digest"] != capture["reviewArtifact"]["digest"] or carry["id"] < capture["id"]:
+    carry = next((entry for entry in reversed(journal) if entry["subject"] == subject and carry_of(entry)), None)
+    if carry is None or carry_of(carry)["digest"] != capture["data"]["digest"] or carry["id"] < capture["id"]:
         return None
     rounds = [entry["id"] for entry in journal if entry["subject"] == subject and entry["kind"] == "review.round"]
     return carry if not rounds or max(rounds) < carry["id"] else None
@@ -2507,15 +2643,15 @@ def carry_review(directory: Path, *, subject: str, from_head: str, to_head: str,
         if item["stage"] == "merged":
             raise StateError("carry_invalid", f"{subject} is merged")
         capture = next((entry for entry in reversed(journal)
-                        if entry["subject"] == subject and entry["kind"] == "review.evidence"), None)
+                        if entry["subject"] == subject and entry["kind"] == CAPTURE_KIND), None)
         if capture is None:
             raise StateError("carry_invalid", f"{subject} has no captured review to carry")
-        reference = capture["reviewArtifact"]
+        reference = capture["data"]
         rounds = [entry for entry in journal if entry["subject"] == subject and entry["kind"] == "review.round"]
         if rounds and rounds[-1]["id"] > capture["id"]:
             raise StateError("carry_invalid", f"{subject}'s latest review round has not been captured")
         standing = _standing_carry(journal, subject, capture)
-        covered = standing["reviewCarry"]["to"] if standing else reference["candidateRef"]
+        covered = carry_of(standing)["to"] if standing else reference["candidateRef"]
         if from_head != covered:
             raise StateError("carry_invalid", f"{subject}'s evidence covers {covered}, not {from_head}")
         if to_head == from_head:
@@ -2533,20 +2669,18 @@ def carry_review(directory: Path, *, subject: str, from_head: str, to_head: str,
             raise StateError("carry_invalid", f"the captured review leaves {', '.join(blocking)} open; a carry can't approve it")
         if outcomes[-1].get("outcome") != "aligned":
             raise StateError("carry_invalid", f"the captured review's last round, round {len(outcomes)}, is not aligned")
-        return append_journal(directory, kind="decision.recorded", subject=subject, lane=item.get("lane"),
-                              summary=f"The lead carried {subject}'s review from {from_head} to {to_head}, "
-                                      f"no new round needed: {reason.strip()}",
-                              review_carry={"from": from_head, "to": to_head, "digest": reference["digest"]})
+        return append_journal(directory, kind="review.carried", subject=subject, lane=item.get("lane"),
+                              data={"from": from_head, "to": to_head, "digest": reference["digest"], "why": reason.strip()})
 
 
 def review_observations(directory: Path, state: dict, journal: list[dict]) -> dict:
-    references = {entry["subject"]: entry for entry in journal if entry["kind"] == "review.evidence"}
+    references = {entry["subject"]: entry for entry in journal if entry["kind"] == CAPTURE_KIND}
     latest_rounds = {entry["subject"]: entry for entry in journal if entry["kind"] == "review.round"}
     observed, budget = {}, [REVIEW_READ_BUDGET]
     items = {item["subject"]: item for item in [*state["queue"], *state.get("planned", [])]}
     queued = {item["subject"] for item in state["queue"]}
     for subject, event in references.items():
-        reference = event["reviewArtifact"]
+        reference = event["data"]
         if subject not in items or items[subject].get("runId"):
             continue
         candidate = reference["candidateRef"]
@@ -2556,7 +2690,7 @@ def review_observations(directory: Path, state: dict, journal: list[dict]) -> di
             # Bound to the reviewed head: a runner sync only merges the base in, under its own checks. A head the
             # lead carried the evidence to stands in for it while that carry holds.
             carry = _standing_carry(journal, subject, event) if subject in queued else None
-            if carry is not None and carry["reviewCarry"]["to"] != item.get("head"):
+            if carry is not None and carry_of(carry)["to"] != item.get("head"):
                 carry = None
             if subject in queued and item.get("head") != candidate and carry is None:
                 raise StateError("review_artifact_invalid", "review candidate is stale or unknown")
@@ -2569,12 +2703,12 @@ def review_observations(directory: Path, state: dict, journal: list[dict]) -> di
             if hashlib.sha256(data).hexdigest() != reference["digest"]:
                 raise StateError("review_artifact_invalid", "review artifact digest mismatch")
             outcomes = _review_outcomes(_review_json(data), subject, candidate)
-            if subject not in queued and (latest.get("review") or {}).get("round") != len(outcomes):
+            if subject not in queued and review_round(latest).get("round") != len(outcomes):
                 raise StateError("review_artifact_invalid", "the capture is not of the latest journaled round")
             observed[subject] = {"candidateRef": candidate, "digest": reference["digest"], "outcomes": outcomes}
             if carry is not None and item.get("head") != candidate:
-                observed[subject]["carried"] = {"from": carry["reviewCarry"]["from"], "to": carry["reviewCarry"]["to"],
-                                                "note": carry["summary"]}
+                carried = carry_of(carry)
+                observed[subject]["carried"] = {"from": carried["from"], "to": carried["to"], "note": carried["note"]}
         except (StateError, OSError, ValueError, UnicodeError, RecursionError):
             observed[subject] = {"candidateRef": candidate, "unavailable": True}
     return observed
@@ -2591,7 +2725,7 @@ def review_evidence(directory: Path, subject: str) -> dict:
     if item.get("runId"):
         return {"subject": subject, "evidence": "run-named", "head": item.get("head"), "runId": item["runId"]}
     observed = document.get("reviewEvidence", {}).get(subject)
-    rounds = len({entry["review"]["round"] for entry in document["journal"]
+    rounds = len({review_round(entry)["round"] for entry in document["journal"]
                   if entry["subject"] == subject and entry["kind"] == "review.round"})
     found = {"subject": subject, "head": item.get("head"), "roundsJournaled": rounds}
     if observed is None:
@@ -2647,7 +2781,7 @@ def event_time(entry: dict) -> str | None:
 
 def _same_recovered_merge(entry: dict, item: dict) -> bool:
     return (entry["kind"] == "candidate.merged" and entry["subject"] == item["subject"]
-            and entry.get("recovery") == {"head": item.get("syncedHead") or item.get("head"),
+            and entry["data"].get("recovery") == {"head": item.get("syncedHead") or item.get("head"),
                                            "changeRequest": item.get("changeRequest")})
 
 
@@ -2681,7 +2815,7 @@ def _candidate_stats(item: dict, own: list[dict], lane_entries: list[dict]) -> d
     rounds_by_number: dict[int, dict] = {}
     for entry in own:
         if entry["kind"] == REVIEW_KIND:
-            rounds_by_number[entry["review"]["round"]] = entry["review"]  # a round recorded again replaces itself
+            rounds_by_number[review_round(entry)["round"]] = review_round(entry)  # a round recorded again replaces itself
     rounds = [rounds_by_number[number] for number in sorted(rounds_by_number)]
 
     assigned = next((entry for entry in own if entry["kind"] == "lane.assigned"), None)
@@ -3429,12 +3563,10 @@ def _recover(directory: Path, recoveries: list[dict], changes: list[dict], repor
                     withdraw(recovery["subject"])
                     reports.append({"subject": item["subject"], "note": "recorded head changed: settle identity before recovery"})
                     break
-                where = f" as change request {recovery['changeRequest']}" if recovery["changeRequest"] else ""
                 bypassed = "pending" in item
                 intent = {
                     "subject": recovery["subject"], "head": recovery["head"], "lane": recovery["lane"],
-                    "summary": f"Recorded from a forge snapshot: merged{where} at {recovery['head']}, "
-                               "not recorded by the runner" + (WAIT_BYPASSED if bypassed else ""),
+                    "acceptanceSkipped": bypassed,
                     "journalAfter": len(read_journal(directory)),
                     "occurredAt": recovery["occurredAt"],
                     "changeRequest": recovery["changeRequest"],
@@ -3473,9 +3605,16 @@ def _recover(directory: Path, recoveries: list[dict], changes: list[dict], repor
 
 def _journal_recovery(directory: Path, intent: dict) -> dict:
     return append_journal(directory, kind="candidate.merged", subject=intent["subject"], lane=intent["lane"],
-                          summary=intent["summary"], recovered=True, occurred_at=intent.get("occurredAt"),
-                          recovery=({"head": intent["head"], "changeRequest": intent["changeRequest"]}
-                                    if "changeRequest" in intent else None))
+                          data=_recovery_facts(intent), recovered=True, occurred_at=intent.get("occurredAt"))
+
+
+def _recovery_facts(intent: dict) -> dict:
+    """A recovered merge's facts: its head, and the source identity a late hand-off can't duplicate."""
+    # Always named, so a merge the runner journaled, which carries no recovery, is never taken for this one.
+    facts = {"head": intent["head"], "recovery": {"head": intent["head"], "changeRequest": intent.get("changeRequest")}}
+    if intent["acceptanceSkipped"]:
+        facts["acceptanceSkipped"] = True
+    return facts
 
 
 def _read_recovery(directory: Path) -> dict | None:
@@ -3485,15 +3624,15 @@ def _read_recovery(directory: Path) -> dict | None:
         return None
     except (UnicodeDecodeError, json.JSONDecodeError):
         raise StateError("state_invalid", f"{RECOVERY_FILE} is not JSON") from None
-    shape = {"subject": str, "head": str, "summary": str, "journalAfter": int}
-    if (not isinstance(intent, dict) or not {*shape, "lane"} <= set(intent)
-            or not set(intent) <= {*shape, "lane", "occurredAt", "changeRequest"}
+    shape = {"subject": str, "head": str, "journalAfter": int}
+    if (not isinstance(intent, dict) or not {*shape, "lane", "acceptanceSkipped", "changeRequest"} <= set(intent)
+            or not set(intent) <= {*shape, "lane", "acceptanceSkipped", "occurredAt", "changeRequest"}
             or not all(isinstance(intent[key], kind) and not isinstance(intent[key], bool) for key, kind in shape.items())
+            or not isinstance(intent["acceptanceSkipped"], bool)
             or not (intent["lane"] is None or isinstance(intent["lane"], str))):
         raise StateError("state_invalid", f"{RECOVERY_FILE} is malformed")
     probe = {"id": 1, "at": now(), "kind": "candidate.merged", "subject": intent["subject"],
-             "lane": intent["lane"], "summary": intent["summary"], "occurredAt": intent.get("occurredAt"),
-             "recovery": {"head": intent["head"], "changeRequest": intent.get("changeRequest")}}
+             "lane": intent["lane"], "occurredAt": intent.get("occurredAt"), "data": _recovery_facts(intent)}
     if journal_errors([probe]):
         raise StateError("state_invalid", f"{RECOVERY_FILE} has an invalid occurrence time")
     return intent
@@ -3578,9 +3717,28 @@ def _finish_intent(directory: Path, intent: dict, finished: list[dict], reports:
             _tool_write(directory, lambda state: next(entry for entry in state["queue"]
                                                       if entry["subject"] == intent["subject"]).pop("pending", None))
         # A merge the runner journaled went through the queue, so its acceptance was not skipped.
-        if intent["summary"].endswith(WAIT_BYPASSED) and (not journaled or any(entry["summary"] == intent["summary"] for entry in entries)):
+        if intent["acceptanceSkipped"] and (not journaled or any(_from_intent(entry, intent) for entry in entries)):
             reports.append(_bypass_report(intent["subject"]))
     (directory / RECOVERY_FILE).unlink(missing_ok=True)
+
+
+def _from_intent(entry: dict, intent: dict) -> bool:
+    """Whether a merge entry is the one this recovery intent journaled, by its facts."""
+    return entry["data"] == _recovery_facts(intent)
+
+
+def wait_events(entries: list[dict]) -> list[dict]:
+    """What ``wait`` tells of each entry: who and what, its facts, and its head and line in the registry's words."""
+    registry = kinds_registry() if entries else None
+    events = []
+    for entry in entries:
+        event = {key: entry.get(key) for key in ("id", "kind", "lane", "subject", "data")}
+        try:
+            event.update(journal_words.words(entry, registry))
+        except journal_words.WordsError:
+            pass  # An entry whose words can't be made still tells its facts.
+        events.append(event)
+    return events
 
 
 def binding_state(path: Path) -> dict:
@@ -4383,6 +4541,11 @@ def _refuse_record_path(directory: Path, output: Path) -> None:
         raise StateError("output_invalid", f"{output.name} is one of the record's own files: write the snapshot elsewhere")
 
 
+def _snapshot_note(entry: dict, source: str) -> bool:
+    """Whether an entry notes this source's snapshot, by its kind and source."""
+    return entry["kind"] in ("snapshot.stale", "snapshot.retaken") and entry["data"].get("source") == source
+
+
 def take_snapshot(directory: Path, member: dict, output: Path, *, source: str, max_age: float,
                   cwd: Path | None = None) -> dict:
     """Take the ``source`` snapshot with the binding's command, or keep the last one.
@@ -4399,21 +4562,27 @@ def take_snapshot(directory: Path, member: dict, output: Path, *, source: str, m
     _refuse_record_path(directory, Path(output))
     state = read_state(directory)
     parent = state["meta"].get("trackerParent")
-    note, again = f"{source}-snapshot:", f"{source}-snapshot: taken again"
     # The journal is published, so it gets a fixed reason class; the command's
     # own words, which may carry anything it printed, stay in this result.
     reason, detail = None, None
+    # The reason's class, as the note's facts give it.
+    cause: dict = {}
     cleanup: list[dict] = []
     if any("{parent}" in part for part in config["argv"]) and not parent:
         reason = "the command needs {parent}, and the record names no meta.trackerParent"
+        cause = {"cause": "no_parent"}
     else:
         argv = _fill(config["argv"], parent, directory)
         code, out, detail = _run_bounded(argv, config["timeoutSeconds"], TRACKER_SNAPSHOT_OUTPUT_BYTES, cwd,
                                          cleanup=cleanup)
         if code is None:
             reason = detail if detail.startswith(("timed out", "printed more", "could not start")) else "it did not finish"
+            cause = {"cause": next((name for start, name in (("timed out", "timed_out"), ("printed more", "too_much_output"),
+                                                            ("could not start", "not_started")) if detail.startswith(start)),
+                                   "unfinished")}
         elif code != 0:
             reason = f"the command exited with {code}"
+            cause = {"cause": "exited", "exitCode": code}
         else:
             try:
                 snapshot = check_snapshot(json.loads(out.decode("utf-8-sig")), "the command's snapshot", max_age,
@@ -4422,24 +4591,27 @@ def take_snapshot(directory: Path, member: dict, output: Path, *, source: str, m
                     raise StateError("snapshot_invalid", f"the command's snapshot is not from the {source}")
             except (UnicodeDecodeError, ValueError, RecursionError):
                 reason = "the command printed no JSON"
+                cause = {"cause": "no_json"}
             except StateError as error:
                 reason = ("the command's snapshot is too old" if error.code == "snapshot_stale"
                           else f"the command's snapshot is not a valid {source} snapshot")
+                cause = {"cause": "too_old" if error.code == "snapshot_stale" else "invalid"}
                 detail = str(error)
-    last = next((entry for entry in reversed(read_journal(directory)) if entry["summary"].startswith(note)), None)
+    last = next((entry for entry in reversed(read_journal(directory)) if _snapshot_note(entry, source)), None)
     if reason is None:
         try:
             _write_atomically(Path(output), dumps(snapshot))
         except OSError as error:
             raise StateError("output_invalid", f"cannot write {Path(output).name}: {error.strerror or error}") from None
-        if last is not None and last["summary"] != again:
-            # Say the outage ended, so the next failure is noted again.
-            append_journal(directory, kind="decision.recorded", summary=again)
+        if last is not None and last["kind"] != "snapshot.retaken":
+            # Say the outage ended, so the next failure is noted again; it answers the note of the outage.
+            append_journal(directory, kind="snapshot.retaken", data={"source": source},
+                           answers=[last["id"]] if last["kind"] == "snapshot.stale" else None)
         return {"ok": True, "taken": True, "output": str(output), "items": len(snapshot["items"]),
                 "takenAt": snapshot["takenAt"], **_cleanup_note(cleanup)}
-    summary = f"{note} {reason}; the last snapshot stands"
-    if last is None or last["summary"] != summary:
-        append_journal(directory, kind="decision.recorded", summary=summary)
+    facts = {"source": source, **cause}
+    if last is None or not (last["kind"] == "snapshot.stale" and last["data"] == facts):
+        append_journal(directory, kind="snapshot.stale", data=facts)
     result = {"ok": True, "taken": False, "reason": reason, "fallback": Path(output).is_file(), **_cleanup_note(cleanup)}
     if detail and detail != reason:
         result["detail"] = detail
@@ -4575,32 +4747,36 @@ def publication(directory: Path) -> dict:
     return {"recoveryPending": (directory / RECOVERY_FILE).exists() or bool(_set_aside_intents(directory))}
 
 
-def _review_argument(value: str | None) -> dict | None:
-    try:
-        review = _json_argument(value, "--review")
-    except StateError as error:
-        raise StateError("entry_invalid", str(error)) from None
-    if review is not None and not isinstance(review, dict):
-        raise StateError("entry_invalid", "--review is a JSON object")
-    return review
+# The kinds a person words: --text and --why go into their data.
+WORDED_KINDS = ("decision.recorded", "blocker.recorded")
 
 
-def _journal_summary(args: argparse.Namespace, review: dict | None) -> str:
-    if args.summary:
-        return args.summary
-    if args.kind == REVIEW_KIND and review is None:
-        raise StateError("entry_invalid", f"a {REVIEW_KIND} gives its review with --review")
-    if args.kind != REVIEW_KIND:
-        raise StateError("entry_invalid", "give --summary")
+def _journal_data(args: argparse.Namespace) -> dict:
+    data = _json_argument(args.data, "--data")
+    if data is not None and not isinstance(data, dict):
+        raise StateError("entry_invalid", "--data is a JSON object")
+    worded = {name: value for name, value in (("text", args.text), ("why", args.why)) if value is not None}
+    if worded:
+        if args.kind not in WORDED_KINDS:
+            raise StateError("entry_invalid", f"--text and --why are for {' and '.join(WORDED_KINDS)}")
+        clash = sorted(set(worded) & set(data or {}))
+        if clash:
+            raise StateError("entry_invalid", f"give {clash[0]} once, in --data or as --{clash[0]}")
+        data = {**(data or {}), **worded}
+    if data is None:
+        raise StateError("entry_invalid", "give the entry's facts with --data, or a person's words with --text and --why")
+    return data
+
+
+def _links(value: str | None, name: str) -> list[int] | None:
+    """Entry ids, comma-separated."""
+    if value is None:
+        return None
     try:
-        verdicts = ", ".join(f"{lens} {verdict}" for lens, verdict in sorted(review["verdicts"].items()))
-        findings = "/".join(str(review["findings"][severity]) for severity in SEVERITIES)
-        number = review["round"]
-        number = int(number) if isinstance(number, float) and number.is_integer() else number
-        return f"Round {number}: {verdicts}; findings {findings}"
-    except (KeyError, TypeError, AttributeError):
-        # The entry's own checks say what is wrong with it.
-        return f"Round {review.get('round', '?')}"
+        ids = [int(part) for part in value.split(",")]
+    except ValueError:
+        raise StateError("entry_invalid", f"{name} is entry ids, comma-separated, such as 3,7") from None
+    return ids
 
 
 def _json_argument(value: str | None, name: str) -> object:
@@ -4704,7 +4880,9 @@ def _checks_argument(value: str) -> object:
 
 
 # What a running `wait` returns on: the journal kinds that need the lead. A blocked lane and machine pressure also end it.
-WAIT_KINDS = frozenset({"candidate.handed", "check.failed", "candidate.merged", "candidate.stopped", "base.broken", "blocker.recorded"})
+# A held runner wakes the lead as a blocker does: the queue writes its hold as serving.held.
+WAIT_KINDS = frozenset({"candidate.handed", "check.failed", "candidate.merged", "candidate.stopped", "base.broken", "blocker.recorded",
+                        "serving.held"})
 # 0 is a wake and 1 an error, so a lead can tell what ended a wait left running in the background.
 WAIT_EXPIRED_EXIT = 3
 WAIT_TIMEOUT_SECONDS = 1800.0
@@ -4885,7 +5063,7 @@ def wait_for_lead(
             return (WAIT_EXPIRED_EXIT if woke == "expired" else 0), {
                 "ok": True,
                 "woke": woke,
-                "events": [{key: entry.get(key) for key in ("id", "kind", "lane", "subject", "summary")} for entry in events],
+                "events": wait_events(events),
                 "blockedLanes": [{key: lanes[token].get(key) for key in ("id", "focus", "waitingOn")} for token in newly_blocked],
                 "pressure": pressure,
                 "quietLanes": [quiet[token] for token in sorted(set(quiet) - set(seen_quiet or ()))],
@@ -4980,9 +5158,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     entry = commands.add_parser("journal", help="append one journal entry")
     entry.add_argument("--kind", required=True)
-    entry.add_argument("--summary", help="required, except on a review.round, whose summary is written for it")
-    entry.add_argument("--base-merge-authorization", help="lead's reviewed head and exact allowed base commits as JSON")
-    entry.add_argument("--review", help="a review.round's review as JSON, or - to read it from stdin")
+    entry.add_argument("--data", help="the kind's facts as a JSON object, in the shape the registry gives; - reads stdin")
+    entry.add_argument("--because", help="earlier entry ids this one happened because of, comma-separated")
+    entry.add_argument("--answers", help="earlier entry ids this one answers, comma-separated")
+    entry.add_argument("--text", help="what a decision or a blocker says, in the person's words")
+    entry.add_argument("--why", help="why the decision was made, in the person's words")
     entry.add_argument("--lane")
     entry.add_argument("--subject")
     entry.add_argument("--writer", choices=("lead", "lane"), default="lead",
@@ -5126,14 +5306,12 @@ def main(argv: list[str] | None = None) -> int:
                 ),
             }
         elif args.command == "journal":
-            review = _review_argument(args.review)
             result = {
                 "ok": True,
                 "entry": append_journal(
-                    args.dir, kind=args.kind, summary=_journal_summary(args, review),
-                    lane=args.lane, subject=args.subject, review=review,
-                    writer="lane" if args.writer == "lane" else None,
-                    base_merge_authorization=_json_argument(args.base_merge_authorization, "--base-merge-authorization"),
+                    args.dir, kind=args.kind, data=_journal_data(args),
+                    because=_links(args.because, "--because"), answers=_links(args.answers, "--answers"),
+                    lane=args.lane, subject=args.subject, writer="lane" if args.writer == "lane" else None,
                 ),
             }
         elif args.command == "close-finished":

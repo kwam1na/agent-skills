@@ -62,14 +62,14 @@ epoch has sequence 0; publish a new sequence in the current epoch to confirm it.
 
 `POST /api/v1/repos/{repo}/deliveries/{id}/snapshots`
 
-The entire body is the raw UTF-8 `hosted-delivery-snapshot/1` projection, at most
+The entire body is the raw UTF-8 `hosted-delivery-snapshot/2` projection, at most
 16 MiB. It is not wrapped in another JSON object. Required headers:
 
 - `Content-Type: application/json` (no encoding)
 - `X-Writer-Epoch: <positive safe integer>`
 - `X-Snapshot-Sequence: <positive safe integer>`
 - `X-Snapshot-Digest: <lowercase SHA-256 of the exact body bytes>`
-- `X-Renderer-Version: delivery-line-map/1`
+- `X-Renderer-Version: delivery-line-map/2`
 
 The receiver counts streamed bytes even without an honest Content-Length,
 rejects nesting deeper than 64, malformed UTF-8/JSON, unknown schema fields and
@@ -90,7 +90,7 @@ public. Unreferenced immutable objects may remain; no bucket lifecycle deletion
 is configured. Committed completed snapshots must be retained.
 
 A receipt contains `protocolVersion: hosted-delivery-api/1`,
-`rendererVersion: delivery-line-map/1`, `epoch`, `sequence`, `digest`,
+`rendererVersion: delivery-line-map/2`, `epoch`, `sequence`, `digest`,
 `sourceFingerprint`, `publishedAt`, `sourceConfirmedAt`. Both times are server
 Unix milliseconds of original acceptance. Sequence is strictly increasing within
 an epoch; compare epoch first. Do not replace current state with an old retry's

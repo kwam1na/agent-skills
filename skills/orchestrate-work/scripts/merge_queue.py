@@ -827,6 +827,12 @@ class Member:
     tree: str
 
 
+def breaks_since_repair(journal: list[dict]) -> list[dict]:
+    """The base.broken entries journaled since the last base.repaired, oldest first."""
+    since = max((entry["id"] for entry in journal if entry["kind"] == "base.repaired"), default=0)
+    return [entry for entry in journal if entry["id"] > since and entry["kind"] == "base.broken"]
+
+
 class Runner:
     """One runner invocation against one repository.
 
@@ -877,6 +883,13 @@ class Runner:
         self.checkouts: list[Path] = []
         # The checks the last check step carried over a base move, so run can tell a re-sync that carried nothing.
         self.carried_now: list[str] = []
+        # The entries a later entry names as its cause: each subject's check start this run, its failed checks by id,
+        # its base re-run's start and verdict, and the last break journaled.
+        self.started: dict[str, int] = {}
+        self.failed: dict[str, dict[str, int]] = {}
+        self.rerun_started: dict[str, int] = {}
+        self.verdicts: dict[str, tuple[int, str]] = {}
+        self.last_break: int | None = None
         self._counter = 0
         self._logs = 0
 
@@ -1149,7 +1162,7 @@ class Runner:
                 found.setdefault(match["id"], (match.groupdict().get("message") or "").strip())
         return [{"id": name, "message": message} for name, message in found.items()]
 
-    def flake_for(self, check_id: str, failures: list[dict], base_head: str | None) -> str | None:
+    def flake_refs(self, check_id: str, failures: list[dict], base_head: str | None) -> list[str] | None:
         """The references of the declared flakes that cover every failure of this check, or None.
 
         A declaration without test patterns covers the whole check; one with
@@ -1162,7 +1175,7 @@ class Runner:
                         if flake["baseHead"] == base_head and flake["check"] == check_id]
         whole = [flake["ref"] for flake in declared if "tests" not in flake]
         if whole:
-            return ", ".join(whole)
+            return whole
         if not failures:
             return None
         refs: list[str] = []
@@ -1171,7 +1184,7 @@ class Runner:
             if not covering:
                 return None
             refs += [flake["ref"] for flake in covering if flake["ref"] not in refs]
-        return ", ".join(refs)
+        return refs
 
     def finish_checking(self, subject: str) -> None:
         """Clear the checking panel; a check left running, by a stop mid-check, reads pending again.
@@ -1217,7 +1230,8 @@ class Runner:
             summary = f"interrupted: a run ended while {subject} was {stage}; its running checks read pending again"
             if stage == "merging":
                 summary += "; check the forge, since the merge may have landed"
-            self.journal("candidate.stopped", summary, subject)
+            self.journal("candidate.stopped", subject,
+                         data={"reason": "interrupted", "detail": summary, "stage": stage})
 
         def build(current: dict) -> tuple[dict, dict]:
             queue = [dict(item) for item in current["queue"]]
@@ -1244,14 +1258,32 @@ class Runner:
     def set_item(self, subject: str, **fields: object) -> None:
         self.write(selector=f"queue[subject={subject}]", assignments={f"/{key}": value for key, value in fields.items()})
 
-    def journal(self, kind: str, summary: str, subject: str | None = None) -> None:
+    def journal(self, kind: str, subject: str | None = None, *, data: dict,
+                because: Iterable[int | None] = (), answers: Iterable[int | None] = ()) -> int:
+        """Append one entry with its facts and the earlier entries it names, and return its id for a later one to name."""
         lane = None
         if subject is not None:
             with contextlib.suppress(Stop):
                 lane = self.item(subject).get("lane")
-        delivery_state.append_journal(self.state_directory, kind=kind, summary=summary, lane=lane, subject=subject,
-                                      writer="runner")
+        entry = delivery_state.append_journal(
+            self.state_directory, kind=kind, data=data, lane=lane, subject=subject, writer="runner",
+            because=[number for number in because if number is not None] or None,
+            answers=[number for number in answers if number is not None] or None)
         self.render()
+        return entry["id"]
+
+    def standing_breaks(self, head: str) -> list[int]:
+        """The base_broken breaks journaled at ``head`` since the base was last repaired, oldest first."""
+        return [entry["id"] for entry in breaks_since_repair(delivery_state.read_journal(self.state_directory))
+                if entry["data"].get("reason") == "base_broken" and entry["data"].get("head") == head]
+
+    def cause(self, stop: Stop, subject: str | None) -> list[int]:
+        """What a stop names as its cause: the failed checks when one failed, the break when the base broke, else nothing."""
+        if stop.reason == "check_failed" and subject is not None:
+            return list(self.failed.get(subject, {}).values())
+        if stop.reason == "base_broken" and self.last_break is not None:
+            return [self.last_break]
+        return []
 
     def checking(self, subject: str | None, title: str = "", steps: list[dict] | None = None) -> None:
         value = None if subject is None else {
@@ -1867,7 +1899,8 @@ class Runner:
         context = context.with_values(branch=branch, head=synced, expectedHead=synced)
         self.set_item(subject, stage="checking", checks=[])
         self.checking(subject, item["title"], [{"label": "selecting checks", "state": "running"}])
-        self.journal("check.started", f"Checking {item['title']}", subject)
+        self.started[subject] = self.journal("check.started", subject, data={})
+        self.failed[subject] = {}
         checkout = self.checkout(synced, "check", context=context.with_values(treeSha=self.tree(synced)))
         self.assert_clean(checkout, "a fresh checkout of the synced head")
         changes = self.changes(base_head, synced)
@@ -1889,7 +1922,8 @@ class Runner:
             self.classify(subject, failed, checks, checkout, base_head, changes, context, result)
         self.set_item(subject, stage="checked")
         self.write(assignments={"/meta/baseHead": base_head})
-        self.journal("check.finished", f"Checks passed for {item['title']}", subject)
+        self.journal("check.finished", subject, data={},
+                     because=[self.started.get(subject)])
         result.outcome = "checked"
 
     def carry(self, subject: str, checks: list[dict], carried: dict | None, result: Result) -> dict[str, dict]:
@@ -1914,7 +1948,9 @@ class Runner:
                      f"commit{'' if len(commits) == 1 else 's'} ({', '.join(commits)}) changed nothing "
                      f"{'it reads' if len(carry) == 1 else 'they read'} or {subject} changes; "
                      + (f"ran again: {', '.join(again)}" if again else "nothing ran again"))
-            self.journal("check.carried", words, subject)
+            self.journal("check.carried", subject, data={
+                "checks": list(carry), "ranAgain": again, "base": {"ref": self.base, "head": carried["to"]},
+                "commits": list(commits)})
             result.notes.append(words)
         self.carried_now = list(carry)
         return carry
@@ -2345,8 +2381,8 @@ class Runner:
                                               "reusedFrom": dict(source)})
                         for subject in subjects:
                             self.journal("check.reused",
-                                         f"{check['id']} reused from the lane's run at {source['head']} "
-                                         f"({source['subject']}): the tree is the one it checked and passed", subject)
+                                         subject,
+                                         data={"check": check["id"], "head": source["head"], "from": source["subject"]})
                         show()
                         continue
                     alone = not check.get("parallelSafe") or limit == 1
@@ -2370,15 +2406,17 @@ class Runner:
                     completed = future.result()
                     assert completed is not None
                     entry = finish(check, completed)
-                    flake = (self.flake_for(check["id"], entry["failures"], context.values.get("baseHead"))
-                             if entry["state"] == "failed" else None)
+                    refs = (self.flake_refs(check["id"], entry["failures"], context.values.get("baseHead"))
+                            if entry["state"] == "failed" else None)
+                    flake = None if refs is None else ", ".join(refs)
                     if flake is not None:
                         # Every failure is a declared flake: one retry, on the record.
-                        named = ", ".join(failure["id"] for failure in entry["failures"]) or "the whole check"
                         for subject in subjects:
+                            # The failure retried is never journaled, so the retry names the run it belongs to.
                             self.journal("check.retried",
-                                         f"{check['id']} failed only on known flakes ({named}; {flake}); retrying once",
-                                         subject)
+                                         subject, data={"check": check["id"], "failing": [failure["id"] for failure in entry["failures"]],
+                                                        "flake": refs, "onBase": False},
+                                         because=[self.started.get(subject)])
                         flaked[check["id"]] = flaked.get(check["id"], 0) + 1
                         first = {"flake": flake, "failures": entry["failures"], "log": entry["log"],
                                  "exitCode": entry["exitCode"]}
@@ -2395,9 +2433,14 @@ class Runner:
                 # Telling a failure from the base's own can take as long as the check, so the lead hears now, once
                 # the row above says the same. A batch's culprit search only re-runs what its whole run already said.
                 for entry in failing if whole_run else []:
-                    said = "Check timed out: " if entry["state"] == "timed_out" else "Check failed: "
+                    failures = [failure["id"] for failure in entry.get("failures") or []]
                     for subject in subjects:
-                        self.journal("check.failed", said + self.failure_text(entry["id"], result), subject)
+                        self.failed.setdefault(subject, {})[entry["id"]] = self.journal(
+                            "check.failed", subject,
+                            data={"check": entry["id"], "timedOut": entry["state"] == "timed_out",
+                                  "failing": failures[:STOP_FAILURES], "more": max(0, len(failures) - STOP_FAILURES),
+                                  "log": entry["log"]},
+                            because=[self.started.get(subject)])
         # A run that reused a check is not a whole run, so it does not shorten the run estimates.
         whole = checks and whole_run and not reused and not carried
         self.record_history(passed, flaked, int(round(time.monotonic() - began)) if whole else None)
@@ -2435,7 +2478,6 @@ class Runner:
         stopped, or that the runner's own interruption ended, has no verdict and
         raises base_rerun_stopped instead (see rerun_stopped).
         """
-        names = ", ".join(check["id"] for check in candidates)
         began = time.monotonic()
         waiting = {"startedAt": now(), "checks": [check["id"] for check in candidates]}
 
@@ -2444,9 +2486,15 @@ class Runner:
             return ({}, {}) if checking is None else ({}, {"/meta/checking/now/baseRerun": waiting})
 
         self.write(build=begin)
-        self.journal("base.rerun.started",
-                     f"Rerunning {names} on {self.base} at {base_head}, to tell whether the failure is the base's own", subject)
-        verdicts: list[str] = []
+        failures_seen = self.failed.get(subject, {})
+        causes = [failures_seen[check["id"]] for check in candidates if check["id"] in failures_seen]
+        self.rerun_started[subject] = self.journal(
+            "base.rerun.started",
+            subject,
+            data={"checks": [check["id"] for check in candidates], "base": {"ref": self.base, "head": base_head}},
+            because=causes or [self.started.get(subject)])
+        # Each check's outcome on the base, as base.rerun.finished lists it.
+        results: list[dict] = []
         broken: Stop | None = None
         stopped: str | None = None
         try:
@@ -2456,12 +2504,12 @@ class Runner:
             for check in candidates:
                 if not self.base_prerequisites_pass(check, by_id, base_checkout, base_context):
                     # The check cannot be judged on the base; the failure stays the candidate's.
-                    verdicts.append(f"{check['id']} could not be judged there")
+                    results.append({"check": check["id"], "result": "not_judged"})
                     continue
                 completed = self.run_one(check, base_checkout, base_context)
                 # A re-run that could not start says nothing about the base.
                 if not started_run(completed):
-                    verdicts.append(f"{check['id']} could not start there")
+                    results.append({"check": check["id"], "result": "not_started"})
                     continue
                 failures, log = self.rerun_outcome(check["id"], completed)
                 if stopped_run(completed):
@@ -2469,19 +2517,21 @@ class Runner:
                     stopped = f"{stopped_words(check['id'], completed)} (log {log})"
                     break
                 retried = False
-                flake = (self.flake_for(check["id"], failures, base_head)
-                         if failed_run(completed) and not completed.timed_out else None)
+                refs = (self.flake_refs(check["id"], failures, base_head)
+                        if failed_run(completed) and not completed.timed_out else None)
+                flake = None if refs is None else ", ".join(refs)
                 if flake is not None:
                     # As on the candidate: a failure made only of declared flakes is retried once, on the record.
-                    named = ", ".join(failure["id"] for failure in failures) or "the whole check"
-                    self.journal("check.retried", f"{check['id']} failed on the base re-run only on known flakes "
-                                                  f"({named}; {flake}); retrying once there", subject)
+                    self.journal("check.retried", subject,
+                                 data={"check": check["id"], "failing": [failure["id"] for failure in failures],
+                                       "flake": refs, "onBase": True},
+                                 because=[failures_seen.get(check["id"], self.rerun_started[subject])])
                     self.record_history({}, {check["id"]: 1}, None)
                     completed = self.run_one(check, base_checkout, base_context)
                     retried = True
                     if not started_run(completed):
                         self.record_rerun(subject, check["id"], failures, log)
-                        verdicts.append(f"{check['id']} could not start there on its flake retry")
+                        results.append({"check": check["id"], "result": "not_started", "retried": True, "log": log})
                         continue
                     failures, log = self.rerun_outcome(check["id"], completed)
                     if stopped_run(completed):
@@ -2490,14 +2540,14 @@ class Runner:
                         break
                 self.record_rerun(subject, check["id"], failures, log,
                                   verdict=("failed" if failed_run(completed) else "passed", base_head))
+                results.append({"check": check["id"], "result": "failed" if failed_run(completed) else "passed",
+                                **({"retried": True} if retried else {}), "log": log})
                 if failed_run(completed):
                     named = failure_words(check["id"], [failure["id"] for failure in failures], log)
-                    verdicts.append(f"{check['id']} also fails{named[len(check['id']):]}")
                     broken = Stop("base_broken", f"{named} also fails on {self.base} at {base_head}; it could also be "
                                                  "cross-talk with another run on the same machine (a shared port, "
                                                  "file or service), so confirm on a quiet machine")
                     break
-                verdicts.append(f"{check['id']} passed{' after a flake retry' if retried else ''} (log {log})")
         except KeyboardInterrupt:
             # The runner itself was stopped mid-re-run, which says nothing of the base either: the candidate's row is
             # settled here, since the interruption ends the turn before any stop is.
@@ -2505,16 +2555,15 @@ class Runner:
                 stop = self.rerun_stopped(subject, base_head, began, "the runner was interrupted")
                 self.stopped(Result("check", subject), stop, subject)
             raise
-        except BaseException as error:
-            self.end_rerun(subject, base_head, began, f"ended without a verdict ({type(error).__name__})")
+        except BaseException:
+            self.end_rerun(subject, base_head, began, verdict_code="no_verdict", results=results)
             raise
         if stopped is not None:
             raise self.rerun_stopped(subject, base_head, began, stopped)
-        verdict = "; ".join(verdicts)
         if broken is not None:
-            self.end_rerun(subject, base_head, began, f"{verdict}: the base is broken")
+            self.end_rerun(subject, base_head, began, verdict_code="base_broken", results=results)
             raise broken
-        self.end_rerun(subject, base_head, began, f"{verdict}: the failure is the candidate's")
+        self.end_rerun(subject, base_head, began, verdict_code="candidate_failed", results=results)
 
     def rerun_stopped(self, subject: str, base_head: str, began: float, why: str) -> Stop:
         """A base re-run stopped before its verdict: journal base.rerun.stopped, record no verdict, and say what follows.
@@ -2529,11 +2578,10 @@ class Runner:
         pair = f"{subject} at {head or 'an unknown head'}, {self.base} at {base_head}"
         again = bool(head) and any(
             entry["kind"] == "base.rerun.stopped" and entry.get("subject") == subject
-            and head in entry["summary"] and base_head in entry["summary"]
+            and entry["data"].get("head") == head and entry["data"]["base"]["head"] == base_head
             for entry in delivery_state.read_journal(self.state_directory)
         )
-        self.end_rerun(subject, base_head, began, f"stopped before its verdict ({why}), which says nothing of the base; "
-                                                  f"heads {pair}", kind="base.rerun.stopped")
+        self.end_rerun(subject, base_head, began, kind="base.rerun.stopped", why=why, head=head)
         if again:
             return Stop("base_rerun_stopped", f"the base re-run was stopped again at the same heads, {pair} ({why}); "
                                               "the lead finds what stopped it")
@@ -2570,8 +2618,13 @@ class Runner:
         with contextlib.suppress(Stop, delivery_state.StateError):
             self.write(build=build)
 
-    def end_rerun(self, subject: str, base_head: str, began: float, verdict: str, kind: str = "base.rerun.finished") -> None:
-        """Journal the base re-run's verdict, or its stop, and how long the candidate waited on it, and end the waiting state."""
+    def end_rerun(self, subject: str, base_head: str, began: float, kind: str = "base.rerun.finished", *,
+                  verdict_code: str = "no_verdict", results: list[dict] | None = None, why: str = "",
+                  head: str = "") -> None:
+        """Journal the base re-run's verdict, or its stop, and how long the candidate waited on it, and end the waiting state.
+
+        A verdict of base_broken is kept for the break it declares to name.
+        """
 
         def build(current: dict) -> tuple[dict, dict]:
             checking = current["meta"]["checking"]["now"]
@@ -2581,8 +2634,16 @@ class Runner:
 
         with contextlib.suppress(Stop, delivery_state.StateError):
             self.write(build=build)
-        self.journal(kind,
-                     f"Base re-run on {self.base} at {base_head} after {int(round(time.monotonic() - began))}s: {verdict}", subject)
+        seconds = int(round(time.monotonic() - began))
+        base = {"ref": self.base, "head": base_head}
+        if kind == "base.rerun.stopped":
+            data = {"base": base, "seconds": seconds, "why": why, **({"head": head} if head else {})}
+        else:
+            data = {"base": base, "seconds": seconds, "verdict": verdict_code, "results": list(results or [])}
+        number = self.journal(kind, subject,
+                              data=data, because=[self.rerun_started.get(subject)])
+        if kind == "base.rerun.finished" and verdict_code == "base_broken":
+            self.verdicts[subject] = (number, base_head)
 
     @staticmethod
     def failure_text(check_id: str, result: Result) -> str:
@@ -2655,10 +2716,14 @@ class Runner:
             raise Stop("merged_unverified", f"{self.base} at {merged} is not {synced}'s tree on top of {base_head}")
         self.finish_item(subject, "merged")
         self.write(assignments={"/meta/baseHead": merged})
-        self.journal("candidate.merged", f"Merged {item['title']} at {synced}", subject)
-        if item.get("repair") and delivery_state.base_awaits_repair(delivery_state.read_journal(self.state_directory)):
+        self.journal("candidate.merged", subject, data={"head": synced})
+        journal = delivery_state.read_journal(self.state_directory)
+        if item.get("repair") and delivery_state.base_awaits_repair(journal):
             # The named repair landed: the base is repaired, which clears the mark and puts back what the break stopped.
-            self.journal("base.repaired", f"{subject}, the named repair, merged at {merged}", subject)
+            # It answers every break since the last repair, so each setback they make closes here.
+            self.journal("base.repaired", subject,
+                         data={"source": "queue", "head": merged, "repair": subject},
+                         answers=[entry["id"] for entry in breaks_since_repair(journal)])
         result.outcome = "merged"
 
     def review_gate(self, subject: str, synced: str, anchor: Path, context: Context) -> None:
@@ -2834,7 +2899,9 @@ class Runner:
                 with contextlib.suppress(Stop, delivery_state.StateError):
                     self.set_item(subject, stage="queued", checks=[])
                 with contextlib.suppress(Stop, delivery_state.StateError, OSError):
-                    self.journal("candidate.stopped", detail, subject)
+                    self.journal("candidate.stopped", subject,
+                                 data={"reason": why.reason, "detail": detail, "requeued": True},
+                                 because=self.cause(why, subject))
                 documents[subject].stop = {
                     "reason": why.reason, "detail": detail,
                     "paths": [], "queueStopped": queue_stopped or why.reason in QUEUE_STOPPING,
@@ -2850,9 +2917,10 @@ class Runner:
             subjects = [member.subject for member in built]
             for subject in subjects:
                 self.set_item(subject, stage="checking", checks=[])
-            titles = ", ".join(member.item["title"] for member in built)
             for subject in subjects:
-                self.journal("check.started", f"Checking {titles} as one batch", subject)
+                self.started[subject] = self.journal("check.started", subject,
+                                                     data={"batch": subjects})
+                self.failed[subject] = {}
             shared = Result("batch", None)
             failed, checks, checkout, changes = self.check_tree(built, base_head, shared, "Batch")
             keep, later, record = built, [], shared
@@ -2886,7 +2954,8 @@ class Runner:
                         self.set_item(member.subject, stage="queued", checks=[])
             else:
                 for subject in subjects:
-                    self.journal("check.finished", f"Checks passed for {titles} as one batch", subject)
+                    self.journal("check.finished", subject,
+                                 data={"batch": subjects}, because=[self.started.get(subject)])
             previous = self.tree(base_head)
             for member in keep:
                 document = documents[member.subject]
@@ -2896,7 +2965,8 @@ class Runner:
                 except Exception as error:  # noqa: BLE001 - a partial landing stops the queue however it ends
                     stop = error if isinstance(error, Stop) else Stop(
                         "runner_error", f"{type(error).__name__}: {error}"[:800])
-                    self.stopped(document, stop, member.subject)
+                    # A member whose tree no longer fits is put back below, so its stop leaves it in the queue.
+                    self.stopped(document, stop, member.subject, requeued=stop.reason == "batch_tree_mismatch")
                     if landed:
                         # The base now holds a tree that may not have been checked on its own.
                         document.notes.append(
@@ -2905,8 +2975,11 @@ class Runner:
                         )
                         document.stop["queueStopped"] = True
                         with contextlib.suppress(Stop, delivery_state.StateError, OSError):
-                            self.journal("base.broken", f"{stop.reason} after a partial landing; "
-                                         f"{self.base} holds the batch's tree up to {landed[-1]}", member.subject)
+                            self.last_break = self.journal(
+                                "base.broken", member.subject,
+                                data={"source": "queue", "reason": stop.reason,
+                                      "detail": f"{self.base} holds the batch's tree up to {landed[-1]}",
+                                      "after": landed[-1]})
                     if stop.reason == "batch_tree_mismatch":
                         # Nothing of it landed; it is batched again once the base is confirmed.
                         with contextlib.suppress(Stop, delivery_state.StateError):
@@ -2966,7 +3039,7 @@ class Runner:
         if needing and not approved_by:
             raise Stop("approval_required", f"targets {needing} need --approved-by")
         result.release = {"ref": ref, "commit": resolved, "targets": []}
-        self.journal("release.started", f"Release of {resolved} started")
+        started = self.journal("release.started", data={"head": resolved})
         context = self.context(None, base_head).with_values(ref=resolved, head=resolved)
         checkout = self.checkout(resolved, "release", context=context.with_values(treeSha=self.tree(resolved)))
         context = context.with_values(treeSha=self.tree(resolved))
@@ -2986,10 +3059,10 @@ class Runner:
                 stopped = True
         if stopped:
             failed = [target["id"] for target in result.release["targets"] if target["state"] in ("failed", "timed_out")]
-            self.journal("release.finished", f"Release of {resolved} stopped at {failed[-1]}")
+            self.journal("release.finished", data={"head": resolved, "failedAt": failed[-1]}, because=[started])
             raise Stop("release_failed", f"release target {failed[-1]} failed")
         self.write(assignments={"/meta/releasedHead": resolved})
-        self.journal("release.finished", f"Released {resolved}")
+        self.journal("release.finished", data={"head": resolved}, because=[started])
         result.outcome = "released"
 
     # -- driving -----------------------------------------------------------
@@ -3023,7 +3096,8 @@ class Runner:
             result.notes.extend(note for note in self.notes if note not in result.notes)
         return result
 
-    def stopped(self, result: Result, stop: Stop, subject: str | None) -> None:
+    def stopped(self, result: Result, stop: Stop, subject: str | None, requeued: bool = False) -> None:
+        """Settle a stop on the record. ``requeued`` says the caller puts the piece back in the queue after it."""
         queue_stopped = stop.reason in QUEUE_STOPPING
         result.stop = {"reason": stop.reason, "detail": stop.detail, "paths": stop.paths, "queueStopped": queue_stopped}
         refused = stop.reason in REFUSALS
@@ -3048,11 +3122,24 @@ class Runner:
                 self.finish_item(subject, "stopped", stop.reason)
             if queue_stopped:
                 # Every stop that stops the queue leaves the base to confirm by hand; serve waits for base.repaired.
-                self.journal("base.broken", f"{stop.reason}: {stop.detail}", subject)
+                # A break a re-run declared names its verdict and the base head it failed at; any other names no cause.
+                # One that finds a break already standing at the same head names it too: both are one setback.
+                verdict = self.verdicts.get(subject) if stop.reason == "base_broken" and subject is not None else None
+                self.last_break = self.journal(
+                    "base.broken", subject,
+                    data={"source": "queue", "reason": stop.reason, "detail": stop.detail,
+                          **({"head": verdict[1]} if verdict else {})},
+                    because=[verdict[0], *self.standing_breaks(verdict[1])] if verdict else [])
             if subject is not None and stop.reason == "provider_refused":
-                self.journal("selection.refused", f"The provider refused {subject}'s checks: {stop.detail}", subject)
+                self.journal("selection.refused", subject,
+                             data={"detail": stop.detail})
             if subject is not None:
-                self.journal("candidate.stopped", f"{stop.reason}: {stop.detail}", subject)
+                # A refusal that left the piece where it stood leaves it in the queue.
+                stage = self.item(subject)["stage"]
+                self.journal("candidate.stopped", subject,
+                             data={"reason": stop.reason, "detail": stop.detail,
+                                   **({"requeued": True} if requeued or stage not in ("stopped", "merged") else {})},
+                             because=self.cause(stop, subject))
 
     def prepared(self, subcommand: str, subject: str | None, step: Callable[[Result], None]) -> Result:
         def guarded(result: Result) -> None:
@@ -3300,8 +3387,8 @@ def hold_for_setup(state_directory: Path, detail: str, kept: Iterable[str] = (),
             if error.code != "version_stale":
                 raise
             continue
-        delivery_state.append_journal(state_directory, kind="blocker.recorded", writer="runner",
-                                      summary=f"Serving is held: {reason}. Repair it, then clear meta.hold.{stopped}")
+        held = f"Serving is held: {reason}. Repair it, then clear meta.hold.{stopped}"
+        delivery_state.append_journal(state_directory, kind="serving.held", writer="runner", data={"why": held})
         return True
     return False
 

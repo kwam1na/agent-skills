@@ -402,10 +402,13 @@ python3 -B scripts/render_state.py --dir <state directory>
   invalid, nothing runs and it exits 2.
 - It reads only the binding's `state` member: `directory`, `renderers` and
   `publishers`. A renderer is any argv, or a built-in (`markdown` or
-  `static-page`), that reads the validated `{state, journal, stats}` on stdin and
-  writes one view on stdout to its `output` inside the state directory. A
-  publisher is any argv that puts the same document somewhere a view reads,
-  such as run-delivery's tracker publisher. A publisher with a `kind` and no
+  `static-page`), that reads the validated `{state, journal, stats}` on stdin,
+  with the delivery's `story` beside them, and writes one view on stdout to its
+  `output` inside the state directory. A publisher is any argv that puts the
+  same document somewhere a view reads, such as run-delivery's tracker
+  publisher. That document carries the story too: a publisher that once
+  received the bare record now receives it with `story`, the narrator's telling
+  of the journal and the plan, as one more member. A publisher with a `kind` and no
   `argv` runs nothing, and the wrapper refuses the configuration, naming the
   fix: name the tracker publisher instead.
 - With no configuration it renders both built-ins, `delivery.md` and
@@ -625,8 +628,12 @@ it.
 `references/schemas.json` holds the skill's schemas, keyed by name:
 
 - `delivery-state/1` describes the state document.
-- `delivery-journal/1` describes one journal entry. The journal is
+- `delivery-journal/2` describes one journal entry. The journal is
   append-only.
+- `journal-kinds/1` describes `references/journal-kinds.json`, the registry
+  that lists every kind of entry: its facts, typed or prose, its links, its
+  altitude and tone, its words and its tracker update. The guide's "Journal
+  entries" section says how an entry is shaped and how a kind is added.
 
 Write both only through the state tool, `scripts/delivery_state.py`. Run it
 with `python3 -B` so no bytecode is written beside the skill:
@@ -637,8 +644,9 @@ python3 -B scripts/delivery_state.py --dir <state directory> show
 python3 -B scripts/delivery_state.py --dir <state directory> patch --writer lead --version <n> --patch '<json merge patch>'
 python3 -B scripts/delivery_state.py --dir <state directory> patch --writer lead --version <n> --element 'queue[subject=<subject>]' --patch '<json merge patch>'
 python3 -B scripts/delivery_state.py --dir <state directory> patch --writer lead --version <n> --element 'lanes[id=<lane>]' --set '{"/waitingOn": null}'
-python3 -B scripts/delivery_state.py --dir <state directory> journal --kind <kind> --summary "<what happened>"
-python3 -B scripts/delivery_state.py --dir <state directory> journal --kind review.round --subject <subject> --lane <lane> --review '<review json>'
+python3 -B scripts/delivery_state.py --dir <state directory> journal --kind <kind> --data '<its facts as JSON>' [--because <ids>] [--answers <ids>]
+python3 -B scripts/delivery_state.py --dir <state directory> journal --kind decision.recorded --text "<the decision>" --why "<its reason>"
+python3 -B scripts/delivery_state.py --dir <state directory> journal --kind review.round --subject <subject> --lane <lane> --data '<the round as JSON>'
 ```
 
 - A merge patch removes any field it sets to null. To set a nullable field to
@@ -661,11 +669,14 @@ python3 -B scripts/delivery_state.py --dir <state directory> journal --kind revi
 - A queue element the lead adds starts with `stage` set to `queued`, empty
   `checks` and a null `syncedHead`.
 - Journal appends are never refused for concurrency; the tool allocates the
-  next id.
+  next id. An entry's `data` is checked against its kind in the registry, and
+  `because` and `answers` name earlier entries by id. An entry carries its
+  facts and nothing else: one in the older shape, without `data`, is refused.
 - A `review.round` entry records one review round of a candidate: its
-  `review` is `{round, startedAt, finishedAt, verdicts, findings}`, where
+  `data` is `{round, startedAt, finishedAt, verdicts, findings}`, with
+  `refused` and `restarts` when they apply, where
   `verdicts` maps each lens to `approve` or `changes` and `findings` counts
-  `P0` to `P3`. The summary is written for it when `--summary` is left out. A
+  `P0` to `P3`. A
   round that finishes before it starts, names no candidate or has no verdict
   is refused. The lead or the lane writes it; the runner never does.
 - `show` prints the validated `{state, journal, stats}` document that
@@ -712,7 +723,7 @@ python3 -B scripts/delivery_state.py --dir <state directory> capture-review \
 The lead reads it when checking a hand-off.
 
 The command stores original outcome bytes in a digest-addressed
-`review-artifacts/` file and appends a `review.evidence` observation. Repeating
+`review-artifacts/` file and appends a `review.recorded` entry. Repeating
 the same capture or an older exact prefix does not append another event or
 replace newer history. An extension must retain every prior source byte;
 rewritten prior rounds are refused. It never creates a run,
@@ -742,9 +753,9 @@ python3 -B scripts/delivery_state.py --dir <state directory> carry-review --writ
 
 Before carrying, the lead reads the diff between the two heads and judges that
 nothing in it needs review; the tool does no git work. The carry journals a
-`decision.recorded` entry with `reviewCarry` naming both heads and the capture's
-digest, and the views then show the capture at the queued head with that
-decision, never as a review of the new head. A carry never changes what the
+`review.carried` entry naming both heads, the capture's digest and the lead's
+reason, and the views then show the capture at the queued head with that
+carry, never as a review of the new head. A carry never changes what the
 evidence says: a capture whose last round is not aligned, or that leaves a P0 or
 P1 open, is refused. Each later head needs its own carry, from the head the last
 carry reached, and a later review round or capture ends a carry. Like a capture,

@@ -61,6 +61,11 @@ _state_spec = importlib.util.spec_from_file_location(
     "delivery_review_state", Path(__file__).resolve().parents[2] / "orchestrate-work" / "scripts" / "delivery_state.py")
 review_state = importlib.util.module_from_spec(_state_spec)
 _state_spec.loader.exec_module(review_state)
+# And the narrator, which tells the record's story; the page draws that story and words no entry itself.
+_narrator_spec = importlib.util.spec_from_file_location(
+    "delivery_narrator", Path(__file__).resolve().parents[2] / "orchestrate-work" / "scripts" / "narrator.py")
+narrator = importlib.util.module_from_spec(_narrator_spec)
+_narrator_spec.loader.exec_module(narrator)
 
 
 SCRIPT = "render.py"
@@ -509,12 +514,12 @@ def native_review_summaries(document: dict) -> dict:
             if not isinstance(journal, list) or any(not isinstance(entry, dict) for entry in journal):
                 raise ValueError("malformed review journal")
             events = [entry for entry in journal if entry.get("subject") == subject
-                      and entry.get("kind") in ("review.round", "review.evidence")]
+                      and entry.get("kind") in ("review.round", *REVIEW_KEPT)]
             if any(type(entry.get("id")) is not int or not 0 < entry["id"] <= SAFE_INTEGER for entry in events):
                 raise ValueError("malformed review journal boundary")
-            evidence = next((entry for entry in reversed(events) if entry["kind"] == "review.evidence"), None)
+            evidence = next((entry for entry in reversed(events) if entry["kind"] in REVIEW_KEPT), None)
             boundary = max((entry.get("id", 0) for entry in events), default=0)
-            if evidence is not None and (evidence.get("reviewArtifact") != {
+            if evidence is not None and (_kept_review(evidence) != {
                     "digest": observation["digest"], "candidateRef": observation["candidateRef"]}
                     or evidence.get("id", 0) != boundary):
                 raise ValueError("review observation is stale")
@@ -640,13 +645,48 @@ def _texts_order(texts: dict, named: list[str]) -> list:
 # Links
 
 
-def page_links(document: object, runs: dict, config: dict) -> dict:
+COMMIT_ID = re.compile(r"^[0-9a-f]{40}$")
+# A commit named in words, cut short as a person writes one: seven or more hex digits, at least one of them a number.
+SHORT_COMMIT = re.compile(r"\b(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{7,39}\b")
+# The entry that says a review was kept: review.recorded, with its digest and reviewed commit as facts.
+REVIEW_KEPT = ("review.recorded",)
+
+
+def _kept_review(entry: dict) -> object:
+    data = entry.get("data")
+    if entry.get("kind") == "review.recorded" and isinstance(data, dict):
+        return {"digest": data.get("digest"), "candidateRef": data.get("candidateRef")}
+    return None
+
+
+def _facts_named(value: object, commits: list, changes: list) -> None:
+    """The commits and change requests a journal entry's facts name, by the registry's types: a commit is a full id, and a
+    change request is the value of a changeRequest field. A commit that a fact's words name cut short is taken too."""
+    if isinstance(value, dict):
+        for key, inner in value.items():
+            if key == "changeRequest" and isinstance(inner, str):
+                changes.append(inner)
+            else:
+                _facts_named(inner, commits, changes)
+    elif isinstance(value, list):
+        for inner in value:
+            _facts_named(inner, commits, changes)
+    elif isinstance(value, str) and COMMIT_ID.match(value):
+        commits.append(value)
+    elif isinstance(value, str):
+        # Words that name a commit cut short, such as a decision's text: the forge opens a short id as it does a full one.
+        commits.extend(SHORT_COMMIT.findall(value))
+
+
+def page_links(document: object, runs: dict, config: dict, reviews: dict | None = None) -> dict:
     """The links the page may open, worked out here so the page holds no link rules of its own:
-    ticket ids by key, change requests by value and fix commits by hash."""
+    ticket ids by key, change requests by value, and by hash the fix commits, the commits a round reviewed and those the
+    journal's facts name."""
     state = document.get("state") if _is_object(document) and _is_object(document.get("state")) else {}
     keys, changes, commits = [], [], []
     meta = state.get("meta") if _is_object(state.get("meta")) else {}
     keys.append(meta.get("trackerParent"))
+    commits.append(meta.get("baseHead"))
     for key in ("queue", "planned"):
         for item in state.get(key) if isinstance(state.get(key), list) else ():
             if _is_object(item):
@@ -659,8 +699,12 @@ def page_links(document: object, runs: dict, config: dict) -> dict:
     for entry in journal if isinstance(journal, list) else ():
         if _is_object(entry):
             keys.append(entry.get("subject"))
-    for summary in runs.values():
+            # An entry's facts: each commit and change request they name opens on the forge, from the words that name it.
+            _facts_named(entry.get("data"), commits, changes)
+    for summary in [*runs.values(), *(reviews.values() if isinstance(reviews, dict) else ())]:
         for entry in summary.get("roundDetail", []) if _is_object(summary) else ():
+            if _is_object(entry):
+                commits.append(entry.get("candidateRef"))
             for note in entry.get("settled", []) if _is_object(entry) else ():
                 if _is_object(note):
                     commits.append(note.get("fixCommit"))
@@ -1040,9 +1084,21 @@ def read_needs_block(state_directory: Path) -> dict | None:
 # The page
 
 
+def with_story(document: dict, plan: object) -> dict:
+    """The record with its story: the one the wrapper told, or, for a record given without one, the narrator's now."""
+    if isinstance(document.get("story"), dict):
+        return document
+    try:
+        return {**document, "story": narrator.narrate(document.get("journal") or [], state=document.get("state"),
+                                                      plan=plan if isinstance(plan, dict) else None)}
+    except (ValueError, KeyError, TypeError):
+        return document
+
+
 def line_map_data(document: object, runs: dict, config: dict, *, theme_key: str, history: str | None,
-                  plan: dict | None = None, needs: dict | None = None) -> dict:
-    """The shared bounded view data; local HTML and public projection consume the same cut."""
+                  plan: dict | None = None, needs: dict | None = None, story: bool = True) -> dict:
+    """The shared bounded view data; local HTML and public projection consume the same cut. Without ``story``, the
+    record is not narrated: a cut that publishes no story tells none."""
     reviews = native_review_summaries(document)
     # One review payload budget, in stop order, regardless of its backing store.
     combined = {**{"run:" + key: value for key, value in runs.items()},
@@ -1065,6 +1121,8 @@ def line_map_data(document: object, runs: dict, config: dict, *, theme_key: str,
     runs = {key: bounded["run:" + key] for key in runs}
     reviews = {key: bounded["native:" + key] for key in reviews}
     document = {key: value for key, value in document.items() if key != "reviewEvidence"}
+    if story:
+        document = with_story(document, plan.get("plan") if isinstance(plan, dict) else None)
     view = {
         "title": config["title"],
         "themeKey": theme_key,
@@ -1073,7 +1131,7 @@ def line_map_data(document: object, runs: dict, config: dict, *, theme_key: str,
         "lenses": config["lenses"],
     }
     return {"document": document, "runs": runs, "reviews": reviews, "view": view,
-            "links": page_links(document, runs, config), "plan": plan, "needs": needs}
+            "links": page_links(document, runs, config, reviews), "plan": plan, "needs": needs}
 
 
 def render_line_map(document: object, runs: dict, config: dict, *, theme_key: str, history: str | None,

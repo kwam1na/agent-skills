@@ -92,8 +92,7 @@
       "kind": "review.round",
       "lane": "lane-1",
       "subject": "PAY-1",
-      "summary": "PAY-1: review round 1",
-      "review": {
+      "data": {
         "round": 1,
         "startedAt": "2026-10-30T06:10:00Z",
         "finishedAt": "2026-10-30T06:10:00Z",
@@ -115,7 +114,10 @@
       "kind": "candidate.handed",
       "lane": "lane-1",
       "subject": "PAY-1",
-      "summary": "candidate.handed PAY-1"
+      "data": {
+        "head": "31686d8f41e095e55258be3b62d0e69173490ee7",
+        "checks": []
+      }
     },
     {
       "id": 3,
@@ -123,7 +125,9 @@
       "kind": "candidate.merged",
       "lane": "lane-1",
       "subject": "PAY-1",
-      "summary": "candidate.merged PAY-1"
+      "data": {
+        "head": "31686d8f41e095e55258be3b62d0e69173490ee7"
+      }
     },
     {
       "id": 4,
@@ -131,8 +135,7 @@
       "kind": "review.round",
       "lane": "lane-1",
       "subject": "PAY-2",
-      "summary": "PAY-2: review round 1",
-      "review": {
+      "data": {
         "round": 1,
         "startedAt": "2026-10-30T06:13:00Z",
         "finishedAt": "2026-10-30T06:13:00Z",
@@ -154,7 +157,10 @@
       "kind": "candidate.handed",
       "lane": "lane-1",
       "subject": "PAY-2",
-      "summary": "candidate.handed PAY-2"
+      "data": {
+        "head": "31686d9241e095e95258be4062d0e69773490eee",
+        "checks": []
+      }
     },
     {
       "id": 6,
@@ -162,7 +168,9 @@
       "kind": "candidate.merged",
       "lane": "lane-1",
       "subject": "PAY-2",
-      "summary": "candidate.merged PAY-2"
+      "data": {
+        "head": "31686d9241e095e95258be4062d0e69773490eee"
+      }
     },
     {
       "id": 7,
@@ -170,8 +178,7 @@
       "kind": "review.round",
       "lane": "lane-1",
       "subject": "PAY-3",
-      "summary": "PAY-3: review round 1",
-      "review": {
+      "data": {
         "round": 1,
         "startedAt": "2026-10-30T06:16:00Z",
         "finishedAt": "2026-10-30T06:16:00Z",
@@ -193,7 +200,10 @@
       "kind": "candidate.handed",
       "lane": "lane-1",
       "subject": "PAY-3",
-      "summary": "candidate.handed PAY-3"
+      "data": {
+        "head": "31686d9541e095ed5258be4562d0e69d73490ef5",
+        "checks": []
+      }
     },
     {
       "id": 9,
@@ -201,7 +211,9 @@
       "kind": "candidate.merged",
       "lane": "lane-1",
       "subject": "PAY-3",
-      "summary": "candidate.merged PAY-3"
+      "data": {
+        "head": "31686d9541e095ed5258be4562d0e69d73490ef5"
+      }
     },
     {
       "id": 10,
@@ -209,8 +221,7 @@
       "kind": "review.round",
       "lane": "lane-1",
       "subject": "PAY-4",
-      "summary": "PAY-4: review round 1",
-      "review": {
+      "data": {
         "round": 1,
         "startedAt": "2026-10-30T06:19:00Z",
         "finishedAt": "2026-10-30T06:19:00Z",
@@ -232,7 +243,10 @@
       "kind": "candidate.handed",
       "lane": "lane-1",
       "subject": "PAY-4",
-      "summary": "candidate.handed PAY-4"
+      "data": {
+        "head": "31686d9841e095f15258be4a62d0e6a373490efc",
+        "checks": []
+      }
     }
   ],
   "stats": {},

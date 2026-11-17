@@ -65,6 +65,19 @@ installs the service package. The lead verifies this separate service job at the
 exact main-push commit alongside Ubuntu and cut-release before release/deploy;
 the release channel's corpus gate alone does not attest service CI.
 
+## Versions move together
+
+The service and the publishing generation move together. The snapshot body is
+`hosted-delivery-snapshot/2`, sent as renderer `delivery-line-map/2`: a service that
+reads another version refuses the body as an unsupported renderer, and a publisher
+refuses a receipt naming another. Deploy the service and apply the generation in
+one step. A delivery hosted as `/1` stays at its last acknowledged cut and its page
+then reads as requiring a compatible snapshot, since nothing republishes a finished
+delivery. One still open under the older generation closes there first, as its
+journal must: the newer publisher reads that delivery's identity, pending body or
+terminal body as corrupt (`identity_corrupt`, `terminal_corrupt`) rather than
+half-reading it.
+
 ## Reviewed production procedure
 
 The tracked Wrangler configuration names `hosted-delivery-viewer`, private R2

@@ -300,8 +300,7 @@
       "kind": "review.round",
       "lane": "lane-1",
       "subject": "CART-101",
-      "summary": "CART-101: review round 1",
-      "review": {
+      "data": {
         "round": 1,
         "startedAt": "2026-10-30T06:10:00Z",
         "finishedAt": "2026-10-30T06:10:00Z",
@@ -323,7 +322,10 @@
       "kind": "candidate.handed",
       "lane": "lane-1",
       "subject": "CART-101",
-      "summary": "candidate.handed CART-101"
+      "data": {
+        "head": "b6af5c64f3947f013079a19e6d5ec43baa43e6d8",
+        "checks": []
+      }
     },
     {
       "id": 3,
@@ -331,7 +333,9 @@
       "kind": "candidate.merged",
       "lane": "lane-1",
       "subject": "CART-101",
-      "summary": "candidate.merged CART-101"
+      "data": {
+        "head": "b6af5c64f3947f013079a19e6d5ec43baa43e6d8"
+      }
     },
     {
       "id": 4,
@@ -339,8 +343,7 @@
       "kind": "review.round",
       "lane": "lane-1",
       "subject": "CART-102",
-      "summary": "CART-102: review round 1",
-      "review": {
+      "data": {
         "round": 1,
         "startedAt": "2026-10-30T06:13:00Z",
         "finishedAt": "2026-10-30T06:13:00Z",
@@ -362,7 +365,10 @@
       "kind": "candidate.handed",
       "lane": "lane-1",
       "subject": "CART-102",
-      "summary": "candidate.handed CART-102"
+      "data": {
+        "head": "b6af5c67f3947f053079a1a36d5ec441aa43e6df",
+        "checks": []
+      }
     },
     {
       "id": 6,
@@ -370,7 +376,9 @@
       "kind": "candidate.merged",
       "lane": "lane-1",
       "subject": "CART-102",
-      "summary": "candidate.merged CART-102"
+      "data": {
+        "head": "b6af5c67f3947f053079a1a36d5ec441aa43e6df"
+      }
     },
     {
       "id": 7,
@@ -378,8 +386,7 @@
       "kind": "review.round",
       "lane": "lane-1",
       "subject": "CART-103",
-      "summary": "CART-103: review round 1",
-      "review": {
+      "data": {
         "round": 1,
         "startedAt": "2026-10-30T06:16:00Z",
         "finishedAt": "2026-10-30T06:16:00Z",
@@ -401,7 +408,10 @@
       "kind": "candidate.handed",
       "lane": "lane-1",
       "subject": "CART-103",
-      "summary": "candidate.handed CART-103"
+      "data": {
+        "head": "b6af5c6af3947f093079a1a86d5ec447aa43e6e6",
+        "checks": []
+      }
     },
     {
       "id": 9,
@@ -409,7 +419,9 @@
       "kind": "candidate.merged",
       "lane": "lane-1",
       "subject": "CART-103",
-      "summary": "candidate.merged CART-103"
+      "data": {
+        "head": "b6af5c6af3947f093079a1a86d5ec447aa43e6e6"
+      }
     },
     {
       "id": 10,
@@ -417,8 +429,7 @@
       "kind": "review.round",
       "lane": "lane-1",
       "subject": "CART-104",
-      "summary": "CART-104: review round 1",
-      "review": {
+      "data": {
         "round": 1,
         "startedAt": "2026-10-30T06:19:00Z",
         "finishedAt": "2026-10-30T06:19:00Z",
@@ -440,7 +451,10 @@
       "kind": "candidate.handed",
       "lane": "lane-1",
       "subject": "CART-104",
-      "summary": "candidate.handed CART-104"
+      "data": {
+        "head": "b6af5c6df3947f0d3079a1ad6d5ec44daa43e6ed",
+        "checks": []
+      }
     },
     {
       "id": 12,
@@ -448,7 +462,9 @@
       "kind": "candidate.merged",
       "lane": "lane-1",
       "subject": "CART-104",
-      "summary": "candidate.merged CART-104"
+      "data": {
+        "head": "b6af5c6df3947f0d3079a1ad6d5ec44daa43e6ed"
+      }
     },
     {
       "id": 13,
@@ -456,8 +472,7 @@
       "kind": "review.round",
       "lane": "lane-1",
       "subject": "CART-105",
-      "summary": "CART-105: review round 1",
-      "review": {
+      "data": {
         "round": 1,
         "startedAt": "2026-10-30T06:22:00Z",
         "finishedAt": "2026-10-30T06:22:00Z",
@@ -479,7 +494,10 @@
       "kind": "candidate.handed",
       "lane": "lane-1",
       "subject": "CART-105",
-      "summary": "candidate.handed CART-105"
+      "data": {
+        "head": "b6af5c70f3947f113079a1b26d5ec453aa43e6f4",
+        "checks": []
+      }
     },
     {
       "id": 15,
@@ -487,8 +505,7 @@
       "kind": "review.round",
       "lane": "lane-1",
       "subject": "CART-106",
-      "summary": "CART-106: review round 1",
-      "review": {
+      "data": {
         "round": 1,
         "startedAt": "2026-10-30T06:25:00Z",
         "finishedAt": "2026-10-30T06:25:00Z",
@@ -510,7 +527,10 @@
       "kind": "candidate.handed",
       "lane": "lane-1",
       "subject": "CART-106",
-      "summary": "candidate.handed CART-106"
+      "data": {
+        "head": "b6af5c73f3947f153079a1b76d5ec459aa43e6fb",
+        "checks": []
+      }
     },
     {
       "id": 17,
@@ -518,7 +538,9 @@
       "kind": "candidate.merged",
       "lane": "lane-1",
       "subject": "CART-106",
-      "summary": "candidate.merged CART-106"
+      "data": {
+        "head": "b6af5c73f3947f153079a1b76d5ec459aa43e6fb"
+      }
     },
     {
       "id": 18,
@@ -526,8 +548,7 @@
       "kind": "review.round",
       "lane": "lane-1",
       "subject": "CART-107",
-      "summary": "CART-107: review round 1",
-      "review": {
+      "data": {
         "round": 1,
         "startedAt": "2026-10-30T06:28:00Z",
         "finishedAt": "2026-10-30T06:28:00Z",
@@ -549,7 +570,10 @@
       "kind": "candidate.handed",
       "lane": "lane-1",
       "subject": "CART-107",
-      "summary": "candidate.handed CART-107"
+      "data": {
+        "head": "b6af5c76f3947f193079a1bc6d5ec45faa43e702",
+        "checks": []
+      }
     },
     {
       "id": 20,
@@ -557,7 +581,9 @@
       "kind": "candidate.merged",
       "lane": "lane-1",
       "subject": "CART-107",
-      "summary": "candidate.merged CART-107"
+      "data": {
+        "head": "b6af5c76f3947f193079a1bc6d5ec45faa43e702"
+      }
     },
     {
       "id": 21,
@@ -565,8 +591,7 @@
       "kind": "review.round",
       "lane": "lane-1",
       "subject": "CART-108",
-      "summary": "CART-108: review round 1",
-      "review": {
+      "data": {
         "round": 1,
         "startedAt": "2026-10-30T06:31:00Z",
         "finishedAt": "2026-10-30T06:31:00Z",
@@ -588,7 +613,10 @@
       "kind": "candidate.handed",
       "lane": "lane-1",
       "subject": "CART-108",
-      "summary": "candidate.handed CART-108"
+      "data": {
+        "head": "b6af5c79f3947f1d3079a1c16d5ec465aa43e709",
+        "checks": []
+      }
     },
     {
       "id": 23,
@@ -596,7 +624,9 @@
       "kind": "candidate.merged",
       "lane": "lane-1",
       "subject": "CART-108",
-      "summary": "candidate.merged CART-108"
+      "data": {
+        "head": "b6af5c79f3947f1d3079a1c16d5ec465aa43e709"
+      }
     },
     {
       "id": 24,
@@ -604,8 +634,7 @@
       "kind": "review.round",
       "lane": "lane-1",
       "subject": "CART-109",
-      "summary": "CART-109: review round 1",
-      "review": {
+      "data": {
         "round": 1,
         "startedAt": "2026-10-30T06:34:00Z",
         "finishedAt": "2026-10-30T06:34:00Z",
@@ -627,7 +656,10 @@
       "kind": "candidate.handed",
       "lane": "lane-1",
       "subject": "CART-109",
-      "summary": "candidate.handed CART-109"
+      "data": {
+        "head": "b6af5c7cf3947f213079a1c66d5ec46baa43e710",
+        "checks": []
+      }
     },
     {
       "id": 26,
@@ -635,7 +667,9 @@
       "kind": "candidate.merged",
       "lane": "lane-1",
       "subject": "CART-109",
-      "summary": "candidate.merged CART-109"
+      "data": {
+        "head": "b6af5c7cf3947f213079a1c66d5ec46baa43e710"
+      }
     },
     {
       "id": 27,
@@ -643,8 +677,7 @@
       "kind": "review.round",
       "lane": "lane-1",
       "subject": "CART-110",
-      "summary": "CART-110: review round 1",
-      "review": {
+      "data": {
         "round": 1,
         "startedAt": "2026-10-30T06:37:00Z",
         "finishedAt": "2026-10-30T06:37:00Z",
@@ -666,7 +699,10 @@
       "kind": "candidate.handed",
       "lane": "lane-1",
       "subject": "CART-110",
-      "summary": "candidate.handed CART-110"
+      "data": {
+        "head": "b6af5cbef3947f793079a2346d5ec4efaa43e7aa",
+        "checks": []
+      }
     },
     {
       "id": 29,
@@ -674,7 +710,9 @@
       "kind": "candidate.merged",
       "lane": "lane-1",
       "subject": "CART-110",
-      "summary": "candidate.merged CART-110"
+      "data": {
+        "head": "b6af5cbef3947f793079a2346d5ec4efaa43e7aa"
+      }
     },
     {
       "id": 30,
@@ -682,8 +720,7 @@
       "kind": "review.round",
       "lane": "lane-1",
       "subject": "CART-111",
-      "summary": "CART-111: review round 1",
-      "review": {
+      "data": {
         "round": 1,
         "startedAt": "2026-10-30T06:40:00Z",
         "finishedAt": "2026-10-30T06:40:00Z",
@@ -705,7 +742,10 @@
       "kind": "candidate.handed",
       "lane": "lane-1",
       "subject": "CART-111",
-      "summary": "candidate.handed CART-111"
+      "data": {
+        "head": "b6af5cc1f3947f7d3079a2396d5ec4f5aa43e7b1",
+        "checks": []
+      }
     },
     {
       "id": 32,
@@ -713,7 +753,9 @@
       "kind": "candidate.merged",
       "lane": "lane-1",
       "subject": "CART-111",
-      "summary": "candidate.merged CART-111"
+      "data": {
+        "head": "b6af5cc1f3947f7d3079a2396d5ec4f5aa43e7b1"
+      }
     },
     {
       "id": 33,
@@ -721,8 +763,7 @@
       "kind": "review.round",
       "lane": "lane-1",
       "subject": "CART-112",
-      "summary": "CART-112: review round 1",
-      "review": {
+      "data": {
         "round": 1,
         "startedAt": "2026-10-30T06:43:00Z",
         "finishedAt": "2026-10-30T06:43:00Z",
@@ -744,7 +785,10 @@
       "kind": "candidate.handed",
       "lane": "lane-1",
       "subject": "CART-112",
-      "summary": "candidate.handed CART-112"
+      "data": {
+        "head": "b6af5cc4f3947f813079a23e6d5ec4fbaa43e7b8",
+        "checks": []
+      }
     },
     {
       "id": 35,
@@ -752,7 +796,9 @@
       "kind": "candidate.merged",
       "lane": "lane-1",
       "subject": "CART-112",
-      "summary": "candidate.merged CART-112"
+      "data": {
+        "head": "b6af5cc4f3947f813079a23e6d5ec4fbaa43e7b8"
+      }
     },
     {
       "id": 36,
@@ -760,8 +806,7 @@
       "kind": "review.round",
       "lane": "lane-1",
       "subject": "CART-113",
-      "summary": "CART-113: review round 1",
-      "review": {
+      "data": {
         "round": 1,
         "startedAt": "2026-10-30T06:46:00Z",
         "finishedAt": "2026-10-30T06:46:00Z",
@@ -783,7 +828,10 @@
       "kind": "candidate.handed",
       "lane": "lane-1",
       "subject": "CART-113",
-      "summary": "candidate.handed CART-113"
+      "data": {
+        "head": "b6af5cc7f3947f853079a2436d5ec501aa43e7bf",
+        "checks": []
+      }
     },
     {
       "id": 38,
@@ -791,7 +839,9 @@
       "kind": "candidate.merged",
       "lane": "lane-1",
       "subject": "CART-113",
-      "summary": "candidate.merged CART-113"
+      "data": {
+        "head": "b6af5cc7f3947f853079a2436d5ec501aa43e7bf"
+      }
     },
     {
       "id": 39,
@@ -799,8 +849,7 @@
       "kind": "review.round",
       "lane": "lane-1",
       "subject": "CART-114",
-      "summary": "CART-114: review round 1",
-      "review": {
+      "data": {
         "round": 1,
         "startedAt": "2026-10-30T06:49:00Z",
         "finishedAt": "2026-10-30T06:49:00Z",
@@ -822,7 +871,10 @@
       "kind": "candidate.handed",
       "lane": "lane-1",
       "subject": "CART-114",
-      "summary": "candidate.handed CART-114"
+      "data": {
+        "head": "b6af5ccaf3947f893079a2486d5ec507aa43e7c6",
+        "checks": []
+      }
     },
     {
       "id": 41,
@@ -830,7 +882,9 @@
       "kind": "candidate.merged",
       "lane": "lane-1",
       "subject": "CART-114",
-      "summary": "candidate.merged CART-114"
+      "data": {
+        "head": "b6af5ccaf3947f893079a2486d5ec507aa43e7c6"
+      }
     },
     {
       "id": 42,
@@ -838,8 +892,7 @@
       "kind": "review.round",
       "lane": "lane-1",
       "subject": "CART-115",
-      "summary": "CART-115: review round 1",
-      "review": {
+      "data": {
         "round": 1,
         "startedAt": "2026-10-30T06:52:00Z",
         "finishedAt": "2026-10-30T06:52:00Z",
@@ -861,7 +914,10 @@
       "kind": "candidate.handed",
       "lane": "lane-1",
       "subject": "CART-115",
-      "summary": "candidate.handed CART-115"
+      "data": {
+        "head": "b6af5ccdf3947f8d3079a24d6d5ec50daa43e7cd",
+        "checks": []
+      }
     },
     {
       "id": 44,
@@ -869,7 +925,9 @@
       "kind": "candidate.merged",
       "lane": "lane-1",
       "subject": "CART-115",
-      "summary": "candidate.merged CART-115"
+      "data": {
+        "head": "b6af5ccdf3947f8d3079a24d6d5ec50daa43e7cd"
+      }
     },
     {
       "id": 45,
@@ -877,8 +935,7 @@
       "kind": "review.round",
       "lane": "lane-1",
       "subject": "CART-116",
-      "summary": "CART-116: review round 1",
-      "review": {
+      "data": {
         "round": 1,
         "startedAt": "2026-10-30T06:55:00Z",
         "finishedAt": "2026-10-30T06:55:00Z",
@@ -900,7 +957,10 @@
       "kind": "candidate.handed",
       "lane": "lane-1",
       "subject": "CART-116",
-      "summary": "candidate.handed CART-116"
+      "data": {
+        "head": "b6af5cd0f3947f913079a2526d5ec513aa43e7d4",
+        "checks": []
+      }
     },
     {
       "id": 47,
@@ -908,7 +968,9 @@
       "kind": "candidate.merged",
       "lane": "lane-1",
       "subject": "CART-116",
-      "summary": "candidate.merged CART-116"
+      "data": {
+        "head": "b6af5cd0f3947f913079a2526d5ec513aa43e7d4"
+      }
     },
     {
       "id": 48,
@@ -916,8 +978,7 @@
       "kind": "review.round",
       "lane": "lane-1",
       "subject": "CART-117",
-      "summary": "CART-117: review round 1",
-      "review": {
+      "data": {
         "round": 1,
         "startedAt": "2026-10-30T06:58:00Z",
         "finishedAt": "2026-10-30T06:58:00Z",
@@ -939,7 +1000,10 @@
       "kind": "candidate.handed",
       "lane": "lane-1",
       "subject": "CART-117",
-      "summary": "candidate.handed CART-117"
+      "data": {
+        "head": "b6af5cd3f3947f953079a2576d5ec519aa43e7db",
+        "checks": []
+      }
     },
     {
       "id": 50,
@@ -947,7 +1011,9 @@
       "kind": "candidate.merged",
       "lane": "lane-1",
       "subject": "CART-117",
-      "summary": "candidate.merged CART-117"
+      "data": {
+        "head": "b6af5cd3f3947f953079a2576d5ec519aa43e7db"
+      }
     },
     {
       "id": 51,
@@ -955,8 +1021,7 @@
       "kind": "review.round",
       "lane": "lane-1",
       "subject": "CART-118",
-      "summary": "CART-118: review round 1",
-      "review": {
+      "data": {
         "round": 1,
         "startedAt": "2026-10-30T07:01:00Z",
         "finishedAt": "2026-10-30T07:01:00Z",
@@ -978,7 +1043,10 @@
       "kind": "candidate.handed",
       "lane": "lane-1",
       "subject": "CART-118",
-      "summary": "candidate.handed CART-118"
+      "data": {
+        "head": "b6af5cd6f3947f993079a25c6d5ec51faa43e7e2",
+        "checks": []
+      }
     },
     {
       "id": 53,
@@ -986,7 +1054,9 @@
       "kind": "candidate.merged",
       "lane": "lane-1",
       "subject": "CART-118",
-      "summary": "candidate.merged CART-118"
+      "data": {
+        "head": "b6af5cd6f3947f993079a25c6d5ec51faa43e7e2"
+      }
     },
     {
       "id": 54,
@@ -994,8 +1064,7 @@
       "kind": "review.round",
       "lane": "lane-1",
       "subject": "CART-119",
-      "summary": "CART-119: review round 1",
-      "review": {
+      "data": {
         "round": 1,
         "startedAt": "2026-10-30T07:04:00Z",
         "finishedAt": "2026-10-30T07:04:00Z",
@@ -1017,7 +1086,10 @@
       "kind": "candidate.handed",
       "lane": "lane-1",
       "subject": "CART-119",
-      "summary": "candidate.handed CART-119"
+      "data": {
+        "head": "b6af5cd9f3947f9d3079a2616d5ec525aa43e7e9",
+        "checks": []
+      }
     },
     {
       "id": 56,
@@ -1025,7 +1097,9 @@
       "kind": "candidate.merged",
       "lane": "lane-1",
       "subject": "CART-119",
-      "summary": "candidate.merged CART-119"
+      "data": {
+        "head": "b6af5cd9f3947f9d3079a2616d5ec525aa43e7e9"
+      }
     },
     {
       "id": 57,
@@ -1033,8 +1107,7 @@
       "kind": "review.round",
       "lane": "lane-1",
       "subject": "CART-120",
-      "summary": "CART-120: review round 1",
-      "review": {
+      "data": {
         "round": 1,
         "startedAt": "2026-10-30T07:07:00Z",
         "finishedAt": "2026-10-30T07:07:00Z",
@@ -1056,7 +1129,10 @@
       "kind": "candidate.handed",
       "lane": "lane-1",
       "subject": "CART-120",
-      "summary": "candidate.handed CART-120"
+      "data": {
+        "head": "b6af5d1bf3947ff53079a2cf6d5ec5a9aa43e883",
+        "checks": []
+      }
     },
     {
       "id": 59,
@@ -1064,7 +1140,9 @@
       "kind": "candidate.merged",
       "lane": "lane-1",
       "subject": "CART-120",
-      "summary": "candidate.merged CART-120"
+      "data": {
+        "head": "b6af5d1bf3947ff53079a2cf6d5ec5a9aa43e883"
+      }
     }
   ],
   "stats": {},

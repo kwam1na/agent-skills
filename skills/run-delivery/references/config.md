@@ -266,7 +266,7 @@ checks may need no file at all.
   "finish": [ { "id": "acs", "text": "Every acceptance criterion met on the delivery base" } ],
   "planReview": { "lenses": ["lens.outcome-correctness", "lens.adversarial-testing"] }, // the plan's own review
   "noDeferrals": true,                        // optional: the delivery takes no deferrals. A finding still deferred
-                                              // when its story merges is a blocker.recorded the lead resolves with
+                                              // when its story merges is a deferral.breached the lead resolves with
                                               // lead-resolve, never a follow-up; false or absent, it is filed as one
                                               // It also has each round brief ask a lens to say "nothing left
                                               // unfixed", refuses a hand-off whose last round's evidence holds a
@@ -556,8 +556,8 @@ offline, the last fetched tip decides.
 | The base ref can't be resolved or read, or `git` fails or times out | `gate` | `posture_unreadable` |
 
 Under `focused` no run starts and a failed run at that head holds nothing; nothing runs instead. The skip goes in the
-full-health log with no `result`. The first skip journals one `decision.recorded`, as does each later change of posture
-at close-out. The close-out summary, `delivery.closed`, `closed.json` on both close paths and the plan chapter's `closeOut` say
+full-health log with no `result`. The first skip journals one `fullhealth.skipped`, and each later change of posture at close-out
+one `posture.changed`. The close-out summary, `delivery.closed`, `closed.json` on both close paths and the plan chapter's `closeOut` say
 the run was skipped, naming the source and the reason. A later `gate` starts a real run, even at the same head, and a
 result clears `closeOut`. Under `gate` nothing changes, and `posture_malformed` or `posture_unreadable` is named once in
 the journal and on each close-out line.
@@ -603,10 +603,14 @@ and the publisher posts it later. A run that finds the lock held exits 0 at once
 a network error, a timeout, a 5xx, 409, 423, 429 or 401, or a 403 that the status read of the epic (or, with no epic or
 an unreadable one, of the project) also gets. Any other 4xx writes `failed` and the run goes on; nothing is journalled,
 and the failure shows in "Needs you". Each comment is cut to the adapter's `commentLimit`, with a pointer to the record.
-A `decision.recorded` entry is posted only when its journal id is in the flow log's `<delivery>.tracker-marks.jsonl`
-(`{"journal", "followup"?: {"story", "finding", "title"}}`), which the command that journals it writes while holding
-the ledger's lock: `lead-plan change` does. A mark with a `followup` files one follow-up item, labelled
-`agent-followup-<story>-<finding id>`, before posting. Every other unmarked decision gets a `skip` line.
+Where each kind posts, and under what heading, is its `tracker` in the registry of kinds
+(`skills/orchestrate-work/references/journal-kinds.json`), which the publisher reads each run and keeps no copy of: a
+kind with none gets a `skip` line. An entry is posted in its kind's words, its head and then its line, as the
+registry's `journal_words.py` makes them. The close-out journals each deferred finding as a `followup.filed` whose
+journal id is marked in the flow log's `<delivery>.tracker-marks.jsonl`
+(`{"journal", "followup": {"story", "finding", "title"}}`), written while it holds the ledger's lock. The mark files
+one follow-up item, labelled `agent-followup-<story>-<finding id>`; the entry itself posts nothing, as the registry
+says, and its follow-up is still filed.
 
 **Moves.** A story's `lane.assigned` waits for its start, a line `{"subject", "lane"?, "at"}` in the flow log's
 `<delivery>.lane-starts.jsonl`, at or after the entry. It then gets the start update and the `start` moves, once per
