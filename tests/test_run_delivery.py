@@ -5960,6 +5960,11 @@ class RunDeliveryPlanTests(unittest.TestCase):
         (record / "state.json").write_text(json.dumps(state, indent=2) + "\n")
         refused("FX-2", "--text", "a reason", said="FX-2 has landed")
         refused("FX-3", "--text", "a reason", said="FX-3 has settled")
+        for item in state["planned"]:
+            if item["subject"] == "FX-4":
+                item["stage"] = "building"
+        (record / "state.json").write_text(json.dumps(state, indent=2) + "\n")
+        refused("FX-4", "--text", "a reason", said="FX-4 has started")
 
     def test_concurrent_rebuilds_lose_no_update(self) -> None:
         fx = self.fixture()

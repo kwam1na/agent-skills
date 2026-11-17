@@ -393,6 +393,14 @@ class NeedsYouTests(unittest.TestCase):
     def test_a_wait_on_a_moving_story_adds_nothing(self) -> None:
         self.assertEqual(self.needs(record(), []), [])
 
+    def test_a_free_story_others_wait_on_carries_their_count(self) -> None:
+        document = record()
+        planned(document, "APP-1")["stage"] = "planned"
+        row(document, "lane-2")["state"] = "idle"
+        listed = self.needs(document, [])
+        self.assertIn(("APP-1 is free to start. Lane 2 is idle. 2 pieces wait on it.", False),
+                      [(item["text"], item["holding"]) for item in listed])
+
     def test_free_to_start_is_listed_and_holds_nothing(self) -> None:
         document = record()
         merge(document, "APP-1")

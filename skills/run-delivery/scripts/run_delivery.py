@@ -9754,7 +9754,12 @@ def waits_needing(c, doc: dict, items: list[dict]) -> list[dict]:
             added.append({"holding": False, "source": f"{on}'s waits", "clears": f"{on} put back, landing or settling",
                           "text": delivery_state.wait_said(table, "needsYou", "stopped", {"subject": on}) + " " + count})
     for free in delivery_state.free_to_start(doc, found, words=table):
-        added.append({"holding": False, "source": f"{free['subject']}'s waits", "text": free["words"],
+        # A story free to start is in "Needs you" itself, so what waits on it is counted on its item.
+        waiting = list(dict.fromkeys(wait["subject"] for wait in found
+                                     if wait["on"] == free["subject"] and wait["subject"] not in lanes))
+        said = free["words"] + (" " + delivery_state.wait_said(table, "needsYou", "count", {"count": len(waiting)})
+                                if waiting else "")
+        added.append({"holding": False, "source": f"{free['subject']}'s waits", "text": said,
                       "clears": f"{free['subject']} assigned, held, or waiting again"})
     return added
 
@@ -11192,7 +11197,8 @@ def lead_block(args) -> None:
 def lead_hold(args) -> None:
     """Record why the lead holds a planned story, as story.held, or clear the hold, as story.unheld. A hold also ends
     when the story is assigned, with nothing more journalled. Refused, with nothing written, for a story the record
-    doesn't hold or that has landed or settled, and for an empty or space-only reason."""
+    doesn't hold or that has landed or settled, a hold on a story already started, and an empty or space-only
+    reason."""
     c = cfg()
     doc = load_state()
     state = doc["state"]
@@ -11216,6 +11222,9 @@ def lead_hold(args) -> None:
                           "--answers", str(standing["id"]))
         print(f"cleared the hold on {args.key} (journal entry {journal_id(done)})")
         return
+    if planned is None or planned["stage"] != "planned":
+        # Only a story not yet started waits on the lead's reason, so a hold is shown only there; a clear is still taken.
+        raise Stop(f"{args.key} has started: there is nothing to hold back")
     text = worded(args.text, "--text")
     done = state_tool("journal", "--kind", "story.held", "--subject", args.key, "--data", json.dumps({"text": text}))
     print(f"recorded the hold on {args.key} (journal entry {journal_id(done)}); it ends when {args.key} is assigned, "
