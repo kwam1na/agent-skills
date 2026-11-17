@@ -34,7 +34,7 @@ CATALOGUE_MODULES = (
     "run_delivery_pr_review",
     "run_delivery_pr_review_gates", "run_delivery_supervisor", "run_delivery_tracker", "run_event_emission_corpus",
     "run_tests", "runless_reviews", "test_dependency_guard", "test_environment", "tracker_contract", "update_provenance",
-    "validate", "waits", "workflow_graph_contract", "workflow_observation", "workflows",
+    "validate", "waits", "waits_review", "workflow_graph_contract", "workflow_observation", "workflows",
 )
 CATALOGUE_IDS = tuple("tests.test_" + name for name in CATALOGUE_MODULES)
 SERVICE_IDS = ('hosted.install', 'hosted.typecheck', 'hosted.build', 'hosted.test',

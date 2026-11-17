@@ -2219,13 +2219,16 @@ def append_journal(
                          "and this registry has none")
     if not isinstance(data, dict):
         raise StateError("entry_invalid", "an entry carries its facts in data, a JSON object")
-    if writer == "runner" and kind == REVIEW_KIND:
-        raise StateError("kind_not_owned", f"the runner never writes {REVIEW_KIND}: the lead or the lane records its review")
+    # A lane journals its own review: a round starting, each lens back, and the round reduced.
+    LANE_REVIEW_KINDS = ("review.started", "review.lens.returned", REVIEW_KIND)
+    if writer == "runner" and kind in LANE_REVIEW_KINDS:
+        raise StateError("kind_not_owned", f"the runner never writes {kind}: the lead or the lane records its review")
     with file_lock(directory / STATE_LOCK):
         current = read_state(directory, for_write=True)
         if writer == "lane":
-            if kind != REVIEW_KIND:
-                raise StateError("writer_not_owned", f"a lane journals only {REVIEW_KIND}; the tool journals its hand-off")
+            if kind not in LANE_REVIEW_KINDS:
+                raise StateError("writer_not_owned", f"a lane journals only its review ({', '.join(LANE_REVIEW_KINDS)}); "
+                                 "the tool journals its hand-off")
             owner = next((entry.get("assignedLane", entry["lane"]) if entry["stage"] == "stopped" else entry["lane"]
                           for entry in [*current["queue"], *current.get("planned", [])] if entry["subject"] == subject), None)
             if lane is None or owner != lane:
@@ -3975,6 +3978,27 @@ def _holds(journal: list[dict]) -> dict[str, dict]:
     return held
 
 
+def _round_in_flight(journal: list[dict], subject: str) -> tuple[dict, list[str]] | None:
+    """The story's review round still running, as its latest ``review.started`` and the lenses back since, or None: a
+    round ends at its ``review.round``, a later start, or the story's hand-off or reassignment."""
+    start = next((entry for entry in reversed(journal)
+                  if entry["kind"] == "review.started" and entry.get("subject") == subject), None)
+    if start is None:
+        return None
+    back: list[str] = []
+    for entry in journal:
+        if entry["id"] <= start["id"] or entry.get("subject") != subject:
+            continue
+        data = entry.get("data") or {}
+        if entry["kind"] in ("candidate.handed", "lane.assigned") or (entry["kind"] == "review.round" and (
+                start["id"] in entry.get("answers", []) or data.get("round") == start["data"]["round"])):
+            return None
+        if (entry["kind"] == "review.lens.returned" and data.get("round") == start["data"]["round"]
+                and data.get("lens") in start["data"]["lenses"] and data["lens"] not in back):
+            back.append(data["lens"])
+    return start, back
+
+
 def waits(document: dict, *, needing: frozenset[str] | set[str] = frozenset(), words: dict | None = None) -> list[dict]:
     """Every wait the record holds, each ``{subject, on, cause, stage, frees, since?, needsSomeone, words}``.
 
@@ -3982,9 +4006,11 @@ def waits(document: dict, *, needing: frozenset[str] | set[str] = frozenset(), w
     ``after`` keys that has not landed (``order``); for each unlanded story of
     another lane whose whole-file grant covers a file both stories name
     (``files``); and for the lead, while the lead's ``story.held`` stands
-    (``held``). An idle lane waits for the same reasons as its next planned
-    story. ``needing`` names what "Needs you" already lists, so a wait on it
-    says that someone has to act.
+    (``held``). A story in review waits on the round its lane is running
+    (``review``), from its latest ``review.started`` until that round is
+    reduced, restarted or abandoned. An idle lane waits for the same reasons as
+    its next planned story. ``needing`` names what "Needs you" already lists,
+    so a wait on it says that someone has to act.
 
     It reads the record it is given and the table of sentences, nothing else:
     no clock, no network, no other file. The same record gives the same waits.
@@ -4048,6 +4074,15 @@ def waits(document: dict, *, needing: frozenset[str] | set[str] = frozenset(), w
             wait["words"] = wait_said(table, "waits", wait["cause"], fields)
         told[subject] = found
     result = [wait for found in told.values() for wait, _ in found]
+    for entry in planned:
+        flight = _round_in_flight(journal, entry["subject"]) if entry["stage"] in ("building", "review") else None
+        if flight is not None:
+            start, back = flight
+            fields = {"round": start["data"]["round"], "head": start["data"]["head"], "back": len(back),
+                      "lenses": start["data"]["lenses"]}
+            result.append({"subject": entry["subject"], "on": entry["lane"], "cause": "review", "stage": "review",
+                           "frees": "ended", "since": start["at"], "needsSomeone": False,
+                           "words": wait_said(table, "waits", "review", fields)})
     for row in state["lanes"]:
         if row.get("state") != "idle":
             continue
@@ -4067,7 +4102,7 @@ def waited_on(document: dict, found: list[dict], *, words: dict | None = None) -
     lanes = {row["id"] for row in document["state"]["lanes"]}
     holders: dict[str, list[str]] = {}
     for wait in found:
-        if wait["subject"] in lanes or wait["on"] == "lead":
+        if wait["subject"] in lanes or wait["on"] == "lead" or wait["cause"] == "review":
             continue
         waiting = holders.setdefault(wait["on"], [])
         if wait["subject"] not in waiting:

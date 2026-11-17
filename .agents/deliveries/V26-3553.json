@@ -82,6 +82,10 @@
         {
           "id": "v26-3426-2",
           "text": "After lead-accept, the lane's row is no longer handed/blocked, waiting on the lead."
+        },
+        {
+          "id": "v26-3426-3",
+          "text": "c3: Lane rows keep their order across writes: lead-assign replaces a lane's row in place rather than moving it to the end, so every view shows lanes in the record's declared order; and each lane's colour comes from its id, never its position, so lane 2 is always lane 2's colour."
         }
       ]
     },
@@ -195,6 +199,18 @@
         {
           "id": "v26-3566-4",
           "text": "c4: The plan chapter shows the dropped criterion struck through, with its reason."
+        },
+        {
+          "id": "v26-3566-5",
+          "text": "c5: The plan chapter states, in one sentence, the approved and current story counts and the stories and criteria added, removed and changed since approval, matching the recorded changes; with none, it says the scope is as approved."
+        },
+        {
+          "id": "v26-3566-6",
+          "text": "c6: A finish line raised since approval shows that it was raised, from what to what, and when."
+        },
+        {
+          "id": "v26-3566-7",
+          "text": "c7: A change added after approval is marked as not reviewed with the plan."
         }
       ]
     },

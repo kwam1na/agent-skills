@@ -1691,9 +1691,45 @@
   // The run that built the stop, as the product's run view summarized it when the page was rendered.
   // A round the view gives no lens verdicts for takes them from the record's own review.round entry.
   function runFor(doc, item) {
+    /**
+     * A story's round in flight: its latest review.started, until a review.round answers it or names its round, the
+     * story is handed off, settled or picked up again, or another start follows. Each lens back is its latest
+     * review.lens.returned for that round. { round, head, at, lenses, back, why, moved } or null.
+     */
+    function roundInFlight(doc, subject) {
+      var start = journalFor(doc, subject, { "review.started": true }).slice(-1)[0];
+      var said = start && isObject(start.data) ? start.data : null;
+      if (!said || typeof said.round !== "number" || typeof said.head !== "string" || settledEntry(doc, subject)) { return null; }
+      var after = journalFor(doc, subject).filter(function (entry) { return (entry.id || 0) > (start.id || 0); });
+      var over = after.some(function (entry) {
+        return entry.kind === "candidate.handed" || entry.kind === "lane.assigned" || (entry.kind === "review.round"
+          && (list(entry.answers).indexOf(start.id) >= 0 || (isObject(entry.data) && entry.data.round === said.round)));
+      });
+      if (over) { return null; }
+      var back = Object.create(null);
+      after.forEach(function (entry) {
+        var data = entry.kind === "review.lens.returned" && isObject(entry.data) ? entry.data : null;
+        if (data && data.round === said.round && typeof data.lens === "string") { back[data.lens] = { verdict: data.verdict, findings: data.findings, at: entry.at }; }
+      });
+      // The card's headline is the story's review wait, as the state tool says it; without one the card words its own.
+      var waiting = waitsOf(doc, "waits", subject).filter(function (wait) { return wait.cause === "review"; })[0];
+      return { round: said.round, head: said.head, at: start.at, lenses: list(said.lenses).filter(function (lens) { return typeof lens === "string"; }),
+        back: back, why: text(said.why) || null, moved: typeof said.moved === "number" ? said.moved : null,
+        headline: waiting ? waiting.words : null };
+    }
     if (typeof item.runId !== "string" || item.runId === "") {
       var native = Object.prototype.hasOwnProperty.call(nativeReviews, item.subject) ? nativeReviews[item.subject] : null;
       var events = journalFor(doc, item.subject, { "review.round": true, "review.recorded": true });
+      var inFlight = roundInFlight(doc, item.subject);
+      // The round in flight, over the finished rounds a valid observation gives, or over none.
+      var underWay = function (finished, note) {
+        var box = el("div", "d-run");
+        if (note) { box.appendChild(el("div", "d-run-none", note)); }
+        var shown = isObject(finished) ? finished : { observational: true, observationKey: item.subject, open: false, roundDetail: [] };
+        box.appendChild(runSummaryNode(Object.assign({}, shown, { running: inFlight }), { commitHref: commitHref, issueHref: issueHref, lenses: VIEW.lenses, subject: item.subject }));
+        return box;
+      };
+      if (inFlight && !native && !events.length) { return underWay(null); }
       var boundary = events.reduce(function (last, event) { return Math.max(last, event.id || 0); }, 0);
       var evidence = events.filter(function (event) { return KEPT[event.kind]; }).slice(-1)[0];
       var observation = isObject(doc.reviewEvidence) ? doc.reviewEvidence[item.subject] : undefined;
@@ -1710,12 +1746,14 @@
           || native.journalId !== boundary
           || (evidence && (!keptReview(evidence) || keptReview(evidence).digest !== native.digest))
           || (isObject(doc.reviewEvidence) && (!isObject(observation) || observation.unavailable === true || observation.digest !== native.digest))) {
+        if (inFlight) { return underWay(null, "Earlier rounds' evidence is unavailable or stale for this candidate."); }
         return el("div", "d-run-none", "Review evidence unavailable or stale for this candidate." + (isPlanned(doc, item) && !closedEntry(doc)
           ? " Its rounds show here again once the lane's review-reduce records its latest round." : ""));
       }
+      if (inFlight) { return underWay(native); }
       var nativeBox = el("div", "d-run");
       if (carried) { nativeBox.appendChild(el("div", "d-run-carried", "Carried by the lead. " + text(carried.note))); }
-      nativeBox.appendChild(runSummaryNode(native, { commitHref: commitHref, lenses: VIEW.lenses }));
+      nativeBox.appendChild(runSummaryNode(native, { commitHref: commitHref, issueHref: issueHref, lenses: VIEW.lenses, subject: item.subject }));
       return nativeBox;
     }
     if (VIEW.runs !== true) { return null; }
@@ -1745,7 +1783,7 @@
       return Object.assign({}, round, { verdicts: verdicts, outcome: outcome });
     });
     var box = el("div", "d-run");
-    box.appendChild(runSummaryNode(Object.assign({}, summary, { roundDetail: rounds }), { commitHref: commitHref, lenses: VIEW.lenses }));
+    box.appendChild(runSummaryNode(Object.assign({}, summary, { roundDetail: rounds }), { commitHref: commitHref, issueHref: issueHref, lenses: VIEW.lenses }));
     return box;
   }
 
@@ -2568,7 +2606,7 @@
     var summary = { observational: true, observationKey: "plan-review", open: false, roundDetail: list(review.rounds).filter(isObject),
       planReview: { state: text(review.state), endedReason: text(review.endedReason) } };
     var box = el("div", "plan-review");
-    box.appendChild(runSummaryNode(summary, { commitHref: commitHref, lenses: VIEW.lenses }));
+    box.appendChild(runSummaryNode(summary, { commitHref: commitHref, issueHref: issueHref, lenses: VIEW.lenses }));
     return fold("review", "Plan review (" + count + (count === 1 ? " round)" : " rounds)"), null, box);
   }
 
