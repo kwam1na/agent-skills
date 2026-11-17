@@ -247,6 +247,10 @@ def validate(value: object, *, secret_values=()) -> None:
         raise ProjectionError('snapshot.structure') from error
 
 
+# What a journal entry publishes, besides a review round's named facts: its identity, kind and times.
+JOURNAL_MEMBERS = ('id', 'at', 'kind', 'lane', 'subject', 'occurredAt')
+
+
 def _registered_kinds(journal: list) -> None:
     """Refuse an entry whose kind the registry of kinds doesn't list: the snapshot names only kinds it knows. What an
     entry publishes is the schema's to say, by name, so a kind added to the registry publishes no facts of its own."""
@@ -261,7 +265,12 @@ def project(document: dict, runs: dict, config: dict, *, source_fingerprint: str
     named = render.named_runs(document)
     selected = {key: value for key, value in runs.items() if key in named}
     data = render.line_map_data(document, selected, config, theme_key='hosted-delivery', history=None,
-                                plan=plan, needs=needs)
+                                plan=plan, needs=needs, story=False)
+    # The links come from what is published: an entry's facts are not, so no commit or change request they name is.
+    published = {**data['document'], 'journal': [
+        {key: entry[key] for key in JOURNAL_MEMBERS if key in entry} if isinstance(entry, dict) else entry
+        for entry in data['document'].get('journal', [])]}
+    data['links'] = render.page_links(published, data['runs'], config, data['reviews'])
     # Keep the existing per-lens null/unavailable distinction without publishing
     # artifact text. A shortened source also uses the existing round-level
     # clipping note, which the trusted shared consumer already displays.

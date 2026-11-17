@@ -570,6 +570,21 @@ class LinkTests(unittest.TestCase):
                                   config(forges=[forge, self.EXAMPLE["forges"][0]]))["changes"]
         self.assertEqual(links[other], {"label": "#180", "href": other, "repository": "another/repo"})
 
+    def test_a_native_review_and_an_entrys_facts_name_commits_and_the_story_is_told_unless_left_out(self) -> None:
+        reviewed, handed = "b" * 40, "c" * 40
+        document = {"state": {"queue": [{"subject": "APP-12"}]}, "journal": [
+            {"id": 1, "at": "2026-11-16T10:00:00Z", "kind": "candidate.handed", "lane": "lane-1", "subject": "APP-12",
+             "data": {"head": handed, "checks": [], "changeRequest": "#36"}}]}
+        reviews = {"APP-12": {"roundDetail": [{"candidateRef": reviewed}]}}
+        links = render.page_links(document, {}, self.EXAMPLE, reviews)
+        self.assertEqual(set(links["commits"]), {reviewed, handed})
+        self.assertEqual(set(links["changes"]), {"#36"})
+        self.assertEqual(set(render.page_links(document, {}, self.EXAMPLE)["commits"]), {handed})
+        told = render.line_map_data(document, {}, self.EXAMPLE, theme_key="local", history=None)
+        self.assertEqual(told["document"]["story"]["schemaVersion"], "story/1")
+        untold = render.line_map_data(document, {}, self.EXAMPLE, theme_key="local", history=None, story=False)
+        self.assertNotIn("story", untold["document"])
+
     def test_with_no_tracker_or_forge_nothing_is_linked(self) -> None:
         document = {"state": {"queue": [{"subject": "APP-12", "changeRequest": "#34"}]}}
         self.assertEqual(render.page_links(document, {}, config()), {"issues": {}, "changes": {}, "commits": {}})

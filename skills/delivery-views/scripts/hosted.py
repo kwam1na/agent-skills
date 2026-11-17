@@ -38,7 +38,7 @@ import render
 import views_common as views
 
 PROTOCOL = 'hosted-delivery-api/1'
-RENDERER = 'delivery-line-map/1'
+RENDERER = 'delivery-line-map/2'
 IDENTITY = 'hosted-identity.json'
 STATUS = 'hosted-status.json'
 OWNER = 'hosted-owner.json'

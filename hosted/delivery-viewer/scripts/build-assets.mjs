@@ -10,10 +10,44 @@ function patch(before, after) {
   line = line.replace(before, after);
 }
 // Small host adapter; every chapter/detail renderer still comes from the corpus.
-// The hosted snapshot carries no story, by its schema: say so, rather than that the story could not be told.
+// The hosted snapshot carries no story and no entry's facts, by its schema. The page says what is not published rather
+// than that nothing was recorded, and leaves out the steps and notes it would draw without words.
+patch(
+  "  function runFor(doc, item) {",
+  'function hostedCut(doc) { return !!(globalThis.deliveryStateStore && typeof globalThis.deliveryStateStore.projection === "function") && !isObject(doc.story); }\n  var UNPUBLISHED = "Its reason is not published on the hosted page.";\n  function runFor(doc, item) {',
+);
 patch(
   'el("h2", "title", "The story could not be told from this record.")',
-  'el("h2", "title", globalThis.deliveryStateStore && typeof globalThis.deliveryStateStore.projection === "function" ? "What happened is not published on the hosted page." : "The story could not be told from this record.")',
+  'el("h2", "title", hostedCut(doc) ? "What happened is not published on the hosted page." : "The story could not be told from this record.")',
+);
+// A kept review publishes no facts: the publisher matched its digest and candidate to the native review it sent.
+patch(
+  "          || (evidence && (!keptReview(evidence) || keptReview(evidence).digest !== native.digest))",
+  "          || (!hostedCut(doc) && evidence && (!keptReview(evidence) || keptReview(evidence).digest !== native.digest))",
+);
+patch(
+  "    return evidence && keptReview(evidence) ? keptReview(evidence).candidateRef : undefined;",
+  "    if (hostedCut(doc)) { var sent = nativeReviews[item.subject]; return isObject(sent) ? sent.candidateRef : undefined; }\n    return evidence && keptReview(evidence) ? keptReview(evidence).candidateRef : undefined;",
+);
+patch(
+  'stopped ? toldLine(doc, stopped) : "No reason recorded."',
+  'stopped ? (toldLine(doc, stopped) || (hostedCut(doc) ? UNPUBLISHED : "")) : "No reason recorded."',
+);
+patch(
+  'toldLine(doc, lastBase) || "No reason recorded."',
+  'toldLine(doc, lastBase) || (hostedCut(doc) ? UNPUBLISHED : "No reason recorded.")',
+);
+patch(
+  'toldLine(doc, events[events.length - 1]) || "No reason recorded."',
+  'toldLine(doc, events[events.length - 1]) || (hostedCut(doc) ? UNPUBLISHED : "No reason recorded.")',
+);
+patch(
+  "    var notes = list(doc.journal).filter(function (entry) {\n",
+  "    var notes = list(doc.journal).filter(function (entry) {\n      if (hostedCut(doc)) { return false; }\n",
+);
+patch(
+  "    var rows = journalFor(doc, item.subject, HISTORY);\n    if (!rows.length) { return null; }",
+  "    var rows = journalFor(doc, item.subject, HISTORY);\n    if (!rows.length || hostedCut(doc)) { return null; }",
 );
 patch(
   "  function refreshRuns() {",

@@ -151,35 +151,79 @@ class ProjectionTests(unittest.TestCase):
 
     def test_an_entry_publishes_its_identity_and_kind_and_a_round_only_its_named_facts(self):
         doc, runs = source()
-        doc['journal'][0]['data'].update(refused=2, restarts=1)
+        round_facts = copy.deepcopy(doc['journal'][0]['data'])
+        doc['journal'][0].update(because=[1], answers=[1], occurredAt='2026-11-15T00:00:00Z')
+        doc['journal'][0]['data'].update(refused=2, restarts=1, note='A note in /tmp/x',
+                                         findings={**round_facts['findings'], 'P4': 3})
         doc['journal'].append({'id': 2, 'at': '2026-11-15T00:01:00Z', 'kind': 'decision.recorded', 'lane': None,
-                               'subject': 'APP-1', 'because': [1], 'data': {'text': 'Carry it', 'why': 'It holds.'}})
+                               'subject': 'APP-1', 'because': [1], 'answers': [1],
+                               'data': {'text': 'Carry it', 'why': 'It holds.'}})
+        # A round whose facts don't fit the round's shape publishes as any other entry: its identity alone.
+        doc['journal'].append({'id': 3, 'at': '2026-11-15T00:02:00Z', 'kind': 'review.round', 'lane': 'one',
+                               'subject': 'APP-1', 'data': {**round_facts, 'verdicts': {'lens.security': 'unavailable'}}})
         value = public.project(doc, runs, config(), source_fingerprint='1' * 64)
         self.assertEqual(value['document']['journal'], [
             {'id': 1, 'at': '2026-11-15T00:00:00Z', 'kind': 'review.round', 'lane': 'one', 'subject': 'APP-1',
-             'data': {'round': 1, 'startedAt': '2026-11-15T00:00:00Z', 'finishedAt': '2026-11-15T00:00:00Z',
-                      'verdicts': {'lens.security': 'changes'}, 'findings': {'P0': 0, 'P1': 1, 'P2': 0, 'P3': 0}}},
-            {'id': 2, 'at': '2026-11-15T00:01:00Z', 'kind': 'decision.recorded', 'lane': None, 'subject': 'APP-1'}])
+             'occurredAt': '2026-11-15T00:00:00Z', 'data': round_facts},
+            {'id': 2, 'at': '2026-11-15T00:01:00Z', 'kind': 'decision.recorded', 'lane': None, 'subject': 'APP-1'},
+            {'id': 3, 'at': '2026-11-15T00:02:00Z', 'kind': 'review.round', 'lane': 'one', 'subject': 'APP-1'}])
         self.assertNotIn('story', value['document'])
-        # A kind the registry gains later, with prose facts, publishes none of them; a kind it doesn't list is refused.
+        # What an entry may publish is named in the schema, so adding a name is a deliberate edit of this test.
+        branches = public.SCHEMA['properties']['document']['properties']['journal']['items']['anyOf']
+        members = {'id', 'at', 'kind', 'lane', 'subject', 'occurredAt'}
+        self.assertEqual([set(branch['properties']) for branch in branches], [members | {'data'}, members])
+        self.assertEqual(set(public.JOURNAL_MEMBERS), members)
+        self.assertEqual(set(branches[0]['properties']['data']['properties']),
+                         {'round', 'startedAt', 'finishedAt', 'verdicts', 'findings'})
+        self.assertEqual(set(branches[0]['properties']['data']['properties']['findings']['properties']), {'P0', 'P1', 'P2', 'P3'})
+        # A kind the registry gains later, with prose facts, publishes none of them; a kind it doesn't list is refused,
+        # wherever it stands in the journal.
         words = public.render.narrator.journal_words
         registry = json.loads(Path(words.REGISTRY_FILE).read_text(encoding="utf-8"))
         registry['kinds']['lease.extended'] = {**registry['kinds']['lease.granted'], 'data': {'why': {'type': 'prose'}}}
         planted = Path(self.enterContext(tempfile.TemporaryDirectory())) / 'journal-kinds.json'
         planted.write_text(json.dumps(registry), encoding='utf-8')
-        doc['journal'].append({'id': 3, 'at': '2026-11-15T00:02:00Z', 'kind': 'lease.extended', 'lane': 'one',
-                               'subject': None, 'data': {'why': 'A secret reason in /tmp/x'}})
+        doc['journal'].insert(1, {'id': 4, 'at': '2026-11-15T00:02:00Z', 'kind': 'lease.extended', 'lane': 'one',
+                                  'subject': None, 'data': {'why': 'A secret reason in /tmp/x'}})
         with self.assertRaisesRegex(public.ProjectionError, 'snapshot.unregistered_kind'):
             public.project(doc, runs, config(), source_fingerprint='1' * 64)
         with mock.patch.object(words, "REGISTRY_FILE", planted):
             value = public.project(doc, runs, config(), source_fingerprint='1' * 64)
-        self.assertEqual(value['document']['journal'][-1],
-                         {'id': 3, 'at': '2026-11-15T00:02:00Z', 'kind': 'lease.extended', 'lane': 'one', 'subject': None})
+        self.assertEqual(value['document']['journal'][1],
+                         {'id': 4, 'at': '2026-11-15T00:02:00Z', 'kind': 'lease.extended', 'lane': 'one', 'subject': None})
         public.validate(value)
         # A snapshot of the older shape is refused, not half-read.
         older = {**copy.deepcopy(value), 'schemaVersion': 'hosted-delivery-snapshot/1'}
         with self.assertRaises(public.ProjectionError):
             public.validate(older)
+
+    def test_the_receiver_does_not_police_kinds_and_the_projection_does(self):
+        # On purpose: the service accepts any kind by its name's shape, so a kind the registry gains needs no service
+        # deploy. Only the projection publishes registered kinds.
+        value = json.loads((FIXTURES / 'valid-unregistered-kind.json').read_text())
+        self.assertEqual(value['document']['journal'][-1]['kind'], 'lease.extended')
+        public.validate(value)
+        doc, runs = source()
+        doc['journal'].append({**value['document']['journal'][-1], 'data': {}})
+        with self.assertRaisesRegex(public.ProjectionError, 'snapshot.unregistered_kind'):
+            public.project(doc, runs, config(), source_fingerprint='1' * 64)
+
+    def test_no_link_comes_from_an_entrys_facts(self):
+        doc, runs = source()
+        doc['journal'].append({'id': 2, 'at': '2026-11-15T00:01:00Z', 'kind': 'candidate.handed', 'lane': 'one',
+                               'subject': 'APP-1', 'data': {'head': 'c' * 40, 'checks': [],
+                                                            'changeRequest': 'https://github.com/example/app/pull/99'}})
+        cfg = config(forges=[{'name': 'GitHub', 'repository': 'example/app',
+                             'pullUrl': 'https://github.com/{repository}/pull/{number}',
+                             'commitUrl': 'https://github.com/{repository}/commit/{sha}'}])
+        value = public.project(doc, runs, cfg, source_fingerprint='1' * 64)
+        self.assertNotIn('c' * 40, value['links']['commits'])
+        self.assertNotIn('https://github.com/example/app/pull/99', value['links']['changes'])
+        self.assertNotIn('c' * 40, json.dumps(value))
+        # The page offers the same links locally, from the facts its opened beats show.
+        local = render.line_map_data(doc, runs, cfg, theme_key='local', history=None)
+        self.assertIn('c' * 40, local['links']['commits'])
+        self.assertIn('https://github.com/example/app/pull/99', local['links']['changes'])
 
     def test_unsafe_links_are_not_published(self):
         doc, runs = source()

@@ -1091,8 +1091,9 @@ def with_story(document: dict, plan: object) -> dict:
 
 
 def line_map_data(document: object, runs: dict, config: dict, *, theme_key: str, history: str | None,
-                  plan: dict | None = None, needs: dict | None = None) -> dict:
-    """The shared bounded view data; local HTML and public projection consume the same cut."""
+                  plan: dict | None = None, needs: dict | None = None, story: bool = True) -> dict:
+    """The shared bounded view data; local HTML and public projection consume the same cut. Without ``story``, the
+    record is not narrated: a cut that publishes no story tells none."""
     reviews = native_review_summaries(document)
     # One review payload budget, in stop order, regardless of its backing store.
     combined = {**{"run:" + key: value for key, value in runs.items()},
@@ -1115,7 +1116,8 @@ def line_map_data(document: object, runs: dict, config: dict, *, theme_key: str,
     runs = {key: bounded["run:" + key] for key in runs}
     reviews = {key: bounded["native:" + key] for key in reviews}
     document = {key: value for key, value in document.items() if key != "reviewEvidence"}
-    document = with_story(document, plan.get("plan") if isinstance(plan, dict) else None)
+    if story:
+        document = with_story(document, plan.get("plan") if isinstance(plan, dict) else None)
     view = {
         "title": config["title"],
         "themeKey": theme_key,

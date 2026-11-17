@@ -257,7 +257,7 @@ class ReceiverTests(unittest.TestCase):
                 if fixture.mode=='oversize':answer={'padding':'x'*(hosted.MAX_RESPONSE+1)}
                 else:
                     if operation in ('snapshots','confirm'):
-                        if self.headers.get('X-Renderer-Version')!='delivery-line-map/1':
+                        if self.headers.get('X-Renderer-Version')!='delivery-line-map/2':
                             self.send_response(422);self.send_header('Content-Type','application/json');self.end_headers();self.wfile.write(b'{"error":"unsupported_renderer"}');return
                         if operation=='snapshots' and self.headers.get('X-Snapshot-Digest')!=hashlib.sha256(body).hexdigest():
                             self.send_error(422);return
@@ -267,9 +267,9 @@ class ReceiverTests(unittest.TestCase):
                         self.send_header('Content-Type','application/json');self.end_headers();self.wfile.write(json.dumps({'error':error.code}).encode());return
                     if isinstance(answer,dict) and 'protocolVersion' in answer:
                         answer['protocolVersion']='hosted-delivery-api/1'
-                        if 'rendererVersion' in answer:answer['rendererVersion']='delivery-line-map/1'
+                        if 'rendererVersion' in answer:answer['rendererVersion']='delivery-line-map/2'
                         if answer.get('receipt'):
-                            answer['receipt']['protocolVersion']='hosted-delivery-api/1';answer['receipt']['rendererVersion']='delivery-line-map/1'
+                            answer['receipt']['protocolVersion']='hosted-delivery-api/1';answer['receipt']['rendererVersion']='delivery-line-map/2'
                 if fixture.mode=='lost' and operation=='snapshots':
                     fixture.mode='normal';self.connection.shutdown(socket.SHUT_RDWR);self.connection.close();return
                 self.send_response(200);self.send_header('Content-Type','application/json');self.end_headers();self.wfile.write(json.dumps(answer).encode())
@@ -322,7 +322,7 @@ class ReceiverTests(unittest.TestCase):
         with mock.patch.dict(os.environ,{'FIXTURE_PUBLISH_TOKEN':TOKEN,'PYTHONPATH':str(self.state)}):
             result=self.publisher.step(lambda:copy.deepcopy(VALID))
         self.assertEqual(result['receipt']['protocolVersion'],'hosted-delivery-api/1')
-        self.assertEqual(result['receipt']['rendererVersion'],'delivery-line-map/1')
+        self.assertEqual(result['receipt']['rendererVersion'],'delivery-line-map/2')
         self.assertEqual(result['receipt']['digest'],hashlib.sha256(hosted.public.encode(VALID)).hexdigest())
         self.assertEqual([call[0] for call in self.observed],['status','session','snapshots'])
         self.assertEqual(hosted.CHILDREN,set())

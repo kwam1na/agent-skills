@@ -728,7 +728,7 @@
           "type": "array",
           "items": {
             "title": "hosted journal entry",
-            "description": "An entry's identity and kind, never its facts, its links or its words: only a review round keeps its round, times, verdicts and finding counts. The kind is one the registry of kinds lists; the projection refuses any other.",
+            "description": "An entry's identity, kind and times, never its facts, its links or its words: only a review round keeps its round, times, verdicts and finding counts. The kind is any name: the projection publishes only kinds the registry of kinds lists, and the receiver does not police kinds.",
             "anyOf": [
               {
                 "type": "object",
@@ -830,6 +830,18 @@
                       }
                     },
                     "maxProperties": 10000
+                  },
+                  "occurredAt": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+                        "maxLength": 65536
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 }
               },
@@ -881,6 +893,18 @@
                     "type": "string",
                     "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)+$",
                     "maxLength": 256
+                  },
+                  "occurredAt": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+                        "maxLength": 65536
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 }
               }

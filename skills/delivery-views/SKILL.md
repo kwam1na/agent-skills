@@ -874,10 +874,13 @@ uploader scans all projected text for its configured secret values before writin
 pending bytes or sending them; collection and run-command children receive none
 of those credentials. Projection rejects recognizable local paths in structural
 references and raw uploads; named prose fields use a visible omission marker.
-The journal publishes each entry's id, time, kind, lane and subject, the kind one the
-registry of kinds lists, and none of its facts, links or words: only a review
-round keeps its round, times, verdicts and finding counts. A kind the registry
-gains later publishes no facts until the snapshot's schema names them. The story
+The journal publishes each entry's id, time, occurrence time, kind, lane and
+subject, the kind one the registry of kinds lists, and none of its facts, links or
+words: only a review round keeps its round, times, verdicts and finding counts. No
+link the page offers comes from an entry's facts, and a batch's membership is not
+published. A kind the registry gains later publishes no facts until the snapshot's
+schema names them. The projection is what publishes only registered kinds; the
+receiver does not police kinds, so a new kind needs no service deploy. The story
 is not published, so the hosted page says what happened is not published there.
 The schema is `hosted-delivery-snapshot/2`; a reader given the older version
 refuses it.

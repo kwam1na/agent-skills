@@ -94,7 +94,7 @@ async function publish(id: string, value: unknown, sequence = 1) {
       "X-Writer-Epoch": "1",
       "X-Snapshot-Sequence": String(sequence),
       "X-Snapshot-Digest": hash(body),
-      "X-Renderer-Version": "delivery-line-map/1",
+      "X-Renderer-Version": "delivery-line-map/2",
     },
     body,
   });

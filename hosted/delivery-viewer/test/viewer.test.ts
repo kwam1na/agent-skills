@@ -64,6 +64,7 @@ describe("hosted view store", () => {
     changed.document.state.meta = { headline: "Changed" };
     const next = await revision(2, changed);
     const future = await revision(2, { ...fixture(), schemaVersion: "future" });
+    const older = await revision(2, { ...fixture(), schemaVersion: "hosted-delivery-snapshot/1" });
     let mode = "good";
     const store = createViewStore(publicId, {
       fetcher: async (url) => {
@@ -76,21 +77,24 @@ describe("hosted view store", () => {
                 ? good.meta
                 : mode === "schema"
                   ? future.meta
-                  : next.meta,
+                  : mode === "older"
+                    ? older.meta
+                    : next.meta,
           );
         if (mode === "404") return new Response("", { status: 404 });
         if (mode === "digest") return Response.json(good.body);
         if (mode === "schema") return Response.json(future.body);
+        if (mode === "older") return Response.json(older.body);
         return Response.json(mode === "good" ? good.body : next.body);
       },
     });
     await store.poll();
     const before = store.projection();
-    for (const failure of ["network", "renderer", "404", "digest", "schema"]) {
+    for (const failure of ["network", "renderer", "404", "digest", "schema", "older"]) {
       mode = failure;
       await store.poll();
       expect(store.projection()).toBe(before);
-      expect(store.status().kind).toMatch(/unavailable|incompatible/);
+      expect(store.status().kind).toMatch(failure === "older" ? /^incompatible$/ : /unavailable|incompatible/);
       expect(JSON.stringify(store.status())).not.toContain(
         "private-url-canary",
       );
@@ -165,6 +169,12 @@ describe("hosted view store", () => {
     expect(store.status().receipt?.sequence).toBe(2);
     const future = { ...fixture(), schemaVersion: "future" };
     r = await revision(3, future);
+    await store.poll();
+    expect(store.projection()).toBe(before);
+    expect(store.status().kind).toBe("incompatible");
+    // A body in the older shape is refused as well, never half-read: the prior projection stands.
+    const older = { ...fixture(), schemaVersion: "hosted-delivery-snapshot/1" };
+    r = await revision(3, older);
     await store.poll();
     expect(store.projection()).toBe(before);
     expect(store.status().kind).toBe("incompatible");
@@ -494,6 +504,14 @@ function auxiliaryProjection(label: string): PublicProjection {
       findings: { P0: 0, P1: 1, P2: 0, P3: 0 },
     },
   });
+  // Every kept review journals its capture after its round, and the capture publishes no facts.
+  body.document.journal.push({
+    id: 3,
+    at: "2026-11-15T00:01:30Z",
+    kind: "review.recorded",
+    lane: "one",
+    subject: "APP-2",
+  });
   const round = {
     round: 1,
     candidateRef: "a".repeat(40),
@@ -539,7 +557,7 @@ function auxiliaryProjection(label: string): PublicProjection {
       observational: true,
       observationKey: "APP-2",
       candidateRef: "b".repeat(40),
-      journalId: 2,
+      journalId: 3,
       digest: "d".repeat(64),
       roundDetail: [
         {
@@ -609,6 +627,52 @@ function testDOM() {
   Object.defineProperty(dom.window, "crypto", { value: globalThis.crypto });
   return dom;
 }
+describe("what the hosted cut does not publish", () => {
+  it("says a reason is not published, and draws no wordless merge-check steps or notes", () => {
+    const built = JSON.parse(
+      readFileSync(new URL("./assets.generated.json", import.meta.url), "utf8"),
+    ) as { renderer: string };
+    const body = auxiliaryProjection("old");
+    const queue = body.document.state.queue as Record<string, unknown>[];
+    queue[queue.length - 1].stage = "stopped";
+    body.document.journal.push(
+      { id: 4, at: "2026-11-15T00:02:00Z", kind: "check.started", lane: "one", subject: "APP-2" },
+      { id: 5, at: "2026-11-15T00:03:00Z", kind: "candidate.stopped", lane: "one", subject: "APP-2" },
+      { id: 6, at: "2026-11-15T00:03:30Z", kind: "decision.recorded", lane: null, subject: "APP-2" },
+      { id: 7, at: "2026-11-15T00:04:00Z", kind: "base.broken", lane: null, subject: null },
+    );
+    projection(body);
+    const dom = testDOM();
+    Object.assign(dom.window, {
+      deliveryStateStore: {
+        projection: () => body,
+        read: () => body.document,
+        subscribe: () => {},
+        onStatus: () => {},
+      },
+    });
+    seedDOM(dom.window, body);
+    try {
+      dom.window.eval(built.renderer);
+      const page = dom.window.document.querySelector("#app")!.textContent!;
+      expect(page).toContain("Its reason is not published on the hosted page.");
+      expect(page).not.toContain("No reason recorded.");
+      (
+        dom.window.document.querySelector(
+          '.stop-btn[data-subject="APP-2"]',
+        ) as HTMLButtonElement
+      ).click();
+      const detail = dom.window.document.querySelector("#detail")!;
+      expect(detail.querySelector("details.mh")).toBeNull();
+      expect(detail.querySelector(".ck-note")).toBeNull();
+      // The kept review still shows: the publisher checked it against the capture it sent.
+      expect(detail.textContent).toContain("old native finding");
+      expect(detail.textContent).not.toContain("Review evidence unavailable or stale");
+    } finally {
+      dom.window.close();
+    }
+  });
+});
 describe("initial and active coherent rendering", () => {
   it("updates auxiliary-only run, native review, link, needs and lens data in the active DOM", () => {
     const built = JSON.parse(

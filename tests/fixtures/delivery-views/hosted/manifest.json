@@ -7,6 +7,11 @@
       "layer": "schema"
     },
     {
+      "file": "valid-unregistered-kind.json",
+      "valid": true,
+      "layer": "schema"
+    },
+    {
       "file": "valid-evidence-markers.json",
       "valid": true,
       "layer": "schema"
@@ -95,6 +100,26 @@
       "file": "invalid-installed-executable-path.json",
       "valid": false,
       "layer": "boundary"
+    },
+    {
+      "file": "invalid-entry-facts.json",
+      "valid": false,
+      "layer": "schema"
+    },
+    {
+      "file": "invalid-entry-because.json",
+      "valid": false,
+      "layer": "schema"
+    },
+    {
+      "file": "invalid-story.json",
+      "valid": false,
+      "layer": "schema"
+    },
+    {
+      "file": "invalid-round-extra-fact.json",
+      "valid": false,
+      "layer": "schema"
     }
   ]
 }
