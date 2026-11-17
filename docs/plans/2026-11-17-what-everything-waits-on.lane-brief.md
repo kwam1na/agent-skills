@@ -39,7 +39,7 @@ assemble briefs, round files or records by hand, and don't edit what they write.
 | Lane | Stories | Owns |
 | --- | --- | --- |
 | lane-1 | V26-3552, V26-3426, V26-3565, V26-3566, V26-3567 | `skills/orchestrate-work/references/wait-words.json`, `skills/orchestrate-work/SKILL.md`, `skills/run-delivery/templates/lane-brief.md`, `tests/test_waits.py`, `tests/fixtures/waits/*`, `tests/test_lane_rows.py`, `tests/test_lead_wait.py`, `tests/test_orchestration_state.py`, `skills/orchestrate-work/scripts/render_state.py`, `skills/orchestrate-work/references/schemas.json`, `tests/test_run_delivery.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_run_delivery_tracker.py`, `tests/test_orchestration_render.py`, `tests/test_delivery_views_render.py`, `profiles/core.json`, `profiles/delivery-views.json`, `profiles/jira.json`, `profiles/linear.json`, `profiles/run-delivery.json`, `tests/delivery_views_page/line-map-waits.test.mjs`, `tests/test_delivery_views_hosted_projection.py`, `skills/run-delivery/SKILL.md`, `provenance.lock.json`, `tests/test_registry.py` |
-| lane-2 | V26-3555, V26-3554 | `skills/delivery-views/scripts/review_projection.py`, `skills/orchestrate-work/scripts/narrator.py`, `tests/test_waits_review.py`, `tests/test_delivery_views_review_projection.py`, `tests/test_narrator.py`, `tests/fixtures/narrator/*`, `skills/delivery-views/assets/run-summary.js`, `skills/delivery-views/assets/run-summary.css`, `tests/delivery_views_page/line-map-round-in-flight.test.mjs`, `tests/delivery_views_page/run-summary-findings.test.mjs`, `tests/delivery_views_page/golden.test.mjs`, `tests/delivery_views_page/line-map.test.mjs`, `tests/fixtures/delivery-views/round-card-deferred/golden.json`, `tests/fixtures/delivery-views/line-map/parked-round-reports/golden.json`, `tests/fixtures/delivery-views/line-map/parked-round-report-unreadable/golden.json` |
+| lane-2 | V26-3555, V26-3554, V26-3568 | `skills/delivery-views/scripts/review_projection.py`, `skills/orchestrate-work/scripts/narrator.py`, `tests/test_waits_review.py`, `tests/test_delivery_views_review_projection.py`, `tests/test_narrator.py`, `tests/fixtures/narrator/*`, `skills/delivery-views/assets/run-summary.js`, `skills/delivery-views/assets/run-summary.css`, `tests/delivery_views_page/line-map-round-in-flight.test.mjs`, `tests/delivery_views_page/run-summary-findings.test.mjs`, `tests/delivery_views_page/golden.test.mjs`, `tests/delivery_views_page/line-map.test.mjs`, `tests/fixtures/delivery-views/round-card-deferred/golden.json`, `tests/fixtures/delivery-views/line-map/parked-round-reports/golden.json`, `tests/fixtures/delivery-views/line-map/parked-round-report-unreadable/golden.json` |
 
 | Story | Label | Pinned request patterns | In-app checks its hand-off needs |
 | --- | --- | --- | --- |
@@ -50,6 +50,7 @@ assemble briefs, round files or records by hand, and don't edit what they write.
 | V26-3565 | V26-3565 | - | none |
 | V26-3566 | V26-3566 | - | none |
 | V26-3567 | V26-3567 | - | none |
+| V26-3568 | V26-3568 | - | none |
 
 ## The focused lane profile
 
