@@ -588,6 +588,12 @@ class WrapperTests(unittest.TestCase):
         self.assertEqual(document["waits"], state_tool.waits(record()))
         self.assertEqual(document["waitedOn"], state_tool.waited_on(record(), document["waits"]))
 
+    def test_a_record_that_waits_on_nothing_reads_as_it_did(self) -> None:
+        document = record()
+        merge(document, "APP-1")
+        self.assertEqual(render_state.with_waits(document), document)
+        self.assertEqual(views.with_waits(document), document)
+
     def test_a_wait_is_gone_from_every_view_once_what_frees_it_happens(self) -> None:
         document = record()
         before = render_state.render_markdown(document)

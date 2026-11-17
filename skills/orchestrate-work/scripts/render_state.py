@@ -520,12 +520,15 @@ def _told(document: dict) -> dict:
 
 def with_waits(document: dict) -> dict:
     """The record with what everything in it waits on, and who waits on each story, as ``waits`` derives them: every
-    view prints these sentences and words none of its own. A record they cannot be derived from is left without."""
+    view prints these sentences and words none of its own. Each is left out when it is empty, and a record they cannot be
+    derived from is left without."""
     if isinstance(document.get("waits"), list):
         return document
     try:
         found = waits(document)
-        return {**document, "waits": found, "waitedOn": waited_on(document, found)}
+        holding = waited_on(document, found)
+        # Left out when there are none, so a record that waits on nothing reads as it did.
+        return {**document, **({"waits": found} if found else {}), **({"waitedOn": holding} if holding else {})}
     except (OSError, ValueError, KeyError, TypeError):
         return document
 

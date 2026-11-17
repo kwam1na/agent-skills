@@ -1103,7 +1103,9 @@ def with_waits(document: dict) -> dict:
         return document
     try:
         found = review_state.waits(document)
-        return {**document, "waits": found, "waitedOn": review_state.waited_on(document, found)}
+        holding = review_state.waited_on(document, found)
+        # Left out when there are none, so a record that waits on nothing reads as it did.
+        return {**document, **({"waits": found} if found else {}), **({"waitedOn": holding} if holding else {})}
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return document
 

@@ -242,7 +242,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/render.py",
-          "sha256": "3ce2c1bc4aab5101e400ee16a15d5a2f5e8a7af411ad2fdb82f80111cecf1ec1"
+          "sha256": "480e9f25b1147826f4665ffbbcdadadbd71af203e1ebdd385117f44df2c6adaf"
         },
         {
           "path": "skills/delivery-views/scripts/review_projection.py",
@@ -554,7 +554,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/render_state.py",
-          "sha256": "43243c9ba8d6d8799f31139387df62caca356688f63ad66e1dc72e0e6f086ad0"
+          "sha256": "16f4d69cbe2914efd6cf93045990618db6db0bf66960dd36043012d9c57bb652"
         }
       ],
       "owner": "delivery-agent/user-delegated",

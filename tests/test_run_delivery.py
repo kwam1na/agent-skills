@@ -5682,8 +5682,9 @@ class RunDeliveryPlanTests(unittest.TestCase):
         plan = (m / "docs/plan.md").read_text()
         self.assertIn("### FX-4. Thing four\n\nLane 1, tier 1, after FX-2. Added mid-delivery: A lane found the gap.\n",
                       plan)
-        # The planned entry, and one `added` change with its reason: registration finds the story held.
-        self.assertIn({"subject": "FX-4", "title": "Thing four", "lane": "lane-1", "stage": "planned"},
+        # The planned entry, with the plan's order its waits read, and one `added` change with its reason: registration
+        # finds the story held.
+        self.assertIn({"subject": "FX-4", "title": "Thing four", "lane": "lane-1", "stage": "planned", "after": ["FX-2"]},
                       self.record(fx)["state"]["planned"])
         self.assertEqual([f["id"] for f in self.record(fx)["state"]["followups"]], ["FX-8"],
                          "the added story is still a follow-up, or another follow-up went with it")
