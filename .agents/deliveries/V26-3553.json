@@ -248,6 +248,10 @@
         {
           "id": "v26-3568-3",
           "text": "c3: A beat that names checks shows their count and reason in its line and their names only in its fold."
+        },
+        {
+          "id": "v26-3568-4",
+          "text": "c4: The marks follow the story's thread state, opening and closing, so a fixture whose thread is open, and one whose thread is closed, each draw as stated."
         }
       ],
       "after": [
