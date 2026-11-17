@@ -149,6 +149,20 @@
           "text": "c5: When the claim is released or the check ends, both sides clear with no action from either lead."
         }
       ]
+    },
+    "V26-3565": {
+      "title": "Catch a provenance listing change at hand-off, not in the merge queue",
+      "lane": "lane-1",
+      "why": "Restored: plan change c13 removed the whole story by mistake when the lead meant to remove only its criterion c3 (lead-plan change --kind removed ignores --criterion). The story stays in the delivery, decoupled from this repository at the operator's request",
+      "criteria": [
+        {
+          "id": "v26-3565-1",
+          "text": "c1: A hand-off whose candidate adds or removes an output a regenerable listing names is refused when its lane doesn't own the listing file, naming the file, the outputs and the grant to ask for, and nothing is recorded."
+        }
+      ],
+      "after": [
+        "V26-3426"
+      ]
     }
   },
   "finish": [
