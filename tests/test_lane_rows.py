@@ -786,9 +786,14 @@ class ALandingReturnsTheLanesItFrees(WaitingRecord):
     def test_a_lane_that_waited_from_handing_its_own_story_off_rests_when_it_lands(self) -> None:
         # Lane 2 has APP-4 still open, so it rests assigned, and that work holds the close; lane 3, with nothing else,
         # rests idle and holds nothing.
-        for lane, own, rests in (("lane-2", "APP-1", "assigned"), ("lane-3", "APP-3", "idle")):
-            with self.subTest(lane=lane):
+        for lane, own, rests, landed in (("lane-2", "APP-1", "assigned", None), ("lane-3", "APP-3", "idle", None),
+                                         ("lane-2", "APP-4", "idle", "APP-1")):
+            with self.subTest(lane=lane, own=own):
                 self.setUp()
+                if landed:
+                    # The lane's other story has already merged: it is no open work, so the lane rests idle.
+                    self.hand(lane, landed)
+                    self.runner(landed, "merged")
                 self.hand(lane, own)
                 row = self.focus(lane, f"waiting for {own} to land", state="waiting", waiting_on=own)
                 self.assertEqual(row["waitingFrom"]["state"], "handed")
