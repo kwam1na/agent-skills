@@ -1194,9 +1194,9 @@ class CarriedFindingIdsTests(unittest.TestCase):
             self.entry(1, [self.finding(i) for i in self.RAISED]),
             self.entry(2, [self.finding("r2-1")],
                        resolvedFindings=[self.closure("r1-1", "fixed"), self.closure("r1-2", "open"),
-                                         self.closure("r1-3", "closed"), self.closure("r1-6", "withdrawn")],
-                       # A plan review's reduce never reads the older key, so neither does its brief.
-                       resolutions=[self.closure("r1-10", "fixed")]),
+                                         self.closure("r1-3", "closed"), self.closure("r1-6", "withdrawn")]),
+            # A plan review's reduce never reads the older key, so neither does its brief, even with no other.
+            self.entry(3, [], resolutions=[self.closure("r1-10", "fixed")]),
         ]
         plan = self.renders(prior)[4]
         self.assertIn("Still open for this lens, so each listed in `resolvedFindings` exactly once: "
@@ -1224,19 +1224,25 @@ class CarriedFindingIdsTests(unittest.TestCase):
         tool = _tool()
         prior = [
             self.entry(1, [*(self.finding(i) for i in self.RAISED), self.finding("r1-5"),
-                           self.finding("r1-4", severity="P3", state="deferred", deferredIssue="d")]),
+                           self.finding("r1-4", severity="P3", state="deferred", deferredIssue="d"),
+                           self.finding("r1-7", severity="P3", state="deferred", deferredIssue="d")]),
             # A story's results may still carry the older `resolutions` key, which its reduce reads.
             self.entry(2, [self.finding("r2-1")],
                        resolutions=[self.closure("r1-1", "fixed"), self.closure("r1-2", "open"),
                                     self.closure("r1-3", "closed"), self.closure("r1-6", "withdrawn"),
                                     self.closure("r1-5", "deferred")]),
+            # A deferral a later round finds fixed is closed, no longer one to re-check.
+            self.entry(3, [self.finding("r3-1", severity="P3", state="deferred", deferredIssue="d")],
+                       resolvedFindings=[self.closure("r1-2", "open"), self.closure("r1-10", "open"),
+                                         self.closure("r2-1", "open"), self.closure("r1-7", "fixed")]),
         ]
         story = self.renders(prior)[1]
         self.assertIn("Still open for this lens, so each listed in `resolvedFindings` exactly once: "
                       f"{self.ids(*self.STILL_OPEN)}.", story)
         self.assertIn("Closed in an earlier round, so `resolvedFindings` may leave them out: "
-                      f"{self.ids(*self.CLOSED)}.", story)
-        self.assertIn(f"Deferred in an earlier round, to re-check as above: {self.ids('r1-5', 'r1-4')}.", story)
+                      f"{self.ids(*self.CLOSED, 'r1-7')}.", story)
+        self.assertIn(f"Deferred in an earlier round, to re-check as above: {self.ids('r1-5', 'r1-4', 'r3-1')}.",
+                      story)
         self.assertEqual(tool.carried_findings([{"entries": [e]} for e in prior], "lens.example"),
                          {f"example-{i}" for i in self.STILL_OPEN})
 
