@@ -35,6 +35,11 @@ Seen on release `linear-v3.0.0` (generation `7ff4b0e5`), the installed workflow 
 - **A grant at the current base can be outside a lane's history.** After a peer delivery (V26-3431) moved `main`, spans
   granted there were unusable for lanes branched earlier, and were re-granted at a common ancestor (42fbc233). Open:
   a grant could map to each lane's own merge base.
+- **One unmappable claim blocks every grant on its file, after the revoke has gone through.** `lead-own --region` maps
+  every claim on the path to the current base, so one landed story's stale span, or a span whose mapping repeated lines
+  make ambiguous, refuses all grants there. Carving a span is a revoke and then grants, so when the grants were refused,
+  lane 1 was left with unclaimed lines and its review-reduce stopped. Open: carve in one command, and name stale claims
+  when a story lands.
 - **`lead-assign`'s co-change warning missed files stories needed.** `hosted-snapshot.schema.json` and the pins in
   `tests/test_registry.py` and `tests/test_run_delivery.py` surfaced mid-story, one grant at a time. Open.
 
@@ -68,6 +73,11 @@ Seen on release `linear-v3.0.0` (generation `7ff4b0e5`), the installed workflow 
   command) rather than wait for a message.
 - **Gaps had no home.** Friction was noticed and mentioned, but only some of it was filed, until this log. Fix: V26-3571 (backlog),
   a gap command with routing by class.
+
+- **A failing tracker read never reached the lead.** The tracker snapshot failed on every supervisor pass for about
+  1h 40m, because a ticket marked Duplicate has a state type (`duplicate`) the snapshot doesn't know. Only the live
+  page showed it. `lead-wait` didn't wake, and no command's status line named it. Fixed for now by moving V26-3569 to
+  Canceled. Open: the snapshot could read `duplicate` as canceled, and a failing reader could wake the lead.
 
 ### The live page
 
