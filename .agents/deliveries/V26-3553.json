@@ -240,6 +240,10 @@
         {
           "id": "v26-3568-1",
           "text": "c1: A closed thread's margin line is drawn neutral, and an open thread's line stays in the held colour."
+        },
+        {
+          "id": "v26-3568-2",
+          "text": "c2: The row with a thread's opening entry shows a ring on the line and the row with its closing entry an end tick, and two adjacent threads are visibly separate."
         }
       ],
       "after": [
