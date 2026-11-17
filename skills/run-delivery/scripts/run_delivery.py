@@ -10965,8 +10965,8 @@ class Supervisor:
                  ("lenses", lambda: journal_lens_returns(c)),
                  ("finish", lambda: journal_finish_met(c, load_state())),
                  ("deferrals", lambda: deferral_breaches(c, load_state())),
-                 ("peerWaits", lambda: write_peer_waits(c)),
-                 ("publish", lambda: render_views(c, only="publishers")), ("needs", derive),
+                 ("peerWaits", lambda: write_peer_waits(c)), ("publish", lambda: render_views(c, only="publishers")),
+                 ("needs", derive),
                  ("render", lambda: render_views(c, only="renderers")), ("latest", lambda: str(copy_latest(c))))
         for name, step in steps:
             if self.lose():
