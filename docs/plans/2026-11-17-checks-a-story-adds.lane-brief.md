@@ -17,7 +17,7 @@ assemble briefs, round files or records by hand, and don't edit what they write.
 
 - Read the repository's root instruction file first. Its rules apply.
 - Begin each story with `python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lane-start <key> --base main`, run from the lead checkout `/Users/kwamina/code/agent-skills`.
-  The delivery record is at `/Users/kwamina/code/agent-skills/.orchestration/lanes/V26-3431/.orchestration/state`. The command makes the
+  The delivery record is at `/Users/kwamina/code/agent-skills/.orchestration/deliveries/V26-3431/state`. The command makes the
   story's own checkout, `.orchestration/lanes/<key>`, on `claude/<key>` from `origin/main`, runs the repository's prepare step
   there, sets your focus, records the story's start, which its tracker start waits for, and moves the story from
   planned to building in the record, so the line map shows it started. Run again, it changes nothing. Work only in that checkout: the lead reads your gate and in-app evidence from it. Never edit the lead's
@@ -122,11 +122,11 @@ Don't move your story's status: this repository gives lanes no status moves.
 ## Focus
 
 Say what you're doing as it changes, with the installed release's state tool:
-`python3 -B .agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py --dir /Users/kwamina/code/agent-skills/.orchestration/lanes/V26-3431/.orchestration/state focus --lane <lane> --text "<what you are doing>" [--state working|reviewing|blocked] [--waiting-on <who>]`.
+`python3 -B .agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py --dir /Users/kwamina/code/agent-skills/.orchestration/deliveries/V26-3431/state focus --lane <lane> --text "<what you are doing>" [--state working|reviewing|blocked] [--waiting-on <who>]`.
 `review-prepare` sets `reviewing` for you.
 
 If a product run builds your story, bind its run id at start, before your first round:
-`python3 -B .agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py --dir /Users/kwamina/code/agent-skills/.orchestration/lanes/V26-3431/.orchestration/state bind-run --lane <lane> --subject <key> --run <run id>`.
+`python3 -B .agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py --dir /Users/kwamina/code/agent-skills/.orchestration/deliveries/V26-3431/state bind-run --lane <lane> --subject <key> --run <run id>`.
 The live view then shows the run's rounds before your hand-off, and the hand-off keeps the run. A story with no run binds none.
 
 ## Your turn
