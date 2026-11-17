@@ -70,54 +70,6 @@
       "line": "Keep facts in the journal"
     },
     {
-      "kind": "review.round",
-      "lane": "lane-1",
-      "subject": "APP-12",
-      "data": {
-        "round": 2,
-        "startedAt": "2026-11-16T10:15:00Z",
-        "finishedAt": "2026-11-16T10:15:00Z",
-        "verdicts": {
-          "adversarial-testing": "approve",
-          "outcome-correctness": "changes"
-        },
-        "findings": {
-          "P0": 0,
-          "P1": 1,
-          "P2": 2,
-          "P3": 0
-        },
-        "refused": 2,
-        "restarts": 2
-      },
-      "head": "Review round 2 on APP-12",
-      "line": "Findings: 0 P0, 1 P1, 2 P2 and 0 P3, after 2 refused results, restarted 2 times"
-    },
-    {
-      "kind": "review.round",
-      "lane": null,
-      "subject": "APP-12",
-      "data": {
-        "round": 2,
-        "startedAt": "2026-11-16T10:15:00Z",
-        "finishedAt": "2026-11-16T10:15:00Z",
-        "verdicts": {
-          "adversarial-testing": "approve",
-          "outcome-correctness": "changes"
-        },
-        "findings": {
-          "P0": 0,
-          "P1": 1,
-          "P2": 2,
-          "P3": 0
-        },
-        "refused": 0,
-        "restarts": 0
-      },
-      "head": "Review round 2 on APP-12",
-      "line": "Findings: 0 P0, 1 P1, 2 P2 and 0 P3"
-    },
-    {
       "kind": "review.started",
       "lane": "lane-1",
       "subject": "APP-12",
@@ -185,6 +137,54 @@
       },
       "head": "adversarial-testing asked for changes on round 4 of APP-12",
       "line": "Findings: 0 P0, 2 P1, 0 P2 and 1 P3"
+    },
+    {
+      "kind": "review.round",
+      "lane": "lane-1",
+      "subject": "APP-12",
+      "data": {
+        "round": 2,
+        "startedAt": "2026-11-16T10:15:00Z",
+        "finishedAt": "2026-11-16T10:15:00Z",
+        "verdicts": {
+          "adversarial-testing": "approve",
+          "outcome-correctness": "changes"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 1,
+          "P2": 2,
+          "P3": 0
+        },
+        "refused": 2,
+        "restarts": 2
+      },
+      "head": "Review round 2 on APP-12",
+      "line": "Findings: 0 P0, 1 P1, 2 P2 and 0 P3, after 2 refused results, restarted 2 times"
+    },
+    {
+      "kind": "review.round",
+      "lane": null,
+      "subject": "APP-12",
+      "data": {
+        "round": 2,
+        "startedAt": "2026-11-16T10:15:00Z",
+        "finishedAt": "2026-11-16T10:15:00Z",
+        "verdicts": {
+          "adversarial-testing": "approve",
+          "outcome-correctness": "changes"
+        },
+        "findings": {
+          "P0": 0,
+          "P1": 1,
+          "P2": 2,
+          "P3": 0
+        },
+        "refused": 0,
+        "restarts": 0
+      },
+      "head": "Review round 2 on APP-12",
+      "line": "Findings: 0 P0, 1 P1, 2 P2 and 0 P3"
     },
     {
       "kind": "review.recorded",
