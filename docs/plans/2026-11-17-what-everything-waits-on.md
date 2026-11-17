@@ -553,7 +553,18 @@ the warning would either hard-code this repository's rule or warn on every new f
 
 ### V26-3566. Let lead-plan drop one criterion, and refuse a flag a change doesn't use
 
-Lane 1, tier 1, after V26-3565. Added mid-delivery: The operator asked to add it to this delivery: plan change c13 removed V26-3565 when the lead meant to drop one criterion, because lead-plan's removed kind ignores --criterion and no kind drops a single criterion
+Lane 1, tier 4, after V26-3565. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`,
+`skills/delivery-views/assets/line-map.js`, `skills/run-delivery/SKILL.md`, `tests/test_run_delivery.py` and
+`tests/delivery_views_page/line-map-plan.test.mjs`.
+
+Added mid-delivery. Plan change c13 removed V26-3565 when the lead meant to drop one of its criteria:
+`lead-plan change --kind removed` removes whole stories and silently ignores `--criterion`, and no kind drops a
+single criterion. The operator asked to add the fix to this delivery.
+
+`lead-plan change` refuses any flag its kind doesn't use, naming the flag, before it writes anything. `--kind removed`
+with `--criterion` drops that one criterion as a recorded change with its reason. It refuses a criterion the story
+lacks, and the story's last criterion. The plan chapter strikes a dropped criterion through and shows its reason, as
+it does for a removed story.
 
 ## Calls made
 
