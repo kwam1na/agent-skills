@@ -233,7 +233,7 @@
     {
       "id": "stories",
       "label": "Every story",
-      "text": "Each of the six stories lands on main through the merge queue, or closes with its reason recorded",
+      "text": "Each of the seven stories lands on main through the merge queue, or closes with its reason recorded",
       "covers": {
         "criteria": "all",
         "proofs": [
@@ -241,7 +241,7 @@
           "merged"
         ]
       },
-      "at": "2026-11-17T19:32:32.035055Z"
+      "at": "2026-11-17T20:03:55.594082Z"
     },
     {
       "id": "local-suite",
