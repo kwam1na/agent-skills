@@ -1917,11 +1917,26 @@ if Path({str(started.with_suffix(".armed"))!r}).exists():
         actual = sh("git", "show", "origin/feature/FX-1:gen/lock.json", cwd=m).stdout
         self.assertEqual(actual, fixture_lock({"src/one.txt": "one\n", "src/two.txt": "two\n"}))
 
-        # A clean merge would preserve the candidate's changed listing without the queue's shared-output guard.
+        # A clean merge would preserve the candidate's changed listing without the queue's shared-output guard. The
+        # hand-off asks that guard first, so a listing both lanes own is refused there, naming the move that makes it
+        # lane-1's alone; moved, FX-4 hands off and is accepted.
         sh("git", "merge", "-q", "--ff-only", "origin/feature/FX-1", cwd=m)
         base = sh("git", "rev-parse", "HEAD", cwd=m).stdout
-        hand_off(fx, "FX-4", "lane-1", files={"gen/lock.json": fixture_lock({"src/one.txt": "one\n"})})
+
+        def refused_then_moved(wt, url):
+            journal = (fx.tmp / "record/journal.jsonl").read_bytes()
+            code, out = fx.flow("handoff", "FX-4", "--pr", url, cwd=wt)
+            self.assertEqual(code, 2, out)
+            self.assertIn("gen/lock.json (removed src/two.txt): it is shared with lane-2", out)
+            self.assertIn("lead-own --lane lane-1 --move gen/lock.json --from lane-2", out)
+            self.assertEqual((fx.tmp / "record/journal.jsonl").read_bytes(), journal, "a refused hand-off was recorded")
+            code, out = fx.flow("lead-own", "--lane", "lane-1", "--move", "gen/lock.json", "--from", "lane-2", cwd=m)
+            self.assertEqual(code, 0, out)
+        hand_off(fx, "FX-4", "lane-1", files={"gen/lock.json": fixture_lock({"src/one.txt": "one\n"})}, before=refused_then_moved)
         code, out = fx.flow("lead-accept", "FX-4", cwd=m)
+        self.assertEqual(code, 0, out)
+        # Shared again after the acceptance, which no hand-off can see: the queue's own guard still stops it.
+        code, out = fx.flow("lead-own", "--lane", "lane-2", "--grant", "gen/lock.json", cwd=m)
         self.assertEqual(code, 0, out)
         queue_run(fx, "FX-4")
         self.assertEqual(self.item(fx, "FX-4")["stage"], "stopped")
