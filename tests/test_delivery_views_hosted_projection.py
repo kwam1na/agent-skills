@@ -261,6 +261,18 @@ class ProjectionTests(unittest.TestCase):
         linked = public.project(doc, runs, cfg, source_fingerprint='1' * 64)
         self.assertEqual(linked['links']['changes']['https://github.com/example/app/pull/12']['label'], '#12')
 
+    def test_a_waiting_lane_projects_with_its_state_and_without_the_tools_own_members(self):
+        doc, _ = source()
+        doc['state']['lanes'] = [{'id': 'one', 'title': 'Lane one', 'focus': 'waiting for APP-1', 'state': 'waiting',
+                                  'waitingOn': 'APP-1', 'since': '2026-11-15T00:00:00Z',
+                                  'waitingFrom': {'state': 'working', 'at': '2026-11-15T00:00:00Z'},
+                                  'restedFrom': {'state': 'waiting', 'at': '2026-11-15T00:00:00Z'}}]
+        value = public.project(doc, {}, config(), source_fingerprint='1' * 64)
+        [lane] = value['document']['state']['lanes']
+        self.assertEqual((lane['state'], lane['waitingOn'], lane['restedFrom']['state']), ('waiting', 'APP-1', 'waiting'))
+        self.assertNotIn('waitingFrom', lane)
+        public.validate(value)
+
     def test_the_lead_listener_item_projects_as_it_is_written(self):
         doc, _ = source()
         item = {'holding': False, 'source': 'lead-wait.json in the record',

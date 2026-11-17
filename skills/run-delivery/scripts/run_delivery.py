@@ -7466,7 +7466,10 @@ def lead_assign(args) -> None:
         state = doc["state"]
         if args.lane not in c.effective_ownership(state):
             raise Stop(f"{args.lane} is not a lane of {c.delivery}")
-        changes = {"lanes": [*(entry for entry in state["lanes"] if entry["id"] != args.lane), row]}
+        # The row is replaced where it stands: an assignment never reorders the lanes.
+        rows = state["lanes"]
+        changes = {"lanes": [row if entry["id"] == args.lane else entry for entry in rows]
+                   if any(entry["id"] == args.lane for entry in rows) else [*rows, row]}
         if "laneOwnership" not in state:
             for key in keys:
                 if c.lane_of(key, state) != args.lane:

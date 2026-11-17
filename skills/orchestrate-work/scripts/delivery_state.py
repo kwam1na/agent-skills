@@ -4146,6 +4146,15 @@ def waits(document: dict, *, needing: frozenset[str] | set[str] = frozenset(), w
         told[subject] = found
     result = [wait for found in told.values() for wait, _ in found]
     for row in state["lanes"]:
+        if row.get("state") != "idle":
+            continue
+        following = next((entry for entry in planned if entry["lane"] == row["id"] and entry["stage"] == "planned"), None)
+        for wait, fields in told.get(following["subject"], []) if following else []:
+            said = wait_said(table, "lanes", wait["cause"], {**fields, "subject": row["id"], "next": following["subject"]})
+            result.append({"subject": row["id"], "on": following["subject"], "cause": wait["cause"], "stage": "planned",
+                           "frees": wait["frees"], **({"since": wait["since"]} if "since" in wait else {}),
+                           "needsSomeone": False, "words": said})
+    for row in state["lanes"]:
         if row.get("state") == "waiting" and row.get("waitingOn") in items and row["waitingOn"] not in landed:
             # A lane waiting on a story goes on by itself when that story lands: it names the story it will finish.
             other = items[row["waitingOn"]]
@@ -4155,15 +4164,6 @@ def waits(document: dict, *, needing: frozenset[str] | set[str] = frozenset(), w
             result.append({"subject": row["id"], "on": other["subject"], "cause": "lane", "stage": other["stage"],
                            "frees": "landed", **({"since": row["waitingFrom"]["at"]} if row.get("waitingFrom") else {}),
                            "needsSomeone": needs_someone(other), "words": wait_said(table, "waits", "lane", fields)})
-            continue
-        if row.get("state") != "idle":
-            continue
-        following = next((entry for entry in planned if entry["lane"] == row["id"] and entry["stage"] == "planned"), None)
-        for wait, fields in told.get(following["subject"], []) if following else []:
-            said = wait_said(table, "lanes", wait["cause"], {**fields, "subject": row["id"], "next": following["subject"]})
-            result.append({"subject": row["id"], "on": following["subject"], "cause": wait["cause"], "stage": "planned",
-                           "frees": wait["frees"], **({"since": wait["since"]} if "since" in wait else {}),
-                           "needsSomeone": False, "words": said})
     return result
 
 

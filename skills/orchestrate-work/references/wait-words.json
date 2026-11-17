@@ -24,11 +24,11 @@
     }
   },
   "waits": {
-    "description": "A story's wait, by its cause, and a waiting lane's.",
+    "description": "A story's wait, by its cause.",
     "templates": {
+      "lane": "{subject:lane} waits for {on:ticket} to land[ before it finishes {own:ticket}].",
       "order": "Waits for {on:ticket} to land. {where}",
       "files": "Waits for {on:ticket} to land. {onLane:lane} holds {files:list} for it.",
-      "lane": "{subject:lane} waits for {on:ticket} to land[ before it finishes {own:ticket}].",
       "held": "Held by the lead: {text}"
     }
   },
