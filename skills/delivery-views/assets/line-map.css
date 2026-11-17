@@ -212,7 +212,7 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
    are never clipped; scrolling sideways (on a phone) never brings a vertical scroll with it. */
 /* The track's least width: the lane-name column and its gap (220 + 24, or 104 + 12 on a phone) and the merge's 176
    (MERGE_WIDTH in line-map.js), plus 46 for each stop of the longest lane, so stops never crowd under their keys. */
-.lines-track { position: relative; display: grid; gap: 20px; padding: 16px 176px 16px 0; min-width: max(872px, calc(420px + var(--most, 1) * 46px)); }
+.lines-track { position: relative; display: grid; gap: 20px; padding: 16px 176px 16px 0; min-width: calc(420px + var(--most, 1) * 46px); }
 .line { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; align-items: start; height: 64px; }
 /* The lane's name stays pinned at the left while its row scrolls, so a lane is named wherever the reader has scrolled to. */
 .line .name { position: sticky; left: 0; z-index: 2; align-self: stretch; padding: 3px 12px 10px 0; margin-bottom: -10px; font-size: 12px; line-height: 16px; color: var(--faint); overflow: hidden;
@@ -582,7 +582,7 @@ a.fact-ref { text-decoration: underline; text-decoration-color: color-mix(in srg
   .checking { padding: 18px 16px; border-radius: 12px; }
   .ck-run, .ck-fails li { margin: 0 -6px; }
   .rail { display: none; }
-  .lines-track { min-width: max(740px, calc(292px + var(--most, 1) * 46px)); }
+  .lines-track { min-width: calc(292px + var(--most, 1) * 46px); }
   .line { grid-template-columns: 104px minmax(0, 1fr); gap: 12px; }
   .person { grid-template-columns: 20px minmax(0, 1fr); padding: 14px 16px; }
   .detail { padding: 18px 16px; border-radius: 12px; }
