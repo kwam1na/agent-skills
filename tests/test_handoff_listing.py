@@ -21,9 +21,11 @@ RUN_QUIETLY = True
 LISTING = "build/listing.json"
 # The listing's command, as the queue runs it: the file's bytes on stdin, the outputs it lists as a JSON array.
 # A file without them is refused in words, as a listing command says what it can't read. The queue gives a listing
-# its step's values, and this one takes `{head}`: run without the commit, it refuses.
-LIST = ("import json, re, sys; d = json.load(sys.stdin); "
-        "re.fullmatch('[0-9a-f]{40}', sys.argv[1]) or sys.exit('no head given'); "
+# its step's values, and this one takes `{head}`: given anything but the candidate's commit, the HEAD of the checkout
+# it runs in, it refuses.
+LIST = ("import json, subprocess, sys; d = json.load(sys.stdin); "
+        "head = subprocess.run(['git', 'rev-parse', 'HEAD'], capture_output=True, text=True).stdout.strip(); "
+        "sys.argv[1:] == [head] or sys.exit('not given the candidate head'); "
         "print(json.dumps(sorted(d['outputs']))) if 'outputs' in d else sys.exit('it lists no outputs')")
 
 
