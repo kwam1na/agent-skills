@@ -2512,7 +2512,8 @@
   /** A finish line that moved since approval: added since, or its covers raised, lowered or changed, and when. */
   function finishMoved(line) {
     var was = approvedPart("finish").filter(function (entry) { return entry.id === line.id; })[0];
-    var parts = clockParts(line.at);
+    // A line edited by hand carries the approval's time, which isn't when it moved: then it says no time.
+    var parts = laterThan(line.at, isObject(plan.approved) ? plan.approved.at : null) ? clockParts(line.at) : null;
     var when = !parts ? "" : parts.day ? " on " + parts.day + ", " + parts.time : " at " + parts.time;
     if (!was) { return el("div", "pm-count pm-moved", "Added since approval" + when + "."); }
     var before = isObject(was.covers) ? was.covers : {}, after = isObject(line.covers) ? line.covers : {};

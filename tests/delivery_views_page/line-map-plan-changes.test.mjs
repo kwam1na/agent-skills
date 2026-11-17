@@ -119,6 +119,19 @@ test("a finish line raised since approval says so, from what to what and when, a
   const sideways = structuredClone(plan);
   sideways.finish[0].covers = { criteria: ["C.1"], proofs: ["review"] };
   expect(moved(await opened(document, sideways))[0]).toEqual(["Cart", ["Changed at 7:40 am: from A.1, B.1 (merged) to C.1 (review)."]]);
+  // A proof added is a raise, the criteria unmoved.
+  const proofs = structuredClone(plan);
+  proofs.finish[0].covers = { criteria: ["A.1", "B.1"], proofs: ["merged", "review"] };
+  expect(moved(await opened(document, proofs))[0]).toEqual(["Cart", ["Raised at 7:40 am: from A.1, B.1 (merged) to A.1, B.1 (merged, review)."]]);
+  // Moved on an earlier day, it names the day.
+  const earlier = structuredClone(plan);
+  earlier.approved.at = "2026-10-29T06:00:00Z";
+  earlier.finish[0].at = "2026-10-29T08:15:00Z";
+  expect(moved(await opened(document, earlier))[0]).toEqual(["Cart", ["Raised on Oct 29, 8:15 am: from A.1, B.1 (merged) to every criterion (merged, review)."]]);
+  // Edited by hand, the line keeps the approval's time, which isn't when it moved: it says no time.
+  const byHand = structuredClone(plan);
+  byHand.finish[0].at = byHand.approved.at;
+  expect(moved(await opened(document, byHand))[0]).toEqual(["Cart", ["Raised: from A.1, B.1 (merged) to every criterion (merged, review)."]]);
 });
 
 test("every change made after approval is marked as not reviewed with the plan, and one made at approval is not", async () => {

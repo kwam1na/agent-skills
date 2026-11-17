@@ -150,6 +150,21 @@ class LeadPlanChangeTests(unittest.TestCase):
         # The criterion is gone, so a second drop of it is refused and writes nothing.
         self.refused(fx, held, ["--kind", "removed", "--subjects", "FX-2", "--criterion", "one-fails"],
                      "FX-2 has no criterion one-fails")
+        # Nor does a recorded drop explain FX-2 leaving the delivery file by hand: drift still records that removal.
+        path = m / ".agents/deliveries/FX-1.json"
+        d = json.loads(path.read_text())
+        del d["stories"]["FX-2"]
+        path.write_text(json.dumps(d, indent=2))
+        probe = ("import json, sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); import run_delivery as flow; "
+                 "c = flow.Config(Path.cwd(), 'FX-1'); "
+                 "log = [*flow.read_plan_log(c), {'type': 'change', 'id': 'c9', 'kind': 'removed', 'subjects': ['FX-2'], "
+                 "'criteria': ['one-loads'], 'by': 'lead'}]; "
+                 "print(json.dumps([e for e in flow.plan_drift(c, log) if e['type'] == 'change']))")
+        done = subprocess.run([sys.executable, "-B", "-c", probe, str(fx.tool.parent)], cwd=m, env=fx.env, text=True,
+                              capture_output=True, timeout=300)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        drift = json.loads(done.stdout.strip().splitlines()[-1])
+        self.assertEqual([(e["kind"], e["subjects"], e["by"]) for e in drift], [("removed", ["FX-2"], "unrecorded")])
 
 
 if __name__ == "__main__":
