@@ -244,6 +244,10 @@
         {
           "id": "v26-3568-2",
           "text": "c2: The row with a thread's opening entry shows a ring on the line and the row with its closing entry an end tick, and two adjacent threads are visibly separate."
+        },
+        {
+          "id": "v26-3568-3",
+          "text": "c3: A beat that names checks shows their count and reason in its line and their names only in its fold."
         }
       ],
       "after": [
