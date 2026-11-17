@@ -1070,9 +1070,9 @@ never disagree:
   with the exact `lead-wait` to start in the background: the last wait's `restart`, so nothing journalled since that
   wait read is missed, or, with none, one after the journal's last entry. While one listens they name it instead, and
   they print nothing about it when nothing works or is queued.
-- The supervisor's "Needs you", and so the live view, says "The lead isn't listening" with that command while a lane
-  works or a candidate is queued and no lease is live, and every lead command's status line says the lead isn't
-  listening. A running `lead-wait` clears both.
+- The supervisor's "Needs you", and so the live view, says which lanes the lead won't hear, in the table of wait
+  sentences' words and with no command, while a lane works or a candidate is queued and no lease is live, and every
+  lead command's status line says the lead isn't listening, with that command. A running `lead-wait` clears both.
 
 Where this generation installs host hooks, run-delivery's `lead.may-stop` hook also holds a lead's stop while a lane
 works or a candidate is queued and no `lead-wait` listens, and journals `hook.held`, which never wakes a `wait`; its

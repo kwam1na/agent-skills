@@ -9675,10 +9675,7 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                           + f"{flow_command()} lead-resolve {entry['id']} --why TEXT"})
     needed = listener_needed(doc["state"])
     if needed and lead_listener(c.state) is None:
-        items.append({"holding": False, "source": f"{LEAD_WAIT_LEASE} in the record",
-                      "text": f"The lead isn't listening: no lead-wait runs while {', '.join(needed)}. Start one in the "
-                      f"background: {lead_wait_command(c, doc)}",
-                      "clears": "a running lead-wait, or nothing left working or queued"})
+        items.append({"holding": False, "source": f"{LEAD_WAIT_LEASE} in the record", **listening_words(c, doc["state"])})
     for name in flapping:
         items.append({"holding": True, "source": f"the supervisor's {name}", "clears": f"the {name} staying up",
                       "text": f"The supervisor's {name} won't stay up; its log is "
@@ -9691,6 +9688,27 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                           f"refuses drafts: {', '.join(drafts)}. Mark each ready, then lead-accept --requeue it if it "
                           "stopped", "clears": "marking each ready, then lead-accept --requeue for one that stopped"})
     return items + waits_needing(c, doc, items)
+
+
+def lane_named(lane: str) -> str:
+    """A lane as a sentence names it: lane-1 is "lane 1"; a lane with another name is called by it."""
+    numbered = re.fullmatch(r"lane-([0-9]+)", lane)
+    return f"lane {numbered.group(1)}" if numbered else lane
+
+
+def listening_words(c, state: dict) -> dict:
+    """The "Needs you" item's text and what clears it while no lead-wait runs, from the table of wait sentences: the
+    lanes still at work, by name. The lead's own status line keeps the command that starts one."""
+    scripts = str(c.release / "skills/orchestrate-work/scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import delivery_state
+    table = delivery_state.load_wait_words()
+    lanes = [lane_named(lane) for lane in listener_facts(state)["lanes"]]
+    # The first lane starts the sentence.
+    lanes = [lane[:1].upper() + lane[1:] for lane in lanes[:1]] + lanes[1:]
+    return {"text": delivery_state.wait_said(table, "listening", "text", {"lanes": lanes, "count": len(lanes)}),
+            "clears": delivery_state.wait_said(table, "listening", "clears", {})}
 
 
 def needs_about(doc: dict, item: dict) -> set[str]:

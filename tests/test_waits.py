@@ -401,6 +401,35 @@ class NeedsYouTests(unittest.TestCase):
                          [("APP-2 is free to start. Lane 1 is idle.", False), ("APP-3 is free to start. Lane 3 is idle.", False)])
 
 
+class ListeningTests(unittest.TestCase):
+    """While no lead-wait runs, "Needs you" says who can't reach the lead, from the table, with no command in it."""
+
+    def said(self, lanes: list[tuple[str, str]], queue: list[dict] | None = None) -> dict:
+        state = {"lanes": [{"id": lane, "state": state} for lane, state in lanes], "queue": queue or []}
+        return run_delivery.listening_words(SimpleNamespace(release=PRODUCT_ROOT), state)
+
+    def test_one_lane_and_several_lanes_cant_reach_the_lead(self) -> None:
+        self.assertEqual(self.said([("lane-1", "idle"), ("lane-2", "working")]),
+                         {"text": "Lane 2 can't reach the lead. A hand-off or question from it will wait unseen until the "
+                                  "lead is watching again.", "clears": "the lead is watching again"})
+        self.assertEqual(self.said([("lane-1", "working"), ("lane-2", "reviewing")])["text"],
+                         "Lane 1 and lane 2 can't reach the lead. A hand-off or question from them will wait unseen "
+                         "until the lead is watching again.")
+        self.assertTrue(self.said([("lane-1", "working"), ("lane-2", "reviewing"), ("lane-3", "blocked")])["text"]
+                        .startswith("Lane 1, lane 2 and lane 3 can't reach the lead."))
+
+    def test_a_lane_with_a_name_is_called_by_it_and_with_no_lane_at_work_it_names_the_queued_piece(self) -> None:
+        self.assertTrue(self.said([("api", "working")])["text"].startswith("Api can't reach the lead."))
+        self.assertEqual(self.said([("lane-1", "idle")], [{"subject": "APP-1", "stage": "queued"}])["text"],
+                         "A piece in the queue can't reach the lead. If it lands or stops, nothing will tell the lead "
+                         "until it is watching again.")
+
+    def test_the_item_names_no_command(self) -> None:
+        said = self.said([("lane-1", "working")])
+        for words in ("lead-wait", "run_delivery", "python"):
+            self.assertNotIn(words, said["text"] + said["clears"])
+
+
 class NextTests(unittest.TestCase):
     """`next` calls a story blocked for the same cause and on that `waits` gives it."""
 
@@ -470,7 +499,7 @@ class TableTests(unittest.TestCase):
         table = json.loads(raw)
         self.assertEqual(json.dumps(table, indent=2, ensure_ascii=False) + "\n", raw)
         self.assertEqual(table["schemaVersion"], "wait-words/1")
-        for group in ("stages", "waits", "lanes", "holding", "needsYou"):
+        for group in ("stages", "waits", "lanes", "holding", "needsYou", "listening"):
             self.assertIn("templates", table[group])
         self.assertEqual(set(table["waits"]["templates"]), {"order", "files", "held"})
         self.assertEqual(set(table["lanes"]["templates"]), {"order", "files", "held"})
@@ -499,7 +528,7 @@ def marked(table: dict) -> dict:
 
 # The fixed words of the real templates, each of which a view may show only inside a marked sentence.
 FIXED = ("Waits for", "Held by the lead", "is next on", "Waited on by", "free to start", "pieces wait on it",
-         "piece waits on it", "was stopped.")
+         "piece waits on it", "was stopped.", "can't reach the lead", "watching again")
 MARK = re.compile(r"⟦([a-zA-Z]+\.[a-zA-Z]+(?:\.[a-z0-9]+)?)⟧")
 
 
@@ -574,6 +603,13 @@ class MarkerTests(unittest.TestCase):
         self.assertTrue(added)
         for item in added:
             self.assertRegex(item["text"], r"⟦needsYou\.free⟧")
+        for lanes, queued, marker in (([("lane-1", "working")], [], "listening.text.1"),
+                                      ([("lane-1", "working"), ("lane-2", "working")], [], "listening.text"),
+                                      ([], [{"subject": "APP-1", "stage": "queued"}], "listening.text.0")):
+            listening = run_delivery.listening_words(SimpleNamespace(release=PRODUCT_ROOT), {
+                "lanes": [{"id": lane, "state": state} for lane, state in lanes], "queue": queued})
+            self.assertRegex(listening["text"], rf"^⟦{re.escape(marker)}⟧ ")
+            self.assertRegex(listening["clears"], r"^⟦listening\.clears⟧ ")
         stopped = record()
         queue(stopped, "APP-1", "stopped")
         [item] = run_delivery.waits_needing(SimpleNamespace(release=PRODUCT_ROOT), stopped, [])

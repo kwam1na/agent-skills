@@ -58,5 +58,19 @@
       "free": "{subject:ticket} is free to start. {lane:lane} is idle.",
       "stopped": "{subject:ticket} was stopped."
     }
+  },
+  "listening": {
+    "description": "The \"Needs you\" item while no lead-wait runs and something needs the lead to listen: the lanes still at work, by name, the first as a sentence starts it.",
+    "templates": {
+      "text": {
+        "by": "count",
+        "cases": {
+          "0": "A piece in the queue can't reach the lead. If it lands or stops, nothing will tell the lead until it is watching again.",
+          "1": "{lanes:list} can't reach the lead. A hand-off or question from it will wait unseen until the lead is watching again."
+        },
+        "otherwise": "{lanes:list} can't reach the lead. A hand-off or question from them will wait unseen until the lead is watching again."
+      },
+      "clears": "the lead is watching again"
+    }
   }
 }
