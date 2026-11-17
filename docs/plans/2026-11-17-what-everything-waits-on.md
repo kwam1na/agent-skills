@@ -568,7 +568,29 @@ it does for a removed story.
 
 ### V26-3567. Show what needs someone as one list, in the lanes' own visual language
 
-Lane 1, tier 1, after V26-3426. Added mid-delivery: The operator approved a live mock of Needs you in the lanes' visual language, merged with Needs attention, and asked to add it to this delivery
+Lane 1, tier 3, after V26-3426. Test-first. Files: `skills/delivery-views/assets/line-map.js`,
+`skills/delivery-views/assets/line-map.css`, `skills/orchestrate-work/references/wait-words.json`,
+`skills/run-delivery/scripts/run_delivery.py`, `tests/delivery_views_page/line-map-needs-you.test.mjs` and
+`tests/test_run_delivery_supervisor.py`.
+
+Added mid-delivery. The operator approved a live mock of "Needs you" in the lanes' visual language, merged with
+"Needs attention", and asked to add it to this delivery.
+
+"Needs attention" goes, and its blocked-lane items become rows of one list. The page's reader is the operator, but
+many items need the lead, so the list names who must act rather than saying "you". Its heading is neutral. It opens
+with one sentence counting the items by who must act and how many hold up the finish, for example "1 thing needs the
+lead, and it's holding up the finish.", replacing the "Holds the close" and "Shown only" headers. Each row's meta
+line opens with who acts: **You** for the operator, **The lead**, or a lane by name. Rows that need the operator come
+first. On the page, "you" always means the reader, and the lead is always named. Each row has:
+- a faint stroke of its lane's line, with the story's stop as the line chart draws it and its short key beneath;
+- for a wait, the blocker's stop in its own lane's colour, joined by a hairline;
+- a short headline, one softer line of why, and a meta line with "Holding up the finish" for holding items and what
+  clears it;
+- "for <age>" in a right-aligned column, with the clock time on hover.
+
+Holding rows come first at full weight. Red appears only on a stopped stop. Each "Needs you" item carries its facts
+(lane, subject, state, blocker, since, holding), and its words come from `wait-words.json`, so the page words
+nothing itself.
 
 ## Calls made
 
