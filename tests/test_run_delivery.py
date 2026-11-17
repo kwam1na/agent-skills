@@ -20,6 +20,7 @@ import ast
 import atexit
 import base64
 import contextlib
+import copy
 import datetime
 import fcntl
 import gc
@@ -496,6 +497,41 @@ class Fixture:
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline and any(group_alive(g) for g in groups):
             time.sleep(0.1)
+
+
+def kept_fixture(case: unittest.TestCase, build, *args, **settings):
+    """The fixture `build(*args, **settings)` makes, each case's own: a Fixture, or a tuple that starts with one. The class
+    builds it once for each build and set of settings, by the real commands, and keeps a copy; every later case asking for the
+    same one gets that copy put back in the same folder, so each path it holds, in its files, its config and its
+    commits, is the one it was built with. Whatever an earlier case left running there is stopped first, as that case's
+    own cleanup would stop it, and this case's cleanup stops what it starts and removes the folder. A case that already
+    holds that fixture and asks again gets one built afresh, beside it."""
+    cls = type(case)
+    builds = cls.__dict__.get("kept_builds")
+    if builds is None:
+        builds = cls.kept_builds = {}
+        cls.addClassCleanup(lambda: [shutil.rmtree(kept.parent, ignore_errors=True) for *_, kept, _ in builds.values()])
+        cls.addClassCleanup(delattr, cls, "kept_builds")
+    key = repr((build.__name__, args, sorted(settings.items())))
+    if key in builds and builds[key][4][0] is case:
+        return build(*args, **settings)
+    if key not in builds:
+        made = build(*args, **settings)
+        fx = made[0] if isinstance(made, tuple) else made
+        kept = Path(tempfile.mkdtemp(prefix="kept-fixture-")) / "built"
+        shutil.copytree(fx.tmp, kept, symlinks=True)
+        builds[key] = (made, copy.copy(fx), dict(fx.env), kept, [case])
+        return made
+    made, original, env, kept, holder = builds[key]
+    holder[0] = case
+    original.close()
+    shutil.copytree(kept, original.tmp, symlinks=True)
+    watch_case(original.tmp)
+    case.addCleanup(original.close)
+    # A case may change its fixture's attributes or environment; the next case starts from the ones built.
+    fx = copy.copy(original)
+    fx.env = dict(env)
+    return (fx, *made[1:]) if isinstance(made, tuple) else fx
 
 
 def locks_under(root: Path, suffix: str) -> list[Path]:
@@ -6393,7 +6429,11 @@ class BaseMoveTests(unittest.TestCase):
         build_release(ROOT, cls.new_archive, cls.new_metadata, release_id="base-move-new", profile_id=PROFILE,
                       runtime_directory=cls.release.build / "runtime")
 
-    def fixture(self, *, conflict: bool = False, derived_record: bool = False, config_change: str = "",
+    def fixture(self, *args, **settings):
+        """Built once for each set of settings and put back for each case: see `kept_fixture`."""
+        return kept_fixture(self, self.build_fixture, *args, **settings)
+
+    def build_fixture(self, *, conflict: bool = False, derived_record: bool = False, config_change: str = "",
                 list_conflict: bool = False):
         fx = Fixture(self.release.generation, self.release.receipt)
         self.addCleanup(fx.close)
@@ -6921,7 +6961,11 @@ class RunDeliveryLeadWorktreeTests(unittest.TestCase):
         for name, value in vars(installed_release()).items():
             setattr(cls, name, value)
 
-    def fixture(self, check_timeout: int | None = None) -> tuple[Fixture, Path, Path]:
+    def fixture(self, *args, **settings):
+        """Built once for each set of settings and put back for each case: see `kept_fixture`."""
+        return kept_fixture(self, self.build_fixture, *args, **settings)
+
+    def build_fixture(self, check_timeout: int | None = None) -> tuple[Fixture, Path, Path]:
         """The plan fixture, initialised, with one approval waiting, and the lead's worktree on lead/FX-1 at the base.
         ``check_timeout`` sets the binding's checkTimeoutSeconds, the wait a lead command without --wait-seconds takes."""
         fx = Fixture(self.generation, self.receipt)

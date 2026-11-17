@@ -36,7 +36,7 @@ from tests.test_run_delivery import (PATTERN, POSIX_ONLY, Fixture, add_story, co
                                      node_environment, plan_delivery, setup_delivery, sh, stop_supervisors,
                                      write_results)
 from tests.test_run_delivery import stop_and_reap  # a process the case started: stopped, then waited for
-from tests.test_run_delivery import watch_case
+from tests.test_run_delivery import kept_fixture, watch_case
 from tests.test_run_delivery_tracker import FileBackend, JiraBackend
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "skills" / "orchestrate-work" / "scripts"))
@@ -1754,7 +1754,11 @@ class LeadAcceptChoosesChecksTests(unittest.TestCase):
         for name, value in vars(installed_release()).items():
             setattr(cls, name, value)
 
-    def fixture(self, lead: bool = True, catalogue_extra: dict | None = None, provider: bool = False,
+    def fixture(self, *args, **settings) -> Fixture:
+        """Built once for each set of settings and put back for each case: see `kept_fixture`."""
+        return kept_fixture(self, self.build_fixture, *args, **settings)
+
+    def build_fixture(self, lead: bool = True, catalogue_extra: dict | None = None, provider: bool = False,
                 readers: list | None = None) -> Fixture:
         fx = Fixture(self.generation, self.receipt)
         self.addCleanup(fx.close)
@@ -1787,6 +1791,15 @@ class LeadAcceptChoosesChecksTests(unittest.TestCase):
         sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
         code, out = fx.flow("lead-init", cwd=m)
         self.assertEqual(code, 0, out)
+        return fx
+
+    def handed_fixture(self) -> Fixture:
+        """The delivery with FX-2 handed off, built once and put back for each case: see `kept_fixture`."""
+        return kept_fixture(self, self.build_handed)
+
+    def build_handed(self) -> Fixture:
+        fx = self.build_fixture()
+        hand_off(fx, "FX-2", "lane-1")
         return fx
 
     def item(self, fx: Fixture, key: str = "FX-2") -> dict:
@@ -1918,8 +1931,7 @@ if Path({str(started.with_suffix(".armed"))!r}).exists():
         self.assertEqual(sh("git", "rev-parse", "origin/feature/FX-1", cwd=m).stdout, base)
 
     def test_reassigning_a_handed_story_preserves_the_handing_lanes_authorization(self) -> None:
-        fx = self.fixture()
-        hand_off(fx, "FX-2", "lane-1")
+        fx = self.handed_fixture()
         before = self.item(fx)
         code, out = fx.flow("lead-assign", "FX-2", "--lane", "lane-2", "--title", "Lane 2", cwd=fx.main)
         self.assertEqual(code, 0, out)
@@ -1966,8 +1978,7 @@ if Path({str(started.with_suffix(".armed"))!r}).exists():
         self.assertIn("choose one", out)
 
     def test_checks_are_recorded_through_select_at_the_handed_head_and_the_queue_runs_them(self) -> None:
-        fx = self.fixture()
-        hand_off(fx, "FX-2", "lane-1")
+        fx = self.handed_fixture()
         head = self.item(fx)["head"]
         code, out = fx.flow("lead-accept", "FX-2", "--checks", "tests.test_nope", cwd=fx.main)
         self.assertEqual(code, 2, out)
@@ -1995,8 +2006,7 @@ if Path({str(started.with_suffix(".armed"))!r}).exists():
                    "--head", self.item(fx)["head"], "--checks", checks, "--reason", reason, "--repo", str(fx.main))
 
     def test_a_selection_standing_before_a_refused_ready_is_put_back_and_one_made_by_it_cleared(self) -> None:
-        fx = self.fixture()
-        hand_off(fx, "FX-2", "lane-1")
+        fx = self.handed_fixture()
         self.select(fx, "tests.test_two", "the lead's earlier choice")
         code, out = fx.flow("lead-accept", "FX-2", "--checks", "tests.test_one", "--reason", "only one changed",
                             cwd=fx.main, env={**fx.env, "FAKE_FORGE_READY": "refuse"})
@@ -2005,8 +2015,7 @@ if Path({str(started.with_suffix(".armed"))!r}).exists():
         self.assertEqual(([c["id"] for c in kept["checks"]], kept["reason"]), (["tests.test_two"], "the lead's earlier choice"))
 
     def test_a_selection_made_before_a_refused_ready_is_cleared_so_nothing_is_left_selected(self) -> None:
-        fx = self.fixture()
-        hand_off(fx, "FX-2", "lane-1")
+        fx = self.handed_fixture()
         code, out = fx.flow("lead-accept", "FX-2", "--checks", "tests.test_one", "--reason", "only one changed",
                             cwd=fx.main, env={**fx.env, "FAKE_FORGE_READY": "refuse"})
         self.assertEqual(code, 1, out)
@@ -2032,8 +2041,7 @@ if Path({str(started.with_suffix(".armed"))!r}).exists():
         self.assertEqual((record(fx), self.draft(fx)), before)
 
     def test_full_suite_accepts_on_the_fallback_as_the_lead_s_decision_and_the_row_says_so(self) -> None:
-        fx = self.fixture()
-        hand_off(fx, "FX-2", "lane-1")
+        fx = self.handed_fixture()
         code, out = fx.flow("lead-accept", "FX-2", "--full-suite", "--reason", "a shared file moved", cwd=fx.main)
         self.assertEqual(code, 0, out)
         item = self.item(fx)
@@ -2046,8 +2054,7 @@ if Path({str(started.with_suffix(".armed"))!r}).exists():
         self.assertEqual(self.item(fx)["checkSelection"], {"by": "provider", "fallback": ["check"]})
 
     def test_full_suite_clears_a_selection_still_standing_so_the_fallback_runs(self) -> None:
-        fx = self.fixture()
-        hand_off(fx, "FX-2", "lane-1")
+        fx = self.handed_fixture()
         head = self.item(fx)["head"]
         self.select(fx, "tests.test_one", "a narrower choice, made before accepting")
         code, out = fx.flow("lead-accept", "FX-2", "--full-suite", "--reason", "run everything after all", cwd=fx.main)
@@ -2322,7 +2329,11 @@ class SupervisorPassTests(unittest.TestCase):
         for name, value in vars(installed_release()).items():
             setattr(cls, name, value)
 
-    def fixture(self, **settings) -> Fixture:
+    def fixture(self, *args, **settings) -> Fixture:
+        """Built once for each set of settings and put back for each case: see `kept_fixture`."""
+        return kept_fixture(self, self.build_fixture, *args, **settings)
+
+    def build_fixture(self, **settings) -> Fixture:
         fx = Fixture(self.generation, self.receipt)
         self.addCleanup(fx.close)
         self.addCleanup(stop_supervisors, fx.tmp)
@@ -2604,6 +2615,15 @@ class SupervisorPassTests(unittest.TestCase):
         settled = next(p for p in record(fx)["state"]["planned"] if p["subject"] == "FX-2")
         self.assertEqual(settled["stage"], "settled", "the close removed the settled story from the record")
 
+    def closable_fixture(self) -> Fixture:
+        """The closable delivery, built once and put back for each case: see `kept_fixture`."""
+        return kept_fixture(self, self.build_closable)
+
+    def build_closable(self) -> Fixture:
+        fx = self.build_fixture()
+        self.closable(fx)
+        return fx
+
     def closable(self, fx: Fixture) -> None:
         """No finish lines, FX-2 merged, its lane done, FX-3 removed: nothing holds the close."""
         path = fx.main / ".agents/deliveries/FX-1.json"
@@ -2627,8 +2647,7 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertEqual(kinds(fx, "delivery.closed"), [], "the delivery closed while something held it")
 
     def test_each_condition_holds_the_close_on_its_own(self) -> None:
-        fx = self.fixture()
-        self.closable(fx)
+        fx = self.closable_fixture()
         lane = lambda *argv: state_tool(fx, "focus", "--lane", "lane-1", "--text", "x", *argv)
         lane("--state", "working")
         self.holds_alone(fx, "lanes not idle or done: lane-1")
@@ -2657,8 +2676,7 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertEqual(len(kinds(fx, "delivery.closed")), 1, passes(fx)[-1])
 
     def test_a_merged_story_whose_checkout_is_still_there_holds_the_close(self) -> None:
-        fx = self.fixture()
-        self.closable(fx)
+        fx = self.closable_fixture()
         # Everything else is met, but cleanup can't remove FX-2's checkout this pass: the close waits for it, as it
         # does when the merge lands after the pass's cleanup has read the record.
         wt = fx.main / "lanes/FX-2"
@@ -2699,8 +2717,7 @@ class SupervisorPassTests(unittest.TestCase):
                                                      "changeRequest": "https://forge.test/pr/1"})
 
     def test_only_the_delivery_s_merged_stories_hold_the_close_for_their_checkouts(self) -> None:
-        fx = self.fixture()
-        self.closable(fx)
+        fx = self.closable_fixture()
         # FX-3 was handed off, then removed from the plan: it never merges, so cleanup never takes its checkout.
         unmerged = hand_off(fx, "FX-3", "lane-2")
         code, out = fx.flow("lead-accept", "FX-3", cwd=fx.main)
@@ -2754,8 +2771,7 @@ class SupervisorPassTests(unittest.TestCase):
         self.holds_alone(fx, "Accepted as drafts while the merge step refuses drafts: FX-2")
 
     def test_the_runner_s_blocker_clears_with_its_hold_or_with_base_repaired(self) -> None:
-        fx = self.fixture()
-        self.closable(fx)
+        fx = self.closable_fixture()
         # A lane still working keeps the delivery open throughout, so each pass shows what else holds.
         state_tool(fx, "focus", "--lane", "lane-1", "--text", "working", "--state", "working")
         held = lambda reason: state_tool(fx, "patch", "--writer", "runner", "--version",
@@ -3852,7 +3868,11 @@ class SupervisorPostureTests(unittest.TestCase):
     merged = SupervisorPassTests.merged
     once = SupervisorPassTests.once
 
-    def fixture(self, closable: bool = True) -> Fixture:
+    def fixture(self, *args, **settings) -> Fixture:
+        """Built once for each set of settings and put back for each case: see `kept_fixture`."""
+        return kept_fixture(self, self.build_fixture, *args, **settings)
+
+    def build_fixture(self, closable: bool = True) -> Fixture:
         fx = Fixture(self.generation, self.receipt)
         self.addCleanup(fx.close)
         self.addCleanup(stop_supervisors, fx.tmp)
@@ -4136,6 +4156,10 @@ class SupervisorPostureRestoredTests(unittest.TestCase):
         return fx, backend
 
     def skipped_and_held_open(self, failed: bool = False) -> Fixture:
+        """Built once for each `failed` and put back for each case: see `kept_fixture`."""
+        return kept_fixture(self, self.build_skipped_and_held_open, failed=failed)
+
+    def build_skipped_and_held_open(self, failed: bool = False) -> Fixture:
         """With `failed`, a failed result already stands at the tip that says focused, from before the skip."""
         fx, backend = self.fixture()
         self.closable(fx, deferred=True)
@@ -4675,7 +4699,11 @@ class SupervisorPostMergeTests(unittest.TestCase):
     merged = SupervisorPassTests.merged
     once = SupervisorPassTests.once
 
-    def fixture(self, **binding) -> Fixture:
+    def fixture(self, *args, **settings) -> Fixture:
+        """Built once for each set of settings and put back for each case: see `kept_fixture`."""
+        return kept_fixture(self, self.build_fixture, *args, **settings)
+
+    def build_fixture(self, **binding) -> Fixture:
         """The supervised delivery with no finish lines, so what holds the close is what each case leaves open."""
         fx = Fixture(self.generation, self.receipt)
         self.addCleanup(fx.close)
@@ -4691,6 +4719,15 @@ class SupervisorPostMergeTests(unittest.TestCase):
         sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
         code, out = fx.flow("lead-init", cwd=fx.main)
         self.assertEqual(code, 0, out)
+        return fx
+
+    def merged_fixture(self) -> Fixture:
+        """The delivery with FX-2 merged, built once and put back for each case: see `kept_fixture`."""
+        return kept_fixture(self, self.build_merged)
+
+    def build_merged(self) -> Fixture:
+        fx = self.build_fixture()
+        self.merged(fx, "FX-2", "lane-1")
         return fx
 
     def done(self, fx: Fixture, *lanes: str) -> None:
@@ -4974,8 +5011,7 @@ class SupervisorPostMergeTests(unittest.TestCase):
         self.assertEqual(len(kinds(fx, "delivery.closed")), 1, last)
 
     def test_a_merge_runs_full_health_with_the_close_still_held_and_once_at_its_head(self) -> None:
-        fx = self.fixture()
-        self.merged(fx, "FX-2", "lane-1")
+        fx = self.merged_fixture()
         for _ in range(3):
             self.assertTrue(self.once(fx)["closeHeldBy"])
         self.assertEqual(health_runs(fx), 1, "fullHealth didn't run after the merge, or ran again at its head")
@@ -4985,8 +5021,7 @@ class SupervisorPostMergeTests(unittest.TestCase):
         self.assertEqual(passes(fx)[-1]["fullHealth"], f"fullHealth passed at {head[:10]}", passes(fx)[-1])
 
     def test_two_merges_a_pass_names_the_first_and_a_break_names_the_second(self) -> None:
-        fx = self.fixture()
-        self.merged(fx, "FX-2", "lane-1")
+        fx = self.merged_fixture()
         self.once(fx)
         [verified] = self.base_events(fx)
         assert_facts(self, verified, "base.verified", {"source": "fullHealth", "head": self.base_tip(fx), "after": "FX-2"})
@@ -5072,8 +5107,7 @@ class SupervisorPostMergeTests(unittest.TestCase):
         self.assertEqual(self.results(fx)[-1]["merge"]["subject"], "FX-3")
 
     def test_a_pass_after_a_pass_verifies_and_never_repairs_a_break_the_queue_journalled(self) -> None:
-        fx = self.fixture()
-        self.merged(fx, "FX-2", "lane-1")
+        fx = self.merged_fixture()
         self.once(fx)
         state_tool(fx, "journal", "--kind", "base.broken", "--data", json.dumps({"source": "queue", "reason": "base_broken", "detail": "lint also fails on the base"}))
         self.merged(fx, "FX-3", "lane-2")
@@ -5103,8 +5137,7 @@ class SupervisorPostMergeTests(unittest.TestCase):
         self.assertEqual((needs[0]["holding"], needs[0]["clears"]), (True, "journalling base.repaired"), needs)
 
     def test_a_pass_never_repairs_a_queue_break_that_fullHealth_s_own_break_followed(self) -> None:
-        fx = self.fixture()
-        self.merged(fx, "FX-2", "lane-1")
+        fx = self.merged_fixture()
         self.once(fx)
         # The queue finds a break; a fix landed by hand fails fullHealth on top of it; the next fix passes.
         state_tool(fx, "journal", "--kind", "base.broken", "--data", json.dumps({"source": "queue", "reason": "base_broken", "detail": "lint also fails on the base"}))
@@ -5121,8 +5154,7 @@ class SupervisorPostMergeTests(unittest.TestCase):
         self.assertTrue(self.serving_waits(fx), "a fullHealth pass confirmed the queue's break")
 
     def test_a_queue_break_the_lead_confirmed_doesnt_keep_a_later_fullHealth_break_from_its_repair(self) -> None:
-        fx = self.fixture()
-        self.merged(fx, "FX-2", "lane-1")
+        fx = self.merged_fixture()
         self.once(fx)
         # The queue's break, confirmed by the lead; then a merge that fails fullHealth, and a fix that passes it.
         state_tool(fx, "journal", "--kind", "base.broken", "--data", json.dumps({"source": "queue", "reason": "base_broken", "detail": "lint also fails on the base"}))
@@ -5166,8 +5198,7 @@ class SupervisorPostMergeTests(unittest.TestCase):
         self.assertFalse(self.serving_waits(fx))
 
     def test_a_batch_names_every_merge_and_a_head_past_the_queue_says_so(self) -> None:
-        fx = self.fixture()
-        self.merged(fx, "FX-2", "lane-1")
+        fx = self.merged_fixture()
         self.merged(fx, "FX-3", "lane-2")
         self.once(fx)
         [verified] = self.base_events(fx)
@@ -5260,6 +5291,9 @@ class SupervisorBackgroundHealthTests(unittest.TestCase):
     setUpClass = classmethod(SupervisorPassTests.setUpClass.__func__)
     merged = SupervisorPassTests.merged
     fixture = SupervisorPostMergeTests.fixture
+    build_fixture = SupervisorPostMergeTests.build_fixture
+    merged_fixture = SupervisorPostMergeTests.merged_fixture
+    build_merged = SupervisorPostMergeTests.build_merged
     base_events = SupervisorPostMergeTests.base_events
     results = SupervisorPostMergeTests.results
 
@@ -5289,8 +5323,7 @@ class SupervisorBackgroundHealthTests(unittest.TestCase):
 
     def slow_run_under_a_supervisor(self, seconds: str = "60") -> Fixture:
         """FX-2 merged by hand, then a running supervisor whose first pass starts a slow fullHealth after it."""
-        fx = self.fixture()
-        self.merged(fx, "FX-2", "lane-1")
+        fx = self.merged_fixture()
         (fx.tmp / "health").write_text("slow")
         fx.env["FX_HEALTH_SECONDS"] = seconds
         code, out = fx.flow("lead-run", "--resume", cwd=fx.main, env=running(fx))
@@ -5392,8 +5425,7 @@ class SupervisorBackgroundHealthTests(unittest.TestCase):
         return not self.run_lock(fx)["held"]
 
     def test_the_close_waits_for_a_run_and_closes_on_its_result(self) -> None:
-        fx = self.fixture()
-        self.merged(fx, "FX-2", "lane-1")
+        fx = self.merged_fixture()
         state_tool(fx, "focus", "--lane", "lane-1", "--text", "done", "--state", "done")
         with open(fx.tmp / "flow-log/plan-changes.jsonl", "a") as changes:
             changes.write(json.dumps({"type": "change", "id": "c1", "kind": "removed", "subjects": ["FX-3"], "by": "lead",
@@ -5435,8 +5467,7 @@ class SupervisorBackgroundHealthTests(unittest.TestCase):
         self.assertEqual(event.get("subject"), "FX-3")
 
     def test_lead_close_stops_a_run_a_once_pass_waits_on(self) -> None:
-        fx = self.fixture()
-        self.merged(fx, "FX-2", "lane-1")
+        fx = self.merged_fixture()
         (fx.tmp / "health").write_text("slow")
         fx.env["FX_HEALTH_SECONDS"] = "300"
         once = subprocess.Popen([sys.executable, "-B", str(fx.tool), "lead-run", "--once"], cwd=fx.main, env=fx.env,
