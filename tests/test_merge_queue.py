@@ -563,15 +563,10 @@ class Adopter:
         return run("show", f"{revision}:{path}", cwd=self.lane)
 
 
-def sentence_lines(adopter: "Adopter", *entries: tuple[str, str, str | None]) -> None:
-    """Entries as a writer journaled them before it wrote facts: only a sentence, written as journal lines directly."""
-    path = adopter.state / state_tool.JOURNAL_FILE
-    number = len(state_tool.read_journal(adopter.state))
-    with path.open("a", encoding="utf-8") as stream:
-        for number, (kind, words, subject) in enumerate(entries, start=number + 1):
-            entry = {"at": state_tool.now(), "id": number, "kind": kind, "lane": None, "subject": subject,
-                     "summary": words}
-            stream.write(json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n")
+def sentence_entries(*entries: tuple[str, str, str | None]) -> list[dict]:
+    """Entries as a writer journaled them before it wrote facts: only a sentence, which the journal now refuses."""
+    return [{"at": state_tool.now(), "id": number, "kind": kind, "lane": None, "subject": subject, "summary": words}
+            for number, (kind, words, subject) in enumerate(entries, start=1)]
 
 
 def journaled(adopter: Adopter, kind: str, subject: str | None = None) -> list[dict]:
@@ -3927,8 +3922,10 @@ class CheckVisibilityTests(MergeQueueTestCase):
             self.assertEqual(waited.returncode, 0, waited.stdout + waited.stderr)
             woke = json.loads(waited.stdout)
             self.assertEqual([event["kind"] for event in woke["events"]], ["check.failed"])
-            self.assertIn("test_held", woke["events"][0]["summary"])
-            self.assertIn(row["log"], woke["events"][0]["summary"])
+            self.assertEqual(woke["events"][0]["subject"], "feature")
+            self.assertEqual(woke["events"][0]["data"], {"check": "held", "timedOut": False, "failing": ["test_held"],
+                                                         "more": 0, "log": row["log"]})
+            self.assertNotIn("summary", woke["events"][0])
             self.assertEqual(row["failures"], ["test_held"])
             self.assertNotIn("candidate.stopped", kinds)
             self.assertNotIn("base.broken", kinds)
@@ -4009,12 +4006,12 @@ class CheckVisibilityTests(MergeQueueTestCase):
         seen: list = []
         rerunning = []
 
-        def journal(runner, kind, summary, subject=None, **facts):
+        def journal(runner, kind, subject=None, **facts):
             if kind in ("base.rerun.started", "base.rerun.finished"):
                 seen.append((kind, copy.deepcopy(state_tool.read_state(adopter.state)["meta"]["checking"]["now"])))
             if kind == "base.rerun.started":
                 rerunning.append(True)
-            return real_journal(runner, kind, summary, subject, **facts)
+            return real_journal(runner, kind, subject, **facts)
 
         def run_one(runner, check, checkout, context):
             return None if rerunning and not starts else real_run_one(runner, check, checkout, context)
@@ -4562,11 +4559,7 @@ class StoppedBaseRerunTests(MergeQueueTestCase):
                 path.write_bytes(original)
 
         def facts_only(entry: dict) -> None:
-            entry.pop("summary")
             entry["data"]["why"] = "other text"
-
-        def sentence_only(entry: dict) -> None:
-            entry.pop("data")
 
         def other_head(entry: dict) -> None:
             facts_only(entry)
@@ -4577,7 +4570,10 @@ class StoppedBaseRerunTests(MergeQueueTestCase):
             entry["data"]["base"]["head"] = "0" * 40
 
         self.assertTrue(again(facts_only))
-        self.assertTrue(again(sentence_only))
+        # A stop with no facts, a sentence's shape, is refused at the journal rather than read.
+        sentence = {key: value for key, value in self.journal(adopter, "base.rerun.stopped")[0].items() if key != "data"}
+        errors = state_tool.journal_errors([sentence])
+        self.assertTrue(errors and "in the older journal shape" in errors[0], errors)
         self.assertFalse(again(other_head))
         self.assertFalse(again(other_base))
 
@@ -4837,41 +4833,40 @@ class BaseRepairTests(MergeQueueTestCase):
         self.assertEqual([item["subject"] for item in state_tool.read_state(adopter.state)["queue"] if "repair" in item], [])
 
     def test_only_a_base_broken_break_names_the_head_a_repair_puts_back_at(self) -> None:
-        for facts in (True, False):
-            with self.subTest(facts=facts):
-                self.fresh()
-                self.only_a_base_broken_break_names_the_head(facts)
+        self.only_a_base_broken_break_names_the_head()
+        # The break and the stop as sentences alone are refused at the journal, so no repair reads them.
+        broke, other = "a" * 40, "e" * 40
+        stopped = f"base_broken: lint also fails on main at {broke}"
+        errors = state_tool.journal_errors(sentence_entries(
+            ("base.broken", stopped, "c"), ("candidate.stopped", stopped, "c"),
+            ("base.broken", f"merged_unverified: main at {other} is not the checked tree on top of {broke}", None)))
+        self.assertEqual(len(errors), 3, errors)
+        self.assertTrue(all("in the older journal shape" in error for error in errors), errors)
 
-    def only_a_base_broken_break_names_the_head(self, facts: bool) -> None:
-        """The break and the stop as facts, and as sentences alone, the shape the record's repair still reads."""
+    def only_a_base_broken_break_names_the_head(self) -> None:
+        """The break and the stop as facts: only the base_broken break names the head the repair puts back at."""
         adopter = self.adopter()
         adopter.enqueue("c", "c" * 40)
         current = state_tool.read_state(adopter.state)
         state_tool.patch(adopter.state, writer="runner", version=current["version"], selector="queue[subject=c]",
                          changes={"stage": "stopped"})
         broke, other = "a" * 40, "e" * 40
-        stopped = f"base_broken: lint also fails on main at {broke}"
-        if facts:
-            detail = f"lint also fails on main at {broke}"
-            break_id = state_tool.append_journal(adopter.state, kind="base.broken", subject="c", data={
-                "source": "queue", "reason": "base_broken", "detail": detail, "head": broke})["id"]
-            state_tool.append_journal(adopter.state, kind="candidate.stopped", subject="c", because=[break_id],
-                                      data={"reason": "base_broken", "detail": detail})
-            # A later break of another kind names another commit; it does not move the head the repair answers.
-            state_tool.append_journal(adopter.state, kind="base.broken", data={
-                "source": "queue", "reason": "merged_unverified", "detail": f"main at {other}"})
-        else:
-            sentence_lines(adopter, ("base.broken", stopped, "c"), ("candidate.stopped", stopped, "c"), (
-                "base.broken", f"merged_unverified: main at {other} is not the checked tree on top of {broke}", None))
+        detail = f"lint also fails on main at {broke}"
+        break_id = state_tool.append_journal(adopter.state, kind="base.broken", subject="c", data={
+            "source": "queue", "reason": "base_broken", "detail": detail, "head": broke})["id"]
+        state_tool.append_journal(adopter.state, kind="candidate.stopped", subject="c", because=[break_id],
+                                  data={"reason": "base_broken", "detail": detail})
+        # A later break of another kind names another commit; it does not move the head the repair answers.
+        state_tool.append_journal(adopter.state, kind="base.broken", data={
+            "source": "queue", "reason": "merged_unverified", "detail": f"main at {other}"})
         state_tool.append_journal(adopter.state, kind="base.repaired", data={"source": "lead", "head": other})
         self.assertEqual(adopter.item("c")["stage"], "queued")
-        if facts:
-            # A break at the same head after the repair finds none standing: the repaired one closed with it.
-            runner = adopter.runner()
-            self.assertEqual(runner.standing_breaks(broke), [])
-            again = state_tool.append_journal(adopter.state, kind="base.broken", subject="c", data={
-                "source": "queue", "reason": "base_broken", "detail": detail, "head": broke})["id"]
-            self.assertEqual(runner.standing_breaks(broke), [again])
+        # A break at the same head after the repair finds none standing: the repaired one closed with it.
+        runner = adopter.runner()
+        self.assertEqual(runner.standing_breaks(broke), [])
+        again = state_tool.append_journal(adopter.state, kind="base.broken", subject="c", data={
+            "source": "queue", "reason": "base_broken", "detail": detail, "head": broke})["id"]
+        self.assertEqual(runner.standing_breaks(broke), [again])
 
     def test_the_repair_command_names_and_withdraws_on_the_command_line(self) -> None:
         adopter = self.adopter()

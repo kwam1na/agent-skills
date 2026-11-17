@@ -4255,7 +4255,7 @@ def verify_base_merge(c, key: str, lane: str, reviewed: str, head: str, doc: dic
     if not history:
         raise Stop("the handed head has no base merge after review")
     grants = [entry for entry in doc["journal"] if entry["subject"] == key and entry["lane"] == lane
-              and entry.get("baseMergeAuthorization", {}).get("reviewed") == reviewed]
+              and entry["kind"] == "base.merge.authorized" and entry["data"].get("reviewed") == reviewed]
     prior = reviewed
     base_commits = []
     for merge in history:
@@ -4269,8 +4269,8 @@ def verify_base_merge(c, key: str, lane: str, reviewed: str, head: str, doc: dic
         # immutable merge commit. A caller-controlled commit date proves no ordering.
         trailers = git("-c", "trailer.separators=:", "show", "-s",
                        "--format=%(trailers:key=Delivery-Base-Merge,valueonly)", merge).splitlines()
-        if not any(base in entry["baseMergeAuthorization"]["baseCommits"]
-                   and trailers == [entry["baseMergeAuthorization"]["token"]] for entry in grants):
+        if not any(base in entry["data"]["baseCommits"]
+                   and trailers == [entry["data"]["token"]] for entry in grants):
             raise Stop(f"the lead did not authorize {key} to merge {base} from {reviewed} before the merge")
         old_base = git("merge-base", c.base_ref, prior)
         new_base = git("merge-base", c.base_ref, merge)
@@ -7493,22 +7493,22 @@ def accept_story(c, args) -> None:
     if not merged and remote_head(branch) != head:
         problems.append(f"{c.remote}/{branch} is not at the handed head {head[:10]}")
     rounds = [e for e in doc["journal"] if e.get("kind") == "review.round" and e.get("subject") == key]
-    numbers = [e["review"]["round"] for e in rounds]
+    numbers = [e["data"]["round"] for e in rounds]
     if len(numbers) != len(set(numbers)):
         problems.append(f"round numbers journaled more than once: {sorted(numbers)}")
     if item.get("reportedRounds") != len(set(numbers)):
         problems.append(f"the hand-off reports {item.get('reportedRounds')} rounds; the journal has {len(set(numbers))}")
-    last = max(rounds, key=lambda e: e["review"]["round"], default=None)
-    if not last or set(last["review"]["verdicts"]) != set(c.lenses) or set(last["review"]["verdicts"].values()) != {"approve"}:
+    last = max(rounds, key=lambda e: e["data"]["round"], default=None)
+    if not last or set(last["data"]["verdicts"]) != set(c.lenses) or set(last["data"]["verdicts"].values()) != {"approve"}:
         problems.append("the last journaled round is not approved by every lens")
     if last and c.no_deferrals:
-        print_evidence_notes(key, last["review"]["round"])
-    evidence = [e for e in doc["journal"] if e.get("kind") == "review.evidence" and e.get("subject") == key]
+        print_evidence_notes(key, last["data"]["round"])
+    evidence = [e for e in doc["journal"] if e.get("kind") == "review.recorded" and e.get("subject") == key]
     carried_review = None
-    if not evidence or evidence[-1]["reviewArtifact"]["candidateRef"] != head:
+    if not evidence or evidence[-1]["data"]["candidateRef"] != head:
         hand = next((entry for entry in reversed(doc["journal"])
                      if entry["subject"] == key and entry["kind"] == "candidate.handed"), {})
-        carry = hand.get("reviewCarry", {})
+        carry = hand["data"].get("carry", {})
         if evidence and carry.get("baseCommits") and carry.get("to") == head and hand.get("lane") == item["lane"]:
             validator = _validator()
             try:
@@ -8573,8 +8573,9 @@ def lane_moved_off(doc: dict, item: dict, words: dict | None = None) -> bool:
     return bool(later)
 
 
-# What the lead journals about a story once it settles it: its check or acceptance, its clean-up or its re-queue.
-SETTLING_KINDS = ("handoff.checked", "handoff.accepted", "cleanup.done", "handoff.requeued")
+# What the lead journals about a story once it settles it: its check or acceptance, its clean-up, its re-queue, or a
+# decision about it.
+SETTLING_KINDS = ("decision.recorded", "handoff.checked", "handoff.accepted", "cleanup.done", "handoff.requeued")
 
 
 def skipped_acceptance(entry: dict) -> bool:
@@ -9362,8 +9363,8 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
         if merge:
             items.append({"holding": True, "source": f"journal entry {merge['id']} (candidate.merged)",
                           "text": f"{item['subject']} merged before you accepted it, and its checkout is kept until you decide",
-                          "clears": f"{flow_command()} lead-accept {item['subject']}, or journalling decision.recorded "
-                          "for it if lead-accept can't take it"})
+                          "clears": f"{flow_command()} lead-accept {item['subject']}, or {flow_command()} lead-decide "
+                          f"--subject {item['subject']} if lead-accept can't take it"})
     resolutions = {entry.get("journal") for entry in read_log("resolutions", c.delivery)}
     for entry in doc["journal"]:
         if entry["kind"] in HOLDING_KINDS and not blocker_resolved(c, doc, entry, resolutions):

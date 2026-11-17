@@ -24,6 +24,8 @@ from tests.test_run_delivery_supervisor import hand_off, running, supervised
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "skills" / "run-delivery" / "scripts"))
+sys.path.insert(0, str(ROOT / "skills" / "orchestrate-work" / "scripts"))
+import delivery_state  # noqa: E402
 import tracker_publisher  # noqa: E402
 
 # The fixture plan, with each story naming the file its lane changes.
@@ -64,14 +66,10 @@ delivery_state.append_journal(Path(sys.argv[2]), kind=sys.argv[3], data=json.loa
 '''
 
 
-def sentence_line(record: Path, kind: str, words: str, subject: str) -> None:
-    """An entry as a writer journaled it before it wrote facts: only a sentence, written as a journal line directly."""
-    journal = record / "journal.jsonl"
-    number = len(journal.read_text().splitlines()) + 1
+def sentence_entry(number: int, kind: str, words: str, subject: str) -> dict:
+    """An entry as a writer journaled it before it wrote facts: only a sentence, which the journal now refuses."""
     at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-    entry = {"at": at, "id": number, "kind": kind, "lane": None, "subject": subject, "summary": words}
-    with journal.open("a", encoding="utf-8") as stream:
-        stream.write(json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n")
+    return {"at": at, "id": number, "kind": kind, "lane": None, "subject": subject, "summary": words}
 
 
 def pid_alive(pid: int) -> bool:
@@ -452,8 +450,12 @@ class PeerDeliveryTests(unittest.TestCase):
         (clone / "src/one.txt").write_text("one, from a clone\n")
         commit(clone, "FX-96: one")
         late = sh("git", "rev-parse", "HEAD", cwd=clone).stdout.strip()
-        # Journaled by an older runner, as a sentence alone: its head is read from the sentence.
-        sentence_line(fx.tmp / "record-FX-9", "candidate.merged", f"Merged FX-96 at {late}", "FX-96")
+        # A merge an older runner journaled as a sentence alone is refused at the journal; the merge is journaled as
+        # its facts.
+        errors = delivery_state.journal_errors([sentence_entry(1, "candidate.merged", f"Merged FX-96 at {late}", "FX-96")])
+        self.assertTrue(errors and "in the older journal shape" in errors[0], errors)
+        sh(sys.executable, "-B", "-c", RUNNER_ENTRY, fx.release / "skills/orchestrate-work/scripts",
+           fx.tmp / "record-FX-9", "candidate.merged", json.dumps({"head": late}), "FX-96")
         held = max(e["id"] for e in self.record(fx, fx.tmp / "record-FX-9")["journal"])
         self.state(fx, fx.tmp / "record-FX-9", "journal", "--kind", "decision.recorded", "--text", "after FX-96",
                    "--why", "a later entry")
@@ -465,9 +467,9 @@ class PeerDeliveryTests(unittest.TestCase):
         self.flow(fx, "FX-1", "lead-run", "--once", cwd=m)
         self.assertEqual([e["data"] for e in self.peer_merged(fx)][2:],
                          [{"peer": "FX-9", "head": late, "files": ["src/one.txt"]}])
-        # A merge entry that names no head, which only an older writer's sentence could be, is read past: it holds
-        # back no later merge.
-        sentence_line(fx.tmp / "record-FX-9", "candidate.merged", "Merged FX-98", "FX-98")
+        # A merge entry that names no head, which only an older writer's sentence could be, is refused at the journal.
+        errors = delivery_state.journal_errors([sentence_entry(1, "candidate.merged", "Merged FX-98", "FX-98")])
+        self.assertTrue(errors and "in the older journal shape" in errors[0], errors)
         after = self.merged_on_base(fx, lead, "FX-9", "FX-99", "src/one.txt", "one, after a headless merge\n")
         self.flow(fx, "FX-1", "lead-run", "--once", cwd=m)
         self.assertEqual([e["data"] for e in self.peer_merged(fx)][3:],
