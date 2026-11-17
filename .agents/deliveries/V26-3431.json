@@ -96,5 +96,6 @@
       "lens.outcome-correctness",
       "lens.adversarial-testing"
     ]
-  }
+  },
+  "stateDirectory": ".orchestration/deliveries/V26-3431/state"
 }
