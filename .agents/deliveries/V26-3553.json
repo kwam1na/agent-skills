@@ -214,6 +214,10 @@
         {
           "id": "v26-3567-3",
           "text": "c3: Each row shows its lane's stop (and a wait's blocker) as the line chart draws them, a headline, a why, what clears it and 'for <age>', with the words taken from the word table and the age from the record."
+        },
+        {
+          "id": "v26-3567-4",
+          "text": "c4: Holding rows come first and carry 'Holding up the finish'. The rest follow quieter. Red appears only on a stopped stop."
         }
       ],
       "after": [
