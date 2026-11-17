@@ -1,0 +1,103 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "writtenBy": "run-delivery plan-review",
+  "plan": "docs/plans/2026-11-17-checks-a-story-adds.md",
+  "planSha256": "bc20ba50fd2f5129e91234726ca9415c92bdbf631c805dea3b8577905301c6a5",
+  "planCommit": "86b881a37047cd49d1870a87dee0b6147b4831e2",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": [
+    "lens.outcome-correctness",
+    "lens.adversarial-testing"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "candidate": "cb55af1a0129ee9280673e090da6acd79b99826a",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-17T20:54:30.972657Z",
+      "finishedAt": "2026-11-17T20:58:36.563449Z",
+      "open": [
+        "adversarial-testing-r1-1",
+        "adversarial-testing-r1-2"
+      ]
+    },
+    {
+      "round": 2,
+      "candidate": "86b881a37047cd49d1870a87dee0b6147b4831e2",
+      "outcome": "aligned",
+      "startedAt": "2026-11-17T20:59:11.706016Z",
+      "finishedAt": "2026-11-17T21:00:20.299152Z",
+      "open": []
+    }
+  ],
+  "reviews": [
+    {
+      "lens": "lens.outcome-correctness",
+      "round": 2,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.outcome-correctness",
+        "subjectRef": "checks-a-story-adds.plan",
+        "candidateRef": "86b881a37047cd49d1870a87dee0b6147b4831e2",
+        "round": 2,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [],
+        "evidence": [
+          "Reviewed tree c002fd9824a02ef2bf3ecb7965cddefaee80fe82, with HEAD at 86b881a37047cd49d1870a87dee0b6147b4831e2. The start identity check passed: the tree matched and `git status --porcelain` was empty. The end identity check passed the same way. No probes or mutants were made.",
+          "Model class: Opus-class (claude-opus-5-5), running as a native subagent with no progress or permission signals available to it. Realization basis: host-convention. Run ID: none. Scoped checks: none, as the brief says, and no test file was run.",
+          "Delta: `git diff cb55af1a0129ee9280673e090da6acd79b99826a..86b881a37047cd49d1870a87dee0b6147b4831e2` changes only docs/plans/2026-11-17-checks-a-story-adds.md. It adds a finish-line bullet on how bullet 2 is proven, the set-equality guard in Decision 6, a new Decision 6a reader, sensors and scenarios that add tests/test_run_delivery_supervisor.py, and the supervisor test file plus profiles/linear.json and profiles/jira.json to Owns and Files.",
+          "Carried findings: round 1 raised none, so `resolvedFindings` is empty.",
+          "Round 1 notes re-checked. (a) P2, the guard firing only after the merge: resolved by Decision 6a, a reader mapping `tests/test_*.py` to `tests.test_own_deliveries`. In delivery_state.py, `resolve_selection` adds a reader's checks whenever a changed path matches, and `_binding_pattern('tests/test_*.py')` matches any top-level test module. So the guard now joins the lead selection of any candidate that adds or renames a test module. No current reader names tests.test_own_deliveries, so the new uncompleted reader leaves its carry behaviour in `merge_queue.carry_plan` unchanged, and it already did not carry. (b) P3, the Files sentence: resolved, because it now lists profiles/run-delivery.json, profiles/linear.json and profiles/jira.json. (c) P3, the working-tree scenario: resolved, because it now asserts that the `--checks` refusal names tests.test_new.",
+          "New finish-line bullet: it says fixture tests in tests/test_run_delivery.py and tests/test_run_delivery_supervisor.py prove bullet 2, not this delivery's own hand-offs. That matches round 1's declined note about the installed generation. tests/test_run_delivery_supervisor.py already has `queue_run` (line 311) and the selection test `test_checks_are_recorded_through_select_at_the_handed_head_and_the_queue_runs_them` (line 1980). That test asserts the old refusal text, \"--checks names checks the binding's catalogue doesn't have: tests.test_nope\" (line 1985). The plan's scenario updates the existing refusal assertions to the both-catalogues text, so that assertion is accounted for.",
+          "Decision 6, set equality: CATALOGUE_MODULES holds names without the `test_` prefix, and the glob gives `test_*` stems, so the lane has to map one to the other. That is an implementation detail, and the guard's discovery check, which fails because CATALOGUE_MODULES is not empty, still holds after the mapping. The planted-failure evidence row gives a red proof for c3.",
+          "Note, P2, not filed because a plan review files no P2: Decision 6a does not say where the new reader goes in `selection.readers`. If it is appended last, tests/test_own_deliveries.py `test_integration_recipe_carries_only_named_checks_and_refuses_collisions` breaks. That test does `reader=target['selection']['readers'].pop()` (line 780) on the assumption that the hosted service reader is last, and asserts `merged['selection']['readers']==[*old['selection']['readers'],reader]` (line 828). The pop would take the new tests reader instead, the recipe would not append it, and the assertion would fail. The `readers[:2]` pins at lines 400 and 530 and `readers[2]` at line 504 would be unaffected. This candidate's own sensor, tests.test_own_deliveries, catches it, so nothing reaches main unseen. Placing the reader before the hosted service reader avoids the extra cycle.",
+          "Approval conditions: no P0 or P1 finding was raised, so nothing must change before approval. Remedies for the P2 note above are optional."
+        ]
+      },
+      "resultSha256": "0bb496ad97b614ec2309b68330e4fc32c343f9d75ce988f10a03049933dc1b06"
+    },
+    {
+      "lens": "lens.adversarial-testing",
+      "round": 2,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.adversarial-testing",
+        "subjectRef": "checks-a-story-adds.plan",
+        "candidateRef": "86b881a37047cd49d1870a87dee0b6147b4831e2",
+        "round": 2,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [
+          {
+            "id": "adversarial-testing-r1-1",
+            "state": "fixed",
+            "resolution": "Adopted as the approval condition asked. tests/test_run_delivery_supervisor.py is now in the lane's Owns, the story's files, the sensors and the candidate's checks (tests.test_run_delivery_supervisor). The acceptance, queue and proposal scenarios are placed in that file, next to the existing selection tests. The selection scenario names tests.test_two,tests.test_new and asserts their order, that the added check equals the head binding's entry and the base id resolves to the base catalogue's entry, and that queue_run merges with the lead's selection. The deny-side proposal assertion is kept: a changed module in neither catalogue is not proposed. The existing refusal assertions are updated to list both catalogues. A finish-line bullet now says the fixture tests prove the second bullet, because this delivery's own hand-offs run the installed generation."
+          },
+          {
+            "id": "adversarial-testing-r1-2",
+            "state": "fixed",
+            "resolution": "Adopted as the approval condition asked. Decision 6 now requires set equality between the modules found by (ROOT / \"tests\").glob(\"test_*.py\") and CATALOGUE_MODULES plus UNCATALOGUED_MODULES, with the two tuples disjoint, and a failure names each missing or extra module. An empty or wrong discovery fails, and so does a stale exclusion. The lane's evidence records a planted-failure run with tests/test_zz_planted.py, which is then removed."
+          }
+        ],
+        "evidence": [
+          "Reviewed tree SHA c002fd9824a02ef2bf3ecb7965cddefaee80fe82, at HEAD 86b881a37047cd49d1870a87dee0b6147b4831e2. The start identity check passed: HEAD^{tree} matched and git status --porcelain was empty. The end identity check also passed, with the same tree and a clean status.",
+          "Verification round 2. I derived the delta myself with git diff cb55af1a0129ee9280673e090da6acd79b99826a..86b881a37047cd49d1870a87dee0b6147b4831e2. It changes only docs/plans/2026-11-17-checks-a-story-adds.md: 46 insertions and 17 deletions. Both candidate reference resolution pairs matched by exact text.",
+          "Re-check of adversarial-testing-r1-1: fixed as the approval condition asked. Both example mutations are now caught by checks the candidate selects. Dropping the `known` filter in proposed_checks fails the kept deny-side proposal assertion. Sending a base id as an object fails the assertion that tests.test_two resolves to the base catalogue's entry, and the new redefinition scenario catches it too.",
+          "Re-check of adversarial-testing-r1-2: fixed as the approval condition asked. A wrong-glob mutation now fails, because the discovered set no longer equals the non-empty CATALOGUE_MODULES. A mutation that ignores UNCATALOGUED_MODULES fails once that tuple holds an entry, and the disjointness assertion catches a stale exclusion that is also catalogued. I checked the premise read-only with a Python AST read of CATALOGUE_MODULES against tests/test_*.py at this tree. The only uncatalogued module is suite_budget, which the story catalogues, and no catalogued module is missing, so the set-equality guard starts green once the story lands.",
+          "The round-1 P2 and P3 notes are taken up in the delta. A hand-off scenario now covers a binding-check id such as validate-registry. Scenarios now cover an unparseable head binding and a lead-accept working tree that differs from the head. The hand-off message test now asserts that a base id is not marked as added. The mixed-list order is pinned in the lead-accept selection scenario.",
+          "Reviewed Decision 6a, which is new in the delta: a reader that maps tests/test_*.py to tests.test_own_deliveries. A mutation of the reader's pattern or check is caught by the planned pin of the reader. Resolving readers into a selection is unchanged state-tool code (resolve_selection), so it is out of this lens's scope. No new P0 or P1.",
+          "Checks: none were run, because a plan review runs none. No mutants were planted. Every mutation above is reasoned against the lines the plan changes, in run_delivery.py (check_ids, handoff, lead-accept, proposed_checks), in the guard and reader pin in tests/test_own_deliveries.py, and in their callers. The only probe was the read-only AST check, which wrote nothing.",
+          "Model class: Opus-class (claude-opus-5-5), running as a native subagent. No progress or permission signals are exposed to this host, and the repository declares no run-event command. Realization basis: host-convention.",
+          "Approval conditions: this round raises no findings, so there are none to state. Both carried findings are fixed as their round-1 approval conditions asked."
+        ]
+      },
+      "resultSha256": "8aead6e07473f1f667d227ae49b4c93b7f22561b396c0f4e68bbf58f29cbca79"
+    }
+  ],
+  "residualRisks": [
+    "2 review rounds; findings open after each round: 2, 0."
+  ]
+}
