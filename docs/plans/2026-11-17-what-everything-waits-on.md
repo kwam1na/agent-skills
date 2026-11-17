@@ -154,10 +154,16 @@ The lane's side:
    field. A `waiting` state with no `--waiting-on` is refused too. Setting `waiting` keeps the row's prior state in a
    new tool-written member, `waitingFrom: {state, at}`. It is not `restedFrom`, which the tool resets at every lane or
    lead write and rewrites when the runner speaks over a row. `waitingFrom` is carried across every write while the
-   state stays `waiting`, whoever writes, and is removed when the row returns. When that subject lands or settles, the
-   state tool returns the row to the state in `waitingFrom`, with `waitingOn` cleared, in the same write that records
-   the landing or settlement. For such a row, `lane_rows_merged` applies this return instead of its own rest. The
-   `wait` event for the landing names the lane it freed.
+   state stays `waiting`, whoever writes, and is removed when the row returns. When that subject lands, settles or is
+   stopped, the state tool returns every `waiting` row whose `waitingOn` is that subject, whichever lane it belongs
+   to, to the state in `waitingFrom`, removing `waitingFrom`, in the same write:
+   - On a landing or a stop, `lane_rows_after` does this first, before any of its early returns, whatever the row's
+     focus names.
+   - On a landing, the return takes the place of the rest for the subject's own lane, and `waitingOn` is cleared.
+   - On a stop, the stop's rest then applies to the returned row as today, so the subject's own lane ends in its
+     `waitingFrom` state with `waitingOn` "lead", and `lane_rows_put_back` treats it as today.
+   - On a settlement, the no-change hand-off and `accept_handoff` do the same return.
+   The `wait` event for the landing names every lane it freed.
 8. **`wait` does not wake on a planned wait.** A `waiting` row is not a blocked one, and `wait` neither wakes on it
    nor counts it as quiet. A `waiting` row is not in "Needs you" and does not hold the close.
 9. **`lead-accept` settles the row.** After an acceptance, the accepted lane's row is `idle` with `waitingOn` naming
@@ -325,7 +331,11 @@ For `waiting` lanes and acceptance, in V26-3426:
 - A lane that was `working` sets `waiting`. Before its subject merges, it says `focus` once more, the runner then
   speaks over its row, and the lead then writes it, each changing its focus. `waitingFrom` is still `{state:
   working}` after each write. When the subject merges, the row returns to `working` with `waitingOn` null and no
-  `waitingFrom`, and `lane_moved_off` reads the returned state. A lane waiting on a subject that settles returns as well. The `wait` event
+  `waitingFrom`, and `lane_moved_off` reads the returned state.
+- Lane 3, `working`, waits on lane 2's story. It returns to `working` when that story merges, and in another case
+  when that story settles. A waiting row whose last focus does not name the subject returns as well.
+- A lane that was `working` sets `waiting` on its own handed story, which the queue then stops. The row is
+  `working`, with `waitingOn` "lead" and no `waitingFrom`. When the story is put back, the row is `handed`, as today. A lane waiting on a subject that settles returns as well. The `wait` event
   for the landing names the freed lane.
 - An idle lane whose next planned story waits shows that story's wait under the lane.
 - After `lead-accept`, the lane is `idle`, waiting on the accepted key, and clears to `null` when that key merges.
