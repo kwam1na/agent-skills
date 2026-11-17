@@ -173,6 +173,19 @@ class ProjectionTests(unittest.TestCase):
         members = {'id', 'at', 'kind', 'lane', 'subject', 'occurredAt'}
         self.assertEqual([set(branch['properties']) for branch in branches], [members | {'data'}, members])
         self.assertEqual(set(public.JOURNAL_MEMBERS), members)
+        # An occurrence is a time, or null for one unknown, and nothing else.
+        for branch in branches:
+            occurred = branch['properties']['occurredAt']
+            self.assertEqual([option.get('type') for option in occurred['anyOf']], ['string', 'null'])
+        for when, valid in (('2026-11-15T00:00:00Z', True), (None, True), ('yesterday', False)):
+            with self.subTest(occurredAt=when):
+                timed = copy.deepcopy(value)
+                timed['document']['journal'][1]['occurredAt'] = when
+                if valid:
+                    public.validate(timed)
+                else:
+                    with self.assertRaises(public.ProjectionError):
+                        public.validate(timed)
         self.assertEqual(set(branches[0]['properties']['data']['properties']),
                          {'round', 'startedAt', 'finishedAt', 'verdicts', 'findings'})
         self.assertEqual(set(branches[0]['properties']['data']['properties']['findings']['properties']), {'P0', 'P1', 'P2', 'P3'})
@@ -216,7 +229,10 @@ class ProjectionTests(unittest.TestCase):
         cfg = config(forges=[{'name': 'GitHub', 'repository': 'example/app',
                              'pullUrl': 'https://github.com/{repository}/pull/{number}',
                              'commitUrl': 'https://github.com/{repository}/commit/{sha}'}])
-        value = public.project(doc, runs, cfg, source_fingerprint='1' * 64)
+        with mock.patch.object(public.render, 'with_story', side_effect=AssertionError('the projection told a story')):
+            value = public.project(doc, runs, cfg, source_fingerprint='1' * 64)
+        # The commit a run's round reviewed is still linked, from the published run.
+        self.assertIn('a' * 40, value['links']['commits'])
         self.assertNotIn('c' * 40, value['links']['commits'])
         self.assertNotIn('https://github.com/example/app/pull/99', value['links']['changes'])
         self.assertNotIn('c' * 40, json.dumps(value))
@@ -462,6 +478,13 @@ class ProjectionTests(unittest.TestCase):
         self.assertTrue(value['reviews']['WORK-1']['roundDetail'])
         self.assertNotIn('reviewEvidence', value['document'])
         self.assertNotIn('outcomes', json.dumps(value))
+        # The commit a native review reviewed is linked, from the published review.
+        cfg = config(forges=[{'name': 'GitHub', 'repository': 'example/app',
+                             'pullUrl': 'https://github.com/{repository}/pull/{number}',
+                             'commitUrl': 'https://github.com/{repository}/commit/{sha}'}])
+        reviewed = {row['candidateRef'] for row in value['reviews']['WORK-1']['roundDetail']}
+        self.assertTrue(reviewed)
+        self.assertLessEqual(reviewed, set(public.project(doc, {}, cfg, source_fingerprint='1' * 64)['links']['commits']))
         doc['reviewEvidence']['WORK-1'] = {'unavailable': True}
         unavailable = public.project(doc, {}, config(), source_fingerprint='1' * 64)
         self.assertEqual(unavailable['reviews']['WORK-1'], {'unavailable': True})

@@ -73,6 +73,8 @@ describe("hosted view store", () => {
           return Response.json(
             mode === "renderer"
               ? { ...next.meta, rendererVersion: "future" }
+              : mode === "previous renderer"
+                ? { ...next.meta, rendererVersion: "delivery-line-map/1" }
               : mode === "good"
                 ? good.meta
                 : mode === "schema"
@@ -90,7 +92,7 @@ describe("hosted view store", () => {
     });
     await store.poll();
     const before = store.projection();
-    for (const failure of ["network", "renderer", "404", "digest", "schema", "older"]) {
+    for (const failure of ["network", "renderer", "previous renderer", "404", "digest", "schema", "older"]) {
       mode = failure;
       await store.poll();
       expect(store.projection()).toBe(before);
@@ -628,48 +630,119 @@ function testDOM() {
   return dom;
 }
 describe("what the hosted cut does not publish", () => {
-  it("says a reason is not published, and draws no wordless merge-check steps or notes", () => {
-    const built = JSON.parse(
-      readFileSync(new URL("./assets.generated.json", import.meta.url), "utf8"),
-    ) as { renderer: string };
+  const UNPUBLISHED = "Its reason is not published on the hosted page.";
+  const NONE = "No reason recorded.";
+  /** The auxiliary projection with: APP-2 stopped by a journaled stop, APP-3 stopped with no stop journaled, APP-4 in a
+   * check run a decision was recorded during, APP-5 planned with a kept review, a lane blocked on nothing named, and the
+   * main line broken. */
+  function hostedBody(): PublicProjection {
     const body = auxiliaryProjection("old");
-    const queue = body.document.state.queue as Record<string, unknown>[];
+    const state = body.document.state as Record<string, unknown>;
+    const queue = state.queue as Record<string, unknown>[];
     queue[queue.length - 1].stage = "stopped";
+    queue.push(
+      { subject: "APP-3", title: "Never journaled", lane: "one", stage: "stopped", head: "c".repeat(40) },
+      { subject: "APP-4", title: "In its checks", lane: "one", stage: "checking", head: "d".repeat(40) },
+    );
+    state.planned = [{ subject: "APP-5", title: "Reviewed before hand-off", lane: "one", stage: "review" }];
+    state.lanes = [{ id: "two", title: "Lane two", focus: "Waiting", state: "blocked", waitingOn: null, since: "2026-11-15T00:00:00Z" }];
+    state.meta = { ...(state.meta as Record<string, unknown>), checking: { now: { subject: "APP-4", title: "In its checks",
+      startedAt: "2026-11-15T00:05:00Z", steps: [{ label: "suite", state: "failed" }] }, next: [] } };
     body.document.journal.push(
       { id: 4, at: "2026-11-15T00:02:00Z", kind: "check.started", lane: "one", subject: "APP-2" },
       { id: 5, at: "2026-11-15T00:03:00Z", kind: "candidate.stopped", lane: "one", subject: "APP-2" },
-      { id: 6, at: "2026-11-15T00:03:30Z", kind: "decision.recorded", lane: null, subject: "APP-2" },
-      { id: 7, at: "2026-11-15T00:04:00Z", kind: "base.broken", lane: null, subject: null },
+      { id: 6, at: "2026-11-15T00:04:00Z", kind: "base.broken", lane: null, subject: null },
+      { id: 7, at: "2026-11-15T00:05:00Z", kind: "check.started", lane: "one", subject: "APP-4" },
+      { id: 8, at: "2026-11-15T00:06:00Z", kind: "decision.recorded", lane: null, subject: "APP-4" },
+      { id: 9, at: "2026-11-15T00:07:00Z", kind: "review.round", lane: "one", subject: "APP-5",
+        data: { round: 1, verdicts: { "lens.security": "approve" }, findings: { P0: 0, P1: 0, P2: 0, P3: 0 } } },
+      { id: 10, at: "2026-11-15T00:08:00Z", kind: "review.recorded", lane: "one", subject: "APP-5" },
     );
-    projection(body);
+    type Review = { roundDetail: { raised: Record<string, unknown>[] }[] } & Record<string, unknown>;
+    const reviews = body.reviews as Record<string, Review>;
+    const own = reviews["APP-2"];
+    body.reviews = { ...reviews, "APP-5": { ...structuredClone(own), observationKey: "APP-5",
+      candidateRef: "e".repeat(40), journalId: 10,
+      roundDetail: [{ ...structuredClone(own.roundDetail[0]), candidateRef: "e".repeat(40),
+        raised: [{ ...own.roundDetail[0].raised[0], summary: "planned native finding" }] }] } };
+    return body;
+  }
+  /** The built page drawn from `body`: as the hosted page, under its store, or as a page with no store. */
+  function drawn(body: PublicProjection, hosted: boolean) {
+    const built = JSON.parse(
+      readFileSync(new URL("./assets.generated.json", import.meta.url), "utf8"),
+    ) as { renderer: string };
     const dom = testDOM();
-    Object.assign(dom.window, {
-      deliveryStateStore: {
-        projection: () => body,
-        read: () => body.document,
-        subscribe: () => {},
-        onStatus: () => {},
-      },
-    });
+    if (hosted) {
+      Object.assign(dom.window, {
+        deliveryStateStore: { projection: () => body, read: () => body.document, subscribe: () => {}, onStatus: () => {} },
+      });
+    }
     seedDOM(dom.window, body);
+    dom.window.eval(built.renderer);
+    const document = dom.window.document;
+    const why = (title: string) =>
+      Array.from(document.querySelectorAll("li")).find((row) => row.querySelector(".a1")?.textContent === title)
+        ?.querySelector(".a2")?.textContent ?? null;
+    const open = (subject: string) => {
+      (document.querySelector(`.stop-btn[data-subject="${subject}"]`) as HTMLButtonElement).click();
+      return document.querySelector("#detail")!;
+    };
+    return { dom, document, why, open };
+  }
+  it("says a reason is not published where one is, and none was recorded where none is", () => {
+    const body = hostedBody();
+    projection(body);
+    const page = drawn(body, true);
     try {
-      dom.window.eval(built.renderer);
-      const page = dom.window.document.querySelector("#app")!.textContent!;
-      expect(page).toContain("Its reason is not published on the hosted page.");
-      expect(page).not.toContain("No reason recorded.");
-      (
-        dom.window.document.querySelector(
-          '.stop-btn[data-subject="APP-2"]',
-        ) as HTMLButtonElement
-      ).click();
-      const detail = dom.window.document.querySelector("#detail")!;
-      expect(detail.querySelector("details.mh")).toBeNull();
-      expect(detail.querySelector(".ck-note")).toBeNull();
-      // The kept review still shows: the publisher checked it against the capture it sent.
-      expect(detail.textContent).toContain("old native finding");
-      expect(detail.textContent).not.toContain("Review evidence unavailable or stale");
+      expect(page.why("Native evidence stopped")).toBe(UNPUBLISHED);
+      expect(page.why("Never journaled stopped")).toBe(NONE);
+      expect(page.why("Lane two is blocked")).toBe(NONE);
+      expect(page.why("The main line is broken")).toBe(UNPUBLISHED);
     } finally {
-      dom.window.close();
+      page.dom.window.close();
+    }
+  });
+  it("draws no wordless merge-check steps or notes, and shows a kept review, its own or a planned piece's", () => {
+    const body = hostedBody();
+    projection(body);
+    const page = drawn(body, true);
+    try {
+      expect(page.document.querySelector(".ck-note")).toBeNull();
+      const stopped = page.open("APP-2");
+      expect(stopped.querySelector("details.mh")).toBeNull();
+      expect(stopped.textContent).toContain("old native finding");
+      expect(stopped.textContent).not.toContain("Review evidence unavailable or stale");
+      const planned = page.open("APP-5");
+      expect(planned.textContent).toContain("planned native finding");
+      expect(planned.textContent).not.toContain("Review evidence unavailable or stale");
+    } finally {
+      page.dom.window.close();
+    }
+  });
+  it("leaves the page as it is with no hosted store, or with a story on the record", () => {
+    // The same record drawn by the page with no store: the note, the merge check, the review cross-check and the
+    // record's own wording are all the page's as before.
+    const body = hostedBody();
+    const local = drawn(body, false);
+    try {
+      expect(local.document.querySelector(".ck-note")).not.toBeNull();
+      expect(local.why("The main line is broken")).toBe(NONE);
+      expect(local.open("APP-2").querySelector("details.mh")).not.toBeNull();
+      expect(local.open("APP-5").textContent).toContain("Review evidence unavailable or stale");
+    } finally {
+      local.dom.window.close();
+    }
+    // Under the store, a record that does carry a story is the page's own too.
+    const told = hostedBody();
+    (told.document as Record<string, unknown>).story = { schemaVersion: "story/1", state: "open",
+      digest: { head: "Nothing has landed yet.", line: "" }, chapters: [], beats: [], threads: [], tones: [] };
+    const page = drawn(told, true);
+    try {
+      expect(page.why("The main line is broken")).toBe(NONE);
+      expect(page.open("APP-5").textContent).toContain("Review evidence unavailable or stale");
+    } finally {
+      page.dom.window.close();
     }
   });
 });
