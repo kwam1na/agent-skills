@@ -5975,6 +5975,14 @@ class RunDeliveryPlanTests(unittest.TestCase):
                 item["stage"] = "building"
         (record / "state.json").write_text(json.dumps(state, indent=2) + "\n")
         refused("FX-4", "--text", "a reason", said="FX-4 has started")
+        # So has one in the queue that hasn't landed: it has no planned entry at all.
+        four = next(item for item in state["planned"] if item["subject"] == "FX-4")
+        state["planned"].remove(four)
+        state["queue"].append({"order": 2, "subject": "FX-4", "title": four["title"], "lane": "lane-1", "stage": "queued",
+                               "head": "b" * 40, "syncedHead": None, "leadInputs": [], "reportedRounds": 1,
+                               "runId": None, "checks": []})
+        (record / "state.json").write_text(json.dumps(state, indent=2) + "\n")
+        refused("FX-4", "--text", "a reason", said="FX-4 has started")
 
     def test_concurrent_rebuilds_lose_no_update(self) -> None:
         fx = self.fixture()
