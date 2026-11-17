@@ -19,8 +19,8 @@ matches the pair by exact text rather than by parsing the reference.
 Cut releases at batch boundaries, not per ruling. Operator rulings
 accumulate as merged text on the default branch, and one release carries
 them. Tag each release with an annotated version tag, `vMAJOR.MINOR.PATCH` with
-an optional `-rc.N` and no leading zeros, on a commit CI ran on as the tip of a
-push to the default branch, such as a merge commit. Major means an adopter must act, minor is additive, and patch changes no
+an optional `-rc.N` and no leading zeros, on a commit merged to the default branch,
+usually a merge commit. Major means an adopter must act, minor is additive, and patch changes no
 contract. Release ids are `<profile>-<version>`. A tag's version must be strictly
 greater than every existing version tag, with a candidate below its final, and its
 commit must equal or descend from the highest one's; a backport to an older line is
@@ -38,16 +38,15 @@ final is built again, so its digests differ from the candidate's because its rel
 id does; an adopter verifies the final's own. See `docs/product-generation.md`.
 
 The default branch is unprotected, and CI on it informs rather than blocks. A merge
-can land on red, and it falls to whoever merges to read the result, because a red
-gating job blocks the next release: the release workflow publishes only on CI's
-success for the exact tagged commit. That gate is the Ubuntu job and `cut-release` on
-the push to the default branch. CI's macOS job runs there, and with a `full-matrix`
-label on a change request, to inform: its result, or its absence, neither allows nor
-blocks a release. Nothing waits for it, except that a gating job absent while it runs
-is waited for, within the bound, and then refused.
+can land on red, and it falls to whoever merges to read the result and fix what it
+shows. CI does not block a release either: the release workflow reads no CI result,
+so pushing a tag publishes whatever CI says about its commit. CI's Ubuntu job and
+`cut-release` run on every change request and on each push to the default branch. Its
+macOS job runs on a push there, and with a `full-matrix` label on a change request.
 
-Before tagging, run the full suite locally on macOS with Python 3.11. The release job
-cannot verify this, so it rests on whoever tags. A newer Python can hide what the
+Before tagging, run the full suite locally on macOS with Python 3.11. A release rests
+on that run passing. Nothing else checks it, in CI or in the release job, so it rests
+on whoever tags. A newer Python can hide what the
 declared minimum shows, so a run on one doesn't count. `.python-version` pins `.venv`
 to it, the version CI runs:
 
@@ -58,8 +57,9 @@ python3 scripts/bootstrap-test-environment.py
 ```
 
 That run is checked against the suite's time budget, described below, and exits 3
-when every test passed and it went over: a release waits until the suite is back
-inside it.
+when every test passed and it went over. A run over its budget does not hold the
+release: the tag's annotation says the run went over, and by how much. Any other exit
+but 0 means the suite did not pass, and nothing is tagged.
 
 Windows is not validated. Its code fixes and guards stay, unproven, and CI does not
 run it.

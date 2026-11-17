@@ -1,7 +1,7 @@
 name: Release
 
-# Pushing a version tag publishes a release built from the tagged tree, with its records and build provenance. Publishing
-# requires CI's success on the exact tagged commit, read from CI's run for that commit rather than running the matrix again.
+# Pushing a version tag publishes a release built from the tagged tree, with its records and build provenance. Nothing
+# here reads CI or runs the suite: a release rests on whoever tags running the full suite locally first, and it passing.
 on:
   push:
     tags: ["v[0-9]*"]
@@ -14,11 +14,9 @@ env:
 jobs:
   guard:
     runs-on: ubuntu-latest
-    # Outlasts the channel's bounded wait for CI, so that wait is what ends it.
-    timeout-minutes: 160
+    timeout-minutes: 10
     permissions:
       contents: read
-      actions: read
     outputs:
       publish: ${{ steps.existing.outputs.publish }}
     steps:
@@ -48,15 +46,6 @@ jobs:
           TAG: ${{ github.ref_name }}
         # A release is never replaced, and an unclear answer stops here rather than reading as absent.
         run: python scripts/release_channel.py existing --tag "$TAG" >> "$GITHUB_OUTPUT"
-      - name: Require CI's success on the tagged commit
-        if: steps.existing.outputs.publish == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
-          REPOSITORY: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          python scripts/release_channel.py ci --tag "$TAG" --repo "$REPOSITORY" --commit "$(git rev-parse "refs/tags/$TAG^{commit}")"
 
   publish:
     needs: guard
@@ -93,7 +82,7 @@ jobs:
           OUT="$RUNNER_TEMP/release"
           git fetch --force --tags origin "refs/tags/$TAG:refs/tags/$TAG"
           test "$(git rev-parse "refs/tags/$TAG^{commit}")" = "$GITHUB_SHA"
-          # The guard's check may be two and a half hours old by now, or from an earlier attempt of this run.
+          # The guard's check ran before the build, and may be from an earlier attempt of this run.
           python scripts/release_channel.py order --tag "$TAG"
           gh release list --exclude-drafts --limit 1000 --json tagName --jq '.[].tagName' > "$RUNNER_TEMP/published.txt"
           previous="$(python scripts/release_channel.py previous --tag "$TAG" --published "$RUNNER_TEMP/published.txt")"

@@ -336,15 +336,13 @@ grep -c 'installed-data-proof/1' .agent-skills/current/runtime/cli.mjs
 Pushing an annotated version tag publishes a release from the tagged tree. A tag is
 `vMAJOR.MINOR.PATCH`, with `-rc.N` for a candidate. The release workflow refuses a
 tag that is not annotated, not merged to `main`, or not above every existing version
-tag. It publishes only on CI's success for that exact commit and never replaces a
-release that already exists. If anything fails, nothing is published. A candidate is
+tag. It never replaces a release that already exists, and it reads no CI result. If
+anything fails, nothing is published. A candidate is
 never latest, so download one by naming its tag. See
 [product generations](docs/product-generation.md#releases).
 
-The gate is the Ubuntu job and `cut-release` on the push to `main`. CI's macOS job
-runs there too, to inform, and neither allows nor blocks a release. Before tagging,
-whoever tags runs the full suite locally on macOS with Python 3.11, which the release
-job cannot verify:
+A release rests on whoever tags. Before tagging, they run the full suite locally on
+macOS with Python 3.11, and it must pass. The release job cannot verify that run:
 
 ```bash
 uv python install 3.11
@@ -353,8 +351,12 @@ python3 scripts/bootstrap-test-environment.py
 ```
 
 `--budget` checks the run against the suite's time budget, and exits 3 when every
-test passed and the run went over it, so a release waits until the suite is back
-inside.
+test passed and the run went over it. That does not hold the release: the tag's
+annotation says the run went over.
+
+CI on `main` informs. It blocks neither a merge nor a release, so a red run there is
+for whoever merges to read and fix. Its macOS job runs on pushes to `main`, and on a
+change request with the `full-matrix` label.
 
 Windows is not validated: CI does not run it, and the fixes made for it are unproven.
 

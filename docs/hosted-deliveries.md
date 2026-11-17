@@ -62,8 +62,8 @@ and shared fixtures. The binding selects `hosted.install`, `hosted.typecheck`,
 those readers. A local merge runner needs supported Node on PATH and Chromium's
 OS prerequisites; CI installs those with Playwright. No Python suite implicitly
 installs the service package. The lead verifies this separate service job at the
-exact main-push commit alongside Ubuntu and cut-release before release/deploy;
-the release channel's corpus gate alone does not attest service CI.
+exact main-push commit before release/deploy; the release workflow reads no CI
+result, and the local suite before a tag does not attest service CI.
 
 ## Versions move together
 
@@ -128,8 +128,8 @@ Record separate identities and results, without secret values:
 - Installed bytes: exact locally built archive SHA-256, verification result,
   installed receipt and unchanged generation bytes in two clean repository
   bindings. Socket substitution in a fixture remains a fixture seam.
-- Published candidate: exact main-push SHA and Ubuntu/cut-release/service CI,
-  annotated candidate tag, attested archive and metadata, applied active receipt.
+- Published candidate: exact main-push SHA, the local macOS Python 3.11 suite's
+  pass at it and service CI, annotated candidate tag, attested archive and metadata, applied active receipt.
 - Exact deployed bytes: reviewed source SHA, Wrangler version, dry-run Worker and
   asset digests, actual Worker version/deployment ID, domain and storage bindings.
 - Live acceptance: two repositories with matching delivery names, an unrelated

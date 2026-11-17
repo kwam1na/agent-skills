@@ -59,13 +59,22 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "--run-delivery-archive /tmp/run-delivery.zip",
         "the supplied extracted Linear and `run-delivery` candidates",
         "an adopter on a tracker gets the same commands from their tracker's archive and keeps installing that one",
+        "It never replaces a release that already exists, and it reads no CI result",
+        "A release rests on whoever tags",
+        "It blocks neither a merge nor a release",
         "Windows, which is not validated (see above), keeps its native `taskkill /T /F` tree cleanup",
     ),
     "docs/host-adapters.md": (
         "On Windows, which is not validated (see the README), directory links use",
     ),
+    "docs/hosted-deliveries.md": (
+        "the release workflow reads no CI result, and the local suite before a tag does not attest service CI",
+    ),
     "docs/product-generation.md": (
-        "It can delay one only where a gating job is absent while it still runs",
+        "Tag a commit merged to `main`; a merge commit is the usual one",
+        "The workflow reads no CI result and runs no suite",
+        "it does not block a release, because the release workflow does not read it",
+        "A run that passes every test and goes over the suite's time budget does not hold the release",
     ),
     "skills/review-work/SKILL.md": (
         "When the host reports no cost, record `coverage: unreported`; do not invent zero",
@@ -100,13 +109,16 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     ),
     "docs/own-deliveries.md": (
         "The binding declares no affected-checks provider, on purpose.",
+        "the corpus's own CI jobs inform and hold neither",
         "Nothing here reads a `.env`, this repository's or another's.",
     ),
     "AGENTS.md": (
         "`docs/solutions/` holds what past deliveries learned, one note per learning at"
         " `docs/solutions/<category>/<slug>-<YYYY-MM-DD>.md`",
         "On Windows, which is not validated (see above), use `.venv\\Scripts\\python.exe`",
-        "a gating job absent while it runs is waited for, within the bound, and then refused",
+        "on a commit merged to the default branch, usually a merge commit",
+        "CI does not block a release either: the release workflow reads no CI result",
+        "Its macOS job runs on a push there, and with a `full-matrix` label on a change request",
         "Stop only processes you started, by the pid you recorded, and never by"
         " pattern with `pkill` or `killall`",
         "resolves, in this repository, to the commit whose tree carries the"
@@ -126,7 +138,8 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "promoted by tagging the final version on the same commit",
         "its digests differ from the candidate's because its release id does",
         "The default branch is unprotected, and CI on it informs rather than blocks",
-        "the release workflow publishes only on CI's success for the exact tagged commit",
+        "it falls to whoever merges to read the result and fix what it shows",
+        "Before tagging, run the full suite locally on macOS with Python 3.11. A release rests on that run passing",
         "`runtimeVersion` does not identify runtime bytes",
         "A green local run does not prove another operating system",
         "clear the local environment's variables first",
@@ -136,7 +149,7 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         "A change that adds tests keeps the suite inside the budget",
         "It never raises a number in the budget; only the operator does",
         "is marked `run_quietly`, never `run_serially`",
-        "a release waits until the suite is back inside it",
+        "A run over its budget does not hold the release: the tag's annotation says the run went over",
         "A lens's follow-up does not outrank a binding ruling",
         "must include the case where nothing observes the clear",
         "by mutating a file `provenance.lock.json` covers takes the digests"
@@ -231,6 +244,70 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
     ),
 }
 
+# Publishing once required CI's success on the tagged commit, waited for it within a bound, and waited for the
+# suite to be back inside its time budget. That is withdrawn: a release rests on the local run before the tag.
+# Each pattern is one way of saying a withdrawn claim, matched in any case against the whitespace-normalized
+# file, so a synonym that comes back is caught wherever it lands.
+WITHDRAWN_RELEASE_GATE_FILES = (
+    "AGENTS.md",
+    "README.md",
+    "docs/product-generation.md",
+    "docs/own-deliveries.md",
+    "docs/hosted-deliveries.md",
+    "docs/linear-connector-check.md",
+    ".github/workflows/release.yml",
+    ".github/workflows/ci.yml",
+    "scripts/release_channel.py",
+)
+WITHDRAWN_RELEASE_GATE_CLAIMS = (
+    # Publishing requires CI.
+    r"publish\w* only on CI",
+    r"requires? CI\b",
+    r"requires? the Ubuntu job",
+    r"CI's success",
+    r"CI has (not )?passed",
+    r"(on|once|after|until|when) CI (is green|passes|passed|succeeds|succeeded)",
+    r"gating (job|CI)",
+    r"gates? (publishing|releases?|a release|the release)",
+    r"the gate is the Ubuntu job",
+    r"corpus gate",
+    r"alongside (corpus )?Ubuntu",
+    r"Ubuntu\W+cut-release\W+service CI",
+    r"blocks the next release",
+    # Which commit a tag may name.
+    r"commit CI (ran|passed) on",
+    r"no CI run to read",
+    # Waiting for CI.
+    r"wait\w* (for|on) CI\b",
+    r"bounded (wait|time)",
+    r"waits its bound",
+    r"within the bound",
+    r"neither allows nor blocks",
+    r"absent while it (still )?runs",
+    r"is waited for",
+    r"two and a half hours",
+    # Waiting for the time budget.
+    r"release waits until",
+    r"until the suite is back inside",
+    r"(holds?|blocks?|delays?) (a|the|the next) release (until|while) the suite",
+)
+
+
+def withdrawn_release_gate_claims(texts: dict[str, str]) -> set[tuple[str, str]]:
+    return {
+        (relative, pattern)
+        for relative, text in texts.items()
+        for pattern in WITHDRAWN_RELEASE_GATE_CLAIMS
+        if re.search(pattern, text, re.IGNORECASE)
+    }
+
+
+def release_gate_texts(root: Path) -> dict[str, str]:
+    return {
+        relative: " ".join((root / relative).read_text(encoding="utf-8").split())
+        for relative in WITHDRAWN_RELEASE_GATE_FILES
+    }
+
 
 def corpus_texts(root: Path) -> dict[str, str]:
     return {
@@ -260,6 +337,30 @@ class DeclaredMechanicsCorpusTests(unittest.TestCase):
 
     def test_declared_mechanics_are_present(self) -> None:
         self.assertEqual(missing_phrases(corpus_texts(ROOT)), set())
+
+    def test_no_standing_text_says_a_release_waits_on_ci_or_on_the_budget(self) -> None:
+        self.assertEqual(withdrawn_release_gate_claims(release_gate_texts(ROOT)), set())
+
+    def test_each_withdrawn_release_gate_claim_is_caught_when_it_comes_back(self) -> None:
+        texts = release_gate_texts(ROOT)
+        returned = {
+            r"publish\w* only on CI": "It publishes only on CI's success for that exact commit.",
+            r"gating (job|CI)": "a red gating job blocks the next release",
+            r"blocks the next release": "a red Ubuntu job on `main` blocks the next release",
+            r"commit CI (ran|passed) on": "on a commit CI ran on as the tip of a push to the default branch",
+            r"no CI run to read": "Any other commit has no CI run to read, so it publishes nothing.",
+            r"neither allows nor blocks": "its result, or its absence, neither allows nor blocks a release",
+            r"is waited for": "a gating job absent while it runs is waited for, within the bound, and then refused",
+            r"release waits until": "a release waits until the suite is back inside it",
+            r"the gate is the Ubuntu job": "The gate is the Ubuntu job and `cut-release` on the push to `main`.",
+            r"wait\w* (for|on) CI\b": "The guard waits for CI on the tagged commit.",
+        }
+        for pattern, sentence in returned.items():
+            with self.subTest(sentence=sentence):
+                self.assertIn(pattern, WITHDRAWN_RELEASE_GATE_CLAIMS)
+                found = withdrawn_release_gate_claims({**texts, "AGENTS.md": texts["AGENTS.md"] + " " + sentence})
+                self.assertIn(("AGENTS.md", pattern), found)
+                self.assertEqual({relative for relative, _ in found}, {"AGENTS.md"})
 
     def test_relocating_a_phrase_within_its_file_preserves_membership(self) -> None:
         texts = corpus_texts(ROOT)

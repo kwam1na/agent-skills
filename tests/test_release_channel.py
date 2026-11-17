@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import importlib.util
-import contextlib
-import io
 import json
 import os
 import re
@@ -12,7 +10,6 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,9 +30,6 @@ def load_channel():
 
 
 channel = load_channel()
-COMMIT = "a" * 40
-JOBS = ("validate (ubuntu-latest, 3.11)", "cut-release")
-MACOS = "validate (macos-latest, 3.11)"
 
 
 def git(root: Path, *arguments: str) -> str:
@@ -150,217 +144,6 @@ class OrderingGuardTests(unittest.TestCase):
         channel.check_order("v1.0.0", self.root)
 
 
-class ContinuousIntegrationDecisionTests(unittest.TestCase):
-    def run_record(self, **changes) -> dict:
-        return {"id": 7, "name": "CI", "run_number": 3, "head_sha": COMMIT, "event": "push", "head_branch": "main",
-                "status": "completed", "conclusion": "success", **changes}
-
-    def jobs(self, **conclusions) -> list[dict]:
-        return [{"name": name, "status": "completed", "conclusion": conclusions.get(name, "success")} for name in JOBS]
-
-    def decide(self, runs: list[dict], jobs: list[dict] | None = None) -> str:
-        decision = channel.decide(runs, lambda run_id: self.jobs() if jobs is None else jobs, COMMIT, "main")
-        return decision.state
-
-    def test_success_on_the_exact_commit_passes(self) -> None:
-        self.assertEqual(self.decide([self.run_record()]), channel.PASS)
-
-    def test_a_required_job_that_did_not_succeed_is_refused_however_the_run_concluded(self) -> None:
-        for conclusion in ("failure", "cancelled", "timed_out", "skipped", "neutral", "action_required", "stale", None):
-            for name in JOBS:
-                with self.subTest(conclusion=conclusion, name=name):
-                    self.assertEqual(self.decide([self.run_record(conclusion=conclusion)], self.jobs(**{name: conclusion})), channel.REFUSE)
-
-    def test_macos_cannot_change_the_decision(self) -> None:
-        # It informs whoever tags. The run's own conclusion carries it, so that conclusion cannot decide either.
-        record = {"name": MACOS, "status": "completed"}
-        for conclusion in ("success", "failure", "cancelled", "timed_out", "skipped", None):
-            for run_conclusion in ("success", "failure", "cancelled"):
-                with self.subTest(conclusion=conclusion, run=run_conclusion):
-                    jobs = [*self.jobs(), {**record, "conclusion": conclusion}]
-                    self.assertEqual(self.decide([self.run_record(conclusion=run_conclusion)], jobs), channel.PASS)
-        self.assertEqual(self.decide([self.run_record(conclusion="cancelled")], self.jobs()), channel.PASS, "macOS never ran")
-        for name in JOBS:
-            with self.subTest(failed=name):
-                jobs = [*self.jobs(**{name: "failure"}), {**record, "conclusion": "success"}]
-                self.assertEqual(self.decide([self.run_record()], jobs), channel.REFUSE, "macOS cannot rescue it")
-
-    def test_nothing_waits_for_macos_to_finish(self) -> None:
-        going = self.run_record(status="in_progress", conclusion=None)
-        jobs = [*self.jobs(), {"name": MACOS, "status": "in_progress", "conclusion": None}]
-        self.assertEqual(self.decide([going], jobs), channel.PASS)
-
-    def test_a_required_job_still_going_waits_and_one_already_failed_refuses_at_once(self) -> None:
-        going = self.run_record(status="in_progress", conclusion=None)
-        ubuntu, cut = JOBS
-        unfinished = {"name": cut, "status": "in_progress", "conclusion": None}
-        self.assertEqual(self.decide([going], [self.jobs()[0], unfinished]), channel.WAIT)
-        self.assertEqual(self.decide([going], [self.jobs()[0]]), channel.WAIT, "its job has not appeared yet")
-        self.assertEqual(self.decide([going], [{"name": ubuntu, "status": "completed", "conclusion": "failure"}, unfinished]), channel.REFUSE)
-
-    def test_a_wait_says_which_gating_jobs_it_is_still_waiting_on(self) -> None:
-        going = self.run_record(status="in_progress", conclusion=None)
-        ubuntu, cut = JOBS
-        unfinished = {"name": cut, "status": "in_progress", "conclusion": None}
-        decision = channel.decide([going], lambda run_id: [self.jobs()[0], unfinished], COMMIT, "main")
-        self.assertEqual(decision.state, channel.WAIT)
-        # A job still running is waited on, not missing from the run.
-        self.assertTrue(decision.reason.endswith(f"is in_progress, still waiting on {cut}"), decision.reason)
-        self.assertNotIn("without", decision.reason)
-
-    def test_a_finished_run_with_any_gating_job_unfinished_is_refused(self) -> None:
-        extra = {"name": "something new", "status": "in_progress", "conclusion": None}
-        self.assertEqual(self.decide([self.run_record()], [*self.jobs(), extra]), channel.REFUSE)
-
-    def test_a_gating_job_absent_while_macos_runs_is_waited_for_then_refused(self) -> None:
-        # A job yet to appear looks like one that never will, so this is the one way macOS can delay a release.
-        going = self.run_record(status="in_progress", conclusion=None)
-        jobs = [job for job in self.jobs() if job["name"] != JOBS[0]]
-        jobs.append({"name": MACOS, "status": "in_progress", "conclusion": None})
-        self.assertEqual(self.decide([going], jobs), channel.WAIT)
-        decision = lambda: channel.Decision(channel.WAIT, "still going")
-        now = [0.0]
-        waited = channel.wait_for_success(decision, limit=10, missing_limit=10, interval=1, clock=lambda: now[0],
-                                          sleep=lambda seconds: now.__setitem__(0, now[0] + seconds), say=lambda _: None)
-        self.assertFalse(waited)
-        self.assertGreater(now[0], 0)
-        self.assertEqual(self.decide([self.run_record()], jobs), channel.REFUSE)
-
-    def test_a_finished_run_missing_a_required_job_is_refused_not_waited_for(self) -> None:
-        self.assertEqual(self.decide([self.run_record(conclusion="cancelled")], [self.jobs()[0]]), channel.REFUSE)
-
-    def test_no_run_is_missing(self) -> None:
-        self.assertEqual(self.decide([]), channel.MISSING)
-
-    def test_a_run_still_going_waits(self) -> None:
-        for status in ("queued", "in_progress", "waiting", "requested", "pending"):
-            with self.subTest(status=status):
-                self.assertEqual(self.decide([self.run_record(status=status, conclusion=None)], []), channel.WAIT)
-
-    def test_a_run_on_the_wrong_commit_or_event_or_branch_or_workflow_does_not_count(self) -> None:
-        for wrong in ({"head_sha": "b" * 40}, {"event": "pull_request"}, {"event": "workflow_dispatch"}, {"head_branch": "feature"},
-                      {"head_branch": "delivery/tag-driven-releases"}, {"name": "Release"}):
-            with self.subTest(wrong=wrong):
-                self.assertEqual(self.decide([self.run_record(**wrong)]), channel.MISSING)
-
-    def by_run(self, runs: list[dict], failing: set[int]) -> str:
-        jobs = lambda run_id: self.jobs(**{JOBS[0]: "failure"}) if run_id in failing else self.jobs()
-        return channel.decide(runs, jobs, COMMIT, "main").state
-
-    def test_a_green_run_elsewhere_does_not_rescue_a_failed_one_here(self) -> None:
-        runs = [self.run_record(), self.run_record(id=8, run_number=4, event="pull_request")]
-        self.assertEqual(self.by_run(runs, {7}), channel.REFUSE)
-
-    def test_the_newest_run_for_the_commit_decides(self) -> None:
-        older, newer, newest = self.run_record(id=1, run_number=1), self.run_record(id=2, run_number=2), self.run_record(id=3, run_number=3)
-        self.assertEqual(self.by_run([older, newer], {1}), channel.PASS)
-        self.assertEqual(self.by_run([newer, older], {1}), channel.PASS)
-        self.assertEqual(self.by_run([newer, newest], {3}), channel.REFUSE)
-        self.assertEqual(self.by_run([newest, newer], {3}), channel.REFUSE)
-
-    def test_a_successful_run_with_a_failed_or_skipped_job_is_refused(self) -> None:
-        for name in JOBS:
-            for conclusion in ("failure", "skipped", "cancelled", None):
-                with self.subTest(name=name, conclusion=conclusion):
-                    self.assertEqual(self.decide([self.run_record()], self.jobs(**{name: conclusion})), channel.REFUSE)
-
-    def test_a_successful_run_missing_any_required_job_is_refused(self) -> None:
-        for name in JOBS:
-            with self.subTest(name=name):
-                jobs = [job for job in self.jobs() if job["name"] != name]
-                decision = channel.decide([self.run_record()], lambda run_id: jobs, COMMIT, "main")
-                self.assertEqual(decision.state, channel.REFUSE)
-                self.assertIn(name, decision.reason)
-
-    def test_a_push_run_missing_ubuntu_or_cut_release_cannot_publish(self) -> None:
-        # macOS is no substitute for either.
-        ubuntu, cut = JOBS
-        job = lambda name: {"name": name, "status": "completed", "conclusion": "success"}
-        for present, absent in (((ubuntu,), (cut,)), ((cut,), (ubuntu,)), ((MACOS,), (ubuntu, cut)), ((MACOS, cut), (ubuntu,)),
-                                ((MACOS, ubuntu), (cut,))):
-            with self.subTest(present=present):
-                jobs = [job(name) for name in present]
-                decision = channel.decide([self.run_record()], lambda run_id: jobs, COMMIT, "main")
-                self.assertEqual(decision.state, channel.REFUSE)
-                for name in absent:
-                    self.assertIn(name, decision.reason)
-
-    def test_an_extra_job_must_also_succeed(self) -> None:
-        extra = {"name": "something new", "status": "completed", "conclusion": "failure"}
-        self.assertEqual(self.decide([self.run_record()], [*self.jobs(), extra]), channel.REFUSE)
-
-    def test_the_required_jobs_are_exactly_the_ones_ci_defines(self) -> None:
-        self.assertEqual(set(channel.REQUIRED_JOBS), set(JOBS))
-        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        systems = json.loads(re.search(r"\) && '(\[[^']*\])' \|\| '", workflow).group(1))
-        self.assertEqual({f"validate ({system}, 3.11)" for system in systems} | {"cut-release"},
-                         set(channel.REQUIRED_JOBS) | set(channel.INFORMING_JOBS), "every job CI defines either gates or informs")
-        self.assertEqual(channel.INFORMING_JOBS, (MACOS,))
-        self.assertIn('python-version: ["3.11"]', workflow)
-        self.assertRegex(workflow, r"(?m)^  validate:$")
-        self.assertRegex(workflow, r"(?m)^  cut-release:$")
-        self.assertEqual(re.findall(r"(?m)^  ([a-z-]+):$", workflow.split("\njobs:\n", 1)[1]), ["validate", "cut-release"])
-
-
-class WaitForContinuousIntegrationTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.now = 0.0
-        self.said: list[str] = []
-
-    def clock(self) -> float:
-        return self.now
-
-    def sleep(self, seconds: float) -> None:
-        self.now += seconds
-
-    def wait(self, states) -> bool:
-        states = iter(states)
-
-        def decide() -> channel.Decision:
-            state = next(states)
-            if isinstance(state, Exception):
-                raise state
-            return channel.Decision(state, f"it is {state}")
-
-        return channel.wait_for_success(decide, limit=9000, missing_limit=300, interval=60, clock=self.clock, sleep=self.sleep,
-                                        say=self.said.append)
-
-    def test_a_pass_returns_at_once(self) -> None:
-        self.assertTrue(self.wait([channel.PASS]))
-        self.assertEqual(self.now, 0)
-
-    def test_a_refusal_ends_the_wait_at_once(self) -> None:
-        self.assertFalse(self.wait([channel.WAIT, channel.REFUSE, channel.PASS]))
-        self.assertEqual(self.now, 60)
-
-    def test_it_waits_out_a_run_that_then_passes(self) -> None:
-        self.assertTrue(self.wait([channel.WAIT] * 100 + [channel.PASS]))
-        self.assertEqual(self.now, 6000)
-
-    def test_it_waits_out_a_run_that_then_fails_and_publishes_nothing(self) -> None:
-        self.assertFalse(self.wait([channel.WAIT] * 100 + [channel.REFUSE]))
-
-    def test_the_wait_is_bounded(self) -> None:
-        self.assertFalse(self.wait([channel.WAIT] * 1000))
-        self.assertLessEqual(self.now, 9000)
-        self.assertGreaterEqual(self.now, 8940)
-        self.assertIn("150", self.said[-1])
-
-    def test_a_missing_run_gets_only_a_short_grace_for_a_tag_pushed_straight_after_its_merge(self) -> None:
-        self.assertFalse(self.wait([channel.MISSING] * 1000))
-        self.assertLessEqual(self.now, 300)
-        self.assertTrue(self.wait([channel.MISSING, channel.MISSING, channel.WAIT, channel.PASS]))
-
-    def test_a_run_that_vanishes_after_being_seen_stays_within_the_missing_grace(self) -> None:
-        self.assertFalse(self.wait([channel.WAIT, *([channel.MISSING] * 1000)]))
-        self.assertLessEqual(self.now, 360)
-
-    def test_a_failing_lookup_is_retried_and_never_counts_as_success(self) -> None:
-        self.assertTrue(self.wait([channel.ChannelError("api down"), channel.PASS]))
-        self.assertFalse(self.wait([channel.ChannelError("api down")] * 1000))
-        self.assertLessEqual(self.now, 9060)
-
-
 class NotesTests(unittest.TestCase):
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
@@ -430,12 +213,9 @@ class NotesTests(unittest.TestCase):
 FAKE_GH = """#!{python}
 import json, os, sys
 folder = os.environ["FAKE_GH"]
-with open(os.path.join(folder, "calls.jsonl"), "a", encoding="utf-8") as log:
-    log.write(json.dumps(sys.argv[1:]) + "\\n")
 with open(os.path.join(folder, "script.json"), encoding="utf-8") as stream:
     script = json.load(stream)
-key = "view" if sys.argv[1:3] == ["release", "view"] else ("jobs" if "/jobs" in sys.argv[2] else "runs")
-reply = script[key]
+reply = script["view"]
 sys.stdout.write(reply.get("stdout", ""))
 sys.stderr.write(reply.get("stderr", ""))
 sys.exit(reply.get("code", 0))
@@ -467,21 +247,6 @@ class CommandLineTests(unittest.TestCase):
         tool.write_text(FAKE_GH.format(python=sys.executable), encoding="utf-8")
         tool.chmod(0o755)
         return {"FAKE_GH": str(folder), "PATH": f"{folder}{os.pathsep}{os.environ['PATH']}"}
-
-    def calls(self) -> list[list[str]]:
-        lines = (self.root / "fake" / "calls.jsonl").read_text(encoding="utf-8").splitlines()
-        return [json.loads(line) for line in lines]
-
-    def ci_run(self, **changes) -> dict:
-        return {"id": 7, "name": "CI", "run_number": 3, "head_sha": self.commit, "event": "push", "head_branch": "main",
-                "status": "completed", "conclusion": "success", **changes}
-
-    def ci_replies(self, runs: list[dict], jobs: list[dict] | None = None) -> dict:
-        jobs = [{"name": name, "status": "completed", "conclusion": "success"} for name in JOBS] if jobs is None else jobs
-        return {"runs": {"stdout": json.dumps({"workflow_runs": runs})}, "jobs": {"stdout": json.dumps({"jobs": jobs})}}
-
-    def ci(self, environment: dict) -> subprocess.CompletedProcess[str]:
-        return self.run_command("ci", "--tag", "v1.0.0", "--repo", "owner/name", "--commit", self.commit, environment=environment)
 
     def test_order_passes_with_exit_zero_and_refuses_with_exit_one(self) -> None:
         git(self.repo, "tag", "-a", "-m", "m", "v2.0.0")
@@ -547,71 +312,17 @@ class CommandLineTests(unittest.TestCase):
         done = self.run_command(*arguments, environment=self.fake_gh(view={"stderr": "HTTP 502: Bad Gateway\n", "code": 1}))
         self.assertEqual((done.returncode, done.stdout), (1, ""))
 
-    @unittest.skipUnless(os.name == "posix", "the fake gh is a POSIX script, and the release job runs on Ubuntu")
-    def test_ci_passes_only_on_success_and_asks_for_exactly_this_commit_on_a_push_to_main(self) -> None:
-        self.assertEqual(self.ci(self.fake_gh(**self.ci_replies([self.ci_run()]))).returncode, 0)
-        runs, jobs = self.calls()
-        self.assertEqual(runs[:1], ["api"])
-        self.assertTrue(runs[1].startswith("repos/owner/name/actions/workflows/ci.yml/runs?"), runs[1])
-        for term in (f"head_sha={self.commit}", "event=push", "branch=main"):
-            self.assertIn(term, runs[1])
-        self.assertTrue(jobs[1].startswith("repos/owner/name/actions/runs/7/jobs?"), jobs[1])
-        self.assertIn("filter=latest", jobs[1])
-
-    @unittest.skipUnless(os.name == "posix", "the fake gh is a POSIX script, and the release job runs on Ubuntu")
-    def test_ci_refuses_a_failed_or_cancelled_run_with_exit_one(self) -> None:
-        for conclusion in ("failure", "cancelled"):
-            with self.subTest(conclusion=conclusion):
-                jobs = [{"name": JOBS[0], "status": "completed", "conclusion": conclusion}]
-                done = self.ci(self.fake_gh(**self.ci_replies([self.ci_run(conclusion=conclusion)], jobs)))
-                self.assertEqual(done.returncode, 1)
-                self.assertIn("publishes nothing", done.stderr)
-        failed = [{"name": name, "status": "completed", "conclusion": "failure"} for name in JOBS]
-        self.assertEqual(self.ci(self.fake_gh(**self.ci_replies([self.ci_run()], failed))).returncode, 1)
-
-    def waited(self, environment: dict) -> tuple[int, float, str]:
-        """Run `ci` in process with a fake clock, so the real limits apply without waiting them out."""
-        now = [0.0]
-
-        def advance(seconds: float) -> None:
-            now[0] += seconds
-
-        output = io.StringIO()
-        with mock.patch.dict(os.environ, environment), mock.patch.object(channel.time, "monotonic", lambda: now[0]), \
-                mock.patch.object(channel.time, "sleep", advance), contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
-            code = channel.main(["ci", "--tag", "v1.0.0", "--repo", "owner/name", "--commit", self.commit])
-        return code, now[0], output.getvalue()
-
-    @unittest.skipUnless(os.name == "posix", "the fake gh is a POSIX script, and the release job runs on Ubuntu")
-    def test_ci_gives_a_missing_run_only_the_real_grace(self) -> None:
-        code, waited, said = self.waited(self.fake_gh(**self.ci_replies([])))
-        self.assertEqual(code, 1)
-        self.assertGreater(waited, 0)
-        self.assertLessEqual(waited, 5 * 60)
-        self.assertIn("gave up", said)
-
-    @unittest.skipUnless(os.name == "posix", "the fake gh is a POSIX script, and the release job runs on Ubuntu")
-    def test_ci_waits_for_a_running_build_only_up_to_the_real_bound(self) -> None:
-        going = self.fake_gh(**self.ci_replies([self.ci_run(status="in_progress", conclusion=None)], []))
-        code, waited, said = self.waited(going)
-        self.assertEqual(code, 1)
-        self.assertGreater(waited, 140 * 60)
-        self.assertLessEqual(waited, 150 * 60)
-        self.assertIn("150 minutes", said)
-
-    @unittest.skipUnless(os.name == "posix", "the fake gh is a POSIX script, and the release job runs on Ubuntu")
-    def test_ci_retries_a_failing_lookup_and_never_reads_it_as_success_or_as_missing(self) -> None:
-        down = {"runs": {"stderr": "HTTP 502\n", "code": 1}, "jobs": {"stderr": "HTTP 502\n", "code": 1}}
-        code, waited, said = self.waited(self.fake_gh(**down))
-        self.assertEqual(code, 1)
-        self.assertGreater(waited, 140 * 60, "a lookup failure is retried, not treated as a missing run")
-        self.assertIn("could not read", said)
-
-    def test_the_wait_log_is_flushed_as_it_goes(self) -> None:
-        stream = mock.Mock()
-        with mock.patch.object(channel.sys, "stdout", stream):
-            channel._say("still waiting")
-        stream.flush.assert_called()
+    def test_there_is_no_command_that_reads_ci(self) -> None:
+        done = self.run_command("ci", "--tag", "v1.0.0", "--repo", "owner/name", "--commit", self.commit)
+        self.assertEqual(done.returncode, 2)
+        self.assertIn("invalid choice: 'ci'", done.stderr)
+        source = SCRIPT.read_text(encoding="utf-8")
+        for withdrawn in ("actions/workflows", "actions/runs", "workflow_runs", "gh run", '"api"', "time.sleep", "wait_for_success"):
+            with self.subTest(withdrawn=withdrawn):
+                self.assertNotIn(withdrawn, source)
+        for name in ("decide", "wait_for_success", "Decision", "REQUIRED_JOBS", "INFORMING_JOBS", "WAIT_LIMIT_SECONDS"):
+            with self.subTest(name=name):
+                self.assertFalse(hasattr(channel, name))
 
 
 class WorkflowWiringTests(unittest.TestCase):
@@ -634,22 +345,20 @@ class WorkflowWiringTests(unittest.TestCase):
         fetch = 'git fetch --force --tags origin "refs/tags/$TAG:refs/tags/$TAG"'
         for line in (fetch, same, order, 'test "$(git cat-file -t "refs/tags/$TAG")" = tag',
                      'git merge-base --is-ancestor "refs/tags/$TAG^{commit}" origin/main',
-                     'run: python scripts/release_channel.py existing --tag "$TAG" >> "$GITHUB_OUTPUT"',
-                     'python scripts/release_channel.py ci --tag "$TAG" --repo "$REPOSITORY" --commit "$(git rev-parse "refs/tags/$TAG^{commit}")"'):
+                     'run: python scripts/release_channel.py existing --tag "$TAG" >> "$GITHUB_OUTPUT"'):
             with self.subTest(line=line):
                 self.assert_line(self.guard, line)
         for line in (fetch, same, order, 'gh release create "$TAG" --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md" $flags "$OUT"/*'):
             with self.subTest(line=line):
                 self.assert_line(self.publish, line)
-        self.assertEqual(self.guard.count("set -euo pipefail"), 2)
+        self.assertEqual(self.guard.count("set -euo pipefail"), 1)
         self.assertEqual(self.publish.count("set -euo pipefail"), 1)
         self.assertNotIn("|| true", self.workflow)
 
     def test_the_conditions_that_decide_whether_a_guard_runs_are_pinned_too(self) -> None:
         self.assert_line(self.guard, "publish: ${{ steps.existing.outputs.publish }}")
-        self.assert_line(self.guard, "if: steps.existing.outputs.publish == 'true'")
         self.assert_line(self.publish, "if: needs.guard.outputs.publish == 'true'")
-        self.assertEqual(len(re.findall(r"(?m)^ *(?:- )?if: ", self.guard)), 1)
+        self.assertEqual(len(re.findall(r"(?m)^ *(?:- )?if: ", self.guard)), 0)
         self.assertEqual(len(re.findall(r"(?m)^ *(?:- )?if: ", self.publish)), 1)
         for forbidden in ("set +e", "exit 0", "always()", "cancelled()", "failure()"):
             with self.subTest(forbidden=forbidden):
@@ -663,7 +372,7 @@ class WorkflowWiringTests(unittest.TestCase):
 
     def test_write_permissions_appear_only_on_the_publish_job(self) -> None:
         self.assertRegex(self.head, r"(?m)^permissions: \{\}$")
-        self.assertRegex(self.guard, r"(?m)^    permissions:\n      contents: read\n      actions: read$")
+        self.assertRegex(self.guard, r"(?m)^    permissions:\n      contents: read\n    outputs:$")
         self.assertNotIn("write", self.guard)
         self.assertRegex(self.publish, r"(?m)^    permissions:\n      contents: write\n      id-token: write\n      attestations: write$")
         self.assertEqual(self.workflow.count(": write"), 3)
@@ -671,17 +380,26 @@ class WorkflowWiringTests(unittest.TestCase):
     def test_no_job_calls_the_matrix(self) -> None:
         self.assertNotIn("uses: ./.github/workflows/ci.yml", self.workflow)
 
+    def test_no_step_reads_ci_or_waits_for_it(self) -> None:
+        for withdrawn in ("release_channel.py ci", "actions: read", "actions/workflows", "actions/runs", "gh run", "gh workflow",
+                          "workflow_run", "check-runs", "check-suites", "commits/$GITHUB_SHA/status", "REPOSITORY/commits"):
+            with self.subTest(withdrawn=withdrawn):
+                self.assertNotIn(withdrawn, self.workflow)
+        self.assertNotRegex(self.workflow, r"(?i)\bCI's (success|result|run)\b|\bwait(s|ing)? (for|on) CI\b|\brequires? CI\b")
+        self.assertEqual(re.findall(r"scripts/release_channel\.py (\w+)", self.workflow),
+                         ["order", "existing", "order", "previous", "notes", "flags"])
+        self.assertEqual(re.findall(r"(?m)^      - name: (.+)$", self.guard), ["Check the tag", "Stop if the release already exists"])
+        # No wait is left for the guard to outlast.
+        self.assertLessEqual(int(re.search(r"(?m)^    timeout-minutes: (\d+)$", self.guard).group(1)), 15)
+
     def test_every_guard_precedes_publishing_and_the_publish_job_needs_the_guard(self) -> None:
         guards = ('test "$(git cat-file -t "refs/tags/$TAG")" = tag', 'git merge-base --is-ancestor "refs/tags/$TAG^{commit}" origin/main',
-                  'scripts/release_channel.py order --tag "$TAG"', 'scripts/release_channel.py existing --tag "$TAG"', "scripts/release_channel.py ci ")
+                  'scripts/release_channel.py order --tag "$TAG"', 'scripts/release_channel.py existing --tag "$TAG"')
         for guard in guards:
             with self.subTest(guard=guard):
                 self.assertIn(guard, self.guard)
         self.assertRegex(self.publish, r"(?m)^    needs: guard$")
         self.assertNotIn("gh release create", self.guard)
-
-    def test_the_guard_checks_the_commit_the_tag_names(self) -> None:
-        self.assertIn('--commit "$(git rev-parse "refs/tags/$TAG^{commit}")"', self.guard)
 
     def test_a_moved_tag_publishes_nothing_because_both_jobs_tie_it_to_the_commit_they_run_on(self) -> None:
         same = 'test "$(git rev-parse "refs/tags/$TAG^{commit}")" = "$GITHUB_SHA"'
@@ -692,7 +410,7 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertLess(self.guard.index(same), self.guard.index('release_channel.py order'))
         self.assertLess(self.publish.index(same), self.publish.index("gh release create"))
 
-    def test_the_publish_step_checks_the_order_again_after_the_wait_and_the_build(self) -> None:
+    def test_the_publish_step_checks_the_order_again_after_the_build(self) -> None:
         recheck = self.publish.index('scripts/release_channel.py order --tag "$TAG"')
         self.assertLess(self.publish.index("scripts/cut-release.py"), recheck)
         self.assertLess(self.publish.index('git fetch --force --tags origin'), recheck)
@@ -700,7 +418,6 @@ class WorkflowWiringTests(unittest.TestCase):
 
     def test_an_existing_release_stops_later_jobs_and_is_never_replaced(self) -> None:
         self.assertIn('scripts/release_channel.py existing --tag "$TAG" >> "$GITHUB_OUTPUT"', self.guard)
-        self.assertLess(self.guard.index("release_channel.py existing"), self.guard.index("scripts/release_channel.py ci "))
         for forbidden in ("--clobber", "gh release upload", "gh release delete"):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, self.workflow)
@@ -724,10 +441,13 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertIn('python-version: "3.11"', ci.split("\n  cut-release:\n", 1)[1])
         self.assertIn('python -m pip install -e ".[test]"', ci.split("\n  cut-release:\n", 1)[1])
 
-    def test_the_guard_can_outlast_its_bounded_wait(self) -> None:
-        minutes = int(re.search(r"(?m)^    timeout-minutes: (\d+)$", self.guard).group(1))
-        self.assertGreater(minutes * 60, channel.WAIT_LIMIT_SECONDS)
-        self.assertEqual(channel.WAIT_LIMIT_SECONDS, 150 * 60)
+    def test_ci_still_defines_the_validate_matrix_and_cut_release(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        systems = json.loads(re.search(r"\) && '(\[[^']*\])' \|\| '", workflow).group(1))
+        self.assertEqual(systems, ["ubuntu-latest", "macos-latest"])
+        self.assertIn('python-version: ["3.11"]', workflow)
+        self.assertEqual(re.findall(r"(?m)^  ([a-z-]+):$", workflow.split("\njobs:\n", 1)[1]), ["validate", "cut-release"])
+        self.assertNotRegex(workflow, r"(?i)gates? (publishing|a release|releases)")
 
     def test_ci_proves_the_release_path_with_nothing_above_read_permission(self) -> None:
         ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
