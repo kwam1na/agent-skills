@@ -617,7 +617,7 @@ shortened one, so the card never falls behind the record.
 
 ### V26-3574. Lead each confirmed note with what was found, and fold the fix beneath it
 
-Lane 3, tier 3, after V26-3565. Test-first. Files: `skills/delivery-views/assets/run-summary.js`,
+Lane 3, tier 3, not blocked. Test-first. Files: `skills/delivery-views/assets/run-summary.js`,
 `skills/delivery-views/assets/run-summary.css` and `tests/delivery_views_page/run-summary-closures.test.mjs`.
 
 Added mid-delivery. The operator approved a mock of the round card's confirmed notes, in line with V26-3555's findings

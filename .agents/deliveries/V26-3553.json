@@ -311,9 +311,6 @@
           "id": "v26-3574-6",
           "text": "c6: The rows' and lenses' open state survives a redraw, as other folds on the card do."
         }
-      ],
-      "after": [
-        "V26-3565"
       ]
     }
   },
