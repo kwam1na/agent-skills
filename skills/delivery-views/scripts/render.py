@@ -646,6 +646,8 @@ def _texts_order(texts: dict, named: list[str]) -> list:
 
 
 COMMIT_ID = re.compile(r"^[0-9a-f]{40}$")
+# A commit named in words, cut short as a person writes one: seven or more hex digits, at least one of them a number.
+SHORT_COMMIT = re.compile(r"\b(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{7,39}\b")
 # The entry that says a review was kept: review.recorded, with its digest and reviewed commit as facts.
 REVIEW_KEPT = ("review.recorded",)
 
@@ -659,7 +661,7 @@ def _kept_review(entry: dict) -> object:
 
 def _facts_named(value: object, commits: list, changes: list) -> None:
     """The commits and change requests a journal entry's facts name, by the registry's types: a commit is a full id, and a
-    change request is the value of a changeRequest field."""
+    change request is the value of a changeRequest field. A commit that a fact's words name cut short is taken too."""
     if isinstance(value, dict):
         for key, inner in value.items():
             if key == "changeRequest" and isinstance(inner, str):
@@ -671,6 +673,9 @@ def _facts_named(value: object, commits: list, changes: list) -> None:
             _facts_named(inner, commits, changes)
     elif isinstance(value, str) and COMMIT_ID.match(value):
         commits.append(value)
+    elif isinstance(value, str):
+        # Words that name a commit cut short, such as a decision's text: the forge opens a short id as it does a full one.
+        commits.extend(SHORT_COMMIT.findall(value))
 
 
 def page_links(document: object, runs: dict, config: dict, reviews: dict | None = None) -> dict:
@@ -694,7 +699,7 @@ def page_links(document: object, runs: dict, config: dict, reviews: dict | None 
     for entry in journal if isinstance(journal, list) else ():
         if _is_object(entry):
             keys.append(entry.get("subject"))
-            # An entry's facts, as an opened beat shows them: each commit and change request it names opens on the forge.
+            # An entry's facts: each commit and change request they name opens on the forge, from the words that name it.
             _facts_named(entry.get("data"), commits, changes)
     for summary in [*runs.values(), *(reviews.values() if isinstance(reviews, dict) else ())]:
         for entry in summary.get("roundDetail", []) if _is_object(summary) else ():

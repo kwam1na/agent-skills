@@ -83,22 +83,32 @@ test("the chapter opens on Story for an open delivery and on Headlines for a clo
   expect(kept.app.querySelector('#happened [data-depth="everything"]').getAttribute("aria-pressed")).toBe("true");
 });
 
-test("a beat opens to its kind's explanation and its entries' facts, with commits and tickets linked", async () => {
+test("a beat has nothing to open: its words link its ticket, its commit in full or cut short, and its change request", async () => {
   const document = storied("break-stops-a-piece");
-  const stop = document.journal.find((entry) => entry.kind === "candidate.handed" && entry.answers);
-  const beat = document.story.beats.find((each) => each.entries.includes(stop.id) && each.form === "entry");
-  const row = `#happened [data-beat="${beat.id}"]`;
-  const [closed, opened] = await open(document, { steps: [{ click: '#happened [data-depth="everything"]' }, { click: `${row} summary` }] }).then((snaps) => [snaps[1], snaps[2]]);
-  expect(closed.app.querySelector(`${row} details`).hasAttribute("open")).toBe(false);
-  const shown = opened.app.querySelector(row);
-  expect(shown.querySelector("details").hasAttribute("open")).toBe(true);
-  expect(shown.querySelector(".beat-explain").textContent).toBe(beat.explain);
-  const facts = Object.fromEntries([...shown.querySelectorAll(".beat-entry > div")].map((pair) => [pair.querySelector("dt").textContent, pair.querySelector("dd")]));
-  expect(facts.head.querySelector("a.fact-ref").getAttribute("href")).toBe(`https://github.com/acme/shop/commit/${stop.data.head}`);
-  expect(facts.piece.querySelector("[data-ticket]").getAttribute("href")).toBe("https://tracker.example/issue/A");
-  expect(facts["change request"].textContent).toBe("#" + stop.data.changeRequest.split("/").pop());
-  // An explanation waits to be asked for.
-  expect(closed.app.querySelector("#happened .beat-explain:not(details:not([open]) *)")).toBeNull();
+  const handed = document.journal.find((entry) => entry.kind === "candidate.handed" && entry.answers);
+  const story = structuredClone(document.story);
+  const beat = story.beats.find((each) => each.entries.includes(handed.id) && each.form === "entry");
+  // Words that name what the facts name: the piece, its head in full and cut short, and its change request.
+  beat.words = { head: `A handed off at ${handed.data.head}`,
+    line: `Reviewed at ${handed.data.head.slice(0, 7)}, in ${handed.data.changeRequest}. Not a commit: 1234567 or decaffe.` };
+  document.story = story;
+  const [, shown] = await open(document, { steps: [{ click: '#happened [data-depth="everything"]' }] });
+  const row = shown.app.querySelector(`#happened [data-beat="${beat.id}"]`);
+  // No beat opens, except the one run of bookkeeping that folds its entries.
+  expect(row.querySelector("details, summary, button, [aria-expanded], [role=button]")).toBeNull();
+  const beats = [...shown.app.querySelectorAll("#happened .beat")];
+  expect(beats.filter((each) => each.querySelector("details")).map((each) => each.getAttribute("data-beat")))
+    .toEqual(story.beats.filter((each) => each.form === "bookkeeping" && each.altitudes.includes("everything")).map((each) => each.id));
+  expect(shown.app.querySelector("#happened .beat-explain, #happened .beat-facts, #happened dl")).toBeNull();
+  const commit = `https://github.com/acme/shop/commit/${handed.data.head}`;
+  const links = [...row.querySelectorAll("a")].map((link) => [link.textContent, link.getAttribute("href")]);
+  expect(links).toEqual([
+    ["A", "https://tracker.example/issue/A"],
+    [handed.data.head.slice(0, 7), commit],
+    [handed.data.head.slice(0, 7), commit],
+    ["#" + handed.data.changeRequest.split("/").pop(), handed.data.changeRequest],
+  ]);
+  expect(row.querySelector(".beat-line").textContent).toContain("Not a commit: 1234567 or decaffe.");
 });
 
 test("a ticket the story's words name is a link to it, as anywhere else on the page", async () => {
@@ -168,16 +178,18 @@ test("a run of bookkeeping is the one run that folds, and opened lists each entr
   const document = storied("bookkeeping-run");
   const [run] = document.story.beats.filter((beat) => beat.form === "bookkeeping");
   const row = `#happened [data-beat="${run.id}"]`;
-  const [, , opened] = await open(document, { steps: [{ click: '#happened [data-depth="everything"]' }, { click: `${row} summary` }] });
+  const [, closed, opened] = await open(document, { steps: [{ click: '#happened [data-depth="everything"]' }, { click: `${row} summary` }] });
+  expect(closed.app.querySelector(`${row} details`).hasAttribute("open")).toBe(false);
+  expect(opened.app.querySelector(`${row} details`).hasAttribute("open")).toBe(true);
   expect([...opened.app.querySelectorAll(`${row} .beat-items li`)].map((line) => line.textContent)).toEqual(
     run.items.map((each) => each.words.head + (each.words.line ? " " + each.words.line : "")));
-  // Its facts are headed by each entry's own words, not the run's.
-  const heads = [...opened.app.querySelectorAll(`${row} .beat-entry-head`)].map((head) => head.textContent);
-  expect(heads.length).toBe(run.items.length);
-  heads.forEach((head, index) => expect(head.startsWith(run.items[index].words.head + " · ")).toBe(true));
+  // Opened, it shows its entries and nothing else: no facts and no explanation.
+  expect(opened.app.querySelector(`${row} .beat-facts, ${row} .beat-explain, ${row} dl`)).toBeNull();
   // Everything else shows its words in full, with nothing to open to read them.
   const lines = [...opened.app.querySelectorAll("#happened .beat:not(.setback) .beat-said")];
   expect(lines.length).toBeGreaterThan(1);
+  expect(opened.app.querySelectorAll("#happened .beat details").length)
+    .toBe(document.story.beats.filter((beat) => beat.form === "bookkeeping" && beat.altitudes.includes("everything")).length);
 });
 
 test("a write to a live record moves the story on an open page without a reload", async () => {

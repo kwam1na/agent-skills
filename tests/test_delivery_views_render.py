@@ -585,6 +585,32 @@ class LinkTests(unittest.TestCase):
         untold = render.line_map_data(document, {}, self.EXAMPLE, theme_key="local", history=None, story=False)
         self.assertNotIn("story", untold["document"])
 
+    def test_a_commit_a_facts_words_name_cut_short_is_linked_and_a_plain_word_or_number_is_not(self) -> None:
+        commits, changes = [], []
+        render._facts_named({"text": "Reverted 1a2b3c4 and deadbeef7, not 1234567, decafbad or 1a2b3c",
+                             "why": "See 0123456789abcdef0123456789abcdef01234567 too."}, commits, changes)
+        # A full id is a commit only as a fact of its own: in words, an id cut short is taken, and a full one is not.
+        self.assertEqual(commits, ["1a2b3c4", "deadbeef7"])
+        self.assertEqual(changes, [])
+        forge = self.EXAMPLE["forges"][0]
+        for sha in ("1a2b3c4", "a" * 39, "a" * 40):
+            with self.subTest(sha=sha):
+                self.assertEqual(views_common.commit_link(sha, forge), f"https://bitbucket.org/example/app/commits/{sha}")
+        for sha in ("1a2b3c", "a" * 41, "1A2B3C4", "1a2b3c4 "):
+            with self.subTest(sha=sha):
+                self.assertIsNone(views_common.commit_link(sha, forge))
+        document = {"state": {"queue": [{"subject": "APP-12"}]}, "journal": [
+            {"id": 1, "at": "2026-11-16T10:00:00Z", "kind": "decision.recorded", "lane": None, "subject": "APP-12",
+             "data": {"text": "Keep 1a2b3c4", "why": "It holds."}}]}
+        self.assertEqual(render.page_links(document, {}, self.EXAMPLE)["commits"],
+                         {"1a2b3c4": "https://bitbucket.org/example/app/commits/1a2b3c4"})
+
+    def test_the_skill_says_a_row_opens_to_nothing_and_its_sentence_links_its_evidence(self) -> None:
+        text = " ".join((Path(__file__).resolve().parents[1] / "skills/delivery-views/SKILL.md").read_text(encoding="utf-8").split())
+        self.assertIn("A row opens to nothing; the ticket, the commit, in full or cut short, and the change request its "
+                      "sentence names are links, and they lead to the evidence. Only a run of bookkeeping folds, listing "
+                      "its entries.", text)
+
     def test_with_no_tracker_or_forge_nothing_is_linked(self) -> None:
         document = {"state": {"queue": [{"subject": "APP-12", "changeRequest": "#34"}]}}
         self.assertEqual(render.page_links(document, {}, config()), {"issues": {}, "changes": {}, "commits": {}})

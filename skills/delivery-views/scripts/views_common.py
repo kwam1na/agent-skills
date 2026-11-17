@@ -306,7 +306,8 @@ def issue_link(key: str, tracker: dict | None) -> str | None:
 
 
 def commit_link(sha: str, forge: dict | None) -> str | None:
-    if forge is None or not COMMIT.match(sha):
+    # A forge opens a commit by its full id or by one cut short, so a link takes either.
+    if forge is None or not re.fullmatch(r"[0-9a-f]{7,40}", sha):
         return None
     return link(forge["commitUrl"], {"repository": forge["repository"], "sha": sha})
 

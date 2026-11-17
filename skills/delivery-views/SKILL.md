@@ -84,6 +84,12 @@ page follows every record write; opened as a file, it shows the record as it
 was rendered. A history renderer declared in the same binding (`render.py
 history`) is linked from its footer.
 
+What happened tells the delivery's story at three depths, one row for each beat: its
+time, its mark, its sentence and its tone's word. A row opens to nothing; the ticket,
+the commit, in full or cut short, and the change request its sentence names are
+links, and they lead to the evidence. Only a run of bookkeeping folds, listing its
+entries.
+
 A piece whose queue or planned element names a `runId` shows that run in its
 detail: its review rounds as a track, and a card for the picked round. With
 `runs` configured, the renderer appends these arguments to its argv and reads

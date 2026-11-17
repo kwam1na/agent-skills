@@ -483,14 +483,6 @@ a.issue-link { color: inherit; cursor: pointer; }
 .beat-line { font-size: 13px; line-height: 19px; color: var(--soft); overflow-wrap: anywhere; }
 .beat-label { font-size: 12px; color: var(--faint); }
 .beat-fold > summary:hover .beat-said { text-decoration: underline; text-decoration-color: var(--hair); text-underline-offset: 4px; }
-/* Opened, a beat shows what its kind of event is, then the facts its entries hold, linked. */
-.beat-facts { display: grid; gap: 10px; padding: 10px 0 4px; }
-.beat-explain { margin: 0; font-size: 13px; line-height: 19px; color: var(--soft); font-style: italic; }
-.beat-entry { display: grid; gap: 3px; margin: 0; font-size: 12px; line-height: 17px; }
-.beat-entry > div { display: grid; grid-template-columns: minmax(96px, max-content) minmax(0, 1fr); gap: 12px; }
-.beat-entry-head { display: block !important; color: var(--soft); }
-.beat-entry dt { color: var(--faint); }
-.beat-entry dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
 .fact-ref { font: 450 12px/1 var(--mono); color: inherit; }
 a.fact-ref { text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); text-underline-offset: 3px; }
 .beat-items { list-style: none; margin: 0; padding: 6px 0 2px 16px; display: grid; gap: 4px; font-size: 12px; line-height: 17px; color: var(--soft); overflow-wrap: anywhere; }

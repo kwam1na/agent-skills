@@ -2818,61 +2818,17 @@
   }
   /** What an entry says, as one line: its story line, or its head when its line is empty. */
   function toldLine(doc, entry) { var words = entryWords(doc, entry); return words.line || words.head; }
-  /** One fact of an entry, linked where it names a commit, a change request or a ticket. */
-  function factValue(value) {
-    if (typeof value === "string") {
-      if (/^[0-9a-f]{40}$/.test(value)) {
-        var href = commitHref(value);
-        var commit = el(href ? "a" : "code", "fact-ref", short(value));
-        if (href) {
-          commit.setAttribute("href", href);
-          commit.setAttribute("target", "_blank");
-          commit.setAttribute("rel", "noopener noreferrer");
-          commit.setAttribute("aria-label", "Open commit " + short(value));
-        }
-        return [commit];
-      }
-      if (/^https?:\/\//.test(value)) { return [changeTarget(value) ? changeLink(value) : value]; }
-      if (Object.prototype.hasOwnProperty.call(LINKS.issues || {}, value)) { return [issue(value)]; }
-      return [value];
+  /** A commit the words name, as a link to it on the forge when the page was given its address: cut short to read. */
+  function commitRef(sha) {
+    var href = commitHref(sha);
+    var commit = el(href ? "a" : "code", "fact-ref", short(sha));
+    if (href) {
+      commit.setAttribute("href", href);
+      commit.setAttribute("target", "_blank");
+      commit.setAttribute("rel", "noopener noreferrer");
+      commit.setAttribute("aria-label", "Open commit " + short(sha));
     }
-    if (typeof value === "boolean") { return [value ? "yes" : "no"]; }
-    if (typeof value === "number") { return [String(value)]; }
-    if (Array.isArray(value)) {
-      if (!value.length) { return ["none"]; }
-      return value.reduce(function (nodes, each, index) { return nodes.concat(index ? [", "] : [], factValue(each)); }, []);
-    }
-    if (isObject(value)) {
-      return Object.keys(value).reduce(function (nodes, key, index) {
-        return nodes.concat(index ? [", "] : [], [factName(key) + " "], factValue(value[key]));
-      }, []);
-    }
-    return ["none"];
-  }
-  // A field's name as a reader says it: "changeRequest" is "change request".
-  function factName(key) { return text(key).replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase(); }
-  /** What an opened beat shows: its kind's explanation, then each entry's facts, as the journal holds them. */
-  function beatFacts(doc, beat) {
-    var box = el("div", "beat-facts");
-    if (text(beat.explain)) { box.appendChild(el("p", "beat-explain", text(beat.explain))); }
-    var byId = Object.create(null);
-    list(doc.journal).forEach(function (entry) { if (isObject(entry)) { byId[String(entry.id)] = entry; } });
-    list(beat.entries).forEach(function (id) {
-      var entry = byId[String(id)];
-      if (!entry) { return; }
-      var facts = el("dl", "beat-entry");
-      if (list(beat.entries).length > 1) {
-        facts.appendChild(add(el("div", "beat-entry-head"), entryWords(doc, entry).head || text(entry.kind), " · ", clock(eventTime(entry)) || "time unknown"));
-      }
-      var data = isObject(entry.data) ? entry.data : null;
-      var shownFacts = data ? Object.keys(data) : [];
-      if (text(entry.subject)) { facts.appendChild(add(el("div"), el("dt", null, "piece"), add.apply(null, [el("dd")].concat(factValue(entry.subject))))); }
-      shownFacts.forEach(function (key) {
-        facts.appendChild(add(el("div"), el("dt", null, factName(key)), add.apply(null, [el("dd")].concat(factValue(data[key])))));
-      });
-      box.appendChild(facts);
-    });
-    return box;
+    return commit;
   }
   /**
    * The story's words, made readable without changing what they say: each ticket id they name links to its ticket, so
@@ -2885,14 +2841,16 @@
     var ids = Object.keys(LINKS.issues || {}).filter(function (id) { return id && said.indexOf(id) >= 0; })
       .sort(function (a, b) { return b.length - a.length; });
     var tickets = ids.length ? "|(?:^|[^\\w-])(" + ids.map(function (id) { return id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }).join("|") + ")(?![\\w-])" : "";
-    var pattern = new RegExp("(\\b[0-9a-f]{40}\\b)|(https?:\\/\\/[^\\s)]+)" + tickets, "g");
+    // A commit is named in full or cut short; a short one links only when it begins exactly one commit the page knows.
+    var pattern = new RegExp("(\\b[0-9a-f]{7,40}\\b)|(https?:\\/\\/[^\\s)]+)" + tickets, "g");
     var nodes = [], last = 0, found;
     while ((found = pattern.exec(said))) {
       var match = found[1] || found[2] || found[3];
       var at = found.index + found[0].indexOf(match);
       if (at > last) { nodes.push(said.slice(last, at)); }
       if (found[1]) {
-        nodes = nodes.concat(factValue(found[1]));
+        var named = found[1].length === 40 ? [found[1]] : Object.keys(LINKS.commits || {}).filter(function (sha) { return sha.indexOf(found[1]) === 0; });
+        nodes.push(named.length === 1 ? commitRef(named[0]) : found[1]);
       } else if (found[2]) {
         // Punctuation that ends the sentence is not part of the address.
         var address = found[2].replace(/[.,;:]+$/, "");
@@ -2913,7 +2871,7 @@
     if (parts) { time.setAttribute("aria-label", clock(instant)); }
     return time;
   }
-  /** One beat as a row: its time, its mark, its words in full, and, opened, its facts and what its kind of event is. */
+  /** One beat as a row: its time, its mark and its words in full. Its ticket, commit and change request are links in the words. */
   function beatRow(doc, story, beat, fresh, depth) {
     var threads = story.threads.filter(function (thread) { return isObject(thread) && thread.id === beat.thread; });
     // Below the headline a setback's entries keep their places in time, tied by a thin line in the margin.
@@ -2921,10 +2879,9 @@
     li.setAttribute("data-beat", text(beat.id));
     if (beat.thread) { li.setAttribute("data-thread", text(beat.thread)); }
     if (beat.form === "thread" && threads.length) { return setbackSheet(doc, beat, threads[0], li); }
-    var head = el("summary", "beat-head");
-    add(head, add(el("span", "beat-words"), add.apply(null, [el("span", "beat-said")].concat(linked(beat.words.head))),
-      text(beat.words.line) ? add.apply(null, [el("span", "beat-line")].concat(linked(beat.words.line))) : null));
-    var fold = add(el("details", "beat-fold"), head);
+    var words = add(el("span", "beat-words"), add.apply(null, [el("span", "beat-said")].concat(linked(beat.words.head))),
+      text(beat.words.line) ? add.apply(null, [el("span", "beat-line")].concat(linked(beat.words.line))) : null);
+    var body = el("div", "beat-body");
     if (beat.form === "bookkeeping") {
       // The one run that folds: opened, it lists each of its entries in that entry's own words.
       var listed = el("ul", "beat-items");
@@ -2933,11 +2890,12 @@
           listed.appendChild(add(el("li"), text(item.words.head), text(item.words.line) ? el("span", "beat-line", " " + text(item.words.line)) : null));
         }
       });
-      fold.appendChild(listed);
+      var fold = add(el("details", "beat-fold"), add(el("summary", "beat-head"), words), listed);
+      body.appendChild(runFold(fold, { key: "beat:" + text(beat.id) + ":" + list(beat.entries)[0] }));
+    } else {
+      body.appendChild(add(el("div", "beat-head"), words));
     }
-    fold.appendChild(beatFacts(doc, beat));
-    add(li, timeOf(beat.at), toneMark(beat.tone), add(el("div", "beat-body"), runFold(fold, { key: "beat:" + text(beat.id) + ":" + list(beat.entries)[0] }),
-      el("span", "beat-label", text(beat.label))));
+    add(li, timeOf(beat.at), toneMark(beat.tone), add(body, el("span", "beat-label", text(beat.label))));
     return li;
   }
   /**
@@ -2956,9 +2914,7 @@
     var cost = thread.state === "closed" && typeof thread.cost === "number"
       ? add(el("div", "setback-cost"), el("b", null, duration(thread.cost)), el("span", null, (clock(thread.openedAt) || "") + " to " + (clock(thread.closedAt) || "")))
       : add(el("div", "setback-cost is-standing"), el("b", null, "Still standing"), el("span", null, "since " + (clock(thread.openedAt) || "a time unknown")));
-    var head = add(el("summary", "beat-head"), add(sheet, words, cost));
-    var fold = add(el("details", "beat-fold"), head, beatFacts(doc, beat));
-    add(li, timeOf(beat.at), toneMark(beat.tone), add(el("div", "beat-body"), runFold(fold, { key: "beat:" + text(beat.id) + ":" + text(thread.opening) })));
+    add(li, timeOf(beat.at), toneMark(beat.tone), add(el("div", "beat-body"), add(el("div", "beat-head"), add(sheet, words, cost))));
     return li;
   }
   // Exactly the beats the story holds at a depth, and among them the tone the reader chose.

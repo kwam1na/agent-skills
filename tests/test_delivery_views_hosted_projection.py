@@ -226,6 +226,9 @@ class ProjectionTests(unittest.TestCase):
         doc['journal'].append({'id': 2, 'at': '2026-11-15T00:01:00Z', 'kind': 'candidate.handed', 'lane': 'one',
                                'subject': 'APP-1', 'data': {'head': 'c' * 40, 'checks': [],
                                                             'changeRequest': 'https://github.com/example/app/pull/99'}})
+        # A commit a fact's words name cut short is no link either: the words are not published.
+        doc['journal'].append({'id': 3, 'at': '2026-11-15T00:02:00Z', 'kind': 'decision.recorded', 'lane': None,
+                               'subject': 'APP-1', 'data': {'text': 'Reverted 1a2b3c4', 'why': 'It broke the build.'}})
         cfg = config(forges=[{'name': 'GitHub', 'repository': 'example/app',
                              'pullUrl': 'https://github.com/{repository}/pull/{number}',
                              'commitUrl': 'https://github.com/{repository}/commit/{sha}'}])
@@ -234,11 +237,14 @@ class ProjectionTests(unittest.TestCase):
         # The commit a run's round reviewed is still linked, from the published run.
         self.assertIn('a' * 40, value['links']['commits'])
         self.assertNotIn('c' * 40, value['links']['commits'])
+        self.assertNotIn('1a2b3c4', value['links']['commits'])
         self.assertNotIn('https://github.com/example/app/pull/99', value['links']['changes'])
         self.assertNotIn('c' * 40, json.dumps(value))
+        self.assertNotIn('1a2b3c4', json.dumps(value))
         # The page offers the same links locally, from the facts its opened beats show.
         local = render.line_map_data(doc, runs, cfg, theme_key='local', history=None)
         self.assertIn('c' * 40, local['links']['commits'])
+        self.assertIn('1a2b3c4', local['links']['commits'])
         self.assertIn('https://github.com/example/app/pull/99', local['links']['changes'])
 
     def test_unsafe_links_are_not_published(self):
