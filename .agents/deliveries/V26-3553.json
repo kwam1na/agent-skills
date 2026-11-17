@@ -158,6 +158,10 @@
         {
           "id": "v26-3565-1",
           "text": "c1: A hand-off whose candidate adds or removes an output a regenerable listing names is refused when its lane doesn't own the listing file, naming the file, the outputs and the grant to ask for, and nothing is recorded."
+        },
+        {
+          "id": "v26-3565-2",
+          "text": "c2: The same hand-off is accepted when the lane owns the listing file, and a hand-off that only refreshes digests is accepted for any lane."
         }
       ],
       "after": [
