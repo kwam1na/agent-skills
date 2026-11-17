@@ -602,6 +602,18 @@ DIVERGENCES = (
         ),
     ),
     (
+        'Result shape',
+        (),
+        (
+            'Still open for this lens, so each listed in `resolvedFindings` exactly once: none.',
+            'Closed in an earlier round, so `resolvedFindings` may leave them out: none.',
+            'Deferred in an earlier round, to re-check as above: none.',
+            'Closed in an earlier round, so never listed in `resolvedFindings`: none.',
+            'The reduce refuses a result that lists one, or that leaves out one still open.',
+        ),
+        "run-delivery names the ids its reduce carries, so a lens never has to work them out from the entries.",
+    ),
+    (
         'Observation binding and selected output',
         (
             'Capture actual review, dissent, clarification and available partial-output bytes before cleanup.',
@@ -848,6 +860,8 @@ KIND_ONLY = (
         'Result shape',
         (
             "A deferred finding doesn't block `aligned`.",
+            'Closed in an earlier round, so `resolvedFindings` may leave them out: none.',
+            'Deferred in an earlier round, to re-check as above: none.',
             (
                 "Every finding this lens raised in an earlier round that is still open must appear; one closed in an "
                 "earlier round may be listed again or left out."
@@ -894,6 +908,8 @@ KIND_ONLY = (
         'Result shape',
         (
             'Every carried finding must appear; a plan review defers none.',
+            'Closed in an earlier round, so never listed in `resolvedFindings`: none.',
+            'The reduce refuses a result that lists one, or that leaves out one still open.',
             (
                 'One entry for every finding this lens raised in an earlier round and has not closed, `{"id", '
                 '"state": "closed|fixed|withdrawn|open", "resolution": "..."}`.'
@@ -1034,7 +1050,7 @@ def _tool():
     return _TOOL
 
 
-def _render(brief_template: str, no_deferrals: bool = False) -> list[str]:
+def _render(brief_template: str, no_deferrals: bool = False, prior: list[dict] | None = None) -> list[str]:
     """run-delivery's brief as run_delivery.py renders it from `brief_template`, for every round it writes: a story's
     assessment, verification and grace rounds, and a plan review's assessment and verification rounds. Only what a
     delivery would read from its release, settings, review folder and git is stood in for."""
@@ -1049,7 +1065,7 @@ def _render(brief_template: str, no_deferrals: bool = False) -> list[str]:
                                        plan="docs/plans/example.md", delivery="EX-1", plan_store=None,
                                        no_deferrals=no_deferrals)
         release = {name: "<value>" for name in ("releaseId", "profile", "archiveSha256", "metadataSha256")}
-        prior = [{"binding": {"round": 1}, "state": "obtained", "result": {"outcome": "aligned"}}]
+        prior = prior or [{"binding": {"round": 1}, "state": "obtained", "result": {"outcome": "aligned"}}]
         story = ("EX-1", "lens.example", "<candidate>", "<tree>", "<merge base>", Path("<checkout>"))
         with mock.patch.multiple(tool, TOOL=root, cfg=lambda: config, release_tuple=lambda: release,
                                  graph_digest=lambda: "<graph>", review_dir=lambda key, root=None: Path(folder),
@@ -1140,6 +1156,62 @@ class NoDeferralsBriefTests(unittest.TestCase):
             self.assertIn(NO_DEFERRALS_EVIDENCE, text)
         for text in [" ".join(text.split()) for text in _render(template)] + under[3:]:  # without it, or a plan review
             self.assertNotIn("nothing left unfixed", text)
+
+
+class CarriedFindingIdsTests(unittest.TestCase):
+    """A verification brief names the ids its reduce will require in `resolvedFindings` and the ones already closed,
+    so a lens never re-lists a finding an earlier round closed."""
+
+    @staticmethod
+    def entry(n: int, findings: list[dict], resolved: list[dict]) -> dict:
+        return {"lens": "lens.example", "binding": {"round": n}, "state": "obtained",
+                "result": {"outcome": "changes-requested", "findings": findings, "resolvedFindings": resolved}}
+
+    def test_a_brief_after_a_closing_round_names_only_the_ids_still_open(self) -> None:
+        tool = _tool()
+        finding = lambda i, **extra: {"id": i, "severity": "P1", "summary": "s", **extra}  # noqa: E731
+        prior = [
+            self.entry(1, [finding("example-r1-1"), finding("example-r1-2"), finding("example-r1-3"),
+                           finding("example-r1-4", severity="P3", state="deferred", deferredIssue="d")], []),
+            self.entry(2, [finding("example-r2-1")],
+                       [{"id": "example-r1-1", "state": "fixed", "resolution": "r"},
+                        {"id": "example-r1-2", "state": "open", "resolution": "r"},
+                        {"id": "example-r1-3", "state": "withdrawn", "resolution": "r"}]),
+        ]
+        renders = [" ".join(text.split()) for text in
+                   _render((ROOT / RUN_DELIVERY_BRIEF).read_text(encoding="utf-8"), prior=prior)]
+        story, plan = renders[1], renders[4]
+        still_open = ("Still open for this lens, so each listed in `resolvedFindings` exactly once: `example-r1-2`, "
+                      "`example-r2-1`.")
+        for text in (story, plan):
+            self.assertIn(still_open, text)
+        self.assertIn("Closed in an earlier round, so never listed in `resolvedFindings`: `example-r1-1`, "
+                      "`example-r1-3`.", plan)
+        self.assertIn("Closed in an earlier round, so `resolvedFindings` may leave them out: `example-r1-1`, "
+                      "`example-r1-3`.", story)
+        self.assertIn("Deferred in an earlier round, to re-check as above: `example-r1-4`.", story)
+        self.assertNotIn("Deferred in an earlier round", plan)
+
+        # What the brief names open is what the plan review's reduce carries, and the closed ids are what it refuses.
+        plan_prior = [{**e, "result": {**e["result"], "findings": [f for f in e["result"]["findings"]
+                                                                   if f["severity"] == "P1"]}} for e in prior]
+        carried = {f["id"] for f in tool.plan_review_open([{"entries": [e]} for e in plan_prior]).values()}
+        self.assertEqual(carried, {"example-r1-2", "example-r2-1"})
+        meta = {"candidate": "c", "tree": "t"}
+        result = {"schemaVersion": "review-lens-result/1", "lensId": "lens.example", "subjectRef": "EX-1.plan",
+                  "candidateRef": "c", "round": 3, "outcome": "aligned", "evidence": ["tree t"], "findings": [],
+                  "resolvedFindings": [{"id": i, "state": "fixed", "resolution": "r"} for i in sorted(carried)]}
+        check = lambda r: tool.plan_check_result(r, subject="EX-1.plan", lens="lens.example",  # noqa: E731
+                                                 short="example", n=3, meta=meta, carried=carried, known={})
+        self.assertEqual(check(result), [])
+        relisted = {**result, "resolvedFindings": [*result["resolvedFindings"],
+                                                   {"id": "example-r1-1", "state": "fixed", "resolution": "r"}]}
+        self.assertEqual(check(relisted),
+                         ["resolvedFindings entry 'example-r1-1' isn't an open finding this lens raised earlier"])
+
+    def test_a_lens_with_nothing_carried_is_told_so(self) -> None:
+        plan = " ".join(_render((ROOT / RUN_DELIVERY_BRIEF).read_text(encoding="utf-8"))[4].split())
+        self.assertIn("Still open for this lens, so each listed in `resolvedFindings` exactly once: none.", plan)
 
 
 class RoundBriefTemplateCorpusTests(unittest.TestCase):
