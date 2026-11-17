@@ -5915,10 +5915,19 @@ class RunDeliveryPlanTests(unittest.TestCase):
                          [(False, False), (False, False)])
         self.assertEqual([(w["subject"], w["cause"], w["on"]) for w in state_tool.waits(read())],
                          [("FX-4", "order", "FX-2"), ("FX-4", "order", "FX-3")])
-        for argv in (["lead-brief"], ["lead-reconcile"]):
-            strip()
-            flow(*argv)
-            self.assertEqual({name: entry(read(), "FX-4").get(name) for name in expected}, expected, argv[0])
+        strip()
+        flow("lead-brief")
+        self.assertEqual({name: entry(read(), "FX-4").get(name) for name in expected}, expected, "lead-brief")
+        # The sweep fills what is missing and keeps what it finds, though the plan says otherwise.
+        state = json.loads((record / "state.json").read_text())
+        for item in state["planned"]:
+            if item["subject"] == "FX-4":
+                item["after"] = ["FX-3"]
+                del item["files"]
+        (record / "state.json").write_text(json.dumps(state, indent=2) + "\n")
+        flow("lead-reconcile")
+        self.assertEqual({name: entry(read(), "FX-4").get(name) for name in expected},
+                         {**expected, "after": ["FX-3"]}, "lead-reconcile")
 
         flow("lead-hold", "FX-4", "--text", "waits for the operator's call on the budget")
         [held] = [e for e in read()["journal"] if e["kind"] == "story.held"]
@@ -5938,6 +5947,7 @@ class RunDeliveryPlanTests(unittest.TestCase):
         [cleared] = [e for e in read()["journal"] if e["kind"] == "story.unheld"]
         self.assertEqual((cleared["subject"], cleared["answers"]), ("FX-4", [held["id"]]))
         self.assertEqual([w for w in state_tool.waits(read()) if w["cause"] == "held"], [])
+        refused("FX-4", "--clear", said="holds no hold on FX-4")
 
         flow("lead-hold", "FX-4", "--text", "the budget again")
         strip()

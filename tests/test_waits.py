@@ -142,6 +142,11 @@ class OrderTests(unittest.TestCase):
                          ("APP-4", "planned", "Waits for APP-4 to land. It hasn't started."))
 
     def test_the_sentence_says_where_the_story_stands_in_the_queue(self) -> None:
+        document = record()
+        planned(document, "APP-1")["noChange"] = {"evidence": "the criteria hold", "baseHead": "a" * 40,
+                                                  "handedAt": "2026-11-17T11:40:00Z"}
+        [wait] = of(document, "APP-2")
+        self.assertEqual(wait["words"], "Waits for APP-1 to land. It waits for the lead to accept it.")
         for stage, fields, said in (("queued", {"pending": True}, "It waits for the lead to accept it."),
                                     ("queued", {}, "It is in the queue."),
                                     ("checking", {}, "It is being checked."),
@@ -191,6 +196,18 @@ class FilesTests(unittest.TestCase):
         queue(document, "APP-1", "checking")
         self.assertEqual(shape(of(document, "APP-3")), [("files", "APP-1")])
 
+    def test_a_stopped_story_is_held_by_the_lane_it_is_now_assigned_to(self) -> None:
+        document = record()
+        queue(document, "APP-1", "stopped", assignedLane="lane-3")
+        self.assertEqual(of(document, "APP-3"), [], "lane 3's own work holds nothing from lane 3")
+        document = record()
+        queue(document, "APP-1", "stopped", assignedLane="lane-1")
+        document["state"]["laneOwnership"]["lane-1"].append("skills/render.py")
+        row(document, "lane-1").update(state="blocked")
+        [wait] = of(document, "APP-3")
+        self.assertEqual((wait["on"], wait["needsSomeone"]), ("APP-1", True))
+        self.assertEqual(wait["words"], "Waits for APP-1 to land. Lane 1 holds skills/render.py for it.")
+
     def test_a_grant_on_paths_the_story_does_not_name_gives_no_wait(self) -> None:
         document = record()
         planned(document, "APP-3")["files"] = ["skills/peers.py", "skills/other.py"]
@@ -224,6 +241,46 @@ class FilesTests(unittest.TestCase):
         document = record()
         planned(document, "APP-3")["after"] = ["APP-4"]
         self.assertEqual(shape(of(document, "APP-3")), [("order", "APP-4"), ("files", "APP-1")])
+
+
+class CarryTests(unittest.TestCase):
+    """A story's `after` and `files` go with it into the queue at hand-off, by the forge's merge the reconcile sweep
+    recovers, and back to the planned work on a rejection, so what waits on it still does until it lands."""
+
+    def setUp(self) -> None:
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.directory = Path(folder.name)
+        state = record()["state"]
+        state["meta"]["handoffsNeedAcceptance"] = True
+        (self.directory / state_tool.STATE_FILE).write_text(state_tool.dumps(state), encoding="utf-8")
+        (self.directory / state_tool.JOURNAL_FILE).touch()
+
+    def shown(self) -> dict:
+        return {"state": state_tool.read_state(self.directory), "journal": state_tool.read_journal(self.directory)}
+
+    def test_a_hand_off_carries_them_into_the_queue_and_a_rejection_carries_them_back(self) -> None:
+        state_tool.handoff(self.directory, lane="lane-2", subject="APP-1", head="c" * 40, change_request="cr-1")
+        [queued] = self.shown()["state"]["queue"]
+        self.assertEqual((queued["subject"], queued["files"]), ("APP-1", ["skills/render.py", "skills/views/card.js"]))
+        self.assertNotIn("after", queued)
+        self.assertEqual(shape(of(self.shown(), "APP-3")), [("files", "APP-1")])
+        state_tool.reject_handoff(self.directory, "APP-1", "not yet")
+        back = planned(self.shown(), "APP-1")
+        self.assertEqual(back["files"], ["skills/render.py", "skills/views/card.js"])
+        self.assertEqual(shape(of(self.shown(), "APP-3")), [("files", "APP-1")])
+
+    def test_a_planned_storys_after_rides_into_the_queue_too(self) -> None:
+        state_tool.handoff(self.directory, lane="lane-1", subject="APP-2", head="c" * 40, change_request="cr-2")
+        queued = next(item for item in self.shown()["state"]["queue"] if item["subject"] == "APP-2")
+        self.assertEqual((queued["after"], queued["files"]), (["APP-1"], ["skills/waits.py"]))
+
+    def test_a_merge_the_sweep_recovers_carries_them_into_the_queue(self) -> None:
+        state = record()["state"]
+        snapshot = {"source": "forge", "items": [{"subject": "APP-1", "state": "merged", "head": "c" * 40}]}
+        lead = state_tool._plan(state, [snapshot], [])[0]
+        queued = next(item for item in lead["queue"] if item["subject"] == "APP-1")
+        self.assertEqual(queued["files"], ["skills/render.py", "skills/views/card.js"])
 
 
 class HeldTests(unittest.TestCase):
@@ -455,6 +512,14 @@ class NextTests(unittest.TestCase):
         self.assertEqual(derived, {"APP-2": [("order", "APP-1")], "APP-3": [("files", "APP-1")]})
         self.assertEqual((ranked["APP-4"]["blocked"], ranked["APP-4"]["waits"]), (False, []))
         self.assertTrue(ranked["APP-4"]["listed"])
+
+    def test_a_wait_the_record_holds_stays_a_blocker_when_the_tracker_calls_its_target_completed(self) -> None:
+        document = record()
+        planned(document, "APP-2")["lane"] = None
+        snapshot = {"items": [{"subject": "APP-1", "state": "completed"}, {"subject": "APP-2", "state": "backlog"}]}
+        entry = self.ranked(document, "lane-1", snapshot)["APP-2"]
+        self.assertEqual((entry["blocked"], shape(entry["waits"])), (True, [("order", "APP-1")]))
+        self.assertIn("blocked by APP-1", entry["reason"])
 
     def test_with_a_snapshot_it_still_adds_the_trackers_blocked_by(self) -> None:
         document = record()
