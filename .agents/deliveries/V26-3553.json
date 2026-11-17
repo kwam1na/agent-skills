@@ -294,6 +294,10 @@
         {
           "id": "v26-3574-2",
           "text": "c2: A lens whose confirmed notes were all fixed shows one collapsed line naming the lens and the count fixed, and opening it lists the rows."
+        },
+        {
+          "id": "v26-3574-3",
+          "text": "c3: A note that ended other than fixed is shown with its ending named, outside any collapsed fixed count."
         }
       ],
       "after": [
