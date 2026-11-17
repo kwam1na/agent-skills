@@ -1669,6 +1669,42 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_waits",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_waits.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_waits.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_waits_review",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_waits_review.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_waits_review.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_workflow_graph_contract",
         "argv": [
           ".venv/bin/python",
