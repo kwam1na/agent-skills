@@ -11576,6 +11576,31 @@ class AddedCatalogueEntryTests(unittest.TestCase):
                          {"tests.test_new": self.entry("tests.test_new")})
         # Where the branch can't be had, nothing is added and nothing escapes.
         self.assertEqual(self.tool.handed_additions(c, "FX-9", "f" * 40, cwd=lead), {})
+        # And lead-accept's acceptance takes the head's entry through that fetch: run in a checkout that lacks the head
+        # again, its --checks accepts the added id.
+        sh("git", "update-ref", "-d", "refs/remotes/origin/claude/FX-2", cwd=lead, check=False)
+        sh("git", "reflog", "expire", "--expire=now", "--all", cwd=lead)
+        sh("git", "gc", "-q", "--prune=now", cwd=lead)
+        self.assertNotEqual(sh("git", "cat-file", "-e", f"{head}^{{commit}}", cwd=lead, check=False).returncode, 0)
+        real_run, real_check_ids, seen = self.tool.run, self.tool.check_ids, []
+
+        def run(argv, cwd=None, check=True, **kw):
+            return real_run(argv, cwd=lead if cwd is None else cwd, check=check, **kw)
+
+        def check_ids(c_, text, what, added=None):
+            seen.append(real_check_ids(c_, text, what, added))
+            raise self.tool.Stop("checked")
+
+        doc = {"state": {"queue": [{"subject": "FX-2", "stage": "handed", "head": head}], "planned": []}}
+        accepting = types.SimpleNamespace(**vars(c), require=lambda key: key)
+        args = argparse.Namespace(requeue=None, key="FX-2", checks="tests.test_run_delivery,tests.test_new",
+                                  full_suite=False)
+        with mock.patch.object(self.tool, "pr_review_config", return_value=None), \
+                mock.patch.object(self.tool, "load_state", return_value=doc), \
+                mock.patch.object(self.tool, "run", run), mock.patch.object(self.tool, "check_ids", check_ids), \
+                self.assertRaises(self.tool.Stop):
+            self.tool.accept_story(accepting, args)
+        self.assertEqual(seen, [["tests.test_run_delivery", "tests.test_new"]])
 
     def test_a_no_change_acceptance_still_refuses_an_unknown_check(self) -> None:
         doc = {"state": {"queue": [], "planned": [{"subject": "FX-2", "noChange": {"baseHead": "a" * 40}}]}}
