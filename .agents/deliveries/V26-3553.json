@@ -149,20 +149,69 @@
           "text": "c5: When the claim is released or the check ends, both sides clear with no action from either lead."
         }
       ]
+    },
+    "V26-3565": {
+      "title": "Catch a provenance listing change at hand-off, not in the merge queue",
+      "lane": "lane-1",
+      "why": "Restored: plan change c13 removed the whole story by mistake when the lead meant to remove only its criterion c3 (lead-plan change --kind removed ignores --criterion). The story stays in the delivery, decoupled from this repository at the operator's request",
+      "criteria": [
+        {
+          "id": "v26-3565-1",
+          "text": "c1: A hand-off whose candidate adds or removes an output a regenerable listing names is refused when its lane doesn't own the listing file, naming the file, the outputs and the grant to ask for, and nothing is recorded."
+        },
+        {
+          "id": "v26-3565-2",
+          "text": "c2: The same hand-off is accepted when the lane owns the listing file, and a hand-off that only refreshes digests is accepted for any lane."
+        },
+        {
+          "id": "v26-3565-4",
+          "text": "c4: The lane brief names each regenerable listing the binding declares, and says that adding or removing an output it lists needs that file's owner; with no listings declared it says nothing."
+        }
+      ],
+      "after": [
+        "V26-3426"
+      ]
+    },
+    "V26-3566": {
+      "title": "Let lead-plan drop one criterion, and refuse a flag a change doesn't use",
+      "lane": "lane-1",
+      "why": "The operator asked to add it to this delivery: plan change c13 removed V26-3565 when the lead meant to drop one criterion, because lead-plan's removed kind ignores --criterion and no kind drops a single criterion",
+      "criteria": [
+        {
+          "id": "v26-3566-1",
+          "text": "c1: A lead-plan change given a flag its kind doesn't use is refused, naming the flag, and nothing is written."
+        },
+        {
+          "id": "v26-3566-2",
+          "text": "c2: --kind removed with --criterion drops only that criterion, records the change with its reason, and leaves the story and its other criteria in place."
+        },
+        {
+          "id": "v26-3566-3",
+          "text": "c3: Dropping a criterion the story lacks, or its last one, is refused and nothing is written."
+        },
+        {
+          "id": "v26-3566-4",
+          "text": "c4: The plan chapter shows the dropped criterion struck through, with its reason."
+        }
+      ],
+      "after": [
+        "V26-3565"
+      ]
     }
   },
   "finish": [
     {
       "id": "stories",
       "label": "Every story",
-      "text": "Each of the four stories lands on main through the merge queue, or closes with its reason recorded",
+      "text": "Each of the six stories lands on main through the merge queue, or closes with its reason recorded",
       "covers": {
         "criteria": "all",
         "proofs": [
           "review",
           "merged"
         ]
-      }
+      },
+      "at": "2026-11-17T19:32:32.035055Z"
     },
     {
       "id": "local-suite",

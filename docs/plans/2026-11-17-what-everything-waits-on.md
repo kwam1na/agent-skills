@@ -529,6 +529,43 @@ Acceptance criteria:
 - `c4` Both sides read it from the same facts, in the shape the epic settles for "waits on".
 - `c5` When the claim is released or the check ends, both sides clear with no action from either lead.
 
+### V26-3565. Catch a provenance listing change at hand-off, not in the merge queue
+
+Lane 1, tier 3, after V26-3426. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`,
+`skills/orchestrate-work/scripts/merge_queue.py`, `skills/run-delivery/templates/lane-brief.md`,
+`skills/run-delivery/SKILL.md`, `skills/run-delivery/references/adopting.md`, `tests/test_run_delivery.py` and
+`tests/test_merge_queue.py`.
+
+Added mid-delivery. The merge queue stopped V26-3552 after its acceptance, because the story added a shipped file to
+`provenance.lock.json`'s listing and its lane didn't own the lock (decision 131). Nothing caught it earlier. The
+operator asked to add the fix to this delivery.
+
+`handoff` runs the queue's listing check (`check_shared_outputs` and `check_listing`) before it records anything. It
+refuses a candidate that changes a regenerable listing its lane doesn't own, with the queue's guidance: the file, the
+outputs added or removed, and the grant to ask the lead for. It reuses the queue's code rather than copying it. A
+digest-only refresh stays free for any lane. The lane brief states the rule once. It names each regenerable listing
+from the binding's `regenerable.listings`, never this repository's `provenance.lock.json` by name, and says nothing
+when the binding declares none.
+
+The story stays independent of this repository's layout. `provenance.lock.json` is only the case that exposed the
+gap. A `lead-assign` warning was considered and left out: no binding says which new files a listing will take on, so
+the warning would either hard-code this repository's rule or warn on every new file.
+
+### V26-3566. Let lead-plan drop one criterion, and refuse a flag a change doesn't use
+
+Lane 1, tier 4, after V26-3565. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`,
+`skills/delivery-views/assets/line-map.js`, `skills/run-delivery/SKILL.md`, `tests/test_run_delivery.py` and
+`tests/delivery_views_page/line-map-plan.test.mjs`.
+
+Added mid-delivery. Plan change c13 removed V26-3565 when the lead meant to drop one of its criteria:
+`lead-plan change --kind removed` removes whole stories and silently ignores `--criterion`, and no kind drops a
+single criterion. The operator asked to add the fix to this delivery.
+
+`lead-plan change` refuses any flag its kind doesn't use, naming the flag, before it writes anything. `--kind removed`
+with `--criterion` drops that one criterion as a recorded change with its reason. It refuses a criterion the story
+lacks, and the story's last criterion. The plan chapter strikes a dropped criterion through and shows its reason, as
+it does for a removed story.
+
 ## Calls made
 
 The operator settled these on 2026-11-17, before drafting.
