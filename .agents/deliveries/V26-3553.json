@@ -281,13 +281,47 @@
       "after": [
         "V26-3554"
       ]
+    },
+    "V26-3574": {
+      "title": "Lead each confirmed note with what was found, and fold the fix beneath it",
+      "lane": "lane-3",
+      "why": "The operator approved a mock of the round card's confirmed notes, aligned with V26-3555's findings redesign, in this delivery",
+      "criteria": [
+        {
+          "id": "v26-3574-1",
+          "text": "c1: A confirmed note's row leads with its finding's summary and priority from the round that raised it. Its resolution, evidence and id show only when the row is opened."
+        },
+        {
+          "id": "v26-3574-2",
+          "text": "c2: A lens whose confirmed notes were all fixed shows one collapsed line naming the lens and the count fixed, and opening it lists the rows."
+        },
+        {
+          "id": "v26-3574-3",
+          "text": "c3: A note that ended other than fixed is shown with its ending named, outside any collapsed fixed count."
+        },
+        {
+          "id": "v26-3574-4",
+          "text": "c4: The confirmation sentence counts each ending, naming the commits for fixed notes."
+        },
+        {
+          "id": "v26-3574-5",
+          "text": "c5: When the raising round's finding isn't on the page, the row shows the resolution as its line, as it does today."
+        },
+        {
+          "id": "v26-3574-6",
+          "text": "c6: The rows' and lenses' open state survives a redraw, as other folds on the card do."
+        }
+      ],
+      "after": [
+        "V26-3565"
+      ]
     }
   },
   "finish": [
     {
       "id": "stories",
       "label": "Every story",
-      "text": "Each of the eight stories lands on main through the merge queue, or closes with its reason recorded",
+      "text": "Each of the nine stories lands on main through the merge queue, or closes with its reason recorded",
       "covers": {
         "criteria": "all",
         "proofs": [
@@ -295,7 +329,7 @@
           "merged"
         ]
       },
-      "at": "2026-11-17T20:12:50.628889Z"
+      "at": "2026-11-17T22:38:31.903933Z"
     },
     {
       "id": "local-suite",
