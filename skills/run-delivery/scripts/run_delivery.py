@@ -7194,7 +7194,7 @@ def lead_sync(args) -> None:
         # The base's merge slot first, which every delivery on this machine shares, then this delivery's queue lock.
         with delivery_state.file_lock(supervisor_lock_path(c)), \
                 delivery_state.merge_slot(c.root, c.base_branch, delivery=c.delivery, timeout=args.wait_seconds,
-                                          doing={"what": "sync"}), \
+                                          doing={"what": "sync"}, on_wait=lambda: say_peer_waits(c)), \
                 delivery_state.file_lock(c.state / delivery_state.QUEUE_LOCK, timeout=args.wait_seconds):
             published = remote_head(c.base_branch)
             if published not in (intent["oldHead"], intent.get("preparedHead")):
@@ -7305,7 +7305,7 @@ def lead_upgrade_writer(args) -> None:
         with delivery_state.file_lock(supervisor_lock_path(c)), \
                 delivery_state.merge_slot(c.root, c.base_branch, delivery=c.delivery,
                                           timeout=float(c.binding.get("checkTimeoutSeconds", 0)),
-                                          doing={"what": "upgrade"}):
+                                          doing={"what": "upgrade"}, on_wait=lambda: say_peer_waits(c)):
             result = state_tool("writer-upgrade", "--writer", "lead", "--expected", args.expected,
                                 "--reason", args.reason)
             pinned = json.loads(result.stdout)["state"]["meta"]["writerGeneration"]
@@ -9909,6 +9909,13 @@ def write_peer_waits(c) -> str:
     staging.write_text(json.dumps(written, indent=2) + "\n")
     os.replace(staging, path)
     return f"{len(found['waits'])} wait(s) on other deliveries, {len(found['waitedOn'])} on this one"
+
+
+def say_peer_waits(c) -> None:
+    """Write this delivery's waits on its peers once, for a lead command that parks the supervisor and then waits for
+    the merge slot: no pass runs while it waits, so the command says its own wait. A write that fails stops nothing."""
+    with contextlib.suppress(Stop, ValueError, OSError, KeyError, TypeError, subprocess.SubprocessError):
+        write_peer_waits(c)
 
 
 def removed_subjects(c) -> set[str]:

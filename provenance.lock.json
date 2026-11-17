@@ -534,7 +534,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "e56a3a78ec1b920585f1cf172e9c1973e5adf3783c3055497870254aeb15d3cb"
+          "sha256": "22f63ed66804113c8bdc6a612b77edc5a020596b407730a6d8ca9ef92a927b49"
         },
         {
           "path": "skills/orchestrate-work/scripts/journal_words.py",
@@ -554,7 +554,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/render_state.py",
-          "sha256": "b75a799122bb9a9fdf5caee868a1313947201502750f3c1d322bed4445abee6e"
+          "sha256": "c2fbec1fea942a6d88f9e87f17f4cbd662045ad0a4730f2954e241df6c870ce8"
         }
       ],
       "owner": "delivery-agent/user-delegated",
@@ -1123,7 +1123,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "148cefd4895041589a22c061b3b171f6714c98697bfe15262b9fba60fb6e7ab4"
+          "sha256": "597ae3cadae0e0bd8f9983054b410b39ffcee27e93dcdd132f5d48785759e510"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",

@@ -7346,6 +7346,43 @@ class SlotDoingTests(MergeQueueTestCase):
         self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
         self.assertEqual(state_tool.slot_parties(lock), {"holder": None, "waiters": []})
 
+    def test_each_queue_command_says_what_it_holds_the_slot_for(self) -> None:
+        self.assertEqual({command: queue.slot_doing(command, ["a", "b"]) for command in ("run", "batch", "check", "merge",
+                                                                                         "release", "evidence")},
+                         {"run": {"what": "check", "subject": "a"}, "batch": {"what": "check", "subject": "a"},
+                          "check": {"what": "check", "subject": "a"}, "merge": {"what": "merge", "subject": "a"},
+                          "release": {"what": "release"}, "evidence": None})
+        self.assertIsNone(queue.slot_doing("run", []))
+
+    def test_a_holder_file_whose_process_is_gone_holds_nothing_and_a_waiter_is_told_once(self) -> None:
+        adopter = self.adopter()
+        lock = state_tool.merge_slot_path(adopter.operator, "main")
+        gone = subprocess.Popen([PY, "-c", "pass"])
+        gone.wait()
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        (lock.parent / "main.holder").write_text(json.dumps({"delivery": "Delivery C", "pid": gone.pid, "since": "x"}))
+        self.assertEqual(state_tool.slot_parties(lock), {"holder": None, "waiters": []})
+        ready, release = self.directory / "held", self.directory / "release"
+        holder = subprocess.Popen([PY, "-B", "-c", HOLD_SLOT, str(SCRIPTS), str(adopter.operator), "main", "Delivery C",
+                                   str(ready), str(release)])
+        self.addCleanup(lambda: (holder.poll() is None and holder.kill(), holder.wait(30)))
+        deadline = time.monotonic() + 30
+        while not ready.exists():
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.02)
+        told: list = []
+        # Three tries within the wait, then past it: the command is told once, its waiter file already written.
+        ticks = iter([0, 0, 0, 0])
+        with self.assertRaises(state_tool.StateError) as raised:
+            with state_tool.merge_slot(adopter.operator, "main", delivery="Fixture delivery", timeout=1,
+                                       on_wait=lambda: told.append(state_tool.slot_parties(lock)["waiters"]),
+                                       sleep=lambda seconds: None, clock=lambda: next(ticks, 5)):
+                pass
+        self.assertEqual(raised.exception.code, "slot_held")
+        self.assertEqual(len(told), 1)
+        self.assertEqual([waiter["pid"] for waiter in told[0]], [os.getpid()])
+        release.write_text("")
+
     def test_a_doing_outside_the_six_is_refused_before_the_slot_is_taken(self) -> None:
         adopter = self.adopter()
         lock = state_tool.merge_slot_path(adopter.operator, "main")

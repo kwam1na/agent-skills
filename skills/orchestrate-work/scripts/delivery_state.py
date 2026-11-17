@@ -515,7 +515,8 @@ def slot_doing(lock: Path, doing: dict) -> None:
 @contextlib.contextmanager
 def merge_slot(repository: Path, base: str, *, delivery: str, timeout: float, poll: float = SLOT_POLL_SECONDS,
                after_merge: bool = False, sleep: Callable[[float], None] = time.sleep,
-               clock: Callable[[], float] = time.monotonic, doing: dict | None = None) -> Iterator[Path]:
+               clock: Callable[[], float] = time.monotonic, doing: dict | None = None,
+               on_wait: Callable[[], None] | None = None) -> Iterator[Path]:
     """Hold ``base``'s merge slot, shared by every delivery on this machine, for the duration of one command.
 
     A command that finds it held writes its pid in the slot's ``waiting`` folder, tries again every ``poll``
@@ -523,8 +524,9 @@ def merge_slot(repository: Path, base: str, *, delivery: str, timeout: float, po
     ``slot_held`` naming the holder. ``after_merge``, for a queue whose last command merged, waits one poll first
     when another live command waits, and never more, so the waiter goes first. The holder file names the holder's
     delivery, pid and start, and the waiter's file the same; ``doing``, ``{what, subject?}`` with ``what`` one of
-    ``SLOT_DOING``, says in both what the command holds it for. Only the lock, which the operating system releases
-    with a dead holder, decides.
+    ``SLOT_DOING``, says in both what the command holds it for. ``on_wait`` is called once, its waiter file written,
+    when the command first finds the slot held. Only the lock, which the operating system releases with a dead
+    holder, decides.
     """
     doing = _slot_doing(doing)
     lock = merge_slot_path(repository, base)
@@ -551,6 +553,8 @@ def merge_slot(repository: Path, base: str, *, delivery: str, timeout: float, po
                     mine = waiting / str(own)
                     mine.write_text(json.dumps({"pid": own, "delivery": delivery, "since": now(),
                                                 **({"doing": doing} if doing else {})}) + "\n", encoding="utf-8")
+                    if on_wait is not None:
+                        on_wait()
                 if clock() >= deadline:
                     raise StateError("slot_held", f"the merge slot for {base} is held by "
                                                   f"{holder_words(slot_holder(lock))}")
@@ -4243,13 +4247,28 @@ def peer_waits(document: dict, delivery: str, peers: list[dict], slot: dict, *,
                             "by": [{"delivery": peer["key"], "subject": entry["subject"]}],
                             "words": wait_said(table, "holding", "claim", {"peer": peer["key"], "story": entry["subject"],
                                                                          "files": hits})})
-    holder = slot.get("holder") if isinstance(slot.get("holder"), dict) else None
+    # The queue names a delivery in the slot's files by its record's headline, a lead command by its key: both are it.
+    def headline(record: object) -> object:
+        meta = record.get("meta") if isinstance(record, dict) else None
+        return meta.get("headline") if isinstance(meta, dict) else None
+
+    # A key always names its own delivery, whatever headline another delivery's record has.
+    named = {**{headline(peer.get("state")): peer["key"] for peer in peers}, headline(state): delivery,
+             **{peer["key"]: peer["key"] for peer in peers}, delivery: delivery}
+    named.pop(None, None)
+
+    def party(said: object) -> dict | None:
+        if not isinstance(said, dict):
+            return None
+        return {**said, "delivery": named.get(said.get("delivery"), said.get("delivery"))}
+
+    holder = party(slot.get("holder"))
     if holder is not None:
         held = holder.get("doing") if isinstance(holder.get("doing"), dict) else {}
         doing = wait_said(table, "doing", "slot", {"what": held.get("what"), **({"subject": held["subject"]}
                                                                                if held.get("subject") else {})})
-        for waiter in slot.get("waiters") or []:
-            if not isinstance(waiter, dict) or waiter.get("delivery") == holder.get("delivery"):
+        for waiter in map(party, slot.get("waiters") or []):
+            if waiter is None or waiter.get("delivery") == holder.get("delivery"):
                 continue
             wanted = waiter.get("doing") if isinstance(waiter.get("doing"), dict) else {}
             piece = wanted.get("subject") if wanted.get("what") in ("check", "merge") else None

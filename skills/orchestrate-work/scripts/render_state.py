@@ -551,24 +551,32 @@ PEER_WAITS_FILE = "peer-waits.json"
 PEER_WAITS_LIMIT_BYTES = 256 * 1024
 
 
-def with_peer_waits(document: dict, directory: Path, *, clock: object = None) -> dict:
-    """The record with the waits on other deliveries ``peer-waits.json`` holds added to its own, while the file is
-    fresh. With no file, a stale one or one that can't be read, it is the record as it was: it says nothing about other
-    deliveries."""
+def fresh_peer_waits(directory: Path, *, clock: object = None) -> dict | None:
+    """``peer-waits.json``'s waits and waitedOn while the file is fresh, or None for no file, a stale one or one that
+    can't be read."""
     path = directory / PEER_WAITS_FILE
     try:
         if path.is_symlink() or not path.is_file() or path.stat().st_size > PEER_WAITS_LIMIT_BYTES:
-            return document
+            return None
         written = json.loads(path.read_text(encoding="utf-8"))
         stale = datetime.datetime.strptime(written["staleAfter"], "%Y-%m-%dT%H:%M:%SZ").replace(
             tzinfo=datetime.timezone.utc)
         moment = clock() if callable(clock) else datetime.datetime.now(datetime.timezone.utc)
         if written.get("spec") != "delivery-peer-waits/1" or stale <= moment:
-            return document
-        said = {name: [wait for wait in written.get(name) or [] if isinstance(wait, dict)
+            return None
+        return {name: [wait for wait in written.get(name) or [] if isinstance(wait, dict)
                        and isinstance(wait.get("subject"), str) and isinstance(wait.get("words"), str)]
                 for name in ("waits", "waitedOn")}
     except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def with_peer_waits(document: dict, directory: Path, *, clock: object = None) -> dict:
+    """The record with the waits on other deliveries ``peer-waits.json`` holds added to its own, while the file is
+    fresh. With no file, a stale one or one that can't be read, it is the record as it was: it says nothing about other
+    deliveries."""
+    said = fresh_peer_waits(directory, clock=clock)
+    if said is None:
         return document
     added = {name: [*(document.get(name) or []), *said[name]] for name in said if said[name]}
     return {**document, **added}
@@ -1797,7 +1805,10 @@ class LiveView:
 
     def watch_key(self) -> tuple:
         keys = []
-        for name in (CHANGES_FILE, STATE_FILE, JOURNAL_FILE, PLAN_FILE):
+        for name in (CHANGES_FILE, STATE_FILE, JOURNAL_FILE, PEER_WAITS_FILE, PLAN_FILE):
+            if name == PLAN_FILE:
+                # The waits on other deliveries go when their file goes stale, though nothing writes it.
+                keys.append(fresh_peer_waits(self.directory) is not None)
             try:
                 stat = (self.directory / name).stat()
                 keys.append((stat.st_size, stat.st_mtime_ns))
