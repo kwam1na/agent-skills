@@ -157,7 +157,23 @@
       "criteria": [
         {
           "id": "v26-3564-1",
-          "text": "A pushed change outside a lane's holdings appears in Needs you as it happens, and a delivery whose lanes share files by lines offers a view of who holds each file and where each lane's changes sit"
+          "text": "c1: A pushed change to a file its lane doesn't hold appears in \"Needs you\" naming the lane and file, and clears when the change is gone or the file is granted."
+        },
+        {
+          "id": "v26-3564-2",
+          "text": "c2: A change to a regenerable shared file raises nothing."
+        },
+        {
+          "id": "v26-3564-3",
+          "text": "c3: With region claims in the record, the live page offers the files view, and its shelf, solid and hollow spines, shared splits and file reading match the record and the lanes' branches."
+        },
+        {
+          "id": "v26-3564-4",
+          "text": "c4: With no region claims, the page shows no files view."
+        },
+        {
+          "id": "v26-3564-5",
+          "text": "c5: A lane branch that can't be read leaves the view and the item saying so, rather than showing stale changes as current."
         }
       ],
       "after": [
@@ -170,7 +186,7 @@
     {
       "id": "stories",
       "label": "Every story",
-      "text": "Each of the four stories lands on main through the merge queue, or closes with its reason recorded",
+      "text": "Each of the five stories lands on main through the merge queue, or closes with its reason recorded",
       "covers": {
         "criteria": "all",
         "proofs": [
