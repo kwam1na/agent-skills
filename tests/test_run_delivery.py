@@ -11547,6 +11547,52 @@ class AddedCatalogueEntryTests(unittest.TestCase):
                       "tests.test_nowhere (the base's has tests.test_run_delivery; the head adds tests.test_new)", said)
         self.assertIn("the head adds none)", self.refusal("tests.test_nowhere", {}))
 
+    def test_an_added_entry_is_accepted_when_the_base_has_no_catalogue(self) -> None:
+        self.write(self.head_adds(self.entry("tests.test_new")))
+        commit(self.repo, "adds one")
+        self.c.binding["selection"].pop("catalogue")
+        added = self.added()
+        self.assertEqual(list(added), ["tests.test_run_delivery", "tests.test_new"])
+        self.assertEqual(self.tool.check_ids(self.c, "tests.test_new", "--checks", added), ["tests.test_new"])
+        with self.assertRaises(self.tool.Stop) as stop:
+            self.tool.check_ids(self.c, "tests.test_new", "--checks")
+        self.assertIn("declares no selection.catalogue", str(stop.exception))
+
+    def test_acceptance_fetches_the_story_s_branch_when_the_handed_head_is_not_in_its_checkout(self) -> None:
+        origin = self.repo.parent / (self.repo.name + "-origin.git")
+        lead = self.repo.parent / (self.repo.name + "-lead")
+        self.addCleanup(shutil.rmtree, origin, True)
+        self.addCleanup(shutil.rmtree, lead, True)
+        sh("git", "clone", "-q", "--bare", self.repo, origin)
+        sh("git", "clone", "-q", origin, lead)
+        self.write(self.head_adds(self.entry("tests.test_new")))
+        commit(self.repo, "the story adds its entry")
+        head = sh("git", "rev-parse", "HEAD", cwd=self.repo).stdout.strip()
+        sh("git", "push", "-q", origin, "HEAD:refs/heads/claude/FX-2", cwd=self.repo)
+        missing = sh("git", "cat-file", "-e", f"{head}^{{commit}}", cwd=lead, check=False)
+        self.assertNotEqual(missing.returncode, 0, "the lead's checkout already holds the head")
+        c = types.SimpleNamespace(binding=self.c.binding, remote="origin", branch=lambda key: f"claude/{key}")
+        self.assertEqual(self.tool.handed_additions(c, "FX-2", head, cwd=lead),
+                         {"tests.test_new": self.entry("tests.test_new")})
+        # Where the branch can't be had, nothing is added and nothing escapes.
+        self.assertEqual(self.tool.handed_additions(c, "FX-9", "f" * 40, cwd=lead), {})
+
+    def test_a_no_change_acceptance_still_refuses_an_unknown_check(self) -> None:
+        doc = {"state": {"queue": [], "planned": [{"subject": "FX-2", "noChange": {"baseHead": "a" * 40}}]}}
+        c = types.SimpleNamespace(binding=self.c.binding, require=lambda key: key)
+        settled = []
+        args = argparse.Namespace(requeue=None, key="FX-2", checks="tests.test_nope", full_suite=False)
+        with mock.patch.object(self.tool, "pr_review_config", return_value=None), \
+                mock.patch.object(self.tool, "load_state", return_value=doc), \
+                mock.patch.object(self.tool, "accept_no_change", lambda *a: settled.append(a[1])):
+            with self.assertRaises(self.tool.Stop) as stop:
+                self.tool.accept_story(c, args)
+            self.assertIn("tests.test_nope", str(stop.exception))
+            self.assertEqual(settled, [])
+            self.tool.accept_story(c, argparse.Namespace(**{**vars(args), "checks": "tests.test_run_delivery"}))
+            self.tool.accept_story(c, argparse.Namespace(**{**vars(args), "checks": None}))
+        self.assertEqual(settled, ["FX-2", "FX-2"])
+
     def test_a_binding_checks_id_or_a_base_id_is_never_an_added_entry(self) -> None:
         redefined = self.entry("tests.test_run_delivery", "tools/other.py")
         self.write(self.head_adds(self.entry("validate-registry"), self.entry("full-suite")))

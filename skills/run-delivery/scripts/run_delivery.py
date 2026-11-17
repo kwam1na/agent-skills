@@ -4377,6 +4377,14 @@ def catalogue_additions(c, ref: str, cwd: Path | None = None) -> dict[str, dict]
     return added
 
 
+def handed_additions(c, key: str, head: str, cwd: Path | None = None) -> dict[str, dict]:
+    """The entries the handed head's committed binding adds to the catalogue, read in the checkout at `cwd` once the
+    head's objects are there: the story's branch is fetched when they aren't."""
+    if run(["git", "cat-file", "-e", f"{head}^{{commit}}"], cwd=cwd, check=False).returncode != 0:
+        run(["git", "fetch", "-q", c.remote, c.branch(key)], cwd=cwd, check=False)
+    return catalogue_additions(c, head, cwd=cwd)
+
+
 def check_ids(c, text: str, what: str, added: dict[str, dict] | None = None) -> list[str]:
     """A comma-separated list of catalogue ids, each once, in the order given: the base's catalogue ids and the
     entries the candidate adds (`catalogue_additions`); refused naming any other, and both catalogues."""
@@ -7786,18 +7794,14 @@ def accept_story(c, args) -> None:
     item = next((q for q in doc["state"]["queue"] if q["subject"] == key), None)
     waiting = next((p for p in doc["state"].get("planned", []) if p["subject"] == key and p.get("noChange")), None)
     if not item and waiting:
+        if args.checks is not None:
+            check_ids(c, args.checks, "--checks")  # refused as before; a no-change story runs no checks
         accept_no_change(c, key, waiting)
         return
     if not item:
         raise Stop(f"{key} is not in the queue; the lane has not handed it off")
-    # The entries the handed head's committed binding adds to the catalogue, read in this checkout once the head's
-    # objects are here: the lane's branch is fetched when they aren't.
     merged = item["stage"] == "merged"
-    added: dict[str, dict] = {}
-    if not merged and lead_selects(c) and not args.full_suite:
-        if run(["git", "cat-file", "-e", f"{item['head']}^{{commit}}"], check=False).returncode != 0:
-            run(["git", "fetch", "-q", c.remote, c.branch(key)], check=False)
-        added = catalogue_additions(c, item["head"])
+    added = handed_additions(c, key, item["head"]) if not merged and lead_selects(c) and not args.full_suite else {}
     chosen = check_ids(c, args.checks, "--checks", added) if args.checks is not None else None
     problems, decisions = [], []
     # Work merged outside the queue skipped the lead's acceptance; its decisions can still be recorded, once.
