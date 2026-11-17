@@ -529,34 +529,6 @@ Acceptance criteria:
 - `c4` Both sides read it from the same facts, in the shape the epic settles for "waits on".
 - `c5` When the claim is released or the check ends, both sides clear with no action from either lead.
 
-### V26-3564. Say when a lane changes a file it doesn't hold, and show shared files when lanes split them
-
-Lane 1, tier 3, after V26-3552 and V26-3426. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`,
-`skills/orchestrate-work/references/wait-words.json`, `skills/delivery-views/scripts/render.py`,
-`skills/delivery-views/assets/line-map.js`, `skills/delivery-views/assets/line-map.css`,
-`tests/test_lane_work.py`, `tests/delivery_views_page/line-map-files.test.mjs` and
-`tests/test_run_delivery_supervisor.py`.
-
-Added mid-delivery: the operator saw file ownership split by lines in this delivery with no view of it, and a lane
-learning of a change outside its ground only at a refused hand-off. They asked for the drift check in "Needs you"
-and an opt-in files view.
-
-Each supervisor pass reads each assigned lane's pushed story branch against the delivery base and writes
-`lane-work.json` beside the record, derived and with `staleAfter`, like `needs-you.json`. It holds each changed
-file, and each change's position, size and enclosing name, taken from the new side. "Needs you" gains one shown,
-non-holding item per change outside its lane's holdings, worded from `wait-words.json`. `provenance.lock.json` and
-other regenerable shared files are exempt. When the record holds region claims, the "Who's doing what" chapter
-offers a closed "Who holds which files" view, in the design the operator approved from a live mock:
-- a shelf per area of the repository, with each held file a spine in its lane's colour;
-- a spine is solid where the lane has changed the file, and hollow where it hasn't;
-- a shared file's spine is split by line stretches;
-- a readout line names the file and its holder;
-- clicking a shared file opens a reading of it: a ruler with each lane's stretches and changes, and per lane, the
-  functions it changed, with their sizes.
-
-With no region claims, the page shows none of this. When a lane branch can't be read, the item and the view say so,
-and show no stale changes.
-
 ## Calls made
 
 The operator settled these on 2026-11-17, before drafting.
