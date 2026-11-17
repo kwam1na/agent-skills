@@ -218,11 +218,11 @@
         },
         {
           "path": "skills/delivery-views/assets/run-summary.css",
-          "sha256": "c70b37b3907893b03f3f22272213e1a2fa82c46af2d862222e1debad2a05987d"
+          "sha256": "d7109927fe6a32a116321d0cf20ffa8d5d3e35e5ed1dd0dab52e5a750b5308b5"
         },
         {
           "path": "skills/delivery-views/assets/run-summary.js",
-          "sha256": "f04ca1f6c5a3ddf5dab50dd7e014c033dafd88c93b1dbfcbe51b2c7a48362040"
+          "sha256": "6b2b44b2986b06aacd038396e284a4b031aa4dc483be9794c07ce96f66d4fbbf"
         },
         {
           "path": "skills/delivery-views/references/delivery-plan.schema.json",

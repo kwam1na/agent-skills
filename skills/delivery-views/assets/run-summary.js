@@ -365,16 +365,25 @@ function runSummaryNode(summary, options) {
       ", and " + roundsSaid(confirmed) + " confirmed " + (fixed.length === 1 ? "it" : "them") + "." +
       (open ? " " + open + (open === 1 ? " is" : " are") + " still open." : "")]);
   }
-  // Earlier notes this round confirmed, as a sentence: "This round confirmed 5 earlier notes fixed in 61f086d."
+  // How a confirmed note ended, in words: "fixed", "withdrawn" for a dropped one, or the ending as recorded.
+  function endingOf(entry) { return entry.state === "fixed" ? "fixed" : entry.state === "dropped" ? "withdrawn" : String(entry.state); }
+  // Earlier notes this round confirmed, as a sentence counting every ending, fixed first with its commits:
+  // "This round confirmed 7 earlier notes: 6 fixed in 61f086d, 1 withdrawn."
   function settledNode(settled) {
-    var fixed = settled.filter(function (entry) { return entry && entry.state === "fixed"; });
-    var others = settled.length - fixed.length;
-    var parts = ["This round confirmed "];
+    var notes = settled.filter(function (entry) { return entry && typeof entry === "object"; });
+    var fixed = notes.filter(function (entry) { return entry.state === "fixed"; });
+    var parts = ["This round confirmed " + notes.length + (notes.length === 1 ? " earlier note: " : " earlier notes: ")];
+    var said = [];
     if (fixed.length) {
       var commits = commitsOf(fixed);
-      parts.push(fixed.length + (fixed.length === 1 ? " earlier note" : " earlier notes") + " fixed" + (commits.length ? " in " : ""), commits);
+      said.push([fixed.length + " fixed" + (commits.length ? " in " : ""), commits]);
     }
-    if (others) { parts.push((fixed.length ? ", and " : "") + others + (fixed.length ? "" : others === 1 ? " earlier note" : " earlier notes") + " settled another way"); }
+    var endings = [];
+    notes.forEach(function (entry) { if (entry.state !== "fixed" && endings.indexOf(endingOf(entry)) < 0) { endings.push(endingOf(entry)); } });
+    endings.forEach(function (ending) {
+      said.push([notes.filter(function (entry) { return entry.state !== "fixed" && endingOf(entry) === ending; }).length + " " + ending]);
+    });
+    said.forEach(function (pieces, index) { if (index) { parts.push(", "); } pieces.forEach(function (piece) { parts.push(piece); }); });
     parts.push(".");
     return line("run-settled", parts);
   }
@@ -414,7 +423,45 @@ function runSummaryNode(summary, options) {
     });
     return box;
   }
-  // The earlier notes a round confirmed: its sentence, then each lens's closures, each line a fold of its own.
+  // The finding an earlier round raised, by its id: the latest round before this one that raised it, or null when
+  // no round on the page holds it.
+  function raisedBefore(round, id) {
+    var found = null;
+    rounds.slice(0, Math.max(0, rounds.indexOf(round))).forEach(function (earlier) {
+      (Array.isArray(earlier.raised) ? earlier.raised : []).forEach(function (entry) { if (isNote(entry) && entry.id === id) { found = entry; } });
+    });
+    return found;
+  }
+  // One confirmed note, a fold of its own. It leads with what its lens found and how serious it was, from the round
+  // that raised it; opened, it shows how it was settled, the commit or follow-up that shows it, and the note's id. A
+  // note whose finding no round on the page holds leads with its resolution, as before. A tick stands for "fixed",
+  // said in words only for a screen reader, and any other ending is named.
+  function closureRow(round, entry) {
+    var item = node("li", "");
+    var finding = raisedBefore(round, entry.id);
+    var disclosure = node("details", "run-closures is-" + (entry.state === "fixed" ? "fixed" : "other"));
+    var preview = node("summary", "run-finding");
+    if (finding) {
+      var severity = SEVERITIES.indexOf(finding.severity) < 0 ? "P3" : finding.severity;
+      preview.appendChild(node("span", "run-finding-text", finding.summary + (/[.!?\u2026:)"'\u201D]$/.test(finding.summary) ? "" : ".")));
+      preview.appendChild(node("span", "run-closure-sev is-" + severity.toLowerCase(), WORDS[severity]));
+    } else {
+      preview.appendChild(node("span", "run-finding-text", entry.resolution));
+    }
+    preview.appendChild(node("span", "run-fate", endingOf(entry)));
+    disclosure.appendChild(preview);
+    if (finding) {
+      disclosure.appendChild(node("p", "run-closure-resolution", entry.resolution));
+      if (typeof entry.fixCommit === "string") { disclosure.appendChild(line("run-closure-evidence", ["Fixed in ", [entry.fixCommit]])); }
+      if (typeof entry.deferredIssue === "string" && entry.deferredIssue) { disclosure.appendChild(followUpNode(entry.deferredIssue)); }
+    }
+    disclosure.appendChild(node("p", "run-closure", entry.id));
+    item.appendChild(runFold(disclosure, { key: "closure:" + (summary.observationKey || summary.runId || "") + ":" + round.round + ":" + entry.id, oneLine: true }));
+    return item;
+  }
+  // The earlier notes a round confirmed: its sentence, then each lens's notes. A lens whose notes were all fixed is
+  // one line, "Testing · 6 fixed", that opens on them; in a lens with any other ending, the notes that ended otherwise
+  // stay in sight, each named, and its fixed ones fold beneath a count of their own.
   function settledParts(round) {
     var outcome = outcomeOf(round);
     var verdicts = round.verdicts && typeof round.verdicts === "object" ? round.verdicts : {};
@@ -423,25 +470,36 @@ function runSummaryNode(summary, options) {
     var closures = settled.filter(function (entry) { return summary.observational && entry && typeof entry.resolution === "string"; });
     var closureLenses = [];
     closures.forEach(function (entry) { if (closureLenses.indexOf(entry.lens) < 0) { closureLenses.push(entry.lens); } });
+    var foldKey = function (name) { return "closures:" + (summary.observationKey || summary.runId || "") + ":" + round.round + ":" + name; };
     closureLenses.sort().forEach(function (lens) {
+      var own = closures.filter(function (entry) { return entry.lens === lens; });
+      var fixed = own.filter(function (entry) { return entry.state === "fixed"; });
+      var others = own.filter(function (entry) { return entry.state !== "fixed"; });
       var group = node("div", "run-reviewer run-closure-reviewer");
-      group.appendChild(reviewerHead("run-reviewer-head", lens, verdictOf(verdicts, lens), outcome));
+      var head = reviewerHead("run-reviewer-head", lens, verdictOf(verdicts, lens), outcome);
+      var fixedList = node("ul", "run-findings");
+      fixed.forEach(function (entry) { fixedList.appendChild(closureRow(round, entry)); });
+      if (!others.length) {
+        var whole = node("details", "run-closure-lens");
+        var top = node("summary", "run-closure-count");
+        head.appendChild(node("span", "run-closure-fixed", " \u00b7 " + fixed.length + " fixed"));
+        top.appendChild(head);
+        whole.appendChild(top);
+        whole.appendChild(fixedList);
+        group.appendChild(runFold(whole, { key: foldKey(lens) }));
+        parts.push(group);
+        return;
+      }
+      group.appendChild(head);
       var list = node("ul", "run-findings");
-      closures.filter(function (entry) { return entry.lens === lens; }).forEach(function (entry) {
-        var item = node("li", "");
-        // A settled note is quiet: a tick stands for "fixed", said in words only for a screen reader, and any other
-        // ending is named. Opened, the line shows whole in place, with the note's id beneath, not the words twice.
-        var fate = entry.state === "fixed" ? "fixed" : entry.state === "dropped" ? "withdrawn" : entry.state;
-        var disclosure = node("details", "run-closures is-" + (entry.state === "fixed" ? "fixed" : "other"));
-        var preview = node("summary", "run-finding");
-        preview.appendChild(node("span", "run-finding-text", entry.resolution));
-        preview.appendChild(node("span", "run-fate", fate));
-        disclosure.appendChild(preview);
-        disclosure.appendChild(node("p", "run-closure", entry.id));
-        item.appendChild(runFold(disclosure, { key: "closure:" + (summary.observationKey || summary.runId || "") + ":" + round.round + ":" + entry.id, oneLine: true }));
-        list.appendChild(item);
-      });
+      others.forEach(function (entry) { list.appendChild(closureRow(round, entry)); });
       group.appendChild(list);
+      if (fixed.length) {
+        var folded = node("details", "run-closure-lens");
+        folded.appendChild(node("summary", "run-closure-count", fixed.length + " fixed"));
+        folded.appendChild(fixedList);
+        group.appendChild(runFold(folded, { key: foldKey(lens + ":fixed") }));
+      }
       parts.push(group);
     });
     return parts;
