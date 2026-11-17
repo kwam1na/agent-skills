@@ -24,6 +24,15 @@ happened, why, and where it now stands. The close-out turns open entries into fo
   another span needed widening by hand for an edge insertion. Fix is V26-3570 (backlog).
 - **A story's own landing invalidates its lane's spans.** After V26-3552 landed, most of lane 1's spans needed
   re-granting at the new base, done by script with `region_ownership.mapped`. Open.
+- **A grant at the current base can be outside a lane's history.** After a peer delivery (V26-3431) moved `main`, spans
+  granted there were unusable for lanes branched earlier. They were re-granted at a common ancestor (42fbc233). Open:
+  grants could map to each lane's own merge base.
+- **Files the plan didn't name keep surfacing mid-story.** `hosted-snapshot.schema.json` (V26-3426), the pins in
+  `tests/test_registry.py` and `tests/test_run_delivery.py`, and the plan chapter's tests were each found by a lane or
+  by the queue, then granted one by one. Open: lead-assign's co-change warning missed them.
+- **Exact-set pins serialize stories.** `tests/test_waits.py`'s pinned set of `waits` templates must gain "review"
+  (V26-3555) and "lane" (V26-3426). One line can't belong to two lanes, so V26-3426 waits for V26-3555 to land. Open:
+  pins that every new template must extend could read the table instead.
 - **A lead fix on `main` inside a lane's span forced that lane to rebase.** This came from the two line-chart fixes. Practice:
   no lead edits to held spans mid-story.
 
@@ -50,6 +59,9 @@ happened, why, and where it now stands. The close-out turns open entries into fo
   (in this delivery).
 - **`lead-wait` exits on every event and timeout,** so restarting it is constant manual work, and the stop hook catches
   any miss. Open.
+- **Lead and lane messages cross.** A lane often asks again for what the lead has already granted, because the grant
+  message is still queued behind the lane's turn. Open: the lane could read its grants from the record (a `lane-grants`
+  command) rather than wait for a message.
 - **zsh parsing broke several compound shell commands** (`$B:t`, `for … do` with heredocs). Practice: write a script
   file and run it with bash.
 
