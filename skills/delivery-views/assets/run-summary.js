@@ -1,5 +1,7 @@
 // The round a reader picked in each run, kept across live redraws.
 var runRoundPicked = {};
+// The round each review last showed in flight, so the redraw that finds it reduced settles its bead once.
+var runInFlight = {};
 // How a height change moves, by the repository's motion guidance (emil-design-eng): a morph on screen eases in and out
 // on a strong curve, stays within 300ms (longer only as far as it travels), and never runs for a keyboard action, which a
 // reader repeats too often to wait on.
@@ -397,6 +399,115 @@ function runSummaryNode(summary, options) {
     });
     return box;
   }
+  // The earlier notes a round confirmed: its sentence, then each lens's closures, each line a fold of its own.
+  function settledParts(round) {
+    var outcome = outcomeOf(round);
+    var verdicts = round.verdicts && typeof round.verdicts === "object" ? round.verdicts : {};
+    var settled = Array.isArray(round.settled) ? round.settled : [];
+    var parts = settled.length ? [settledNode(settled)] : [];
+    var closures = settled.filter(function (entry) { return summary.observational && entry && typeof entry.resolution === "string"; });
+    var closureLenses = [];
+    closures.forEach(function (entry) { if (closureLenses.indexOf(entry.lens) < 0) { closureLenses.push(entry.lens); } });
+    closureLenses.sort().forEach(function (lens) {
+      var group = node("div", "run-reviewer run-closure-reviewer");
+      group.appendChild(reviewerHead("run-reviewer-head", lens, verdictOf(verdicts, lens), outcome));
+      var list = node("ul", "run-findings");
+      closures.filter(function (entry) { return entry.lens === lens; }).forEach(function (entry) {
+        var item = node("li", "");
+        // A settled note is quiet: a tick stands for "fixed", said in words only for a screen reader, and any other
+        // ending is named. Opened, the line shows whole in place, with the note's id beneath, not the words twice.
+        var fate = entry.state === "fixed" ? "fixed" : entry.state === "dropped" ? "withdrawn" : entry.state;
+        var disclosure = node("details", "run-closures is-" + (entry.state === "fixed" ? "fixed" : "other"));
+        var preview = node("summary", "run-finding");
+        preview.appendChild(node("span", "run-finding-text", entry.resolution));
+        preview.appendChild(node("span", "run-fate", fate));
+        disclosure.appendChild(preview);
+        disclosure.appendChild(node("p", "run-closure", entry.id));
+        item.appendChild(runFold(disclosure, { key: "closure:" + (summary.observationKey || summary.runId || "") + ":" + round.round + ":" + entry.id, oneLine: true }));
+        list.appendChild(item);
+      });
+      group.appendChild(list);
+      parts.push(group);
+    });
+    return parts;
+  }
+  // How long ago something began, for a round or a lens still at work: "moments", "4 min", "2 h 5 min", "3 days".
+  function since(date) {
+    var minutes = Math.max(0, Math.round((Date.now() - date.getTime()) / 60000));
+    if (minutes < 1) { return "moments"; }
+    if (minutes < 60) { return minutes + " min"; }
+    if (minutes < 1440) { var rest = minutes % 60; return Math.floor(minutes / 60) + " h" + (rest ? " " + rest + " min" : ""); }
+    var days = Math.round(minutes / 1440);
+    return days + (days === 1 ? " day" : " days");
+  }
+  // The round in flight's lenses: those it started with, then any other that came back.
+  function runningLenses() {
+    var lenses = running.lenses.slice();
+    Object.keys(running.back).forEach(function (lens) { if (lenses.indexOf(lens) < 0) { lenses.push(lens); } });
+    return lenses;
+  }
+  function backOf(lens) { return Object.prototype.hasOwnProperty.call(running.back, lens) ? running.back[lens] : null; }
+  function backCount() { return runningLenses().filter(backOf).length; }
+  // The round in flight: the head it reads, how long ago it began, how many lenses are back, the lane's reason when
+  // it gave one, a row per lens, back with its verdict or still reading, and the last round's confirmed notes folded.
+  function runningCard(previous) {
+    var lenses = runningLenses();
+    var box = node("div", "run-card is-running");
+    var head = node("p", "run-card-head");
+    head.appendChild(node("b", null, "Round " + running.round));
+    head.appendChild(node("span", "run-card-outcome", backCount() + " of " + lenses.length + " back"));
+    box.appendChild(head);
+    var began = when(running.at);
+    var reading = line("run-quiet run-reading-at", ["Reviewing ", [running.head]]);
+    if (began) {
+      reading.appendChild(document.createTextNode(" · started "));
+      reading.appendChild(timeNode("run-since", began, since(began) + " ago"));
+    }
+    box.appendChild(reading);
+    if (typeof running.why === "string" && running.why.trim()) { box.appendChild(node("p", "run-why", running.why)); }
+    var rows = node("ul", "run-lens-rows");
+    lenses.forEach(function (lens) {
+      var back = backOf(lens);
+      var row = node("li", "run-lens-row " + (back ? "is-back" : "is-reading"));
+      row.setAttribute("data-lens", lens);
+      if (back) {
+        row.appendChild(reviewerHead("", lens, back.verdict, null));
+        var counts = counted(back.findings);
+        row.appendChild(node("span", "run-quiet", noteWords(counts) || "nothing raised"));
+      } else {
+        row.appendChild(reviewerHead("", lens, undefined, null));
+        row.appendChild(node("span", "run-reading", "reading" + (began ? " · " + since(began) : "")));
+      }
+      rows.appendChild(row);
+    });
+    box.appendChild(rows);
+    var earlier = previous ? settledParts(previous) : [];
+    if (earlier.length) {
+      // The notes the last round confirmed fold to their one sentence while a round runs, and open as they do today.
+      var fold = node("details", "run-earlier");
+      var said = node("summary", "run-earlier-head");
+      while (earlier[0].firstChild) { said.appendChild(earlier[0].firstChild); }
+      said.firstChild.textContent = said.firstChild.textContent.replace(/^This round/, nameOf(previous, rounds.length - 1));
+      fold.appendChild(said);
+      earlier.slice(1).forEach(function (part) { fold.appendChild(part); });
+      box.appendChild(runFold(fold, { key: "earlier:" + key + ":" + running.round, oneLine: true }));
+    }
+    return box;
+  }
+  // The round in flight's bead: a ring in the lane's colour whose halo breathes on the page's tempo.
+  function runningBead(picked, choose) {
+    var item = node("li", "run-bead is-running");
+    var button = node("button", "run-pick");
+    button.type = "button";
+    button.setAttribute("aria-pressed", String(picked));
+    button.setAttribute("aria-label", "Round " + running.round + ", under way, " + backCount() + " of " + runningLenses().length + " lenses back");
+    button.appendChild(node("span", "run-dot", running.round));
+    button.addEventListener("click", function (event) { event.stopPropagation(); choose(); });
+    item.appendChild(button);
+    var began = when(running.at);
+    if (began) { item.appendChild(timeNode("run-at", began, "under way")); }
+    return item;
+  }
   // The picked round in full. With the round's report, each reviewer lists what it raised and what became
   // of it; without one, the lenses' verdicts and the round's counts.
   function card(round, index) {
@@ -476,32 +587,7 @@ function runSummaryNode(summary, options) {
       });
       var told = outcomeOfNotes(raised, known);
       if (told) { box.appendChild(told); }
-      var settled = Array.isArray(round.settled) ? round.settled : [];
-      if (settled.length) { box.appendChild(settledNode(settled)); }
-      var closures = settled.filter(function (entry) { return summary.observational && typeof entry.resolution === "string"; });
-      var closureLenses = [];
-      closures.forEach(function (entry) { if (closureLenses.indexOf(entry.lens) < 0) { closureLenses.push(entry.lens); } });
-      closureLenses.sort().forEach(function (lens) {
-        var group = node("div", "run-reviewer run-closure-reviewer");
-        group.appendChild(reviewerHead("run-reviewer-head", lens, verdictOf(verdicts, lens), outcome));
-        var list = node("ul", "run-findings");
-        closures.filter(function (entry) { return entry.lens === lens; }).forEach(function (entry) {
-          var item = node("li", "");
-          // A settled note is quiet: a tick stands for "fixed", said in words only for a screen reader, and any other
-          // ending is named. Opened, the line shows whole in place, with the note's id beneath, not the words twice.
-          var fate = entry.state === "fixed" ? "fixed" : entry.state === "dropped" ? "withdrawn" : entry.state;
-          var disclosure = node("details", "run-closures is-" + (entry.state === "fixed" ? "fixed" : "other"));
-          var preview = node("summary", "run-finding");
-          preview.appendChild(node("span", "run-finding-text", entry.resolution));
-          preview.appendChild(node("span", "run-fate", fate));
-          disclosure.appendChild(preview);
-          disclosure.appendChild(node("p", "run-closure", entry.id));
-          item.appendChild(runFold(disclosure, { key: "closure:" + (summary.observationKey || summary.runId || "") + ":" + round.round + ":" + entry.id, oneLine: true }));
-          list.appendChild(item);
-        });
-        group.appendChild(list);
-        box.appendChild(group);
-      });
+      settledParts(round).forEach(function (part) { box.appendChild(part); });
       var listed = clippedNode(round);
       if (listed) { box.appendChild(listed); }
       return box;
@@ -545,27 +631,59 @@ function runSummaryNode(summary, options) {
   }
   else if (summary.observational) { box.appendChild(node("p", "run-quiet", "Recorded reviewer reports · display only")); }
   var rounds = Array.isArray(summary.roundDetail) ? summary.roundDetail.filter(function (round) { return round && typeof round === "object"; }) : [];
-  box.appendChild(node("p", "run-story", rounds.length ? story(rounds) : "No review rounds yet"));
-  if (rounds.length) {
-    var key = typeof summary.runId === "string" ? summary.runId : (summary.observationKey || "");
-    var picked = typeof runRoundPicked[key] === "number" && runRoundPicked[key] < rounds.length ? runRoundPicked[key] : rounds.length - 1;
+  var running = summary.running && typeof summary.running === "object" && typeof summary.running.round === "number"
+    && typeof summary.running.head === "string" ? summary.running : null;
+  if (running) {
+    running = Object.assign({}, running, { lenses: Array.isArray(running.lenses) ? running.lenses : [],
+                                           back: running.back && typeof running.back === "object" ? running.back : {} });
+  }
+  var key = typeof summary.runId === "string" ? summary.runId : (summary.observationKey || "");
+  if (running) {
+    // The present tense: the round under way, and the last finished round beneath it, dated by its candidate and how
+    // far the branch has moved since.
+    box.appendChild(node("p", "run-story", typeof running.headline === "string" && running.headline ? running.headline : "Round " + running.round + " under way"));
+    var finished = rounds[rounds.length - 1];
+    if (finished) {
+      var parts = [nameOf(finished, rounds.length - 1) + " " + outcomeWords(finished)];
+      if (typeof finished.candidateRef === "string" && finished.candidateRef) { parts.push(" ", [finished.candidateRef]); }
+      if (typeof running.moved === "number") { parts.push(" · " + plural(running.moved, "commit") + " since"); }
+      box.appendChild(line("run-last", parts));
+    }
+  } else {
+    box.appendChild(node("p", "run-story", rounds.length ? story(rounds) : "No review rounds yet"));
+  }
+  // The redraw that finds the round it last showed in flight reduced settles that round's bead, once.
+  var settling = !running && typeof runInFlight[key] === "number" && rounds.length && numberOf(rounds[rounds.length - 1], rounds.length - 1) === runInFlight[key];
+  if (running) { runInFlight[key] = running.round; } else { delete runInFlight[key]; }
+  if (rounds.length || running) {
+    var beads = rounds.length + (running ? 1 : 0);
+    // While a round runs it is shown first; a reader's own pick of a finished round stands.
+    var picked = typeof runRoundPicked[key] === "number" && runRoundPicked[key] < beads ? runRoundPicked[key] : beads - 1;
     var track = node("ol", "run-track");
     var buttons = [];
+    var cardAt = function (index) { return index < rounds.length ? card(rounds[index], index) : runningCard(rounds[rounds.length - 1]); };
     // Picking a round updates the beads in place, so the button a reader pressed keeps keyboard focus.
+    var choose = function (chosen) {
+      runRoundPicked[key] = chosen;
+      buttons.forEach(function (button, at) { button.setAttribute("aria-pressed", String(at === chosen)); });
+      var next = cardAt(chosen);
+      var from = runHeldHeight(shown);
+      shown.replaceWith(next);
+      shown = next;
+      runEaseHeight(next, from);
+    };
     rounds.forEach(function (round, index) {
-      var made = bead(round, index, index ? rounds[index - 1] : null, index === picked, function (chosen) {
-        runRoundPicked[key] = chosen;
-        buttons.forEach(function (button, at) { button.setAttribute("aria-pressed", String(at === chosen)); });
-        var next = card(rounds[chosen], chosen);
-        var from = runHeldHeight(shown);
-        shown.replaceWith(next);
-        shown = next;
-        runEaseHeight(next, from);
-      });
+      var made = bead(round, index, index ? rounds[index - 1] : null, index === picked, choose);
+      if (settling && index === rounds.length - 1) { made.classList.add("is-settling"); }
       buttons.push(made.querySelector(".run-pick"));
       track.appendChild(made);
     });
-    var shown = card(rounds[picked], picked);
+    if (running) {
+      var flight = runningBead(picked === rounds.length, function () { choose(rounds.length); });
+      buttons.push(flight.querySelector(".run-pick"));
+      track.appendChild(flight);
+    }
+    var shown = cardAt(picked);
     box.appendChild(track);
     box.appendChild(shown);
   }

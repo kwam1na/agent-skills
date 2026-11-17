@@ -1850,13 +1850,15 @@ def read_result(path: Path) -> object:
 def journal_returns(key: str, folder: Path, doc: dict) -> list[str]:
     """Each lens result of the story's round in flight that matches its brief, journaled once as review.lens.returned.
 
-    The round in flight is the latest review.started, while no review.round answers it. A result that doesn't match
-    its brief is never journaled, so the lens's next result for the same brief is; a restart's new start journals
-    its lenses afresh. Both the supervisor's pass and review-reduce call it, so whichever sees a result first
-    journals it."""
+    The round in flight is the latest review.started, until a review.round answers it or names its round, or the
+    story is handed off or picked up again. A result that doesn't match its brief is never journaled, so the lens's
+    next result for the same brief is; a restart's new start journals its lenses afresh. Both the supervisor's pass
+    and review-reduce call it, so whichever sees a result first journals it."""
     start = latest_start(doc, key)
-    if start is None or any(e.get("kind") == "review.round" and e.get("subject") == key and start["id"] in e.get("answers", [])
-                            for e in doc["journal"]):
+    if start is None or any(e.get("subject") == key and e["id"] > start["id"] and (
+            e.get("kind") in ("candidate.handed", "lane.assigned")
+            or (e.get("kind") == "review.round" and (start["id"] in e.get("answers", []) or e["data"]["round"] == start["data"]["round"])))
+            for e in doc["journal"]):
         return []
     n = start["data"]["round"]
     meta_path = folder / f"round-{n}.meta.json"
