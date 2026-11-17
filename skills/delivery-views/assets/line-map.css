@@ -430,6 +430,7 @@ a.issue-link { color: inherit; cursor: pointer; }
 .left-groups li:hover .left-title, .left-title:focus-visible { text-decoration: underline; text-decoration-color: var(--edge); text-underline-offset: 3px; }
 .left-groups li:hover .left-ring { background: color-mix(in oklab, var(--c) 35%, transparent); }
 .left-state { font-size: 12px; color: var(--faint); white-space: nowrap; }
+.left-wait { grid-column: 3 / -1; font-size: 12px; color: var(--faint); overflow-wrap: anywhere; }
 .left-groups .left-more { display: block; padding-left: 22px; font-size: 12px; color: var(--faint); }
 .after { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 24px; padding-top: 8px; }
 .after div { border-top: 2px solid var(--hair); padding-top: 12px; color: var(--soft); font-size: 15px; }

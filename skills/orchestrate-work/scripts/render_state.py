@@ -114,7 +114,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from delivery_state import (  # noqa: E402
     CHANGES_FILE, JOURNAL_FILE, OUTBOX_DIRECTORY, PUBLISHED_FILE, QUEUE_LOCK, RECOVERY_FILE,
     RECOVERY_QUARANTINE, STATE_FILE, STATE_LOCK, StateError,
-    dumps, load_schema, merge_slot_path, show, slot_holder,
+    dumps, load_schema, merge_slot_path, show, slot_holder, waited_on, waits,
 )
 import narrator  # noqa: E402
 
@@ -370,6 +370,8 @@ def _status_lines(status: object) -> list[str]:
 
 
 def render_markdown(document: dict) -> str:
+    document = with_waits(document)
+    waiting, holding = _waits_by(document, "waits"), _waits_by(document, "waitedOn")
     state = document["state"]
     meta = state["meta"]
     lines = [
@@ -429,6 +431,7 @@ def render_markdown(document: dict) -> str:
             rows.append(f"  - {_markdown_text(_estimate_text(estimates[item['subject']]))}")
         rows.extend(f"  - {_markdown_text(text)}" for text in _selection_texts(item))
         rows.extend(f"  - {_markdown_text(_check_text(check))}" for check in item["checks"])
+        rows.extend(f"  - {_markdown_text(text)}" for text in holding.get(item["subject"], []))
     lines += _markdown_section("Queue", rows, "The queue is empty.")
 
     rows = []
@@ -439,6 +442,8 @@ def render_markdown(document: dict) -> str:
         rows.extend(summary_row(summary, "  "))
         if isinstance(item.get("noChange"), dict):
             rows.append(f"  - {_markdown_text(_no_change_text(item['noChange']))}")
+        rows.extend(f"  - {_markdown_text(text)}" for text in [*waiting.get(item["subject"], []),
+                                                               *holding.get(item["subject"], [])])
         rows.extend(stats_row(item, "  "))
     lines += _markdown_section("Planned", rows, "Nothing planned outside the queue.")
 
@@ -449,11 +454,11 @@ def render_markdown(document: dict) -> str:
             return _markdown_text(derived[lane["id"]]) + " (derived)"
         return _markdown_text(lane["focus"])
 
-    rows = [
-        f"- {_markdown_text(lane['id'])}: {_markdown_text(lane['title'])}, {_markdown_text(lane['state'])}"
-        f" · focus {lane_focus(lane)} · waiting on {_markdown_text(lane['waitingOn'])} · since {_markdown_text(lane['since'])}"
-        for lane in state["lanes"]
-    ]
+    rows = []
+    for lane in state["lanes"]:
+        rows.append(f"- {_markdown_text(lane['id'])}: {_markdown_text(lane['title'])}, {_markdown_text(lane['state'])}"
+                    f" · focus {lane_focus(lane)} · waiting on {_markdown_text(lane['waitingOn'])} · since {_markdown_text(lane['since'])}")
+        rows.extend(f"  - {_markdown_text(text)}" for text in waiting.get(lane["id"], []))
     lines += _markdown_section("Lanes", rows, "No lanes.")
 
     rows = [f"- {'met' if item['met'] else 'open'}: {_markdown_text(item['text'])}" for item in state["finish"]]
@@ -513,6 +518,27 @@ def _told(document: dict) -> dict:
         return document
 
 
+def with_waits(document: dict) -> dict:
+    """The record with what everything in it waits on, and who waits on each story, as ``waits`` derives them: every
+    view prints these sentences and words none of its own. A record they cannot be derived from is left without."""
+    if isinstance(document.get("waits"), list):
+        return document
+    try:
+        found = waits(document)
+        return {**document, "waits": found, "waitedOn": waited_on(document, found)}
+    except (OSError, ValueError, KeyError, TypeError):
+        return document
+
+
+def _waits_by(document: dict, name: str) -> dict[str, list[str]]:
+    """The sentences of a document's ``waits`` or ``waitedOn``, by the subject they are said under."""
+    said: dict[str, list[str]] = {}
+    for wait in document.get(name) or []:
+        if isinstance(wait, dict) and isinstance(wait.get("subject"), str) and isinstance(wait.get("words"), str):
+            said.setdefault(wait["subject"], []).append(wait["words"])
+    return said
+
+
 def with_story(shown: dict, directory: Path) -> dict:
     """The record with its story, as every view and the live stream carry it. A story that cannot be told is left out."""
     plan = None
@@ -521,6 +547,7 @@ def with_story(shown: dict, directory: Path) -> dict:
         plan = read if isinstance(read, dict) else None
     except (OSError, ValueError):
         pass
+    shown = with_waits(shown)
     try:
         return {**shown, "story": narrator.narrate(shown["journal"], state=shown["state"], plan=plan)}
     except (ValueError, KeyError, TypeError):
@@ -804,6 +831,18 @@ _PAGE_PROGRAM = """
       if (isObject(found)) { entry.appendChild(el("div", statsText(found), "detail")); }
       return entry;
     }
+    /* What each thing waits on, and who waits on it: the state tool's sentences, printed as they are. */
+    function said(name, subject) {
+      return (isArray(doc[name]) ? doc[name] : []).filter(function (wait) {
+        return isObject(wait) && wait.subject === subject && typeof wait.words === "string";
+      }).map(function (wait) { return wait.words; });
+    }
+    function withWaits(entry, subject, names) {
+      names.forEach(function (name) {
+        said(name, subject).forEach(function (words) { entry.appendChild(el("div", words, "detail wait")); });
+      });
+      return entry;
+    }
 
     var queue = state.queue.slice().sort(function (a, b) { return a.order - b.order; });
     parts.push(el("h2", "Queue"));
@@ -816,6 +855,7 @@ _PAGE_PROGRAM = """
       var estimate = Object.prototype.hasOwnProperty.call(estimates, item.subject) ? estimates[item.subject] : null;
       if (isObject(estimate)) { entry.appendChild(el("div", estimateText(estimate), "detail")); }
       selectionTexts(item).forEach(function (text) { entry.appendChild(el("div", text, "detail")); });
+      withWaits(entry, item.subject, ["waitedOn"]);
       item.checks.forEach(function (check) {
         if ((isArray(check.failures) && check.failures.length) || typeof check.log === "string" ||
             typeof check.reusedFrom === "string" || Object.prototype.hasOwnProperty.call(check, "node")) {
@@ -837,15 +877,16 @@ _PAGE_PROGRAM = """
         entry.appendChild(el("div", "Evidence, run at base " + show(String(noChange.baseHead || "").slice(0, 10)) + ": " +
           show(noChange.evidence), "detail"));
       }
-      return entry;
+      return withWaits(entry, item.subject, ["waits", "waitedOn"]);
     }));
 
     parts.push(el("h2", "Lanes"));
     var derivedFocus = isObject(doc.focus) ? doc.focus : {};
     parts.push(list("ul", state.lanes, "No lanes.", function (lane) {
       var focus = !lane.focus && typeof derivedFocus[lane.id] === "string" ? derivedFocus[lane.id] + " (derived)" : show(lane.focus);
-      return row(show(lane.id) + ": " + show(lane.title),
-        "Focus " + focus + " \\u00b7 waiting on " + show(lane.waitingOn) + " \\u00b7 since " + show(lane.since), lane.state);
+      return withWaits(row(show(lane.id) + ": " + show(lane.title),
+        "Focus " + focus + " \\u00b7 waiting on " + show(lane.waitingOn) + " \\u00b7 since " + show(lane.since), lane.state),
+        lane.id, ["waits"]);
     }));
 
     parts.push(el("h2", "Finish line"));
@@ -994,7 +1035,7 @@ def render_static_page(document: dict, *, live: bool = False, flags: tuple[str, 
                        banner: str | None = None) -> str:
     """The page. `banner` is the supervisor's banner markup, given only when the view reads a status file."""
     adapter = f"<script>\n{_LIVE_ADAPTER}\n</script>\n" if live else ""
-    document = _told(document)
+    document = with_waits(_told(document))
     return (
         "<!doctype html>\n"
         '<html lang="en">\n'

@@ -5863,6 +5863,103 @@ class RunDeliveryPlanTests(unittest.TestCase):
         self.assertEqual(plan["changes"], [], "a story frozen with the plan read as an added change")
         self.assertIn("FX-4", [p["subject"] for p in self.record(fx)["state"]["planned"]])
 
+    def test_each_writer_gives_planned_work_its_order_and_files_and_the_lead_holds_and_clears_a_story(self) -> None:
+        """lead-init writes a story's `after` keys and `Files:` paths into its planned entry; lead-brief, the reconcile
+        sweep and lead-assign each fill an entry found without them. The waits are derived from what they wrote.
+        lead-hold journals the lead's reason, refuses with the record unchanged, and ends by a clear or an assignment."""
+        fx = self.fixture()
+        path = plan_delivery(fx)
+        m = fx.main
+        d = json.loads(path.read_text())
+        d["stories"]["FX-4"] = {"title": "Thing FX-4", "lane": "lane-1", "after": ["FX-2", "FX-3"],
+                                "criteria": [{"id": "fx-4-works", "text": "FX-4 works"}]}
+        path.write_text(json.dumps(d, indent=2))
+        plan = m / "docs/plan.md"
+        plan.write_text(plan.read_text() + "\n### S9 (FX-4). Thing FX-4\n\nFiles: `src/two/render.py` and `docs/`.\n\n"
+                        "- Scenarios: it works.\n")
+        commit(m, "FX-1: FX-4 added")
+        record = fx.tmp / "record"
+        spec = importlib.util.spec_from_file_location("waits_state_tool", fx.release / "skills/orchestrate-work/scripts/delivery_state.py")
+        state_tool = importlib.util.module_from_spec(spec)
+        previous = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        try:
+            spec.loader.exec_module(state_tool)
+        finally:
+            sys.dont_write_bytecode = previous
+
+        def flow(*argv: str, code: int = 0) -> str:
+            done, out = fx.flow(*argv, cwd=m)
+            self.assertEqual(done, code, f"{argv[0]}: {out}")
+            return out
+
+        def read() -> dict:
+            return {"state": json.loads((record / "state.json").read_text()),
+                    "journal": [json.loads(line) for line in (record / "journal.jsonl").read_text().splitlines()]}
+
+        def entry(document: dict, key: str) -> dict:
+            return next(item for item in document["state"]["planned"] if item["subject"] == key)
+
+        def strip() -> None:
+            state = json.loads((record / "state.json").read_text())
+            for item in state["planned"]:
+                item.pop("after", None)
+                item.pop("files", None)
+            (record / "state.json").write_text(json.dumps(state, indent=2) + "\n")
+
+        expected = {"after": ["FX-2", "FX-3"], "files": ["src/two/render.py", "docs/*"]}
+        flow("lead-init")
+        self.assertEqual({name: entry(read(), "FX-4").get(name) for name in expected}, expected)
+        self.assertEqual([("after" in entry(read(), key), "files" in entry(read(), key)) for key in ("FX-2", "FX-3")],
+                         [(False, False), (False, False)])
+        self.assertEqual([(w["subject"], w["cause"], w["on"]) for w in state_tool.waits(read())],
+                         [("FX-4", "order", "FX-2"), ("FX-4", "order", "FX-3")])
+        for argv in (["lead-brief"], ["lead-reconcile"]):
+            strip()
+            flow(*argv)
+            self.assertEqual({name: entry(read(), "FX-4").get(name) for name in expected}, expected, argv[0])
+
+        flow("lead-hold", "FX-4", "--text", "waits for the operator's call on the budget")
+        [held] = [e for e in read()["journal"] if e["kind"] == "story.held"]
+        self.assertEqual((held["subject"], held["data"]), ("FX-4", {"text": "waits for the operator's call on the budget"}))
+        self.assertEqual([w["words"] for w in state_tool.waits(read()) if w["cause"] == "held"],
+                         ["Held by the lead: waits for the operator's call on the budget"])
+
+        def refused(*argv: str, said: str) -> None:
+            before = ((record / "state.json").read_bytes(), (record / "journal.jsonl").read_bytes())
+            self.assertIn(said, flow("lead-hold", *argv, code=2))
+            self.assertEqual(((record / "state.json").read_bytes(), (record / "journal.jsonl").read_bytes()), before, argv)
+
+        refused("FX-9", "--text", "a reason", said="FX-9 is not in the record")
+        refused("FX-4", "--text", "", said="--text is required")
+        refused("FX-4", "--text", "  ", said="--text is required")
+        flow("lead-hold", "FX-4", "--clear")
+        [cleared] = [e for e in read()["journal"] if e["kind"] == "story.unheld"]
+        self.assertEqual((cleared["subject"], cleared["answers"]), ("FX-4", [held["id"]]))
+        self.assertEqual([w for w in state_tool.waits(read()) if w["cause"] == "held"], [])
+
+        flow("lead-hold", "FX-4", "--text", "the budget again")
+        strip()
+        flow("lead-assign", "FX-4", "--lane", "lane-1", "--title", "Lane 1")
+        document = read()
+        self.assertEqual({name: entry(document, "FX-4").get(name) for name in expected}, expected, "lead-assign")
+        self.assertEqual([e["kind"] for e in document["journal"] if e["kind"].startswith("story.")].count("story.unheld"), 1,
+                         "an assignment ends the hold with nothing more journalled")
+        self.assertEqual([w for w in state_tool.waits(document) if w["cause"] == "held"], [])
+
+        state = document["state"]
+        for item in state["planned"]:
+            if item["subject"] == "FX-3":
+                item["stage"] = "settled"
+        two = entry(document, "FX-2")
+        state["planned"].remove(two)
+        state["queue"].append({"order": 1, "subject": "FX-2", "title": two["title"], "lane": "lane-1", "stage": "merged",
+                               "head": "a" * 40, "syncedHead": None, "leadInputs": [], "reportedRounds": 1,
+                               "runId": None, "checks": []})
+        (record / "state.json").write_text(json.dumps(state, indent=2) + "\n")
+        refused("FX-2", "--text", "a reason", said="FX-2 has landed")
+        refused("FX-3", "--text", "a reason", said="FX-3 has settled")
+
     def test_concurrent_rebuilds_lose_no_update(self) -> None:
         fx = self.fixture()
         path = plan_delivery(fx)

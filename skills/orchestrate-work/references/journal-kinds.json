@@ -2058,6 +2058,54 @@
       },
       "instruction": "On the same ticket: the lease is released."
     },
+    "story.held": {
+      "altitude": "story",
+      "tone": "decision",
+      "label": "Held",
+      "data": {
+        "text": {
+          "type": "prose"
+        }
+      },
+      "because": {
+        "required": false
+      },
+      "answers": [],
+      "opensThread": false,
+      "words": {
+        "head": "The lead held {subject}",
+        "line": "{text}"
+      },
+      "explain": "The lead holds a planned story back for a reason of its own; the hold ends when the story is assigned, or when the lead clears it.",
+      "tracker": {
+        "posts": "ticket",
+        "heading": "Waiting"
+      },
+      "instruction": "On the ticket: the lead's reason, in the lead's words."
+    },
+    "story.unheld": {
+      "altitude": "story",
+      "tone": "note",
+      "label": "Hold cleared",
+      "data": {},
+      "because": {
+        "required": false
+      },
+      "answers": [
+        "story.held"
+      ],
+      "opensThread": false,
+      "words": {
+        "head": "The lead cleared the hold on {subject}",
+        "line": ""
+      },
+      "explain": "The lead no longer holds a planned story back.",
+      "tracker": {
+        "posts": "ticket",
+        "heading": "Waiting"
+      },
+      "instruction": "On the ticket: the lead has cleared its reason, and the story is free to go on."
+    },
     "release.started": {
       "altitude": "headline",
       "tone": "note",

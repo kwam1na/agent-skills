@@ -632,6 +632,21 @@
                 "stopped"
               ]
             },
+            "after": {
+              "description": "The planned entry's after, carried at hand-off. Optional.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/name"
+              }
+            },
+            "files": {
+              "description": "The planned entry's files, carried at hand-off, so an unlanded story in the queue still holds the files it names. Optional.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
             "head": {
               "$ref": "#/$defs/commit"
             },
@@ -1009,6 +1024,21 @@
                 "settled"
               ],
               "description": "settled: closed with no change needed, the lead having accepted the lane's evidence that the work's criteria already hold on the base; it never enters the queue, and counts as done."
+            },
+            "after": {
+              "description": "The stories the plan orders before this one, from the delivery file. Optional; lead-init, lead-brief, the reconcile sweep and lead-assign fill it where a planned entry lacks it, and the hand-off carries it into the queue. A story without it waits on no order.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/name"
+              }
+            },
+            "files": {
+              "description": "The paths the story's plan section names in its Files: sentence. Optional; filled and carried as after is. A story without it waits on no files, and holds none.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
             },
             "changeRequest": {
               "$ref": "#/$defs/name"

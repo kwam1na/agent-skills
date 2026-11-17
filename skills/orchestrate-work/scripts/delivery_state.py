@@ -1412,6 +1412,7 @@ def handoff(
             # A ticket reconcile saw started stays so in the queue, so a rejection can hand the flag back.
             if planned.get("trackerStarted"):
                 item["trackerStarted"] = True
+            item.update(_plan_members(planned))
             state["queue"].append(item)
         if base_merge is not None:
             if item.get("runId") or run:
@@ -1521,6 +1522,12 @@ def no_change_handoff(directory: Path, *, lane: str, subject: str, base_head: st
     return entry
 
 
+def _plan_members(item: dict) -> dict:
+    """The plan's order and files a piece carries between the planned work and the queue, so a story that waits on it
+    still does while it is queued."""
+    return {name: list(item[name]) for name in ("after", "files") if name in item}
+
+
 def _rest_if_free(state: dict, lane: str | None) -> None:
     """A lane whose story settled with no change, holding no other open work, is idle, as one is after a merge."""
     if lane is None:
@@ -1624,6 +1631,7 @@ def reject_handoff(directory: Path, subject: str, reason: str) -> dict:
             back["runId"] = item["runId"]
         if item.get("trackerStarted"):
             back["trackerStarted"] = True
+        back.update(_plan_members(item))
         state.setdefault("planned", []).append(back)
         _rest_if_free(state, item["lane"])
         if back["lane"] is not None:
@@ -3365,6 +3373,7 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
                         element["changeRequest"] = entry["changeRequest"]
                     if entry.get("trackerStarted"):
                         element["trackerStarted"] = True
+                    element.update(_plan_members(entry))
                     # Under the lead's policy it waits like any hand-off, so its recovery can say the wait was skipped.
                     if state["meta"].get("handoffsNeedAcceptance"):
                         element["pending"] = True
@@ -3926,7 +3935,161 @@ def _files(hint: dict, *, queued: bool) -> tuple[list[str], str]:
     return declared, "declared files"
 
 
-def next_for_lane(state: dict, lane: str, snapshot: dict, hints: dict | None) -> list[dict]:
+# ---------------------------------------------------------------------------
+# What everything waits on, derived from the record and never stored
+
+# Every sentence a wait is said in: read through WAIT_WORDS_FILE, which a test may point at a copy.
+WAIT_WORDS_FILE = Path(__file__).resolve().parent.parent / "references" / "wait-words.json"
+# The causes, in the order a story's waits are shown.
+WAIT_CAUSES = ("order", "files", "lane", "claim", "slot", "review", "held")
+
+
+def load_wait_words(path: Path | None = None) -> dict:
+    """The table of wait sentences at ``path``, or at ``WAIT_WORDS_FILE`` as it stands when called."""
+    return json.loads(Path(WAIT_WORDS_FILE if path is None else path).read_bytes().decode("utf-8"))
+
+
+def wait_said(table: dict, group: str, name: str, fields: dict) -> str:
+    """One sentence from the table, its variant chosen by its field's value, in journal_words' template forms."""
+    template = table[group]["templates"][name]
+    if isinstance(template, dict):
+        key = journal_words._case_key(journal_words.lookup(fields, template["by"]))
+        template = template["cases"].get(key, template["otherwise"]) if key is not None else template["otherwise"]
+    return journal_words._fill(template, fields, "words", [])
+
+
+def _landed_subjects(state: dict) -> set[str]:
+    """Work that has landed: merged, or settled with no change needed."""
+    return ({item["subject"] for item in state["queue"] if item["stage"] == "merged"}
+            | {item["subject"] for item in state.get("planned", []) if item["stage"] == "settled"})
+
+
+def _holds(journal: list[dict]) -> dict[str, dict]:
+    """The lead's standing holds, by story: its latest ``story.held`` that no ``story.unheld`` or assignment ended."""
+    held: dict[str, dict] = {}
+    for entry in journal:
+        if entry["kind"] == "story.held" and entry.get("subject"):
+            held[entry["subject"]] = entry
+        elif entry["kind"] in ("story.unheld", "lane.assigned"):
+            held.pop(entry.get("subject"), None)
+    return held
+
+
+def waits(document: dict, *, needing: frozenset[str] | set[str] = frozenset(), words: dict | None = None) -> list[dict]:
+    """Every wait the record holds, each ``{subject, on, cause, stage, frees, since?, needsSomeone, words}``.
+
+    A planned story that has not started waits, in this order, for each of its
+    ``after`` keys that has not landed (``order``); for each unlanded story of
+    another lane whose whole-file grant covers a file both stories name
+    (``files``); and for the lead, while the lead's ``story.held`` stands
+    (``held``). An idle lane waits for the same reasons as its next planned
+    story. ``needing`` names what "Needs you" already lists, so a wait on it
+    says that someone has to act.
+
+    It reads the record it is given and the table of sentences, nothing else:
+    no clock, no network, no other file. The same record gives the same waits.
+    """
+    table = load_wait_words() if words is None else words
+    state, journal = document["state"], document.get("journal") or []
+    planned, queue = state.get("planned", []), state["queue"]
+    landed = _landed_subjects(state)
+    items = {item["subject"]: item for item in [*planned, *queue]}
+    rows = {row["id"]: row for row in state["lanes"]}
+    ownership = state.get("laneOwnership") or {}
+    held = _holds(journal)
+    rounds: dict[str, int] = {}
+    for entry in journal:
+        if entry["kind"] == "review.round" and entry.get("subject") and isinstance((entry.get("data") or {}).get("round"), int):
+            rounds[entry["subject"]] = max(rounds.get(entry["subject"], 0), entry["data"]["round"])
+
+    def lane_of(item: dict) -> str | None:
+        return item.get("assignedLane", item["lane"]) if item["stage"] == "stopped" else item["lane"]
+
+    def where(item: dict) -> str:
+        """Where a story stands, by the stage the stage sentences are keyed on."""
+        if item.get("pending") or item.get("noChange"):
+            return "handed"
+        return item["stage"]
+
+    def needs_someone(item: dict) -> bool:
+        row = rows.get(lane_of(item)) or {}
+        return (item["stage"] == "stopped" or item["subject"] in needing
+                or row.get("state") == "blocked" or row.get("waitingOn") == "lead")
+
+    told: dict[str, list[tuple[dict, dict]]] = {}
+    for entry in planned:
+        if entry["stage"] != "planned":
+            continue
+        subject, found = entry["subject"], []
+        for key in entry.get("after", []):
+            if key in items and key not in landed:
+                other = items[key]
+                fields = {"on": key, "where": wait_said(table, "stages", "where",
+                                                        {"stage": where(other), "round": rounds.get(key)})}
+                found.append(({"subject": subject, "on": key, "cause": "order", "stage": other["stage"],
+                               "frees": "landed", "needsSomeone": needs_someone(other)}, fields))
+        named = entry.get("files", [])
+        for other in [*planned, *queue]:
+            holder = lane_of(other)
+            if other["subject"] in (subject, *landed) or holder is None or holder == entry["lane"]:
+                continue
+            hits = [path for path in named if any(_overlap(path, grant) for grant in ownership.get(holder, []))
+                    and any(_overlap(path, theirs) for theirs in other.get("files", []))]
+            if hits:
+                fields = {"on": other["subject"], "onLane": holder, "files": hits}
+                found.append(({"subject": subject, "on": other["subject"], "cause": "files", "stage": other["stage"],
+                               "frees": "landed", "needsSomeone": needs_someone(other)}, fields))
+        if subject in held:
+            hold = held[subject]
+            fields = {"text": hold["data"]["text"]}
+            found.append(({"subject": subject, "on": "lead", "cause": "held", "stage": "held", "frees": "assigned",
+                           "since": hold["at"], "needsSomeone": False}, fields))
+        for wait, fields in found:
+            wait["words"] = wait_said(table, "waits", wait["cause"], fields)
+        told[subject] = found
+    result = [wait for found in told.values() for wait, _ in found]
+    for row in state["lanes"]:
+        if row.get("state") != "idle":
+            continue
+        following = next((entry for entry in planned if entry["lane"] == row["id"] and entry["stage"] == "planned"), None)
+        for wait, fields in told.get(following["subject"], []) if following else []:
+            said = wait_said(table, "lanes", wait["cause"], {**fields, "subject": row["id"], "next": following["subject"]})
+            result.append({"subject": row["id"], "on": following["subject"], "cause": wait["cause"], "stage": "planned",
+                           "frees": wait["frees"], **({"since": wait["since"]} if "since" in wait else {}),
+                           "needsSomeone": False, "words": said})
+    return result
+
+
+def waited_on(document: dict, found: list[dict], *, words: dict | None = None) -> list[dict]:
+    """Who waits on each story others wait on, ``{subject, by, words}``, in the order the waits name them. A lane's
+    wait repeats its next story's, so only stories are counted."""
+    table = load_wait_words() if words is None else words
+    lanes = {row["id"] for row in document["state"]["lanes"]}
+    holders: dict[str, list[str]] = {}
+    for wait in found:
+        if wait["subject"] in lanes or wait["on"] == "lead":
+            continue
+        waiting = holders.setdefault(wait["on"], [])
+        if wait["subject"] not in waiting:
+            waiting.append(wait["subject"])
+    return [{"subject": subject, "by": by, "words": wait_said(table, "holding", "story", {"by": by})}
+            for subject, by in holders.items()]
+
+
+def free_to_start(document: dict, found: list[dict], *, words: dict | None = None) -> list[dict]:
+    """Planned stories nothing holds any more, on an idle lane: ``{subject, lane, words}``, for "Needs you"."""
+    table = load_wait_words() if words is None else words
+    state = document["state"]
+    waiting = {wait["subject"] for wait in found}
+    held = _holds(document.get("journal") or [])
+    idle = {row["id"] for row in state["lanes"] if row.get("state") == "idle"}
+    return [{"subject": entry["subject"], "lane": entry["lane"],
+             "words": wait_said(table, "needsYou", "free", {"subject": entry["subject"], "lane": entry["lane"]})}
+            for entry in state.get("planned", []) if entry["stage"] == "planned" and entry["lane"] in idle
+            and entry["subject"] not in waiting and entry["subject"] not in held]
+
+
+def next_for_lane(state: dict, lane: str, snapshot: dict | None, hints: dict | None) -> list[dict]:
     """The planned and follow-up work ``lane`` could take next, best first, each with a one-line reason.
 
     Candidates are planned work that no lane, or ``lane``, holds and nobody
@@ -3936,9 +4099,11 @@ def next_for_lane(state: dict, lane: str, snapshot: dict, hints: dict | None) ->
     keyed the same way. They are ordered by:
 
     1. unblocked first: every blocker completed, canceled, or merged or
-       settled with no change in the record. Blockers are the tracker's ``blockedBy`` and the hints'
-       ``blockers``, the plan's order, so the order holds when the tracker
-       has none; a blocker the snapshot does not list counts as open, and work
+       settled with no change in the record. Blockers are the record's own
+       ``order`` and ``files`` waits, as ``waits`` derives them and each
+       item's ``waits`` lists them, the tracker's ``blockedBy`` when there is
+       a snapshot, and the hints' ``blockers``, the plan's order, so the order
+       holds when the tracker has none; a blocker the snapshot does not list counts as open, and work
        the snapshot does not list comes after work it shows unblocked, its
        blockers unknown;
     2. no collision first: no file overlaps a file of work another open lane
@@ -3955,7 +4120,12 @@ def next_for_lane(state: dict, lane: str, snapshot: dict, hints: dict | None) ->
     if not any(entry["id"] == lane for entry in state["lanes"]):
         raise StateError("lane_unknown", f"there is no lane {lane}")
     declared = {} if hints is None else hints["items"]
-    tracker = {item["subject"]: item for item in snapshot["items"]}
+    tracker = {item["subject"]: item for item in (snapshot or {"items": []})["items"]}
+    # The plan's order and the files other lanes hold are the record's own waits, as every view shows them.
+    derived: dict[str, list[dict]] = {}
+    for wait in waits({"state": state}):
+        if wait["cause"] in ("order", "files"):
+            derived.setdefault(wait["subject"], []).append({"cause": wait["cause"], "on": wait["on"]})
     merged = {item["subject"] for item in state["queue"] if item["stage"] == "merged"}
     # Work settled with no change needed is done too, though it never entered the queue: it blocks nothing.
     merged |= {item["subject"] for item in state.get("planned", []) if item["stage"] == "settled"}
@@ -3985,10 +4155,13 @@ def next_for_lane(state: dict, lane: str, snapshot: dict, hints: dict | None) ->
             continue
         open_blockers = []
         blockers = [*tracker.get(subject, {}).get("blockedBy", []), *declared.get(subject, {}).get("blockers", [])]
-        for blocker in dict.fromkeys(blockers):
-            if blocker in merged or tracker.get(blocker, {}).get("state") in ("completed", "canceled"):
+        waited = [wait["on"] for wait in derived.get(subject, [])]
+        for blocker in dict.fromkeys([*waited, *blockers]):
+            if blocker not in waited and (blocker in merged
+                                          or tracker.get(blocker, {}).get("state") in ("completed", "canceled")):
                 continue
-            open_blockers.append(blocker if blocker in tracker else f"{blocker} (not in the snapshot)")
+            open_blockers.append(blocker if blocker in tracker or blocker in waited or snapshot is None
+                                 else f"{blocker} (not in the snapshot)")
         files, kind = _files(declared.get(subject, {}), queued=False)
         collisions = {}
         for other, paths in sorted(held.items()):
@@ -3999,7 +4172,7 @@ def next_for_lane(state: dict, lane: str, snapshot: dict, hints: dict | None) ->
         owned = sorted({path for path in files for held_subject, mine in own
                         if held_subject != subject and _overlap(path, mine)})
         priority = declared.get(subject, {}).get("priority")
-        unlisted = subject not in tracker
+        unlisted = snapshot is not None and subject not in tracker
         parts = [f"blocked by {', '.join(open_blockers)}" if open_blockers
                  else "not in the snapshot, so its blockers are unknown" if unlisted else "unblocked"]
         if not files:
@@ -4015,6 +4188,7 @@ def next_for_lane(state: dict, lane: str, snapshot: dict, hints: dict | None) ->
         parts.append(f"priority {priority}" if priority is not None else "no priority")
         ranked.append({
             "subject": subject, "title": title, "blocked": bool(open_blockers), "listed": not unlisted,
+            "waits": derived.get(subject, []),
             "collidesWith": sorted(collisions), "owned": bool(owned), "priority": priority,
             "reason": f"{subject}: " + "; ".join(parts),
             "_key": (bool(open_blockers), unlisted, bool(collisions), 5 if priority is None else priority,
