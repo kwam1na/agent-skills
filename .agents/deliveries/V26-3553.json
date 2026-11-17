@@ -206,6 +206,10 @@
         {
           "id": "v26-3567-1",
           "text": "c1: The live page shows one Needs you list and no Needs attention section, and a blocked lane's question appears in it once."
+        },
+        {
+          "id": "v26-3567-2",
+          "text": "c2: The list opens with the sentence counting items and those holding up the finish, with no group headers."
         }
       ],
       "after": [
