@@ -9,10 +9,11 @@ commit as they were, and a dropped criterion leaves its story and its other crit
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import unittest
 
-from tests.test_run_delivery import Fixture, installed_release, plan_delivery, sh
+from tests.test_run_delivery import Fixture, add_story, installed_release, plan_delivery, sh
 
 RUN_QUIETLY = True
 
@@ -45,6 +46,15 @@ class LeadPlanChangeTests(unittest.TestCase):
         self.assertEqual(held(), before, argv)
         self.assertEqual(sh("git", "status", "--porcelain", cwd=fx.main).stdout, "", argv)
 
+    def removed_subjects(self, fx: Fixture) -> list[str]:
+        """The stories the close no longer waits on, as the tool's own `removed_subjects` reads the changes log."""
+        probe = ("import json, sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); import run_delivery as flow; "
+                 "print(json.dumps(sorted(flow.removed_subjects(flow.Config(Path.cwd(), 'FX-1')))))")
+        done = subprocess.run([sys.executable, "-B", "-c", probe, str(fx.tool.parent)], cwd=fx.main, env=fx.env, text=True,
+                              capture_output=True, timeout=300)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        return json.loads(done.stdout.strip().splitlines()[-1])
+
     def plan(self, fx: Fixture) -> dict:
         path = fx.tmp / "record/plan.json"
         checked = sh(sys.executable, "-B", fx.release / "skills/delivery-views/scripts/views_common.py", "check-plan", path,
@@ -62,6 +72,8 @@ class LeadPlanChangeTests(unittest.TestCase):
                  "--kind removed doesn't use --lane; it is for --kind added"),
                 (["--kind", "removed", "--subjects", "FX-3", "--after"], "--kind removed doesn't use --after"),
                 (["--kind", "removed", "--subjects", "FX-3", "--covers", covers], "--kind removed doesn't use --covers"),
+                (["--kind", "removed", "--subjects", "FX-3", "--finish", "acs"], "--kind removed doesn't use --finish"),
+                (["--kind", "removed", "--subjects", "FX-3", "--label", "L"], "--kind removed doesn't use --label"),
                 (["--kind", "finish", "--finish", "acs", "--covers", covers, "--subjects", "FX-2"],
                  "--kind finish doesn't use --subjects; it is for --kind added or removed or relaxed or changed"),
                 (["--kind", "finish", "--finish", "acs", "--covers", covers, "--criterion", "one-loads"],
@@ -73,7 +85,9 @@ class LeadPlanChangeTests(unittest.TestCase):
                 (["--kind", "added", "--subjects", "FX-3", "--criterion", "two-x", "--text", "x", "--lane", "lane-1"],
                  "FX-3 is already a story of FX-1, so --kind added doesn't use --lane"),
                 (["--kind", "added", "--subjects", "FX-3", "--criterion", "two-x", "--text", "x", "--after", "FX-2"],
-                 "FX-3 is already a story of FX-1, so --kind added doesn't use --after")):
+                 "FX-3 is already a story of FX-1, so --kind added doesn't use --after"),
+                (["--kind", "finish", "--finish", "acs", "--text", "New words", "--label", "L"],
+                 "finish line acs already exists, so --kind finish doesn't use --label; it is for a new line")):
             with self.subTest(argv=argv):
                 self.refused(fx, held, argv, words)
         # The drop's own refusals: a criterion the story lacks, its last one, one a finish line still names, and
@@ -91,13 +105,18 @@ class LeadPlanChangeTests(unittest.TestCase):
             with self.subTest(argv=argv):
                 self.refused(fx, held, argv, words)
         self.assertEqual(self.plan(fx)["changes"], [])
+        # A story added by hand without its reason is still refused by name, whether a change removes it or only one of
+        # its criteria: a drop keeps the story, so it doesn't excuse it.
+        add_story(fx, fx.main / ".agents/deliveries/FX-1.json", "FX-5",
+                  criteria=[{"id": "fx-5-works", "text": "FX-5 works"}, {"id": "fx-5-fails", "text": "FX-5 fails"}])
+        self.refused(fx, held, ["--kind", "removed", "--subjects", "FX-5", "--criterion", "fx-5-fails"], "FX-5 has no `why`")
 
     def test_removed_with_a_criterion_drops_only_that_criterion_and_records_it_with_its_reason(self) -> None:
         fx, held = self.lead()
         m = fx.main
+        # A line covering every criterion names none, so it holds no criterion back from a drop.
         code, out = fx.flow("lead-plan", "change", "--kind", "finish", "--finish", "acs", "--covers",
-                            json.dumps({"criteria": ["one-loads", "two-renders"], "proofs": ["merged"]}),
-                            "--why", "One-fails leaves the plan.", cwd=m)
+                            json.dumps({"criteria": "all", "proofs": ["merged"]}), "--why", "One-fails leaves the plan.", cwd=m)
         self.assertEqual(code, 0, out)
         code, out = fx.flow("lead-plan", "change", "--kind", "removed", "--subjects", "FX-2", "--criterion", "one-fails",
                             "--why", "The failure copy moves to its own story.", cwd=m)
@@ -123,6 +142,11 @@ class LeadPlanChangeTests(unittest.TestCase):
         code, out = fx.flow("lead-reconcile", cwd=m)
         self.assertEqual(code, 0, out)
         self.assertEqual([c["id"] for c in self.plan(fx)["changes"]], ["c1", "c2"], out)
+        # The close still waits on FX-2: a dropped criterion removes no story. A whole story's removal still counts.
+        self.assertEqual(self.removed_subjects(fx), [])
+        code, out = fx.flow("lead-plan", "change", "--kind", "removed", "--subjects", "FX-3", "--why", "Folded into FX-2.", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.removed_subjects(fx), ["FX-3"])
         # The criterion is gone, so a second drop of it is refused and writes nothing.
         self.refused(fx, held, ["--kind", "removed", "--subjects", "FX-2", "--criterion", "one-fails"],
                      "FX-2 has no criterion one-fails")

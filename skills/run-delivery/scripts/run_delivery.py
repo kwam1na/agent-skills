@@ -4954,7 +4954,7 @@ def plan_drift(c, log: list[dict]) -> list[dict]:
         for change in recorded:
             if kind == "story-added" and change["kind"] == "added" and key in change["subjects"] and not change.get("criteria"):
                 return True
-            if kind == "story-removed" and change["kind"] == "removed" and key in change["subjects"]:
+            if kind == "story-removed" and change["kind"] == "removed" and key in change["subjects"] and not change.get("criteria"):
                 return True
             if kind == "criterion" and criterion in change.get("criteria", []) and change.get("after") == after:
                 return True
@@ -5384,6 +5384,9 @@ def lead_plan(args) -> None:
             record_finish = {"id": args.finish, "text": args.text, "met": False}
             change.update(after=covers)
         else:
+            if args.label is not None:
+                raise Stop(f"finish line {args.finish} already exists, so --kind finish doesn't use --label; it is for a "
+                           "new line")
             reworded = args.text is not None and args.text != line["text"]
             if not reworded and covers == plan_covers(line):
                 raise Stop(f"finish line {args.finish} already reads so and covers that: nothing to change")
@@ -9828,7 +9831,7 @@ def write_needs(c, items: list[dict] | None, number: int, started: float) -> Non
 
 def removed_subjects(c) -> set[str]:
     return {key for entry in read_plan_log(c) if entry.get("type") == "change" and entry.get("kind") == "removed"
-            for key in entry.get("subjects", [])}
+            and not entry.get("criteria") for key in entry.get("subjects", [])}  # a dropped criterion keeps its story
 
 
 def close_holds(c, doc: dict, needs: list[dict]) -> list[str]:
