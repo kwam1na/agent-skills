@@ -207,6 +207,10 @@
         {
           "id": "v26-3566-6",
           "text": "c6: A finish line raised since approval shows that it was raised, from what to what, and when."
+        },
+        {
+          "id": "v26-3566-7",
+          "text": "c7: A change added after approval is marked as not reviewed with the plan."
         }
       ]
     },
