@@ -36,6 +36,9 @@
         "tests/test_narrator.py",
         "tests/fixtures/narrator/*"
       ]
+    },
+    "lane-3": {
+      "owns": []
     }
   },
   "stories": {
