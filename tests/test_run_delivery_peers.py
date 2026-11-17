@@ -801,7 +801,7 @@ class PeerWaitsTests(unittest.TestCase):
     def test_every_caller_of_the_merge_slot_says_what_it_holds_it_for(self) -> None:
         import ast
         named = {"lead_sync": "sync", "lead_upgrade_writer": "upgrade", "lead_push": "push", "slot": None}
-        seen, told = {}, set()
+        seen, told = {}, {}
         for relative in ("skills/run-delivery/scripts/run_delivery.py", "skills/orchestrate-work/scripts/merge_queue.py"):
             tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"))
             for function in ast.walk(tree):
@@ -812,11 +812,15 @@ class PeerWaitsTests(unittest.TestCase):
                             and call.func.attr == "merge_slot"):
                         [doing] = [keyword.value for keyword in call.keywords if keyword.arg == "doing"]
                         seen[function.name] = ast.literal_eval(doing)["what"] if isinstance(doing, ast.Dict) else None
-                        if any(keyword.arg == "on_wait" for keyword in call.keywords):
-                            told.add(function.name)
+                        for keyword in call.keywords:
+                            if keyword.arg == "on_wait":
+                                told[function.name] = ast.unparse(keyword.value)
         self.assertEqual(seen, named)
-        # The two that park the supervisor while they wait say their own wait.
-        self.assertEqual(told, {"lead_sync", "lead_upgrade_writer"})
+        # The two that park the supervisor while they wait say their own wait, fresh for as long as each may wait, and
+        # once they take the slot, fresh only until a pass is overdue.
+        self.assertEqual(told, {
+            "lead_sync": "lambda taken: say_peer_waits(c, 0 if taken else args.wait_seconds)",
+            "lead_upgrade_writer": "lambda taken: say_peer_waits(c, 0 if taken else float(c.binding.get('checkTimeoutSeconds', 0)))"})
 
     def test_a_holder_or_waiter_file_without_doing_is_using_the_main_line_and_a_free_slot_waits_on_nothing(self) -> None:
         slot = self.slot({"delivery": "PEER-1"}, {"delivery": "APP-1"})

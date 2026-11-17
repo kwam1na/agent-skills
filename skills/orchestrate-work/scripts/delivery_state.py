@@ -516,7 +516,7 @@ def slot_doing(lock: Path, doing: dict) -> None:
 def merge_slot(repository: Path, base: str, *, delivery: str, timeout: float, poll: float = SLOT_POLL_SECONDS,
                after_merge: bool = False, sleep: Callable[[float], None] = time.sleep,
                clock: Callable[[], float] = time.monotonic, doing: dict | None = None,
-               on_wait: Callable[[], None] | None = None) -> Iterator[Path]:
+               on_wait: Callable[[bool], None] | None = None) -> Iterator[Path]:
     """Hold ``base``'s merge slot, shared by every delivery on this machine, for the duration of one command.
 
     A command that finds it held writes its pid in the slot's ``waiting`` folder, tries again every ``poll``
@@ -524,8 +524,8 @@ def merge_slot(repository: Path, base: str, *, delivery: str, timeout: float, po
     ``slot_held`` naming the holder. ``after_merge``, for a queue whose last command merged, waits one poll first
     when another live command waits, and never more, so the waiter goes first. The holder file names the holder's
     delivery, pid and start, and the waiter's file the same; ``doing``, ``{what, subject?}`` with ``what`` one of
-    ``SLOT_DOING``, says in both what the command holds it for. ``on_wait`` is called once, its waiter file written,
-    when the command first finds the slot held, and again once it takes the slot after waiting. Only the lock, which the operating system releases with a dead
+    ``SLOT_DOING``, says in both what the command holds it for. ``on_wait`` is called with False once, its waiter file
+    written, when the command first finds the slot held, and with True once it takes the slot after waiting. Only the lock, which the operating system releases with a dead
     holder, decides.
     """
     doing = _slot_doing(doing)
@@ -554,7 +554,7 @@ def merge_slot(repository: Path, base: str, *, delivery: str, timeout: float, po
                     mine.write_text(json.dumps({"pid": own, "delivery": delivery, "since": now(),
                                                 **({"doing": doing} if doing else {})}) + "\n", encoding="utf-8")
                     if on_wait is not None:
-                        on_wait()
+                        on_wait(False)
                 if clock() >= deadline:
                     raise StateError("slot_held", f"the merge slot for {base} is held by "
                                                   f"{holder_words(slot_holder(lock))}")
@@ -566,7 +566,7 @@ def merge_slot(repository: Path, base: str, *, delivery: str, timeout: float, po
         _write_atomically(holder, json.dumps({"delivery": delivery, "pid": own, "since": now(), "base": base,
                                               **({"doing": doing} if doing else {})}, sort_keys=True) + "\n")
         if mine is not None and on_wait is not None:
-            on_wait()
+            on_wait(True)
         try:
             yield lock
         finally:

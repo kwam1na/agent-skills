@@ -534,7 +534,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "937ec464b8bc03a59ae49034bf6f8ee9a1a7b31b5f4ee91f38590539b44ae38e"
+          "sha256": "16b7db19456077719a01b35e2176ae8131b1a3dc9b00f666764ca30b525e0529"
         },
         {
           "path": "skills/orchestrate-work/scripts/journal_words.py",
@@ -1123,7 +1123,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "86c5eab8dce42c3bef2f4a87eb70f3d658314960320c6c97730be047172cbf92"
+          "sha256": "758eb3352cdebab7910dcaad9c432328f4b589eb80965d3389e07ae99a15c4a8"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
