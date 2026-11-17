@@ -149,37 +149,6 @@
           "text": "c5: When the claim is released or the check ends, both sides clear with no action from either lead."
         }
       ]
-    },
-    "V26-3564": {
-      "title": "Say when a lane changes a file it doesn't hold, and show shared files when lanes split them",
-      "lane": "lane-1",
-      "why": "The operator saw file ownership split by lines in this delivery with no view of it, and a lane learning of a change outside its ground only at a refused hand-off; they asked for the drift check in Needs you and an opt-in files view",
-      "criteria": [
-        {
-          "id": "v26-3564-1",
-          "text": "c1: A pushed change to a file its lane doesn't hold appears in \"Needs you\" naming the lane and file, and clears when the change is gone or the file is granted."
-        },
-        {
-          "id": "v26-3564-2",
-          "text": "c2: A change to a regenerable shared file raises nothing."
-        },
-        {
-          "id": "v26-3564-3",
-          "text": "c3: With region claims in the record, the live page offers the files view, and its shelf, solid and hollow spines, shared splits and file reading match the record and the lanes' branches."
-        },
-        {
-          "id": "v26-3564-4",
-          "text": "c4: With no region claims, the page shows no files view."
-        },
-        {
-          "id": "v26-3564-5",
-          "text": "c5: A lane branch that can't be read leaves the view and the item saying so, rather than showing stale changes as current."
-        }
-      ],
-      "after": [
-        "V26-3552",
-        "V26-3426"
-      ]
     }
   },
   "finish": [
