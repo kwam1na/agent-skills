@@ -1702,7 +1702,7 @@
         var box = el("div", "d-run");
         if (note) { box.appendChild(el("div", "d-run-none", note)); }
         var shown = isObject(finished) ? finished : { observational: true, observationKey: item.subject, open: false, roundDetail: [] };
-        box.appendChild(runSummaryNode(Object.assign({}, shown, { running: inFlight }), { commitHref: commitHref, lenses: VIEW.lenses }));
+        box.appendChild(runSummaryNode(Object.assign({}, shown, { running: inFlight }), { commitHref: commitHref, issueHref: issueHref, lenses: VIEW.lenses }));
         return box;
       };
       if (inFlight && !native && !events.length) { return underWay(null); }
@@ -1729,7 +1729,7 @@
       if (inFlight) { return underWay(native); }
       var nativeBox = el("div", "d-run");
       if (carried) { nativeBox.appendChild(el("div", "d-run-carried", "Carried by the lead. " + text(carried.note))); }
-      nativeBox.appendChild(runSummaryNode(native, { commitHref: commitHref, lenses: VIEW.lenses }));
+      nativeBox.appendChild(runSummaryNode(native, { commitHref: commitHref, issueHref: issueHref, lenses: VIEW.lenses }));
       return nativeBox;
     }
     if (VIEW.runs !== true) { return null; }
@@ -1759,7 +1759,7 @@
       return Object.assign({}, round, { verdicts: verdicts, outcome: outcome });
     });
     var box = el("div", "d-run");
-    box.appendChild(runSummaryNode(Object.assign({}, summary, { roundDetail: rounds }), { commitHref: commitHref, lenses: VIEW.lenses }));
+    box.appendChild(runSummaryNode(Object.assign({}, summary, { roundDetail: rounds }), { commitHref: commitHref, issueHref: issueHref, lenses: VIEW.lenses }));
     return box;
   }
 
@@ -2524,7 +2524,7 @@
     var summary = { observational: true, observationKey: "plan-review", open: false, roundDetail: list(review.rounds).filter(isObject),
       planReview: { state: text(review.state), endedReason: text(review.endedReason) } };
     var box = el("div", "plan-review");
-    box.appendChild(runSummaryNode(summary, { commitHref: commitHref, lenses: VIEW.lenses }));
+    box.appendChild(runSummaryNode(summary, { commitHref: commitHref, issueHref: issueHref, lenses: VIEW.lenses }));
     return fold("review", "Plan review (" + count + (count === 1 ? " round)" : " rounds)"), null, box);
   }
 

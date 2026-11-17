@@ -314,15 +314,28 @@ function runSummaryNode(summary, options) {
     });
     return commits;
   }
-  // A finding's state, as the run last observed it: a quiet check when a later round confirmed it fixed,
-  // a faint ring while it is open, and any other state in words.
-  function stateNode(entry, fate) {
-    var fixed = entry.state === "resolved" && fate && fate.entry.state === "fixed";
-    var words = fixed ? "\u2713 fixed" : entry.state === "unresolved" ? "open"
-      : entry.state === "deferred" ? "deferred" + (entry.deferredIssue || (fate && fate.entry.deferredIssue) ? " · " + (entry.deferredIssue || fate.entry.deferredIssue) : "")
-      : entry.state === "resolved" && fate ? String(fate.entry.state) : String(entry.state);
-    var kind = fixed ? "fixed" : entry.state === "unresolved" ? "open" : "other";
-    var made = node("span", "run-fate is-" + kind, words);
+  // A finding's fate, as the run last observed it: fixed when a later round confirmed it, open, deferred, or any other
+  // ending in words. `band` is how a band heading says it when every finding under it shares it.
+  function fateOf(entry, fate) {
+    if (entry.state === "resolved" && fate && fate.entry.state === "fixed") { return { kind: "fixed", words: "\u2713 fixed", band: "fixed" }; }
+    if (entry.state === "unresolved") { return { kind: "open", words: "open", band: "open" }; }
+    if (entry.state === "deferred") { return { kind: "deferred", words: "deferred", band: "deferred" }; }
+    var other = entry.state === "resolved" && fate ? String(fate.entry.state) : String(entry.state);
+    return { kind: "other", words: other, band: other };
+  }
+  // A deferral's follow-up, as one faint line under its finding: linked when it is a ticket the page can address, or
+  // an address itself.
+  function followUpNode(issue) {
+    var made = node("p", "run-followup", "\u21b3 ");
+    var href = /^https:\/\/\S+$/.test(issue) ? issue
+      : options && typeof options.issueHref === "function" && /^[A-Z][A-Z0-9]*-[0-9]+$/.test(issue) ? options.issueHref(issue) : null;
+    if (typeof href !== "string" || !/^https:\/\//.test(href)) { made.appendChild(document.createTextNode(issue)); return made; }
+    var link = node("a", null, issue);
+    link.setAttribute("href", href);
+    link.setAttribute("target", "_blank");
+    link.setAttribute("rel", "noopener noreferrer");
+    link.addEventListener("click", function (event) { event.stopPropagation(); });
+    made.appendChild(link);
     return made;
   }
   // "round 4", "rounds 2 and 4", "rounds 2, 3 and 4".
@@ -533,8 +546,8 @@ function runSummaryNode(summary, options) {
       raised.forEach(function (entry) { if (lenses.indexOf(entry.lens) < 0) { lenses.push(entry.lens); } });
       Object.keys(briefsOf(round) || {}).forEach(function (lens) { if (lenses.indexOf(lens) < 0) { lenses.push(lens); } });
       var known = fates(index);
-      // When every finding is fixed, or every one is still open, the footer says so once and the lines carry no mark.
-      var fixedAll = raised.length && raised.every(function (entry) { return entry.state === "resolved" && known[entry.id] && known[entry.id].entry.state === "fixed"; });
+      // When every finding is fixed, or every one is still open, the footer says so once and the rows carry no fate.
+      var fixedAll = raised.length && raised.every(function (entry) { return fateOf(entry, known[entry.id]).kind === "fixed"; });
       var openAll = raised.length && raised.every(function (entry) { return entry.state === "unresolved"; });
       var uniform = Boolean(fixedAll || openAll);
       // A round that raised nothing is the reviewers in one row and one line, not a "nothing raised" each.
@@ -556,29 +569,35 @@ function runSummaryNode(summary, options) {
         var record = recordNode(round, lens, false);
         if (record) { group.appendChild(record); }
         if (own.length) {
-          // Each severity is said once, as a quiet band heading over its findings, worst first; a minor
-          // finding's text is lighter than a worse one's.
+          // Each severity is said once, as a quiet band heading over its findings, worst first, with the fate they
+          // share said once beside it; a finding says its own fate only when it differs. A minor finding's text is
+          // lighter than a worse one's.
           var list = node("ul", "run-findings");
-          var band = null;
+          var band = null, shared = null;
+          var severityOf = function (entry) { return SEVERITIES.indexOf(entry.severity) < 0 ? "P3" : entry.severity; };
           own.forEach(function (entry) {
-            var severity = SEVERITIES.indexOf(entry.severity) < 0 ? "P3" : entry.severity;
+            var severity = severityOf(entry);
+            var fate = fateOf(entry, known[entry.id]);
             if (severity !== band) {
               band = severity;
-              var size = own.filter(function (other) { return (SEVERITIES.indexOf(other.severity) < 0 ? "P3" : other.severity) === severity; }).length;
+              var members = own.filter(function (other) { return severityOf(other) === severity; });
+              var bands = members.map(function (other) { return fateOf(other, known[other.id]).band; });
+              shared = uniform ? null : bands.every(function (word) { return word === bands[0]; }) ? bands[0] : null;
               var name = WORDS[severity];
-              list.appendChild(node("li", "run-band is-" + severity.toLowerCase(), name.charAt(0).toUpperCase() + name.slice(1) + (size > 1 ? " · " + size : "")));
+              list.appendChild(node("li", "run-band is-" + severity.toLowerCase(), name.charAt(0).toUpperCase() + name.slice(1)
+                + (members.length > 1 ? " · " + members.length : "") + (shared ? " · " + (members.length > 1 ? "all " : "") + shared : "")));
             }
             var item = node("li", "run-finding is-" + severity.toLowerCase());
             // Summaries are sentences; one stored without its full stop gets one here.
-            var said = node("span", "run-finding-text", entry.summary + (/[.!?\u2026:)"'\u201D]$/.test(entry.summary) ? "" : "."));
-            item.appendChild(said);
-            // A finding its lens filed as deferred says so beside its fate, the two sharing the row's second cell.
-            var marks = item;
-            if (entry.filed === "deferred") {
-              marks = item.appendChild(node("span", "run-marks"));
-              marks.appendChild(node("span", "run-filed", "Deferred · " + WORDS[severity]));
+            var said = node("span", "run-finding-line");
+            said.appendChild(node("span", "run-finding-text", entry.summary + (/[.!?\u2026:)"'\u201D]$/.test(entry.summary) ? "" : ".")));
+            if (!uniform && fate.band !== shared) {
+              said.appendChild(document.createTextNode(" "));
+              said.appendChild(node("span", "run-fate is-" + fate.kind, fate.words));
             }
-            if (!uniform) { marks.appendChild(stateNode(entry, known[entry.id])); }
+            item.appendChild(said);
+            var issue = entry.deferredIssue || (known[entry.id] && known[entry.id].entry.deferredIssue);
+            if (entry.filed === "deferred" && fate.kind !== "fixed" && typeof issue === "string" && issue) { item.appendChild(followUpNode(issue)); }
             list.appendChild(item);
           });
           group.appendChild(list);

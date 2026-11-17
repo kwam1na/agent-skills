@@ -214,15 +214,15 @@
         },
         {
           "path": "skills/delivery-views/assets/line-map.js",
-          "sha256": "840f3a22e03d6e016dc1d7468020bebca44fc68e4da008313d0428639cddfc3e"
+          "sha256": "6d58a78c6b13915c4e1bae996f39a8b86e4a665cd1f76e3ab9fa370b5c337548"
         },
         {
           "path": "skills/delivery-views/assets/run-summary.css",
-          "sha256": "8b018160eb07c4f89376a5657ecba1d9ac38f1faf1ecf0bc91e7603112dfb0fe"
+          "sha256": "c70b37b3907893b03f3f22272213e1a2fa82c46af2d862222e1debad2a05987d"
         },
         {
           "path": "skills/delivery-views/assets/run-summary.js",
-          "sha256": "fdb49e7a71827af3fa10543f6b3afb2adc511d60bc5950ec9800f25a46d2700c"
+          "sha256": "dd1f51bf6962bdca179b6c021c44594f624edcb0e72f539c4327e5a65db41c24"
         },
         {
           "path": "skills/delivery-views/references/delivery-plan.schema.json",

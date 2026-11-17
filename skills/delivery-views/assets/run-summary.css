@@ -56,8 +56,14 @@
 .run-fate { font: 500 11px/16px var(--mono, ui-monospace, monospace); white-space: nowrap; color: var(--soft, #4d545a); font-variant-numeric: tabular-nums; }
 .run-fate.is-fixed { color: var(--ink, #141719); font-weight: 500; }
 .run-fate.is-open { color: var(--faint, #8f979c); }
-.run-marks { display: inline-flex; gap: 8px; align-items: baseline; }
-.run-filed { font: 500 11px/16px var(--mono, ui-monospace, monospace); white-space: nowrap; color: var(--soft, #4d545a); }
+/* A raised finding is its text across the card, clamped at three lines, its own fate a faint word after it when it
+   differs from its band's, and a deferral's follow-up one faint line beneath. */
+li.run-finding { display: block; }
+li.run-finding .run-finding-line { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+li.run-finding .run-finding-text { display: inline; }
+li.run-finding .run-fate { white-space: nowrap; }
+.run-followup { margin: 2px 0 0; font-size: 12px; line-height: 1.5; color: var(--faint, #8f979c); overflow-wrap: anywhere; font-weight: 400; }
+.run-followup a { color: inherit; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 2px; }
 .run-commit { font: 12px var(--mono, ui-monospace, monospace); color: inherit; }
 a.run-commit { text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 2px; }
 .run-settled { margin: 0; padding-top: 12px; border-top: 1px solid var(--hair, #dfe2de); font-size: 13px; color: var(--ink, #141719); }
