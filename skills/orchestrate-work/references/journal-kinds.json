@@ -8,6 +8,13 @@
     "notes",
     "title"
   ],
+  "tones": {
+    "landed": "Landed",
+    "ready": "Ready to check",
+    "decision": "Decision",
+    "problem": "Setback",
+    "note": "Other update"
+  },
   "types": {
     "prose": {
       "description": "A person's own words, never read to decide anything. It holds something other than spaces.",
@@ -2137,6 +2144,14 @@
         },
         "verdict": {
           "type": "holdVerdict"
+        },
+        "lanes": {
+          "type": "names",
+          "optional": true
+        },
+        "pieces": {
+          "type": "names",
+          "optional": true
         }
       },
       "because": {
@@ -2152,7 +2167,7 @@
           },
           "otherwise": "A hook warned the lead"
         },
-        "line": "{hook}"
+        "line": "{hook}[, while {lanes:list:lane} worked][, with {pieces:list} still to land]"
       },
       "explain": "A hook stopped the lead from ending its turn while work was still open.",
       "tracker": null,

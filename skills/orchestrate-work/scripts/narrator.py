@@ -77,32 +77,17 @@ def _sibling(name: str):
 journal_words = _sibling("journal_words")
 
 
-# Until the sentence is removed, a record may hold entries with a sentence and no facts, and one kind that is the
-# sentence's bridge only. Such an entry is told by its sentence, under its kind's label, and opens no thread.
-BRIDGE_KINDS = {"review.evidence": {"altitude": "bookkeeping", "tone": "note", "label": "Review evidence", "opensThread": False}}
-
-
-# What each tone means to a reader, in the order a legend lists them. A setback's sheet is named by its tone's word.
-TONE_WORDS = {"landed": "Landed", "ready": "Ready to check", "decision": "Decision", "problem": "Setback", "note": "Other update"}
-
-
 class NarratorError(ValueError):
     """A record the story cannot be told from."""
 
 
 def _kind(entry: dict, registry: dict) -> dict:
-    return registry["kinds"].get(entry["kind"]) or BRIDGE_KINDS[entry["kind"]]
-
-
-def _facts(entry: dict) -> bool:
-    return isinstance(entry.get("data"), dict)
+    return registry["kinds"][entry["kind"]]
 
 
 def _said(entry: dict, registry: dict) -> dict:
-    """An entry's words: its kind's, from its facts, or, for an entry with only a sentence, its label and sentence."""
-    if _facts(entry):
-        return journal_words.words(entry, registry)
-    return {"head": _kind(entry, registry)["label"], "line": entry.get("summary") if isinstance(entry.get("summary"), str) else ""}
+    """An entry's words, its kind's, from its facts."""
+    return journal_words.words(entry, registry)
 
 
 def narrate(journal: list, state: dict | None = None, plan: dict | None = None, registry: dict | None = None) -> dict:
@@ -151,7 +136,8 @@ def narrate(journal: list, state: dict | None = None, plan: dict | None = None, 
         "chapters": chapters,
         "beats": beats,
         "threads": threads,
-        "tones": [{"tone": tone, "word": word} for tone, word in TONE_WORDS.items()],
+        # What each tone means to a reader, in the order a legend lists them, as the registry words them.
+        "tones": [{"tone": tone, "word": word} for tone, word in registry["tones"].items()],
     }
 
 
@@ -165,11 +151,11 @@ def _ordered(journal: object, registry: dict) -> list[dict]:
         if (not isinstance(entry, dict) or not isinstance(entry.get("id"), int) or isinstance(entry.get("id"), bool)
                 or not isinstance(entry.get("kind"), str) or not isinstance(entry.get("at"), str)):
             raise NarratorError(f"entry {position} has no id, kind and at")
-        if entry["kind"] not in registry["kinds"] and entry["kind"] not in BRIDGE_KINDS:
+        if entry["kind"] not in registry["kinds"]:
             raise NarratorError(f"entry {entry['id']}: no kind named {entry['kind']} in the registry")
         _seconds(_instant(entry))
-        if not isinstance(entry.get("data", {}), dict):
-            raise NarratorError(f"entry {entry['id']}: its data is not an object")
+        if "summary" in entry or not isinstance(entry.get("data"), dict):
+            raise NarratorError(f"entry {entry['id']}: in the older journal shape, with a sentence or without data")
     return sorted(journal, key=lambda entry: (_seconds(_instant(entry)), entry["id"]))
 
 
@@ -212,7 +198,7 @@ def _pieces(entries: list[dict], state: dict | None, plan: dict | None) -> list[
 def _titles(entries: list[dict], state: dict | None, plan: dict | None) -> dict:
     titles = {}
     for entry in entries:
-        if entry["kind"] in (ASSIGN_KIND, "story.added") and isinstance(entry.get("data", {}).get("title"), str):
+        if entry["kind"] in (ASSIGN_KIND, "story.added") and isinstance(entry["data"].get("title"), str):
             titles.setdefault(entry["subject"], entry["data"]["title"])
     sources = []
     if isinstance(plan, dict):
@@ -231,16 +217,14 @@ def _titles(entries: list[dict], state: dict | None, plan: dict | None) -> dict:
 def _opens(entry: dict, registry: dict) -> bool:
     """Whether an entry opens a thread: its kind's ``opensThread`` is true, or ``{"unless": field}`` and that field isn't."""
     opens = _kind(entry, registry)["opensThread"]
-    if not _facts(entry):
-        return False
     if isinstance(opens, dict):
-        return entry.get("data", {}).get(opens.get("unless")) is not True
+        return entry["data"].get(opens.get("unless")) is not True
     return opens is True
 
 
 def _kept_from_opening(entry: dict, registry: dict) -> bool:
     """An entry of a kind that opens a thread, kept from opening one by its own facts: a stop that left its piece queued."""
-    return bool(_kind(entry, registry)["opensThread"]) and _facts(entry) and not _opens(entry, registry)
+    return bool(_kind(entry, registry)["opensThread"]) and not _opens(entry, registry)
 
 
 def _threads(entries: list[dict], by_id: dict, registry: dict) -> tuple[list[dict], dict]:
@@ -329,8 +313,8 @@ def _chapters(entries: list[dict], closed: bool) -> list[dict]:
 def _altitudes(entry: dict, thread: str | None, registry: dict) -> list[str]:
     altitude = _kind(entry, registry)["altitude"]
     if entry["kind"] == DECISION_KIND:
-        # A person's decision, with its reason; a sentence-only one was the old record's catch-all.
-        return list(ALTITUDES) if _facts(entry) else ["story", "everything"]
+        # A person's decision, with its reason.
+        return list(ALTITUDES)
     if _kept_from_opening(entry, registry):
         altitude = "story"
     if altitude == "bookkeeping":
@@ -356,14 +340,13 @@ def _entry_beats(ids: list[int], by_id: dict, member_of: dict, registry: dict, f
     for entry in (by_id[name] for name in ids):
         thread = member_of.get(entry["id"])
         kind = _kind(entry, registry)
-        batch = entry.get("data", {}).get("batch") if entry["kind"] == BATCH_KIND else None
+        batch = entry["data"].get("batch") if entry["kind"] == BATCH_KIND else None
         last = beats[-1] if beats else None
         if (last and last["thread"] == thread and kind["altitude"] == "bookkeeping" and last["group"] == "bookkeeping"):
             last["held"].append(entry)
             continue
-        # Finish lines met together, journaled one after another with nothing between, are told as one; a line written
-        # only as a sentence keeps its sentence.
-        met = "finish" if entry["kind"] == FINISH_KIND and _facts(entry) else None
+        # Finish lines met together, journaled one after another with nothing between, are told as one.
+        met = "finish" if entry["kind"] == FINISH_KIND else None
         if met and last and last["thread"] == thread and last["group"] == met:
             last["held"].append(entry)
             continue
@@ -386,21 +369,21 @@ def _entry_beats(ids: list[int], by_id: dict, member_of: dict, registry: dict, f
 
 
 def _finish_label(entry: dict, finishes: dict) -> str:
-    return finishes.get(entry.get("data", {}).get("finish")) or "A finish line"
+    return finishes.get(entry["data"].get("finish")) or "A finish line"
 
 
 def _beat(beat: dict, registry: dict, finishes: dict) -> dict:
     held = beat["held"]
     first = held[0]
     kind = _kind(first, registry)
-    if len(held) == 1 and first["kind"] == FINISH_KIND and _facts(first):
+    if len(held) == 1 and first["kind"] == FINISH_KIND:
         # A finish line is named for the reader by its label, never by its id.
         words = _said({**first, "data": {**first["data"], "finish": _finish_label(first, finishes)}}, registry)
         form, label, tone, kind_name = "entry", kind["label"], kind["tone"], first["kind"]
     elif len(held) == 1:
         form, words, label, tone, kind_name = "entry", _said(first, registry), kind["label"], kind["tone"], first["kind"]
     elif first["kind"] == FINISH_KIND:
-        met = [entry.get("data", {}).get("finish") for entry in held]
+        met = [entry["data"].get("finish") for entry in held]
         every = len(finishes) == len(held) and set(met) == set(finishes)
         head = "Every finish line was met" if every else f"{_number(len(held)).capitalize()} finish lines were met"
         form, label, tone, kind_name = "finish", kind["label"], kind["tone"], first["kind"]
@@ -444,7 +427,7 @@ def _thread_beat(thread: dict, by_id: dict, registry: dict) -> dict:
     thread["words"] = {"head": "A setback: " + _lower(said["head"]), "line": " ".join(line)}
     ordered = sorted(told, key=lambda name: (_seconds(_instant(by_id[name])), name))
     return {"id": None, "chapter": None, "form": "thread", "altitudes": ["headline"], "at": thread["openedAt"], "entries": ordered,
-            "thread": thread["id"], "kind": opening["kind"], "tone": "problem", "label": TONE_WORDS["problem"], "words": dict(thread["words"]),
+            "thread": thread["id"], "kind": opening["kind"], "tone": "problem", "label": registry["tones"]["problem"], "words": dict(thread["words"]),
             "explain": _kind(opening, registry).get("explain"), "items": [], "first": opening["id"]}
 
 
@@ -473,11 +456,11 @@ def _word_chapter(chapter: dict, chapters: list[dict], index: int, by_id: dict, 
         parts = []
         if picked:
             parts.append(journal_words.duration(_between(_instant(min(picked, key=_key)), _instant(merge))) + " after it was picked up")
-        rounds = max(handed, key=_key).get("data", {}).get("rounds") if handed else None
+        rounds = max(handed, key=_key)["data"].get("rounds") if handed else None
         if isinstance(rounds, int) and rounds > 0:
             parts.append("after " + journal_words.show(rounds, "count", "review round"))
         line = ", ".join(parts)
-        chapter["words"] = {"head": _said(merge, registry)["head"] if _facts(merge) else f"{merge['subject']} landed", "line": _sentence(line[:1].upper() + line[1:]) if line else "",
+        chapter["words"] = {"head": _said(merge, registry)["head"], "line": _sentence(line[:1].upper() + line[1:]) if line else "",
                             "standing": standing}
         return
     if chapter["form"] == "start":
@@ -514,7 +497,7 @@ def _digest(entries: list[dict], threads: list[dict], pieces: list[str], landed:
     took = _between(started, closed_at) if closed_at else None
     done = [thread for thread in threads if thread["state"] == "closed"]
     standing = [{"thread": thread["id"], "openedAt": thread["openedAt"]} for thread in threads if thread["state"] == "open"]
-    decisions = sum(1 for entry in entries if entry["kind"] == DECISION_KIND and _facts(entry))
+    decisions = sum(1 for entry in entries if entry["kind"] == DECISION_KIND)
     cost = sum(thread["cost"] for thread in done)
     if not landed:
         head = "Nothing landed." if closed else "Nothing has landed yet."

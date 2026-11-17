@@ -9,11 +9,10 @@ const NOW = "2026-10-30T12:00:00Z";
 const CONFIG = { spec: "delivery-views-config/1", runs: REPLAYED_RUNS };
 
 test("a stopped base rerun is drawn in the story and reads as stopped in the piece's merge check", async () => {
-  const summary = "Base re-run on main at aaaaaaaaaa after 4s was stopped before its verdict: stop exited 143";
   const document = record({
     queue: [item("A", "queued")],
     journal: journal([[10, "candidate.handed", "A"], [11, "check.started", "A"], [12, "check.failed", "A"],
-      [13, "base.rerun.started", "A"], [14, "base.rerun.stopped", "A", { summary }]]),
+      [13, "base.rerun.started", "A"], [14, "base.rerun.stopped", "A"]]),
   });
   const [shown, card] = await openPage(pageWithRuns(document, {}, { config: CONFIG }),
     { now: NOW, store: false, steps: [{ click: '.stop-btn[data-subject="A"]' }] });
@@ -21,15 +20,14 @@ test("a stopped base rerun is drawn in the story and reads as stopped in the pie
   expect(shown.app.querySelector(`#happened .beat > time[datetime="${document.journal.at(-1).at}"]`) !== null).toBe(true);
   const history = card.app.querySelector("#detail .mh");
   expect(history.querySelector("summary .mh-sub").textContent).toMatch(/^ · Try stopped /);
-  expect([...history.querySelectorAll("li span")].map((row) => row.textContent).at(-1)).toBe(summary);
+  expect([...history.querySelectorAll("li span")].map((row) => row.textContent).at(-1)).toBe("The run on the main line stopped: After 4s, for the piece at 0000034. The stop exited 143.");
 });
 
 test("a check carried over a base move is drawn in the story and reads as carried in the piece's merge check", async () => {
-  const summary = "Carried lib to main at bbbbbbbbbb: 1 base commit changed nothing lib reads or A changes";
   const document = record({
     queue: [item("A", "checking")],
     journal: journal([[10, "candidate.handed", "A"], [11, "check.started", "A"], [12, "check.finished", "A"],
-      [13, "candidate.stopped", "A"], [14, "check.started", "A"], [15, "check.carried", "A", { summary }]]),
+      [13, "candidate.stopped", "A"], [14, "check.started", "A"], [15, "check.carried", "A"]]),
   });
   const [shown, card] = await openPage(pageWithRuns(document, {}, { config: CONFIG }),
     { now: NOW, store: false, steps: [{ click: '.stop-btn[data-subject="A"]' }] });
@@ -37,5 +35,5 @@ test("a check carried over a base move is drawn in the story and reads as carrie
   expect(shown.app.querySelector(`#happened .beat > time[datetime="${document.journal.at(-1).at}"]`) !== null).toBe(true);
   const history = card.app.querySelector("#detail .mh");
   expect(history.querySelector("summary .mh-sub").textContent).toMatch(/^ · Checks carried /);
-  expect([...history.querySelectorAll("li span")].map((row) => row.textContent).at(-1)).toBe(summary);
+  expect([...history.querySelectorAll("li span")].map((row) => row.textContent).at(-1)).toBe("Checks carried to the new main line: lib carried, none ran again, across 1 commit");
 });

@@ -149,7 +149,7 @@ class DeliveryStateFixture(unittest.TestCase):
             "extensions": {"adopter": {"note": HOSTILE, "nested": [1, {"a": None}]}},
         }
         state_tool(self.state_dir, "patch", "--writer", "lead", "--version", str(version), "--patch", json.dumps(changes))
-        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", HOSTILE, "--lane", "lane-1")
+        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--text", HOSTILE, "--why", "A test.", "--lane", "lane-1")
         # What a renderer reads: the state tool's show, without its publication status.
         # What every renderer and publisher receives: the record shown, with the story the narrator tells of it.
         self.document = render_state.with_story({key: value for key, value in state_tool(self.state_dir, "show").items() if key != "publication"},
@@ -579,20 +579,18 @@ FIXED_STATE = {
     "extensions": {"adopter": {"note": HOSTILE, "nested": [1, {"a": None}]}},
 }
 FIXED_JOURNAL = [
-    {"id": 1, "at": "2026-10-20T10:00:00Z", "kind": "lane.assigned", "lane": "lane-1", "subject": None,
-     "summary": "Assigned " + HOSTILE},
+    {"id": 1, "at": "2026-10-20T10:00:00Z", "kind": "lane.assigned", "lane": "lane-1", "subject": "change-1",
+     "data": {"title": "Assigned " + HOSTILE}},
     {"id": 2, "at": "2026-10-20T10:40:00Z", "kind": "review.round", "lane": "lane-1", "subject": "change-1",
-     "summary": "Round 1 " + HOSTILE,
-     "review": {"round": 1, "startedAt": "2026-10-20T10:30:00Z", "finishedAt": "2026-10-20T10:40:00Z",
+     "data": {"round": 1, "startedAt": "2026-10-20T10:30:00Z", "finishedAt": "2026-10-20T10:40:00Z",
                 "verdicts": {"outcome": "changes", "adversarial": "changes"},
                 "findings": {"P0": 0, "P1": 1, "P2": 2, "P3": 0}}},
     {"id": 3, "at": "2026-10-20T10:50:00Z", "kind": "review.round", "lane": "lane-1", "subject": "change-1",
-     "summary": "Round 2",
-     "review": {"round": 2, "startedAt": "2026-10-20T10:45:00Z", "finishedAt": "2026-10-20T10:50:00Z",
+     "data": {"round": 2, "startedAt": "2026-10-20T10:45:00Z", "finishedAt": "2026-10-20T10:50:00Z",
                 "verdicts": {"outcome": "approve", "adversarial": "approve"},
                 "findings": {"P0": 0, "P1": 0, "P2": 0, "P3": 1}}},
     {"id": 4, "at": "2026-10-20T11:00:00Z", "kind": "candidate.handed", "lane": "lane-1", "subject": "change-1",
-     "summary": "Handed over"},
+     "data": {"head": FIXED_STATE["queue"][0]["head"], "changeRequest": "change request 1", "checks": []}},
 ]
 # sha256 of each built-in view of the fixed state. A change here is a change
 # to what every adopter's page shows; make it deliberately.
@@ -618,8 +616,8 @@ PINNED_EMPTY_VIEWS = {
     "delivery.html": "3e6d8803ad1f842199052eda8ac6872f5a0fe5ee87f9b4ff932167d098f4bfbb",
 }
 PINNED_VIEWS = {
-    "delivery.md": "b5f72d94d7e66bcfea7be7b17c87123b8ffe405e43997a88f437d7cbe7b68abd",
-    "delivery.html": "26bf03566eff03c3fbe3584cfd4515c1047414ade855d8206c0502d156832a2a",
+    "delivery.md": "2fc32135cd66da2136a144514b9ae7d9a78f93704b0350dd5df3ab0bf74ce29e",
+    "delivery.html": "139711b1dac2bb2ebb91cde9bcfdd1614fc8439d537fe8ea8101efc9f332282e",
 }
 
 
@@ -1189,8 +1187,8 @@ class LiveTests(DeliveryStateFixture):
         first = client.wait_for(lambda doc: True)
         self.assertIsNotNone(first, "a page that connects gets the record at once")
         written = time.monotonic()
-        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", "Reached the page")
-        seen = client.wait_for(lambda doc: doc["journal"] and doc["journal"][-1]["summary"] == "Reached the page")
+        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--text", "Reached the page", "--why", "A test.")
+        seen = client.wait_for(lambda doc: doc["journal"] and doc["journal"][-1]["data"]["text"] == "Reached the page")
         self.assertIsNotNone(seen)
         self.assertLess(time.monotonic() - written, 3.0)
         self.assertEqual(set(seen), {"state", "journal", "stats", "estimates", "status", "focus", "story"})
@@ -1199,7 +1197,7 @@ class LiveTests(DeliveryStateFixture):
         self.assertIn(b"EventSource(\"/events\")", page)
         self.assertIn(b'id="live-status"', page)
         status, document = client.get("document")
-        self.assertEqual(json.loads(document)["journal"][-1]["summary"], "Reached the page")
+        self.assertEqual(json.loads(document)["journal"][-1]["data"]["text"], "Reached the page")
 
     def test_a_burst_of_writes_ends_at_the_final_version_with_nothing_lost_or_doubled(self) -> None:
         _, url = self.start()
@@ -1208,7 +1206,7 @@ class LiveTests(DeliveryStateFixture):
         client.wait_for(lambda doc: True)
         before = len(client.events)
         threads = [threading.Thread(target=state_tool, args=(self.state_dir, "journal", "--kind", "decision.recorded",
-                                                             "--summary", f"Burst {n}")) for n in range(10)]
+                                                             "--text", f"Burst {n}", "--why", "A test.")) for n in range(10)]
         for thread in threads:
             thread.start()
         for thread in threads:
@@ -1216,7 +1214,7 @@ class LiveTests(DeliveryStateFixture):
         final = state_tool(self.state_dir, "show")
         seen = client.wait_for(lambda doc: len(doc["journal"]) == len(final["journal"]), seconds=5)
         self.assertIsNotNone(seen)
-        summaries = [entry["summary"] for entry in seen["journal"]]
+        summaries = [entry["data"].get("text", "") for entry in seen["journal"]]
         self.assertEqual(sorted(summary for summary in summaries if summary.startswith("Burst")),
                          sorted(f"Burst {n}" for n in range(10)))
         self.assertEqual(len(summaries), len(set(entry["id"] for entry in seen["journal"])))
@@ -1256,8 +1254,8 @@ class LiveTests(DeliveryStateFixture):
         client = self.client(url)
         client.listen()
         client.wait_for(lambda doc: True)
-        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", "Rendered, not published")
-        client.wait_for(lambda doc: doc["journal"][-1]["summary"] == "Rendered, not published")
+        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--text", "Rendered, not published", "--why", "A test.")
+        client.wait_for(lambda doc: doc["journal"][-1]["data"]["text"] == "Rendered, not published")
         deadline = time.monotonic() + 3
         while "Rendered, not published" not in (self.state_dir / "delivery.md").read_text(encoding="utf-8") \
                 and time.monotonic() < deadline:
@@ -1271,12 +1269,12 @@ class LiveTests(DeliveryStateFixture):
         first.listen()
         first.wait_for(lambda doc: True)
         first.close()
-        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", "While away")
+        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--text", "While away", "--why", "A test.")
         time.sleep(0.6)
         second = self.client(url)
         second.listen()
         seen = second.wait_for(lambda doc: True, seconds=2)
-        self.assertEqual(seen["journal"][-1]["summary"], "While away")
+        self.assertEqual(seen["journal"][-1]["data"]["text"], "While away")
 
     def test_a_half_written_record_is_never_served_and_never_stops_the_server(self) -> None:
         process, url = self.start()
@@ -1289,9 +1287,9 @@ class LiveTests(DeliveryStateFixture):
         self.assertIsNone(process.poll())
         self.assertEqual(json.loads(client.get("document")[1]), good, "the last valid record stands")
         state_file.write_bytes(whole)
-        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", "Recovered")
+        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--text", "Recovered", "--why", "A test.")
         client.listen()
-        self.assertIsNotNone(client.wait_for(lambda doc: doc["journal"][-1]["summary"] == "Recovered"))
+        self.assertIsNotNone(client.wait_for(lambda doc: doc["journal"][-1]["data"]["text"] == "Recovered"))
 
     def test_it_serves_only_its_own_host_and_binds_to_this_machine_by_default(self) -> None:
         _, url = self.start()
@@ -1338,8 +1336,8 @@ class LiveTests(DeliveryStateFixture):
         state_file.chmod(0)
         time.sleep(0.8)
         state_file.chmod(0o644)
-        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", "After a bad read")
-        self.assertIsNotNone(client.wait_for(lambda doc: doc["journal"][-1]["summary"] == "After a bad read"))
+        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--text", "After a bad read", "--why", "A test.")
+        self.assertIsNotNone(client.wait_for(lambda doc: doc["journal"][-1]["data"]["text"] == "After a bad read"))
         self.assertIsNone(process.poll())
 
     def test_a_slow_view_never_holds_back_the_page(self) -> None:
@@ -1350,8 +1348,8 @@ class LiveTests(DeliveryStateFixture):
         client.listen()
         client.wait_for(lambda doc: True, seconds=10)
         written = time.monotonic()
-        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", "Not held back")
-        self.assertIsNotNone(client.wait_for(lambda doc: doc["journal"][-1]["summary"] == "Not held back"))
+        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--text", "Not held back", "--why", "A test.")
+        self.assertIsNotNone(client.wait_for(lambda doc: doc["journal"][-1]["data"]["text"] == "Not held back"))
         self.assertLess(time.monotonic() - written, 3.0)
 
     def test_an_opted_in_view_is_served_live_and_others_are_not(self) -> None:
@@ -1627,11 +1625,11 @@ class LiveTests(DeliveryStateFixture):
         first.listen()
         first.wait_for(lambda doc: True)
         for n in range(3):
-            state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", f"Long run {n}")
-        self.assertIsNotNone(first.wait_for(lambda doc: doc["journal"][-1]["summary"] == "Long run 2"))
+            state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--text", f"Long run {n}", "--why", "A test.")
+        self.assertIsNotNone(first.wait_for(lambda doc: doc["journal"][-1]["data"]["text"] == "Long run 2"))
         self.assertLessEqual(path.stat().st_size, limit)
         first.close()
-        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", "Away past the trim")
+        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--text", "Away past the trim", "--why", "A test.")
         time.sleep(0.6)
         second = self.client(url)
         second.listen()
@@ -1754,7 +1752,7 @@ class ChangeNotificationTests(DeliveryStateFixture):
         version = state_tool(self.state_dir, "show")["state"]["version"]
         state_tool(self.state_dir, "patch", "--writer", "lead", "--version", str(version),
                    "--patch", json.dumps({"meta": {"headline": "Changed"}}))
-        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", "A lane's entry", "--lane", "lane-1")
+        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--text", "A lane's entry", "--why", "A test.", "--lane", "lane-1")
         shown = state_tool(self.state_dir, "show")
         changes = self.changes()[before:]
         self.assertEqual([change["change"] for change in changes], ["patch", "journal"])
@@ -1790,7 +1788,7 @@ class ChangeNotificationTests(DeliveryStateFixture):
                              sort_keys=True, separators=(",", ":")) for n in range(2 * limit // 60)]
         path.write_text("\n".join(seeded) + "\n", encoding="utf-8")
         self.assertGreater(path.stat().st_size, limit)
-        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", "Past the cap")
+        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--text", "Past the cap", "--why", "A test.")
         self.assertLessEqual(path.stat().st_size, limit)
         changes = self.changes()
         latest = state_tool(self.state_dir, "show")["journal"][-1]["id"]
@@ -1802,7 +1800,7 @@ class ChangeNotificationTests(DeliveryStateFixture):
         trimmed = path.stat()
         # It keeps appending after a trim, and stays within its cap however long the run.
         for n in range(3):
-            state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", f"After {n}")
+            state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--text", f"After {n}", "--why", "A test.")
         self.assertEqual([change["change"] for change in self.changes()[-3:]], ["journal"] * 3)
         self.assertEqual(path.stat().st_ino, trimmed.st_ino, "below the cap, a write only appends")
         self.assertGreater(path.stat().st_size, trimmed.st_size)
@@ -1811,8 +1809,8 @@ class ChangeNotificationTests(DeliveryStateFixture):
         path = self.state_dir / "changes.jsonl"
         path.unlink(missing_ok=True)
         path.mkdir()
-        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--summary", "Still written")
-        self.assertEqual(state_tool(self.state_dir, "show")["journal"][-1]["summary"], "Still written")
+        state_tool(self.state_dir, "journal", "--kind", "decision.recorded", "--text", "Still written", "--why", "A test.")
+        self.assertEqual(state_tool(self.state_dir, "show")["journal"][-1]["data"]["text"], "Still written")
 
 
 class WrapperTests(DeliveryStateFixture):
@@ -2124,7 +2122,7 @@ class MarkdownRendererTests(DeliveryStateFixture):
         # The story's beats, one row each, under the one chapter this record holds.
         rows = [line for line in lines[lines.index("## Story") + 1 :] if line.startswith("- ")]
         self.assertEqual([row.split(":")[0] for row in rows], ["- 2026-10-20T10"] * 3)
-        self.assertEqual(len([row for row in rows if " Review round: Round 1 " in row]), 3)
+        self.assertEqual(len([row for row in rows if row.endswith(" Review round 1 on change-1: Findings: 0 P0, 1 P1, 2 P2 and 0 P3")]), 3)
 
     def test_state_text_renders_inert(self) -> None:
         view = self.render()
@@ -2157,8 +2155,9 @@ class MarkdownRendererTests(DeliveryStateFixture):
         # Non-ASCII state text arrives exactly, whatever the console encoding.
         self.assertIn("caf\u00e9 \u2713", view)
         self.assertIn("queued", view)
-        # The journal's entry reads as the story tells it: its kind's label, never the kind's id.
-        self.assertIn("Z Decision: \\</script\\>", view)
+        # The journal's entry reads as the story tells it: a decision in the lead's words, never the kind's id.
+        self.assertIn("Z \\</script\\>", view)
+        self.assertTrue(view.rstrip().endswith("indented: A test."))
         self.assertNotIn("decision.recorded", view)
 
     def test_only_meaningful_punctuation_is_escaped(self) -> None:

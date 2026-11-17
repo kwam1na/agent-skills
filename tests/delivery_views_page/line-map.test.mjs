@@ -221,11 +221,11 @@ test("says when the piece being checked runs on the fallback because the lead ch
 
 test("in a batch, the fallback note names the pieces on the fallback, or says it is every piece", async () => {
   const document = fixtureDocument();
-  const summary = "Checking Retry card payments once on a dropped connection, Keep the order number on the receipt page as one batch";
+  const members = { batch: ["PAY-2361", "PAY-2362"] };
   document.state.queue[3].stage = "checking";
   document.journal.push(
-    { at: "2026-10-22T05:05:00Z", id: 43, kind: "check.started", lane: "payments", subject: "PAY-2361", summary },
-    { at: "2026-10-22T05:05:00Z", id: 44, kind: "check.started", lane: "storefront", subject: "PAY-2362", summary },
+    { at: "2026-10-22T05:05:00Z", id: 11, kind: "check.started", lane: "payments", subject: "PAY-2361", data: members },
+    { at: "2026-10-22T05:05:00Z", id: 12, kind: "check.started", lane: "storefront", subject: "PAY-2362", data: members },
   );
   const fallback = { by: "provider", fallback: ["full-suite"] };
   const piece = (subject) => document.state.queue.find((entry) => entry.subject === subject);
@@ -302,15 +302,20 @@ test("puts failed checks first, says the piece won't merge from this run, and se
   document.state.queue[2].checks = ids.map((id, index) => ({
     id, state: states[index], ...(states[index] === "failed" ? { log: `logs/00${index}-${id}.log` } : {}), ...(index === 9 ? { failures: ["harness-behavior stop.log"], detail: "exit 1 after 2 retries" } : {}),
   }));
+  // Each failure the queue journaled, and the lead's notes, each naming among its causes the failure it is about.
+  const failed = (id, at, index) => ({ at, id, kind: "check.failed", lane: "payments", subject: "PAY-2361", because: [10],
+    data: { check: ids[index], timedOut: false, failing: [], more: 0, log: `logs/00${index}-${ids[index]}.log` } });
+  const note = (id, at, kind, subject, data, because) => ({ at, id, kind, lane: null, subject, data, ...(because ? { because } : {}) });
   document.journal.push(
-    { at: "2026-10-22T05:06:00Z", id: 21, kind: "blocker.recorded", lane: null, subject: "PAY-2361", summary: `Already failing on main: ${ids[3]}, the motion inventory test.` },
-    { at: "2026-10-22T05:06:30Z", id: 22, kind: "decision.recorded", lane: null, subject: "PAY-2361", summary: `Load flake, not a code failure: \`${ids[9]}\`.` },
-    { at: "2026-10-22T05:07:00Z", id: 23, kind: "decision.recorded", lane: null, subject: "PAY-2361", summary: "Verdict: this will not merge from this run." },
-    { at: "2026-10-22T05:07:30Z", id: 24, kind: "decision.recorded", lane: null, subject: "PAY-2363", summary: `About another piece: ${ids[3]}.` },
-    // Names a longer id that starts with a failed one: it is not about that check.
-    { at: "2026-10-22T04:20:00Z", id: 26, kind: "blocker.recorded", lane: null, subject: "PAY-2361", summary: `From an earlier run: ${ids[3]}.` },
-    { at: "not a time", id: 27, kind: "blocker.recorded", lane: null, subject: "PAY-2361", summary: `Undated: ${ids[3]}!` },
-    { at: "2026-10-22T05:08:00Z", id: 25, kind: "decision.recorded", lane: null, subject: "PAY-2361", summary: `Unrelated: ${ids[9]}.publishing passed.` },
+    failed(11, at(4), 3), failed(12, at(19), 9),
+    note(13, "2026-10-22T05:06:00Z", "blocker.recorded", "PAY-2361", { text: "Already failing on main, the motion inventory test" }, [11]),
+    note(14, "2026-10-22T05:06:30Z", "decision.recorded", "PAY-2361", { text: "Load flake, not a code failure", why: "It passed alone on a quiet machine." }, [12]),
+    note(15, "2026-10-22T05:07:00Z", "decision.recorded", "PAY-2361", { text: "Verdict: this will not merge from this run", why: "Two checks failed." }),
+    // Caused by a failure on this piece, but about another piece: it stays out.
+    note(16, "2026-10-22T05:07:30Z", "decision.recorded", "PAY-2363", { text: "About another piece", why: "It shares the check." }, [11]),
+    note(17, "2026-10-22T04:20:00Z", "blocker.recorded", "PAY-2361", { text: "From an earlier run" }, [11]),
+    // Its words name a failed check, but nothing ties it to that check's failure: it is a note about the piece.
+    note(18, "2026-10-22T05:08:00Z", "decision.recorded", "PAY-2361", { text: `Unrelated: ${ids[9]}`, why: "Publishing passed." }),
   );
   const [{ app }] = await open(document);
   const checking = app.querySelector(".checking");
@@ -325,7 +330,10 @@ test("puts failed checks first, says the piece won't merge from this run, and se
   const skewed = JSON.parse(JSON.stringify(document));
   skewed.state.meta.checking.now.steps[2].finishedAt = "2026-10-22T04:20:00Z";
   skewed.state.meta.checking.now.steps[12].startedAt = "2026-10-22T06:00:00Z";
+  // A note with no readable time is left out too.
+  skewed.journal.push(note(19, "not a time", "blocker.recorded", "PAY-2361", { text: "Undated" }, [11]));
   const [{ app: skewedApp }] = await open(skewed);
+  expect([...skewedApp.querySelectorAll(".ck-fails li")].map((failure) => failure.querySelectorAll(".ck-note").length)).toEqual([1, 1]);
   const values = [...skewedApp.querySelectorAll(".run-line *")].flatMap((node) => [...node.attributes].map((attribute) => attribute.value));
   expect(values.filter((value) => /NaN|Infinity/.test(value))).toEqual([]);
   expect(skewedApp.querySelectorAll(".run-line .rl-seg")).toHaveLength(13);
@@ -365,16 +373,15 @@ test("puts failed checks first, says the piece won't merge from this run, and se
   const failures = [...checking.querySelectorAll(".ck-fails li")];
   expect(failures.map((failure) => failure.querySelector(".ck-f")?.textContent)).toEqual([`Failed: ${ids[3]}`, `Failed: ${ids[9]}`]);
   expect(failures[0].querySelector(".ck-log")?.textContent).toBe(`Log: logs/003-${ids[3]}.log`);
-  expect([...failures[0].querySelectorAll(".ck-note")].map((note) => note.textContent)).toEqual([`Already failing on main: ${ids[3]}, the motion inventory test.`]);
+  expect([...failures[0].querySelectorAll(".ck-note")].map((note) => note.textContent)).toEqual(["Work was blocked on PAY-2361. Already failing on main, the motion inventory test"]);
   expect(failures[1].textContent).toContain("Failing: harness-behavior stop.log");
   expect(failures[1].textContent).toContain("exit 1 after 2 retries");
-  // Notes from before this run, or with no readable time, are left out.
+  // Notes from before this run are left out.
   expect(checking.textContent).not.toContain("From an earlier run");
-  expect(checking.textContent).not.toContain("Undated");
-  expect([...failures[1].querySelectorAll(".ck-note")].map((note) => note.textContent)).toEqual([`Load flake, not a code failure: \`${ids[9]}\`.`]);
+  expect([...failures[1].querySelectorAll(".ck-note")].map((note) => note.textContent)).toEqual(["Load flake, not a code failure. It passed alone on a quiet machine."]);
   // A note on the piece that names no failed check follows the list; another piece's note stays out.
   expect([...checking.querySelectorAll(".ck-more .ck-note")].map((note) => note.textContent)).toEqual([
-    "Verdict: this will not merge from this run.", `Unrelated: ${ids[9]}.publishing passed.`]);
+    "Verdict: this will not merge from this run. Two checks failed.", `Unrelated: ${ids[9]}. Publishing passed.`]);
   expect(checking.textContent).not.toContain("About another piece");
   expect(checking.querySelectorAll(".ck-step")).toHaveLength(0);
   expect(checking.textContent).toContain("9 passed, 1 reused, 2 failed, 1 running, 7 waiting");
@@ -432,9 +439,10 @@ test("names each check by the title its provider gave, by its id where none was 
 test("draws a passed post-merge fullHealth and a provider's refused selection in the history, never as raw kinds", async () => {
   const document = fixtureDocument();
   document.journal.push(
-    { at: "2026-10-22T05:08:00Z", id: 45, kind: "base.verified", summary: "fullHealth passed at the base head PAY-2358's merge reached" },
-    { at: "2026-10-22T05:09:00Z", id: 46, kind: "selection.refused", lane: "payments", subject: "PAY-2361",
-      summary: "The provider refused PAY-2361's checks: no checks match the diff" },
+    { at: "2026-10-22T05:08:00Z", id: 11, kind: "base.verified", lane: null, subject: null,
+      data: { source: "fullHealth", head: "a".repeat(40), after: "PAY-2358" } },
+    { at: "2026-10-22T05:09:00Z", id: 12, kind: "selection.refused", lane: "payments", subject: "PAY-2361",
+      data: { detail: "The provider refused PAY-2361's checks: no checks match the diff" } },
   );
   const [shown] = await open(document);
   // The feed's words are the story chapter's: only that it draws both entries is pinned, and that neither is a raw kind.
@@ -454,8 +462,10 @@ test("says a piece whose check failed is waiting on the main line's rerun, on th
   Object.assign(building, { state: "failed", finishedAt: "2026-10-22T05:06:50Z" });
   now.baseRerun = { startedAt: "2026-10-22T05:07:00Z", checks: ["storefront build"] };
   document.journal.push(
-    { at: "2026-10-22T05:06:55Z", id: 40, kind: "check.failed", lane: "payments", subject: "PAY-2361", summary: "Check failed: storefront build" },
-    { at: "2026-10-22T05:07:00Z", id: 41, kind: "base.rerun.started", lane: "payments", subject: "PAY-2361", summary: "Rerunning storefront build on main" },
+    { at: "2026-10-22T05:06:55Z", id: 11, kind: "check.failed", lane: "payments", subject: "PAY-2361", because: [10],
+      data: { check: "storefront build", timedOut: false, failing: ["build.Step.test_bundle"], more: 0, log: "logs/storefront-build.log" } },
+    { at: "2026-10-22T05:07:00Z", id: 12, kind: "base.rerun.started", lane: "payments", subject: "PAY-2361", because: [11],
+      data: { checks: ["storefront build"], base: { ref: "main", head: "a".repeat(40) } } },
   );
   const steps = [{ click: '.stop-btn[data-subject="PAY-2361"]' }];
   const [first, shown] = await open(document, { steps });
@@ -473,11 +483,11 @@ test("says a piece whose check failed is waiting on the main line's rerun, on th
   const history = shown.app.querySelector("#detail .mh");
   expect(history.querySelector("summary .mh-sub").textContent).toMatch(/^ · Trying the main line 3 minutes ago · /);
   expect([...history.querySelectorAll("li span")].map((row) => row.textContent).slice(-2))
-    .toEqual(["Check failed: storefront build", "Rerunning storefront build on main"]);
+    .toEqual(["storefront build failed: Failing: build.Step.test_bundle", "Checking the main line too: storefront build, at aaaaaaa"]);
   // Its verdict is drawn in the feed and reads as the merge check's last step.
   const verdict = JSON.parse(JSON.stringify(document));
-  verdict.journal.push({ at: "2026-10-22T05:09:00Z", id: 42, kind: "base.rerun.finished", lane: "payments", subject: "PAY-2361",
-    summary: "Base re-run on main after 120s: storefront build passed: the failure is the candidate's" });
+  verdict.journal.push({ at: "2026-10-22T05:09:00Z", id: 13, kind: "base.rerun.finished", lane: "payments", subject: "PAY-2361", because: [12],
+    data: { base: { ref: "main", head: "a".repeat(40) }, seconds: 120, verdict: "candidate_failed", results: [{ check: "storefront build", result: "passed" }] } });
   const [, verdictShown] = await open(verdict, { steps });
   expect(verdictShown.app.querySelector('#happened .beat > time[datetime="2026-10-22T05:09:00Z"]') !== null).toBe(true);
   expect(verdictShown.app.querySelector("#detail .mh summary .mh-sub").textContent).toMatch(/^ · Main line tried a minute ago · /);
@@ -494,11 +504,11 @@ test("says a piece whose check failed is waiting on the main line's rerun, on th
     .toBe("Retry card payments once on a dropped connection, Checked, about to merge");
   // A batch keeps its own header, and the rerun line still says the run is waiting on the main line.
   const batch = JSON.parse(JSON.stringify(document));
-  const summary = "Checking Retry card payments once on a dropped connection, Keep the order number on the receipt page as one batch";
+  const members = { batch: ["PAY-2361", "PAY-2362"] };
   batch.state.queue[3].stage = "checking";
   batch.journal.push(
-    { at: "2026-10-22T05:05:00Z", id: 43, kind: "check.started", lane: "payments", subject: "PAY-2361", summary },
-    { at: "2026-10-22T05:05:00Z", id: 44, kind: "check.started", lane: "storefront", subject: "PAY-2362", summary },
+    { at: "2026-10-22T05:05:00Z", id: 13, kind: "check.started", lane: "payments", subject: "PAY-2361", data: members },
+    { at: "2026-10-22T05:05:00Z", id: 14, kind: "check.started", lane: "storefront", subject: "PAY-2362", data: members },
   );
   const [batchShown] = await open(batch);
   expect(batchShown.app.querySelector(".checking .ck-h-words")?.textContent).toBe("Being checked together · 2 pieces");
@@ -519,12 +529,16 @@ test("says a piece whose check failed is waiting on the main line's rerun, on th
     .toBe("Retry card payments once on a dropped connection, Being checked before merge");
 });
 
-test("matches a note to a check whose name ends in punctuation", async () => {
+test("puts a note under a check whose name ends in punctuation, by the failure the note names", async () => {
   const document = fixtureDocument();
   document.state.meta.checking.now.steps[1] = { label: "lint(webapp)", state: "failed" };
-  document.journal.push({ at: "2026-10-22T05:06:00Z", id: 50, kind: "decision.recorded", lane: null, subject: "PAY-2361", summary: "Flaky: lint(webapp) passes alone" });
+  document.journal.push(
+    { at: "2026-10-22T05:05:30Z", id: 11, kind: "check.failed", lane: "payments", subject: "PAY-2361", because: [10],
+      data: { check: "lint(webapp)", timedOut: false, failing: [], more: 0, log: "logs/lint-webapp.log" } },
+    { at: "2026-10-22T05:06:00Z", id: 12, kind: "decision.recorded", lane: null, subject: "PAY-2361", because: [11],
+      data: { text: "Flaky", why: "It passes alone." } });
   const [{ app }] = await open(document);
-  expect(app.querySelector(".ck-fails li .ck-note")?.textContent).toBe("Flaky: lint(webapp) passes alone");
+  expect([...app.querySelectorAll('.ck-fails li[data-check="lint(webapp)"] .ck-note')].map((note) => note.textContent)).toEqual(["Flaky. It passes alone."]);
 });
 
 test("drops the chips for the failed-first list even when there are only a few checks", async () => {
@@ -552,7 +566,7 @@ test("never lets record text become markup", async () => {
   document.state.queue[0].title = HOSTILE;
   document.state.lanes[0].focus = HOSTILE;
   document.state.lanes[0].title = HOSTILE;
-  document.journal[0].summary = HOSTILE;
+  document.journal[0].data = { title: HOSTILE, note: HOSTILE };
   // The tracker's own words win over the record's titles, so they are made hostile too.
   document.state.tickets["PAY-2361"] = { title: HOSTILE, summary: HOSTILE };
   const page = render(document);
@@ -765,8 +779,8 @@ test("shows the latest round when the picked one is past the run's rounds", asyn
 
 test("takes a round's lens verdicts from the record's review.round entry only when the run gives none", async () => {
   const document = fixtureDocument();
-  const entry = (round, verdicts) => ({ at: "2026-10-22T04:59:00Z", id: 90 + round, kind: "review.round", lane: "payments",
-    subject: "PAY-2361", summary: `payments review round ${round} on PAY-2361`, review: { round, verdicts } });
+  const entry = (round, verdicts) => ({ at: "2026-10-22T04:59:00Z", id: 10 + round, kind: "review.round", lane: "payments",
+    subject: "PAY-2361", data: { round, startedAt: "2026-10-22T04:50:00Z", finishedAt: "2026-10-22T04:59:00Z", verdicts, findings: { P0: 0, P1: 0, P2: 0, P3: 0 } } });
   document.journal.push(entry(1, { "lens.outcome-correctness": "approve", "lens.adversarial-testing": "changes" }), entry(2, { "lens.outcome-correctness": "changes" }));
   const summary = { runId: "run-7", ticket: null, open: true, status: null, startedAt: null, lastAt: null, durationSeconds: null, rounds: 2, findings: null,
     roundDetail: [
@@ -781,9 +795,9 @@ test("takes a round's lens verdicts from the record's review.round entry only wh
 
 test("fills a lens the run leaves out or calls unknown from the record, keeps the run's own, and reads a missing outcome from them", async () => {
   const document = fixtureDocument();
-  document.journal.push({ at: "2026-10-22T04:59:00Z", id: 91, kind: "review.round", lane: "payments", subject: "PAY-2361",
-    summary: "payments review round 1 on PAY-2361",
-    review: { round: 1, verdicts: { "lens.outcome-correctness": "changes", "lens.adversarial-testing": "approve", "lens.perf": "approve" } } });
+  document.journal.push({ at: "2026-10-22T04:59:00Z", id: 11, kind: "review.round", lane: "payments", subject: "PAY-2361",
+    data: { round: 1, startedAt: "2026-10-22T04:50:00Z", finishedAt: "2026-10-22T04:59:00Z",
+      verdicts: { "lens.outcome-correctness": "changes", "lens.adversarial-testing": "approve", "lens.perf": "approve" }, findings: { P0: 0, P1: 0, P2: 0, P3: 0 } } });
   const summary = { runId: "run-7", ticket: null, open: true, status: null, startedAt: null, lastAt: null, durationSeconds: null, rounds: 1, findings: null,
     roundDetail: [{ round: 1, at: "2026-10-22T04:40:00Z", outcome: null, findings: null,
       verdicts: { "lens.outcome-correctness": "approve", "lens.adversarial-testing": "unknown" } }] };
@@ -882,7 +896,7 @@ test("marks what changed since the last update, as the earlier map did", async (
   later.state.meta.checking = { now: null, next: [] };
   later.state.lanes[1].state = "handed";
   later.state.followups.push({ id: "f-new", title: "Show the retry count to support", reference: "PAY-2399" });
-  later.journal.push({ at: "2026-10-22T05:09:00Z", id: 11, kind: "candidate.merged", lane: "payments", subject: "PAY-2361", summary: "Merged PAY-2361" });
+  later.journal.push({ at: "2026-10-22T05:09:00Z", id: 11, kind: "candidate.merged", lane: "payments", subject: "PAY-2361", data: { head: "6".repeat(40) } });
   // Pushed as the live server sends a record: with the story the narrator tells of it.
   const [, pushed] = await open(fixtureDocument(), { store: { read: "pending" }, steps: [{ push: told(later) }] });
   const app = pushed.app;
@@ -903,12 +917,12 @@ test("shows pieces checked as one batch together, each with its change request",
   // As the runner writes a batch: every member in checks, one journal start per member, each with its own time.
   const batch = () => {
     const document = fixtureDocument();
-    const summary = "Checking Retry card payments once on a dropped connection, Keep the order number on the receipt page as one batch";
+    const members = { batch: ["PAY-2361", "PAY-2362"] };
     document.state.queue[3].stage = "checking";
     document.state.meta.checking.now.title = "Batch of 2: PAY-2361, PAY-2362";
     document.journal.push(
-      { at: "2026-10-22T05:05:00.120431Z", id: 11, kind: "check.started", lane: "payments", subject: "PAY-2361", summary },
-      { at: "2026-10-22T05:05:00.187902Z", id: 12, kind: "check.started", lane: "storefront", subject: "PAY-2362", summary },
+      { at: "2026-10-22T05:05:00.120431Z", id: 11, kind: "check.started", lane: "payments", subject: "PAY-2361", data: members },
+      { at: "2026-10-22T05:05:00.187902Z", id: 12, kind: "check.started", lane: "storefront", subject: "PAY-2362", data: members },
     );
     return document;
   };
@@ -937,27 +951,28 @@ test("shows pieces checked as one batch together, each with its change request",
   const failing = batch();
   failing.state.meta.checking.now.steps = [{ label: "shop.check.aa", state: "failed" }, { label: "shop.check.bb", state: "running" }];
   failing.state.queue[3].checks = [{ id: "shop.check.aa", state: "failed", log: "logs/batch-aa.log" }];
-  failing.journal.push({ at: "2026-10-22T05:06:00Z", id: 40, kind: "blocker.recorded", lane: null, subject: "PAY-2362", summary: "shop.check.aa fails on the receipt page." });
+  failing.journal.push({ at: "2026-10-22T05:05:50Z", id: 13, kind: "check.failed", lane: "storefront", subject: "PAY-2362", because: [12],
+    data: { check: "shop.check.aa", timedOut: false, failing: [], more: 0, log: "logs/batch-aa.log" } },
+  { at: "2026-10-22T05:06:00Z", id: 14, kind: "blocker.recorded", lane: null, subject: "PAY-2362", because: [13], data: { text: "shop.check.aa fails on the receipt page." } });
   const [{ app: failingApp }] = await open(failing);
   expect(failingApp.querySelector(".ck-verdict")?.textContent).toBe(
     "The batch won't land as one. 1 failed · 1 still to run · the pieces ahead of the one that broke it can still land");
   expect(failingApp.querySelector(".ck-fails li")?.textContent).toContain("Log: logs/batch-aa.log");
-  expect(failingApp.querySelector(".ck-fails li .ck-note")?.textContent).toBe("shop.check.aa fails on the receipt page.");
+  expect(failingApp.querySelector(".ck-fails li .ck-note")?.textContent).toBe("Work was blocked on PAY-2362. shop.check.aa fails on the receipt page.");
 
   // A member carried out of a failed batch and checked again on its own is not in the old batch any more.
   const carried = batch();
   carried.state.queue[2].stage = "merged";
   carried.state.meta.checking.now = { subject: "PAY-2362", title: "Keep the order number on the receipt page", startedAt: "2026-10-22T05:09:00Z", steps: [] };
-  carried.journal.push({ at: "2026-10-22T05:09:00.004211Z", id: 13, kind: "check.started", lane: "storefront", subject: "PAY-2362", summary: "Checking Keep the order number on the receipt page" });
+  carried.journal.push({ at: "2026-10-22T05:09:00.004211Z", id: 13, kind: "check.started", lane: "storefront", subject: "PAY-2362", data: {} });
   const [{ app: carriedApp }] = await open(carried);
   expect(carriedApp.querySelector(".ck-h .ck-h-words")?.textContent).toBe("Checking · PAY-2362");
   expect(carriedApp.querySelector("#detail .d-batch")).toBeNull();
-  // The same batch started twice in a row counts each member once, and a lane's note between the starts
-  // does not split the batch.
+  // The same batch started twice counts each member once, and a lane's note between the starts changes nothing.
   const twice = batch();
   const [first, second] = twice.journal.slice(-2);
-  twice.journal.splice(twice.journal.length - 1, 0, { at: "2026-10-22T05:05:00.150000Z", id: 30, kind: "decision.recorded", lane: "ops", subject: null, summary: "A note" });
-  twice.journal.push({ ...first, id: 31 }, { ...second, id: 32 });
+  twice.journal.push({ ...first, id: 13 }, { at: "2026-10-22T05:05:00.150000Z", id: 14, kind: "decision.recorded", lane: "ops", subject: null,
+    data: { text: "A note", why: "The lane said so." } }, { ...second, id: 15 });
   const [{ app: twiceApp }] = await open(twice);
   expect(twiceApp.querySelector(".ck-h .ck-h-words")?.textContent).toBe("Being checked together · 2 pieces");
   // Pieces in checks that the latest batch start does not cover are not a batch either.
@@ -980,7 +995,7 @@ test("keeps a hand-over the lead has not accepted apart from the work ready to c
 test("shows a lead's status whole, and a broken main line as needing attention", async () => {
   const document = fixtureDocument();
   document.status = { source: "override", text: "Pausing merges · back after the deploy", expiresAt: "2026-10-22T06:00:00Z" };
-  document.journal.push({ at: "2026-10-22T05:08:00Z", id: 12, kind: "base.broken", lane: null, subject: null, summary: "Typecheck fails on main" });
+  document.journal.push({ at: "2026-10-22T05:08:00Z", id: 11, kind: "base.broken", lane: null, subject: null, data: { source: "queue", detail: "Typecheck fails on main" } });
   const [{ app }] = await open(document);
   expect(app.querySelector(".say")?.textContent).toBe("Pausing merges · back after the deploy");
   expect(app.querySelector(".attention")?.textContent).toContain("The main line is brokenTypecheck fails on main");
@@ -1128,10 +1143,11 @@ test("filters the story by tab, each the beats of one tone, keeping focus on the
 
 test("names a failed check among the problems while its stop is still being worked out", async () => {
   const document = fixtureDocument();
-  document.journal.push({ id: 99, at: "2026-10-22T07:00:00Z", kind: "check.failed", lane: null, subject: null, summary: "Check failed: suite (failing test_alpha; log logs/suite.log)" });
+  document.journal.push({ id: 11, at: "2026-10-22T07:00:00Z", kind: "check.failed", lane: "payments", subject: "PAY-2361", because: [10],
+    data: { check: "suite", timedOut: false, failing: ["test_alpha"], more: 0, log: "logs/suite.log" } });
   const [, problems] = await open(document, { steps: [{ click: '#happened [data-tab="problems"]' }] });
   const entry = [...problems.app.querySelectorAll("#happened .beat")].find((row) => row.textContent.includes("test_alpha"));
-  expect(entry?.querySelector(".beat-said").textContent).toBe("Check failed");
+  expect(entry?.querySelector(".beat-said").textContent).toBe("suite failed");
   expect(entry?.querySelector(".g").className).toBe("g stop");
 });
 

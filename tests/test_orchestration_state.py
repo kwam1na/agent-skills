@@ -2003,59 +2003,59 @@ class ReviewRoundTests(unittest.TestCase):
     def journal(self) -> list[dict]:
         return state_tool.show(self.directory)["journal"]
 
-    def test_a_round_is_journaled_with_its_review_and_a_written_summary(self) -> None:
+    def test_a_round_is_journaled_with_its_facts_and_no_sentence(self) -> None:
         payload = review(1, "2026-10-20T10:00:00Z", "2026-10-20T10:20:00.5Z",
                          verdicts={"outcome": "approve", "adversarial": "changes"}, findings=(0, 1, 2, 3))
         code, result = run_tool(self.directory, "journal", "--kind", "review.round", "--subject", "work-a",
-                                "--lane", "lane-1", "--review", json.dumps(payload))
+                                "--lane", "lane-1", "--data", json.dumps(payload))
         self.assertEqual(code, 0, result)
         entry = self.journal()[-1]
-        self.assertEqual((entry["kind"], entry["subject"], entry["review"]), ("review.round", "work-a", payload))
-        self.assertEqual(entry["summary"], "Round 1: adversarial changes, outcome approve; findings 0/1/2/3")
+        self.assertEqual({key: entry[key] for key in entry if key not in ("id", "at")},
+                         {"kind": "review.round", "lane": "lane-1", "subject": "work-a", "data": payload})
         code, result = run_tool(self.directory, "journal", "--kind", "review.round", "--subject", "work-a",
-                                "--review", "-", "--summary", "Round two, from the hand-off",
-                                stdin=json.dumps(review(2, "2026-10-20T11:00:00Z", "2026-10-20T11:00:00Z")))
-        self.assertEqual((code, self.journal()[-1]["summary"]), (0, "Round two, from the hand-off"))
-        code, result = run_tool(self.directory, "journal", "--kind", "review.round", "--subject", "work-a", "--review",
+                                "--data", "-", stdin=json.dumps({**review(2, "2026-10-20T11:00:00Z", "2026-10-20T11:00:00Z"), "refused": 1}))
+        self.assertEqual((code, self.journal()[-1]["data"]["refused"]), (0, 1))
+        code, result = run_tool(self.directory, "journal", "--kind", "review.round", "--subject", "work-a", "--data",
                                 json.dumps({**review(3, "2026-10-20T12:00:00Z", "2026-10-20T12:01:00Z"), "round": 3.0}))
-        self.assertEqual((code, self.journal()[-1]["summary"][:8]), (0, "Round 3:"))
+        self.assertEqual((code, self.journal()[-1]["data"]["round"]), (0, 3))
 
     def test_a_missing_review_is_named(self) -> None:
-        code, refused = run_tool(self.directory, "journal", "--kind", "review.round", "--subject", "w", "--review", "null")
+        code, refused = run_tool(self.directory, "journal", "--kind", "review.round", "--subject", "w", "--data", "null")
         self.assertEqual(refused["code"], "entry_invalid")
-        self.assertIn("--review", refused["error"])
+        self.assertIn("--data", refused["error"])
 
     def test_a_malformed_round_is_refused_and_nothing_is_written(self) -> None:
         good = review(1, "2026-10-20T10:00:00Z", "2026-10-20T10:20:00Z")
         before = (self.directory / state_tool.JOURNAL_FILE).read_bytes()
         cases = {
-            "a verdict that is not approve or changes": ["--subject", "w", "--review",
+            "a verdict that is not approve or changes": ["--subject", "w", "--data",
                                                          json.dumps({**good, "verdicts": {"outcome": "maybe"}})],
-            "finished before it started": ["--subject", "w", "--review", json.dumps(
+            "finished before it started": ["--subject", "w", "--data", json.dumps(
                 {**good, "startedAt": "2026-10-20T10:20:00.2Z", "finishedAt": "2026-10-20T10:20:00.1Z"})],
-            "no candidate": ["--review", json.dumps(good)],
-            "no verdict": ["--subject", "w", "--review", json.dumps({**good, "verdicts": {}})],
-            "no review": ["--subject", "w", "--summary", "A round"],
-            "a severity the schema does not know": ["--subject", "w", "--review", json.dumps(
+            "no candidate": ["--data", json.dumps(good)],
+            "no verdict": ["--subject", "w", "--data", json.dumps({**good, "verdicts": {}})],
+            "no review": ["--subject", "w"],
+            "a severity the schema does not know": ["--subject", "w", "--data", json.dumps(
                 {**good, "findings": {**good["findings"], "P4": 1}})],
-            "round zero": ["--subject", "w", "--review", json.dumps({**good, "round": 0})],
-            "a negative count": ["--subject", "w", "--review", json.dumps(
+            "round zero": ["--subject", "w", "--data", json.dumps({**good, "round": 0})],
+            "a negative count": ["--subject", "w", "--data", json.dumps(
                 {**good, "findings": {**good["findings"], "P1": -1}})],
-            "not JSON": ["--subject", "w", "--review", "{round"],
-            "a date that does not exist": ["--subject", "w", "--review", json.dumps(
+            "not JSON": ["--subject", "w", "--data", "{round"],
+            "a date that does not exist": ["--subject", "w", "--data", json.dumps(
                 {**good, "startedAt": "2026-13-45T00:10:00Z"})],
-            "a null review": ["--subject", "w", "--review", "null"],
-            "not an object": ["--subject", "w", "--review", "[1]"],
+            "a null review": ["--subject", "w", "--data", "null"],
+            "not an object": ["--subject", "w", "--data", "[1]"],
         }
         for name, args in cases.items():
             with self.subTest(name):
                 code, refused = run_tool(self.directory, "journal", "--kind", "review.round", *args)
-                self.assertEqual((code, refused["code"]), (1, "entry_invalid"), refused)
+                self.assertEqual(code, 1, refused)
+                self.assertIn(refused["code"], ("entry_invalid", "patch_invalid"), refused)
         code, refused = run_tool(self.directory, "journal", "--kind", "decision.recorded", "--text", "x", "--why", "A fixture.",
-                                 "--review", json.dumps(good))
-        self.assertEqual((code, refused["code"]), (1, "entry_invalid"), "only a review round carries a review")
+                                 "--data", json.dumps(good))
+        self.assertEqual((code, refused["code"]), (1, "entry_invalid"), "only a review round carries a round")
         code, refused = run_tool(self.directory, "journal", "--kind", "decision.recorded")
-        self.assertEqual((code, refused["code"]), (1, "entry_invalid"), "other kinds still need a summary")
+        self.assertEqual((code, refused["code"]), (1, "entry_invalid"), "other kinds need their facts too")
         self.assertEqual((self.directory / state_tool.JOURNAL_FILE).read_bytes(), before)
 
     def test_the_runner_never_writes_a_review_round(self) -> None:
@@ -2071,8 +2071,10 @@ class ReviewRoundTests(unittest.TestCase):
         self.assertIn('writer="runner"', source[source.index("def journal(self"):source.index("def checking(self")])
 
 
-def entry(number: int, at: str, kind: str, subject: str | None = None, lane: str | None = None, **fields: object) -> dict:
-    return {"id": number, "at": at, "kind": kind, "lane": lane, "subject": subject, "summary": kind, **fields}
+def entry(number: int, at: str, kind: str, subject: str | None = None, lane: str | None = None, *,
+          review: dict | None = None, **fields: object) -> dict:
+    """An entry as a fold reads it: a round's facts are its review, and other kinds' facts are not read."""
+    return {"id": number, "at": at, "kind": kind, "lane": lane, "subject": subject, "data": review or {}, **fields}
 
 
 class DeliveryStatsTests(unittest.TestCase):
@@ -2779,9 +2781,10 @@ class TrackerSnapshotTests(unittest.TestCase):
         self.assertEqual(code, 0, result)
         return result
 
-    def notes(self) -> list[str]:
-        return [entry["summary"] for entry in state_tool.show(self.directory)["journal"]
-                if entry["summary"].startswith("tracker-snapshot:")]
+    def notes(self) -> list[tuple[str, dict]]:
+        """Each note of the tracker's snapshot, as its kind and its facts."""
+        return [(entry["kind"], entry["data"]) for entry in state_tool.show(self.directory)["journal"]
+                if entry["kind"] in ("snapshot.stale", "snapshot.retaken") and entry["data"]["source"] == "tracker"]
 
     def test_the_command_takes_a_snapshot_reconcile_reads_with_no_agent(self) -> None:
         result = self.snap()
@@ -2797,16 +2800,16 @@ class TrackerSnapshotTests(unittest.TestCase):
     def test_a_failing_or_invalid_command_keeps_the_last_snapshot_and_notes_why_once(self) -> None:
         self.snap()
         kept = self.output.read_bytes()
-        for mode, reason, detail in (("fail", "exited with 3", "the tracker refused"),
-                                     ("garbage", "printed no JSON", None),
-                                     ("forge", "not a valid tracker snapshot", "forge"),
-                                     # The age is whole seconds and the run takes time: 7200s or a little more.
-                                     ("old", "too old", re.compile(r"was taken 720\ds ago")),
-                                     ("huge", "printed more than", None),
-                                     ("bigint", "printed no JSON", None),
-                                     ("deep", "printed no JSON", None),
-                                     ("forgeok", "not a valid tracker snapshot", "not from the tracker"),
-                                     ("baddate", "not a valid tracker snapshot", "not a real time")):
+        for mode, reason, detail, cause in (("fail", "exited with 3", "the tracker refused", {"cause": "exited", "exitCode": 3}),
+                                            ("garbage", "printed no JSON", None, {"cause": "no_json"}),
+                                            ("forge", "not a valid tracker snapshot", "forge", {"cause": "invalid"}),
+                                            # The age is whole seconds and the run takes time: 7200s or a little more.
+                                            ("old", "too old", re.compile(r"was taken 720\ds ago"), {"cause": "too_old"}),
+                                            ("huge", "printed more than", None, {"cause": "too_much_output"}),
+                                            ("bigint", "printed no JSON", None, {"cause": "no_json"}),
+                                            ("deep", "printed no JSON", None, {"cause": "no_json"}),
+                                            ("forgeok", "not a valid tracker snapshot", "not from the tracker", {"cause": "invalid"}),
+                                            ("baddate", "not a valid tracker snapshot", "not a real time", {"cause": "invalid"})):
             with self.subTest(mode=mode):
                 result = self.snap(mode)
                 self.assertEqual((result["taken"], result["fallback"]), (False, True))
@@ -2816,9 +2819,9 @@ class TrackerSnapshotTests(unittest.TestCase):
                 elif detail:
                     self.assertIn(detail, result["detail"])
                 self.assertEqual(self.output.read_bytes(), kept, "the last snapshot stands")
-                self.assertIn(reason, self.notes()[-1])
-        # What the command printed is never published: the journal names only the reason.
-        self.assertFalse([note for note in self.notes() if "secret-token" in note or "Bearer" in note])
+                self.assertEqual(self.notes()[-1], ("snapshot.stale", {"source": "tracker", **cause}))
+        # What the command printed is never published: the journal names only the reason's class.
+        self.assertFalse([note for note in self.notes() if "secret-token" in json.dumps(note) or "Bearer" in json.dumps(note)])
         before = len(self.notes())
         self.snap("baddate")
         self.assertEqual(len(self.notes()), before, "the same reason is noted once")
@@ -2827,14 +2830,11 @@ class TrackerSnapshotTests(unittest.TestCase):
         self.snap("fail")
         self.snap()
         self.snap("fail")
-        self.assertEqual(self.notes(), [
-            "tracker-snapshot: the command exited with 3; the last snapshot stands",
-            "tracker-snapshot: taken again",
-            "tracker-snapshot: the command exited with 3; the last snapshot stands",
-        ])
+        exited = ("snapshot.stale", {"source": "tracker", "cause": "exited", "exitCode": 3})
+        self.assertEqual(self.notes(), [exited, ("snapshot.retaken", {"source": "tracker"}), exited])
         self.snap()
         self.snap()
-        self.assertEqual(self.notes().count("tracker-snapshot: taken again"), 2, "a run of successes is noted once")
+        self.assertEqual(self.notes().count(("snapshot.retaken", {"source": "tracker"})), 2, "a run of successes is noted once")
 
     def test_reconcile_refuses_a_snapshot_the_parser_cannot_read(self) -> None:
         for name, text in (("long number", '{"takenAt": ' + "9" * 5000 + "}"),
@@ -3161,9 +3161,10 @@ class SourceRefreshTests(unittest.TestCase):
     def footprint(self) -> tuple:
         return state_tool.read_state(self.directory)["version"], len(state_tool.read_journal(self.directory))
 
-    def notes(self, source: str) -> list[str]:
-        return [entry["summary"] for entry in state_tool.read_journal(self.directory)
-                if entry["summary"].startswith(f"{source}-snapshot:")]
+    def notes(self, source: str) -> list[tuple[str, dict]]:
+        """Each note of a source's snapshot, as its kind and its facts."""
+        return [(entry["kind"], entry["data"]) for entry in state_tool.read_journal(self.directory)
+                if entry["kind"] in ("snapshot.stale", "snapshot.retaken") and entry["data"]["source"] == source]
 
     def queue(self, *items: dict) -> None:
         version = state_tool.read_state(self.directory)["version"]
@@ -3196,7 +3197,7 @@ class SourceRefreshTests(unittest.TestCase):
         self.assertIn("exited with 3", tracker["reason"])
         self.assertEqual(self.sources()["forge"]["status"], "observed", "the other source is still read")
         self.assertEqual(json.loads((self.directory / "snapshots" / "tracker.json").read_text(encoding="utf-8")), kept)
-        self.assertEqual(self.notes("tracker"), ["tracker-snapshot: the command exited with 3; the last snapshot stands"])
+        self.assertEqual(self.notes("tracker"), [("snapshot.stale", {"source": "tracker", "cause": "exited", "exitCode": 3})])
         before = self.footprint()
         self.refresh("tracker", "forge")
         self.assertEqual(self.footprint(), before, "the same outage is recorded once")
@@ -3204,7 +3205,7 @@ class SourceRefreshTests(unittest.TestCase):
         self.refresh("tracker", "forge")
         self.assertEqual(self.sources()["tracker"]["status"], "observed")
         self.assertNotIn("lastReadAt", self.sources()["tracker"])
-        self.assertEqual(self.notes("tracker")[-1], "tracker-snapshot: taken again")
+        self.assertEqual(self.notes("tracker")[-1], ("snapshot.retaken", {"source": "tracker"}))
 
     def test_a_source_that_never_answered_was_never_read(self) -> None:
         self.world("forge", [], mode="sleep")
@@ -3228,8 +3229,7 @@ class SourceRefreshTests(unittest.TestCase):
         self.world("forge", [{"subject": "work-t", "state": "started"}], source="tracker")
         self.refresh("forge")
         self.assertEqual(self.sources()["forge"]["status"], "stale")
-        self.assertEqual(self.notes("forge"), ["forge-snapshot: the command's snapshot is not a valid forge snapshot; "
-                                               "the last snapshot stands"])
+        self.assertEqual(self.notes("forge"), [("snapshot.stale", {"source": "forge", "cause": "invalid"})])
 
     def test_a_snapshot_reconcile_refuses_marks_its_source_stale_rather_than_failing(self) -> None:
         self.world("tracker", [{"subject": "work-t", "state": "started"}])
@@ -3591,7 +3591,7 @@ class NoChangeHandoffTests(unittest.TestCase):
         self.assertIn("done-already", [item["subject"] for item in document["state"]["planned"]], "settled, not removed")
         self.assertEqual(next(item for item in document["state"]["lanes"] if item["id"] == "lane-1")["state"], "idle",
                          "a lane with nothing else open rests once its story settles")
-        self.assertIn("settled with no change needed", document["journal"][-1]["summary"])
+        self.assertEqual((document["journal"][-1]["kind"], document["journal"][-1]["data"]), ("handoff.accepted", {"settled": True}))
         # Settled once: neither handed off nor accepted again.
         code, result = self.hand()
         self.assertEqual((code, result.get("code")), (1, "handoff_invalid"), result)
@@ -3630,7 +3630,8 @@ class NoChangeHandoffTests(unittest.TestCase):
         code, result = self.hand()
         self.assertEqual(code, 0, result)
         self.assertEqual(self.entry()["stage"], "settled")
-        self.assertIn("; settled", state_tool.show(self.directory)["journal"][-1]["summary"])
+        last = state_tool.show(self.directory)["journal"][-1]
+        self.assertEqual((last["kind"], last["data"]), ("candidate.handed", {"head": self.BASE, "checks": [], "noChange": True}))
 
     def test_a_no_change_hand_off_it_cant_take_is_refused_and_writes_nothing(self) -> None:
         before = state_tool.show(self.directory)["state"]
@@ -4342,10 +4343,10 @@ class LaneWriterTests(unittest.TestCase):
         state = state_tool.read_state(self.directory)
         self.assertNotIn("work-b", [entry["subject"] for entry in state["queue"]])
         self.assertEqual([entry["subject"] for entry in state["planned"]], ["work-b"])
-        decisions = {entry["subject"]: entry["summary"] for entry in state_tool.read_journal(self.directory)
-                     if entry["kind"] == "decision.recorded"}
-        self.assertIn("Accepted", decisions["work-a"])
-        self.assertIn("the review missed the migration", decisions["work-b"])
+        settled = {entry["subject"]: (entry["kind"], entry["data"]) for entry in state_tool.read_journal(self.directory)
+                   if entry["kind"] in ("handoff.accepted", "handoff.rejected")}
+        self.assertEqual(settled, {"work-a": ("handoff.accepted", {"settled": False}),
+                                   "work-b": ("handoff.rejected", {"why": "the review missed the migration"})})
 
     def test_a_lane_that_drops_its_own_state_is_refused_as_invalid_not_crashed(self) -> None:
         version = self.version()
@@ -4369,8 +4370,8 @@ class LaneWriterTests(unittest.TestCase):
                                     ("a kind the lane does not write", "candidate.merged", "work-a")):
             with self.subTest(name):
                 with self.assertRaises(state_tool.StateError) as caught:
-                    state_tool.append_journal(self.directory, kind=kind, data={}, lane="lane-1", subject=subject,
-                                              review=own if kind == "review.round" else None, writer="lane")
+                    state_tool.append_journal(self.directory, kind=kind, data=own if kind == "review.round" else {},
+                                              lane="lane-1", subject=subject, writer="lane")
                 self.assertEqual(caught.exception.code, "writer_not_owned")
 
     def test_the_command_line_hands_off_and_sets_focus(self) -> None:
@@ -5710,7 +5711,7 @@ def with_change(document: dict, path: tuple, value: object) -> dict:
 
 
 VALID_ENTRY = {"id": 1, "at": "2026-10-20T10:00:00Z", "kind": "candidate.merged", "lane": None,
-               "subject": "pr-1", "summary": "Merged"}
+               "subject": "pr-1", "data": {"head": "a" * 40}}
 
 
 SNAPSHOT = {"takenAt": "2026-10-20T10:00:00Z", "source": "tracker",
@@ -5721,17 +5722,8 @@ VALID_FIXTURES = {
     "queued with its ticket started", "lane wait set by the queue", "a decision carrying a review",
     "queue check with a title", "queue check with its node", "step with a title", "a close started", "a close finished", "queue check with its base re-run",
     "checking now awaiting the base rerun", "queue row named as the repair",
-    "facts only", "facts beside a sentence", "with its causes and what it answers", "an unregistered kind", "the registry",
+    "with its causes and what it answers", "an unregistered kind", "the registry",
 }
-# The kinds the journal took before the registry: every one is still accepted, by the registry or by the bridge.
-SENTENCE_KINDS = [
-    "lane.assigned", "review.round", "candidate.handed", "check.started", "check.finished",
-    "check.failed", "check.retried", "check.reused", "check.carried", "candidate.merged", "candidate.stopped", "base.verified", "base.broken",
-    "base.repaired", "base.rerun.started", "base.rerun.finished", "base.rerun.stopped", "base.flaky",
-    "lease.granted", "lease.released", "release.started", "release.finished",
-    "finish.met", "decision.recorded", "blocker.recorded", "delivery.closed", "review.evidence", "check.selected",
-    "selection.refused", "hook.held", "base.moved", "peer.merged",
-]
 
 
 class SchemaAgreementTests(unittest.TestCase):
@@ -5842,25 +5834,21 @@ class SchemaAgreementTests(unittest.TestCase):
             ],
             "delivery-journal/2": [
                 ("valid", VALID_ENTRY),
-                ("facts only", {key: value for key, value in {**VALID_ENTRY, "data": {"head": HEAD_A}}.items() if key != "summary"}),
-                ("facts beside a sentence", {**VALID_ENTRY, "data": {"head": HEAD_A}}),
+                ("facts beside a sentence", {**VALID_ENTRY, "summary": "Merged"}),
                 ("with its causes and what it answers", {**VALID_ENTRY, "because": [1, 2], "answers": [3]}),
-                ("neither facts nor a sentence", {key: value for key, value in VALID_ENTRY.items() if key != "summary"}),
+                ("no facts", {key: value for key, value in VALID_ENTRY.items() if key != "data"}),
                 ("facts that are not an object", {**VALID_ENTRY, "data": ["head"]}),
                 ("a cause that is not an entry id", {**VALID_ENTRY, "because": [0]}),
                 ("an answer by text", {**VALID_ENTRY, "answers": ["3"]}),
                 ("an unregistered kind", {**VALID_ENTRY, "kind": "candidate.vanished"}),
                 ("a kind that is not a name", {**VALID_ENTRY, "kind": "candidate vanished"}),
                 ("with lane", {**VALID_ENTRY, "lane": "lane-1"}),
-                ("a decision carrying a review", {**VALID_ENTRY, "kind": "decision.recorded",
-                                                 "reviewCarry": {"from": HEAD_A, "to": HEAD_B, "digest": "0" * 64}}),
-                ("a review carry with a short digest", {**VALID_ENTRY, "kind": "decision.recorded",
-                                                       "reviewCarry": {"from": HEAD_A, "to": HEAD_B, "digest": "0" * 8}}),
-                ("a review carry without its target", {**VALID_ENTRY, "kind": "decision.recorded",
-                                                      "reviewCarry": {"from": HEAD_A, "digest": "0" * 64}}),
+                ("a decision carrying the older shape's review carry", {**VALID_ENTRY, "kind": "decision.recorded",
+                                                                       "reviewCarry": {"from": HEAD_A, "to": HEAD_B, "digest": "0" * 64}}),
+                ("a round carrying the older shape's review", {**VALID_ENTRY, "kind": "review.round", "review": {}}),
+                ("a merge carrying the older shape's recovery", {**VALID_ENTRY, "recovery": {"head": HEAD_A, "changeRequest": None}}),
                 ("id zero", {**VALID_ENTRY, "id": 0}),
                 ("id as boolean", {**VALID_ENTRY, "id": True}),
-                ("empty summary", {**VALID_ENTRY, "summary": ""}),
                 ("empty lane", {**VALID_ENTRY, "lane": ""}),
                 ("missing subject", {key: value for key, value in VALID_ENTRY.items() if key != "subject"}),
                 ("extra field", {**VALID_ENTRY, "extra": 1}),
@@ -5917,11 +5905,9 @@ class SchemaAgreementTests(unittest.TestCase):
     def test_closed_value_lists_are_exact(self) -> None:
         state = schema_module.load_schema("delivery-state/1")
         journal = schema_module.load_schema("delivery-journal/2")
-        # The schema takes any kind by its shape; the registry, and the bridge until it goes, say which exist.
-        registered = list(json.loads((SKILL / "references/journal-kinds.json").read_text(encoding="utf-8"))["kinds"])
-        self.assertEqual(state_tool.BRIDGE_KINDS, ("review.evidence",))
-        self.assertEqual(sorted(set(SENTENCE_KINDS) - set(registered)), list(state_tool.BRIDGE_KINDS))
-        kinds = [*registered, *state_tool.BRIDGE_KINDS]
+        # The schema takes any kind by its shape; the registry says which exist.
+        kinds = list(json.loads((SKILL / "references/journal-kinds.json").read_text(encoding="utf-8"))["kinds"])
+        self.assertFalse(hasattr(state_tool, "BRIDGE_KINDS"))
         queue = state["properties"]["queue"]["items"]["properties"]
         self.assertEqual(queue["stage"]["enum"],
                          ["queued", "syncing", "synced", "checking", "checked", "merging", "merged", "stopped"])
@@ -5934,9 +5920,9 @@ class SchemaAgreementTests(unittest.TestCase):
         for kind in kinds:
             with self.subTest(kind=kind):
                 self.assertEqual(schema_module.validate({**VALID_ENTRY, "kind": kind}, journal), [])
-                if kind not in ("review.round", "review.evidence"):
-                    # Each is accepted with a sentence only, as every writer still journals it.
-                    self.assertEqual(state_tool.journal_errors([{**VALID_ENTRY, "kind": kind}]), [])
+        # The older capture's kind is no kind at all.
+        self.assertEqual(state_tool.journal_errors([{**VALID_ENTRY, "kind": "review.evidence"}]),
+                         ["entry 1/kind: no kind named review.evidence in the registry"])
         self.assertEqual(state_tool.journal_errors([{**VALID_ENTRY, "kind": "candidate.vanished"}]),
                          ["entry 1/kind: no kind named candidate.vanished in the registry"])
 
@@ -6199,10 +6185,10 @@ class CarryReviewTests(unittest.TestCase):
         self.assertEqual(self.evidence()["evidence"], "unavailable", "a capture binds to the head it reviewed")
         before = state_tool.show(self.directory)
         entry = self.carry()
-        self.assertEqual((entry["kind"], entry["subject"]), ("decision.recorded", "work-a"))
-        self.assertEqual(entry["reviewCarry"]["from"], HEAD_B)
-        self.assertEqual(entry["reviewCarry"]["to"], HEAD_C)
-        self.assertIn("only a fixture changed", entry["summary"])
+        digest = [item for item in state_tool.read_journal(self.directory) if item["kind"] == "review.recorded"][-1]["data"]["digest"]
+        self.assertEqual((entry["kind"], entry["lane"], entry["subject"], entry["data"], "because" in entry, "answers" in entry),
+                         ("review.carried", "lane-1", "work-a",
+                          {"from": HEAD_B, "to": HEAD_C, "digest": digest, "why": "only a fixture changed"}, False, False))
         found = self.evidence()
         self.assertEqual((found["evidence"], found["carriedFrom"], found["carriedTo"]), ("captured", HEAD_B, HEAD_C))
         after = state_tool.show(self.directory)
@@ -6210,7 +6196,7 @@ class CarryReviewTests(unittest.TestCase):
         # The evidence itself is unchanged: its rounds, its own reviewed head, its digest.
         self.assertEqual(observed["candidateRef"], HEAD_B)
         self.assertEqual(len(observed["outcomes"]), 2)
-        self.assertEqual(observed["carried"], {"from": HEAD_B, "to": HEAD_C, "note": entry["summary"]})
+        self.assertEqual(observed["carried"], {"from": HEAD_B, "to": HEAD_C, "note": "only a fixture changed"})
 
     def test_a_carry_is_no_run_no_round_and_no_admission_evidence(self) -> None:
         before = state_tool.show(self.directory)
@@ -6220,7 +6206,7 @@ class CarryReviewTests(unittest.TestCase):
         self.assertIsNone(after["state"]["queue"][0]["runId"])
         self.assertNotIn("evidence", after["state"]["queue"][0])
         self.assertEqual(after["stats"]["work-a"].get("rounds"), before["stats"]["work-a"].get("rounds"))
-        self.assertEqual([entry["kind"] for entry in after["journal"]][len(before["journal"]):], ["decision.recorded"])
+        self.assertEqual([entry["kind"] for entry in after["journal"]][len(before["journal"]):], ["review.carried"])
 
     def test_a_later_round_or_capture_ends_a_carry(self) -> None:
         self.carry()
@@ -6320,33 +6306,33 @@ class CarryReviewTests(unittest.TestCase):
         self.assertIn("exact reviewed head", self.refused(handoff))
         self.assertEqual((self.directory / state_tool.STATE_FILE).read_bytes(), before)
         # A lane cannot write the authorization through the journal CLI.
-        code, result = run_tool(self.directory, "journal", "--writer", "lane", "--kind", "decision.recorded",
-                                "--subject", "work-a", "--lane", "lane-1", "--text", "fixture", "--why", "A fixture.",
-                                "--base-merge-authorization", json.dumps(carry))
+        code, result = run_tool(self.directory, "journal", "--writer", "lane", "--kind", "base.merge.authorized",
+                                "--subject", "work-a", "--lane", "lane-1", "--data", json.dumps(carry))
         self.assertEqual((code, result["code"]), (1, "writer_not_owned"))
         self.assertEqual((self.directory / state_tool.STATE_FILE).read_bytes(), before)
         state_tool.append_journal(self.directory, kind="review.round", subject="work-a", lane="lane-1",
                                   data=review)
         self.assertIn("exact reviewed head", self.refused(handoff))
 
-    def test_only_the_lead_carries_and_only_a_decision_holds_a_carry(self) -> None:
+    def test_only_the_lead_carries_and_only_a_carry_about_a_story_holds_one(self) -> None:
         arguments = ("carry-review", "--subject", "work-a", "--from", HEAD_B, "--to", HEAD_C, "--reason", "fixtures only")
         code, refused = run_tool(self.directory, *arguments, "--writer", "lane")
         self.assertEqual((code, refused["code"]), (1, "writer_not_owned"))
         code, carried = run_tool(self.directory, *arguments, "--writer", "lead")
         self.assertEqual(code, 0, carried)
-        self.assertEqual(carried["entry"]["reviewCarry"]["to"], HEAD_C)
-        carry = {"from": HEAD_B, "to": HEAD_C, "digest": "0" * 64}
-        for stray in ({**VALID_ENTRY, "kind": "candidate.merged", "reviewCarry": carry},
-                      {**VALID_ENTRY, "kind": "decision.recorded", "subject": None, "reviewCarry": carry}):
-            with self.subTest(kind=stray["kind"], subject=stray["subject"]):
-                self.assertTrue(any("only a decision about a subject carries its review" in error
-                                    for error in state_tool.journal_errors([stray])))
-        self.assertEqual(state_tool.journal_errors([{**VALID_ENTRY, "kind": "decision.recorded", "reviewCarry": carry}]), [])
+        self.assertEqual((carried["entry"]["kind"], carried["entry"]["data"]["to"]), ("review.carried", HEAD_C))
+        carry = {"from": HEAD_B, "to": HEAD_C, "digest": "0" * 64, "why": "Fixtures only."}
+        stray = {**VALID_ENTRY, "kind": "review.carried", "subject": None, "data": carry}
+        self.assertIn("entry 1: a review.carried names its story", state_tool.journal_errors([stray]))
+        self.assertEqual(state_tool.journal_errors([{**stray, "subject": "work-a"}]), [])
+        # A decision carries no carry of its own: the older shape's member is no member of this one.
+        older = {**VALID_ENTRY, "kind": "decision.recorded", "data": {"text": "Carry", "why": "Fixtures."},
+                 "reviewCarry": {key: carry[key] for key in ("from", "to", "digest")}}
+        self.assertTrue(any("/reviewCarry: no value is allowed here" in error for error in state_tool.journal_errors([older])))
 
 
 class StateToolFactsTests(unittest.TestCase):
-    """The state tool's own entries carry their kind's facts and links, beside the sentence the bridge keeps."""
+    """The state tool's own entries carry their kind's facts and links, and no sentence."""
 
     EVIDENCE = [{"check": "full", "definition": "sha256:" + "d" * 64, "head": HEAD_A, "tree": "e" * 40, "result": "passed"}]
 
@@ -6370,7 +6356,7 @@ class StateToolFactsTests(unittest.TestCase):
         return state_tool.append_journal(self.directory, kind="candidate.stopped", subject=subject, writer="runner",
                                          data={"reason": "check_failed", "detail": "unit failed on the piece."})
 
-    def test_a_hand_off_journals_its_facts_beside_its_sentence(self) -> None:
+    def test_a_hand_off_journals_its_facts_and_no_sentence(self) -> None:
         state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head=HEAD_A, change_request="cr-a", rounds=2,
                            evidence=self.EVIDENCE, checks=["unit"])
         entry = self.last()
@@ -6378,7 +6364,7 @@ class StateToolFactsTests(unittest.TestCase):
                          {"kind": "candidate.handed", "lane": "lane-1", "subject": "work-a", "because": None, "answers": None,
                           "data": {"head": HEAD_A, "changeRequest": "cr-a", "rounds": 2, "checks": ["unit"],
                                    "evidence": self.EVIDENCE}})
-        self.assertTrue(entry["summary"].startswith(f"lane-1 handed work-a at {HEAD_A} (cr-a) after 2 review rounds"))
+        self.assertEqual(set(entry), {"id", "at", "kind", "lane", "subject", "data"})
         state_tool.handoff(self.directory, lane="lane-1", subject="work-q", head=HEAD_B, change_request="cr-1")
         self.assertEqual(self.last()["data"], {"head": HEAD_B, "changeRequest": "cr-1", "checks": []})
 
@@ -6411,9 +6397,9 @@ class StateToolFactsTests(unittest.TestCase):
         entry = self.last()
         self.assertEqual((entry["kind"], entry["lane"], entry["subject"], entry["data"], "answers" in entry),
                          ("candidate.handed", "lane-1", "work-a", {"head": HEAD_B, "checks": [], "noChange": True}, False))
-        self.assertIn("with no change needed", entry["summary"])
+        self.assertNotIn("summary", entry)
 
-    def test_a_selection_journals_its_checks_and_reason_and_a_clearing_keeps_its_sentence(self) -> None:
+    def test_a_selection_journals_its_checks_and_reason_and_a_clearing_journals_its_own_kind(self) -> None:
         LeadSelectionTests.select(self, binding={**LeadSelectionTests.BINDING,
                                                   "selection": {"lead": True, "catalogue": [selected_check("guide")],
                                                                 "guards": ["guide"]}})
@@ -6423,22 +6409,51 @@ class StateToolFactsTests(unittest.TestCase):
                                          "added": [{"id": "guide", "why": "a guard"}]})
         state_tool.select_checks(self.directory, "work-q", binding=LeadSelectionTests.BINDING)
         cleared = self.last()
-        # The clearing keeps its old kind and sentence: readers outside the state tool key on check.selected.
-        self.assertEqual((cleared["kind"], "data" in cleared), ("check.selected", False))
-        self.assertIn("Cleared the lead's check selection for work-q", cleared["summary"])
+        self.assertEqual({key: cleared[key] for key in cleared if key not in ("id", "at")},
+                         {"kind": "check.selection.cleared", "lane": "lane-1", "subject": "work-q", "data": {}})
+
+    def test_an_acceptance_names_the_check_journaled_for_its_hand_off_and_a_rejection_names_the_hand_off(self) -> None:
+        version = state_tool.read_state(self.directory)["version"]
+        state_tool.patch(self.directory, writer="lead", version=version, changes={"meta": {"handoffsNeedAcceptance": True}})
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head=HEAD_A, change_request="cr-a", rounds=1)
+        handed = self.last()
+        checked = state_tool.append_journal(self.directory, kind="handoff.checked", subject="work-a", because=[handed["id"]],
+                                            data={"head": HEAD_A, "rounds": 1, "afterMerge": False, "noChange": False, "notes": []})
+        # Another piece's check, journaled after, is not this acceptance's, whatever it names.
+        state_tool.append_journal(self.directory, kind="handoff.checked", subject="work-q", because=[handed["id"]],
+                                  data={"head": HEAD_A, "rounds": 1, "afterMerge": False, "noChange": False, "notes": []})
+        state_tool.accept_handoff(self.directory, "work-a")
+        accepted = self.last()
+        self.assertEqual({key: accepted[key] for key in accepted if key not in ("id", "at")},
+                         {"kind": "handoff.accepted", "lane": None, "subject": "work-a", "data": {"settled": False},
+                          "because": [checked["id"]]})
+        # With no check journaled for the latest hand-off, the acceptance names nothing and is still appended.
+        state_tool.patch(self.directory, writer="runner", version=state_tool.read_state(self.directory)["version"],
+                         selector="queue[subject=work-a]", assignments={"/stage": "stopped"})
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head=HEAD_B, change_request="cr-a", rounds=1)
+        again = self.last()
+        state_tool.accept_handoff(self.directory, "work-a")
+        self.assertEqual((self.last()["kind"], "because" in self.last()), ("handoff.accepted", False))
+        # A rejection names the hand-off it sends back, with the lead's reason.
+        state_tool.patch(self.directory, writer="runner", version=state_tool.read_state(self.directory)["version"],
+                         selector="queue[subject=work-a]", assignments={"/stage": "stopped"})
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head=HEAD_C, change_request="cr-a", rounds=1)
+        third = self.last()
+        state_tool.reject_handoff(self.directory, "work-a", "Its checks were not the ones named.")
+        rejected = self.last()
+        self.assertEqual({key: rejected[key] for key in rejected if key not in ("id", "at")},
+                         {"kind": "handoff.rejected", "lane": "lane-1", "subject": "work-a",
+                          "data": {"why": "Its checks were not the ones named."}, "because": [third["id"]]})
+        self.assertNotEqual(third["id"], again["id"])
 
     def test_wait_events_carry_each_entrys_facts_and_its_words_from_the_registry(self) -> None:
         handed = state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head=HEAD_A, change_request="cr-a",
                                     rounds=1)
         entries = state_tool.read_journal(self.directory)
-        sentence = {"id": 9, "at": entries[0]["at"], "kind": "decision.recorded", "lane": None, "subject": None,
-                    "summary": "A sentence only"}
-        events = state_tool.wait_events([entries[-1], sentence])
+        events = state_tool.wait_events([entries[-1]])
         self.assertEqual(events[0], {"id": entries[-1]["id"], "kind": "candidate.handed", "lane": "lane-1",
-                                     "subject": "work-a", "summary": entries[-1]["summary"], "data": entries[-1]["data"],
+                                     "subject": "work-a", "data": entries[-1]["data"],
                                      "head": "Lane 1 handed off work-a", "line": "Ready after 1 review round"})
-        self.assertEqual(events[1], {"id": 9, "kind": "decision.recorded", "lane": None, "subject": None,
-                                     "summary": "A sentence only"})
         registry = json.loads(state_tool.journal_words.REGISTRY_FILE.read_text(encoding="utf-8"))
         registry["kinds"]["candidate.handed"]["words"]["head"] = "{subject} is ready"
         planted = self.root / "journal-kinds.json"
@@ -6472,8 +6487,20 @@ def write_journal(directory: Path, entries: list[dict]) -> None:
         "".join(json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n" for entry in entries), encoding="utf-8")
 
 
+OLDER_SHAPE = "in the older journal shape, with a sentence or without data, which a 2.x release reads"
+
+
+def refused_at_the_journal(case: unittest.TestCase, entry: dict) -> None:
+    """A reader's case from when an entry could hold only a sentence: the journal refuses that entry now, so no reader
+    of it is reached."""
+    errors = state_tool.journal_errors([{**entry, "id": 1}])
+    case.assertEqual(len(errors), 1, errors)
+    case.assertIn(OLDER_SHAPE, errors[0])
+
+
 class FactsReaderTests(unittest.TestCase):
-    """The state tool's readers of its own entries read their facts, whatever their prose says, and a sentence as before."""
+    """The state tool's readers of its own entries read their facts, whatever their prose says. An entry with only a
+    sentence, each reader's case before, is refused at the journal."""
 
     KINDS = json.loads((SKILL / "references/journal-kinds.json").read_text(encoding="utf-8"))["kinds"]
 
@@ -6506,16 +6533,10 @@ class FactsReaderTests(unittest.TestCase):
         self.assertIsNone(state_tool.repaired_state(state, [broken, {**stop, "because": []}]))
         self.assertIsNone(state_tool.repaired_state(state, [broken, {**stop, "data": {**stop["data"], "reason": "check_failed"}}]))
         self.assertIsNone(state_tool.repaired_state(state, [{**broken, "data": {**broken["data"], "reason": "merged_unverified"}}, stop]))
-        # A break with facts reads its head, for a stop that has only its sentence.
-        said_stop = {key: value for key, value in stop.items() if key not in ("data", "because")}
-        said_stop["summary"] = f"base_broken: unit also fails on main at {HEAD_B}"
-        self.assertEqual(state_tool.repaired_state(state, [broken, said_stop])["queue"][0]["stage"], "queued")
-        # A sentence-only break and stop read as before.
-        said = [{**broken, "summary": f"base_broken: unit also fails on main at {HEAD_B}"},
-                {**stop, "summary": f"base_broken: unit also fails on main at {HEAD_B}"}]
-        for entry in said:
-            del entry["data"]
-        self.assertEqual(state_tool.repaired_state(state, said)["queue"][0]["stage"], "queued")
+        # A stop or a break with only its sentence is refused before any repair reads it.
+        for entry in (broken, stop):
+            said = {key: value for key, value in entry.items() if key not in ("data", "because")}
+            refused_at_the_journal(self, {**said, "summary": f"base_broken: unit also fails on main at {HEAD_B}"})
 
     def test_a_base_move_is_journaled_once_by_its_commits_whatever_its_reason_says(self) -> None:
         state_tool.patch(self.directory, writer="runner", version=1, changes={"meta": {"baseHead": HEAD_A}})
@@ -6529,15 +6550,14 @@ class FactsReaderTests(unittest.TestCase):
                 self.assertEqual([(entry["kind"], entry["data"]) for entry in moved],
                                  [("base.moved", {"from": HEAD_A, "to": HEAD_B, "merged": HEAD_C, "why": "Published move"})])
                 # Facts only, and its reason in other words: still this move, so it is not journaled again.
-                kept = {key: value for key, value in prose_replaced(moved, self.KINDS)[0].items() if key != "summary"}
+                self.assertEqual(set(moved[0]), {"id", "at", "kind", "lane", "subject", "data"})
+                kept = prose_replaced(moved, self.KINDS)[0]
                 write_journal(self.directory, [kept])
                 state_tool.complete_base_move_locked(self.directory, **arguments)
                 self.assertEqual(state_tool.read_journal(self.directory), [kept])
-                # A sentence-only entry is matched by its sentence, as before.
+                # A move with only its sentence is refused at the journal.
                 said = {key: value for key, value in moved[0].items() if key != "data"}
-                write_journal(self.directory, [said])
-                state_tool.complete_base_move_locked(self.directory, **arguments)
-                self.assertEqual(state_tool.read_journal(self.directory), [said])
+                refused_at_the_journal(self, {**said, "summary": f"Base moved from {HEAD_A} to {HEAD_B} by merging {HEAD_C}"})
                 # A different move after one with facts is journaled for itself.
                 write_journal(self.directory, [kept])
                 state_tool.complete_base_move_locked(self.directory, **{**arguments, "from_head": HEAD_B, "to_head": HEAD_D,
@@ -6565,8 +6585,9 @@ class FactsReaderTests(unittest.TestCase):
         snapshot = {"takenAt": taken(), "source": "tracker", "items": []}
         self.assertTrue(take(0, json.dumps(snapshot).encode())["taken"])
         retaken = state_tool.read_journal(self.directory)[-1]
-        self.assertEqual((retaken["kind"], retaken["data"], retaken["answers"], retaken["summary"]),
-                         ("snapshot.retaken", {"source": "tracker"}, [other["id"]], "tracker-snapshot: taken again"))
+        self.assertEqual({key: retaken[key] for key in retaken if key not in ("id", "at")},
+                         {"kind": "snapshot.retaken", "lane": None, "subject": None, "data": {"source": "tracker"},
+                          "answers": [other["id"]]})
         # Each class of cause is a fact of its own.
         for result, cause in (((None, b"", "timed out after 2s"), "timed_out"), ((None, b"", "printed more than 16 MiB"), "too_much_output"),
                               ((None, b"", "could not start: no such file"), "not_started"), ((None, b"", "it was killed"), "unfinished")):
@@ -6579,15 +6600,11 @@ class FactsReaderTests(unittest.TestCase):
         state_tool.init(orphan, "No parent")
         state_tool.take_snapshot(orphan, member, output, source="tracker", max_age=3600)
         self.assertEqual(state_tool.read_journal(orphan)[-1]["data"], {"source": "tracker", "cause": "no_parent"})
-        # A retake after a stale note with only its sentence answers nothing: that note is not of the kind it answers.
-        said = {"id": 1, "at": taken(), "kind": "decision.recorded", "lane": None, "subject": None,
-                "summary": "tracker-snapshot: the command exited with 3; the last snapshot stands"}
-        write_journal(self.directory, [said])
-        self.assertTrue(take(0, json.dumps(snapshot).encode())["taken"])
-        self.assertNotIn("answers", state_tool.read_journal(self.directory)[-1])
+        # A stale note with only its sentence is refused at the journal.
+        refused_at_the_journal(self, {"id": 1, "at": taken(), "kind": "decision.recorded", "lane": None, "subject": None,
+                                      "summary": "tracker-snapshot: the command exited with 3; the last snapshot stands"})
         # A forge note is not the tracker's.
-        self.assertEqual(state_tool._snapshot_note({**stale, "data": {"source": "forge"}}, "tracker", "tracker-snapshot:"),
-                         False)
+        self.assertEqual(state_tool._snapshot_note({**stale, "data": {"source": "forge"}}, "tracker"), False)
 
     def test_a_recovered_merge_is_known_as_its_intents_by_its_facts(self) -> None:
         state_tool.patch(self.directory, writer="lead", version=1,
@@ -6596,11 +6613,9 @@ class FactsReaderTests(unittest.TestCase):
         merged = state_tool.merged_item(state["queue"][0], syncedHead=HEAD_B)
         state_tool.patch(self.directory, writer="runner", version=state["version"], changes={"queue": [merged]})
         intent = {"subject": "work-q", "head": HEAD_B, "lane": "lane-1", "journalAfter": 0, "occurredAt": None,
-                  "changeRequest": "change 7",
-                  "summary": f"Recorded from a forge snapshot: merged at {HEAD_B}, not recorded by the runner"
-                             + state_tool.WAIT_BYPASSED}
+                  "changeRequest": "change 7", "acceptanceSkipped": True}
         recorded = {"id": 1, "at": taken(), "kind": "candidate.merged", "lane": "lane-1", "subject": "work-q",
-                    "occurredAt": None, "recovery": {"head": HEAD_B, "changeRequest": "change 7"},
+                    "occurredAt": None,
                     "data": {"head": HEAD_B, "recovery": {"head": HEAD_B, "changeRequest": "change 7"}, "acceptanceSkipped": True}}
         for entry, bypassed in ((recorded, True), ({**recorded, "data": {"head": HEAD_B}}, False),
                                 (prose_replaced([recorded], FactsReaderTests.KINDS)[0], True)):
@@ -6612,14 +6627,23 @@ class FactsReaderTests(unittest.TestCase):
                 # The intent's own merge skipped the lead's acceptance; a merge with other facts went through the queue.
                 self.assertEqual(any("before the lead accepted" in report.get("note", "") for report in reports), bypassed,
                                  reports)
+        # The recovery's intent says whether it skipped acceptance as a flag; one in the older shape, with a sentence, is
+        # malformed, and set aside rather than read.
+        (self.directory / state_tool.RECOVERY_FILE).write_text(json.dumps(
+            {**{key: value for key, value in intent.items() if key != "acceptanceSkipped"},
+             "summary": f"Recorded from a forge snapshot: merged at {HEAD_B}" + state_tool.WAIT_BYPASSED}), encoding="utf-8")
+        with self.assertRaises(state_tool.StateError) as malformed:
+            state_tool._read_recovery(self.directory)
+        self.assertIn("is malformed", str(malformed.exception))
+        refused_at_the_journal(self, {key: value for key, value in {**recorded, "summary": "Recorded"}.items() if key != "data"})
 
     def test_a_reconciled_merge_journals_its_head_and_source_identity(self) -> None:
         RecoveryIntentTests.setUp(self)
         state_tool.reconcile(self.directory, [self.forge])
         entry = RecoveryIntentTests.recovered(self)[-1]
-        self.assertEqual(entry["data"], {"head": HEAD_B, "recovery": {"head": HEAD_B, "changeRequest": "change 7"}})
-        self.assertEqual(entry["recovery"], entry["data"]["recovery"])
-        self.assertIn("Recorded from a forge snapshot", entry["summary"])
+        self.assertEqual({key: entry[key] for key in entry if key not in ("id", "at")},
+                         {"kind": "candidate.merged", "lane": "lane-1", "subject": "work-q", "occurredAt": entry["occurredAt"],
+                          "data": {"head": HEAD_B, "recovery": {"head": HEAD_B, "changeRequest": "change 7"}}})
 
 
 class FactsReviewReaderTests(unittest.TestCase):
@@ -6637,10 +6661,10 @@ class FactsReviewReaderTests(unittest.TestCase):
                                                                     verdicts=verdicts))
 
     def test_a_carry_with_facts_holds_the_evidence_and_gives_its_reason_as_its_note(self) -> None:
-        capture = next(entry for entry in state_tool.read_journal(self.directory) if entry["kind"] == "review.evidence")
+        capture = next(entry for entry in state_tool.read_journal(self.directory) if entry["kind"] == "review.recorded")
         why = "only a fixture changed"
         state_tool.append_journal(self.directory, kind="review.carried", subject="work-a", lane="lane-1", data={
-            "from": HEAD_B, "to": HEAD_C, "digest": capture["reviewArtifact"]["digest"], "why": why})
+            "from": HEAD_B, "to": HEAD_C, "digest": capture["data"]["digest"], "why": why})
         found = self.evidence()
         self.assertEqual((found["evidence"], found["carriedFrom"], found["carriedTo"]), ("captured", HEAD_B, HEAD_C))
         self.assertEqual(state_tool.show(self.directory)["reviewEvidence"]["work-a"]["carried"],
@@ -6663,24 +6687,37 @@ class FactsReviewReaderTests(unittest.TestCase):
         self.facts_round(2)
         capture = self.capture([review_round(1, HEAD_A, finding=True), review_round(2, HEAD_B, resolved=True)])
         merge = {"reviewed": HEAD_B, "baseCommits": [HEAD_D]}
-        state_tool.append_journal(self.directory, kind="decision.recorded", subject="work-a", lane="lane-1",
-                                  data={"text": "Merge the main line into work-a", "why": "It needs the base's fix."},
-                                  base_merge_authorization=merge)
+        authorized = state_tool.append_journal(self.directory, kind="base.merge.authorized", subject="work-a", lane="lane-1",
+                                               data=merge)
+        self.assertEqual((authorized["data"]["reviewed"], authorized["data"]["baseCommits"]), (HEAD_B, [HEAD_D]))
+        self.assertRegex(authorized["data"]["token"], r"^[0-9a-f]{32}$")
+        # The token is the tool's own: one the caller gives is refused, and so is an authorization a lane writes.
+        for fields, code in (({"data": {**merge, "token": "0" * 32}}, "entry_invalid"), ({"data": merge, "writer": "lane"}, "writer_not_owned")):
+            with self.subTest(fields=fields), self.assertRaises(state_tool.StateError) as refused:
+                state_tool.append_journal(self.directory, kind="base.merge.authorized", subject="work-a", lane="lane-1", **fields)
+            self.assertEqual(refused.exception.code, code)
         state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head=HEAD_C, change_request="cr", rounds=2,
                            base_merge=merge)
         handed = state_tool.read_journal(self.directory)[-1]
-        carry = {"from": HEAD_B, "to": HEAD_C, "digest": capture["reviewArtifact"]["digest"], "baseCommits": [HEAD_D]}
+        carry = {"from": HEAD_B, "to": HEAD_C, "digest": capture["data"]["digest"], "baseCommits": [HEAD_D]}
         self.assertEqual({key: handed.get(key) for key in ("kind", "lane", "subject", "data", "answers")},
                          {"kind": "candidate.handed", "lane": "lane-1", "subject": "work-a", "answers": None,
                           "data": {"head": HEAD_C, "changeRequest": "cr", "checks": [], "rounds": 2, "carry": carry}})
         self.assertEqual(self.evidence()["evidence"], "captured")
-        # With only its facts, in other words: the carry still holds the evidence at the handed head.
+        # In other words: the carry still holds the evidence at the handed head, told in its hand-off's words.
         journal = state_tool.read_journal(self.directory)
-        facts_only = [{key: value for key, value in entry.items() if key not in ("reviewCarry", "summary")}
-                      if entry["id"] == handed["id"] else entry for entry in journal]
-        write_journal(self.directory, prose_replaced(facts_only, FactsReaderTests.KINDS))
+        write_journal(self.directory, prose_replaced(journal, FactsReaderTests.KINDS))
         self.assertEqual(state_tool.carry_of(state_tool.read_journal(self.directory)[-1]),
-                         {"from": HEAD_B, "to": HEAD_C, "digest": carry["digest"], "note": ""})
+                         {"from": HEAD_B, "to": HEAD_C, "digest": carry["digest"],
+                          "note": f"Ready after 2 review rounds, its review carried from {HEAD_B[:7]}"})
+        # Words that can't be made leave the carry its review, with no note.
+        registry = json.loads(state_tool.journal_words.REGISTRY_FILE.read_text(encoding="utf-8"))
+        registry["kinds"]["candidate.handed"]["words"]["line"] = "{nothing}"
+        planted = self.root / "journal-kinds.json"
+        planted.write_text(json.dumps(registry), encoding="utf-8")
+        with mock.patch.object(state_tool.journal_words, "REGISTRY_FILE", planted):
+            self.assertEqual(state_tool.carry_of(state_tool.read_journal(self.directory)[-1]),
+                             {"from": HEAD_B, "to": HEAD_C, "digest": carry["digest"], "note": ""})
         found = self.evidence()
         self.assertEqual((found["evidence"], found["carriedFrom"], found["carriedTo"]), ("captured", HEAD_B, HEAD_C))
 
@@ -6704,7 +6741,7 @@ class FactsReviewReaderTests(unittest.TestCase):
         self.assertEqual(len(observed["outcomes"]), 2)
         # The capture is the latest aligned round's, as a base-merge hand-off needs.
         capture, rounds = state_tool.aligned_capture(self.directory, journal, "work-a", "lane-1", HEAD_B)
-        self.assertEqual((capture["kind"], rounds), ("review.evidence", 2))
+        self.assertEqual((capture["kind"], rounds), ("review.recorded", 2))
 
 
 class SkillTextTests(unittest.TestCase):
@@ -6796,16 +6833,30 @@ class SkillTextTests(unittest.TestCase):
                        "`bookkeeping` is the rest, and a bookkeeping kind is never a problem and never posts to the tracker",
                        "**A kind is added in the registry, and nowhere else.**",
                        "Kinds beginning `x.` are reserved for an adopter's own registry",
-                       "an entry may still carry a `summary` sentence, beside its `data` or instead of it",
-                       "Give the sentence beside the facts, with `--summary`: the readers that still read it need it"):
+                       "An entry in the older journal shape, without `data` or with that shape's `summary`, is refused, and "
+                       "the refusal names the release that reads it. A record whose journal is empty is valid in either shape."):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, normal)
         skill = " ".join((SKILL / "SKILL.md").read_text(encoding="utf-8").split())
-        for phrase in ("journal --kind <kind> --data '<its facts as JSON>' --summary \"<what happened>\"",
-                       "--why \"<its reason>\" --summary \"<what happened>\"",
-                       "give `--summary` beside `--data`: an entry may carry a sentence, facts or both"):
+        for phrase in ("journal --kind <kind> --data '<its facts as JSON>' [--because <ids>] [--answers <ids>]",
+                       "journal --kind decision.recorded --text \"<the decision>\" --why \"<its reason>\"",
+                       "journal --kind review.round --subject <subject> --lane <lane> --data '<the round as JSON>'",
+                       "An entry carries its facts and nothing else: one in the older shape, without `data`, is refused."):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, skill)
+
+    def test_no_skill_page_or_guide_names_a_sentence_on_an_entry(self) -> None:
+        # The sentence is gone, and so is every way of giving or reading one: absence pins on the words its bridge used.
+        pages = [GUIDE, SKILL / "SKILL.md", *(PRODUCT_ROOT / "skills").glob("*/SKILL.md"),
+                 *(PRODUCT_ROOT / "skills/run-delivery/references").glob("*.md")]
+        for path in pages:
+            normal = " ".join(path.read_text(encoding="utf-8").split())
+            for phrase in ("--summary", "`summary` sentence", "until the sentence", "the sentence's bridge", "only a sentence",
+                           "only as a sentence", "beside its sentence", "beside the facts", "a sentence, facts or both",
+                           "whose summary starts", "review.evidence", "reviewCarry", "baseMergeAuthorization",
+                           "--base-merge-authorization", "--review '"):
+                with self.subTest(page=path.name, phrase=phrase):
+                    self.assertNotIn(phrase, normal)
 
     def test_the_tracker_publisher_posts_where_the_registry_says_for_the_kinds_it_knows(self) -> None:
         previous = sys.dont_write_bytecode
@@ -6932,7 +6983,7 @@ class LeadSelectionTests(unittest.TestCase):
         code, result = run_tool(self.directory, "select", "--subject", "work-q", "--clear")
         self.assertEqual(code, 0, result)
         self.assertNotIn("leadSelection", result["item"])
-        self.assertEqual(state_tool.read_journal(self.directory)[-1]["kind"], "check.selected")
+        self.assertEqual(state_tool.read_journal(self.directory)[-1]["kind"], "check.selection.cleared")
         code, result = run_tool(self.directory, "select", "--subject", "work-q", "--head", HEAD_A)
         self.assertEqual((code, result["code"]), (1, "select_invalid"))
 

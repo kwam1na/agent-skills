@@ -26,6 +26,23 @@ TOOL = ROOT / "skills/orchestrate-work/scripts/delivery_state.py"
 EVENT_KINDS = ("candidate.handed", "check.failed", "candidate.merged", "candidate.stopped", "base.broken", "blocker.recorded",
                "serving.held")
 GIB = 2**30
+HEAD = "a" * 40
+# Each kind these tests journal, with facts of its shape. A kind the registry gives a cause names a check's start.
+FACTS = {
+    "candidate.handed": {"head": HEAD, "changeRequest": "cr-1", "checks": []},
+    "check.failed": {"check": "unit", "timedOut": False, "failing": [], "more": 0, "log": "logs/unit.log"},
+    "candidate.merged": {"head": HEAD},
+    "candidate.stopped": {"reason": "check_failed", "detail": "unit failed on the piece."},
+    "base.broken": {"source": "queue", "detail": "unit fails on the main line."},
+    "blocker.recorded": {"text": "The lead must choose."},
+    "serving.held": {"why": "Serving is held: the setup failed."},
+    "decision.recorded": {"text": "Carry the review", "why": "It still holds."},
+    "base.rerun.stopped": {"base": {"ref": "main", "head": HEAD}, "head": HEAD, "seconds": 3, "why": "The runner was stopped."},
+}
+CAUSED = ("check.failed", "base.rerun.stopped")
+# Who an entry of a piece's kind names, for its words.
+NAMED = {"candidate.handed": ("--lane", "lane-1", "--subject", "work-q"), "candidate.merged": ("--subject", "work-q"),
+         "candidate.stopped": ("--subject", "work-q")}
 
 
 def _load_tool():
@@ -59,8 +76,13 @@ class Record:
             raise AssertionError(done.stdout + done.stderr)
         return json.loads(done.stdout)
 
-    def journal(self, kind: str, summary: str = "what happened", *facts: str) -> int:
-        return self.tool("journal", "--kind", kind, "--summary", summary, *facts)["entry"]["id"]
+    def journal(self, kind: str, **facts: object) -> int:
+        """Journal one entry of ``kind``, with its facts, or ``facts`` in their place; its cause first, when it needs one."""
+        cause = ()
+        if kind in CAUSED:
+            cause = ("--because", str(self.tool("journal", "--kind", "check.started", "--data", "{}")["entry"]["id"]))
+        data = json.dumps(facts or FACTS[kind])
+        return self.tool("journal", "--kind", kind, "--data", data, *cause, *NAMED.get(kind, ()))["entry"]["id"]
 
     def add_lanes(self, *lanes: str) -> None:
         version = self.tool("show")["state"]["version"]
@@ -115,29 +137,27 @@ class EventTests(RecordCase):
             with self.subTest(kind=kind):
                 process = self.record.start_wait()
                 self.assert_running(process)
-                # A blocker carries its facts too: its event tells them, in the registry's words.
-                facts = ("--text", "The lead must choose.") if kind == "blocker.recorded" else ()
-                identifier = self.record.journal(kind, f"the {kind} summary", *facts)
+                identifier = self.record.journal(kind)
                 code, result = _finish(process)
                 self.assertEqual(code, 0)
                 self.assertEqual(result["woke"], "event")
                 self.assertEqual([(event["id"], event["kind"]) for event in result["events"]], [(identifier, kind)])
-                self.assertEqual(result["events"][0]["summary"], f"the {kind} summary")
-                if facts:
-                    self.assertEqual({key: result["events"][0][key] for key in ("data", "head", "line")},
-                                     {"data": {"text": "The lead must choose."}, "head": "Work was blocked",
-                                      "line": "The lead must choose."})
-                else:
-                    self.assertNotIn("data", result["events"][0])
+                # Each event tells its facts, in the registry's words, and no sentence.
+                event = result["events"][0]
+                self.assertEqual(event["data"], FACTS[kind])
+                self.assertNotIn("summary", event)
+                self.assertTrue(event["head"].strip())
+                if kind == "blocker.recorded":
+                    self.assertEqual((event["head"], event["line"]), ("Work was blocked", "The lead must choose."))
                 self.assertEqual(result["through"], identifier)
 
     def test_a_stopped_base_rerun_does_not_end_a_running_wait(self) -> None:
         # The queue checks the candidate again itself; only a second stop at the same heads, as candidate.stopped, wakes.
         process = self.record.start_wait()
         self.assert_running(process)
-        self.record.journal("base.rerun.stopped", "the base re-run was stopped before its verdict")
+        self.record.journal("base.rerun.stopped")
         self.assert_running(process)
-        identifier = self.record.journal("candidate.stopped", "base_rerun_stopped: stopped twice")
+        identifier = self.record.journal("candidate.stopped", reason="base_rerun_stopped", detail="Stopped twice at the same heads.")
         code, result = _finish(process)
         self.assertEqual(code, 0)
         self.assertEqual([(event["id"], event["kind"]) for event in result["events"]], [(identifier, "candidate.stopped")])
@@ -1036,6 +1056,13 @@ class LeaseTests(unittest.TestCase):
             with self.subTest(stage=stage):
                 self.assertEqual(flow.listener_needed({**state, "queue": [{"subject": "A", "stage": stage}]}),
                                  [f"A ({stage})"])
+
+    def test_a_held_stop_names_the_same_lanes_and_pieces_as_its_facts(self) -> None:
+        lane = lambda name, state: {"id": name, "state": state}
+        state = {"lanes": [lane("lane-1", "idle"), lane("lane-2", "done"), lane("lane-3", "working"), lane("lane-4", "handed")],
+                 "queue": [{"subject": "A", "stage": "merged"}, {"subject": "B", "stage": "queued"}, {"subject": "C", "stage": "stopped"}]}
+        self.assertEqual(flow.listener_facts(state), {"lanes": ["lane-3", "lane-4"], "pieces": ["B", "C"]})
+        self.assertEqual(flow.listener_facts({"lanes": [lane("lane-1", "idle")], "queue": []}), {"lanes": [], "pieces": []})
 
 
 class StandingTextTests(unittest.TestCase):

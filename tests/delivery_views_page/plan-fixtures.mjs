@@ -31,19 +31,52 @@ export function item(subject, stage, extra = {}) {
     leadInputs: [], reportedRounds: null, runId: null, checks: [], ...extra };
 }
 
+/** The main line the fixtures' facts name. */
+export const BASE = { ref: "main", head: headOf("main") };
+
+/** Each kind's facts when a step gives none, in the shape the registry of kinds gives that kind's data. */
+const FACTS = {
+  "candidate.handed": (subject) => ({ head: headOf(subject), checks: [] }),
+  "candidate.merged": (subject) => ({ head: headOf(subject) }),
+  "candidate.stopped": () => ({ reason: "check_failed", detail: "A check failed." }),
+  "check.started": () => ({}),
+  "check.finished": () => ({}),
+  "check.failed": () => ({ check: "suite", timedOut: false, failing: [], more: 0, log: "logs/suite.log" }),
+  "check.carried": () => ({ checks: ["lib"], ranAgain: [], base: BASE, commits: [headOf("base-1")] }),
+  "base.rerun.started": () => ({ checks: ["suite"], base: BASE }),
+  "base.rerun.stopped": (subject) => ({ base: BASE, head: headOf(subject), seconds: 4, why: "The stop exited 143." }),
+  "base.broken": () => ({ source: "queue" }),
+  "base.repaired": () => ({ source: "lead", head: headOf("main-repaired") }),
+  "base.flaky": () => ({ source: "fullHealth", head: BASE.head, failing: ["tests.x.X.test_y"] }),
+  "peer.merged": () => ({ peer: "FX-92", head: headOf("peer"), files: ["src/one.txt"] }),
+  "handoff.accepted": () => ({ settled: false }),
+  "lane.assigned": (subject) => ({ title: `Work ${subject}` }),
+  "decision.recorded": () => ({ text: "The lead made a call", why: "It was needed." }),
+  "blocker.recorded": () => ({ text: "Work cannot go on" }),
+  "delivery.closed": () => ({}),
+};
+/** The kinds whose entries the registry says name what caused them. */
+const CAUSED = new Set(["check.finished", "check.failed", "base.rerun.started", "base.rerun.stopped", "base.rerun.finished",
+  "handoff.checked", "handoff.rejected", "release.finished"]);
+
 /**
- * A journal for a sequence of [minute, kind, subject, extra] steps; `approve` and `changes` stand for review rounds
- * whose required lenses all approve, or one asks for changes.
+ * A journal for a sequence of [minute, kind, subject, extra] steps, each entry carrying its kind's facts: `extra.data`
+ * over the kind's own, and the rest of `extra` beside them, such as `because`. A kind whose entries name a cause names
+ * the entry before it unless told otherwise. `approve` and `changes` stand for review rounds whose required lenses all
+ * approve, or one asks for changes.
  */
 export function journal(steps) {
   return steps.map(([at, kind, subject, extra = {}], index) => {
-    const entry = { id: index + 1, at: minute(at), kind, lane: "lane-1", subject, summary: `${kind} ${subject ?? ""}`.trim() };
+    const { data = {}, round, verdicts, ...rest } = extra;
+    const entry = { id: index + 1, at: minute(at), kind, lane: "lane-1", subject };
     if (kind === "approve" || kind === "changes" || kind === "review.round") {
-      const verdicts = extra.verdicts ?? Object.fromEntries(LENSES.map((lens) => [lens, kind === "changes" ? "changes" : "approve"]));
-      return { ...entry, kind: "review.round", summary: `${subject}: review round ${extra.round ?? 1}`,
-        review: { round: extra.round ?? 1, startedAt: minute(at), finishedAt: minute(at), verdicts, findings: { P0: 0, P1: 0, P2: 0, P3: 0 } } };
+      const given = verdicts ?? Object.fromEntries(LENSES.map((lens) => [lens, kind === "changes" ? "changes" : "approve"]));
+      return { ...entry, kind: "review.round", ...rest,
+        data: { round: round ?? 1, startedAt: minute(at), finishedAt: minute(at), verdicts: given, findings: { P0: 0, P1: 0, P2: 0, P3: 0 }, ...data } };
     }
-    return { ...entry, ...extra };
+    if (!FACTS[kind] && !extra.data) throw new Error(`no facts for a ${kind} step: give them as data`);
+    const caused = CAUSED.has(kind) && index > 0 ? { because: [index] } : {};
+    return { ...entry, ...caused, ...rest, data: { ...(FACTS[kind] ? FACTS[kind](subject) : {}), ...data } };
   });
 }
 

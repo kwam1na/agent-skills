@@ -405,13 +405,13 @@ REQUIRED_PHRASES: dict[str, tuple[str, ...]] = {
         " the close-out files its follow-up.",
         "A delivery file that declares `\"noDeferrals\": true` takes no deferrals: a"
         " finding still deferred when its story merges is journalled as a"
-        " `blocker.recorded` on the story, shown in \"Needs you\" and holding the close"
+        " `deferral.breached` on the story, shown in \"Needs you\" and holding the close"
         " until the lead resolves it with `lead-resolve`, and no follow-up is filed for"
         " it.",
     ),
     "skills/run-delivery/references/config.md": (
         '"noDeferrals": true, // optional: the delivery takes no deferrals. A finding'
-        " still deferred // when its story merges is a blocker.recorded the lead"
+        " still deferred // when its story merges is a deferral.breached the lead"
         " resolves with // lead-resolve, never a follow-up; false or absent, it is"
         " filed as one",
     ),

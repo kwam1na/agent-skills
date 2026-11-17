@@ -206,10 +206,10 @@ class PrReviewCase(unittest.TestCase):
         return self.flow("lead-accept", "FX-2", cwd=self.fx.main)
 
     def decisions(self) -> str:
-        """The journaled decisions' summaries, which carry what lead-accept checked."""
+        """The notes of each handoff.checked, the facts that carry what lead-accept checked, one per line."""
         journal = self.fx.tmp / "record/journal.jsonl"
         entries = [json.loads(line) for line in journal.read_text().splitlines()]
-        return "\n".join(e.get("summary", "") for e in entries if e.get("kind") in ("decision.recorded", "handoff.checked"))
+        return "\n".join(note for e in entries if e["kind"] == "handoff.checked" for note in e["data"]["notes"])
 
 
 class LegacyCharacterizationTests(PrReviewCase):

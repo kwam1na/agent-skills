@@ -114,7 +114,7 @@ test("blocking approvals raise one flag naming each, after a broken base, until 
   expect(flagWhy(app)).toEqual(["Product Owner signs off the copy; Security reviews the token scope"]);
   expect(app.querySelector("#plan .plan-calm")).toBeNull();
   const broken = structuredClone(document);
-  broken.journal.push({ id: 99, at: "2026-10-30T11:00:00Z", kind: "base.broken", subject: null, summary: "main is red" });
+  broken.journal.push({ id: broken.journal.length + 1, at: "2026-10-30T11:00:00Z", kind: "base.broken", lane: null, subject: null, data: { source: "queue", detail: "Main is red" } });
   expect(flags(await shown(broken, plan))).toEqual(["The base is broken", "Approvals are blocking work"]);
   // One done: the other still blocks. Both done: the calm line returns, and the fold counts nothing ahead.
   plan.approvals[0].state = "done";

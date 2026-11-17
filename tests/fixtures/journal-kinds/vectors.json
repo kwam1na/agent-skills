@@ -1787,6 +1787,66 @@
       "line": "lead.may-stop"
     },
     {
+      "kind": "hook.held",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "hook": "lead.may-stop",
+        "verdict": "block",
+        "lanes": [
+          "lane-1",
+          "lane-2"
+        ],
+        "pieces": [
+          "APP-12"
+        ]
+      },
+      "head": "A hook kept the lead working",
+      "line": "lead.may-stop, while Lane 1 and Lane 2 worked, with APP-12 still to land"
+    },
+    {
+      "kind": "hook.held",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "hook": "lead.may-stop",
+        "verdict": "warn",
+        "lanes": [
+          "lane-1"
+        ]
+      },
+      "head": "A hook warned the lead",
+      "line": "lead.may-stop, while Lane 1 worked"
+    },
+    {
+      "kind": "hook.held",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "hook": "lead.may-stop",
+        "verdict": "block",
+        "pieces": [
+          "APP-12",
+          "APP-13"
+        ]
+      },
+      "head": "A hook kept the lead working",
+      "line": "lead.may-stop, with APP-12 and APP-13 still to land"
+    },
+    {
+      "kind": "hook.held",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "hook": "lead.may-stop",
+        "verdict": "block",
+        "lanes": [],
+        "pieces": []
+      },
+      "head": "A hook kept the lead working",
+      "line": "lead.may-stop"
+    },
+    {
       "kind": "peer.merged",
       "lane": "lane-1",
       "subject": "APP-12",

@@ -752,58 +752,46 @@ class ReadingTests(unittest.TestCase):
         words = {tone["tone"]: tone["word"] for tone in story["tones"]}
         self.assertTrue(all(words[beat["tone"]] == beat["label"] for beat in story["beats"] if beat["form"] == "thread"))
 
-    def test_finish_lines_written_only_as_sentences_each_keep_their_sentence(self) -> None:
-        journal = [
-            {"id": 1, "at": "2026-11-16T09:00:00Z", "kind": "finish.met", "lane": None, "subject": "stories", "summary": "stories: Every story lands"},
-            {"id": 2, "at": "2026-11-16T09:00:01Z", "kind": "finish.met", "lane": None, "subject": "suite", "summary": "suite: The suite passes"},
-        ]
-        story = narrator.narrate(journal)
-        self.assertEqual([(beat["form"], beat["words"]["line"]) for beat in story["beats"]],
-                         [("entry", "stories: Every story lands"), ("entry", "suite: The suite passes")])
+    def test_the_tones_words_are_the_registrys_and_a_changed_word_changes_the_story(self) -> None:
+        registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
+        self.assertEqual(registry["tones"], {"landed": "Landed", "ready": "Ready to check", "decision": "Decision",
+                                             "problem": "Setback", "note": "Other update"})
+        registry["tones"]["problem"] = "Hold-up"
+        story = narrator.narrate(fixture("standing-break")[0], registry=registry)
+        self.assertIn({"tone": "problem", "word": "Hold-up"}, story["tones"])
+        self.assertTrue(all(beat["label"] == "Hold-up" for beat in story["beats"] if beat["form"] == "thread"))
+        self.assertTrue(any(beat["form"] == "thread" for beat in story["beats"]))
 
 
-class BridgeTests(unittest.TestCase):
-    """Until the sentence is removed, a record may still hold entries that carry only a sentence: the narrator tells
-    each by its sentence, under its kind's label, and builds nothing on facts it doesn't have."""
+class OlderShapeTests(unittest.TestCase):
+    """A record whose entries carry a sentence, or no facts, is in the older shape: the narrator tells no story of it,
+    as the journal itself refuses it, and a kind the registry doesn't list is refused as before."""
 
     def journal(self) -> list[dict]:
         at = lambda minute: f"2026-11-16T09:{minute:02d}:00Z"
-        said = lambda id_, minute, kind, summary, subject=None, **extra: {
-            "id": id_, "at": at(minute), "kind": kind, "lane": "lane-1" if subject else None, "subject": subject, "summary": summary, **extra}
-        journal = [
-            said(1, 0, "decision.recorded", "Record starts at base 2e02f3e on origin/main."),
-            said(2, 1, "lane.assigned", "lane-1 assigned A: Work A", "A"),
-            said(3, 5, "candidate.stopped", "check_failed: failing checks: tests.test_one", "A"),
-            said(4, 6, "review.evidence", "Native review outcomes captured for display", "A",
-                 reviewArtifact={"candidateRef": "a" * 40, "digest": "d" * 64}),
-            said(5, 9, "candidate.merged", "Merged Work A at " + "b" * 40, "A"),
-            {**said(6, 10, "decision.recorded", "Held the queue for the release"), "data": {"text": "Held the queue", "why": "The release runs first."}},
-        ]
-        self.assertEqual(state_tool.journal_errors(journal), [])
-        return journal
+        return [{"id": 1, "at": at(0), "kind": "finish.met", "lane": None, "subject": "stories", "data": {"finish": "stories"}},
+                {"id": 2, "at": at(1), "kind": "candidate.merged", "lane": "lane-1", "subject": "A", "data": {"head": "b" * 40}}]
 
-    def test_a_sentence_is_read_under_its_kinds_label_and_opens_nothing(self) -> None:
-        journal = self.journal()
-        story = narrator.narrate(journal)
-        self.assertEqual([error.message for error in SCHEMA.iter_errors(story)], [])
-        self.assertEqual(story["threads"], [])
-        words = {entry: beat_of(story, entry)["words"] for entry in (1, 3, 4, 5, 6)}
-        self.assertEqual(words[3], {"head": "Stopped", "line": "check_failed: failing checks: tests.test_one"})
-        self.assertEqual(words[5], {"head": "Landed", "line": "Merged Work A at " + "b" * 40})
-        self.assertEqual(words[6], {"head": "Held the queue", "line": "The release runs first."})
-        self.assertEqual(story["chapters"][1]["words"]["head"], "A landed")
-        # A sentence-only decision was the old record's catch-all: it reads at the story altitude and is no decision.
-        self.assertEqual(beat_of(story, 1)["altitudes"], ["story", "everything"])
-        self.assertEqual(beat_of(story, 6)["altitudes"], list(ALTITUDES))
-        self.assertEqual(story["digest"]["decisions"], 1)
-        # The sentence's own bridge kind is bookkeeping.
-        self.assertEqual((beat_of(story, 4)["altitudes"], beat_of(story, 4)["label"]), (["everything"], "Review evidence"))
+    def test_an_entry_with_a_sentence_or_without_facts_is_refused_as_the_older_shape(self) -> None:
+        self.assertEqual(state_tool.journal_errors(self.journal()), [])
+        narrator.narrate(self.journal())
+        older = [{**self.journal()[0], "summary": "stories: Every story lands"},
+                 {key: value for key, value in self.journal()[1].items() if key != "data"}]
+        for index, entry in enumerate(older):
+            journal = self.journal()
+            journal[index] = entry
+            with self.subTest(entry=entry):
+                with self.assertRaises(narrator.NarratorError) as refused:
+                    narrator.narrate(journal)
+                self.assertIn("in the older journal shape", str(refused.exception))
+                self.assertIn("in the older journal shape", " ".join(state_tool.journal_errors(journal)))
 
-    def test_a_kind_neither_registered_nor_the_bridges_is_still_refused(self) -> None:
+    def test_a_kind_the_registry_does_not_list_is_refused(self) -> None:
         journal = self.journal()
-        journal[3]["kind"] = "review.unknown"
-        with self.assertRaises(narrator.NarratorError):
+        journal[1]["kind"] = "review.evidence"
+        with self.assertRaises(narrator.NarratorError) as refused:
             narrator.narrate(journal)
+        self.assertIn("no kind named review.evidence", str(refused.exception))
 
 
 class RegistryTests(unittest.TestCase):

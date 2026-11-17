@@ -65,6 +65,39 @@ def stamp(seconds: int) -> str:
     return (base + datetime.timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
+KINDS = json.loads((ROOT / "skills/orchestrate-work/references/journal-kinds.json").read_text(encoding="utf-8"))
+# A value of each fact type, for an entry whose own facts a case doesn't name.
+SAMPLE = {
+    "commit": "a" * 40, "commits": ["a" * 40], "count": 0, "round": 1, "flag": False, "seconds": 0, "exitCode": 0,
+    "digest": "0" * 64, "token": "0" * 32, "instant": "2026-11-01T09:00:00Z", "log": "logs/check.log",
+    "path": "src/one.txt", "paths": ["src/one.txt"], "names": [], "checks": [], "addedChecks": [], "proseList": [],
+    "clips": [], "rerunResults": [], "suiteEvidence": [], "verdicts": {}, "changeRequest": "https://forge.test/pr/1",
+    "url": "https://forge.test/pr/1", "base": {"ref": "origin/main", "head": "a" * 40}, "span": {"first": 1, "after": 2},
+    "findings": {"P0": 0, "P1": 0, "P2": 0, "P3": 0}, "recovery": {"head": "a" * 40, "changeRequest": None},
+    "carry": {"from": "b" * 40, "to": "a" * 40, "digest": "0" * 64, "baseCommits": ["c" * 40]},
+}
+
+
+def facts_of(kind: str, subject: str | None) -> dict:
+    """Facts of a kind's shape: each fact it requires, with a value of its type."""
+    facts = {}
+    for name, fact in KINDS["kinds"][kind]["data"].items():
+        if fact.get("optional"):
+            continue
+        kind_of = fact["type"]
+        if kind_of in SAMPLE:
+            facts[name] = SAMPLE[kind_of]
+        elif kind_of == "verdicts":
+            facts[name] = {"lens.outcome-correctness": "approve"}
+        elif "enum" in KINDS["types"][kind_of]:
+            facts[name] = KINDS["types"][kind_of]["enum"][0]
+        elif kind_of == "name":
+            facts[name] = subject or "the delivery"
+        else:  # prose
+            facts[name] = f"{kind} for {subject or 'the delivery'}"
+    return facts
+
+
 # The fake trackers. Both keep: issues {key: {status, comments: [{text, markers}], markers: [], labels, parent,
 # summary}}, the workflow, the projects, the valid token, and failures to inject: [{op, ticket, status, times}].
 
@@ -589,7 +622,7 @@ class Delivery:
         with self.backend.edit() as store:
             store["issues"][EPIC] = {"status": "In Progress", "comments": [], "markers": [], "labels": [],
                                      "parent": None, "summary": "The epic"}
-        self.entry("decision.recorded", summary="Record starts at base abc1234 on origin/main.")
+        self.start("abc1234")
 
     def write_config(self) -> None:
         (self.root / ".agents/run-delivery.json").write_text(json.dumps(
@@ -619,11 +652,30 @@ class Delivery:
 
     # The record.
 
-    def entry(self, kind: str, subject: str | None = None, summary: str | None = None, lane: str | None = None) -> dict:
+    def entry(self, kind: str, subject: str | None = None, data: dict | None = None, lane: str | None = None,
+              because: list[int] | None = None, answers: list[int] | None = None) -> dict:
+        """An entry of ``kind`` with its facts: ``data`` when given, else facts of the kind's shape."""
         self.clock += 10
         entry = {"id": len(self.journal) + 1, "at": stamp(self.clock), "kind": kind, "lane": lane, "subject": subject,
-                 "summary": summary or f"{kind} for {subject or 'the delivery'}"}
+                 "data": facts_of(kind, subject) if data is None else data,
+                 **({"because": because} if because else {}), **({"answers": answers} if answers else {})}
         self.journal.append(entry)
+        return entry
+
+    def start(self, head: str) -> dict:
+        """The record's own start, the first entry: record.started on origin/main at a head."""
+        return self.entry("record.started", data={"base": {"ref": "origin/main", "head": (head * 40)[:40]}})
+
+    def start_posted(self) -> None:
+        """The record's start as an earlier run posted it to the epic: its ledger line, so a case's own failures and
+        crashes meet the entries it names first."""
+        tp.append_ledger(self.state_dir, {"journal": 1, "init": self.init(), "outcome": "comment", "writer": "publisher",
+                                          "kind": "record.started", "final": True, "ticket": EPIC, "action": "comment"})
+
+    def followup(self, story: str, finding: str, title: str) -> dict:
+        """A deferred finding filed as a follow-up: followup.filed, marked for the publisher to file."""
+        entry = self.entry("followup.filed", story, {"finding": finding, "followup": f"{story}-{finding}", "title": title})
+        self.mark(entry, {"story": story, "finding": finding, "title": title})
         return entry
 
     def lane_start(self, subject: str) -> None:
@@ -717,9 +769,9 @@ class Scenarios:
             posted[entry["id"]] = kind
             if kind == "lane.assigned":
                 d.lane_start("EP-2")
-        marked = d.entry("decision.recorded", "EP-2", "Plan change: EP-3 removed")
+        marked = d.entry("decision.recorded", "EP-2")
         d.mark(marked)
-        lane_posted = d.entry("candidate.handed", "EP-2", "Handed off by its lane")
+        lane_posted = d.entry("candidate.handed", "EP-2")
         d.command_line(lane_posted, action="comment")
         self.published(d)
         self.published(d)  # A second run changes nothing.
@@ -732,22 +784,24 @@ class Scenarios:
             if entry is lane_posted:
                 self.assertEqual(outcomes, ["comment"], "a command's action line is the entry's")
             elif entry["kind"] == "decision.recorded":
-                self.assertEqual(outcomes, ["comment"] if entry is marked else ["skip"], entry)
+                # Every decision is posted, marked or not: the registry's words say it.
+                self.assertEqual(outcomes, ["comment"], entry)
             elif update is None:
                 self.assertEqual(outcomes, ["skip"], entry)
             else:
                 self.assertEqual(outcomes, ["comment"], entry)
                 self.assertEqual(sum(f"journal entry {entry['id']} " in text for text in comments), 1, entry)
-        self.assertFalse(any("journal entry 1 " in text for text in comments), "the record's own start isn't posted")
+        self.assertEqual(d.journal[0]["kind"], "record.started")
+        self.assertEqual(sum("journal entry 1 " in text for text in d.comments(EPIC)), 1, "the record's start posts to the epic once")
         self.assertFalse(any(f"journal entry {lane_posted['id']} " in text for text in comments))
 
     def test_a_transient_failure_stops_the_run_and_the_next_posts_from_there(self) -> None:
         d = self.delivery()
         d.ticket("EP-2")
         for n in range(2, 11):
-            d.entry("finish.met", summary=f"Line {n}")
-        eleven = d.entry("candidate.stopped", "EP-2", "Stopped: checks failed")
-        twelve = d.entry("candidate.merged", "EP-2", "Merged at abc")
+            d.entry("finish.met", data={"finish": f"line-{n}"})
+        eleven = d.entry("candidate.stopped", "EP-2")
+        twelve = d.entry("candidate.merged", "EP-2")
         d.fail("comment", 503, ticket="EP-2", times=1)
         code, out = d.publish()
         self.assertEqual(code, 1, out)
@@ -765,7 +819,7 @@ class Scenarios:
         d = self.delivery()
         d.ticket("EP-2")
         for n in range(8):
-            d.entry("lease.granted", "EP-2", f"Lease {n}")
+            d.entry("lease.granted", "EP-2")
         runs = [d.publish(wait=False) for _ in range(3)]
         for run in runs:
             run.wait(timeout=120)
@@ -791,7 +845,8 @@ class Scenarios:
     def test_a_crash_after_the_post_and_before_the_line_posts_nothing_again(self) -> None:
         d = self.delivery()
         d.ticket("EP-2")
-        entry = d.entry("candidate.handed", "EP-2", "Handed off")
+        d.start_posted()
+        entry = d.entry("candidate.handed", "EP-2")
         code, out = d.publish(env={"TRACKER_PUBLISHER_EXIT_AFTER": "comment"})
         self.assertNotEqual(code, 0, out)
         self.assertEqual(len(d.comments("EP-2")), 1)
@@ -819,7 +874,7 @@ class Scenarios:
     def test_a_long_entry_posts_one_comment_cut_to_the_limit(self) -> None:
         d = self.delivery()
         d.ticket("EP-2")
-        entry = d.entry("blocker.recorded", "EP-2", "x" * 40000)
+        entry = d.entry("blocker.recorded", "EP-2", {"text": "x" * 40000})
         self.published(d)
         [text] = d.comments("EP-2")
         self.assertLessEqual(len(text), 32767)
@@ -846,20 +901,19 @@ class Scenarios:
         d = self.delivery()
         d.ticket("EP-2")
         d.ticket("EP-3")
-        first = d.entry("decision.recorded", "EP-2", "Deferred F1")
-        d.mark(first, {"story": "EP-2", "finding": "F1", "title": "Tidy the parser"})
+        first = d.followup("EP-2", "F1", "Tidy the parser")
         code, out = d.publish(env={"TRACKER_PUBLISHER_EXIT_AFTER": "create"})
         self.assertNotEqual(code, 0, out)
-        second = d.entry("decision.recorded", "EP-3", "Deferred F1 too")
-        d.mark(second, {"story": "EP-3", "finding": "F1", "title": "Tidy the lexer"})
+        d.followup("EP-3", "F1", "Tidy the lexer")
         self.published(d)
         self.published(d)
         created = [call for call in d.calls() if call[0] == "create"]
         self.assertEqual(len(created), 2, "one follow-up per story, each once")
         labels = sorted(d.backend.read()["issues"][call[1]]["labels"][0] for call in created)
         self.assertEqual(labels, ["agent-followup-ep-2-f1", "agent-followup-ep-3-f1"])
-        self.assertEqual(d.outcomes(first["id"]), ["create", "comment"])
-        self.assertIn("Follow-up: EP-", d.comments("EP-2")[0])
+        # A follow-up's own entry posts nothing, as the registry says: the follow-up is its own ticket.
+        self.assertEqual(d.outcomes(first["id"]), ["create", "skip"])
+        self.assertEqual(d.comments("EP-2"), [])
 
     def test_a_409_and_a_site_wide_403_are_retried_and_a_one_ticket_403_is_not(self) -> None:
         d = self.delivery()
@@ -888,6 +942,7 @@ class Scenarios:
     def test_an_unreadable_epic_asks_the_project_whether_the_site_refuses(self) -> None:
         d = self.delivery()
         d.ticket("EP-2")
+        d.start_posted()
         entry = d.entry("lease.granted", "EP-2")
         d.fail("comment", 403, ticket="EP-2")
         d.fail("status", 404, ticket=EPIC)
@@ -987,7 +1042,7 @@ class Scenarios:
         entry = d.entry("lane.assigned", "EP-2", lane="lane-1")
         self.published(d)
         d.planned = []
-        d.entry("decision.recorded", summary="EP-2 removed from the plan")
+        d.entry("decision.recorded", data={"text": "EP-2 removed from the plan", "why": "Out of scope."})
         self.published(d)
         self.assertEqual(d.outcomes(entry["id"]), ["skip"])
         d.lane_start("EP-2")
@@ -1027,7 +1082,7 @@ class Scenarios:
         d = self.delivery()
         d.ticket("EP-2")
         with tp.ledger_lock(d.state_dir, wait=True):
-            entry = d.entry("decision.recorded", "EP-2", "Plan change c1: EP-3 added")
+            entry = d.entry("decision.recorded", "EP-2")
             self.published(d)  # Started between the two writes: it finds the lock held and leaves the entry.
             d.mark(entry)
         self.assertEqual(d.lines(entry["id"]), [])
@@ -1036,14 +1091,16 @@ class Scenarios:
         self.assertEqual(d.outcomes(entry["id"]), ["comment"])
         self.assertEqual(len(d.comments("EP-2")), 1)
 
-    def test_an_unmarked_decision_is_skipped_and_a_marked_one_posted(self) -> None:
+    def test_a_decision_is_posted_whether_or_not_it_is_marked(self) -> None:
         d = self.delivery()
         d.ticket("EP-2")
-        accepted = d.entry("decision.recorded", "EP-2", "EP-2 accepted")
-        change = d.entry("decision.recorded", "EP-2", "Plan change c1")
+        unmarked = d.entry("decision.recorded", "EP-2", {"text": "EP-2 accepted", "why": "Its checks passed."})
+        change = d.entry("decision.recorded", "EP-2", {"text": "Plan change c1", "why": "The operator asked."})
         d.mark(change)
         self.published(d)
-        self.assertEqual((d.outcomes(accepted["id"]), d.outcomes(change["id"])), (["skip"], ["comment"]))
+        self.assertEqual((d.outcomes(unmarked["id"]), d.outcomes(change["id"])), (["comment"], ["comment"]))
+        self.assertEqual([("EP-2 accepted" in text, "Plan change c1" in text) for text in d.comments("EP-2")],
+                         [(True, False), (False, True)])
 
     def test_after_a_replace_a_reused_journal_id_is_posted_and_a_started_story_is_not_restarted(self) -> None:
         d = self.delivery({"start": ["Start work"], "lead": {"candidate.handed": ["Submit for review"]}})
@@ -1059,7 +1116,7 @@ class Scenarios:
         shutil.rmtree(d.flow_log)
         d.journal = []
         d.clock += 1000
-        d.entry("decision.recorded", summary="Record starts at base def5678 on origin/main.")
+        d.start("def5678")
         again = d.entry("lane.assigned", "EP-2", lane="lane-1")
         three = d.entry("lane.assigned", "EP-3", lane="lane-1")
         d.lane_start("EP-2")
@@ -1186,8 +1243,8 @@ class Scenarios:
         d.entry("lease.granted", "EP-2")
         self.published(d)
         d.journal, d.clock = [], d.clock + 1000
-        d.entry("decision.recorded", summary="Record starts again.")
-        again = d.entry("lease.granted", "EP-2", "The lease, under the new record")
+        d.start("0")
+        again = d.entry("lease.granted", "EP-2")
         self.published(d)
         self.assertEqual(d.outcomes(again["id"]), ["comment"])
         self.assertEqual(len(d.comments("EP-2")), 2)
@@ -1195,7 +1252,7 @@ class Scenarios:
     def test_the_cut_is_said_and_counted_as_the_tracker_counts(self) -> None:
         d = self.delivery()
         d.ticket("EP-2")
-        entry = d.entry("blocker.recorded", "EP-2", "\U0001F600" * 20000)
+        entry = d.entry("blocker.recorded", "EP-2", {"text": "\U0001F600" * 20000})
         self.published(d)
         [text] = d.comments("EP-2")
         self.assertLessEqual(tp.units(text), 32767)
@@ -1211,7 +1268,8 @@ class Scenarios:
         (d.state_dir / tp.LEDGER).write_text('{"journal": 1, "outc')
         self.published(d)
         self.assertEqual((d.outcomes(1), d.outcomes(first["id"]), d.outcomes(second["id"])),
-                         (["skip"], ["comment"], ["comment"]))
+                         (["comment"], ["comment"], ["comment"]))
+        self.assertEqual(sum("journal entry 1 " in text for text in d.comments(EPIC)), 1, "the start posted once")
 
     def test_a_replaced_records_move_at_the_same_journal_id_is_still_made(self) -> None:
         d = self.delivery({"lead": {"candidate.merged": ["Complete"]}})
@@ -1220,7 +1278,7 @@ class Scenarios:
         d.entry("candidate.merged", "EP-2")
         self.published(d)
         d.journal, d.clock = [], d.clock + 1000
-        d.entry("decision.recorded", summary="Record starts again.")
+        d.start("0")
         again = d.entry("candidate.merged", "EP-3")
         failed = d.entry("candidate.stopped", "EP-3")
         self.published(d)
@@ -1236,7 +1294,7 @@ class Scenarios:
         self.published(d)
         self.assertEqual([item["holding"] for item in d.needs_you()], [False])
         d.journal, d.clock = [], d.clock + 1000
-        d.entry("decision.recorded", summary="Record starts again.")
+        d.start("0")
         self.published(d)
         self.assertEqual(d.needs_you(), [], "the replaced record's refusal isn't this record's")
 
@@ -1252,16 +1310,19 @@ class Scenarios:
         self.assertEqual(d.status("EP-2"), "In Review")
         self.assertIn('The move "Start work" isn\'t offered from In Review', d.comments("EP-2")[0])
 
-    def test_a_follow_up_filed_before_a_failed_comment_is_named_in_it(self) -> None:
+    def test_a_follow_up_whose_filing_failed_is_filed_once_by_the_next_run(self) -> None:
         d = self.delivery()
         d.ticket("EP-2")
-        entry = d.entry("decision.recorded", "EP-2", "Deferred F3")
-        d.mark(entry, {"story": "EP-2", "finding": "F3", "title": "Later"})
-        d.fail("comment", 503, ticket="EP-2")
+        d.start_posted()
+        entry = d.followup("EP-2", "F3", "Later")
+        d.fail("create", 503)
         self.assertEqual(d.publish()[0], 1)
         self.published(d)
-        [created] = [call[1] for call in d.calls() if call[0] == "create"]
-        self.assertIn(f"Follow-up: {created}.", d.comments("EP-2")[0])
+        created = [call for call in d.calls() if call[0] == "create"]
+        self.assertEqual(len(created), 1, created)
+        self.assertEqual(d.backend.read()["issues"][created[0][1]]["labels"], ["agent-followup-ep-2-f3"])
+        self.assertEqual(d.outcomes(entry["id"]), ["create", "skip"])
+        self.assertEqual(d.comments("EP-2"), [])
 
     def test_a_reassignment_at_the_same_moment_as_the_start_takes_it(self) -> None:
         d = self.delivery({"start": ["Start work"]})
@@ -1296,9 +1357,8 @@ class AdapterContractTests(unittest.TestCase):
         d.lane_start("EP-2")
         d.entry("candidate.merged", "EP-2")
         d.entry("candidate.merged", "EP-3")
-        deferral = d.entry("decision.recorded", "EP-2", "Deferred F2")
-        d.mark(deferral, {"story": "EP-2", "finding": "F2", "title": "Later"})
-        d.entry("blocker.recorded", "EP-3", "y" * 33000)
+        d.followup("EP-2", "F2", "Later")
+        d.entry("blocker.recorded", "EP-3", {"text": "y" * 33000})
         d.fail("comment", 400, ticket="EP-3", times=1)
         for _ in range(2):
             self.assertEqual(d.publish()[0], 0)
@@ -1679,7 +1739,7 @@ class RunDeliveryTrackerCommandTests(unittest.TestCase):
         self.assertFalse((m / ".agents/deliveries/FX-1.json").exists())
         self.assertEqual((m / ".agents/orchestration.json").read_text(), before)
 
-    def test_lead_assign_journals_each_story_and_lead_plan_change_marks_its_decision(self) -> None:
+    def test_lead_assign_journals_each_story_and_lead_plan_change_journals_the_plan_update(self) -> None:
         h = self.harness
         fx = self.fixture()
         m = fx.main
@@ -1701,12 +1761,14 @@ class RunDeliveryTrackerCommandTests(unittest.TestCase):
         code, out = fx.flow("lead-plan", "change", "--kind", "relaxed", "--subjects", "FX-2", "--criterion", "one-fails",
                             "--text", "Thing one says it failed", "--why", "The operator eased it.", cwd=m)
         self.assertEqual(code, 0, out)
-        written = [e for e in self.journal(fx)[before:] if e["kind"] == "decision.recorded"]
-        self.assertEqual(len(written), 1, written)
-        marks = tp.read_flow(fx.tmp / "flow-log", "FX-1", tp.MARKS)
-        self.assertEqual(marks[-1]["journal"], written[0]["id"])
-        self.assertEqual([mark["journal"] for mark in marks], [written[0]["id"]],
-                         "only the lead's plan change is marked: lead-init's plan build isn't")
+        # The change is journalled as the plan's update, its facts naming what changed; nothing is marked, since the
+        # registry's words post every entry the tracker takes.
+        written = self.journal(fx)[before:]
+        self.assertEqual([e["kind"] for e in written], ["plan.updated"], written)
+        plan = json.loads((fx.tmp / "record/plan.json").read_text())
+        self.assertEqual((written[0]["subject"], written[0]["data"], written[0].get("because"), written[0].get("answers")),
+                         (None, {"updated": plan["updated"], "changed": ["changes", "units"]}, None, None))
+        self.assertEqual(tp.read_flow(fx.tmp / "flow-log", "FX-1", tp.MARKS), [])
 
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)
@@ -1751,7 +1813,7 @@ class LaneCommandTests(RunDeliveryTrackerCommandTests):
     the review move follows reviewWhen, and handoff posts its own update through the ledger, or leaves it to the
     publisher when the tracker refuses it."""
 
-    def test_lead_assign_journals_each_story_and_lead_plan_change_marks_its_decision(self) -> None:
+    def test_lead_assign_journals_each_story_and_lead_plan_change_journals_the_plan_update(self) -> None:
         pass  # The parent's case; not repeated here.
 
     def test_lead_setup_binds_the_tracker_publisher_and_lead_init_refuses_without_it(self) -> None:
@@ -2160,7 +2222,7 @@ class LaneCommandTests(RunDeliveryTrackerCommandTests):
                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             deadline = time.monotonic() + 60
             while time.monotonic() < deadline and not any(
-                    e["kind"] == "review.evidence" for e in self.record(fx)["journal"]):
+                    e["kind"] == "review.recorded" for e in self.record(fx)["journal"]):
                 time.sleep(0.2)
             time.sleep(2)
             self.assertIsNone(process.poll(), "handoff didn't wait for the ledger")
@@ -2653,9 +2715,9 @@ class LinearPublisherTests(unittest.TestCase):
         d.ticket("EP-2")
         assigned = d.entry("lane.assigned", "EP-2", lane="lane-1")
         d.lane_start("EP-2")
-        handed = d.entry("candidate.handed", "EP-2", "Handed off at abc")
-        merged = d.entry("candidate.merged", "EP-2", "Merged at def")
-        decision = d.entry("decision.recorded", "EP-2", "Plan change: EP-3 removed")
+        handed = d.entry("candidate.handed", "EP-2")
+        merged = d.entry("candidate.merged", "EP-2")
+        decision = d.entry("decision.recorded", "EP-2")
         d.mark(decision)
         self.published(d)
         self.published(d)
@@ -2681,7 +2743,8 @@ class LinearPublisherTests(unittest.TestCase):
                 moves = {"lead": {"lease.granted": ["In Review"]}} if operation == "transition" else None
                 d = self.delivery(moves)
                 d.ticket("EP-2", status="In Progress")
-                entry = d.entry("lease.granted", "EP-2", label)
+                d.start_posted()
+                entry = d.entry("lease.granted", "EP-2")
                 if rule is None:
                     d.unreachable()
                 else:
@@ -2753,8 +2816,8 @@ class LinearPublisherTests(unittest.TestCase):
     def test_the_first_run_over_a_host_mode_record_skips_through_journal_through(self) -> None:
         d = self.delivery()
         d.ticket("EP-2")
-        posted = d.entry("candidate.handed", "EP-2", "Posted by the host publisher")
-        after = d.entry("candidate.merged", "EP-2", "Merged after the switch")
+        posted = d.entry("candidate.handed", "EP-2")
+        after = d.entry("candidate.merged", "EP-2")
         (d.state_dir / "published.json").write_text(json.dumps(
             {"version": 7, "journalThrough": posted["id"], "at": stamp(d.clock + 5)}))
         self.published(d)
@@ -2801,7 +2864,7 @@ class LinearPublisherTests(unittest.TestCase):
     def test_only_the_first_run_seeds_and_a_later_ack_covers_nothing(self) -> None:
         d = self.delivery({"start": ["In Progress"]})
         d.ticket("EP-2")
-        posted = d.entry("candidate.handed", "EP-2", "Posted by the host publisher")
+        posted = d.entry("candidate.handed", "EP-2")
         path = d.state_dir / "published.json"
         path.write_text(json.dumps({"version": 3, "journalThrough": posted["id"], "at": stamp(d.clock + 1)}))
         self.published(d)
@@ -2809,7 +2872,7 @@ class LinearPublisherTests(unittest.TestCase):
         # A host publisher beside it acknowledges past a story still waiting for its start, and past an entry a
         # transient failure held back: neither is taken for one it posted.
         assigned = d.entry("lane.assigned", "EP-2", lane="lane-1")
-        held = d.entry("lease.granted", "EP-2", "Held back")
+        held = d.entry("lease.granted", "EP-2")
         self.inject(d, "Comments", status=503, ticket="EP-2")
         self.assertEqual(d.publish()[0], 1)
         path.write_text(json.dumps({"version": 9, "journalThrough": held["id"], "at": stamp(d.clock + 1)}))
@@ -2825,11 +2888,11 @@ class LinearPublisherTests(unittest.TestCase):
     def test_a_record_the_publisher_began_is_never_seeded_by_a_later_ack(self) -> None:
         d = self.delivery({"start": ["In Progress"]})
         d.ticket("EP-2")
-        handed = d.entry("candidate.handed", "EP-2", "Posted by the tracker publisher")
+        handed = d.entry("candidate.handed", "EP-2")
         self.published(d)
         self.assertEqual(d.outcomes(handed["id"]), ["comment"])
         assigned = d.entry("lane.assigned", "EP-2", lane="lane-1")
-        held = d.entry("lease.granted", "EP-2", "Held back by a transient failure")
+        held = d.entry("lease.granted", "EP-2")
         self.inject(d, "Comments", status=503, ticket="EP-2")
         self.assertEqual(d.publish()[0], 1)
         self.assertEqual((d.lines(assigned["id"]), d.lines(held["id"])), ([], []), "one waits, one is held back")
@@ -2848,9 +2911,9 @@ class LinearPublisherTests(unittest.TestCase):
             with self.subTest(case):
                 d = self.delivery()
                 d.ticket("EP-2")
-                first = d.entry("candidate.handed", "EP-2", "Posted by the host publisher")
-                second = d.entry("candidate.stopped", "EP-2", "Posted by the host publisher too")
-                after = d.entry("candidate.merged", "EP-2", "After the switch")
+                first = d.entry("candidate.handed", "EP-2")
+                second = d.entry("candidate.stopped", "EP-2")
+                after = d.entry("candidate.merged", "EP-2")
                 (d.state_dir / "published.json").write_text(json.dumps(
                     {"version": 4, "journalThrough": second["id"], "at": stamp(d.clock + 1)}))
                 if case == "a seeding cut short":
@@ -2866,7 +2929,7 @@ class LinearPublisherTests(unittest.TestCase):
                     (d.state_dir / "published.json").write_text(json.dumps(
                         {"version": 5, "journalThrough": after["id"], "at": stamp(d.clock + 1)}))
                 else:
-                    lane = d.entry("candidate.handed", "EP-2", "Handed off by its lane")
+                    lane = d.entry("candidate.handed", "EP-2")
                     d.command_line(lane, action="comment")
                 self.published(d)
                 for entry in (first, second):
@@ -2899,7 +2962,7 @@ class LinearPublisherTests(unittest.TestCase):
             with self.subTest(backend=backend.name):
                 d = self.delivery(transitions, backend)
                 d.ticket("EP-2", status="Done")
-                entry = d.entry("candidate.merged", "EP-2", "Merged; the tracker's integration closed it")
+                entry = d.entry("candidate.merged", "EP-2")
                 self.published(d)
                 self.published(d)
                 lines = d.lines(entry["id"])

@@ -646,16 +646,15 @@ def _texts_order(texts: dict, named: list[str]) -> list:
 
 
 COMMIT_ID = re.compile(r"^[0-9a-f]{40}$")
-# The entry that says a review was kept: review.recorded, with its digest and reviewed commit as facts, or, until the
-# sentence is removed, the sentence's review.evidence, which carries them beside the entry.
-REVIEW_KEPT = ("review.recorded", "review.evidence")
+# The entry that says a review was kept: review.recorded, with its digest and reviewed commit as facts.
+REVIEW_KEPT = ("review.recorded",)
 
 
 def _kept_review(entry: dict) -> object:
     data = entry.get("data")
     if entry.get("kind") == "review.recorded" and isinstance(data, dict):
         return {"digest": data.get("digest"), "candidateRef": data.get("candidateRef")}
-    return entry.get("reviewArtifact")
+    return None
 
 
 def _facts_named(value: object, commits: list, changes: list) -> None:
