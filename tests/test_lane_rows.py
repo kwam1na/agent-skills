@@ -864,19 +864,6 @@ class LeavingWaitingAnotherWay(WaitingRecord):
         self.assertGreaterEqual(again["at"], first["at"])
 
 
-class EveryViewOrdersLanesById(unittest.TestCase):
-    def test_the_markdown_view_lists_lanes_by_id_whatever_order_the_record_keeps(self) -> None:
-        from tests.test_waits import render_state
-        document = waits_record()
-        lanes = document["state"]["lanes"]
-        lanes.append({**lanes[0], "id": "lane-10", "title": "Ten"})
-        document["state"]["lanes"] = [lanes[3], lanes[1], lanes[2], lanes[0]]
-        shown = render_state.render_markdown(document)
-        section = shown[shown.index("## Lanes"):shown.index("## Finish line")]
-        listed = [line.split(":")[0][2:] for line in section.splitlines() if line.startswith("- lane")]
-        self.assertEqual(listed, ["lane-1", "lane-2", "lane-3", "lane-10"])
-
-
 def run_delivery_root() -> Path:
     return Path(run_delivery.__file__).resolve().parents[3]
 

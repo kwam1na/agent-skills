@@ -455,7 +455,7 @@ def render_markdown(document: dict) -> str:
         return _markdown_text(lane["focus"])
 
     rows = []
-    for lane in sorted(state["lanes"], key=lane_order):
+    for lane in state["lanes"]:
         rows.append(f"- {_markdown_text(lane['id'])}: {_markdown_text(lane['title'])}, {_markdown_text(lane['state'])}"
                     f" · focus {lane_focus(lane)} · waiting on {_markdown_text(lane['waitingOn'])} · since {_markdown_text(lane['since'])}")
         rows.extend(f"  - {_markdown_text(text)}" for text in waiting.get(lane["id"], []))
@@ -531,14 +531,6 @@ def with_waits(document: dict) -> dict:
         return {**document, **({"waits": found} if found else {}), **({"waitedOn": holding} if holding else {})}
     except (OSError, ValueError, KeyError, TypeError):
         return document
-
-
-def lane_order(lane: object) -> tuple:
-    """A lane's place in every view, by its id and never by where the record lists it: "lane-2" before "lane-10"."""
-    name = lane.get("id") if isinstance(lane, dict) else None
-    name = name if isinstance(name, str) else ""
-    numbered = re.fullmatch(r"(.*?)([0-9]+)", name)
-    return (numbered.group(1), int(numbered.group(2)), name) if numbered else (name, -1, name)
 
 
 def _waits_by(document: dict, name: str) -> dict[str, list[str]]:
@@ -893,18 +885,7 @@ _PAGE_PROGRAM = """
 
     parts.push(el("h2", "Lanes"));
     var derivedFocus = isObject(doc.focus) ? doc.focus : {};
-    /* Lanes by their id, as every view orders them, never by where the record lists them. */
-    function laneKey(lane) {
-      var id = typeof lane.id === "string" ? lane.id : "";
-      var numbered = /^(.*?)([0-9]+)$/.exec(id);
-      return numbered ? [numbered[1], Number(numbered[2]), id] : [id, -1, id];
-    }
-    var lanes = state.lanes.slice().sort(function (a, b) {
-      var x = laneKey(a), y = laneKey(b);
-      for (var i = 0; i < 3; i += 1) { if (x[i] !== y[i]) { return x[i] < y[i] ? -1 : 1; } }
-      return 0;
-    });
-    parts.push(list("ul", lanes, "No lanes.", function (lane) {
+    parts.push(list("ul", state.lanes, "No lanes.", function (lane) {
       var focus = !lane.focus && typeof derivedFocus[lane.id] === "string" ? derivedFocus[lane.id] + " (derived)" : show(lane.focus);
       return withWaits(row(show(lane.id) + ": " + show(lane.title),
         "Focus " + focus + " \\u00b7 waiting on " + show(lane.waitingOn) + " \\u00b7 since " + show(lane.since), lane.state),

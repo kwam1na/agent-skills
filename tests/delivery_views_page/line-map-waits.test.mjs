@@ -114,7 +114,7 @@ test("a lane waiting on another story is drawn as progress, with what it waits f
     .toEqual(["Lane 1 waits for APP-1 to land before it finishes APP-2."]);
 });
 
-test("lanes keep their order and their colour by id, whatever order the record lists them in", async () => {
+test("each lane keeps its id's colour wherever the record lists it", async () => {
   const drawn = async (document) => {
     const [first] = await openPage(pageWithRuns(document, {}, { config: CONFIG }), { now: NOW });
     const rows = [...first.app.querySelectorAll(".person")].map((row) => [row.querySelector("h3").textContent, row.style.getPropertyValue("--c")]);
@@ -122,10 +122,11 @@ test("lanes keep their order and their colour by id, whatever order the record l
     return { rows, lines };
   };
   const inOrder = await drawn(record());
+  expect(inOrder.rows).toEqual([["Waits", "var(--l1)"], ["Renderer", "var(--l2)"]]);
   const swapped = record();
   swapped.state.lanes.reverse();
-  // Lane 2 assigned after lane 1 once moved its row to the end; nothing on the page may move or change colour for it.
-  expect(await drawn(swapped)).toEqual(inOrder);
-  expect(inOrder.rows).toEqual([["Waits", "var(--l1)"], ["Renderer", "var(--l2)"]]);
+  // The rows follow the record's order; a lane's colour follows its id.
+  const moved = await drawn(swapped);
+  expect(moved.rows).toEqual([["Renderer", "var(--l2)"], ["Waits", "var(--l1)"]]);
+  expect(new Map(moved.lines)).toEqual(new Map(inOrder.lines));
 });
-

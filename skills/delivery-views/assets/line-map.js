@@ -415,14 +415,7 @@
     list(doc.state.lanes).forEach(function (lane) { if (isObject(lane) && lane.id) { names[lane.id] = text(lane.title) || text(lane.id); } });
     return names;
   }
-  // Lanes are ordered, and coloured, by their id, never by where the record lists them: an assignment that moves a row
-  // moves no lane and changes no lane's colour. "lane-2" comes before "lane-10", and work with no lane comes last.
-  function laneOrder(a, b) {
-    if (!a || !b) { return a ? -1 : b ? 1 : 0; }
-    var x = /^(.*?)(\d+)$/.exec(a), y = /^(.*?)(\d+)$/.exec(b);
-    if (x && y && x[1] === y[1]) { return Number(x[2]) - Number(y[2]) || (a < b ? -1 : a > b ? 1 : 0); }
-    return a < b ? -1 : a > b ? 1 : 0;
-  }
+  // A lane's colour comes from its id, never from where the record lists it, so no row moving changes a lane's colour.
   function laneColour(lane) {
     if (!lane) { return "var(--soft)"; }
     var numbered = /^lane-(\d+)$/.exec(lane);
@@ -1467,7 +1460,6 @@
     }
     var lanes = [];
     all.forEach(function (piece) { var lane = piece.item.lane || ""; if (lanes.indexOf(lane) < 0) { lanes.push(lane); } });
-    lanes.sort(laneOrder);
     // Every lane's stops sit on one pitch, set by the longest lane, and end together where the lane turns into the main line.
     var most = Math.max.apply(null, lanes.map(function (lane) { return all.filter(function (piece) { return (piece.item.lane || "") === lane; }).length; }));
     var box = el("div", "lines");
@@ -1853,7 +1845,7 @@
   }
   function drawWho(doc, all) {
     var inner = parts.who;
-    var lanes = list(doc.state.lanes).filter(isObject).slice().sort(function (a, b) { return laneOrder(text(a.id), text(b.id)); });
+    var lanes = list(doc.state.lanes).filter(isObject);
     var colours = laneColours(doc, all);
     var focus = isObject(doc.focus) ? doc.focus : {};
     var busy = lanes.filter(function (lane) { return lane.state !== "idle" && lane.state !== "done"; }).length;
