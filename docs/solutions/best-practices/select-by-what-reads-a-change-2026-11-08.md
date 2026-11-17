@@ -1,6 +1,7 @@
 ---
 title: "Select checks by what reads a change, not only by what it touches"
 date: 2026-11-08
+last_updated: 2026-11-17
 category: best-practices
 module: orchestrate-work
 problem_type: best_practice
@@ -58,6 +59,11 @@ memory.
   guide a corpus test pins), add a `readers` entry naming its readers.
 - Make the repository's corpus and qualification tests `guards`, so no
   selection can leave them out.
+- Check the binding after writing the note. A journal kind named in the wrong skill
+  reached a base a second time after this note named it, because the binding still
+  had no reader for skill pages: a note that names a defect changes nothing until a
+  `readers` or `guards` entry carries it. A change to any Markdown file under
+  `skills/` now brings the corpus tests that read the shipped skill prose.
 - Read `select`'s warnings before queueing: a selected check failing at the
   base head would stop the queue.
 - Mark a readers entry complete only when its paths really are everything its

@@ -1845,6 +1845,18 @@
       },
       {
         "paths": [
+          "skills/**/*.md"
+        ],
+        "checks": [
+          "tests.test_declared_mechanics_corpus",
+          "tests.test_lane_ruling_corpus",
+          "tests.test_review_bound_corpus",
+          "tests.test_round_brief_template_corpus",
+          "tests.test_run_event_emission_corpus"
+        ]
+      },
+      {
+        "paths": [
           "hosted/delivery-viewer/**",
           "skills/delivery-views/assets/**",
           "skills/delivery-views/scripts/render.py",
