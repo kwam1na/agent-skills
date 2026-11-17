@@ -4077,16 +4077,16 @@ def waited_on(document: dict, found: list[dict], *, words: dict | None = None) -
 
 
 def free_to_start(document: dict, found: list[dict], *, words: dict | None = None) -> list[dict]:
-    """Planned stories nothing holds any more, on an idle lane: ``{subject, lane, words}``, for "Needs you"."""
+    """Planned stories nothing holds any more, on an idle lane: ``{subject, lane, words}``, for "Needs you". A held
+    story has its ``held`` wait among ``found``, so it is never free."""
     table = load_wait_words() if words is None else words
     state = document["state"]
     waiting = {wait["subject"] for wait in found}
-    held = _holds(document.get("journal") or [])
     idle = {row["id"] for row in state["lanes"] if row.get("state") == "idle"}
     return [{"subject": entry["subject"], "lane": entry["lane"],
              "words": wait_said(table, "needsYou", "free", {"subject": entry["subject"], "lane": entry["lane"]})}
             for entry in state.get("planned", []) if entry["stage"] == "planned" and entry["lane"] in idle
-            and entry["subject"] not in waiting and entry["subject"] not in held]
+            and entry["subject"] not in waiting]
 
 
 def next_for_lane(state: dict, lane: str, snapshot: dict | None, hints: dict | None) -> list[dict]:
