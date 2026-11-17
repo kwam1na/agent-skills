@@ -689,14 +689,14 @@ test("lists each reviewer's findings on its round, and on the confirming round t
     [...group.querySelectorAll(".run-finding")].map((item) => [item.className, item.querySelector(".run-finding-text")?.textContent,
       item.querySelector(".run-fate")?.textContent ?? null]),
   ]);
-  // Round 1 lists each reviewer's findings, worst first, with what became of each, and says it once below.
+  // Round 1 lists each reviewer's findings, worst first, and says once below what became of them.
   const one = first.app.querySelector("#detail .run-card");
   expect(findings(one)).toEqual([
-    ["Testing", [["run-finding is-p1", "A retry after a timeout charges twice.", "\u2713 fixed"], ["run-finding is-p2", "No test covers a dropped second attempt.", "open"]]],
-    ["Correctness", [["run-finding is-p2", "The receipt keeps the first attempt's total.", "dropped"]]],
+    ["Testing", [["run-finding is-p1", "A retry after a timeout charges twice.", null], ["run-finding is-p2", "No test covers a dropped second attempt.", null]]],
+    ["Correctness", [["run-finding is-p2", "The receipt keeps the first attempt's total.", null]]],
   ]);
-  // Each severity is said once, as a band over its findings.
-  expect([...one.querySelectorAll(".run-band")].map((band) => band.textContent)).toEqual(["Serious", "Moderate", "Moderate"]);
+  // Each severity is said once, as a band over its findings, with the fate they share: here each band holds one.
+  expect([...one.querySelectorAll(".run-band")].map((band) => band.textContent)).toEqual(["Serious · fixed", "Moderate · open", "Moderate · dropped"]);
   expect(one.querySelector(".run-settled")?.textContent).toBe("1 of this round's 3 notes was fixed in abc1234, and round 2 confirmed it. 1 is still open.");
   // Counts are the findings' own, so the card does not repeat them.
   expect(one.querySelector(".run-card-notes")).toBeNull();
@@ -735,7 +735,8 @@ test("never lets report text become markup, nor a fix commit become a link unles
   expect([...card.querySelectorAll("b")].filter((node) => node.textContent === "bold")).toHaveLength(0);
   // A summary stored without a full stop gets one.
   expect(card.querySelector(".run-finding-text")?.textContent).toBe(`${HOSTILE}.`);
-  expect(card.querySelector(".run-fate")?.textContent).toBe(HOSTILE);
+  // Its fate is its band's, said in the band's own text.
+  expect(card.querySelector(".run-band")?.textContent).toBe(`Minor · ${HOSTILE}`);
   // The javascript-shaped commit stays text; only the real commit id is linked.
   expect([...card.querySelectorAll("a")].map((link) => link.getAttribute("href"))).toEqual([`https://github.com/acme/shop/commit/${FIX}`]);
   expect([...card.querySelectorAll("code.run-commit")].map((code) => code.textContent)).toEqual(["javascr"]);
