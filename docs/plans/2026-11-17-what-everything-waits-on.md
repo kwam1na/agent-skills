@@ -151,10 +151,13 @@ The lane's side:
 
 7. **A lane state `waiting`.** A lane row may be `waiting`, and then its `waitingOn` must be a subject the record
    holds. The lane sets it through `focus --state waiting --waiting-on KEY`. Anything else is refused, naming the
-   field. A `waiting` state with no `--waiting-on` is refused too. Setting `waiting` keeps the row's prior state in
-   its existing `restedFrom` member. When that subject lands or settles, the state tool returns the row to the state
-   in `restedFrom`, with `waitingOn` cleared, in the same write that records the landing or settlement. The `wait`
-   event for the landing names the lane it freed.
+   field. A `waiting` state with no `--waiting-on` is refused too. Setting `waiting` keeps the row's prior state in a
+   new tool-written member, `waitingFrom: {state, at}`. It is not `restedFrom`, which the tool resets at every lane or
+   lead write and rewrites when the runner speaks over a row. `waitingFrom` is carried across every write while the
+   state stays `waiting`, whoever writes, and is removed when the row returns. When that subject lands or settles, the
+   state tool returns the row to the state in `waitingFrom`, with `waitingOn` cleared, in the same write that records
+   the landing or settlement. For such a row, `lane_rows_merged` applies this return instead of its own rest. The
+   `wait` event for the landing names the lane it freed.
 8. **`wait` does not wake on a planned wait.** A `waiting` row is not a blocked one, and `wait` neither wakes on it
    nor counts it as quiet. A `waiting` row is not in "Needs you" and does not hold the close.
 9. **`lead-accept` settles the row.** After an acceptance, the accepted lane's row is `idle` with `waitingOn` naming
@@ -257,8 +260,8 @@ Pins that go stale, and the story that re-derives them:
 - The registry's kind list in `tests/test_journal_kinds.py`, its vectors, the inventory in
   `tests/test_journal_shape.py`, and `ALL_KINDS` in `tests/test_run_delivery_tracker.py`: V26-3552 for `story.held`
   and `story.unheld`, and V26-3555 for its two kinds.
-- The lane states in `schemas.json` and wherever `tests/test_orchestration_state.py` and `tests/test_lane_rows.py`
-  list them: V26-3426.
+- The lane states and the lane row's members in `schemas.json`, with the new `waitingFrom`, and wherever
+  `tests/test_orchestration_state.py` and `tests/test_lane_rows.py` list them: V26-3426.
 - The planned entry's members: V26-3552.
 - The merge slot's holder and waiter file members, wherever `tests/test_run_delivery_peers.py` and
   `tests/test_merge_queue.py` assert them: V26-3554.
@@ -301,8 +304,9 @@ For `waits`, from fixture records, in-process, in V26-3552:
   carrying the count of what waits on it. That item does not hold the close.
 - "Free to start" applies to a planned story with no wait left, not held, on an idle lane. It is in "Needs you" and
   does not hold the close. It is not in "Needs you" in any of these cases: the story's lane is busy; the story is
-  held; it still has a wait; or its lane is the idle lane Decision 9 left after an acceptance and the story has a
-  wait.
+  held; or it still has a wait.
+- On the idle lane Decision 9 left, still waiting on its accepted key, a planned story with no wait that is not held
+  is "free to start" in "Needs you". The same lane with a story that has a wait is not.
 - With the clock's functions, the network and every other file open replaced by ones that raise, the same fixture
   gives the same waits twice.
 - `next` on a fixture with no tracker snapshot reports a story with only an `order` wait, and a story with only a
@@ -316,8 +320,12 @@ For `waiting` lanes and acceptance, in V26-3426:
 - `focus --state waiting --waiting-on KEY` for a known key writes the row. With an unknown key it is refused, naming
   the field, and with no `--waiting-on` it is refused too.
 - A `waiting` lane does not wake `wait`, is not counted as quiet, is not in "Needs you" and does not hold the close.
-- A lane that rested from `working` returns to `working` when its subject merges, in the same write. A lane that
-  rested from `idle` returns to `idle`. A lane waiting on a subject that settles returns as well. The `wait` event
+- A lane that was `working` returns to `working` when its subject merges, in the same write. A lane that was
+  `idle` returns to `idle`.
+- A lane that was `working` sets `waiting`. Before its subject merges, it says `focus` once more, the runner then
+  speaks over its row, and the lead then writes it, each changing its focus. `waitingFrom` is still `{state:
+  working}` after each write. When the subject merges, the row returns to `working` with `waitingOn` null and no
+  `waitingFrom`, and `lane_moved_off` reads the returned state. A lane waiting on a subject that settles returns as well. The `wait` event
   for the landing names the freed lane.
 - An idle lane whose next planned story waits shows that story's wait under the lane.
 - After `lead-accept`, the lane is `idle`, waiting on the accepted key, and clears to `null` when that key merges.
@@ -343,7 +351,7 @@ For other deliveries, on `PeerDeliveryTests`' existing two-delivery fixture, in 
   naming the peer, "check of" that piece, and since when. The same holds for `lead-sync` and for
   `lead-upgrade-writer`. The runner's front piece, waiting on the slot, gives a `slot` wait for the piece. The
   holder's file names each waiter and what it is doing, and both sides clear when the slot is released.
-- A holder file without `doing` reads as "is using the main line".
+- A holder file without `doing`, and a waiter file without it, each read as "is using the main line".
 - A fresh `peer-waits.json` shows the `claim` sentence, the `slot` sentence and the holder side's line on the page,
   the Markdown view and the built-in page. The same file past `staleAfter`, and no file at all, each show nothing
   about other deliveries.
