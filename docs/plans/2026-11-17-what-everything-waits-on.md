@@ -529,6 +529,10 @@ Acceptance criteria:
 - `c4` Both sides read it from the same facts, in the shape the epic settles for "waits on".
 - `c5` When the claim is released or the check ends, both sides clear with no action from either lead.
 
+### V26-3565. Catch a provenance listing change at hand-off, not in the merge queue
+
+Lane 1, tier 1, after V26-3426. Added mid-delivery: The operator asked to add it to this delivery: V26-3552 was stopped by the merge queue after acceptance for a provenance listing change its lane didn't own (decision 131), and nothing caught it earlier
+
 ## Calls made
 
 The operator settled these on 2026-11-17, before drafting.
