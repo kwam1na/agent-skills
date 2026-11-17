@@ -20,7 +20,11 @@ RUN_QUIETLY = True
 
 LISTING = "build/listing.json"
 # The listing's command, as the queue runs it: the file's bytes on stdin, the outputs it lists as a JSON array.
-LIST = "import json, sys; print(json.dumps(sorted(json.load(sys.stdin)['outputs'])))"
+# A file without them is refused in words, as a listing command says what it can't read. The queue gives a listing
+# its step's values, and this one takes `{head}`: run without the commit, it refuses.
+LIST = ("import json, re, sys; d = json.load(sys.stdin); "
+        "re.fullmatch('[0-9a-f]{40}', sys.argv[1]) or sys.exit('no head given'); "
+        "print(json.dumps(sorted(d['outputs']))) if 'outputs' in d else sys.exit('it lists no outputs')")
 
 
 class HandoffListingTests(unittest.TestCase):
@@ -44,7 +48,7 @@ class HandoffListingTests(unittest.TestCase):
             "base": {"remote": "origin", "ref": "feature/FX-1"}, "checkTimeoutSeconds": 600,
             "state": {"forgeSnapshot": {"argv": ["true"]}},
             "regenerable": {"paths": [LISTING], "regenerators": [["true"]],
-                            "listings": [{"path": LISTING, "argv": [sys.executable, "-c", LIST]}]}}, indent=2))
+                            "listings": [{"path": LISTING, "argv": [sys.executable, "-c", LIST, "{head}"]}]}}, indent=2))
         self.listing(m, ["a"], "1")
         commit(m, "FX-1: a regenerable listing")
         sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
@@ -90,42 +94,60 @@ class HandoffListingTests(unittest.TestCase):
         return (read(fx.tmp / "record/journal.jsonl"), read(fx.tmp / "record/state.json"), read(review / "blocked.json"),
                 sorted(p.name for p in review.iterdir()))
 
-    def test_a_listing_change_is_refused_until_the_lane_owns_the_listing(self) -> None:
-        fx = self.delivery()
-        wt, url = self.candidate(fx, "FX-2", "lane-1", "src/one.txt", ["a", "b"], "2")
-        before = self.recorded(fx, wt, "FX-2")
-        code, out = fx.flow("handoff", "FX-2", "--pr", url, cwd=wt)
+    def handoff(self, fx: Fixture, key: str, wt: Path, url: str, *words: str) -> None:
+        """A hand-off refused with each of `words` in its output, and nothing recorded."""
+        before = self.recorded(fx, wt, key)
+        code, out = fx.flow("handoff", key, "--pr", url, cwd=wt)
         self.assertEqual(code, 2, out)
-        self.assertIn("FX-2 changes the outputs a listing names, in files lane-1 doesn't own, and the merge queue would "
-                      "stop it after acceptance:", out)
-        self.assertIn(f"{LISTING} (added b): ask the lead to grant it, with ", out)
-        self.assertIn(f"lead-own --lane lane-1 --grant {LISTING}", out)
-        self.assertIn("then hand off again. Refreshing a listing's digests alone needs no grant.", out)
-        self.assertEqual(self.recorded(fx, wt, "FX-2"), before, "a refused hand-off recorded something")
-        # Granted the listing, the same candidate hands off.
-        code, out = fx.flow("lead-own", "--lane", "lane-1", "--grant", LISTING, cwd=fx.main)
-        self.assertEqual(code, 0, out)
+        for said in words:
+            self.assertIn(said, out)
+        self.assertEqual(self.recorded(fx, wt, key), before, "a refused hand-off recorded something")
+
+    def test_a_listing_change_is_refused_until_the_lane_owns_the_listing_alone(self) -> None:
+        fx = self.delivery()
+        m = fx.main
+        own = lambda *argv: self.assertEqual(fx.flow("lead-own", *argv, cwd=m)[0], 0)
+        wt, url = self.candidate(fx, "FX-2", "lane-1", "src/one.txt", ["b"], "2")
+        # No lane holds the listing: the lead grants it.
+        self.handoff(fx, "FX-2", wt, url,
+                     "FX-2 changes the outputs a listing names, in files lane-1 doesn't own alone, and the merge queue "
+                     "would stop it after acceptance:",
+                     f"{LISTING} (added b; removed a): ask the lead to grant it, with ",
+                     f"lead-own --lane lane-1 --grant {LISTING}",
+                     "then hand off again. Refreshing a listing's digests alone needs no grant.")
+        # Another lane holds it: the lead moves it, by that lane's claim.
+        own("--lane", "lane-2", "--grant", "build/*")
+        self.handoff(fx, "FX-2", wt, url, f"{LISTING} (added b; removed a): it is held by lane-2, so ask the lead to make "
+                     f"it lane-1's alone, with ", "lead-own --lane lane-1 --move build/* --from lane-2")
+        # Both hold it: still lane-1's alone is what the queue takes, so the same move.
+        own("--lane", "lane-1", "--grant", LISTING)
+        self.handoff(fx, "FX-2", wt, url, f"{LISTING} (added b; removed a): it is shared with lane-2, so ask the lead to "
+                     "make it lane-1's alone, with ", "lead-own --lane lane-1 --move build/* --from lane-2")
+        self.assertNotIn("--grant", fx.flow("handoff", "FX-2", "--pr", url, cwd=wt)[1])
+        # Moved, the listing is lane-1's alone, and the same candidate hands off.
+        own("--lane", "lane-1", "--move", "build/*", "--from", "lane-2")
         code, out = fx.flow("handoff", "FX-2", "--pr", url, cwd=wt)
         self.assertEqual(code, 0, out)
         self.assertIn("**Hand-off: FX-2**", out)
 
-    def test_a_removed_output_is_refused_and_a_digest_refresh_hands_off_from_any_lane(self) -> None:
+    def test_a_removed_output_or_a_listing_that_cant_be_read_is_refused_and_a_digest_refresh_hands_off(self) -> None:
         fx = self.delivery()
         wt, url = self.candidate(fx, "FX-3", "lane-2", "src/two.txt", [], "2")
-        before = self.recorded(fx, wt, "FX-3")
-        code, out = fx.flow("handoff", "FX-3", "--pr", url, cwd=wt)
-        self.assertEqual(code, 2, out)
-        self.assertIn(f"{LISTING} (removed a): ask the lead to grant it, with ", out)
-        self.assertIn(f"lead-own --lane lane-2 --grant {LISTING}", out)
-        self.assertEqual(self.recorded(fx, wt, "FX-3"), before, "a refused hand-off recorded something")
+        self.handoff(fx, "FX-3", wt, url, f"{LISTING} (removed a): ask the lead to grant it, with ",
+                     f"lead-own --lane lane-2 --grant {LISTING}")
+        # A listing its command can't read is the queue's refusal too, said as the hand-off's, and records nothing.
+        (wt / LISTING).write_text("{}\n")
+        commit(wt, "FX-3: a listing with no outputs")
+        self.reviewed(fx, "FX-3", wt, 2)
+        self.handoff(fx, "FX-3", wt, url, "run-delivery: the merge queue's listing check can't run at ",
+                     f"the listing of {LISTING} at the candidate exited 1: it lists no outputs")
         # The output put back, only the digest differs from the base's: the listing is unchanged, so no grant is needed.
         self.listing(wt, ["a"], "3")
         commit(wt, "FX-3: only the digest moves")
-        self.reviewed(fx, "FX-3", wt, 2)
+        self.reviewed(fx, "FX-3", wt, 3)
         code, out = fx.flow("handoff", "FX-3", "--pr", url, cwd=wt)
         self.assertEqual(code, 0, out)
         self.assertIn("**Hand-off: FX-3**", out)
-
 
     def test_the_brief_names_each_listing_the_binding_declares_and_says_nothing_without_one(self) -> None:
         fx = self.delivery()
@@ -137,18 +159,27 @@ class HandoffListingTests(unittest.TestCase):
         brief = (m / "docs/lane-brief.md").read_text()
         self.assertIn("The lead refuses a hand-off that changes anything else." + rule + "\n", brief)
         self.assertEqual(brief.count("needs that file's owner"), 1, "the rule is stated once")
-        # With no listings declared, the brief says nothing of them, and the sentence before reads as it always did.
         binding = m / ".agents/orchestration.json"
         declared = json.loads(binding.read_text())
-        declared["regenerable"]["listings"] = []
-        binding.write_text(json.dumps(declared, indent=2))
-        commit(m, "FX-1: no listings")
-        code, out = fx.flow("lead-brief", cwd=m)
-        self.assertEqual(code, 0, out)
-        brief = (m / "docs/lane-brief.md").read_text()
-        self.assertIn("The lead refuses a hand-off that changes anything else.\n", brief)
-        self.assertNotIn("needs that file's owner", brief)
-        self.assertNotIn("{{listings}}", brief)
+
+        def brief_with(regenerable: dict) -> str:
+            binding.write_text(json.dumps({**declared, "regenerable": regenerable}, indent=2))
+            commit(m, "FX-1: the listings move")
+            code, out = fx.flow("lead-brief", cwd=m)
+            self.assertEqual(code, 0, out)
+            return (m / "docs/lane-brief.md").read_text()
+        # Two listings are named in one sentence.
+        two = {**declared["regenerable"], "paths": [LISTING, "build/other.json"],
+               "listings": [*declared["regenerable"]["listings"], {"path": "build/other.json", "argv": ["true"]}]}
+        self.assertIn(f" Adding or removing an output `{LISTING}` or `build/other.json` lists needs that file's owner",
+                      brief_with(two))
+        # With no regenerators, neither the queue nor the hand-off checks a listing, so the brief names none; with no
+        # listings declared it says nothing of them either, and the sentence before reads as it always did.
+        for regenerable in ({**declared["regenerable"], "regenerators": []}, {**declared["regenerable"], "listings": []}):
+            brief = brief_with(regenerable)
+            self.assertIn("The lead refuses a hand-off that changes anything else.\n", brief)
+            self.assertNotIn("needs that file's owner", brief)
+            self.assertNotIn("{{listings}}", brief)
 
 
 if __name__ == "__main__":

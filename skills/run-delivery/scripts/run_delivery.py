@@ -4584,19 +4584,35 @@ def handoff(args) -> None:
         # the listing. Its own check, asked here, says so before the lead accepts rather than after.
         _validator()
         import merge_queue  # noqa: E402  (the installed release's own queue)
-        queue = merge_queue.Runner(repo(), c.state, remote=c.remote, base=c.base_branch)
+        queue = merge_queue.Runner(main_checkout(), c.state, remote=c.remote, base=c.base_branch)
         queue.binding = c.binding
+        root = Path(c.binding.get("workRoot", ".orchestration/work"))
+        queue.work_root = (root if root.is_absolute() else main_checkout() / root).resolve()
+        # The values the queue's sync step gives a listing, so a listing that names {head} reads the same here.
+        values = queue.context(key, git("rev-parse", c.base_ref)).with_values(branch=c.branch(key), head=head)
         try:
-            moved = list(queue.unowned_listing_changes(lane, repo(), c.base_ref, head, None))
+            moved = list(queue.unowned_listing_changes(lane, repo(), c.base_ref, head, values))
         except merge_queue.Stop as error:
             raise Stop(f"the merge queue's listing check can't run at {head[:10]}: {error.detail}") from error
         if moved:
             said = lambda added, removed: "; ".join(filter(None, [added and f"added {', '.join(added)}",
                                                                    removed and f"removed {', '.join(removed)}"]))
-            raise Stop("\n  ".join([f"{key} changes the outputs a listing names, in files {lane} doesn't own, and the "
-                                    "merge queue would stop it after acceptance:",
-                                    *(f"{path} ({said(added, removed)}): ask the lead to grant it, with "
-                                      f"{flow_command()} lead-own --lane {lane} --grant {path}" for path, added, removed in moved),
+
+            def ask(path: str, owners: list[str]) -> str:
+                # A listing no lane holds is granted; one another lane holds, even beside this one, is moved from it.
+                others = [owner for owner in owners if owner != lane]
+                if not others:
+                    return f"ask the lead to grant it, with {flow_command()} lead-own --lane {lane} --grant {path}"
+                held = "shared with" if lane in owners else "held by"
+                claims = c.record_state().get("laneOwnership", {})
+                return (f"it is {held} {', '.join(others)}, so ask the lead to make it {lane}'s alone, with "
+                        + " and ".join(f"{flow_command()} lead-own --lane {lane} --move {claim} --from {other}"
+                                       for other in others for claim in claims.get(other, [])
+                                       if fnmatch.fnmatchcase(path, claim)))
+            raise Stop("\n  ".join([f"{key} changes the outputs a listing names, in files {lane} doesn't own alone, and "
+                                    "the merge queue would stop it after acceptance:",
+                                    *(f"{path} ({said(added, removed)}): {ask(path, owners)}"
+                                      for path, owners, added, removed in moved),
                                     "then hand off again. Refreshing a listing's digests alone needs no grant."]))
     validation, gate_problems = gates_summary(key, repo(), head)
     pr_line = None

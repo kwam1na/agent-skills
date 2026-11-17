@@ -1701,14 +1701,14 @@ class Runner:
 
     def check_shared_outputs(self, item: dict, checkout: Path, base: str, candidate: str, context: Context) -> None:
         """A lane may refresh a shared output without a claim when its listing stays the same."""
-        for path, added, removed in self.unowned_listing_changes(item["lane"], checkout, base, candidate, context):
+        for path, _owners, added, removed in self.unowned_listing_changes(item["lane"], checkout, base, candidate, context):
             raise self.listing_stop(path, added, removed)
 
     def unowned_listing_changes(
         self, lane: str, checkout: Path, base: str, candidate: str, context: Context | None,
-    ) -> Iterator[tuple[str, list[str], list[str]]]:
+    ) -> Iterator[tuple[str, list[str], list[str], list[str]]]:
         """Each regenerable listing the candidate changed what it lists of, where ``lane`` isn't its only owner: the
-        listing's path and the outputs added and removed, in the binding's order. A hand-off asks the same question
+        listing's path, the lanes that own it, and the outputs added and removed, in the binding's order. A hand-off asks the same question
         before the lead accepts, so a lane is told while the listing can still be granted."""
         ownership = self.state().get("laneOwnership")
         regenerable = self.binding["regenerable"]
@@ -1725,7 +1725,7 @@ class Runner:
             if owners != [lane]:
                 added, removed = self.listing_change(checkout, path, entry["argv"], merge_base, base, candidate, context)
                 if added or removed:
-                    yield path, added, removed
+                    yield path, owners, added, removed
 
     def merge_base_in(self, checkout: Path, base_head: str, branch: str, context: Context | None = None) -> None:
         self.merge_in(checkout, base_head, base_head, "--theirs", f"Merge {self.base} into {branch}", context=context)
