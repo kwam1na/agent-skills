@@ -8076,3 +8076,90 @@ class ProviderRefusalTests(MergeQueueTestCase):
         self.assertEqual(queue.binding_errors({**binding, "selection": {"lead": False, "refusalStops": True}}),
                          ["/selection/refusalStops: needs selection.lead, since only the lead's selection releases a "
                           "candidate the provider refused"])
+
+
+class SlotDoingTests(MergeQueueTestCase):
+    """A queue command's merge slot files say what it holds or waits for the slot to do: a candidate's check, then its
+    merge, or a release."""
+
+    run_quietly = True
+
+    def holder(self, adopter: Adopter) -> dict | None:
+        return state_tool.slot_holder(state_tool.merge_slot_path(adopter.operator, "main"))
+
+    def test_a_run_holds_the_slot_for_its_candidates_check_then_says_it_is_merging_it(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        at_merge: list = []
+        merging: list = []
+        original = queue.delivery_state.slot_doing
+
+        def noted(lock: Path, doing: dict) -> None:
+            original(lock, doing)
+            merging.append(self.holder(adopter))
+
+        with mock.patch.object(queue.delivery_state, "slot_doing", noted):
+            results = self.run_queue(adopter, "feature", seams={"before_merge": lambda runner, subject:
+                                                                 at_merge.append(self.holder(adopter))})
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        self.assertEqual(at_merge[0]["doing"], {"what": "check", "subject": "feature"})
+        self.assertEqual([said["doing"] for said in merging], [{"what": "merge", "subject": "feature"}])
+        self.assertEqual(merging[0]["pid"], os.getpid())
+        self.assertIsNone(self.holder(adopter))
+
+    def test_a_release_holds_the_slot_for_a_release(self) -> None:
+        adopter = self.adopter()
+        head = adopter.lane_commit("feature", {"src/app.txt": "elsewhere\n"})
+        run("fetch", "--quiet", "origin", cwd=adopter.operator)
+        held: list = []
+        original = queue.delivery_state.merge_slot
+
+        def noted(*args, **kwargs):
+            held.append(kwargs.get("doing"))
+            return original(*args, **kwargs)
+
+        with mock.patch.object(queue.delivery_state, "merge_slot", noted):
+            document = adopter.runner().run_command("release", [head], "operator")[0].document()
+        self.assertEqual(document["stop"]["reason"], "ref_not_on_base")
+        self.assertEqual(held, [{"what": "release"}])
+
+    def test_a_queue_waiting_for_a_held_slot_says_in_its_waiter_file_which_check_it_waits_to_run(self) -> None:
+        adopter = self.adopter()
+        self.candidate(adopter)
+        ready, release = self.directory / "held", self.directory / "release"
+        holder = subprocess.Popen([PY, "-B", "-c", HOLD_SLOT, str(SCRIPTS), str(adopter.operator), "main", "Delivery C",
+                                   str(ready), str(release)])
+        self.addCleanup(lambda: (holder.poll() is None and holder.kill(), holder.wait(30)))
+        deadline = time.monotonic() + 30
+        while not ready.exists():
+            self.assertIsNone(holder.poll())
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.02)
+        lock = state_tool.merge_slot_path(adopter.operator, "main")
+        results: list = []
+        turn = threading.Thread(target=lambda: results.extend(self.run_queue(adopter, "feature", slot_wait=30)))
+        turn.start()
+        try:
+            while not state_tool.slot_parties(lock)["waiters"] and time.monotonic() < deadline:
+                time.sleep(0.02)
+            parties = state_tool.slot_parties(lock)
+            self.assertEqual(parties["holder"]["delivery"], "Delivery C")
+            self.assertNotIn("doing", parties["holder"])
+            [waiter] = parties["waiters"]
+            self.assertEqual((waiter["pid"], waiter["doing"]), (os.getpid(), {"what": "check", "subject": "feature"}))
+        finally:
+            release.write_text("")
+            turn.join(120)
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document()["stop"])
+        self.assertEqual(state_tool.slot_parties(lock), {"holder": None, "waiters": []})
+
+    def test_a_doing_outside_the_six_is_refused_before_the_slot_is_taken(self) -> None:
+        adopter = self.adopter()
+        lock = state_tool.merge_slot_path(adopter.operator, "main")
+        for doing in ({"what": "deploy"}, {"what": "check", "subject": 7}):
+            with self.subTest(doing=doing):
+                with self.assertRaises(state_tool.StateError) as raised:
+                    with state_tool.merge_slot(adopter.operator, "main", delivery="Delivery C", timeout=0, doing=doing):
+                        pass
+                self.assertEqual(raised.exception.code, "slot_doing_invalid")
+                self.assertIsNone(state_tool.slot_holder(lock))
