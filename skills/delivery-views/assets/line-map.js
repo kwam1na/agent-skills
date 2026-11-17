@@ -1702,7 +1702,7 @@
         var box = el("div", "d-run");
         if (note) { box.appendChild(el("div", "d-run-none", note)); }
         var shown = isObject(finished) ? finished : { observational: true, observationKey: item.subject, open: false, roundDetail: [] };
-        box.appendChild(runSummaryNode(Object.assign({}, shown, { running: inFlight }), { commitHref: commitHref, issueHref: issueHref, lenses: VIEW.lenses }));
+        box.appendChild(runSummaryNode(Object.assign({}, shown, { running: inFlight }), { commitHref: commitHref, issueHref: issueHref, lenses: VIEW.lenses, subject: item.subject }));
         return box;
       };
       if (inFlight && !native && !events.length) { return underWay(null); }
@@ -1729,7 +1729,7 @@
       if (inFlight) { return underWay(native); }
       var nativeBox = el("div", "d-run");
       if (carried) { nativeBox.appendChild(el("div", "d-run-carried", "Carried by the lead. " + text(carried.note))); }
-      nativeBox.appendChild(runSummaryNode(native, { commitHref: commitHref, issueHref: issueHref, lenses: VIEW.lenses }));
+      nativeBox.appendChild(runSummaryNode(native, { commitHref: commitHref, issueHref: issueHref, lenses: VIEW.lenses, subject: item.subject }));
       return nativeBox;
     }
     if (VIEW.runs !== true) { return null; }

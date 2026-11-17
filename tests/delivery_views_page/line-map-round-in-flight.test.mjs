@@ -101,6 +101,37 @@ test("over finished rounds, the last is dated beneath with the commits since, an
   expect(finished.app.querySelector(".run-closures .run-finding-text").textContent).toBe("The count is fixed.");
 });
 
+test("over earlier evidence that is stale, the round in flight still shows as under way, with a note", async () => {
+  const doc = record([started("2026-11-17T10:00:00Z", { round: 3, head: C, moved: 11 })], { earlier: true });
+  doc.reviewEvidence["WORK-1"].digest = "e".repeat(64);
+  const [, shown] = await openPage(pageWithRuns(doc), { now: NOW, steps: [pick] });
+  expect(shown.app.querySelector(".run-card.is-running .run-card-outcome").textContent).toBe("0 of 2 back");
+  expect(shown.app.querySelector(".d-run-none").textContent).toBe("Earlier rounds' evidence is unavailable or stale for this candidate.");
+  // With no valid earlier rounds, nothing is dated beneath the headline.
+  expect(shown.app.querySelector(".run-last")).toBeNull();
+});
+
+test("the reduced round's bead settles when a redraw first finds it reduced, for that one motion, and not after", async () => {
+  // The page as rendered after round 3 was reduced and kept; the record pushed first still has it in flight.
+  const running = record([started("2026-11-17T10:00:00Z", { round: 3, head: C, moved: 11 })], { earlier: true });
+  const kept = structuredClone(running);
+  const start = kept.journal.at(-1).id;
+  kept.journal.push({ id: start + 1, lane: "lane-1", subject: "WORK-1", ...reduced("2026-11-17T10:10:00Z", 3, [start]) },
+                    { id: start + 2, at: "2026-11-17T10:11:00Z", kind: "review.recorded", lane: "lane-1", subject: "WORK-1",
+                      data: { digest: "f".repeat(64), candidateRef: C } });
+  const third = result(3, C, false);
+  third.entries[0].result.resolvedFindings = [];
+  kept.reviewEvidence["WORK-1"] = { candidateRef: C, digest: "f".repeat(64), outcomes: [result(1, A, true), result(2, B, false), third] };
+  // The page's own clock runs here: the settle lasts the one motion, so a redraw past it shows the bead still.
+  const [, inFlight, settled, again] = await openPage(pageWithRuns(kept), { steps: [pick, { push: running }, { push: kept, wait: 800 },
+                                                                                    { push: kept }] }).then((snaps) => snaps.slice(1));
+  expect(inFlight.app.querySelector(".run-bead.is-running")).not.toBeNull();
+  const settling = (snap) => [...snap.app.querySelectorAll(".run-bead")].map((bead) => bead.classList.contains("is-settling"));
+  expect(settling(settled)).toEqual([false, false, true]);
+  expect(settled.app.querySelector(".run-story").textContent).toBe("Approved on round 3 · 1 serious note raised");
+  expect(settling(again)).toEqual([false, false, false]);
+});
+
 test("a restart, a hand-off, a settlement or a reassignment leaves no round shown as running", async () => {
   const first = started("2026-11-17T10:00:00Z", { round: 1, head: A });
   // After a restart's new start, only its own lenses count: the old start's return is gone.

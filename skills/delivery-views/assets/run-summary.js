@@ -1,7 +1,9 @@
 // The round a reader picked in each run, kept across live redraws.
 var runRoundPicked = {};
-// The round each review last showed in flight, so the redraw that finds it reduced settles its bead once.
+// The round each review last showed in flight, so the redraws that find it reduced settle its bead, for the length of
+// that one motion (the page's --move).
 var runInFlight = {};
+var RUN_SETTLE_MS = 700;
 // How a height change moves, by the repository's motion guidance (emil-design-eng): a morph on screen eases in and out
 // on a strong curve, stays within 300ms (longer only as far as it travels), and never runs for a keyboard action, which a
 // reader repeats too often to wait on.
@@ -671,9 +673,17 @@ function runSummaryNode(summary, options) {
   } else {
     box.appendChild(node("p", "run-story", rounds.length ? story(rounds) : "No review rounds yet"));
   }
-  // The redraw that finds the round it last showed in flight reduced settles that round's bead, once.
-  var settling = !running && typeof runInFlight[key] === "number" && rounds.length && numberOf(rounds[rounds.length - 1], rounds.length - 1) === runInFlight[key];
-  if (running) { runInFlight[key] = running.round; } else { delete runInFlight[key]; }
+  // The redraw that finds the round it last showed in flight reduced settles that round's bead: for the one motion's
+  // length, since a hover or a push redraws the panel again at once, and never after. It is kept by the story the page
+  // names, since the card's own key changes when the finished rounds' evidence does.
+  var flightKey = options && typeof options.subject === "string" ? options.subject : key;
+  var lastNumber = rounds.length ? numberOf(rounds[rounds.length - 1], rounds.length - 1) : null;
+  var flown = runInFlight[flightKey];
+  if (running) { runInFlight[flightKey] = { round: running.round, settledAt: null }; }
+  else if (flown && flown.settledAt === null && flown.round === lastNumber) { flown.settledAt = Date.now(); }
+  else if (flown && flown.round !== lastNumber) { delete runInFlight[flightKey]; }
+  var settling = !running && flown && flown.round === lastNumber && typeof flown.settledAt === "number"
+    && Date.now() - flown.settledAt < RUN_SETTLE_MS;
   if (rounds.length || running) {
     var beads = rounds.length + (running ? 1 : 0);
     // While a round runs it is shown first; a reader's own pick of a finished round stands.

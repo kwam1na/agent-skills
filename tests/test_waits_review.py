@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -93,6 +95,17 @@ class RoundInFlightTests(unittest.TestCase):
         latest = self.journal(fx, "review.started")[-1]
         self.assertEqual((latest["data"]["round"], latest["data"]["moved"], latest["data"]["restart"]), (2, 2, False))
         self.assertNotIn("why", latest["data"])
+        # The story picked up again after the start: its round is no longer in flight, so a pass journals no result
+        # saved for it, and the pass's step still succeeds.
+        done = subprocess.run([sys.executable, "-B", str(fx.release / "skills/orchestrate-work/scripts/delivery_state.py"),
+                               "--dir", str(fx.tmp / "record"), "journal", "--kind", "lane.assigned", "--subject", "FX-2",
+                               "--lane", "lane-1", "--data", json.dumps({"title": "Again"})],
+                              cwd=fx.main, env=fx.env, text=True, capture_output=True)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        write_results(review, 2, "FX-2", lenses)
+        code, out = fx.flow("lead-run", "--once", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertEqual([e["data"]["round"] for e in self.journal(fx, "review.lens.returned")], [1, 1])
 
     def test_each_lens_result_is_journaled_once_whichever_sees_it_first_and_a_mismatched_one_never(self) -> None:
         fx, wt, review, lenses = self.lane()
@@ -104,11 +117,25 @@ class RoundInFlightTests(unittest.TestCase):
         code, out = fx.flow("lead-run", "--once", cwd=fx.main)
         self.assertEqual(code, 0, out)
         self.assertEqual(self.journal(fx, "review.lens.returned"), [])
-        # The lens's own result, saved before a pass: that pass journals it.
+        # The lens's own result, saved before a pass: that pass journals it. The other lens's file, half saved, is
+        # not JSON: the pass skips it and goes on.
         write_results(review, 1, "FX-2", lenses, only=0)
+        short1 = lenses[1][1][0]
+        (review / f"result-r1-{short1}.json").write_text('{"schemaVersion": "review-lens-res')
         code, out = fx.flow("lead-run", "--once", cwd=fx.main)
         self.assertEqual(code, 0, out)
         self.assertEqual([e["data"]["lens"] for e in self.journal(fx, "review.lens.returned")], [first])
+        # A restart's new start journals its lenses afresh: the first lens's result, saved again, is journaled again.
+        code, out = fx.flow("review-prepare", "FX-2", "--round", "1", "--restart", cwd=wt)
+        self.assertEqual(code, 0, out)
+        restart = self.journal(fx, "review.started")[-1]
+        self.assertTrue(restart["data"]["restart"])
+        write_results(review, 1, "FX-2", lenses, only=0)
+        code, out = fx.flow("lead-run", "--once", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        again = self.journal(fx, "review.lens.returned")
+        self.assertEqual([e["data"]["lens"] for e in again], [first, first])
+        self.assertGreater(again[1]["id"], restart["id"])
         # The other lens's, saved after it: the next pass journals that one alone, and a pass with nothing new nothing.
         write_results(review, 1, "FX-2", lenses, only=1)
         for _ in range(2):
@@ -116,15 +143,14 @@ class RoundInFlightTests(unittest.TestCase):
             self.assertEqual(code, 0, out)
         returned = self.journal(fx, "review.lens.returned")
         self.assertEqual([(e["data"]["lens"], e["data"]["verdict"], e["data"]["round"]) for e in returned],
-                         [(first, "approve", 1), (second, "approve", 1)])
+                         [(first, "approve", 1), (first, "approve", 1), (second, "approve", 1)])
         self.assertEqual({e["lane"] for e in returned}, {"lane-1"})
-        # review-reduce finds both journaled, and journals only the round.
+        # review-reduce finds both journaled, and journals only the round, which answers the restart's start.
         code, out = fx.flow("review-reduce", "FX-2", "--round", "1", cwd=wt)
         self.assertEqual(code, 0, out)
-        self.assertEqual(len(self.journal(fx, "review.lens.returned")), 2)
-        [start] = self.journal(fx, "review.started")
+        self.assertEqual(len(self.journal(fx, "review.lens.returned")), 3)
         [reduced] = self.journal(fx, "review.round")
-        self.assertEqual(reduced["answers"], [start["id"]])
+        self.assertEqual(reduced["answers"], [restart["id"]])
 
 
 if __name__ == "__main__":
