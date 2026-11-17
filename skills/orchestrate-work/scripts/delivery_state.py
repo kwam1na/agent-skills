@@ -4163,7 +4163,7 @@ def waits(document: dict, *, needing: frozenset[str] | set[str] = frozenset(), w
             fields = {"subject": row["id"], "on": other["subject"], "own": own}
             result.append({"subject": row["id"], "on": other["subject"], "cause": "lane", "stage": other["stage"],
                            "frees": "landed", **({"since": row["waitingFrom"]["at"]} if row.get("waitingFrom") else {}),
-                           "needsSomeone": needs_someone(other), "words": wait_said(table, "waits", "lane", fields)})
+                           "needsSomeone": needs_someone(other), "words": wait_said(table, "lanes", "waiting", fields)})
     return result
 
 

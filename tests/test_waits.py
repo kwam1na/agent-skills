@@ -585,8 +585,8 @@ class TableTests(unittest.TestCase):
         self.assertEqual(table["schemaVersion"], "wait-words/1")
         for group in ("stages", "waits", "lanes", "holding", "needsYou", "listening"):
             self.assertIn("templates", table[group])
-        self.assertEqual(set(table["waits"]["templates"]), {"order", "files", "lane", "held"})
-        self.assertEqual(set(table["lanes"]["templates"]), {"order", "files", "held"})
+        self.assertEqual(set(table["waits"]["templates"]), {"order", "files", "held"})
+        self.assertEqual(set(table["lanes"]["templates"]), {"order", "files", "held", "waiting"})
         self.assertEqual(set(table["needsYou"]["templates"]), {"count", "free", "stopped"})
         self.assertEqual(state_tool.wait_said(table, "needsYou", "count", {"count": 1}), "1 piece waits on it.")
         self.assertEqual(state_tool.wait_said(table, "needsYou", "count", {"count": 3}), "3 pieces wait on it.")
@@ -659,8 +659,8 @@ class MarkerTests(unittest.TestCase):
     def test_every_template_this_record_reaches_carries_its_own_marker(self) -> None:
         document = render_state.with_waits(self.document)
         reached = {MARK.search(words).group(1) for words in self.sentences(document)}
-        self.assertEqual(reached, {"waits.order", "waits.files", "waits.held", "waits.lane", "lanes.order", "lanes.files",
-                                   "lanes.held", "holding.story"})
+        self.assertEqual(reached, {"waits.order", "waits.files", "waits.held", "lanes.order", "lanes.files", "lanes.held",
+                                   "lanes.waiting", "holding.story"})
         stage = next(wait["words"] for wait in document["waits"] if wait["cause"] == "order" and wait["subject"] == "APP-2")
         self.assertIn("⟦stages.where.review⟧", stage)
 
