@@ -1163,40 +1163,50 @@ class CarriedFindingIdsTests(unittest.TestCase):
     so a lens never re-lists a finding an earlier round closed."""
 
     @staticmethod
-    def entry(n: int, findings: list[dict], resolved: list[dict]) -> dict:
+    def entry(n: int, findings: list[dict], **closures: list[dict]) -> dict:
         return {"lens": "lens.example", "binding": {"round": n}, "state": "obtained",
-                "result": {"outcome": "changes-requested", "findings": findings, "resolvedFindings": resolved}}
+                "result": {"outcome": "changes-requested", "findings": findings, **closures}}
 
-    def test_a_brief_after_a_closing_round_names_only_the_ids_still_open(self) -> None:
+    @staticmethod
+    def finding(i: str, **extra: str) -> dict:
+        return {"id": f"example-{i}", "severity": "P1", "summary": "s", **extra}
+
+    @staticmethod
+    def closure(i: str, state: str) -> dict:
+        return {"id": f"example-{i}", "state": state, "resolution": "r"}
+
+    @staticmethod
+    def ids(*names: str) -> str:
+        return ", ".join(f"`example-{name}`" for name in names)
+
+    def renders(self, prior: list[dict]) -> list[str]:
+        return [" ".join(text.split()) for text in
+                _render((ROOT / RUN_DELIVERY_BRIEF).read_text(encoding="utf-8"), prior=prior)]
+
+    # Raised in an order sorting would change (`r1-10` sorts before `r1-2`), and closed with every state a lens writes.
+    RAISED = ("r1-1", "r1-2", "r1-10", "r1-3", "r1-6")
+    STILL_OPEN = ("r1-2", "r1-10", "r2-1")
+    CLOSED = ("r1-1", "r1-3", "r1-6")
+
+    def test_a_plan_brief_after_a_closing_round_names_only_the_ids_its_reduce_carries(self) -> None:
         tool = _tool()
-        finding = lambda i, **extra: {"id": i, "severity": "P1", "summary": "s", **extra}  # noqa: E731
         prior = [
-            self.entry(1, [finding("example-r1-1"), finding("example-r1-2"), finding("example-r1-3"),
-                           finding("example-r1-4", severity="P3", state="deferred", deferredIssue="d")], []),
-            self.entry(2, [finding("example-r2-1")],
-                       [{"id": "example-r1-1", "state": "fixed", "resolution": "r"},
-                        {"id": "example-r1-2", "state": "open", "resolution": "r"},
-                        {"id": "example-r1-3", "state": "withdrawn", "resolution": "r"}]),
+            self.entry(1, [self.finding(i) for i in self.RAISED]),
+            self.entry(2, [self.finding("r2-1")],
+                       resolvedFindings=[self.closure("r1-1", "fixed"), self.closure("r1-2", "open"),
+                                         self.closure("r1-3", "closed"), self.closure("r1-6", "withdrawn")],
+                       # A plan review's reduce never reads the older key, so neither does its brief.
+                       resolutions=[self.closure("r1-10", "fixed")]),
         ]
-        renders = [" ".join(text.split()) for text in
-                   _render((ROOT / RUN_DELIVERY_BRIEF).read_text(encoding="utf-8"), prior=prior)]
-        story, plan = renders[1], renders[4]
-        still_open = ("Still open for this lens, so each listed in `resolvedFindings` exactly once: `example-r1-2`, "
-                      "`example-r2-1`.")
-        for text in (story, plan):
-            self.assertIn(still_open, text)
-        self.assertIn("Closed in an earlier round, so never listed in `resolvedFindings`: `example-r1-1`, "
-                      "`example-r1-3`.", plan)
-        self.assertIn("Closed in an earlier round, so `resolvedFindings` may leave them out: `example-r1-1`, "
-                      "`example-r1-3`.", story)
-        self.assertIn("Deferred in an earlier round, to re-check as above: `example-r1-4`.", story)
+        plan = self.renders(prior)[4]
+        self.assertIn("Still open for this lens, so each listed in `resolvedFindings` exactly once: "
+                      f"{self.ids(*self.STILL_OPEN)}.", plan)
+        self.assertIn(f"Closed in an earlier round, so never listed in `resolvedFindings`: {self.ids(*self.CLOSED)}.",
+                      plan)
         self.assertNotIn("Deferred in an earlier round", plan)
 
-        # What the brief names open is what the plan review's reduce carries, and the closed ids are what it refuses.
-        plan_prior = [{**e, "result": {**e["result"], "findings": [f for f in e["result"]["findings"]
-                                                                   if f["severity"] == "P1"]}} for e in prior]
-        carried = {f["id"] for f in tool.plan_review_open([{"entries": [e]} for e in plan_prior]).values()}
-        self.assertEqual(carried, {"example-r1-2", "example-r2-1"})
+        carried = {f["id"] for f in tool.plan_review_open([{"entries": [e]} for e in prior]).values()}
+        self.assertEqual(carried, {f"example-{i}" for i in self.STILL_OPEN})
         meta = {"candidate": "c", "tree": "t"}
         result = {"schemaVersion": "review-lens-result/1", "lensId": "lens.example", "subjectRef": "EX-1.plan",
                   "candidateRef": "c", "round": 3, "outcome": "aligned", "evidence": ["tree t"], "findings": [],
@@ -1204,10 +1214,31 @@ class CarriedFindingIdsTests(unittest.TestCase):
         check = lambda r: tool.plan_check_result(r, subject="EX-1.plan", lens="lens.example",  # noqa: E731
                                                  short="example", n=3, meta=meta, carried=carried, known={})
         self.assertEqual(check(result), [])
-        relisted = {**result, "resolvedFindings": [*result["resolvedFindings"],
-                                                   {"id": "example-r1-1", "state": "fixed", "resolution": "r"}]}
-        self.assertEqual(check(relisted),
-                         ["resolvedFindings entry 'example-r1-1' isn't an open finding this lens raised earlier"])
+        for closed in self.CLOSED:
+            with self.subTest(relisted=closed):
+                relisted = {**result, "resolvedFindings": [*result["resolvedFindings"], self.closure(closed, "fixed")]}
+                self.assertEqual(check(relisted), [f"resolvedFindings entry 'example-{closed}' isn't an open finding "
+                                                   "this lens raised earlier"])
+
+    def test_a_story_brief_names_the_ids_its_reduce_carries_and_its_deferrals(self) -> None:
+        tool = _tool()
+        prior = [
+            self.entry(1, [*(self.finding(i) for i in self.RAISED), self.finding("r1-5"),
+                           self.finding("r1-4", severity="P3", state="deferred", deferredIssue="d")]),
+            # A story's results may still carry the older `resolutions` key, which its reduce reads.
+            self.entry(2, [self.finding("r2-1")],
+                       resolutions=[self.closure("r1-1", "fixed"), self.closure("r1-2", "open"),
+                                    self.closure("r1-3", "closed"), self.closure("r1-6", "withdrawn"),
+                                    self.closure("r1-5", "deferred")]),
+        ]
+        story = self.renders(prior)[1]
+        self.assertIn("Still open for this lens, so each listed in `resolvedFindings` exactly once: "
+                      f"{self.ids(*self.STILL_OPEN)}.", story)
+        self.assertIn("Closed in an earlier round, so `resolvedFindings` may leave them out: "
+                      f"{self.ids(*self.CLOSED)}.", story)
+        self.assertIn(f"Deferred in an earlier round, to re-check as above: {self.ids('r1-5', 'r1-4')}.", story)
+        self.assertEqual(tool.carried_findings([{"entries": [e]} for e in prior], "lens.example"),
+                         {f"example-{i}" for i in self.STILL_OPEN})
 
     def test_a_lens_with_nothing_carried_is_told_so(self) -> None:
         plan = " ".join(_render((ROOT / RUN_DELIVERY_BRIEF).read_text(encoding="utf-8"))[4].split())

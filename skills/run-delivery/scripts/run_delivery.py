@@ -1555,16 +1555,17 @@ def scoped_checks(span: str) -> str:
             "tests that cover the rest: " + (", ".join(f"`{path}`" for path in changed) or "none") + ".")
 
 
-def finding_ledger(prior: list[dict], closed: tuple[str, ...]) -> dict[str, list[str]]:
-    """One lens's earlier findings by where its rounds left them, each in the order raised: `open` is exactly what the
-    next reduce carries and requires in `resolvedFindings`, `closed` what a state in `closed` closed, and `deferred`
-    what was deferred and not since found fixed."""
+def finding_ledger(prior: list[dict], closed: tuple[str, ...], legacy: bool) -> dict[str, list[str]]:
+    """One lens's earlier findings by where its rounds left them, each in the order first raised: `open` is exactly
+    what the next reduce carries and requires in `resolvedFindings`, `closed` what a state in `closed` closed, and
+    `deferred` what was deferred and not since found fixed. `legacy` reads a story's older `resolutions` key, which a
+    plan review's reduce never reads."""
     status: dict[str, str] = {}
     for entry in prior:
         result = entry.get("result") or {}
         for f in result.get("findings", []):
             status[f["id"]] = "deferred" if f.get("state") == "deferred" else "open"
-        for x in result.get("resolvedFindings", result.get("resolutions", [])):
+        for x in result.get("resolvedFindings", result.get("resolutions", []) if legacy else []):
             if x.get("id") in status and x.get("state") == "deferred":
                 status[x["id"]] = "deferred"
             elif x.get("id") in status and x.get("state") in closed:
@@ -1609,7 +1610,7 @@ def brief(key: str, round_no: int, lens: str, candidate: str, tree: str, merge_b
                  "one you find fixed as `closed`, `fixed` or `withdrawn`: only that listing records a deferral as fixed, "
                  "and one listed as `deferred` or `open`, or not listed, stays deferred and is filed as a follow-up at "
                  "close. A deferral (P2/P3 only) also carries `deferredIssue`.")
-        ledger = finding_ledger(prior, tuple(s for s in CLOSED if s != "deferred"))
+        ledger = finding_ledger(prior, tuple(s for s in CLOSED if s != "deferred"), legacy=True)
         later += ("\n- Still open for this lens, so each listed in `resolvedFindings` exactly once: "
                   f"{id_list(ledger['open'])}.\n"
                   f"- Closed in an earlier round, so `resolvedFindings` may leave them out: {id_list(ledger['closed'])}.\n"
@@ -2315,7 +2316,7 @@ def plan_brief(c, n: int, lens: str, candidate: str, tree: str, checkout: Path, 
                  "- `resolvedFindings`: required. One entry for every finding this lens raised in an earlier round and "
                  'has not closed, `{"id", "state": "closed|fixed|withdrawn|open", "resolution": "..."}`. Every carried '
                  "finding must appear; a plan review defers none.")
-        ledger = finding_ledger(prior, PLAN_REVIEW_CLOSED)
+        ledger = finding_ledger(prior, PLAN_REVIEW_CLOSED, legacy=False)
         later += ("\n- Still open for this lens, so each listed in `resolvedFindings` exactly once: "
                   f"{id_list(ledger['open'])}.\n"
                   f"- Closed in an earlier round, so never listed in `resolvedFindings`: {id_list(ledger['closed'])}. "
