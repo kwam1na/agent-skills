@@ -531,7 +531,7 @@ Acceptance criteria:
 
 ### V26-3565. Catch a provenance listing change at hand-off, not in the merge queue
 
-Lane 1, tier 3, after V26-3426. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`,
+Lane 3, tier 2, after V26-3566. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`,
 `skills/orchestrate-work/scripts/merge_queue.py`, `skills/run-delivery/templates/lane-brief.md`,
 `skills/run-delivery/SKILL.md`, `skills/run-delivery/references/adopting.md`, `tests/test_run_delivery.py` and
 `tests/test_merge_queue.py`.
@@ -553,7 +553,7 @@ the warning would either hard-code this repository's rule or warn on every new f
 
 ### V26-3566. Let lead-plan drop one criterion, and refuse a flag a change doesn't use
 
-Lane 1, tier 4, after V26-3565. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`,
+Lane 3, tier 1, not blocked. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`,
 `skills/delivery-views/assets/line-map.js`, `skills/run-delivery/SKILL.md`, `tests/test_run_delivery.py` and
 `tests/delivery_views_page/line-map-plan.test.mjs`.
 

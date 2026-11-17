@@ -155,7 +155,7 @@
     },
     "V26-3565": {
       "title": "Catch a provenance listing change at hand-off, not in the merge queue",
-      "lane": "lane-1",
+      "lane": "lane-3",
       "why": "Restored: plan change c13 removed the whole story by mistake when the lead meant to remove only its criterion c3 (lead-plan change --kind removed ignores --criterion). The story stays in the delivery, decoupled from this repository at the operator's request",
       "criteria": [
         {
@@ -172,12 +172,12 @@
         }
       ],
       "after": [
-        "V26-3426"
+        "V26-3566"
       ]
     },
     "V26-3566": {
       "title": "Let lead-plan drop one criterion, and refuse a flag a change doesn't use",
-      "lane": "lane-1",
+      "lane": "lane-3",
       "why": "The operator asked to add it to this delivery: plan change c13 removed V26-3565 when the lead meant to drop one criterion, because lead-plan's removed kind ignores --criterion and no kind drops a single criterion",
       "criteria": [
         {
@@ -196,9 +196,6 @@
           "id": "v26-3566-4",
           "text": "c4: The plan chapter shows the dropped criterion struck through, with its reason."
         }
-      ],
-      "after": [
-        "V26-3565"
       ]
     },
     "V26-3567": {
