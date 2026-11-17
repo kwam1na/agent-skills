@@ -2772,7 +2772,7 @@
     if (changes.length) { changeBox.appendChild(scopeChart(changes)); }
     var changeList = el("ul");
     changes.slice().reverse().forEach(function (change) { changeList.appendChild(changeRow(change)); });
-    changeBox.appendChild(changes.length ? changeList : el("p", "waiting", "Nothing has changed since approval."));
+    if (changes.length) { changeBox.appendChild(changeList); }  // with none, the sentence above says the scope is as approved
     if (isObject(PLAN.clipped)) {
       var clip = PLAN.clipped;
       changeBox.appendChild(el("p", "plan-clipped", "The plan was too large to show whole: " +
