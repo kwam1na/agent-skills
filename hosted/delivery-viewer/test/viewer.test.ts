@@ -117,7 +117,6 @@ describe("hosted view store", () => {
       kind: "delivery.closed",
       lane: "lead",
       subject: "APP-1",
-      summary: "Completed",
     });
     r = await revision(2, done, 9999999);
     await store.poll();
@@ -128,7 +127,6 @@ describe("hosted view store", () => {
       kind: "lane.assigned",
       lane: "one",
       subject: "APP-1",
-      summary: "Reopened",
     });
     r = await revision(3, done, 9999999);
     await store.poll();
@@ -234,14 +232,21 @@ describe("trusted corpus DOM bridge (behavior only)", () => {
       expect(window.document.querySelector("#app")!.textContent).toContain(
         "Coherent new headline",
       );
+      // The snapshot carries no story, so its chapter says that plainly, never that the story could not be told.
+      expect(window.document.querySelector("#app")!.textContent).toContain(
+        "What happened is not published on the hosted page.",
+      );
+      expect(window.document.querySelector("#app")!.textContent).not.toContain(
+        "could not be told",
+      );
       expect(window.document.querySelector("#plan")).not.toBeNull();
       const detail = window.document.querySelector("#detail")!.textContent;
       expect(detail).toContain("APP-1");
       const fold = Array.from(window.document.querySelectorAll("summary")).find(
         (row) => row.textContent?.includes("All units"),
       )!.parentElement as HTMLDetailsElement;
-      fold.open = true;
-      fold.dispatchEvent(new window.Event("toggle"));
+      // The page remembers a fold at its summary's click, as a reader opens it.
+      (fold.querySelector("summary") as HTMLElement).click();
       held = structuredClone(next);
       listener(held.document);
       expect(
@@ -483,8 +488,7 @@ function auxiliaryProjection(label: string): PublicProjection {
     kind: "review.round",
     lane: "one",
     subject: "APP-2",
-    summary: "Native review",
-    review: {
+    data: {
       round: 1,
       verdicts: { "lens.security": "changes" },
       findings: { P0: 0, P1: 1, P2: 0, P3: 0 },
@@ -643,8 +647,8 @@ describe("initial and active coherent rendering", () => {
         dom.window.document.querySelectorAll("#plan summary"),
       ).find((row) => row.textContent?.includes("All units"))!
         .parentElement as HTMLDetailsElement;
-      fold.open = true;
-      fold.dispatchEvent(new dom.window.Event("toggle"));
+      // The page remembers a fold at its summary's click, as a reader opens it.
+      (fold.querySelector("summary") as HTMLElement).click();
       held = auxiliaryProjection("new");
       projection(held);
       listener(held.document);
@@ -775,7 +779,8 @@ describe("fenced presentation boundaries", () => {
         id: 2,
         at: "2026-11-15T00:01:00Z",
         kind: "delivery.closed",
-        summary: "Closed",
+        lane: null,
+        subject: null,
       });
       let r = await revision(1, value, 9999999);
       const store = createViewStore(publicId, {
@@ -792,7 +797,8 @@ describe("fenced presentation boundaries", () => {
         id: 3,
         at: "2026-11-15T00:02:00Z",
         kind,
-        summary: "Reopened",
+        lane: null,
+        subject: null,
       });
       r = await revision(2, value, 9999999);
       await store.poll();
@@ -805,7 +811,8 @@ describe("fenced presentation boundaries", () => {
       id: 2,
       at: "2026-11-15T00:01:00Z",
       kind: "delivery.closed",
-      summary: "Closed",
+      lane: null,
+      subject: null,
     });
     let r = await revision(1, value);
     let missing = false;
@@ -826,7 +833,8 @@ describe("fenced presentation boundaries", () => {
       id: 3,
       at: "2026-11-15T00:02:00Z",
       kind: "check.started",
-      summary: "Reopened",
+      lane: null,
+      subject: null,
     });
     r = await revision(2, value);
     missing = true;

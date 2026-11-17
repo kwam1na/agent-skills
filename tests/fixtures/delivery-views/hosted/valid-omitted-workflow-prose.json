@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "hosted-delivery-snapshot/1",
+  "schemaVersion": "hosted-delivery-snapshot/2",
   "sourceFingerprint": "1111111111111111111111111111111111111111111111111111111111111111",
   "document": {
     "state": {
@@ -50,48 +50,42 @@
         "at": "2026-11-15T00:00:00Z",
         "kind": "decision.recorded",
         "lane": null,
-        "subject": null,
-        "summary": "[Local reference omitted]"
+        "subject": null
       },
       {
         "id": 2,
         "at": "2026-11-15T00:00:00Z",
         "kind": "decision.recorded",
         "lane": null,
-        "subject": null,
-        "summary": "[Local reference omitted]"
+        "subject": null
       },
       {
         "id": 3,
         "at": "2026-11-15T00:00:00Z",
         "kind": "decision.recorded",
         "lane": null,
-        "subject": null,
-        "summary": "[Local reference omitted]"
+        "subject": null
       },
       {
         "id": 4,
         "at": "2026-11-15T00:00:00Z",
         "kind": "decision.recorded",
         "lane": null,
-        "subject": null,
-        "summary": "[Local reference omitted]"
+        "subject": null
       },
       {
         "id": 5,
         "at": "2026-11-15T00:00:00Z",
         "kind": "decision.recorded",
         "lane": null,
-        "subject": null,
-        "summary": "[Local reference omitted]"
+        "subject": null
       },
       {
         "id": 6,
         "at": "2026-11-15T00:00:00Z",
         "kind": "decision.recorded",
         "lane": null,
-        "subject": null,
-        "summary": "[Local reference omitted]"
+        "subject": null
       }
     ],
     "stats": {},

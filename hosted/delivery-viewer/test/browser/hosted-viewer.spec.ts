@@ -378,7 +378,6 @@ test("retains readable progress on pointer loss, incompatibility and publisher d
     kind: "delivery.closed",
     lane: "lead",
     subject: "APP-1",
-    summary: "Delivery finished",
   });
   await publish(id, body, 3);
   await expect(page.locator("#hosting-status")).toContainText(

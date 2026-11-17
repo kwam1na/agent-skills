@@ -379,8 +379,8 @@ class CollectionTests(unittest.TestCase):
         (self.state/'needs-you.json').write_text(json.dumps(needs))
         needed=hosted.collect(self.inputs);self.assertEqual(needed['needs']['running'],False)
         self.assertNotEqual(planned['sourceFingerprint'],needed['sourceFingerprint'])
-        event={'id':1,'at':'2026-11-15T00:00:00Z','kind':'review.evidence','lane':None,'subject':'APP-1','summary':'Evidence',
-               'reviewArtifact':{'digest':'a'*64,'candidateRef':'b'*40}}
+        event={'id':1,'at':'2026-11-15T00:00:00Z','kind':'review.recorded','lane':None,'subject':'APP-1',
+               'data':{'digest':'a'*64,'candidateRef':'b'*40}}
         (self.state/'journal.jsonl').write_text(json.dumps(event)+'\n')
         missing=hosted.collect(self.inputs)
         folder=self.state/'review-artifacts';folder.mkdir();(folder/('a'*64+'.json')).write_text('unavailable artifact')
@@ -430,8 +430,8 @@ class CollectionTests(unittest.TestCase):
 
     def test_automatic_observer_publishes_state_plan_needs_and_artifact_without_tracker(self):
         arguments=self.prepare_watch();api=FakeAPI();clock=[0.0];stage=[0];published=[]
-        event={'id':1,'at':'2026-11-15T00:00:00Z','kind':'review.evidence','lane':None,'subject':'APP-1','summary':'Evidence',
-               'reviewArtifact':{'digest':'a'*64,'candidateRef':'b'*40}}
+        event={'id':1,'at':'2026-11-15T00:00:00Z','kind':'review.recorded','lane':None,'subject':'APP-1',
+               'data':{'digest':'a'*64,'candidateRef':'b'*40}}
         (self.state/'journal.jsonl').write_text(json.dumps(event)+'\n')
         plan=json.loads((ROOT/'tests/fixtures/delivery-views/hosted/valid-plan-review.json').read_text())['plan']['plan']
         def sleep(seconds):

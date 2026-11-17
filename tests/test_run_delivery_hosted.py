@@ -42,7 +42,7 @@ class TerminalTests(unittest.TestCase):
         self.config=views_common.validate_config(CFG);self.api=FakeAPI()
         self.publisher=hosted.Publisher(self.live,self.config['hosted'],'APP-1',self.api,secret_values=[TOKEN])
         self.document={'state':render.review_state.initial_state('Terminal delivery'),'journal':[]}
-        self.document['journal']=[{'id':10,'kind':'delivery.closed','at':'2026-11-15T00:00:00Z','subject':None,'lane':None,'summary':'Closed'}]
+        self.document['journal']=[{'id':10,'kind':'delivery.closed','at':'2026-11-15T00:00:00Z','subject':None,'lane':None,'data':{}}]
         self.document['state'].setdefault('meta',{})['closing']={'started':{'entry':10,'at':'2026-11-15T00:00:00Z'},'finished':{'entry':10,'at':'2026-11-15T00:00:01Z'}}
         (self.archive/'state.json').write_text(json.dumps(self.document['state']))
         (self.archive/'journal.jsonl').write_text(json.dumps(self.document['journal'][0])+'\n')
@@ -420,7 +420,7 @@ class OwnedProcessTests(unittest.TestCase):
         self.assertIsNotNone(hosted.read_json(self.archive/hosted.IDENTITY)['receipt'])
         return info
     def finished(self,*,notify=True):
-        self.document['journal']=[{'id':1,'kind':'delivery.closed','at':'2026-11-15T00:00:00Z','subject':None,'lane':None,'summary':'Closed'}]
+        self.document['journal']=[{'id':1,'kind':'delivery.closed','at':'2026-11-15T00:00:00Z','subject':None,'lane':None,'data':{}}]
         self.document['state']['meta']['closing']={'started':{'entry':1,'at':'2026-11-15T00:00:00Z'},'finished':{'entry':1,'at':'2026-11-15T00:00:01Z'}}
         self.write_record(self.state);self.write_record(self.archive)
         if notify:return hosted.request_terminal(self.state,self.archive,self.archives,1,self.document)
@@ -459,7 +459,7 @@ class OwnedProcessTests(unittest.TestCase):
         self.assertEqual(hosted.read_json(self.archive/hosted.TERMINAL)['state'],'published')
         self.assertEqual(hosted.finished_entry(json.loads(next(body for op,_,body in reversed(self.observed) if op=='snapshots'))['document']),1)
         before=hosted.read_json(self.state/hosted.IDENTITY)['publicId']
-        self.document['journal'].append({'id':2,'kind':'lane.assigned','at':'2026-11-15T00:01:00Z','subject':'APP-2','lane':'one','summary':'New work'})
+        self.document['journal'].append({'id':2,'kind':'lane.assigned','at':'2026-11-15T00:01:00Z','subject':'APP-2','lane':'one','data':{'title':'New work'}})
         self.document['state']['meta']['headline']='Reopened delivery';self.write_record(self.state)
         self.command('start','--resume')
         self.wait_for(lambda:any(body and b'Reopened delivery' in body for op,_,body in self.observed if op=='snapshots'))
@@ -568,7 +568,7 @@ class OwnedProcessTests(unittest.TestCase):
         # Keep the source intact: this independent cleanup path must stop the
         # owner even though neither production disappearance guard fires.
         self.document['journal'].append({'id':2,'kind':'lane.assigned','at':'2026-11-15T00:01:00Z',
-                                        'subject':'APP-2','lane':'one','summary':'New work'})
+                                        'subject':'APP-2','lane':'one','data':{'title':'New work'}})
         self.write_record(self.state);self.command('start')
         self.assertTrue(hosted.locked(self.state/hosted.LOCK));stop_owned()
         self.assertFalse(hosted.locked(self.state/hosted.LOCK));self.assertTrue((self.state/'state.json').exists())
@@ -712,7 +712,7 @@ class InstalledLifecycleTests(unittest.TestCase):
         lock=stop.with_name('FX-1.supervisor.lock')
         self.wait_for(lambda:not flow.read_lock(lock)[0])
         self.assertTrue(hosted.locked(self.state/hosted.LOCK))
-        self.state_command('journal','--kind','delivery.closed','--summary','Manual finished close')
+        self.state_command('journal','--kind','delivery.closed','--data','{}')
         (self.state/'.hosted-unreferenced').write_text('active atomic staging body')
         self.command('lead-close')
         closed=json.loads((self.state.parent/'flow-log/FX-1.closed.json').read_text())

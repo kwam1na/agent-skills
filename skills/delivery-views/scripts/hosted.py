@@ -615,7 +615,7 @@ def selected_files(directory):
     state=render.review_state.read_state(directory)
     journal=render.review_state.read_journal(directory)
     subjects={row['subject'] for name in ('queue','planned') for row in state.get(name,[])}
-    refs={entry['subject']:entry['reviewArtifact']['digest'] for entry in journal if entry['kind']=='review.evidence' and entry['subject'] in subjects}
+    refs={entry['subject']:entry['data']['digest'] for entry in journal if entry['kind']=='review.recorded' and entry['subject'] in subjects}
     for digest in refs.values():
         if not HEX.fullmatch(digest):raise PublishError('source_invalid')
         names.append('review-artifacts/'+digest+'.json')

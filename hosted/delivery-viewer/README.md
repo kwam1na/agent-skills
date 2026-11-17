@@ -62,7 +62,7 @@ epoch has sequence 0; publish a new sequence in the current epoch to confirm it.
 
 `POST /api/v1/repos/{repo}/deliveries/{id}/snapshots`
 
-The entire body is the raw UTF-8 `hosted-delivery-snapshot/1` projection, at most
+The entire body is the raw UTF-8 `hosted-delivery-snapshot/2` projection, at most
 16 MiB. It is not wrapped in another JSON object. Required headers:
 
 - `Content-Type: application/json` (no encoding)

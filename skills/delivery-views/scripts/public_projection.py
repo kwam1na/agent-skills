@@ -247,6 +247,14 @@ def validate(value: object, *, secret_values=()) -> None:
         raise ProjectionError('snapshot.structure') from error
 
 
+def _registered_kinds(journal: list) -> None:
+    """Refuse an entry whose kind the registry of kinds doesn't list: the snapshot names only kinds it knows. What an
+    entry publishes is the schema's to say, by name, so a kind added to the registry publishes no facts of its own."""
+    kinds = render.narrator.journal_words.load_registry()['kinds']
+    if any(not isinstance(entry, dict) or entry.get('kind') not in kinds for entry in journal):
+        raise ProjectionError('snapshot.unregistered_kind')
+
+
 def project(document: dict, runs: dict, config: dict, *, source_fingerprint: str,
             plan: dict | None = None, needs: dict | None = None, secret_values=()) -> dict:
     """Allowlist one current delivery's shared bounded line-map data, never history."""
@@ -284,7 +292,8 @@ def project(document: dict, runs: dict, config: dict, *, source_fingerprint: str
             data['plan'] = {'unreadable': 'plan.json unavailable'}
         elif 'absent' in data['plan']:
             data['plan'] = {'absent': 'plan.json'}
-    value = _project({'schemaVersion': 'hosted-delivery-snapshot/1',
+    _registered_kinds(data['document'].get('journal', []))
+    value = _project({'schemaVersion': SCHEMA['properties']['schemaVersion']['const'],
                       'sourceFingerprint': source_fingerprint, **data}, SCHEMA)
     meta = value['document']['state'].get('meta', {})
     if 'planFile' in meta:

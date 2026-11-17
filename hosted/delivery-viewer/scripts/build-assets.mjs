@@ -10,6 +10,11 @@ function patch(before, after) {
   line = line.replace(before, after);
 }
 // Small host adapter; every chapter/detail renderer still comes from the corpus.
+// The hosted snapshot carries no story, by its schema: say so, rather than that the story could not be told.
+patch(
+  'el("h2", "title", "The story could not be told from this record.")',
+  'el("h2", "title", globalThis.deliveryStateStore && typeof globalThis.deliveryStateStore.projection === "function" ? "What happened is not published on the hosted page." : "The story could not be told from this record.")',
+);
 patch(
   "  function refreshRuns() {",
   '  function refreshRuns() { if (globalThis.deliveryStateStore && typeof globalThis.deliveryStateStore.projection === "function") { return; }',

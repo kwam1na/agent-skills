@@ -27,6 +27,11 @@
       "layer": "schema"
     },
     {
+      "file": "invalid-older-version.json",
+      "valid": false,
+      "layer": "schema"
+    },
+    {
       "file": "invalid-unknown-top.json",
       "valid": false,
       "layer": "schema"
