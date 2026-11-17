@@ -529,6 +529,10 @@ Acceptance criteria:
 - `c4` Both sides read it from the same facts, in the shape the epic settles for "waits on".
 - `c5` When the claim is released or the check ends, both sides clear with no action from either lead.
 
+### V26-3564. Say when a lane changes a file it doesn't hold, and show shared files when lanes split them
+
+Lane 1, tier 1, after V26-3552 and V26-3426. Added mid-delivery: The operator saw file ownership split by lines in this delivery with no view of it, and a lane learning of a change outside its ground only at a refused hand-off; they asked for the drift check in Needs you and an opt-in files view
+
 ## Calls made
 
 The operator settled these on 2026-11-17, before drafting.

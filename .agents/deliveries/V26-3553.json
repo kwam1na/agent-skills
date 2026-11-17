@@ -149,6 +149,21 @@
           "text": "c5: When the claim is released or the check ends, both sides clear with no action from either lead."
         }
       ]
+    },
+    "V26-3564": {
+      "title": "Say when a lane changes a file it doesn't hold, and show shared files when lanes split them",
+      "lane": "lane-1",
+      "why": "The operator saw file ownership split by lines in this delivery with no view of it, and a lane learning of a change outside its ground only at a refused hand-off; they asked for the drift check in Needs you and an opt-in files view",
+      "criteria": [
+        {
+          "id": "v26-3564-1",
+          "text": "A pushed change outside a lane's holdings appears in Needs you as it happens, and a delivery whose lanes share files by lines offers a view of who holds each file and where each lane's changes sit"
+        }
+      ],
+      "after": [
+        "V26-3552",
+        "V26-3426"
+      ]
     }
   },
   "finish": [
