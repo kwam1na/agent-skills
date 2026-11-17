@@ -180,6 +180,10 @@
         {
           "id": "v26-3566-1",
           "text": "c1: A lead-plan change given a flag its kind doesn't use is refused, naming the flag, and nothing is written."
+        },
+        {
+          "id": "v26-3566-2",
+          "text": "c2: --kind removed with --criterion drops only that criterion, records the change with its reason, and leaves the story and its other criteria in place."
         }
       ],
       "after": [
