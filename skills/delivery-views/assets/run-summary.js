@@ -599,7 +599,7 @@ function runSummaryNode(summary, options) {
             }
             item.appendChild(said);
             var issue = entry.deferredIssue || (known[entry.id] && known[entry.id].entry.deferredIssue);
-            if (entry.filed === "deferred" && fate.kind !== "fixed" && typeof issue === "string" && issue) { item.appendChild(followUpNode(issue)); }
+            if ((entry.filed === "deferred" || fate.kind === "deferred") && fate.kind !== "fixed" && typeof issue === "string" && issue) { item.appendChild(followUpNode(issue)); }
             list.appendChild(item);
           });
           group.appendChild(list);

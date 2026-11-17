@@ -87,6 +87,17 @@ test("a follow-up that is a ticket the page knows, or an address, is linked; any
   expect(rows(shown).map((row) => row[2])).toEqual(["↳ WORK-9", "↳ https://example.test/issues/9", "↳ OTHER-4", "↳ javascript:alert(1)"]);
 });
 
+test("a finding a later round defers shows its follow-up, and one still open shows none", async () => {
+  const shown = await card([
+    { round: 1, outcome: "unresolved", entries: [entry(AT, A, 1, "changes-requested", [
+      finding("at-1", "P2", "Deferred later", { state: "open", deferredIssue: undefined }),
+      finding("at-2", "P2", "Still open", { state: "open", deferredIssue: "Not a deferral." })])] },
+    { round: 2, outcome: "unresolved", entries: [entry(AT, B, 2, "changes-requested", [],
+      [{ id: "at-1", state: "deferred", resolution: "Later.", deferredIssue: "WORK-9" }])] }],
+    B, [{ click: ".run-pick", index: 0 }]);
+  expect(rows(shown)).toEqual([["Deferred later.", "deferred", "↳ WORK-9"], ["Still open.", "open", null]]);
+});
+
 test("a finding's row is its text across the card, clamped at three lines, with no column beside it", () => {
   const dom = new JSDOM(pageWithRuns(record([], A), {}, { config: CONFIG }));
   const rules = [];
