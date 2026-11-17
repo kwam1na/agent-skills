@@ -995,7 +995,7 @@
     "V26-2361": {
       "detail": "Payments laneRetry card payments once on a dropped connectionV26-2361 · #1106 · Being checked before merge · Checking since 6 minutes agoA dropped connection during card payment retries once, without charging twice.Approved on round 2 · 1 serious note, 2 moderate notes, 1 minor note raised134:40 am2118 min laterRound 2ApprovedTestingCorrectness1 note1 minordetails unavailableWaiting on Lead inputNow: verifyWaiting · 1m3 review roundsMerge check · Checking 6 minutes ago · 1 step5:04 amChecks started on V26-2361",
       "rounds": [
-        "Round 1Changes requestedTestingSeriousA retry after a timeout charges twice.resolvedModerateNo test covers a dropped second attempt.openCorrectnessapprovedModerateThe receipt keeps the first attempt's total.resolved1 of this round's notes is still open.",
+        "Round 1Changes requestedTestingSerious · resolvedA retry after a timeout charges twice.Moderate · openNo test covers a dropped second attempt.CorrectnessapprovedModerate · resolvedThe receipt keeps the first attempt's total.1 of this round's notes is still open.",
         "Round 2ApprovedTestingCorrectness1 note1 minordetails unavailable"
       ]
     },

@@ -2284,8 +2284,9 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         expect({k: round_entry["data"].get(k) for k in ("round", "refused", "restarts")} == {"round": 1, "refused": 1, "restarts": 1}
                and set(round_entry["data"]) == {"round", "startedAt", "finishedAt", "verdicts", "findings", "refused", "restarts"}
                and "review" not in round_entry
-               and "because" not in round_entry and "answers" not in round_entry,
-               f"the journal doesn't carry the round's history: {round_entry}")
+               and "because" not in round_entry
+               and round_entry.get("answers") == [max(e["id"] for e in journal if e["kind"] == "review.started")],
+               f"the journal doesn't carry the round's history, answering the restart's start: {round_entry}")
         (wt / "src/one.txt").write_text("one fixed\n")
         commit(wt, "FX-2: fix")
         code, out = flow_run("review-prepare", "FX-2", "--round", "2", cwd=wt)
@@ -4075,6 +4076,10 @@ class RunDeliveryReleaseAndNamesTests(unittest.TestCase):
         review = wt / ".orchestration/review/FX-3"
         code, out = fx.flow("review-prepare", "FX-3", "--round", 1, cwd=wt, tool=old / TOOL_RELATIVE)
         expect(code == 0, out)
+        # The record's writer is the current generation, so the older one journals no start, and says so.
+        self.assertIn("this round's start isn't journalled", out)
+        journal = (fx.tmp / "record/journal.jsonl").read_text()
+        self.assertNotIn('"review.started"', journal)
         brief_text = (review / "brief-r1-adversarial-testing.md").read_text()
         previous, current = receipt_tuple(receipt["previous"]), receipt_tuple(receipt)
         self.assertIn(f"`{previous['releaseId']}`", brief_text)
