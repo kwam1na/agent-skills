@@ -160,7 +160,7 @@ The lane's side:
      lane it belongs to and whatever its focus names, before any of its early returns. Each returned row takes the
      state in `waitingFrom`, `waitingOn` is cleared, and `waitingFrom` is removed. For the subject's own lane this
      takes the place of the rest.
-   - On a settlement, the no-change hand-off and `accept_handoff` each do the same return.
+   - On a settlement, the no-change hand-off and `accept_handoff` each do the same return, before `_rest_if_free`.
    - On a stop, only the subject's own lane's row returns, if it is `waiting` on the subject. It takes its
      `waitingFrom` state, and then the stop's rest applies to it with `waitingOn` "lead", before any early return,
      whatever its focus names. `lane_rows_put_back` then treats it as today. A `waiting` row in another lane stays
@@ -336,7 +336,8 @@ For `waiting` lanes and acceptance, in V26-3426:
   `waitingFrom`, and `lane_moved_off` reads the returned state.
 - Lane 3, `working`, waits on lane 2's story. It returns to `working`, with no `waitingFrom`, in each of three
   cases: when that story merges, when it settles through a no-change hand-off, and when it is settled through
-  `accept_handoff`. A waiting row whose last focus does not name the subject returns as well.
+  `accept_handoff`. In each settle case the settlement's `wait` event names lane 3. A waiting row whose last focus
+  does not name the subject returns as well.
 - One landing frees lane 3 and lane 1, both waiting on it. Both return, and the landing's `wait` event names both.
 - Lane 3, `working`, waits on lane 2's story, which the queue then stops. Lane 3 stays `waiting` with the same
   `waitingOn` and `waitingFrom`, and is counted in the stopped item's "N pieces wait on it". When the story is put
