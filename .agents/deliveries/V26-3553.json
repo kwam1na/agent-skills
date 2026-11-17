@@ -162,6 +162,10 @@
         {
           "id": "v26-3565-2",
           "text": "c2: The same hand-off is accepted when the lane owns the listing file, and a hand-off that only refreshes digests is accepted for any lane."
+        },
+        {
+          "id": "v26-3565-4",
+          "text": "c4: The lane brief names each regenerable listing the binding declares, and says that adding or removing an output it lists needs that file's owner; with no listings declared it says nothing."
         }
       ],
       "after": [
