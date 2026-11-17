@@ -4822,11 +4822,17 @@ class RunDeliveryPlanFormatTests(unittest.TestCase):
         document.setdefault("state", {})["trackerSnapshot"] = {"argv": argv}
         binding.write_text(json.dumps(document, indent=2))
         commit(fx.main, "EX-1: the binding's tracker snapshot")
+        # A plan story the snapshot doesn't list is named as untracked, not as a ticket without a summary.
+        listed = json.loads(snapshot.read_text())
+        listed["items"] = [item for item in listed["items"] if item["subject"] != "EX-3"]
+        snapshot.write_text(json.dumps(listed))
         code, out = rerun()
         self.assertEqual(code, 0, out)
         drafted = json.loads((fx.main / ".agents/deliveries/EX-1.json").read_text())
         self.assertEqual([c["id"] for c in drafted["stories"]["EX-2"]["criteria"]], ["ex-2-1", "ex-2-2"])
         self.assertNotIn("no tracker snapshot", out)
+        self.assertIn("note: plan story EX-3 has no tracker item", out)
+        self.assertNotIn("EX-3's ticket has no", out)
         # When the command fails, prints no snapshot or outlives its timeout, lead-setup says so and drafts no criteria.
         for failing, words in (({"argv": ["sh", "-c", "echo boom >&2; exit 3"]},
                                 "the binding's tracker snapshot failed (3: boom)"),
