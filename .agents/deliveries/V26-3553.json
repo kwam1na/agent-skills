@@ -252,6 +252,10 @@
         {
           "id": "v26-3568-4",
           "text": "c4: The marks follow the story's thread state, opening and closing, so a fixture whose thread is open, and one whose thread is closed, each draw as stated."
+        },
+        {
+          "id": "v26-3568-5",
+          "text": "c5: Nothing moves under reduced motion."
         }
       ],
       "after": [
