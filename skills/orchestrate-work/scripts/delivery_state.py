@@ -1294,6 +1294,13 @@ def lane_rows_after(directory: Path, state: dict, subject: str, *, stopped: str 
             if entry.get("state") != "waiting" and entry.get("waitingOn") == subject:
                 entry["waitingOn"] = None
         if lane in freed:
+            # A lane that waited from handing this story off has nothing of it left to hand: it rests as one does when
+            # its story lands, idle with nothing else open and assigned otherwise.
+            if row["state"] == "handed":
+                work = [*state["queue"], *state.get("planned", [])]
+                open_work = any(item.get("lane") == lane and item["subject"] != subject and item.get("stage") != "merged"
+                                for item in work)
+                row.update(focus=f"{subject} merged", state="assigned" if open_work else "idle")
             return rows
     elif row is not None and row.get("state") == "waiting" and row.get("waitingOn") == subject:
         # A stop returns only the subject's own lane to the state it waited from, and the stop's words and its wait on
@@ -2163,6 +2170,9 @@ def set_focus(directory: Path, lane: str, text: str, *, state: str | None = None
     assignments = {} if waiting_on is ... else {"/waitingOn": waiting_on}
     for attempt in range(1, FOCUS_ATTEMPTS + 1):
         current = read_state(directory)
+        if state == "waiting" and waiting_on in _landed_subjects(current):
+            # Nothing would ever return a row waiting on a story that has already landed.
+            raise StateError("focus_invalid", f"--waiting-on: {waiting_on} has already landed, so there is nothing to wait for")
         try:
             return patch(directory, writer="lane", lane=lane, version=current["version"], changes=changes,
                          selector=f"lanes[id={lane}]", assignments=assignments,
@@ -3824,10 +3834,6 @@ def _from_intent(entry: dict, intent: dict) -> bool:
     return entry["data"] == _recovery_facts(intent)
 
 
-# The entries that land or settle a story, and so may free the lanes waiting on it.
-FREEING_KINDS = ("candidate.merged", "candidate.handed", "handoff.accepted")
-
-
 def wait_events(entries: list[dict], state: dict | None = None) -> list[dict]:
     """What ``wait`` tells of each entry: who and what, its facts, and its head and line in the registry's words. An
     entry that landed or settled a story names, as ``freed``, every lane the record says it returned from waiting."""
@@ -3835,7 +3841,11 @@ def wait_events(entries: list[dict], state: dict | None = None) -> list[dict]:
     events = []
     for entry in entries:
         event = {key: entry.get(key) for key in ("id", "kind", "lane", "subject", "data")}
-        if state is not None and entry["kind"] in FREEING_KINDS and entry.get("subject"):
+        data = entry.get("data") or {}
+        # A hand-off frees a lane only when it settles with no change, and an acceptance only when it settles one.
+        landing = (entry["kind"] == "candidate.merged" or (entry["kind"] == "candidate.handed" and data.get("noChange") is True)
+                   or (entry["kind"] == "handoff.accepted" and data.get("settled") is True))
+        if state is not None and landing and entry.get("subject"):
             freed = [row["id"] for row in state.get("lanes", []) if (row.get("freed") or {}).get("by") == entry["subject"]]
             if freed:
                 event["freed"] = freed

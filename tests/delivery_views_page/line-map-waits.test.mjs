@@ -130,3 +130,20 @@ test("each lane keeps its id's colour wherever the record lists it", async () =>
   expect(moved.rows).toEqual([["Renderer", "var(--l2)"], ["Waits", "var(--l1)"]]);
   expect(new Map(moved.lines)).toEqual(new Map(inOrder.lines));
 });
+
+test("lanes named other than lane-N get distinct colours that follow their ids", async () => {
+  const named = (document) => {
+    const renamed = JSON.parse(JSON.stringify(document).replaceAll("lane-1", "api").replaceAll("lane-2", "web"));
+    return renamed;
+  };
+  const colours = async (document) => {
+    const [first] = await openPage(pageWithRuns(document, {}, { config: CONFIG }), { now: NOW });
+    return new Map([...first.app.querySelectorAll(".person")].map((row) => [row.querySelector("h3").textContent, row.style.getPropertyValue("--c")]));
+  };
+  const inOrder = await colours(named(record()));
+  expect(inOrder.get("Waits") !== inOrder.get("Renderer")).toBe(true);
+  const swapped = named(record());
+  swapped.state.lanes.reverse();
+  expect(await colours(swapped)).toEqual(inOrder);
+});
+
