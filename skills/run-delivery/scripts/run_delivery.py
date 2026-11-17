@@ -1677,8 +1677,15 @@ def review_prepare(args) -> None:
     started = {"round": n, "head": candidate, "lenses": list(c.lenses), "restart": bool(previous),
                **({"moved": int(git("rev-list", "--count", f"{prior_candidate}..{candidate}"))} if prior_candidate else {}),
                **({"why": why.strip()} if why is not None else {})}
-    state_tool("journal", "--writer", "lane", "--kind", "review.started", "--subject", key, "--lane", lane,
-               "--data", json.dumps(started))
+    # An older generation still running here may not write the record, which another generation now writes: the round
+    # goes on unjournalled, as rounds did before their start was, and the views show none under way.
+    done = state_tool("journal", "--writer", "lane", "--kind", "review.started", "--subject", key, "--lane", lane,
+                      "--data", json.dumps(started), check=False)
+    if done.returncode != 0:
+        if '"writer_generation_mismatch"' not in (done.stdout or "") + (done.stderr or ""):
+            raise Stop(f"journal review.started failed: {(done.stderr or done.stdout).strip()[-600:]}")
+        print(f"{key} round {n}: the record's writer is another generation, so this round's start isn't journalled: "
+              "the views won't show it as under way")
     meta_path.write_text(json.dumps({"round": n, "candidate": candidate, "tree": tree, "startedAt": now(),
                                      "lenses": list(c.lenses), "attempts": attempts, "restarts": restarts}, indent=2))
     append_log("prepares", key, {"round": n, "candidate": candidate, "restart": bool(previous)})
