@@ -20,6 +20,7 @@ import shutil
 import signal
 import socket
 import contextlib
+import copy
 import subprocess
 import sys
 import tempfile
@@ -35,6 +36,7 @@ from tests.test_run_delivery import (PATTERN, POSIX_ONLY, Fixture, add_story, co
                                      node_environment, plan_delivery, setup_delivery, sh, stop_supervisors,
                                      write_results)
 from tests.test_run_delivery import stop_and_reap  # a process the case started: stopped, then waited for
+from tests.test_run_delivery import watch_case
 from tests.test_run_delivery_tracker import FileBackend, JiraBackend
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "skills" / "orchestrate-work" / "scripts"))
@@ -4342,12 +4344,39 @@ class CloseStoppedPartwayTests(unittest.TestCase):
                          len(kinds(fx, "delivery.closed")))
         return archive
 
+    # The closable delivery, built once by the first case to ask and kept as a copy: (fixture, backend, copy).
+    built: tuple | None = None
+
     def setUp(self) -> None:
         self.backend = None
 
+    @classmethod
+    def tearDownClass(cls) -> None:
+        if cls.built is not None:
+            shutil.rmtree(cls.built[2].parent, ignore_errors=True)
+            cls.built = None
+
     def closable_fixture(self) -> Fixture:
-        fx, self.backend = self.fixture()
-        self.closable(fx)
+        """The closable delivery, each case's own. It is built once, by the real commands, and every case after the first
+        gets that build put back in the same folder, so each path it holds, in its files, its config and its commits,
+        is the one it was built with. A case's cleanup stops what it started and removes the folder before the next."""
+        cls = type(self)
+        if cls.built is None:
+            fx, self.backend = self.fixture()
+            self.closable(fx)
+            kept = Path(tempfile.mkdtemp(prefix="closable-delivery-")) / "built"
+            shutil.copytree(fx.tmp, kept, symlinks=True)
+            cls.built = (copy.copy(fx), self.backend, kept)
+            cls.built[0].env = dict(fx.env)
+        else:
+            original, self.backend, kept = cls.built
+            shutil.rmtree(original.tmp, ignore_errors=True)
+            shutil.copytree(kept, original.tmp, symlinks=True)
+            watch_case(original.tmp)
+            self.addCleanup(original.close)
+            fx = copy.copy(original)
+        # A case may change its fixture's environment; the next case starts from the one built.
+        fx.env = dict(cls.built[0].env)
         return fx
 
     def test_a_supervisor_stopped_waiting_on_the_tracker_reads_unfinished_and_a_resume_finishes_it(self) -> None:
@@ -4549,8 +4578,7 @@ class CloseStoppedPartwayTests(unittest.TestCase):
                 self.assertTrue(self.status(fx).startswith("supervisor: stopped; the delivery is closed."))
 
     def test_a_close_waiting_on_the_tracker_publisher_under_a_live_supervisor_is_its_needs_not_a_stop(self) -> None:
-        fx, self.backend = self.fixture()
-        self.closable(fx)
+        fx = self.closable_fixture()
         # The tracker refuses the close's own update, transiently, until it is cleared: the close is journaled, and
         # then waits for the publisher to cover its entry.
         with self.backend.edit() as store:
