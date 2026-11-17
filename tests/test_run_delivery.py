@@ -4798,10 +4798,9 @@ class RunDeliveryPlanFormatTests(unittest.TestCase):
         fx = self.fixture()
         snapshot = fx.tmp / "tracker.json"
         snapshot.write_text(json.dumps({"takenAt": "2026-11-09T00:00:00Z", "source": "tracker", "items": [
-            {"subject": "EX-2", "state": "backlog", "summary": "The API serves it.",
-             "criteria": ["The API serves it", "It says when it fails"]},
+            {"subject": "EX-2", "state": "backlog", "criteria": ["The API serves it", "It says when it fails"]},
             {"subject": "EX-3", "state": "backlog"},
-            {"subject": "EX-4", "state": "backlog", "criteria": []}]}))
+            {"subject": "EX-4", "state": "backlog", "summary": "The API is described.", "criteria": []}]}))
         code, out, drafted = self.setup(fx, plan_format_example(), "--tracker-snapshot", str(snapshot))
         self.assertEqual(code, 0, out)
         self.assertEqual(drafted["stories"]["EX-2"]["criteria"], [{"id": "ex-2-1", "text": "The API serves it"},
@@ -4809,8 +4808,10 @@ class RunDeliveryPlanFormatTests(unittest.TestCase):
         for key in ("EX-3", "EX-4"):
             self.assertNotIn("criteria", drafted["stories"][key])
             self.assertIn(f"note: plan story {key}'s tracker item has no Acceptance Criteria section", out)
+        # A summary is noted apart from criteria: EX-2 has criteria and no summary, EX-4 a summary and no criteria.
+        for key in ("EX-2", "EX-3"):
             self.assertIn(f"note: {key}'s ticket has no `## Summary`; its card will show none", out)
-        self.assertNotIn("EX-2's ticket has no", out)
+        self.assertNotIn("EX-4's ticket has no", out)
         # The binding's own tracker snapshot, run for the delivery, when no file is given.
         binding = fx.main / ".agents/orchestration.json"
         document = json.loads(binding.read_text()) if binding.exists() else {}
@@ -8235,7 +8236,7 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         lines = doctor_lines(out)
         self.assertEqual(list(lines), DOCTOR_LABELS, out)
         expected_skips = {"pipeline PR review", "gh", "forge write access", "plan chapter", "added stories' reasons",
-                          "pull requests marked ready", "delivery supervisor", "hosted delivery"}
+                          "story summaries", "pull requests marked ready", "delivery supervisor", "hosted delivery"}
         expected_skips |= set() if self.ffmpeg else {"video evidence tools"}
         expected_skips |= set() if self.node22 else {"harness configuration"}
         self.assertEqual({label for label, (status, _) in lines.items() if status == "skipped"}, expected_skips, out)
