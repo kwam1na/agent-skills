@@ -171,6 +171,20 @@
       "after": [
         "V26-3426"
       ]
+    },
+    "V26-3566": {
+      "title": "Let lead-plan drop one criterion, and refuse a flag a change doesn't use",
+      "lane": "lane-1",
+      "why": "The operator asked to add it to this delivery: plan change c13 removed V26-3565 when the lead meant to drop one criterion, because lead-plan's removed kind ignores --criterion and no kind drops a single criterion",
+      "criteria": [
+        {
+          "id": "v26-3566-1",
+          "text": "c1: A lead-plan change given a flag its kind doesn't use is refused, naming the flag, and nothing is written."
+        }
+      ],
+      "after": [
+        "V26-3565"
+      ]
     }
   },
   "finish": [

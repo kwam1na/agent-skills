@@ -551,6 +551,10 @@ The story stays independent of this repository's layout. `provenance.lock.json` 
 gap. A `lead-assign` warning was considered and left out: no binding says which new files a listing will take on, so
 the warning would either hard-code this repository's rule or warn on every new file.
 
+### V26-3566. Let lead-plan drop one criterion, and refuse a flag a change doesn't use
+
+Lane 1, tier 1, after V26-3565. Added mid-delivery: The operator asked to add it to this delivery: plan change c13 removed V26-3565 when the lead meant to drop one criterion, because lead-plan's removed kind ignores --criterion and no kind drops a single criterion
+
 ## Calls made
 
 The operator settled these on 2026-11-17, before drafting.
