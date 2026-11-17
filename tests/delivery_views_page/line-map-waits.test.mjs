@@ -101,3 +101,15 @@ test("the built-in page says the same sentences under the story and under the la
   expect(freed.window.document.querySelectorAll("#app .wait")).toHaveLength(0);
   freed.window.close();
 });
+
+test("a lane waiting on another story is drawn as progress, with what it waits for, and isn't blocked", async () => {
+  const document = record();
+  document.state.lanes[0] = { ...lane("lane-1", "waiting"), waitingOn: "APP-1", waitingFrom: { state: "working", at: "2026-11-17T11:00:00Z" } };
+  const [first] = await openPage(pageWithRuns(document, {}, { config: CONFIG }), { now: NOW });
+  const chip = person(first.app, "lane-1").querySelector(".chip");
+  expect(chip.textContent).toBe("Waiting");
+  expect(chip.classList.contains("waiting")).toBe(true);
+  expect(chip.classList.contains("blocked")).toBe(false);
+  expect([...person(first.app, "lane-1").querySelectorAll(".wait")].map((line) => line.textContent))
+    .toEqual(["Lane 1 waits for APP-1 to land before it finishes APP-2."]);
+});

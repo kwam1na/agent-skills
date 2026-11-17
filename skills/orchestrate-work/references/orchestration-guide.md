@@ -316,6 +316,14 @@ decision. Lanes post on their own tickets at the points the lane brief names.
   an unlanded story of another lane whose whole-file grant covers a file both
   stories' `files` name. An idle lane says what its next story waits on. Each
   wait goes away when what frees it happens, with no action from anyone.
+- A lane whose work waits for another story to land says so with `focus --state waiting --waiting-on KEY`, which
+  must name a story the record holds; a `waiting` state without one is refused. The tool keeps the state the row left
+  as `waitingFrom`, across every write while it waits. When KEY lands, or settles with no change, the row returns to
+  that state in the same write, whichever lane it belongs to, and `wait`'s event for the landing names it in `freed`.
+  A stop of KEY returns only KEY's own lane, to its state with the stop's words, waiting on the lead; another lane
+  waiting on it still waits. Any other write that takes a row out of `waiting` drops `waitingFrom` and a `waitingOn`
+  still naming KEY. After an acceptance, the accepted lane's row is `idle`, waiting on the accepted story, until it
+  lands.
 - For a reason only the lead knows, hold the story: `story.held` with the
   reason in `data.text`, answered by `story.unheld` when the lead clears it. A
   hold also ends when the story is assigned, and nothing more is journalled.
@@ -1085,7 +1093,8 @@ file, and reads no CI or forge. It returns on the first thing needing the lead:
 - a journal entry after `--after` of kind `candidate.handed`, `check.failed`,
   `candidate.merged`, `candidate.stopped`, `base.broken`, `blocker.recorded` or
   `serving.held`;
-- a lane in the `blocked` state;
+- a lane in the `blocked` state. A lane in the `waiting` state waits on a story, which goes on by itself when it
+  lands: it wakes no wait, is never reported quiet, isn't in "Needs you" and doesn't hold the close;
 - machine pressure: five-minute load above `--load-multiple` times the cores
   (2 by default), free disk under `--min-free-bytes` (20 GiB), or swap grown by
   more than `--swap-growth-bytes` (4 GiB).

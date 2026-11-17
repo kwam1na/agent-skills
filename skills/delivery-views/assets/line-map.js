@@ -228,7 +228,7 @@
     checked: "Checked, about to merge", merging: "Merging", planned: "Not started", building: "Being built", review: "In review",
     settled: "Closed, no change needed", nochange: "Handed over with no change needed, waiting for the lead"
   });
-  var LANE_WORDS = table({ idle: "Standing by", assigned: "Assigned", working: "Building", reviewing: "In review", handed: "Handed over", blocked: "Blocked", done: "Done" });
+  var LANE_WORDS = table({ idle: "Standing by", assigned: "Assigned", working: "Building", reviewing: "In review", handed: "Handed over", blocked: "Blocked", waiting: "Waiting", done: "Done" });
   // The states of a check that ran in this run, and so carries a start time.
   var RAN = table({ running: true, passed: true, failed: true, timed_out: true });
   var STEP_WORDS = table({ pending: "waiting", running: "running", passed: "passed", failed: "failed", skipped: "skipped", timed_out: "timed out", reused: "reused" });
