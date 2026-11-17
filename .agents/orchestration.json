@@ -359,6 +359,42 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_delivery_views_hosted",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_delivery_views_hosted.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_delivery_views_hosted.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_delivery_views_hosted_projection",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_delivery_views_hosted_projection.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_delivery_views_hosted_projection.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_delivery_views_page",
         "argv": [
           ".venv/bin/python",
@@ -557,6 +593,24 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_hive_knowledge_adapter",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_hive_knowledge_adapter.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_hive_knowledge_adapter.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_hooks",
         "argv": [
           ".venv/bin/python",
@@ -606,6 +660,24 @@
         "cwd": ".",
         "reasons": [
           "The tests in tests/test_jira_profile.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_knowledge_library",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_knowledge_library.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_knowledge_library.py."
         ],
         "prerequisites": [],
         "timeoutSeconds": 3600
@@ -1273,6 +1345,24 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_run_delivery_hosted",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_run_delivery_hosted.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_run_delivery_hosted.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_run_delivery_peers",
         "argv": [
           ".venv/bin/python",
@@ -1577,6 +1667,104 @@
         ],
         "prerequisites": [],
         "timeoutSeconds": 3600
+      },
+      {
+        "id": "hosted.install",
+        "argv": [
+          "npm",
+          "ci",
+          "--ignore-scripts",
+          "--no-audit",
+          "--no-fund",
+          "--engine-strict"
+        ],
+        "cwd": "hosted/delivery-viewer",
+        "reasons": [
+          "The separate hosted service and its trusted schema, assets and fixtures."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 1200
+      },
+      {
+        "id": "hosted.typecheck",
+        "argv": [
+          "npm",
+          "run",
+          "typecheck"
+        ],
+        "cwd": "hosted/delivery-viewer",
+        "reasons": [
+          "The separate hosted service and its trusted schema, assets and fixtures."
+        ],
+        "prerequisites": [
+          "hosted.install"
+        ],
+        "timeoutSeconds": 1200
+      },
+      {
+        "id": "hosted.build",
+        "argv": [
+          "npm",
+          "run",
+          "build"
+        ],
+        "cwd": "hosted/delivery-viewer",
+        "reasons": [
+          "The separate hosted service and its trusted schema, assets and fixtures."
+        ],
+        "prerequisites": [
+          "hosted.install"
+        ],
+        "timeoutSeconds": 1200
+      },
+      {
+        "id": "hosted.test",
+        "argv": [
+          "npm",
+          "test"
+        ],
+        "cwd": "hosted/delivery-viewer",
+        "reasons": [
+          "The separate hosted service and its trusted schema, assets and fixtures."
+        ],
+        "prerequisites": [
+          "hosted.install"
+        ],
+        "timeoutSeconds": 1200
+      },
+      {
+        "id": "hosted.browser-install",
+        "argv": [
+          "npx",
+          "playwright",
+          "install",
+          "chromium"
+        ],
+        "cwd": "hosted/delivery-viewer",
+        "reasons": [
+          "The separate hosted service and its trusted schema, assets and fixtures."
+        ],
+        "prerequisites": [
+          "hosted.install"
+        ],
+        "timeoutSeconds": 1200
+      },
+      {
+        "id": "hosted.browser",
+        "argv": [
+          "npm",
+          "run",
+          "test:browser"
+        ],
+        "cwd": "hosted/delivery-viewer",
+        "reasons": [
+          "The separate hosted service and its trusted schema, assets and fixtures."
+        ],
+        "prerequisites": [
+          "hosted.build",
+          "hosted.browser-install"
+        ],
+        "timeoutSeconds": 1200
       }
     ],
     "guards": [
@@ -1599,6 +1787,24 @@
         ],
         "checks": [
           "tests.test_compound_learning_corpus"
+        ]
+      },
+      {
+        "paths": [
+          "hosted/delivery-viewer/**",
+          "skills/delivery-views/assets/**",
+          "skills/delivery-views/scripts/render.py",
+          "skills/delivery-views/references/hosted-snapshot.schema.json",
+          "tests/fixtures/delivery-views/hosted/**",
+          ".github/workflows/hosted-delivery-viewer.yml"
+        ],
+        "checks": [
+          "hosted.install",
+          "hosted.typecheck",
+          "hosted.build",
+          "hosted.test",
+          "hosted.browser-install",
+          "hosted.browser"
         ]
       }
     ]

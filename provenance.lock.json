@@ -66,7 +66,7 @@
       "outputs": [
         {
           "path": "skills/compound-learning/SKILL.md",
-          "sha256": "266698753b1ec7f3eab6098b0e1f3cf88744ca0d132c2cac5802ba7108f3a25a"
+          "sha256": "0848c45ff0f9fd6b08d5601cfde5f60565b97a3f657e79c71270bea6ad51d01a"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -165,7 +165,7 @@
       "outputs": [
         {
           "path": "skills/deliver-work/SKILL.md",
-          "sha256": "e18e0655702418838ea2ccb046fca9564134bceac35f799f384a0c9a4aabab2e"
+          "sha256": "f5d058a523f684eeb596013292c7e704c62954093bda966da64806643d8ea1e0"
         },
         {
           "path": "skills/deliver-work/agents/openai.yaml",
@@ -173,7 +173,7 @@
         },
         {
           "path": "skills/deliver-work/references/capability-contract.md",
-          "sha256": "f41bc821e57fe7cbe54346fcad991d4addb4320ebff2fb25ea007eb6c637d6fc"
+          "sha256": "2567903f6cddef01032245220e4250c6bfe3699845aaa21977fbe49842554688"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -198,7 +198,7 @@
       "outputs": [
         {
           "path": "skills/delivery-views/SKILL.md",
-          "sha256": "d627aaa9024b6c2a792f9b48014be6e972baab0be4e6df7b991d81a07ad1f4fb"
+          "sha256": "f44399bbea96242e591a46623f0883578d9d5860ec7c02637941bb17128f49bd"
         },
         {
           "path": "skills/delivery-views/assets/history.css",
@@ -229,8 +229,20 @@
           "sha256": "d372aaa6757cf4ed321492f2aa8ad17585279c1380184a89882cfeba752589ae"
         },
         {
+          "path": "skills/delivery-views/references/hosted-snapshot.schema.json",
+          "sha256": "6e624866560de4ebc93040bcad55328f120e32d7bb9e286e27c2a851b5426fb4"
+        },
+        {
+          "path": "skills/delivery-views/scripts/hosted.py",
+          "sha256": "c3138f1a6e094e02a6717181237afc5bb6b679b8a544138fd0790c0cb099ed5f"
+        },
+        {
+          "path": "skills/delivery-views/scripts/public_projection.py",
+          "sha256": "51791c095e3fb6ade264934e31b0964f20605b07f066d2c753dae11f46f6c9cd"
+        },
+        {
           "path": "skills/delivery-views/scripts/render.py",
-          "sha256": "633c5f266cb5063b3230b7c50c5b8ee1a9daf0ee7603c0800f8eb3d6d815cca7"
+          "sha256": "8768f72218720cefbc28e0eeeea7e5c13b284dab3874b98490f6fadf5c846b76"
         },
         {
           "path": "skills/delivery-views/scripts/review_projection.py",
@@ -242,7 +254,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/views_common.py",
-          "sha256": "1cbfb5a244a69288a384ffaf3a1e3e9f8a2079d354b92cbfb806487a1e2cac34"
+          "sha256": "690b8657b9c6c389e09673b9e0ce2902985e0e92d7d5a05619cfaf179fc04c38"
         }
       ],
       "owner": "delivery-agent/user-delegated",
@@ -267,7 +279,7 @@
       "outputs": [
         {
           "path": "skills/diagnose-work/SKILL.md",
-          "sha256": "1e1ac2dba414784f6af0b68cd4eca2db89fdd5d7b03d4056391880ad7283e77b"
+          "sha256": "bce0c487747c0920e9a069770340e2f5ebd16efadd18326b0646f9cf9dae9355"
         }
       ],
       "owner": "delivery-agent/user-delegated",
@@ -373,6 +385,35 @@
     {
       "classification": "optional-adapter",
       "distribution": "releasable",
+      "id": "hive-knowledge-adapter",
+      "license": "NOASSERTION",
+      "modification": {
+        "reason": "Independently authored read-only adapter that maps the neutral knowledge-library capability to the host's hive-mined server, kept out of the core workflow so core stays provider-neutral.",
+        "status": "independently-authored"
+      },
+      "outputs": [
+        {
+          "path": "skills/hive-knowledge-adapter/SKILL.md",
+          "sha256": "4455e746df4af3986c07ec82cb5c704bbf31863b538e0cc860946f2aa05831e9"
+        },
+        {
+          "path": "skills/hive-knowledge-adapter/references/adapter-contract.json",
+          "sha256": "f169dadd699be21c3a467832b3335a35d017a54520660edb350a0de02089707d"
+        }
+      ],
+      "owner": "delivery-agent/user-delegated",
+      "source": {
+        "kind": "independent-origin",
+        "ownerApproval": {
+          "owner": "delivery-agent/user-delegated",
+          "reference": "plan-review:the approved knowledge-library read-side plan"
+        },
+        "rationale": "Authored from the approved plan that adds a read-only knowledge library to core and maps it to the host's hive-mined server in the run-delivery closure; it copies no adopter source."
+      }
+    },
+    {
+      "classification": "optional-adapter",
+      "distribution": "releasable",
       "id": "jira-tracker-adapter",
       "license": "LicenseRef-Athena-internal",
       "modification": {
@@ -469,7 +510,7 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "77c2f42a3ba81c7d70069d5114f7620e26745eaabb70face301382b4dc722f60"
+          "sha256": "c1473df74b0f0f767f9edabd5c38419d043a1a5e79fe05e64c57c3406b9dfd47"
         },
         {
           "path": "skills/orchestrate-work/references/journal-kinds.json",
@@ -988,7 +1029,7 @@
       "outputs": [
         {
           "path": "skills/plan-work/SKILL.md",
-          "sha256": "da928f915c8c2e24663eaf0b997f3b1b133df60f196c3ed2c4609e12586fc821"
+          "sha256": "f12d2b382f3a03b05bb35cff1393a9b0308f419216fbdb0e4a08d82382d8e3fe"
         }
       ],
       "owner": "agent-skills-corpus",
@@ -1038,7 +1079,7 @@
       "outputs": [
         {
           "path": "skills/run-delivery/SKILL.md",
-          "sha256": "58ce0ed0529ee0a1b063f2ff08957b961c5bd90430438cf0519496a00b028729"
+          "sha256": "465d6390fc09286a10dd7f785b8dbd0c79daa4f3652e57fa276a79076ecdbfbf"
         },
         {
           "path": "skills/run-delivery/adapters/forge_bitbucket.py",
@@ -1066,11 +1107,11 @@
         },
         {
           "path": "skills/run-delivery/references/adopting.md",
-          "sha256": "b1eb9544cc141b7233d9886b8b16af5098128d68a2a60da142f7b1ebf3b52cc7"
+          "sha256": "599b9e110af7b53e87a124351acd5d842803f73bb4a065bb4610dbd2465ba456"
         },
         {
           "path": "skills/run-delivery/references/config.md",
-          "sha256": "09a9150b76ff8589ce6c449b49af9a52c4d739fa3c0b14d245ca4f988e56aede"
+          "sha256": "c017e198337ec1e16a5b35b191035306448dbb71d72838f1806f2ac6186376e2"
         },
         {
           "path": "skills/run-delivery/scripts/pr_review_gates.py",
@@ -1078,7 +1119,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "bea340f56e1f3ebf0853362ba24b8ac4a8322d9946eda8c1e793bd9a35bb05b3"
+          "sha256": "7ab9dc83b9ca16e182b6607ad293b7bedd9a6b46b3a53f8f84798514b993061c"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",

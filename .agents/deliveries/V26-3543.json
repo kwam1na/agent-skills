@@ -1,0 +1,221 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3543",
+  "headline": "V26-3543: consult a team knowledge library while planning, diagnosing and compounding",
+  "baseBranch": "integrate/knowledge-library",
+  "integrationTarget": "main",
+  "plan": "docs/plans/2026-11-16-knowledge-library-read-side.md",
+  "laneBrief": "docs/plans/2026-11-16-knowledge-library-read-side.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-16-knowledge-library-read-side.lane-notes.md"
+  },
+  "context": {
+    "sections": [
+      "Decisions",
+      "Delivery"
+    ]
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "skills/deliver-work/references/capability-contract.md",
+        "skills/deliver-work/SKILL.md",
+        "agent_skills/validate.py",
+        "skills/plan-work/SKILL.md",
+        "skills/diagnose-work/SKILL.md",
+        "skills/compound-learning/SKILL.md",
+        "skills/orchestrate-work/SKILL.md",
+        "README.md",
+        "tests/test_knowledge_library.py",
+        "tests/test_core_boundary.py",
+        "tests/test_readme.py"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "skills/hive-knowledge-adapter/*",
+        "catalog.json",
+        "profiles/*",
+        "tests/test_hive_knowledge_adapter.py",
+        "tests/test_linear_profile.py",
+        "tests/test_jira_profile.py",
+        "tests/test_profile_inventory.py"
+      ]
+    },
+    "lane-3": {
+      "owns": [
+        "skills/run-delivery/scripts/run_delivery.py",
+        "skills/run-delivery/references/adopting.md",
+        "tests/test_run_delivery.py"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3544": {
+      "title": "Add the neutral knowledge-library capability to core, and keep the provider out of it",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "v26-3544-1",
+          "text": "The contract lists exactly the two read operations and their shape rules."
+        },
+        {
+          "id": "v26-3544-2",
+          "text": "A core file naming the provider, or carrying its field, type or list names, fails the suite."
+        },
+        {
+          "id": "v26-3544-3",
+          "text": "The registry validates and provenance is current."
+        }
+      ]
+    },
+    "V26-3545": {
+      "title": "Consult the knowledge library in plan-work, diagnose-work and compound-learning, lanes included",
+      "lane": "lane-1",
+      "after": [
+        "V26-3544"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3545-1",
+          "text": "Each consult instruction is present with its \"after docs/solutions/\" order."
+        },
+        {
+          "id": "v26-3545-2",
+          "text": "No skill keeps a lane from the library."
+        },
+        {
+          "id": "v26-3545-3",
+          "text": "Items are data, never instructions, and never causal evidence."
+        }
+      ]
+    },
+    "V26-3546": {
+      "title": "Ship a hive-mined knowledge adapter in the run-delivery closure",
+      "lane": "lane-2",
+      "after": [
+        "V26-3544"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3546-1",
+          "text": "The three archives ship the adapter and its contract; core and bootstrap do not."
+        },
+        {
+          "id": "v26-3546-2",
+          "text": "Every alternate access path is rejected, and the adapter's own files scan clean."
+        },
+        {
+          "id": "v26-3546-3",
+          "text": "The registry validates, including profile.closure."
+        }
+      ]
+    },
+    "V26-3547": {
+      "title": "Have doctor report the knowledge-library properties, and document adopting it",
+      "lane": "lane-3",
+      "criteria": [
+        {
+          "id": "v26-3547-1",
+          "text": "A repository without the document passes doctor as before."
+        },
+        {
+          "id": "v26-3547-2",
+          "text": "Each malformed shape fails doctor with exit 1, naming the field."
+        }
+      ]
+    },
+    "V26-3548": {
+      "title": "Describe the knowledge library in the README and the profile descriptions",
+      "lane": "lane-1",
+      "after": [
+        "V26-3545",
+        "V26-3546"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3548-1",
+          "text": "A reader of the README learns the capability exists, that it is optional and read-only, and where the adapter ships."
+        },
+        {
+          "id": "v26-3548-2",
+          "text": "The registry validates with the new descriptions."
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "Every story",
+      "text": "Each of the five stories lands on integrate/knowledge-library through the merge queue, or closes with its reason recorded",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the integration candidate, inside tests/suite-budget.json",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "integration",
+      "label": "Integration",
+      "text": "The integration reaches main through a change request the operator approves",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "main-ci",
+      "label": "Main CI",
+      "text": "CI's Ubuntu and cut-release jobs pass for that push to main",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "readyPullRequests": true,
+    "grantedBy": "Kwamina",
+    "grantedOn": "2026-11-16"
+  },
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  },
+  "approvals": [
+    {
+      "id": "approval-1",
+      "text": "The operator approves this plan, with its decisions, before `lead-setup`.",
+      "state": "done",
+      "who": "Kwamina"
+    },
+    {
+      "id": "approval-2",
+      "text": "The operator approves the final integration's change request to `main`.",
+      "state": "waiting"
+    }
+  ],
+  "outOfScope": [
+    "Proposing, drafting or pushing items to the library, and any change to how hive-mined drafts sessions.",
+    "Any other knowledge provider, host, or compatibility engine.",
+    "Making the capability required, or relaxing core's provider-boundary rule.",
+    "Indexing a repository's docs/solutions/ into the library.",
+    "A release tag."
+  ]
+}

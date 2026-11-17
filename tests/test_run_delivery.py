@@ -5905,7 +5905,7 @@ TROUBLESHOOTING_KEYS = [
     "no plan at", "has no configuration for lanes", "forge.mergeNeedsReady says the merge step refuses a draft",
     "the supervisor is down", "don't have the default signal dispositions", "it runs Node",
     "it runs with no node on its PATH", "it recorded no Node", "supervisor: down (<why>)", "it wanted port",
-    "binding doesn't serve the base", "isn't offered; refine it first",
+    "binding doesn't serve the base", "isn't offered; refine it first", "isn't a valid knowledge-properties/1",
 ]
 
 
@@ -5917,8 +5917,8 @@ def troubleshooting_section() -> str:
 DOCTOR_LABELS = ["host and tools", "orchestration binding", "merge queue candidate step", "configuration", "release generation",
                  "host hooks", "release on the delivery base", "gates", "lane checkouts ignored", "tracker issue URL",
                  "pipeline PR review", "gh", "forge find", "forge write access", "tracker snapshot token",
-                 "snapshots and publishers", "in-app adapters", "in-app adapter contract", "video evidence tools",
-                 "Node", "harness configuration", "delivery file", "plan chapter", "added stories' reasons",
+                 "snapshots and publishers", "hosted delivery", "in-app adapters", "in-app adapter contract", "video evidence tools",
+                 "Node", "harness configuration", "knowledge library properties", "delivery file", "plan chapter", "added stories' reasons",
                  "plan sections", "story files", "story readiness", "context sections", "finish lines",
                  "configuration on the remote base", "pull requests marked ready", "delivery supervisor", "deliveries on this base", "merge slot",
                  "gates on the base"]
@@ -7668,6 +7668,45 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         cls.bins = Path(tempfile.mkdtemp(prefix="run-delivery-bins-"))
         cls.addClassCleanup(shutil.rmtree, cls.bins, True)
 
+    def test_installed_global_hosted_doctor_without_a_selected_delivery(self) -> None:
+        from tests.test_delivery_views_hosted import CFG, TOKEN
+        fx = self.fixture()
+        views = fx.main / ".agents/delivery-views.json"
+        views.write_text(json.dumps(CFG))
+        for path in (fx.main / ".agents/deliveries").glob("*.json"):
+            path.unlink()
+        commit(fx.main, "Global hosting without a selected delivery")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+        before = fx.tool.read_bytes()
+        for mode in ("configured", "missing-token", "malformed"):
+            with self.subTest(mode=mode):
+                environment = {**fx.env, "FIXTURE_PUBLISH_TOKEN": TOKEN}
+                if mode == "missing-token":
+                    environment.pop("FIXTURE_PUBLISH_TOKEN")
+                if mode == "malformed":
+                    invalid = json.loads(json.dumps(CFG))
+                    invalid["hosted"]["origin"] = "http://invalid.example.com"
+                    views.write_text(json.dumps(invalid))
+                    commit(fx.main, "Invalid hosting remains a diagnostic failure")
+                    sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+                code, output = fx.flow("doctor", "--offline", cwd=fx.main, env=environment)
+                status, detail = doctor_lines(output)["hosted delivery"]
+                if mode == "malformed":
+                    self.assertEqual(code, 1, output)
+                    self.assertEqual(status, "wrong")
+                    self.assertIn("hosted configuration is invalid", detail)
+                else:
+                    self.assertEqual(code, 0, output)
+                    self.assertEqual(status, "ok" if mode == "configured" else "warn")
+                    self.assertIn("configured", detail)
+                    self.assertIn("no delivery selected", detail)
+                    self.assertEqual("FIXTURE_PUBLISH_TOKEN is unset" in detail, mode == "missing-token")
+                self.assertNotIn(TOKEN, output)
+                self.assertFalse((fx.main / ".orchestration/state").exists())
+                self.assertFalse((fx.tmp / "record").exists())
+                self.assertFalse(list(fx.main.rglob("hosted-owner.json")))
+        self.assertEqual(fx.tool.read_bytes(), before)
+
     def without(self, *names: str) -> str:
         """A PATH with every program the current one has, except these."""
         folder = self.bins / "-".join(names)
@@ -8011,11 +8050,12 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         lines = doctor_lines(out)
         self.assertEqual(list(lines), DOCTOR_LABELS, out)
         expected_skips = {"pipeline PR review", "gh", "forge write access", "plan chapter", "added stories' reasons",
-                          "pull requests marked ready", "delivery supervisor"}
+                          "pull requests marked ready", "delivery supervisor", "hosted delivery"}
         expected_skips |= set() if self.ffmpeg else {"video evidence tools"}
         expected_skips |= set() if self.node22 else {"harness configuration"}
         self.assertEqual({label for label, (status, _) in lines.items() if status == "skipped"}, expected_skips, out)
         self.assertEqual(failing(out), {}, out)
+        self.assertEqual(lines["hosted delivery"], ("skipped", "(hosted publishing is disabled)"), out)
         self.assertIn("not verified", lines["forge write access"][1])
         self.assertEqual(len(out.splitlines()), len(DOCTOR_LABELS), "doctor prints one line per check")
         # The fixture's one finish line declares no `covers`: a warning that it covers every criterion, not a failure.
@@ -8023,6 +8063,75 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         self.assertEqual(status, "warn", out)
         self.assertIn("acs declares no `covers`, so the supervisor reads each as covering every criterion", detail)
         self.assertIn('fix: give each its `covers`, `{"criteria": [], "proofs": []}` for a line you check', detail)
+        # The same clean repository carries the knowledge library's rows: one fixture, not another.
+        self.knowledge_library_rows(fx, lines)
+
+    def knowledge_library_rows(self, fx: Fixture, lines: dict) -> None:
+        """Doctor reports the adopting repository's knowledge-properties document: absent is an ok row that says the
+        library isn't consulted, valid is ok, malformed is wrong naming the field and fails doctor. It never writes
+        the document, and never guesses the properties from where the repository lives."""
+        m, path = fx.main, fx.main / ".agents/knowledge-properties.json"
+        # Properties are never guessed: the checkout's own folder name is a project the library could hold, yet with no
+        # document the capability is available, not configured, and nothing is derived from that name.
+        self.assertEqual(m.name, "main")
+        status, detail = lines["knowledge library properties"]
+        self.assertEqual(status, "ok", detail)
+        self.assertIn("no .agents/knowledge-properties.json found", detail)
+        self.assertIn("the knowledge library is available, not configured, and isn't consulted", detail)
+        self.assertNotIn("project", detail)
+        self.assertNotIn(m.name, detail.replace("references/adopting.md", ""))
+        self.assertFalse(path.exists(), "doctor wrote the knowledge-properties document")
+        # The guide's own document is a valid plugin document.
+        guide = next(b for b in guide_blocks() if b["path"] == ".agents/knowledge-properties.json")
+        plugin = json.loads(guide["body"])
+        self.assertEqual(plugin["server"], "plugin")
+        read_only = {"schemaVersion": "knowledge-properties/1", "server": "read-only", "name": "team-library",
+                     "project": "fixture-app", "tags": ["payments", "ci", "billing", "deploys", "flaky"]}
+        for document, shown in ((plugin, f"server plugin, project {plugin['project']}"),
+                                (read_only, "server read-only team-library, project fixture-app, tags payments, ci, billing, deploys, flaky")):
+            with self.subTest(valid=document["server"]):
+                path.write_text(json.dumps(document, indent=2) + "\n")
+                before = path.read_bytes()
+                status, detail = doctor_lines(self.doctor(fx, "--offline", expect_code=0))["knowledge library properties"]
+                self.assertEqual(status, "ok", detail)
+                self.assertIn(f".agents/knowledge-properties.json is valid: {shown}", detail)
+                self.assertIn("the first search shows whether the library holds that project", detail)
+                self.assertEqual(path.read_bytes(), before, "doctor rewrote the knowledge-properties document")
+        valid = read_only
+        malformed = (
+            ("invalid JSON", "{not json", "isn't JSON"),
+            ("schemaVersion", {**valid, "schemaVersion": "knowledge-properties/2"}, "`schemaVersion`"),
+            ("server", {**valid, "server": "remote"}, "`server`"),
+            ("name", {k: v for k, v in valid.items() if k != "name"}, "`name`"),
+            ("project", {k: v for k, v in valid.items() if k != "project"}, "`project`"),
+            # A short string, which the count can't catch: only the list check refuses it.
+            ("tags not a list", {**valid, "tags": "ci"}, "`tags` must be a list"),
+            ("more than five tags", {**valid, "tags": ["a", "b", "c", "d", "e", "f"]}, "`tags` holds 6 names, more than 5"),
+            # The rest of the shape the adapter reads: nothing outside it is accepted.
+            ("not an object", "[]", "must be a JSON object"),
+            ("unknown field", {**valid, "projects": ["a"]}, "`projects` isn't one of its fields"),
+            ("plugin with name", {**valid, "server": "plugin"}, "`name` names a `read-only` server only"),
+            ("project with a space", {**valid, "project": "my project"}, "`project` must be one name"),
+            ("name with a comma", {**valid, "name": "a,b"}, "needs its `name`"),
+            ("tag with a comma", {**valid, "tags": ["a,b"]}, "`tags` must hold only names"),
+            ("duplicate tag", {**valid, "tags": ["ci", "ci"]}, "`tags` names a tag twice"),
+        )
+        try:
+            for case, document, names in malformed:
+                with self.subTest(malformed=case):
+                    path.write_text(document if isinstance(document, str) else json.dumps(document, indent=2) + "\n")
+                    out = self.doctor(fx, "--offline", expect_code=1)
+                    self.assertEqual(list(failing(out)), ["knowledge library properties"], out)
+                    status, detail = doctor_lines(out)["knowledge library properties"]
+                    self.assertEqual(status, "wrong", detail)
+                    problem, _, fix = detail.partition("; fix: ")
+                    self.assertIn(".agents/knowledge-properties.json", problem)
+                    self.assertIn(names, problem)
+                    self.assertIn("references/adopting.md", fix)
+                    self.assertTrue([key for key in TROUBLESHOOTING_KEYS if key in problem],
+                                    f"no troubleshooting entry is keyed by: {detail}")
+        finally:
+            path.unlink()
 
     def test_each_missing_prerequisite_yields_one_failing_line_with_its_fix(self) -> None:
         fx = self.fixture()
@@ -8543,6 +8652,8 @@ class RunDeliveryDoctorTests(unittest.TestCase):
             "orchestration binding": "no .agents/orchestration.json; fix: write the orchestrate-work binding (see the "
                                      "adoption guide, references/adopting.md)"}, done.stdout)
         self.assertEqual(doctor_lines(done.stdout)["release generation"][0], "ok", done.stdout)
+        # The knowledge library's row needs only the host: it reports without a configuration.
+        self.assertEqual(doctor_lines(done.stdout)["knowledge library properties"][0], "ok", done.stdout)
 
     def test_every_message_has_its_troubleshooting_entry(self) -> None:
         section = troubleshooting_section()
@@ -10407,7 +10518,7 @@ class LaneStartAndReadinessTests(unittest.TestCase):
 # set in the test runner's own environment would point the fixtures' commands somewhere other than the fixture.
 TOOL_SETTINGS = ("DELIVERY_STATE", "RUN_DELIVERY_BASE", "RUN_DELIVERY_SUPERVISOR", "RUN_DELIVERY_LIVE_PORT",
                  "RUN_DELIVERY_CONFIG", "DELIVERY_FLOW_CONFIG", "RUN_DELIVERY_DELIVERY", "DELIVERY_FLOW_DELIVERY", "RUN_DELIVERY_LOCAL",
-                 "DELIVERY_FLOW_LOCAL", "RUN_DELIVERY_CLOCK")
+                 "DELIVERY_FLOW_LOCAL", "RUN_DELIVERY_CLOCK", "RUN_DELIVERY_HOSTED_FD")
 PLANTED_KEY = "PLANTED-9"
 PLANTED_MARKER = "planted-live-delivery-7f3c"
 
@@ -10508,7 +10619,8 @@ class LiveDeliveryOutOfReachTests(unittest.TestCase):
                     "DELIVERY_FLOW_CONFIG": str(main / ".agents/run-delivery.json"),
                     "RUN_DELIVERY_DELIVERY": PLANTED_KEY, "DELIVERY_FLOW_DELIVERY": PLANTED_KEY,
                     "RUN_DELIVERY_LOCAL": "1", "DELIVERY_FLOW_LOCAL": "1", "RUN_DELIVERY_SUPERVISOR": "on",
-                    "RUN_DELIVERY_LIVE_PORT": "0", "RUN_DELIVERY_CLOCK": str(live / "clock.json")}
+                    "RUN_DELIVERY_LIVE_PORT": "0", "RUN_DELIVERY_CLOCK": str(live / "clock.json"),
+                    "RUN_DELIVERY_HOSTED_FD": PLANTED_MARKER}
         (live / "clock.json").write_text(json.dumps({"now": 0, "poll": 0}))  # a clock no case's wait may read
         self.assertEqual(set(settings), set(TOOL_SETTINGS))
         return main, worktree, settings

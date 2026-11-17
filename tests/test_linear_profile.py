@@ -24,6 +24,10 @@ ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = ROOT / "skills/linear-tracker-adapter/references/adapter-contract.json"
 ADAPTER = ROOT / "skills/linear-tracker-adapter/SKILL.md"
 PROPERTIES_DOCUMENT = ".agents/tracker-properties.json"
+HIVE_ADAPTER_FILES = (
+    "skills/hive-knowledge-adapter/SKILL.md",
+    "skills/hive-knowledge-adapter/references/adapter-contract.json",
+)
 TRACKING_WORKFLOWS = ("create-linear-ticket", "execute-linear-ticket")
 # Resolution that belongs to the adapter must not reappear as a native call in
 # a tracking workflow body.
@@ -257,27 +261,30 @@ class LinearProfileTests(unittest.TestCase):
                     )
 
     def _earlier_linear(self, directory: Path) -> tuple[Path, Path]:
-        """A linear product as it was before it built on run-delivery."""
+        """A linear product as it was before it built on run-delivery, and so without what rides with it."""
         current, current_metadata = self.build(directory, "current")
         tree = directory / "earlier-tree"
         verify_release(current, current_metadata, extract_to=tree)
-        shutil.rmtree(tree / "skills/run-delivery")
+        removed = {"run-delivery", "hive-knowledge-adapter"}
+        for skill in removed:
+            shutil.rmtree(tree / f"skills/{skill}")
         profile = json.loads((tree / "profiles/linear.json").read_text(encoding="utf-8"))
         profile["includes"].remove("run-delivery")
-        profile["expectedFiles"] = [path for path in profile["expectedFiles"] if not path.startswith("skills/run-delivery/")]
+        profile["expectedFiles"] = [path for path in profile["expectedFiles"]
+                                    if not path.startswith(tuple(f"skills/{skill}/" for skill in removed))]
         (tree / "profiles/linear.json").write_text(canonical_json(profile), encoding="utf-8")
         catalog = json.loads((tree / "catalog.json").read_text(encoding="utf-8"))
-        catalog["skills"] = [skill for skill in catalog["skills"] if skill["id"] != "run-delivery"]
+        catalog["skills"] = [skill for skill in catalog["skills"] if skill["id"] not in removed]
         for skill in catalog["skills"]:
             skill["profiles"] = [name for name in skill["profiles"] if name != "run-delivery"]
         (tree / "catalog.json").write_text(canonical_json(catalog), encoding="utf-8")
         (tree / "profiles/run-delivery.json").unlink()
         lock = json.loads((tree / "provenance.lock.json").read_text(encoding="utf-8"))
-        lock["entries"] = [entry for entry in lock["entries"] if entry["id"] != "run-delivery"]
+        lock["entries"] = [entry for entry in lock["entries"] if entry["id"] not in removed]
         (tree / "provenance.lock.json").write_text(canonical_json(lock), encoding="utf-8")
         inventory = json.loads((tree / "validation-inventory.json").read_text(encoding="utf-8"))
         inventory["scenarios"] = [row for row in inventory["scenarios"]
-                                  if "run-delivery" not in (row.get("profile"), row.get("skill"))]
+                                  if not removed & {row.get("profile"), row.get("skill")}]
         inventory["expectedScenarioCount"] = len(inventory["scenarios"])
         (tree / "validation-inventory.json").write_text(canonical_json(inventory), encoding="utf-8")
         archive, metadata = directory / "earlier.zip", directory / "earlier.release.json"
@@ -293,6 +300,7 @@ class LinearProfileTests(unittest.TestCase):
             with mock.patch.dict(os.environ, {"AGENT_SKILLS_EXECUTION_CONTEXT": "", "GITHUB_EVENT_NAME": ""}):
                 Lifecycle(repository).install(earlier, earlier_metadata, maintainer=True)
                 self.assertFalse((repository / ".agents/skills/run-delivery").exists())
+                self.assertFalse((repository / ".agents/skills/hive-knowledge-adapter").exists())
                 # What the apply command calls.
                 result = Lifecycle(repository).install(current, current_metadata, maintainer=True)
             self.assertEqual(result["status"]["lifecycle"], "current")
@@ -302,6 +310,7 @@ class LinearProfileTests(unittest.TestCase):
                 with self.subTest(host=host):
                     self.assertTrue((repository / host / "skills/run-delivery/SKILL.md").is_file())
                     self.assertTrue((repository / host / "skills/linear-tracker-adapter/SKILL.md").is_file())
+                    self.assertTrue((repository / host / "skills/hive-knowledge-adapter/SKILL.md").is_file())
             done = subprocess.run(
                 [sys.executable, "-B", ".agent-skills/current/skills/run-delivery/scripts/run_delivery.py", "doctor", "--offline"],
                 cwd=repository, capture_output=True, text=True, check=False, timeout=120,
@@ -382,6 +391,10 @@ class LinearProfileTests(unittest.TestCase):
                 ).is_file()
             )
             self.assertFalse((extracted / "agent_skills/linear_mcp.py").exists())
+            # The knowledge adapter rides in the run-delivery closure this profile builds on.
+            for shipped in HIVE_ADAPTER_FILES:
+                with self.subTest(shipped=shipped):
+                    self.assertTrue((extracted / shipped).is_file())
 
             repository = initialize_repository(directory)
             with mock.patch.dict(
@@ -402,6 +415,7 @@ class LinearProfileTests(unittest.TestCase):
                 self.assertTrue(
                     (repository / root / "linear-tracker-adapter").is_symlink()
                 )
+                self.assertTrue((repository / root / "hive-knowledge-adapter").is_symlink())
 
     def test_supported_profile_identity_mismatch_rejects(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

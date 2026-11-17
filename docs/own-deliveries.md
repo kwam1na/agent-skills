@@ -63,6 +63,24 @@ It doesn't check `GITHUB_TOKEN`, and a missing one shows up when the forge snaps
 runs. The views scrub both from what they show, and the publisher writes the key to no
 output, log or ledger line.
 
+## Hosted progress
+
+This repository opts into `https://deliveries.v26technologies.com` through
+`.agents/delivery-views.json`. Each delivery has its own unlisted read-only link;
+the site's root lists nothing. The installed lifecycle starts its publisher and
+shows the link in its summary. Closing retains the acknowledged completed view.
+
+`AGENT_SKILLS_DELIVERY_PUBLISH_TOKEN` is a separate repository-scoped publishing
+credential, held in the login Keychain under service
+`v26.hosted-delivery-publishing`, account `agent-skills`. Retrieve it through the
+operator's approved Keychain access and supply the named variable in the
+environment of `lead-init`, or when starting or resuming `lead-run`. A running
+supervisor cannot receive a later shell export; restart it with the credential.
+The token belongs only in the publishing command's environment, never in source,
+arguments, delivery notes or share links. Cloudflare management credentials are
+not publishing credentials. Share the delivery's `/d/…` link; anyone receiving it
+can view its saved progress.
+
 ## Tracker updates
 
 The binding names run-delivery's tracker publisher, which posts this repository's
@@ -231,6 +249,67 @@ git show origin/main:.agent-skills/active.json | python3 -c \
 python3 -c 'import json; print(json.load(open(".agent-skills/active.json"))["release"]["archiveSha256"])'
 ```
 
+Preserve only the reviewed hosted check additions after the target restore. Use
+the fetched, reviewed integration ref below, replacing `<name>` as above. The
+script refuses missing additions, different same-ID target entries and an altered
+service reader. It retains every other target field and existing entry, including
+base/remote, gates, prepare, merge strategy and posture. It changes no installed
+file. Inspect and stage the resulting binding diff explicitly.
+
+```bash
+PYTHONOPTIMIZE=0 python3 - <<'PY'
+import copy, json, subprocess
+from pathlib import Path
+binding = Path(".agents/orchestration.json")
+target = json.loads(subprocess.check_output(["git", "show", "origin/main:.agents/orchestration.json"]))
+source = json.loads(subprocess.check_output(["git", "show", "origin/integrate/<name>:.agents/orchestration.json"]))
+assert json.loads(binding.read_text()) == target, "restore the target binding first"
+service = ["hosted.install", "hosted.typecheck", "hosted.build", "hosted.test", "hosted.browser-install", "hosted.browser"]
+allowed = ["tests.test_delivery_views_hosted", "tests.test_delivery_views_hosted_projection", "tests.test_run_delivery_hosted", *service]
+reader = {"paths": ["hosted/delivery-viewer/**", "skills/delivery-views/assets/**", "skills/delivery-views/scripts/render.py", "skills/delivery-views/references/hosted-snapshot.schema.json", "tests/fixtures/delivery-views/hosted/**", ".github/workflows/hosted-delivery-viewer.yml"], "checks": service}
+assert reader in source["selection"]["readers"], "reviewed service reader differs"
+merged = copy.deepcopy(target)
+rows = merged["selection"]["catalogue"]
+target_ids = [row["id"] for row in rows]
+python_ids = [key for key in target_ids if key.startswith("tests.")]
+assert python_ids == sorted(python_ids), "target Python checks are not in canonical order"
+assert [key for key in target_ids if key in service] == [key for key in service if key in target_ids], "target service checks are not in reviewed order"
+for key in allowed:
+    candidates = [row for row in source["selection"]["catalogue"] if row["id"] == key]
+    assert len(candidates) == 1, f"missing or duplicate reviewed check: {key}"
+    existing = [row for row in rows if row["id"] == key]
+    assert not existing or existing == candidates, f"different same-ID target check: {key}"
+    if not existing:
+        if key.startswith("tests."):
+            at = next((i for i, row in enumerate(rows) if row["id"].startswith("tests.") and row["id"] > key), None)
+            if at is None:
+                at = next((i for i, row in enumerate(rows) if row["id"] in service), len(rows))
+        else:
+            at = next((i for i, row in enumerate(rows) if row["id"] in service and service.index(row["id"]) > service.index(key)), len(rows))
+        rows.insert(at, candidates[0])
+readers = merged["selection"]["readers"]
+assert not any(row["paths"] == reader["paths"] and row != reader for row in readers), "different target service reader"
+if reader not in readers:
+    readers.append(reader)
+# Everything outside these exact additions must still equal the target.
+restored = copy.deepcopy(merged)
+restored["selection"]["catalogue"] = target["selection"]["catalogue"]
+restored["selection"]["readers"] = target["selection"]["readers"]
+assert restored == target
+assert all(row in rows for row in target["selection"]["catalogue"])
+assert all(row in readers for row in target["selection"]["readers"])
+assert [row for row in rows if row["id"] in target_ids] == target["selection"]["catalogue"]
+binding.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
+PY
+git diff origin/main -- .agents/orchestration.json
+git add .agents/orchestration.json
+```
+
+The binding diff must contain only these catalogue/reader additions; the installed
+receipt, host projections, hooks and remaining standing settings still match the
+target exactly as checked separately above. Do not carry the integration base or
+other branch-specific operational configuration into `main`.
+
 Require the digests to match. If a merge is in progress, finish it after resolving
 the conflicts and restoring these paths. Otherwise commit the restore. Retain
 the reviewed product source, tests, catalog, profiles, provenance and delivery
@@ -286,3 +365,24 @@ python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py doc
 ```
 
 Fix the first line that isn't `ok` and run it again, until it exits 0.
+
+## Hosted service verification
+
+The deployable service has its own locked package and CI workflow, described in
+[hosted deliveries](hosted-deliveries.md). Shared schema, trusted assets/theme
+source and hosted fixture changes select the service checks through binding
+readers. The catalogue IDs are `hosted.install`, `hosted.typecheck`, `hosted.build`,
+`hosted.test`, `hosted.browser-install` and `hosted.browser`; their dependencies
+keep service installation out of unrelated Python checks. Use supported Node
+22.22.2+ or 24.15+ on the merge runner's PATH, and install Chromium's operating
+system prerequisites there. The separate Ubuntu service CI installs them itself.
+The lead must verify its exact main-push result alongside corpus Ubuntu and
+cut-release before publishing a candidate or deploying. An absent/red service
+job is not replaced by a green corpus job. The lead owns the budgeted macOS
+Python 3.11 full suite; packaging lanes run only focused checks.
+
+Installed-archive qualification from local builds is not published-candidate
+adoption. Record the authenticated released archive and active receipt separately
+from service build/deployment/asset identities, and leave actual remote acceptance
+open through the live scenarios. See the hosted guide for reviewed production
+configuration and the candidate/final sequence.

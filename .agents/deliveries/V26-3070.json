@@ -1,0 +1,300 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3070",
+  "headline": "V26-3070",
+  "baseBranch": "integrate/hosted-deliveries",
+  "integrationTarget": "main",
+  "plan": "docs/plans/2026-11-15-1521-feat-hosted-delivery-views-plan.md",
+  "laneBrief": "docs/plans/2026-11-15-1521-feat-hosted-delivery-views-plan.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-15-1521-feat-hosted-delivery-views-plan.lane-notes.md"
+  },
+  "context": {
+    "sections": [
+      "Planning Contract",
+      "Delivery Decisions"
+    ]
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        ".github/workflows/hosted-delivery-viewer.yml",
+        "catalog.json",
+        "docs/hosted-deliveries.md",
+        "docs/own-deliveries.md",
+        "profiles/delivery-views.json",
+        "profiles/jira.json",
+        "profiles/linear.json",
+        "profiles/run-delivery.json",
+        "provenance.lock.json",
+        "skills/delivery-views/SKILL.md",
+        "skills/delivery-views/references/hosted-snapshot.schema.json",
+        "skills/delivery-views/scripts/hosted.py",
+        "skills/delivery-views/scripts/public_projection.py",
+        "skills/delivery-views/scripts/render.py",
+        "skills/delivery-views/scripts/views_common.py",
+        "skills/run-delivery/SKILL.md",
+        "skills/run-delivery/references/adopting.md",
+        "skills/run-delivery/references/config.md",
+        "skills/run-delivery/scripts/run_delivery.py",
+        "tests/fixtures/delivery-views/hosted/",
+        "tests/test_delivery_views_adopter.py",
+        "tests/test_delivery_views_hosted.py",
+        "tests/test_delivery_views_hosted_projection.py",
+        "tests/test_own_deliveries.py",
+        "tests/test_registry.py",
+        "tests/test_release_integration.py",
+        "tests/test_run_delivery_hosted.py",
+        "tests/test_run_delivery_supervisor.py"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "hosted/delivery-viewer/"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3514": {
+      "title": "Define the public snapshot and reusable projection",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "v26-3514-1",
+          "text": "Produce one explicit data-only public view contract without weakening local rendering."
+        },
+        {
+          "id": "v26-3514-2",
+          "text": "Meet the approved plan's R3, R5, R6, R13, R14; F1/F2; AE1/AE5."
+        },
+        {
+          "id": "v26-3514-3",
+          "text": "Python and service read the same valid/invalid fixture set; existing local render assertions remain unchanged. This seam proves projection, not Cloudflare/browser behavior."
+        }
+      ]
+    },
+    "V26-3515": {
+      "title": "Build scoped ingestion and persistent snapshot commits",
+      "lane": "lane-2",
+      "after": [
+        "V26-3514"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3515-1",
+          "text": "Accept authenticated repository updates without snapshot regression or partial publication."
+        },
+        {
+          "id": "v26-3515-2",
+          "text": "Meet the approved plan's R1, R5, R8, R11\u2013R13; F1/F3; AE4/AE5."
+        },
+        {
+          "id": "v26-3515-3",
+          "text": "Tests execute against real local Worker/DO/R2 bindings, not only storage mocks; targeted injected failures cover both sides of the commit boundary. These tests do not prove production deployment."
+        }
+      ]
+    },
+    "V26-3516": {
+      "title": "Serve the trusted hosted line map",
+      "lane": "lane-2",
+      "after": [
+        "V26-3514",
+        "V26-3515"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3516-1",
+          "text": "Show the reused delivery UI with truthful freshness and safe public reads."
+        },
+        {
+          "id": "v26-3516-2",
+          "text": "Meet the approved plan's R1\u2013R3, R6, R8\u2013R10, R14; F2/F4; AE2/AE3/AE6."
+        },
+        {
+          "id": "v26-3516-3",
+          "text": "Real browser checks cover signed-out viewing, CSP, referrer, mobile layout and keyboard detail navigation; jsdom covers store/poll behavior but is not browser-security proof."
+        }
+      ]
+    },
+    "V26-3517": {
+      "title": "Implement the portable watcher and uploader",
+      "lane": "lane-1",
+      "after": [
+        "V26-3514",
+        "V26-3515"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3517-1",
+          "text": "Automatically publish coherent changes and recover ambiguous acknowledgements."
+        },
+        {
+          "id": "v26-3517-2",
+          "text": "Meet the approved plan's R4\u2013R9, R11\u2013R13; F1\u2013F3; AE2\u2013AE5."
+        },
+        {
+          "id": "v26-3517-3",
+          "text": "A local fixture receiver checks protocol, bounded retries and process behavior; it is explicitly not Cloudflare proof."
+        }
+      ]
+    },
+    "V26-3519": {
+      "title": "Package, document and qualify the integration",
+      "lane": "lane-2",
+      "after": [
+        "V26-3514",
+        "V26-3515",
+        "V26-3516",
+        "V26-3517",
+        "V26-3527"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3519-1",
+          "text": "Ship all reusable files in selected profiles and prove configuration-only adoption."
+        },
+        {
+          "id": "v26-3519-2",
+          "text": "Meet the approved plan's R4, R6, R7, R12, R13; F1; AE1/AE5."
+        },
+        {
+          "id": "v26-3519-3",
+          "text": "Installed-archive proof is recorded separately from source tests and service CI; no fixture result is described as live proof."
+        },
+        {
+          "id": "v26-3519-4",
+          "text": "Correct the existing hosted collection fixture to use production atomic state replacement, with a deterministic concurrent-read regression for continuous updates and explicit malformed-source rejection. Preserve the failed V26-3527 queue evidence; review and qualify this bounded sensor correction in packaging before final integration."
+        },
+        {
+          "id": "v26-3519-5",
+          "text": "Prepare and review the exact non-secret production Wrangler custom-domain configuration and deployment procedure before main integration. This includes hosted/delivery-viewer/wrangler.jsonc for deliveries.v26technologies.com. Do not provision, release, deploy or claim live proof in packaging; V26-3520 remains active through the published candidate adopter and real hosted scenarios."
+        },
+        {
+          "id": "v26-3519-6",
+          "text": "Restore target standing settings and installed generation at final integration, then retain only the reviewed three hosted Python catalogue additions, six service catalogue additions and exact service reader. Assert all other binding/selection fields and existing catalogue/readers equal target, refuse differing ID collisions, and verify receipt/projection equality separately. Update and test the documented recipe without carrying integration-specific operational settings into main."
+        }
+      ]
+    },
+    "V26-3520": {
+      "title": "Deploy and prove a real adopter delivery",
+      "lane": "lane-2",
+      "after": [
+        "V26-3519"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3520-1",
+          "text": "Make the custom-domain viewer operational and prove its intended off-machine behavior."
+        },
+        {
+          "id": "v26-3520-2",
+          "text": "Meet the approved plan's R1\u2013R14; F1\u2013F4; AE1\u2013AE6."
+        },
+        {
+          "id": "v26-3520-3",
+          "text": "Preserve actual custom-domain HTTP/browser evidence, disconnect/reconnect results, exact deployed bytes and installed-archive identity; stop short of deployment completion if any prerequisite or live proof remains unavailable."
+        }
+      ]
+    },
+    "V26-3527": {
+      "title": "Complete bounded hosted publishing and archive recovery",
+      "lane": "lane-1",
+      "why": "Kwamina explicitly authorized a tracked remediation follow-up with a fresh two-round review limit after the original lifecycle review reached its terminal four-round bound; preserve all prior dissent and evidence.",
+      "criteria": [
+        {
+          "id": "v26-3527-1",
+          "text": "Meet the retained U5 lifecycle and privacy obligations, deliver terminal intent under live CONTROL contention within the close budget, prove truthful live pending status, and preserve stable same-ID archive recovery under bounded transitional polling."
+        },
+        {
+          "id": "v26-3527-2",
+          "text": "CONTROL contention cannot prevent bounded terminal notification to an existing owner; close stays within 30 seconds, the owner exits by its ten-minute terminal deadline if pending, and same-ID archive recovery remains possible."
+        },
+        {
+          "id": "v26-3527-3",
+          "text": "Live hosted_info and hosted_line report final-publication-pending with the existing URL and preceding receipt; deleting that fallback fails its regression."
+        },
+        {
+          "id": "v26-3527-4",
+          "text": "Active archive polling uses bounded production unavailability handling, then direct post-exit assertions verify stable identity, receipt and status while persistent corruption still fails."
+        },
+        {
+          "id": "v26-3527-5",
+          "text": "The full retained lifecycle and c1 privacy behavior remains covered by installed-generation command/process tests, strict receiver fixtures and coherent capture of the actual delivery record."
+        },
+        {
+          "id": "v26-3527-6",
+          "text": "Preserve the original terminal four-round history and obtain independent review for this separately authorized follow-up under a two-round maximum declared before its first round."
+        }
+      ],
+      "after": [
+        "V26-3517",
+        "V26-3516"
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "Every story",
+      "text": "All seven tracked stories meet their criteria and merge or are explicitly settled through the workflow",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "Final macOS Python 3.11 full suite passes inside tests/suite-budget.json and service checks pass",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "integration",
+      "label": "Integration",
+      "text": "Reviewed integration reaches main and exact push CI gates are verified",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "hosted-proof",
+      "label": "Hosted proof",
+      "text": "Reviewed Cloudflare build and exact verified installed adopter show off-machine progress, offline persistence and catch-up",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "readyPullRequests": true,
+    "grantedBy": "Kwamina",
+    "grantedOn": "2026-11-15"
+  },
+  "outOfScope": [
+    "Remote delivery controls, public repository directory, viewer accounts, raw artifact hosting and alternate execution hosts."
+  ],
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  },
+  "approvals": [
+    {
+      "id": "approved-scope",
+      "text": "Kwamina approved the plan and authorized tracking then delivery through repo workflows",
+      "state": "done",
+      "who": "Kwamina"
+    }
+  ]
+}

@@ -21,22 +21,24 @@ CATALOGUE_MODULES = (
     "adoption", "bootstrap_qualification", "catalog", "compound_learning_corpus", "core_boundary", "corpus_copy",
     "cut_release", "declared_mechanics_corpus", "delivery_posture_vectors", "delivery_provider",
     "delivery_provider_rails_contract", "delivery_views", "delivery_views_adopter", "delivery_views_history",
-    "delivery_views_page", "delivery_views_plan", "delivery_views_plan_fixtures", "delivery_views_render",
+    "delivery_views_hosted", "delivery_views_hosted_projection", "delivery_views_page", "delivery_views_plan", "delivery_views_plan_fixtures", "delivery_views_render",
     "delivery_views_review_projection", "delivery_views_snapshots", "diagnosis", "documented_install_surface",
-    "fault_injection", "forge_adapters", "historical_qualifications", "hooks", "host_exposure", "jira_profile", "lane_rows",
+    "fault_injection", "forge_adapters", "historical_qualifications", "hive_knowledge_adapter", "hooks", "host_exposure", "jira_profile", "knowledge_library", "lane_rows",
     "lane_ruling_corpus", "lead_wait", "lifecycle", "linear_profile", "linear_qualification", "measure_test_writes",
     "merge_occurrence", "merge_queue", "no_current_set_names", "orchestration_adopter", "orchestration_render",
     "orchestration_state", "own_deliveries", "product_descriptors", "product_launcher", "product_release",
     "profile_inventory", "provenance", "provider_qualification", "qualification", "readme", "receipt", "registry",
     "release_archive", "release_channel", "release_entry_budget", "release_integration", "review_and_compounding",
     "review_base_reopening", "review_bound_corpus", "review_grace", "review_orchestration", "round_brief_template_corpus",
-    "router", "run_delivery", "run_delivery_hooks", "run_delivery_peers", "run_delivery_plan_review",
+    "router", "run_delivery", "run_delivery_hooks", "run_delivery_hosted", "run_delivery_peers", "run_delivery_plan_review",
     "run_delivery_pr_review",
     "run_delivery_pr_review_gates", "run_delivery_supervisor", "run_delivery_tracker", "run_event_emission_corpus",
     "run_tests", "runless_reviews", "test_dependency_guard", "test_environment", "tracker_contract", "update_provenance",
     "validate", "workflow_graph_contract", "workflow_observation", "workflows",
 )
 CATALOGUE_IDS = tuple("tests.test_" + name for name in CATALOGUE_MODULES)
+SERVICE_IDS = ('hosted.install', 'hosted.typecheck', 'hosted.build', 'hosted.test',
+               'hosted.browser-install', 'hosted.browser')
 GUARDS = ["tests.test_linear_qualification", "tests.test_registry"]
 # Modules that run as scripts, holding no unittest case.
 SCRIPT_MODULES = ("tests.test_registry",)
@@ -95,7 +97,8 @@ class FreshClone(unittest.TestCase):
         shutil.rmtree(seed)
         python = str(Path(sys.executable).parent)
         cls.environment = {"PATH": os.pathsep.join([python, os.environ["PATH"]]), "HOME": cls.temporary.name,
-                           "PYTHONDONTWRITEBYTECODE": "1", "LINEAR_API_KEY": "fixture", "GITHUB_TOKEN": "fixture"}
+                           "PYTHONDONTWRITEBYTECODE": "1", "LINEAR_API_KEY": "fixture", "GITHUB_TOKEN": "fixture",
+                           "AGENT_SKILLS_DELIVERY_PUBLISH_TOKEN": "fixture-publishing-" + "a" * 32}
 
     def doctor(self, cwd: Path | None = None, *, without: tuple[str, ...] = ()) -> subprocess.CompletedProcess:
         environment = {key: value for key, value in self.environment.items() if key not in without}
@@ -109,6 +112,16 @@ class FreshClone(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertTrue(any(line.startswith("ok") and "release on the delivery base" in line for line in lines), done.stdout)
         self.assertTrue(any(line.startswith("ok") and "orchestration binding" in line for line in lines), done.stdout)
+
+    def test_missing_publishing_credential_warns_without_selecting_a_delivery(self) -> None:
+        done = self.doctor(without=("AGENT_SKILLS_DELIVERY_PUBLISH_TOKEN",))
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        warnings = [line for line in done.stdout.splitlines() if line.split()[0] not in ("ok", "skipped")]
+        self.assertEqual(len(warnings), 1, done.stdout + done.stderr)
+        self.assertRegex(warnings[0], r"^warn\s+hosted delivery: hosted: configured; no delivery selected; "
+                                     r"AGENT_SKILLS_DELIVERY_PUBLISH_TOKEN is unset;")
+        self.assertNotIn("Traceback", done.stdout + done.stderr)
+        self.assertFalse((self.clone / ".orchestration/state").exists())
 
     def test_a_missing_piece_is_named(self) -> None:
         done = self.doctor(without=("LINEAR_API_KEY",))
@@ -148,6 +161,12 @@ ATTESTED_ARCHIVES = {
     "linear-v2.2.0": "716a4fc4faf371d7ac5bff392958232610c7e1561e6879b28c63bfd2cb721e68",
     "linear-v2.3.0": "cf47a56998e6e9d599053523da596747ce318b294ff6da2f110a955f516d7ed5",
     "linear-v2.4.0": "40c95a2fce838307a7ba4598a6881a6fa126e2743a34387908cfb62151d076ff",
+    "linear-v2.5.0-rc.1": "1293e7f2082626bb31c41236efbda5a88e9a16c5b47894175b02cf2a4c263a34",
+    "linear-v2.5.0": "8bd3c1ad6bfd5320d665acbf6a2c09fc412f4cd94dab6b87a6d2a5a035c37440",
+    "linear-v2.5.1-rc.1": "781dcb94ef83d3fdd50a843a573179c820b9b1ee4f9ecc59bd2b56d22549c33f",
+    "linear-v2.5.1": "1ea6f84cf44dd40f0c4bb242dabcfbafa2ba673f3dd028dfcc5558552ba95f96",
+    "linear-v2.5.2-rc.1": "a1d890352faecaaf8cfc8813b6246154c40c4577cb2d642e0cd9c45d6ffd09f4",
+    "linear-v2.5.2": "85766f57568c0db1588b0f8a90441cac7a3b71a671c668acca866a8afcfaa331",
 }
 HOOK_COMMAND = 'python3 -B "${CLAUDE_PROJECT_DIR}/.agent-skills/current/__main__.py" hook claude-code %s || exit 1'
 
@@ -353,8 +372,8 @@ class StandingBinding(unittest.TestCase):
         selection = binding["selection"]
         self.assertTrue(selection["lead"])
         catalogue = selection["catalogue"]
-        self.assertEqual([entry["id"] for entry in catalogue], list(CATALOGUE_IDS))
-        for entry in catalogue:
+        self.assertEqual([entry["id"] for entry in catalogue], [*CATALOGUE_IDS,*SERVICE_IDS])
+        for entry in catalogue[:len(CATALOGUE_IDS)]:
             # Each id is a test module that exists, run on its own through the worktree's environment.
             module = entry["id"]
             source = ROOT / (module.replace(".", "/") + ".py")
@@ -374,7 +393,7 @@ class StandingBinding(unittest.TestCase):
             self.assertLessEqual(entry["timeoutSeconds"], binding["checkTimeoutCeiling"], module)
             self.assertTrue(entry["reasons"], module)
         self.assertEqual(selection["guards"], GUARDS)
-        self.assertEqual(selection["readers"], [{"paths": ["skills/delivery-views/scripts/snapshot.py"],
+        self.assertEqual(selection["readers"][:2], [{"paths": ["skills/delivery-views/scripts/snapshot.py"],
                                                  "checks": ["tests.test_delivery_views_adopter",
                                                             "tests.test_delivery_views_snapshots"]},
                                                 {"paths": ["docs/solutions/**"],
@@ -475,7 +494,7 @@ class StandingBinding(unittest.TestCase):
         self.assertIn(f"Two guards join every selection, named or not: `{first}`,", section)
         self.assertIn(f"and `{second}`.", section)
         self.assertEqual(len(selection["guards"]), 2)
-        snapshot, notes = selection["readers"]
+        snapshot, notes = selection["readers"][:2]
         (path,) = snapshot["paths"]
         adopter, snapshots = snapshot["checks"]
         self.assertIn(f"A change to `{path}` also brings `{adopter}` and `{snapshots}`,", section)
@@ -648,6 +667,149 @@ class LeadChoosesChecksAtAcceptance(unittest.TestCase):
         # The selection is made at acceptance, not by a separate call to the state tool.
         self.assertNotIn(" select --subject", section)
         self.assertNotIn("With no selection the queue runs the whole suite.", section)
+
+
+
+class HostedServiceBoundaryTests(unittest.TestCase):
+    def test_service_ci_and_catalogue_keep_dependencies_in_the_service(self):
+        workflow=json.loads((ROOT/'.github/workflows/hosted-delivery-viewer.yml').read_text())
+        self.assertEqual(workflow['permissions'],{'contents':'read'})
+        self.assertEqual(workflow['on']['push']['branches'],['main','integrate/hosted-deliveries'])
+        required=['hosted/delivery-viewer/**','skills/delivery-views/assets/**',
+                  'skills/delivery-views/scripts/render.py',
+                  'skills/delivery-views/references/hosted-snapshot.schema.json',
+                  'tests/fixtures/delivery-views/hosted/**','.github/workflows/hosted-delivery-viewer.yml']
+        for event in ('push','pull_request'):
+            self.assertEqual(workflow['on'][event]['paths'],required)
+        job=workflow['jobs']['service']
+        for field in ('if','continue-on-error'):self.assertNotIn(field,job)
+        for step in job['steps']:
+            self.assertNotIn('continue-on-error',step)
+            if step.get('uses','').startswith('actions/upload-artifact@'):
+                self.assertEqual(step.get('if'),'always()')
+            else:self.assertNotIn('if',step)
+        self.assertEqual(job['defaults']['run']['working-directory'],'hosted/delivery-viewer')
+        self.assertEqual([step['with']['node-version'] for step in job['steps'] if step.get('uses','').startswith('actions/setup-node@')],['22.23.5'])
+        commands=[step['run'] for step in job['steps'] if 'run' in step]
+        self.assertEqual(commands,['npm ci --ignore-scripts --no-audit --no-fund --engine-strict',
+                                   'npm run typecheck','npm run build','npm test',
+                                   'npx playwright install --with-deps chromium','npm run test:browser'])
+        self.assertNotIn('deploy', ' '.join(commands))
+        binding=json.loads((ROOT/'.agents/orchestration.json').read_text())
+        rows={entry['id']:entry for entry in binding['selection']['catalogue']}
+        for key in SERVICE_IDS:self.assertEqual(rows[key]['cwd'],'hosted/delivery-viewer')
+        expected=[commands[0].split(),['npm','run','typecheck'],['npm','run','build'],
+                  ['npm','test'],['npx','playwright','install','chromium'],['npm','run','test:browser']]
+        for key,argv in zip(SERVICE_IDS,expected):self.assertEqual(rows[key]['argv'],argv,key)
+        self.assertEqual(rows['hosted.typecheck']['prerequisites'],['hosted.install'])
+        self.assertEqual(rows['hosted.build']['prerequisites'],['hosted.install'])
+        self.assertEqual(rows['hosted.test']['prerequisites'],['hosted.install'])
+        self.assertEqual(rows['hosted.install']['prerequisites'],[])
+        self.assertEqual(rows['hosted.browser-install']['prerequisites'],['hosted.install'])
+        self.assertEqual(rows['hosted.browser']['prerequisites'],['hosted.build','hosted.browser-install'])
+        for path in required:
+            matched=[entry for entry in binding['selection']['readers'] if path in entry['paths']]
+            self.assertTrue(any(entry['checks']==list(SERVICE_IDS) for entry in matched),path)
+        root=json.loads((ROOT/'package.json').read_text())
+        self.assertNotIn('wrangler',root.get('devDependencies',{}))
+        self.assertNotIn('playwright',root.get('devDependencies',{}))
+
+    def test_service_readers_resolve_dependencies_without_loading_service_for_other_changes(self):
+        tool=_generation_module('hosted_selection',STATE_TOOL)
+        binding=json.loads((ROOT/'.agents/orchestration.json').read_text())
+        for changed in ('hosted/delivery-viewer/src/worker.ts','skills/delivery-views/assets/line-map.js',
+                        'skills/delivery-views/scripts/render.py',
+                        'skills/delivery-views/references/hosted-snapshot.schema.json',
+                        'tests/fixtures/delivery-views/hosted/valid-plan-review.json',
+                        '.github/workflows/hosted-delivery-viewer.yml','docs/own-deliveries.md'):
+            with self.subTest(changed=changed):
+                checks,_=tool.resolve_selection([],binding,lambda:[changed])
+                ids={row['id'] for row in checks}
+                self.assertEqual(set(SERVICE_IDS).issubset(ids),changed!='docs/own-deliveries.md')
+                for row in checks:self.assertLessEqual(set(row['prerequisites']),ids)
+
+    def test_integration_recipe_carries_only_named_checks_and_refuses_collisions(self):
+        import copy
+        text=(ROOT/'docs/own-deliveries.md').read_text()
+        self.assertIn("PYTHONOPTIMIZE=0 python3 - <<'PY'",text)
+        start=text.index('python3 - <<\'PY\'\n',text.index('Preserve only the reviewed hosted check additions'))
+        recipe=text[start+len('python3 - <<\'PY\'\n'):text.index('\nPY\n',start)]
+        source=json.loads((ROOT/'.agents/orchestration.json').read_text())
+        source['selection']['catalogue'].sort(key=lambda row:
+            (row['id'] in SERVICE_IDS,SERVICE_IDS.index(row['id'])
+             if row['id'] in SERVICE_IDS else row['id']))
+        allowed=['tests.test_delivery_views_hosted','tests.test_delivery_views_hosted_projection',
+                 'tests.test_run_delivery_hosted',*SERVICE_IDS]
+        target=copy.deepcopy(source)
+        target['base']={'remote':'standing','ref':'standing-main'}
+        target['prepare']=[['standing-only']]
+        target['selection']['catalogue']=[r for r in target['selection']['catalogue'] if r['id'] not in allowed]
+        reader=target['selection']['readers'].pop()
+        for mode in ('add','already-identical','target-extension','partial-target','target-python-order','target-service-order','collision','reader-collision','missing-reader','not-restored','missing-source-check','duplicate-source-check'):
+            with self.subTest(mode=mode),tempfile.TemporaryDirectory() as directory:
+                path=Path(directory)/'.agents/orchestration.json';path.parent.mkdir()
+                old=copy.deepcopy(target);candidate=copy.deepcopy(source)
+                if mode=='partial-target':
+                    old['selection']['catalogue']=[r for r in old['selection']['catalogue'] if r['id']<allowed[2]]
+                    old['selection']['catalogue'].extend(copy.deepcopy(next(r for r in source['selection']['catalogue'] if r['id']==key))
+                                                        for key in (SERVICE_IDS[0],SERVICE_IDS[2],SERVICE_IDS[4],SERVICE_IDS[5]))
+                if mode=='target-python-order':old['selection']['catalogue'][:2]=reversed(old['selection']['catalogue'][:2])
+                if mode=='target-service-order':
+                    old['selection']['catalogue'].extend(copy.deepcopy(next(r for r in source['selection']['catalogue'] if r['id']==key))
+                                                        for key in reversed(SERVICE_IDS[:2]))
+                if mode in ('already-identical','collision'):
+                    row=copy.deepcopy(next(r for r in source['selection']['catalogue'] if r['id']==allowed[0]))
+                    if mode=='collision':row['argv']=['unreviewed']
+                    at=next((i for i,r in enumerate(old['selection']['catalogue']) if r['id']>row['id']),len(old['selection']['catalogue']))
+                    old['selection']['catalogue'].insert(at,row)
+                if mode=='target-extension':
+                    row=copy.deepcopy(old['selection']['catalogue'][0])
+                    row['id']='tests.test_delivery_views_hosted_extra'
+                    at=next(i for i,r in enumerate(old['selection']['catalogue']) if r['id']>row['id'])
+                    old['selection']['catalogue'].insert(at,row)
+                if mode=='reader-collision':old['selection']['readers'].append({**reader,'checks':['unreviewed']})
+                if mode=='missing-reader':candidate['selection']['readers'].remove(reader)
+                if mode=='missing-source-check':
+                    candidate['selection']['catalogue']=[r for r in candidate['selection']['catalogue'] if r['id']!='hosted.test']
+                if mode=='duplicate-source-check':
+                    candidate['selection']['catalogue'].append(copy.deepcopy(next(r for r in candidate['selection']['catalogue'] if r['id']=='hosted.test')))
+                written=copy.deepcopy(old)
+                if mode=='not-restored':written['merge']=['branch-specific']
+                path.write_text(json.dumps(written,indent=2)+'\n');before=path.read_bytes()
+                answers={'origin/main:.agents/orchestration.json':old,
+                         'origin/integrate/<name>:.agents/orchestration.json':candidate}
+                prefix='import subprocess,json\nanswers='+repr(answers)+'\nsubprocess.check_output=lambda args:json.dumps(answers[args[2]]).encode()\n'
+                done=subprocess.run([sys.executable,'-B','-c',prefix+recipe],cwd=directory,
+                                    env={**os.environ,'PYTHONOPTIMIZE':'0'},capture_output=True,text=True,timeout=10)
+                if mode not in ('add','already-identical','target-extension','partial-target'):
+                    self.assertNotEqual(done.returncode,0,mode)
+                    self.assertIn('AssertionError',done.stderr)
+                    self.assertEqual(path.read_bytes(),before)
+                    continue
+                self.assertEqual(done.returncode,0,done.stderr)
+                merged=json.loads(path.read_text())
+                expected=sorted({r['id'] for r in old['selection']['catalogue'] if r['id'].startswith('tests.')} |
+                                {key for key in allowed if key.startswith('tests.')})
+                self.assertEqual([r['id'] for r in merged['selection']['catalogue']],[*expected,*SERVICE_IDS])
+                self.assertEqual([r['id'] for r in merged['selection']['catalogue'] if r['id'] in allowed],allowed)
+                self.assertEqual(merged['selection']['readers'],[*old['selection']['readers'],reader])
+                old_ids={r['id'] for r in old['selection']['catalogue']}
+                self.assertEqual([r for r in merged['selection']['catalogue'] if r['id'] in old_ids],old['selection']['catalogue'])
+                merged['selection']['catalogue']=old['selection']['catalogue']
+                merged['selection']['readers']=old['selection']['readers']
+                self.assertEqual(merged,old)
+
+    def test_nonsecret_production_config_is_exact_and_live_proof_stays_separate(self):
+        config=json.loads((ROOT/'hosted/delivery-viewer/wrangler.jsonc').read_text())
+        self.assertEqual(config['routes'],[{'pattern':'deliveries.v26technologies.com','custom_domain':True}])
+        self.assertFalse(config['workers_dev']);self.assertFalse(config['preview_urls'])
+        self.assertFalse(config['observability']['enabled'])
+        self.assertNotIn('vars',config)
+        doc=(ROOT/'docs/hosted-deliveries.md').read_text()
+        for phrase in ('Published candidate','Exact deployed bytes','No live proof is claimed',
+                       'npx wrangler secret put PUBLISHERS','npx wrangler deploy',
+                       'same commit','two repositories','disconnect','catch-up'):
+            self.assertIn(phrase,doc)
 
 
 if __name__ == "__main__":

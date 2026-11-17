@@ -68,6 +68,48 @@ python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py <co
 setup check, a first delivery as lead and as lane, host notes, the operating rules and troubleshooting. This page is
 the command reference.
 
+## Hosted delivery progress
+
+When the binding shelf's `.agents/delivery-views.json` enables `hosted`, `lead-init`
+and the supervisor start or adopt one independent hosted watcher. A normal
+`lead-run --resume` keeps its public identity and explicitly resumes its writer
+lease. Stopping the supervisor leaves this watcher alive. The watcher checks its
+record, generation and recorded PID identity; a generation transition replaces
+the verified owner. Generic renderers and tracker children receive no publishing
+credential. The detached supervisor receives that credential through a private
+pipe, never a command argument or a stored sidecar.
+Before the binding shelf names its credential, discovery git runs with a
+restricted OS/session environment. This also protects a token name changed on
+the shelf. Public prose containing recognizable local references carries a
+visible omission marker; raw uploaded paths and configured secrets still fail
+strict validation.
+
+Explicit lead status output, `doctor` and `view` show the hosted URL and local
+publication status. These links grant public read access. Supervisor logs do not
+print them. Local live views continue to run no publishers.
+
+After `close-finished` marks the same `delivery.closed` entry in the record and
+its archive, close records a durable terminal request. Publication adds at most
+30 seconds to local close. The independent watcher retries the frozen terminal
+cut for up to 10 minutes, then exits with `final-publication-pending`. Only a
+matching receipt for that finished cut yields `final-published`.
+
+Close notifies the existing owner before waiting for lifecycle control. The
+credential-free notification fixes the original retry deadline even under lock
+contention; repeated close commands do not extend it or replace an acknowledged
+cut. Live pending status keeps the known URL and preceding receipt. During
+active archive updates, status may briefly report bounded unavailability; stable
+post-exit reads still validate the archived identity and receipt strictly.
+
+The archive retains the identity, status, referenced pending bytes and frozen
+terminal cut. `view --archive PATH` needs no token and starts no uploader.
+From a configured checkout, `hosted-retry --archive PATH` reconciles and retries
+that exact terminal cut with the same public ID; add `--resume` only to resume
+an expired writer lease. It uses the checkout's trusted configuration and refuses
+an archive while its original watcher remains alive. A plain `hosted-retry`
+retries the current delivery. Publishing failures leave local delivery execution
+and tracker publishing independent.
+
 ## Integration bases
 
 From the standing base checkout, run `lead-setup KEY --plan PATH --integration BRANCH` with the usual
@@ -161,6 +203,7 @@ It exits 0 when no check is `missing` or `wrong`, 1 when one is, and 2 on a usag
 | ffmpeg and ffprobe, with the filters video evidence uses | a story is marked for video evidence |
 | The first `node` on `PATH` meets the runtime's `nodeMinimum`: `wrong` below it, `missing` with none, even with an nvm Node that meets it, whose `bin` folder the line then names to put first | the generation carries a runtime |
 | Node 22.6 or newer reads the harness configuration, through the generation's runtime loader | `harness.config.ts` exists |
+| `.agents/knowledge-properties.json` is valid `knowledge-properties/1`, or absent: an `ok` line that says the optional knowledge library isn't consulted. Shape only; the first search shows whether the library holds the project | always |
 | The delivery file: every story has a lane, and lanes own disjoint files | `--delivery` |
 | The delivery supervisor is running, with the Node its lock records beside its pid and address (`wrong` below the runtime's `nodeMinimum`, `warn` when an older generation's supervisor recorded none), or the delivery is closed. A close with its `started` mark and no `finished` mark, and no supervisor running, is `wrong`: it stopped partway, and the row names what finishes it | `--delivery` |
 | Story files: each file a story's plan section names is its lane's. A file outside the lane is reported as `warn`, which doesn't fail the check, since a plan may move files between lanes as stories merge | `--delivery` |
