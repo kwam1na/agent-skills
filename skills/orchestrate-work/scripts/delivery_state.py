@@ -525,7 +525,7 @@ def merge_slot(repository: Path, base: str, *, delivery: str, timeout: float, po
     when another live command waits, and never more, so the waiter goes first. The holder file names the holder's
     delivery, pid and start, and the waiter's file the same; ``doing``, ``{what, subject?}`` with ``what`` one of
     ``SLOT_DOING``, says in both what the command holds it for. ``on_wait`` is called once, its waiter file written,
-    when the command first finds the slot held. Only the lock, which the operating system releases with a dead
+    when the command first finds the slot held, and again once it takes the slot after waiting. Only the lock, which the operating system releases with a dead
     holder, decides.
     """
     doing = _slot_doing(doing)
@@ -565,6 +565,8 @@ def merge_slot(repository: Path, base: str, *, delivery: str, timeout: float, po
                     mine.unlink()
         _write_atomically(holder, json.dumps({"delivery": delivery, "pid": own, "since": now(), "base": base,
                                               **({"doing": doing} if doing else {})}, sort_keys=True) + "\n")
+        if mine is not None and on_wait is not None:
+            on_wait()
         try:
             yield lock
         finally:

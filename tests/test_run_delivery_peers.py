@@ -595,6 +595,10 @@ class PeerDeliveryTests(unittest.TestCase):
         wait_until(lambda: "writer upgrade" in json.dumps(self.peer_waits(fx, record1)), "the upgrade to say its wait")
         self.assertEqual(self.peer_waits(fx, record1)["waits"], [
             ("lead", f"The lead's writer upgrade waits for delivery FX-9, which is checking FX-92, since {at}.")])
+        # Nothing rewrites it while it waits, so it stays fresh for as long as the upgrade may wait.
+        written = json.loads((record1 / "peer-waits.json").read_text())
+        lasts = (datetime.datetime.fromisoformat(written["staleAfter"][:-1]) - datetime.datetime.fromisoformat(written["at"][:-1]))
+        self.assertGreaterEqual(lasts.total_seconds(), 120)
         upgrade.kill()
         upgrade.wait()
         # A push waiting when the holder lets go takes the slot and finishes, and both sides clear on their next pass.
@@ -797,7 +801,7 @@ class PeerWaitsTests(unittest.TestCase):
     def test_every_caller_of_the_merge_slot_says_what_it_holds_it_for(self) -> None:
         import ast
         named = {"lead_sync": "sync", "lead_upgrade_writer": "upgrade", "lead_push": "push", "slot": None}
-        seen = {}
+        seen, told = {}, set()
         for relative in ("skills/run-delivery/scripts/run_delivery.py", "skills/orchestrate-work/scripts/merge_queue.py"):
             tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"))
             for function in ast.walk(tree):
@@ -808,7 +812,11 @@ class PeerWaitsTests(unittest.TestCase):
                             and call.func.attr == "merge_slot"):
                         [doing] = [keyword.value for keyword in call.keywords if keyword.arg == "doing"]
                         seen[function.name] = ast.literal_eval(doing)["what"] if isinstance(doing, ast.Dict) else None
+                        if any(keyword.arg == "on_wait" for keyword in call.keywords):
+                            told.add(function.name)
         self.assertEqual(seen, named)
+        # The two that park the supervisor while they wait say their own wait.
+        self.assertEqual(told, {"lead_sync", "lead_upgrade_writer"})
 
     def test_a_holder_or_waiter_file_without_doing_is_using_the_main_line_and_a_free_slot_waits_on_nothing(self) -> None:
         slot = self.slot({"delivery": "PEER-1"}, {"delivery": "APP-1"})
@@ -936,6 +944,15 @@ class PeerWaitViewTests(unittest.TestCase):
         self.assertNotEqual(view.watch_key(), before)
         self.assertTrue(view.refresh())
         self.assertIn(claim, json.dumps(view.document, ensure_ascii=False))
+        # Released, the next pass rewrites the file still fresh, with no wait in it: the key moves and the wait goes.
+        released = view.watch_key()
+        written = json.loads((record / "peer-waits.json").read_text())
+        (record / "peer-waits.json").write_text(json.dumps({**written, "waits": [], "waitedOn": [], "at": "2026-11-17T14:20:00Z"}))
+        self.assertNotEqual(view.watch_key(), released)
+        self.assertTrue(view.refresh())
+        self.assertNotIn(claim, json.dumps(view.document, ensure_ascii=False))
+        self.write("2999-01-01T00:00:00Z")
+        self.assertTrue(view.refresh())
         shown = self.render_state.with_story(self.render_state.show(record), record)
         self.assertEqual([wait["words"] for wait in shown["waits"]], [wait["words"] for wait in self.found["waits"]])
         # Gone stale with nothing else written, the key moves, and the next document carries none of it.

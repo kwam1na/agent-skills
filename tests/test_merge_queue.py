@@ -7381,7 +7381,19 @@ class SlotDoingTests(MergeQueueTestCase):
         self.assertEqual(raised.exception.code, "slot_held")
         self.assertEqual(len(told), 1)
         self.assertEqual([waiter["pid"] for waiter in told[0]], [os.getpid()])
-        release.write_text("")
+        # Taking the slot once the holder lets go tells it once more, holding now and no longer waiting.
+        told.clear()
+        ticks = iter([0, 0])
+
+        def let_go(seconds: float) -> None:
+            release.write_text("")
+            holder.wait(30)
+
+        with state_tool.merge_slot(adopter.operator, "main", delivery="Fixture delivery", timeout=1, sleep=let_go,
+                                   clock=lambda: next(ticks, 0), on_wait=lambda: told.append(state_tool.slot_parties(lock))):
+            pass
+        self.assertEqual([(said["holder"] or {}).get("pid") for said in told], [holder.pid, os.getpid()])
+        self.assertEqual(told[1]["waiters"], [])
 
     def test_a_doing_outside_the_six_is_refused_before_the_slot_is_taken(self) -> None:
         adopter = self.adopter()
