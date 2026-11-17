@@ -5242,13 +5242,24 @@ def plan_publish_command(c) -> str:
 def lead_plan(args) -> None:
     """Record a change to the approved plan in the delivery file, or a reason for one already recorded."""
     c = cfg()
+    if args.action == "change":
+        # A flag the kind doesn't read is refused rather than ignored: --criterion on a story's removal once removed
+        # the whole story. --lane and --after are for a story --kind added brings into the delivery.
+        takes = {"subjects": ("added", "removed", "relaxed", "changed"), "criterion": ("added", "removed", "relaxed", "changed"),
+                 "text": ("added", "relaxed", "changed", "finish"), "lane": ("added",), "after": ("added",),
+                 "finish": ("finish",), "covers": ("finish",), "label": ("finish",)}
+        for flag, kinds in takes.items():
+            given = getattr(args, flag) != [] if flag == "subjects" else getattr(args, flag) is not None  # --subjects defaults to []
+            if given and args.kind not in kinds:
+                raise Stop(f"--kind {args.kind} doesn't use --{flag}; it is for --kind {' or '.join(kinds)}")
+    dropping = args.action == "change" and args.kind == "removed" and args.criterion is not None
     log = read_plan_log(c)
     if not plan_declared(c) and not any(entry["type"] == "snapshot" for entry in log):
         raise Stop(f"{c.delivery_where} declares no criteria, so the plan chapter is off; add criteria to its stories first")
     # Its rebuild registers any story added since, so a story registration would refuse is refused before anything
     # is written; one this change removes needs no reason.
     if (c.state / "state.json").exists():
-        removing = set(args.subjects or []) if args.action == "change" and args.kind == "removed" else set()
+        removing = set(args.subjects or []) if args.action == "change" and args.kind == "removed" and not dropping else set()
         problems = unreasoned_problems(c, [key for key in unregistered(c, load_state()["state"]) if key not in removing])
         if problems:
             raise unreasoned_refusal(c, problems)
@@ -5307,6 +5318,10 @@ def lead_plan(args) -> None:
     elif args.kind in ("added", "changed", "relaxed"):
         if len(change["subjects"]) != 1 or not args.criterion or args.text is None:
             raise Stop(f"--kind {args.kind} takes one story in --subjects, --criterion and --text")
+        for flag in ("lane", "after"):
+            if getattr(args, flag) is not None:
+                raise Stop(f"{change['subjects'][0]} is already a story of {c.delivery}, so --kind added doesn't use "
+                           f"--{flag}; it is for a story not yet in the delivery")
         criteria = stories[change["subjects"][0]].setdefault("criteria", [])
         existing = next((item for item in criteria if item["id"] == args.criterion), None)
         taken = [item["id"] for story in stories.values() for item in story.get("criteria", [])]
@@ -5320,6 +5335,25 @@ def lead_plan(args) -> None:
             change["before"] = existing["text"]
             existing["text"] = args.text
         change.update(criteria=[args.criterion], after=args.text)
+    elif dropping:
+        # One criterion leaves the story, which stays; the change keeps its wording, and no `after` says it is gone.
+        if len(change["subjects"]) != 1:
+            raise Stop("--kind removed with --criterion drops that criterion from one story in --subjects")
+        key = change["subjects"][0]
+        criteria = stories[key].get("criteria", [])
+        existing = next((item for item in criteria if item["id"] == args.criterion), None)
+        if existing is None:
+            raise Stop(f"{key} has no criterion {args.criterion}")
+        if len(criteria) == 1:
+            raise Stop(f"{args.criterion} is {key}'s last criterion; a story keeps at least one, so remove the story "
+                       f"instead, with --kind removed --subjects {key}")
+        naming = [line["id"] for line in raw.get("finish", [])
+                  if isinstance(plan_covers(line).get("criteria"), list) and args.criterion in plan_covers(line)["criteria"]]
+        if naming:
+            raise Stop(f"finish line {', '.join(naming)} covers {args.criterion}; take it out of its --covers first, with "
+                       f"--kind finish")
+        criteria.remove(existing)
+        change.update(criteria=[args.criterion], before=existing["text"])
     elif args.kind == "removed":
         if not change["subjects"]:
             raise Stop("--kind removed names the stories it removes in --subjects")
@@ -5389,8 +5423,10 @@ def lead_plan(args) -> None:
         ids = entry["id"]
         if wording is not None:
             ids += f" and {record_plan_change(c, {**change, 'before': wording[0], 'after': wording[1]})['id']}"
-        git("commit", "-q", "-m", f"{c.delivery}: plan change {ids} ({'added story' if new_story else args.kind} "
-            f"{', '.join(change['subjects']) or change.get('finish', '')})".rstrip(), cwd=root)
+        said = f"{'added story' if new_story else args.kind} {', '.join(change['subjects']) or change.get('finish', '')}".rstrip()
+        if dropping:
+            said = f"removed {args.criterion} from {change['subjects'][0]}"
+        git("commit", "-q", "-m", f"{c.delivery}: plan change {ids} ({said})", cwd=root)
         if planned_after is not None:  # as it stands now: a story registered since the check above stays planned
             patch_from(lambda doc: {"planned": [p for p in doc["state"].get("planned", [])
                                                 if p["subject"] not in change["subjects"]]}, "the plan change's planned work")
@@ -5413,7 +5449,8 @@ def lead_plan(args) -> None:
             if patched is not None:
                 state_tool("journal", "--kind", "story.added", "--subject", key, "--data", json.dumps(story_added(c, key, change.get("why"))))
         rebuild_plan(c)
-    print(f"recorded {ids}: {args.kind} {', '.join(change['subjects']) or change.get('finish', '')}".rstrip())
+    print(f"recorded {ids}: {said}" if dropping else
+          f"recorded {ids}: {args.kind} {', '.join(change['subjects']) or change.get('finish', '')}".rstrip())
     print(f"committed the delivery file{' and the plan' if plan_text is not None else ''}; push it so lanes see it: "
           f"{plan_publish_command(c)}")
 

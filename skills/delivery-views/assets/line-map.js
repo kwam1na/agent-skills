@@ -2418,8 +2418,9 @@
     var first = size;
     var points = [[begin, size]];
     changes.slice().sort(function (p, q) { return (seconds(p.at) || 0) - (seconds(q.at) || 0); }).forEach(function (change) {
-      if (change.kind === "added") { size += list(change.subjects).length; }
-      if (change.kind === "removed") { size -= list(change.subjects).length; }
+      // A change naming criteria added or dropped those, and its story stays in scope.
+      if (change.kind === "added" && !list(change.criteria).length) { size += list(change.subjects).length; }
+      if (change.kind === "removed" && !list(change.criteria).length) { size -= list(change.subjects).length; }
       points.push([seconds(change.at) || begin, size, change.kind]);
     });
     var end = last !== null && last > begin ? last : begin + 1;
@@ -2472,9 +2473,12 @@
     return issueHref(text(ref)) ? issue(text(ref)) : el("span", "pc-ref", text(ref));
   }
   function changeRow(change) {
-    var row = el("li", "plan-change " + text(change.kind));
-    var head = add(el("div", "pc-head"), el("span", "pc-kind", CHANGE_WORDS[change.kind] || text(change.kind)),
-      el("span", "pc-subjects", list(change.subjects).map(text).join(", ")), el("time", null, clock(change.at)));
+    // A removal naming criteria dropped those from its story, which stays: its wording is struck through below.
+    var dropped = change.kind === "removed" && list(change.criteria).length > 0;
+    var row = el("li", "plan-change " + text(change.kind) + (dropped ? " criterion" : ""));
+    var head = add(el("div", "pc-head"), el("span", "pc-kind", dropped ? "Removed criterion" : CHANGE_WORDS[change.kind] || text(change.kind)),
+      el("span", "pc-subjects", list(change.subjects).map(text).join(", ") + (dropped ? " · " + list(change.criteria).map(text).join(", ") : "")),
+      el("time", null, clock(change.at)));
     head.lastChild.setAttribute("datetime", text(change.at));
     add(row, head);
     if (text(change.title)) { row.appendChild(el("div", "pc-title", text(change.title))); }
