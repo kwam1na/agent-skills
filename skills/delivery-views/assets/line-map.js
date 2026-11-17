@@ -594,6 +594,8 @@
     if (outcome) { nodes.push(el("p", "plan-now", outcome)); }
     var status = sayLine(doc, all);
     if (status) { nodes.push(el("p", "say", status)); }
+    // What the lead waits on in another delivery sharing the base, and what waits on the lead, as the state tool says.
+    waitLines(doc, "lead", "p", "say say-wait").forEach(function (line) { nodes.push(line); });
     var panel = closed ? null : checkingPanel(doc, all);
     if (panel) { nodes.push(panel); }
     var needs = attention(doc);

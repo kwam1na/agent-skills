@@ -11,20 +11,27 @@ from __future__ import annotations
 import datetime
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 import urllib.request
 from pathlib import Path
 
+# The skill's modules another test module already loaded under their plain names, which its lazy imports read: this
+# module's imports load them again, so they go back as they were once it has.
+KEPT = {name: sys.modules[name] for name in ("delivery_state", "render_state", "run_delivery", "delivery_views_render")
+        if name in sys.modules}
 from tests.test_run_delivery import POSIX_ONLY, Fixture, commit, doctor_lines, installed_release, sh, stop_supervisors
 from tests.test_run_delivery_supervisor import hand_off, running, supervised
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "skills" / "run-delivery" / "scripts"))
 sys.path.insert(0, str(ROOT / "skills" / "orchestrate-work" / "scripts"))
+sys.modules.update(KEPT)
 import delivery_state  # noqa: E402
 import tracker_publisher  # noqa: E402
 
@@ -37,10 +44,11 @@ SLOT_HOLDER = r'''
 import sys, time
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
-import delivery_state
-with delivery_state.merge_slot(Path(sys.argv[2]), sys.argv[3], delivery=sys.argv[4], timeout=5):
+import json, delivery_state
+doing = json.loads(sys.argv[5]) if len(sys.argv) > 5 else None
+with delivery_state.merge_slot(Path(sys.argv[2]), sys.argv[3], delivery=sys.argv[4], timeout=5, doing=doing):
     print("holding", flush=True)
-    time.sleep(120)
+    time.sleep(600)
 '''
 
 # One supervisor pass's peers step, run directly after the base's remote-tracking ref is set back to an earlier commit,
@@ -190,10 +198,11 @@ class PeerDeliveryTests(unittest.TestCase):
         proc.wait()
         return proc.pid
 
-    def hold_slot(self, fx: Fixture, delivery: str) -> subprocess.Popen:
+    def hold_slot(self, fx: Fixture, delivery: str, doing: dict | None = None) -> subprocess.Popen:
         proc = subprocess.Popen([sys.executable, "-B", "-c", SLOT_HOLDER, str(fx.release / "skills/orchestrate-work/scripts"),
-                                 str(fx.main), "feature/FX-1", delivery], stdout=subprocess.PIPE, text=True)
-        self.addCleanup(lambda: (proc.poll() is None and proc.kill(), proc.wait()))
+                                 str(fx.main), "feature/FX-1", delivery, *([json.dumps(doing)] if doing else [])],
+                                stdout=subprocess.PIPE, text=True)
+        self.addCleanup(lambda: (proc.poll() is None and proc.kill(), proc.wait(), proc.stdout.close()))
         self.assertEqual(proc.stdout.readline().strip(), "holding")
         return proc
 
@@ -483,6 +492,115 @@ class PeerDeliveryTests(unittest.TestCase):
         # The tracker publisher posts nothing for it.
         self.assertIsNone(tracker_publisher.kind_updates()["peer.merged"])
 
+    # -- what each delivery waits on in the other
+
+    def peer_waits(self, fx: Fixture, folder: Path) -> dict:
+        """The record's peer-waits.json as the last supervisor pass wrote it, its sentences by name."""
+        written = json.loads((folder / "peer-waits.json").read_text())
+        self.assertEqual(written["spec"], "delivery-peer-waits/1")
+        self.assertGreater(written["staleAfter"], written["at"])
+        return {name: [(wait["subject"], wait["words"]) for wait in written[name]] for name in ("waits", "waitedOn")}
+
+    def files_named(self, fx: Fixture) -> None:
+        """FX-1's plan sections name their files in a `Files:` sentence, which its planned entries carry."""
+        plan = fx.main / "docs/plan.md"
+        plan.write_text(plan.read_text().replace("It changes `src/one.txt`.", "Files: `src/one.txt`.")
+                        .replace("It changes `src/two.txt`.", "Files: `src/two.txt`."))
+        commit(fx.main, "FX-1: name each story's files")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=fx.main)
+
+    def test_a_claim_is_a_wait_in_the_delivery_that_needs_the_file_and_a_line_in_the_one_that_claims_it(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        self.files_named(fx)
+        self.flow(fx, "FX-1", "lead-init", "--no-supervisor", cwd=m)
+        lead = self.peer(fx)
+        self.flow(fx, "FX-9", "lead-init", "--no-supervisor", cwd=lead)
+        record1, record9 = fx.tmp / "record", fx.tmp / "record-FX-9"
+        self.patch(fx, record9, "lead", "--patch", json.dumps({"laneOwnership": {"lane-1": [], "lane-2": ["src/two*"]}}))
+        self.flow(fx, "FX-9", "lead-own", "--claim", "src/one*", cwd=lead)
+        # Each delivery's own pass derives its side from the same facts: FX-1's FX-2 names the file FX-9 claims.
+        self.flow(fx, "FX-1", "lead-run", "--once", cwd=m)
+        self.flow(fx, "FX-9", "lead-run", "--once", cwd=lead)
+        waits = self.peer_waits(fx, record1)
+        self.assertIn(("FX-2", "Waits for delivery FX-9, which claims src/one.txt."), waits["waits"])
+        self.assertEqual(waits["waitedOn"], [])
+        self.assertEqual(self.peer_waits(fx, record9), {"waits": [], "waitedOn": [
+            ("lead", "Delivery FX-1's FX-2 waits on this delivery's claim on src/one.txt.")]})
+        # It is derived and never stored: the record holds none of it, and the views add it while the file is fresh.
+        shown = self.record(fx, record1)
+        self.assertNotIn("Waits for delivery FX-9", json.dumps(shown))
+        # Released, both sides clear on their next pass, with no action from either lead.
+        self.patch(fx, record9, "lead", "--patch", json.dumps({"extensions": {"claims": []}}))
+        self.flow(fx, "FX-1", "lead-run", "--once", cwd=m)
+        self.flow(fx, "FX-9", "lead-run", "--once", cwd=lead)
+        self.assertEqual(self.peer_waits(fx, record1), {"waits": [], "waitedOn": []})
+        self.assertEqual(self.peer_waits(fx, record9), {"waits": [], "waitedOn": []})
+        # Claimed again, then closed with its claim still listed: FX-1's next pass waits on nothing.
+        self.flow(fx, "FX-9", "lead-own", "--claim", "src/one*", cwd=lead)
+        self.flow(fx, "FX-1", "lead-run", "--once", cwd=m)
+        self.assertTrue(self.peer_waits(fx, record1)["waits"])
+        self.state(fx, record9, "journal", "--kind", "delivery.closed", "--data", "{}")
+        fx.flow("--delivery", "FX-9", "lead-close", cwd=lead)
+        self.flow(fx, "FX-1", "lead-run", "--once", cwd=m)
+        self.assertEqual(self.peer_waits(fx, record1), {"waits": [], "waitedOn": []})
+
+    def waiting(self, fx: Fixture, *argv: str, cwd: Path) -> subprocess.Popen:
+        """A lead command of FX-1 started while the slot is held, until its waiter file is written; stopped by its pid."""
+        proc = subprocess.Popen([sys.executable, "-B", str(fx.tool), "--delivery", "FX-1", *argv], cwd=cwd, env=fx.env,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        self.addCleanup(lambda: (proc.poll() is None and proc.kill(), proc.wait(), proc.stdout.close()))
+        lock = delivery_state.merge_slot_path(fx.main, "feature/FX-1")
+        wait_until(lambda: any(w["pid"] == proc.pid for w in delivery_state.slot_parties(lock)["waiters"])
+                   or proc.poll() is not None, f"{argv[0]} to wait for the slot")
+        if proc.poll() is not None:
+            self.fail(f"{argv[0]} ended instead of waiting: {proc.stdout.read()}")
+        return proc
+
+    def test_a_lead_command_waiting_on_a_peers_hold_says_which_delivery_what_it_does_and_since_when(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        # The writer upgrade waits for the slot within the binding's check timeout.
+        binding = json.loads((m / ".agents/orchestration.json").read_text())
+        (m / ".agents/orchestration.json").write_text(json.dumps({**binding, "checkTimeoutSeconds": 120}, indent=2))
+        commit(m, "FX-1: a check timeout the upgrade waits within")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        self.flow(fx, "FX-1", "lead-init", "--no-supervisor", cwd=m)
+        lead = self.peer(fx)
+        self.flow(fx, "FX-9", "lead-init", "--no-supervisor", cwd=lead)
+        record1, record9 = fx.tmp / "record", fx.tmp / "record-FX-9"
+        lock = delivery_state.merge_slot_path(fx.main, "feature/FX-1")
+        holder = self.hold_slot(fx, "FX-9", {"what": "check", "subject": "FX-92"})
+        since = delivery_state.slot_parties(lock)["holder"]["since"]
+        at = datetime.datetime.strptime(since[:19], "%Y-%m-%dT%H:%M:%S").strftime("%H:%M UTC")
+        push = self.waiting(fx, "lead-push", "--wait-seconds", "120", cwd=m)
+        [waiter] = delivery_state.slot_parties(lock)["waiters"]
+        self.assertEqual((waiter["delivery"], waiter["doing"]), ("FX-1", {"what": "push"}))
+        # Each delivery's pass: FX-1's lead waits on FX-9's check, and FX-9 says FX-1 waits on it.
+        self.flow(fx, "FX-1", "lead-run", "--once", cwd=m)
+        self.flow(fx, "FX-9", "lead-run", "--once", cwd=lead)
+        self.assertEqual(self.peer_waits(fx, record1), {"waitedOn": [], "waits": [
+            ("lead", f"The lead's push waits for delivery FX-9, which is checking FX-92, since {at}.")]})
+        self.assertEqual(self.peer_waits(fx, record9), {"waits": [], "waitedOn": [
+            ("FX-92", "Delivery FX-1 waits to start pushing.")]})
+        push.kill()
+        push.wait()
+        # The writer upgrade says so in its waiter file too.
+        upgrade = self.waiting(fx, "lead-upgrade-writer", "--expected", "0" * 64, "--reason", "test", "--no-supervisor",
+                               cwd=m)
+        [waiter] = delivery_state.slot_parties(lock)["waiters"]
+        self.assertEqual((waiter["pid"], waiter["doing"]), (upgrade.pid, {"what": "upgrade"}))
+        upgrade.kill()
+        upgrade.wait()
+        # A push waiting when the holder lets go takes the slot and finishes, and both sides clear on their next pass.
+        push = self.waiting(fx, "lead-push", "--wait-seconds", "120", cwd=m)
+        holder.kill()
+        holder.wait()
+        self.assertEqual(push.wait(120), 0)
+        self.flow(fx, "FX-1", "lead-run", "--once", cwd=m)
+        self.flow(fx, "FX-9", "lead-run", "--once", cwd=lead)
+        self.assertEqual(self.peer_waits(fx, record1), {"waits": [], "waitedOn": []})
+        self.assertEqual(self.peer_waits(fx, record9), {"waits": [], "waitedOn": []})
 
 class PeerWordingTests(unittest.TestCase):
     """The words that say how deliveries on one base see each other, where a lead reads them."""
@@ -506,6 +624,243 @@ class PeerWordingTests(unittest.TestCase):
         self.assertIn("`--claim` claims whole files on the base for the delivery itself, in its own record, so another "
                       "delivery on the base warns, without refusing,", self.text("skills/run-delivery/SKILL.md"))
 
+
+
+# -- the waits on other deliveries, derived in-process from records and slot files a case writes
+
+WORDS = ROOT / "skills/orchestrate-work/references/wait-words.json"
+CLOCK = "2026-11-17T14:10:02Z"
+
+
+def ours() -> dict:
+    """APP-1's record: APP-2 planned in lane 1, naming skills/render.py; APP-3 building in lane 2, which holds
+    skills/views.py, which APP-1 claims; APP-5 queued in lane 2."""
+    return {"state": {"lanes": [{"id": "lane-1", "state": "idle"}, {"id": "lane-2", "state": "working"}],
+                      "queue": [{"subject": "APP-5", "lane": "lane-2", "stage": "queued"}],
+                      "planned": [{"subject": "APP-2", "lane": "lane-1", "stage": "planned", "files": ["skills/render.py"]},
+                                  {"subject": "APP-3", "lane": "lane-2", "stage": "building", "files": ["skills/views.py"]}],
+                      "laneOwnership": {"lane-2": ["skills/views.py"]}, "extensions": {"claims": ["skills/views.py"]}},
+            "journal": []}
+
+
+def theirs() -> dict:
+    """PEER-1's record: its lane 1 holds skills/*.py for PEER-2, which is building, and it claims skills/render.py;
+    PEER-3, planned, names skills/views.py."""
+    return {"key": "PEER-1", "state": {
+        "lanes": [], "queue": [], "laneOwnership": {"lane-1": ["skills/*.py"]}, "extensions": {"claims": ["skills/render.py"]},
+        "planned": [{"subject": "PEER-2", "lane": "lane-1", "stage": "building", "files": ["skills/render.py"]},
+                    {"subject": "PEER-3", "lane": "lane-2", "stage": "planned", "files": ["skills/views.py"]}]}}
+
+
+FREE = {"holder": None, "waiters": []}
+
+
+def said(found: dict, name: str = "waits") -> list[tuple]:
+    return [(wait["subject"], wait["words"]) for wait in found[name]]
+
+
+class PeerWaitsTests(unittest.TestCase):
+    """A claim or the merge slot gives a wait in the delivery that waits and a line in the one it waits on, from the
+    same facts, and both go when the claim is released or the slot is."""
+
+    def test_a_claimed_file_is_a_wait_on_the_peer_and_its_story_and_the_peer_says_who_waits_on_its_claim(self) -> None:
+        found = delivery_state.peer_waits(ours(), "APP-1", [theirs()], FREE)
+        self.assertEqual(said(found), [("APP-2", "Waits for delivery PEER-1, whose PEER-2 claims skills/render.py.")])
+        [wait] = [wait for wait in found["waits"] if wait["subject"] == "APP-2"]
+        self.assertEqual({k: wait[k] for k in ("on", "cause", "stage", "frees", "needsSomeone")},
+                         {"on": {"delivery": "PEER-1", "subject": "PEER-2"}, "cause": "claim", "stage": "building",
+                          "frees": "released", "needsSomeone": False})
+        # PEER-3 waits on APP-1's claim: said under APP-3, the story on the file.
+        self.assertEqual(said(found, "waitedOn"), [("APP-3", "Delivery PEER-1's PEER-3 waits on this delivery's claim on skills/views.py.")])
+        self.assertEqual(found["waitedOn"][0]["by"], [{"delivery": "PEER-1", "subject": "PEER-3"}])
+        # The peer derives the same from its side: its PEER-3 waits on APP-1, and it says APP-2 waits on its claim.
+        peer = {"state": theirs()["state"], "journal": []}
+        mirror = delivery_state.peer_waits(peer, "PEER-1", [{"key": "APP-1", "state": ours()["state"]}], FREE)
+        self.assertEqual(said(mirror), [("PEER-3", "Waits for delivery APP-1, whose APP-3 claims skills/views.py.")])
+        self.assertEqual(said(mirror, "waitedOn"), [("PEER-2", "Delivery APP-1's APP-2 waits on this delivery's claim on skills/render.py.")])
+
+    def test_a_claim_no_story_holds_names_the_delivery_and_is_said_under_the_lead(self) -> None:
+        peer = theirs()
+        peer["state"]["laneOwnership"] = {}
+        document = ours()
+        document["state"]["laneOwnership"] = {}
+        found = delivery_state.peer_waits(document, "APP-1", [peer], FREE)
+        self.assertEqual(said(found)[0], ("APP-2", "Waits for delivery PEER-1, which claims skills/render.py."))
+        self.assertEqual(found["waits"][0]["on"], {"delivery": "PEER-1"})
+        self.assertEqual([subject for subject, _ in said(found, "waitedOn")], ["lead"])
+
+    def test_a_released_claim_a_closed_peer_and_a_started_story_wait_on_nothing(self) -> None:
+        peer = theirs()
+        peer["state"]["extensions"] = {"claims": []}
+        document = ours()
+        document["state"]["extensions"] = {}
+        self.assertEqual(delivery_state.peer_waits(document, "APP-1", [peer], FREE), {"waits": [], "waitedOn": []})
+        # A closed peer is no longer registered, so it is not among the peers.
+        self.assertEqual(delivery_state.peer_waits(ours(), "APP-1", [], FREE), {"waits": [], "waitedOn": []})
+        started = ours()
+        started["state"]["planned"][0]["stage"] = "building"
+        self.assertEqual(said(delivery_state.peer_waits(started, "APP-1", [theirs()], FREE)), [])
+
+    def slot(self, holder: dict | None, *waiters: dict) -> dict:
+        return {"holder": None if holder is None else {"pid": 1, "since": CLOCK, **holder},
+                "waiters": [{"pid": 10 + index, "since": CLOCK, **waiter} for index, waiter in enumerate(waiters)]}
+
+    def test_a_lead_command_and_the_queues_front_piece_wait_on_the_peers_hold_saying_what_it_does_and_since(self) -> None:
+        for what, words in (("push", "push"), ("sync", "sync"), ("upgrade", "writer upgrade")):
+            with self.subTest(what=what):
+                slot = self.slot({"delivery": "PEER-1", "doing": {"what": "check", "subject": "PEER-2"}},
+                                 {"delivery": "APP-1", "doing": {"what": what}})
+                [wait] = delivery_state.peer_waits(ours(), "APP-1", [], slot)["waits"]
+                self.assertEqual((wait["subject"], wait["words"]), (
+                    "lead", f"The lead's {words} waits for delivery PEER-1, which is checking PEER-2, since 14:10 UTC."))
+                self.assertEqual({k: wait[k] for k in ("on", "cause", "stage", "frees", "since", "needsSomeone")},
+                                 {"on": {"delivery": "PEER-1", "subject": "PEER-2"}, "cause": "slot", "stage": "check",
+                                  "frees": "released", "since": CLOCK, "needsSomeone": False})
+        for held, doing in (({"what": "merge", "subject": "PEER-2"}, "merging PEER-2"), ({"what": "release"}, "releasing"),
+                            ({"what": "push"}, "pushing")):
+            with self.subTest(held=held):
+                slot = self.slot({"delivery": "PEER-1", "doing": held}, {"delivery": "APP-1", "doing": {"what": "check", "subject": "APP-5"}})
+                self.assertEqual(said(delivery_state.peer_waits(ours(), "APP-1", [], slot)),
+                                 [("APP-5", f"APP-5 waits for delivery PEER-1, which is {doing}, since 14:10 UTC.")])
+
+    def test_the_holder_names_each_waiter_and_what_it_waits_to_do(self) -> None:
+        slot = self.slot({"delivery": "APP-1", "doing": {"what": "check", "subject": "APP-5"}},
+                         {"delivery": "PEER-1", "doing": {"what": "push"}},
+                         {"delivery": "PEER-1", "doing": {"what": "check", "subject": "PEER-2"}},
+                         {"delivery": "APP-1", "doing": {"what": "push"}})
+        found = delivery_state.peer_waits(ours(), "APP-1", [], slot)
+        self.assertEqual(said(found, "waitedOn"), [("APP-5", "Delivery PEER-1 waits to start pushing."),
+                                                   ("APP-5", "Delivery PEER-1 waits to start checking PEER-2.")])
+        self.assertEqual(found["waitedOn"][1]["by"], [{"delivery": "PEER-1", "subject": "PEER-2"}])
+        # This delivery's own waiter waits on itself, which is no wait on another delivery.
+        self.assertEqual(found["waits"], [])
+        # A lead's hold is said under the lead.
+        slot["holder"]["doing"] = {"what": "sync"}
+        self.assertEqual({subject for subject, _ in said(delivery_state.peer_waits(ours(), "APP-1", [], slot), "waitedOn")}, {"lead"})
+
+    def test_every_caller_of_the_merge_slot_says_what_it_holds_it_for(self) -> None:
+        import ast
+        named = {"lead_sync": "sync", "lead_upgrade_writer": "upgrade", "lead_push": "push", "slot": None}
+        seen = {}
+        for relative in ("skills/run-delivery/scripts/run_delivery.py", "skills/orchestrate-work/scripts/merge_queue.py"):
+            tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"))
+            for function in ast.walk(tree):
+                if not isinstance(function, ast.FunctionDef):
+                    continue
+                for call in ast.walk(function):
+                    if (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                            and call.func.attr == "merge_slot"):
+                        [doing] = [keyword.value for keyword in call.keywords if keyword.arg == "doing"]
+                        seen[function.name] = ast.literal_eval(doing)["what"] if isinstance(doing, ast.Dict) else None
+        self.assertEqual(seen, named)
+
+    def test_a_holder_or_waiter_file_without_doing_is_using_the_main_line_and_a_free_slot_waits_on_nothing(self) -> None:
+        slot = self.slot({"delivery": "PEER-1"}, {"delivery": "APP-1"})
+        self.assertEqual(said(delivery_state.peer_waits(ours(), "APP-1", [], slot)), [
+            ("lead", "The lead's use of the main line waits for delivery PEER-1, which is using the main line, since 14:10 UTC.")])
+        holding = self.slot({"delivery": "APP-1"}, {"delivery": "PEER-1"})
+        self.assertEqual(said(delivery_state.peer_waits(ours(), "APP-1", [], holding), "waitedOn"),
+                         [("lead", "Delivery PEER-1 waits to start using the main line.")])
+        self.assertEqual(delivery_state.peer_waits(ours(), "APP-1", [], self.slot(None, {"delivery": "APP-1"})),
+                         {"waits": [], "waitedOn": []})
+
+
+def marked(table: dict) -> dict:
+    """The table with every template carrying its own marker, ⟦group.name[.case]⟧, as tests.test_waits marks it."""
+    copied = json.loads(json.dumps(table))
+    for group, value in copied.items():
+        if not isinstance(value, dict) or "templates" not in value:
+            continue
+        for name, template in value["templates"].items():
+            if isinstance(template, dict):
+                template["cases"] = {case: f"⟦{group}.{name}.{case}⟧ {words}" for case, words in template["cases"].items()}
+                template["otherwise"] = f"⟦{group}.{name}⟧ {template['otherwise']}"
+            else:
+                value["templates"][name] = f"⟦{group}.{name}⟧ {template}"
+    return copied
+
+
+class PeerWaitViewTests(unittest.TestCase):
+    """Each peer-wait sentence comes from its own template, and the Markdown view and the built-in page print it while
+    peer-waits.json is fresh, and nothing of other deliveries when it is stale or absent."""
+
+    def setUp(self) -> None:
+        import render_state
+        self.render_state = render_state
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.folder = Path(folder.name)
+        self.table = marked(json.loads(WORDS.read_text(encoding="utf-8")))
+        slot = {"holder": {"pid": 1, "since": CLOCK, "delivery": "PEER-1", "doing": {"what": "check", "subject": "PEER-2"}},
+                "waiters": [{"pid": 2, "since": CLOCK, "delivery": "APP-1", "doing": {"what": "push"}},
+                            {"pid": 3, "since": CLOCK, "delivery": "APP-1", "doing": {"what": "check", "subject": "APP-5"}}]}
+        claims = delivery_state.peer_waits(ours(), "APP-1", [theirs()], FREE, words=self.table)
+        held = delivery_state.peer_waits(ours(), "APP-1", [], slot, words=self.table)
+        holding = delivery_state.peer_waits(ours(), "APP-1", [], {
+            "holder": {"pid": 1, "since": CLOCK, "delivery": "APP-1", "doing": {"what": "sync"}},
+            "waiters": [{"pid": 2, "since": CLOCK, "delivery": "PEER-1", "doing": {"what": "merge", "subject": "PEER-2"}}]},
+            words=self.table)
+        self.found = {name: [*claims[name], *held[name], *holding[name]] for name in ("waits", "waitedOn")}
+
+    def write(self, stale_after: str) -> None:
+        (self.folder / "peer-waits.json").write_text(json.dumps({"spec": "delivery-peer-waits/1", "at": CLOCK,
+                                                                 "staleAfter": stale_after, **self.found}))
+
+    def record(self) -> dict:
+        """The waits fixture's whole record, with APP-1's work in it."""
+        document = json.loads((ROOT / "tests/fixtures/waits/record.json").read_text(encoding="utf-8"))
+        document["journal"] = []
+        mine = ours()["state"]
+        template = next(iter(document["state"]["planned"]))
+        document["state"]["planned"] = [{**template, **item, "title": item["subject"]} for item in mine["planned"]]
+        rows = {row["id"]: row for row in document["state"]["lanes"]}
+        document["state"]["lanes"] = [{**rows["lane-1"], **row} for row in mine["lanes"]]
+        document["state"]["queue"] = [{"order": 1, "subject": "APP-5", "title": "Five", "lane": "lane-2", "stage": "queued",
+                                       "head": "b" * 40, "syncedHead": None, "leadInputs": [], "reportedRounds": None,
+                                       "runId": None, "checks": []}]
+        document["state"].update(laneOwnership=mine["laneOwnership"], extensions=mine["extensions"])
+        return document
+
+    def test_every_template_the_cases_reach_carries_its_own_marker(self) -> None:
+        reached = {re.search(r"⟦([a-zA-Z]+\.[a-zA-Z]+(?:\.[a-z0-9]+)?)⟧", wait["words"]).group(1)
+                   for name in ("waits", "waitedOn") for wait in self.found[name]}
+        self.assertEqual(reached, {"waits.claim.true", "holding.claim", "waits.slot.lead", "waits.slot",
+                                   "holding.slot"})
+        # The holder's doing is said from its own template inside the sentence.
+        self.assertTrue(any("⟦doing.slot.check⟧" in wait["words"] for wait in self.found["waits"]))
+        self.assertTrue(any("⟦doing.work.push⟧" in wait["words"] for wait in self.found["waits"]))
+
+    def test_the_markdown_view_and_the_built_in_page_print_them_while_fresh(self) -> None:
+        self.write("2999-01-01T00:00:00Z")
+        shown = self.render_state.with_peer_waits(self.record(), self.folder)
+        markdown = self.render_state.render_markdown(shown)
+        page = self.render_state.render_static_page(shown)
+        for wait in [*self.found["waits"], *self.found["waitedOn"]]:
+            self.assertIn(self.render_state._markdown_text(wait["words"]), markdown)
+        raw = re.search(r'<script type="application/json" id="delivery-state">(.*?)</script>', page, re.S).group(1)
+        embedded = json.loads(raw)
+        for name in ("waits", "waitedOn"):
+            self.assertEqual([wait for wait in embedded[name] if wait in self.found[name]], self.found[name])
+        # Under the story, the queued piece, the lane and the lead.
+        lines = markdown.splitlines()
+        story = lines.index(next(line for line in lines if line.startswith("- APP-2:")))
+        self.assertIn("⟦waits.claim.true⟧", lines[story + 1])
+        piece = lines.index(next(line for line in lines if line.startswith("- 1\\. APP-5:")))
+        self.assertIn("⟦waits.slot⟧", "\n".join(lines[piece:piece + 3]))
+        lead = [line for line in lines if "⟦waits.slot.lead⟧" in line or ("⟦holding.slot⟧" in line and line.startswith("- "))]
+        self.assertEqual(len(lead), 2, markdown)
+        # The page's own script prints what it is given: no peer-wait words of its own.
+        script = page[page.index("<script>"):]
+        for words in ("waits for delivery", "waits to start", "using the main line", "this delivery's claim"):
+            self.assertNotIn(words, script.replace(raw, ""))
+
+    def test_a_stale_file_or_none_says_nothing_of_other_deliveries(self) -> None:
+        document = self.record()
+        self.assertEqual(self.render_state.with_peer_waits(document, self.folder), document)
+        self.write("2026-11-17T14:00:00Z")
+        self.assertEqual(self.render_state.with_peer_waits(document, self.folder), document)
+        (self.folder / "peer-waits.json").write_text("{not json")
+        self.assertEqual(self.render_state.with_peer_waits(document, self.folder), document)
 
 if __name__ == "__main__":
     unittest.main()

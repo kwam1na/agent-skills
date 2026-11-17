@@ -7193,7 +7193,8 @@ def lead_sync(args) -> None:
     try:
         # The base's merge slot first, which every delivery on this machine shares, then this delivery's queue lock.
         with delivery_state.file_lock(supervisor_lock_path(c)), \
-                delivery_state.merge_slot(c.root, c.base_branch, delivery=c.delivery, timeout=args.wait_seconds), \
+                delivery_state.merge_slot(c.root, c.base_branch, delivery=c.delivery, timeout=args.wait_seconds,
+                                          doing={"what": "sync"}), \
                 delivery_state.file_lock(c.state / delivery_state.QUEUE_LOCK, timeout=args.wait_seconds):
             published = remote_head(c.base_branch)
             if published not in (intent["oldHead"], intent.get("preparedHead")):
@@ -7303,7 +7304,8 @@ def lead_upgrade_writer(args) -> None:
         # slot, as the queue does, within the binding's check timeout, around the transition's queue lock.
         with delivery_state.file_lock(supervisor_lock_path(c)), \
                 delivery_state.merge_slot(c.root, c.base_branch, delivery=c.delivery,
-                                          timeout=float(c.binding.get("checkTimeoutSeconds", 0))):
+                                          timeout=float(c.binding.get("checkTimeoutSeconds", 0)),
+                                          doing={"what": "upgrade"}):
             result = state_tool("writer-upgrade", "--writer", "lead", "--expected", args.expected,
                                 "--reason", args.reason)
             pinned = json.loads(result.stdout)["state"]["meta"]["writerGeneration"]
@@ -7339,7 +7341,8 @@ def lead_push(args) -> None:
 
     print(f"Waiting for the merge queue's lock to publish {c.base_branch}.", flush=True)
     try:
-        with delivery_state.merge_slot(c.root, c.base_branch, delivery=c.delivery, timeout=args.wait_seconds), \
+        with delivery_state.merge_slot(c.root, c.base_branch, delivery=c.delivery, timeout=args.wait_seconds,
+                                       doing={"what": "push"}), \
                 delivery_state.file_lock(c.state / delivery_state.QUEUE_LOCK, timeout=args.wait_seconds):
             git("fetch", "-q", c.remote, c.base_branch)
             current = remote_head(c.base_branch)
@@ -9875,6 +9878,39 @@ def write_needs(c, items: list[dict] | None, number: int, started: float) -> Non
             fcntl.flock(lock, fcntl.LOCK_UN)
 
 
+PEER_WAITS_FILE = "peer-waits.json"
+
+
+def write_peer_waits(c) -> str:
+    """Replace the record's waits on the other deliveries on its base, and theirs on it, which renderers add to the
+    record's own while the file is fresh: from the registry, each peer's claims and planned files, and the merge
+    slot's holder and waiter files, as `delivery_state.peer_waits` derives them. Stale, like "Needs you", once one
+    pass is overdue."""
+    scripts = str(c.release / "skills/orchestrate-work/scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import delivery_state
+    peers = [{"key": peer["key"], "state": json_object(Path(peer["state"]) / "state.json")}
+             for peer in peer_deliveries(c) if peer["status"] != "unreadable"]
+    try:
+        slot = delivery_state.slot_parties(delivery_state.merge_slot_path(c.root, c.base_branch))
+    except delivery_state.StateError:
+        slot = {"holder": None, "waiters": []}
+    document = load_state()
+    if not isinstance(document.get("state"), dict):
+        return "skipped: the record has no state to derive from"
+    found = delivery_state.peer_waits(document, c.delivery, peers, slot)
+    at = datetime.datetime.now(datetime.timezone.utc)
+    interval = supervisor_pass_seconds(c)
+    written = {"spec": "delivery-peer-waits/1", "at": at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+               "staleAfter": (at + datetime.timedelta(seconds=2 * interval)).strftime("%Y-%m-%dT%H:%M:%SZ"), **found}
+    path = c.state / PEER_WAITS_FILE
+    staging = path.with_name(f".{PEER_WAITS_FILE}.{os.getpid()}")
+    staging.write_text(json.dumps(written, indent=2) + "\n")
+    os.replace(staging, path)
+    return f"{len(found['waits'])} wait(s) on other deliveries, {len(found['waitedOn'])} on this one"
+
+
 def removed_subjects(c) -> set[str]:
     return {key for entry in read_plan_log(c) if entry.get("type") == "change" and entry.get("kind") == "removed"
             for key in entry.get("subjects", [])}
@@ -10929,6 +10965,7 @@ class Supervisor:
                  ("lenses", lambda: journal_lens_returns(c)),
                  ("finish", lambda: journal_finish_met(c, load_state())),
                  ("deferrals", lambda: deferral_breaches(c, load_state())),
+                 ("peerWaits", lambda: write_peer_waits(c)),
                  ("publish", lambda: render_views(c, only="publishers")), ("needs", derive),
                  ("render", lambda: render_views(c, only="renderers")), ("latest", lambda: str(copy_latest(c))))
         for name, step in steps:

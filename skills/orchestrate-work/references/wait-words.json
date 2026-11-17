@@ -29,6 +29,20 @@
       "order": "Waits for {on:ticket} to land. {where}",
       "files": "Waits for {on:ticket} to land. {onLane:lane} holds {files:list} for it.",
       "review": "In review: round {round} under way at {head:commit}, {back} of {lenses:count:lens|lenses} back.",
+      "claim": {
+        "by": "named",
+        "cases": {
+          "true": "Waits for delivery {peer}, whose {story:ticket} claims {files:list}."
+        },
+        "otherwise": "Waits for delivery {peer}, which claims {files:list}."
+      },
+      "slot": {
+        "by": "waiter",
+        "cases": {
+          "lead": "The lead's {work} waits for delivery {holder}, which is {doing}[, since {at}]."
+        },
+        "otherwise": "{waiter:ticket} waits for delivery {holder}, which is {doing}[, since {at}]."
+      },
       "held": "Held by the lead: {text}"
     }
   },
@@ -43,7 +57,36 @@
   "holding": {
     "description": "Under the story others wait on.",
     "templates": {
-      "story": "Waited on by {by:list:ticket}."
+      "story": "Waited on by {by:list:ticket}.",
+      "claim": "Delivery {peer}'s {story:ticket} waits on this delivery's claim on {files:list}.",
+      "slot": "Delivery {peer} waits to start {doing}."
+    }
+  },
+  "doing": {
+    "description": "What a command holds or waits for a merge slot to do, as its holder and waiter files say: a holder's as it goes on, a lead's waiter's as its work. A file without it is using the main line.",
+    "templates": {
+      "slot": {
+        "by": "what",
+        "cases": {
+          "push": "pushing",
+          "sync": "syncing",
+          "upgrade": "upgrading its writer",
+          "check": "checking[ {subject:ticket}]",
+          "merge": "merging[ {subject:ticket}]",
+          "release": "releasing"
+        },
+        "otherwise": "using the main line"
+      },
+      "work": {
+        "by": "what",
+        "cases": {
+          "push": "push",
+          "sync": "sync",
+          "upgrade": "writer upgrade",
+          "release": "release"
+        },
+        "otherwise": "use of the main line"
+      }
     }
   },
   "needsYou": {
