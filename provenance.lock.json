@@ -230,7 +230,7 @@
         },
         {
           "path": "skills/delivery-views/references/hosted-snapshot.schema.json",
-          "sha256": "fe5809c267246e1d24afe9a7eb182843deb30420a6ca9dbdcd7f91474d1d059e"
+          "sha256": "2ccad1e3e089adb75ce07661c8f55b93ea29c49a61a65f691bdb12882fee3579"
         },
         {
           "path": "skills/delivery-views/scripts/hosted.py",
