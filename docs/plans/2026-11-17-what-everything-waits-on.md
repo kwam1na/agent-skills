@@ -608,6 +608,13 @@ entry a short end tick, so adjacent setbacks read as separate. A beat whose line
 its fold. Its words change in the registry and its vectors, not in the page. Every mark is drawn from the story's
 existing thread facts.
 
+It also fixes the Checking card's finishing animation, folded in at the operator's request. Each record write
+rebuilds the card from scratch ([`line-map.js`](skills/delivery-views/assets/line-map.js), around the running row), so a
+finishing check's hand-off is cut short: the arc filling, the tick or cross, the hold and the turn, about two seconds
+in all (`SETTLE_MS`, `HOLD_MS`, `TURN_OUT_MS`, `TURN_IN_MS`). Two-second hosted checks interrupt every one. A redraw
+mid-hand-off keeps the animating row and queues the next result. Checks that finish faster than the animation get a
+shortened one, so the card never falls behind the record.
+
 ## Calls made
 
 The operator settled these on 2026-11-17, before drafting.
