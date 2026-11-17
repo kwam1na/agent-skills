@@ -222,6 +222,10 @@
         {
           "id": "v26-3567-5",
           "text": "c5: Pointed at a copy of the word table with changed templates, the rows show the changed words, so no row words itself."
+        },
+        {
+          "id": "v26-3567-6",
+          "text": "c6: Each row's meta line opens with who must act: You for the operator, The lead, or a lane by name. Rows that need the operator come first. On the page, 'you' always means the reader and the lead is always named."
         }
       ],
       "after": [
