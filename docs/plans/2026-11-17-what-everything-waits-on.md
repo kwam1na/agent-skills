@@ -165,7 +165,9 @@ The lane's side:
      `waitingFrom` state, and then the stop's rest applies to it with `waitingOn` "lead", before any early return,
      whatever its focus names. `lane_rows_put_back` then treats it as today. A `waiting` row in another lane stays
      `waiting`, with the same `waitingOn` and `waitingFrom`, and is counted among what waits on the stopped piece.
-   The `wait` event for a landing or a settlement names every lane it freed.
+   The `wait` event for a landing or a settlement names every lane it freed. Any other write that takes a row out of
+   `waiting`, such as the lane's own `focus` to another state or a hand-off, removes `waitingFrom` and clears a
+   `waitingOn` that named the waited-on subject.
 8. **`wait` does not wake on a planned wait.** A `waiting` row is not a blocked one, and `wait` neither wakes on it
    nor counts it as quiet. A `waiting` row is not in "Needs you" and does not hold the close.
 9. **`lead-accept` settles the row.** After an acceptance, the accepted lane's row is `idle` with `waitingOn` naming
@@ -345,6 +347,12 @@ For `waiting` lanes and acceptance, in V26-3426:
 - A lane that was `working` sets `waiting` on its own handed story, which the queue then stops. The row is
   `working`, with `waitingOn` "lead" and no `waitingFrom`. The same holds when the row's last focus does not name
   the stopped story. When the story is put back, the row is `handed`, as today.
+- A lane that was `working` sets `waiting` on its own story and holds no other open work. The story then settles
+  through a no-change hand-off, and the row ends `idle`, with `waitingOn` null and no `waitingFrom`. The same holds
+  when the story is settled through `accept_handoff`.
+- A lane `waiting` on lane 2's story hands its own story with no change. The row is `handed`, with no `waitingFrom`
+  and a `waitingOn` that no longer names lane 2's story. A lane `waiting` that says `focus --state working` likewise
+  keeps no `waitingFrom`.
 - An idle lane whose next planned story waits shows that story's wait under the lane.
 - After `lead-accept`, the lane is `idle`, waiting on the accepted key, and clears to `null` when that key merges.
 
