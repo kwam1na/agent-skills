@@ -218,6 +218,10 @@
         {
           "id": "v26-3567-4",
           "text": "c4: Holding rows come first and carry 'Holding up the finish'. The rest follow quieter. Red appears only on a stopped stop."
+        },
+        {
+          "id": "v26-3567-5",
+          "text": "c5: Pointed at a copy of the word table with changed templates, the rows show the changed words, so no row words itself."
         }
       ],
       "after": [
