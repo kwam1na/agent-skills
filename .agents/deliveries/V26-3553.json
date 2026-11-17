@@ -256,6 +256,10 @@
         {
           "id": "v26-3568-5",
           "text": "c5: Nothing moves under reduced motion."
+        },
+        {
+          "id": "v26-3568-6",
+          "text": "c6: A check's finishing animation (the arc filling, its tick or cross, the hold and the turn to the next check) plays to its end across live redraws. A redraw mid-animation keeps the animating row and queues the next result, and checks that finish faster than the animation get a shortened one, so the card never falls behind the record."
         }
       ],
       "after": [
