@@ -566,6 +566,10 @@ with `--criterion` drops that one criterion as a recorded change with its reason
 lacks, and the story's last criterion. The plan chapter strikes a dropped criterion through and shows its reason, as
 it does for a removed story.
 
+### V26-3567. Show what needs someone as one list, in the lanes' own visual language
+
+Lane 1, tier 1, after V26-3426. Added mid-delivery: The operator approved a live mock of Needs you in the lanes' visual language, merged with Needs attention, and asked to add it to this delivery
+
 ## Calls made
 
 The operator settled these on 2026-11-17, before drafting.

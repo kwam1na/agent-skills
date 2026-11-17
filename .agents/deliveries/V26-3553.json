@@ -197,6 +197,20 @@
       "after": [
         "V26-3565"
       ]
+    },
+    "V26-3567": {
+      "title": "Show what needs someone as one list, in the lanes' own visual language",
+      "lane": "lane-1",
+      "why": "The operator approved a live mock of Needs you in the lanes' visual language, merged with Needs attention, and asked to add it to this delivery",
+      "criteria": [
+        {
+          "id": "v26-3567-1",
+          "text": "c1: The live page shows one Needs you list and no Needs attention section, and a blocked lane's question appears in it once."
+        }
+      ],
+      "after": [
+        "V26-3426"
+      ]
     }
   },
   "finish": [
