@@ -620,6 +620,30 @@ class BoundaryTests(unittest.TestCase):
         self.assertEqual([(thread["opening"], thread["closing"], thread["cost"]) for thread in story["threads"]], [(blocker, resolved, 20 * 60)])
         self.assertEqual(story["digest"]["words"]["line"], "One setback cost 20m.")
 
+    def test_a_rounds_start_is_a_story_beat_its_lenses_bookkeeping_and_its_reduction_opens_no_thread(self) -> None:
+        journal = Journal()
+        journal.started()
+        journal.add(1, "lane.assigned", {"title": "Work A"}, subject="A")
+        start = journal.add(10, "review.started", {"round": 2, "head": "b" * 40, "lenses": ["lens.one", "lens.two"],
+                                                   "restart": False, "moved": 3, "why": "Fixes the open P1."}, subject="A")
+        back = [journal.add(20, "review.lens.returned", {"round": 2, "lens": lens, "verdict": "approve",
+                                                         "findings": {"P0": 0, "P1": 0, "P2": 0, "P3": 0}}, subject="A")
+                for lens in ("lens.one", "lens.two")]
+        reduced = journal.add(25, "review.round", {"round": 2, "startedAt": "2026-11-16T09:10:00Z", "finishedAt": "2026-11-16T09:25:00Z",
+                                                   "verdicts": {"lens.one": "approve", "lens.two": "approve"},
+                                                   "findings": {"P0": 0, "P1": 0, "P2": 0, "P3": 0}}, subject="A", answers=[start])
+        story = journal.told()
+        self.assertWhole(story, journal)
+        self.assertEqual(story["threads"], [])
+        beat = beat_of(story, start)
+        self.assertEqual((beat["form"], beat["entries"], beat["altitudes"]), ("entry", [start], ["story", "everything"]))
+        self.assertEqual(beat["words"], {"head": "Review round 2 started on A",
+                                         "line": "At bbbbbbb, read by lens.one and lens.two, 3 commits since the last round. Fixes the open P1."})
+        # The lenses' returns are one run of bookkeeping, told only in full; the reduced round is a beat of its own.
+        returns = beat_of(story, back[0])
+        self.assertEqual((returns["form"], returns["entries"], returns["altitudes"]), ("bookkeeping", back, ["everything"]))
+        self.assertEqual(beat_of(story, reduced)["entries"], [reduced])
+
     def test_work_after_the_close_reopens_the_delivery(self) -> None:
         journal = Journal()
         journal.started()

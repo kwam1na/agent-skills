@@ -28,6 +28,7 @@
     "templates": {
       "order": "Waits for {on:ticket} to land. {where}",
       "files": "Waits for {on:ticket} to land. {onLane:lane} holds {files:list} for it.",
+      "review": "In review: round {round} under way at {head:commit}, {back} of {lenses:count:lens|lenses} back.",
       "held": "Held by the lead: {text}"
     }
   },

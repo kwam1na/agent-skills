@@ -1698,9 +1698,45 @@
   // The run that built the stop, as the product's run view summarized it when the page was rendered.
   // A round the view gives no lens verdicts for takes them from the record's own review.round entry.
   function runFor(doc, item) {
+    /**
+     * A story's round in flight: its latest review.started, until a review.round answers it or names its round, the
+     * story is handed off, settled or picked up again, or another start follows. Each lens back is its latest
+     * review.lens.returned for that round. { round, head, at, lenses, back, why, moved } or null.
+     */
+    function roundInFlight(doc, subject) {
+      var start = journalFor(doc, subject, { "review.started": true }).slice(-1)[0];
+      var said = start && isObject(start.data) ? start.data : null;
+      if (!said || typeof said.round !== "number" || typeof said.head !== "string" || settledEntry(doc, subject)) { return null; }
+      var after = journalFor(doc, subject).filter(function (entry) { return (entry.id || 0) > (start.id || 0); });
+      var over = after.some(function (entry) {
+        return entry.kind === "candidate.handed" || entry.kind === "lane.assigned" || (entry.kind === "review.round"
+          && (list(entry.answers).indexOf(start.id) >= 0 || (isObject(entry.data) && entry.data.round === said.round)));
+      });
+      if (over) { return null; }
+      var back = Object.create(null);
+      after.forEach(function (entry) {
+        var data = entry.kind === "review.lens.returned" && isObject(entry.data) ? entry.data : null;
+        if (data && data.round === said.round && typeof data.lens === "string") { back[data.lens] = { verdict: data.verdict, findings: data.findings, at: entry.at }; }
+      });
+      // The card's headline is the story's review wait, as the state tool says it; without one the card words its own.
+      var waiting = waitsOf(doc, "waits", subject).filter(function (wait) { return wait.cause === "review"; })[0];
+      return { round: said.round, head: said.head, at: start.at, lenses: list(said.lenses).filter(function (lens) { return typeof lens === "string"; }),
+        back: back, why: text(said.why) || null, moved: typeof said.moved === "number" ? said.moved : null,
+        headline: waiting ? waiting.words : null };
+    }
     if (typeof item.runId !== "string" || item.runId === "") {
       var native = Object.prototype.hasOwnProperty.call(nativeReviews, item.subject) ? nativeReviews[item.subject] : null;
       var events = journalFor(doc, item.subject, { "review.round": true, "review.recorded": true });
+      var inFlight = roundInFlight(doc, item.subject);
+      // The round in flight, over the finished rounds a valid observation gives, or over none.
+      var underWay = function (finished, note) {
+        var box = el("div", "d-run");
+        if (note) { box.appendChild(el("div", "d-run-none", note)); }
+        var shown = isObject(finished) ? finished : { observational: true, observationKey: item.subject, open: false, roundDetail: [] };
+        box.appendChild(runSummaryNode(Object.assign({}, shown, { running: inFlight }), { commitHref: commitHref, issueHref: issueHref, lenses: VIEW.lenses, subject: item.subject }));
+        return box;
+      };
+      if (inFlight && !native && !events.length) { return underWay(null); }
       var boundary = events.reduce(function (last, event) { return Math.max(last, event.id || 0); }, 0);
       var evidence = events.filter(function (event) { return KEPT[event.kind]; }).slice(-1)[0];
       var observation = isObject(doc.reviewEvidence) ? doc.reviewEvidence[item.subject] : undefined;
@@ -1717,12 +1753,14 @@
           || native.journalId !== boundary
           || (evidence && (!keptReview(evidence) || keptReview(evidence).digest !== native.digest))
           || (isObject(doc.reviewEvidence) && (!isObject(observation) || observation.unavailable === true || observation.digest !== native.digest))) {
+        if (inFlight) { return underWay(null, "Earlier rounds' evidence is unavailable or stale for this candidate."); }
         return el("div", "d-run-none", "Review evidence unavailable or stale for this candidate." + (isPlanned(doc, item) && !closedEntry(doc)
           ? " Its rounds show here again once the lane's review-reduce records its latest round." : ""));
       }
+      if (inFlight) { return underWay(native); }
       var nativeBox = el("div", "d-run");
       if (carried) { nativeBox.appendChild(el("div", "d-run-carried", "Carried by the lead. " + text(carried.note))); }
-      nativeBox.appendChild(runSummaryNode(native, { commitHref: commitHref, lenses: VIEW.lenses }));
+      nativeBox.appendChild(runSummaryNode(native, { commitHref: commitHref, issueHref: issueHref, lenses: VIEW.lenses, subject: item.subject }));
       return nativeBox;
     }
     if (VIEW.runs !== true) { return null; }
@@ -1752,7 +1790,7 @@
       return Object.assign({}, round, { verdicts: verdicts, outcome: outcome });
     });
     var box = el("div", "d-run");
-    box.appendChild(runSummaryNode(Object.assign({}, summary, { roundDetail: rounds }), { commitHref: commitHref, lenses: VIEW.lenses }));
+    box.appendChild(runSummaryNode(Object.assign({}, summary, { roundDetail: rounds }), { commitHref: commitHref, issueHref: issueHref, lenses: VIEW.lenses }));
     return box;
   }
 
@@ -2170,6 +2208,7 @@
     var label = line ? text(line.label) || text(line.id) : text(recordLine.text) || text(recordLine.id);
     var done = 0, either = 0, total = 0, noun = "criteria", measured = "Proven";
     var kinds = [];
+    var moved = line ? finishMoved(line) : null;
     if (line) {
       kinds = list(isObject(line.covers) ? line.covers.proofs : []).map(text);
       if (kinds.length) { measured = kinds.map(kindLabel).join(", "); }
@@ -2191,7 +2230,7 @@
         whole.style.width = met ? "100%" : "0%";
         marked.appendChild(whole);
         return add(el("div", "plan-meter" + (met ? " met" : "")), add(el("div", "pm-head"), el("span", "pm-label", label), el("span", "pm-state", met ? "Met" : "Not yet")),
-          marked, el("div", "pm-count", met ? "Marked met by the lead" : "The lead marks this one"));
+          marked, el("div", "pm-count", met ? "Marked met by the lead" : "The lead marks this one"), moved);
       }
       var rows = covered === null ? counts.units : covered.map(function (criterion) { return criterion.unit; });
       if (covered === null) { noun = "units"; }
@@ -2213,7 +2252,7 @@
     // The count first, then what it counts: "10 of 21 criteria · review, merged".
     var words = line ? done + " of " + total + " " + noun + (kinds.length ? " · " + measured.toLowerCase() : " proven") +
       (either > done ? ", " + (either - done) + " more by waiver" : "") : "Not in the plan";
-    return add(box, head, bar, el("div", "pm-count", words));
+    return add(box, head, bar, el("div", "pm-count", words), moved);
   }
   /** One meter per finish line: the plan's, in order, then any the record has that the plan does not. */
   function planMeters(doc) {
@@ -2425,8 +2464,9 @@
     var first = size;
     var points = [[begin, size]];
     changes.slice().sort(function (p, q) { return (seconds(p.at) || 0) - (seconds(q.at) || 0); }).forEach(function (change) {
-      if (change.kind === "added") { size += list(change.subjects).length; }
-      if (change.kind === "removed") { size -= list(change.subjects).length; }
+      // A change naming criteria added or dropped those, and its story stays in scope.
+      if (change.kind === "added" && !list(change.criteria).length) { size += list(change.subjects).length; }
+      if (change.kind === "removed" && !list(change.criteria).length) { size -= list(change.subjects).length; }
       points.push([seconds(change.at) || begin, size, change.kind]);
     });
     var end = last !== null && last > begin ? last : begin + 1;
@@ -2478,11 +2518,65 @@
     if (target) { return changeLink(ref); }
     return issueHref(text(ref)) ? issue(text(ref)) : el("span", "pc-ref", text(ref));
   }
+  /** What was approved: its units and its finish lines, as the snapshot froze them. */
+  function approvedPart(key) { return list(isObject(plan.approved) && isObject(plan.approved.snapshot) ? plan.approved.snapshot[key] : []).filter(isObject); }
+  function spokenList(parts) { return parts.length < 2 ? parts.join("") : parts.slice(0, -1).join(", ") + " and " + parts[parts.length - 1]; }
+  /**
+   * The scope since approval in one sentence, counted from the recorded changes alone: stories added and removed, then
+   * criteria added, removed and changed. A change naming criteria moved those criteria, not its story.
+   */
+  function scopeSentence(changes) {
+    var approved = approvedPart("units").length;
+    var tally = { storyAdded: 0, storyRemoved: 0, added: 0, removed: 0, changed: 0 };
+    changes.forEach(function (change) {
+      var named = list(change.criteria).length, subjects = list(change.subjects).length;
+      if (change.kind === "added") { if (named) { tally.added += named; } else { tally.storyAdded += subjects; } }
+      if (change.kind === "removed") { if (named) { tally.removed += named; } else { tally.storyRemoved += subjects; } }
+      if (change.kind === "changed" || change.kind === "relaxed") { tally.changed += named; }
+    });
+    var stories = function (n) { return n + (n === 1 ? " story" : " stories"); };
+    var moved = [tally.storyAdded ? tally.storyAdded + " added" : "", tally.storyRemoved ? tally.storyRemoved + " removed" : ""].filter(Boolean);
+    var criteria = [[tally.added, "added"], [tally.removed, "removed"], [tally.changed, "changed"]].filter(function (pair) { return pair[0]; })
+      .map(function (pair, i) { return pair[0] + (i ? "" : pair[0] === 1 ? " criterion" : " criteria") + " " + pair[1]; });
+    if (!moved.length && !criteria.length) { return "The scope is as approved: " + stories(approved) + "."; }
+    var now = approved + tally.storyAdded - tally.storyRemoved;
+    return "Approved with " + stories(approved) + (moved.length ? ", now " + now + ": " + spokenList(moved) : ", still " + now) +
+      (criteria.length ? "; " + spokenList(criteria) : "") + ".";
+  }
+  /** Whether covers `a` holds everything covers `b` does: its criteria, or every criterion, and its proofs. */
+  function coversHold(a, b) {
+    var proofs = list(a.proofs).map(text);
+    var criteria = a.criteria === "all" || (b.criteria !== "all" && list(b.criteria).every(function (id) { return list(a.criteria).indexOf(id) >= 0; }));
+    return criteria && list(b.proofs).every(function (kind) { return proofs.indexOf(text(kind)) >= 0; });
+  }
+  function coversWords(covers) {
+    var criteria = covers.criteria === "all" ? "every criterion" : list(covers.criteria).length ? list(covers.criteria).map(text).join(", ") : "no criteria";
+    var proofs = list(covers.proofs).map(function (kind) { return kindLabel(text(kind)).toLowerCase(); });
+    return criteria + (proofs.length ? " (" + proofs.join(", ") + ")" : "");
+  }
+  /** A finish line that moved since approval: added since, or its covers raised, lowered or changed, and when. */
+  function finishMoved(line) {
+    var was = approvedPart("finish").filter(function (entry) { return entry.id === line.id; })[0];
+    // A line edited by hand carries the approval's time, which isn't when it moved: then it says no time.
+    var parts = laterThan(line.at, isObject(plan.approved) ? plan.approved.at : null) ? clockParts(line.at) : null;
+    var when = !parts ? "" : parts.day ? " on " + parts.day + ", " + parts.time : " at " + parts.time;
+    if (!was) { return el("div", "pm-count pm-moved", "Added since approval" + when + "."); }
+    var before = isObject(was.covers) ? was.covers : {}, after = isObject(line.covers) ? line.covers : {};
+    var raised = coversHold(after, before), lowered = coversHold(before, after);
+    if (raised && lowered) { return null; }
+    return el("div", "pm-count pm-moved", (raised ? "Raised" : lowered ? "Lowered" : "Changed") + when + ": from " + coversWords(before) +
+      " to " + coversWords(after) + ".");
+  }
   function changeRow(change) {
-    var row = el("li", "plan-change " + text(change.kind));
-    var head = add(el("div", "pc-head"), el("span", "pc-kind", CHANGE_WORDS[change.kind] || text(change.kind)),
-      el("span", "pc-subjects", list(change.subjects).map(text).join(", ")), el("time", null, clock(change.at)));
+    // A removal naming criteria dropped those from its story, which stays: its wording is struck through below.
+    var dropped = change.kind === "removed" && list(change.criteria).length > 0;
+    var row = el("li", "plan-change " + text(change.kind) + (dropped ? " criterion" : ""));
+    var head = add(el("div", "pc-head"), el("span", "pc-kind", dropped ? "Removed criterion" : CHANGE_WORDS[change.kind] || text(change.kind)),
+      el("span", "pc-subjects", list(change.subjects).map(text).join(", ") + (dropped ? " · " + list(change.criteria).map(text).join(", ") : "")),
+      el("time", null, clock(change.at)));
     head.lastChild.setAttribute("datetime", text(change.at));
+    // What was approved was reviewed with the plan; a change made since was not.
+    if (laterThan(change.at, isObject(plan.approved) ? plan.approved.at : null)) { head.appendChild(el("span", "pc-unreviewed", "Not reviewed with the plan")); }
     add(row, head);
     if (text(change.title)) { row.appendChild(el("div", "pc-title", text(change.title))); }
     var before = own(change, "before"), after = own(change, "after");
@@ -2519,7 +2613,7 @@
     var summary = { observational: true, observationKey: "plan-review", open: false, roundDetail: list(review.rounds).filter(isObject),
       planReview: { state: text(review.state), endedReason: text(review.endedReason) } };
     var box = el("div", "plan-review");
-    box.appendChild(runSummaryNode(summary, { commitHref: commitHref, lenses: VIEW.lenses }));
+    box.appendChild(runSummaryNode(summary, { commitHref: commitHref, issueHref: issueHref, lenses: VIEW.lenses }));
     return fold("review", "Plan review (" + count + (count === 1 ? " round)" : " rounds)"), null, box);
   }
 
@@ -2720,10 +2814,11 @@
     if (review) { folds.appendChild(reviewFold(review)); }
     var changes = list(plan.changes).filter(isObject);
     var changeBox = el("div", "plan-changes");
+    changeBox.appendChild(el("p", "waiting plan-scoped", scopeSentence(changes)));
     if (changes.length) { changeBox.appendChild(scopeChart(changes)); }
     var changeList = el("ul");
     changes.slice().reverse().forEach(function (change) { changeList.appendChild(changeRow(change)); });
-    changeBox.appendChild(changes.length ? changeList : el("p", "waiting", "Nothing has changed since approval."));
+    if (changes.length) { changeBox.appendChild(changeList); }  // with none, the sentence above says the scope is as approved
     if (isObject(PLAN.clipped)) {
       var clip = PLAN.clipped;
       changeBox.appendChild(el("p", "plan-clipped", "The plan was too large to show whole: " +

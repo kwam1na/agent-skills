@@ -72,7 +72,9 @@ async function deferredCards(document) {
   return snaps.slice(1).map((snap) => snap.app.querySelector("#detail .run-card"));
 }
 const pill = (card) => card.querySelector(".run-card-outcome").textContent;
-const marks = (card) => Array.from(card.querySelectorAll(".run-filed"), (mark) => mark.textContent);
+// What each band heading and each row says of its findings' fate: the band once, a row only where it differs.
+const marks = (card) => [Array.from(card.querySelectorAll(".run-band"), (band) => band.textContent),
+  Array.from(card.querySelectorAll("li.run-finding"), (row) => row.querySelector(".run-fate")?.textContent ?? null)];
 
 test("a round that approved with deferred findings says so at its head and on each row, as the golden holds", async () => {
   const golden = readJson(path.join(DEFERRED, "golden.json"));
@@ -80,7 +82,8 @@ test("a round that approved with deferred findings says so at its head and on ea
   assert.deepEqual(cards.map((card) => card.textContent), golden.rounds);
   const [first] = cards;
   assert.equal(pill(first), "Approved with 4 deferrable notes");
-  assert.deepEqual(marks(first), ["Deferred · minor", "Deferred · minor", "Deferred · moderate", "Deferred · minor"]);
+  // Every note was fixed, so the footer says it once and no band or row repeats it.
+  assert.deepEqual(marks(first), [["Minor · 2", "Moderate", "Minor"], [null, null, null, null]]);
   assert.equal(first.querySelector(".run-settled").textContent, "All 4 of this round's notes were fixed in bbbbbbb, and round 2 confirmed them.");
 });
 
@@ -89,7 +92,10 @@ test("a deferred finding a later round leaves unfixed is still counted and marke
     outcomes[1].entries[1].result.resolvedFindings.pop();
   }));
   assert.equal(pill(first), "Approved with 4 deferrable notes");
-  assert.deepEqual(marks(first), ["Deferred · minor", "Deferred · minor", "Deferred · moderate", "Deferred · minor"]);
+  // A band whose notes ended alike says it once; in the mixed band each row says its own, and the deferral left open
+  // keeps its follow-up beneath it.
+  assert.deepEqual(marks(first), [["Minor · 2", "Moderate · fixed", "Minor · fixed"], ["\u2713 fixed", "deferred", null, null]]);
+  assert.equal(first.querySelectorAll(".run-followup").length, 1);
   assert.equal(first.querySelector(".run-settled").textContent, "3 of this round's 4 notes were fixed in bbbbbbb, and round 2 confirmed them.");
 });
 
@@ -101,13 +107,13 @@ test("a round that approved with one deferred finding says it in the singular", 
     outcomes[1].entries[1].result.resolvedFindings = [];
   }));
   assert.equal(pill(first), "Approved with 1 deferrable note");
-  assert.deepEqual(marks(first), ["Deferred · moderate"]);
+  assert.deepEqual(marks(first), [["Moderate"], [null]]);
 });
 
 test("a round that raised nothing still reads Approved, and a round with notes open keeps its words", async () => {
   const [, second] = await deferredCards(deferredRecord());
   assert.equal(pill(second), "Approved");
-  assert.deepEqual(marks(second), []);
+  assert.deepEqual(marks(second), [[], []]);
   const [open] = await deferredCards(deferredRecord((outcomes, document) => {
     outcomes.pop();
     outcomes[0].outcome = "unresolved";
@@ -117,5 +123,7 @@ test("a round that raised nothing still reads Approved, and a round with notes o
     document.reviewEvidence["WORK-1"].candidateRef = document.state.queue[0].head = "a".repeat(40);
   }));
   assert.equal(pill(open), "Approved, notes open");
-  assert.deepEqual(marks(open), ["Deferred · minor", "Deferred · minor", "Deferred · moderate"]);
+  // The three still deferred say so by their bands, the one left open by its own, and each deferral keeps its follow-up.
+  assert.deepEqual(marks(open), [["Minor · 2 · all deferred", "Moderate · deferred", "Minor · open"], [null, null, null, null]]);
+  assert.equal(open.querySelectorAll(".run-followup").length, 3);
 });
