@@ -1,0 +1,230 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3553",
+  "headline": "Show what everything is waiting on, and what will free it",
+  "plan": "docs/plans/2026-11-17-what-everything-waits-on.md",
+  "laneBrief": "docs/plans/2026-11-17-what-everything-waits-on.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-17-what-everything-waits-on.lane-notes.md"
+  },
+  "context": {
+    "sections": [
+      "Design direction",
+      "Decisions"
+    ]
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "skills/orchestrate-work/references/wait-words.json",
+        "skills/orchestrate-work/references/orchestration-guide.md",
+        "skills/orchestrate-work/SKILL.md",
+        "skills/run-delivery/templates/lane-brief.md",
+        "tests/test_waits.py",
+        "tests/fixtures/waits/*",
+        "tests/test_lane_rows.py",
+        "tests/test_lead_wait.py",
+        "tests/test_orchestration_state.py"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "skills/delivery-views/scripts/review_projection.py",
+        "skills/orchestrate-work/scripts/narrator.py",
+        "tests/test_waits_review.py",
+        "tests/test_delivery_views_review_projection.py",
+        "tests/test_narrator.py",
+        "tests/fixtures/narrator/*"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3552": {
+      "title": "Say what a story that hasn't started is waiting on",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "v26-3552-1",
+          "text": "c1: A planned story whose after keys have not all landed says which story it waits on and where that story stands."
+        },
+        {
+          "id": "v26-3552-2",
+          "text": "c2: A planned story whose files another lane holds says which lane and for which story."
+        },
+        {
+          "id": "v26-3552-3",
+          "text": "c3: The lead can record why a story waits, and that reason is shown with the story."
+        },
+        {
+          "id": "v26-3552-4",
+          "text": "c4: An idle lane whose next story is waiting is shown as waiting, with the same reason, not as stalled."
+        },
+        {
+          "id": "v26-3552-5",
+          "text": "c5: When the wait ends, the reason goes away with no action from the lead."
+        }
+      ]
+    },
+    "V26-3426": {
+      "title": "Give a lane a \"waiting on another story\" state that the views show as progress, not as the operator's blocker",
+      "lane": "lane-1",
+      "after": [
+        "V26-3552"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3426-1",
+          "text": "A lane waiting on another story's merge isn't in \"Needs you\" and doesn't hold the close, and the row clears when that story merges."
+        },
+        {
+          "id": "v26-3426-2",
+          "text": "After lead-accept, the lane's row is no longer handed/blocked, waiting on the lead."
+        }
+      ]
+    },
+    "V26-3555": {
+      "title": "Show a review round while it is running",
+      "lane": "lane-2",
+      "criteria": [
+        {
+          "id": "v26-3555-1",
+          "text": "c1: While a round runs, the story's review shows that round as under way, at the head being reviewed, with how long ago it started."
+        },
+        {
+          "id": "v26-3555-2",
+          "text": "c2: The last finished round's outcome is shown with its candidate and how many commits the branch has moved since."
+        },
+        {
+          "id": "v26-3555-3",
+          "text": "c3: Each lens of the running round shows as back, with its verdict, or still reading; a lens that returns updates in place with no reload."
+        },
+        {
+          "id": "v26-3555-4",
+          "text": "c4: The lane's reason for the round is shown when it gave one, and nothing is shown when it did not."
+        },
+        {
+          "id": "v26-3555-5",
+          "text": "c5: Earlier rounds' confirmed notes are folded while a round runs and open as they do today."
+        },
+        {
+          "id": "v26-3555-6",
+          "text": "c6: When the round is reduced, the card settles to the finished round's card as it is today."
+        },
+        {
+          "id": "v26-3555-7",
+          "text": "c7: A round restarted or abandoned does not leave a round shown as running."
+        },
+        {
+          "id": "v26-3555-8",
+          "text": "c8: Nothing moves under reduced motion, and every looping motion keeps the page's shared tempo."
+        }
+      ]
+    },
+    "V26-3554": {
+      "title": "Show a wait on another delivery sharing the base, in both deliveries",
+      "lane": "lane-2",
+      "after": [
+        "V26-3552",
+        "V26-3555"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3554-1",
+          "text": "c1: A story or lane that needs a shared file another delivery claims says which delivery holds it and for which story."
+        },
+        {
+          "id": "v26-3554-2",
+          "text": "c2: A lead whose acceptance or push is held by another lead's check or tag on the shared base sees which delivery, what it is doing, and since when."
+        },
+        {
+          "id": "v26-3554-3",
+          "text": "c3: The holding delivery shows which deliveries are waiting on its claim or check."
+        },
+        {
+          "id": "v26-3554-4",
+          "text": "c4: Both sides read it from the same facts, in the shape the epic settles for \"waits on\"."
+        },
+        {
+          "id": "v26-3554-5",
+          "text": "c5: When the claim is released or the check ends, both sides clear with no action from either lead."
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "Every story",
+      "text": "Each of the four stories lands on main through the merge queue, or closes with its reason recorded",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the base head after the last landing, inside tests/suite-budget.json",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "waits-shown",
+      "label": "Waits shown",
+      "text": "The waits and a running review round are shown to the operator on a real record before the delivery closes",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "readyPullRequests": true,
+    "grantedBy": "Kwamina",
+    "grantedOn": "2026-11-17"
+  },
+  "approvals": [
+    {
+      "id": "approval-1",
+      "text": "The operator has approved delivering this plan once its lenses align, on `main`, with two lanes, each granted push and draft change requests, and the lead granted ready change requests.",
+      "state": "waiting"
+    },
+    {
+      "id": "approval-2",
+      "text": "The lead reads the wait templates as V26-3552 hands them off, and accepts them or sends them back.",
+      "state": "waiting"
+    },
+    {
+      "id": "approval-3",
+      "text": "The operator sees the waits and the running round on a real record before the delivery closes.",
+      "state": "waiting"
+    },
+    {
+      "id": "approval-4",
+      "text": "Raising a number in `tests/suite-budget.json` is the operator's alone.",
+      "state": "waiting"
+    }
+  ],
+  "outOfScope": [
+    "A wait measured against a clock, or \"overdue\".",
+    "A lens reporting progress mid-round.",
+    "Storing waits in the record as state.",
+    "Changing how `next` ranks work, beyond taking its reasons from `waits`.",
+    "Refusing work because of another delivery's claim. Claims stay a warning.",
+    "Hosts other than the two the release projects to, and adopter-specific overlays.",
+    "Tagging a release, and applying it here."
+  ],
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  }
+}
