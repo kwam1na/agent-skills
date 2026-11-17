@@ -40,6 +40,9 @@ CATALOGUE_IDS = tuple("tests.test_" + name for name in CATALOGUE_MODULES)
 SERVICE_IDS = ('hosted.install', 'hosted.typecheck', 'hosted.build', 'hosted.test',
                'hosted.browser-install', 'hosted.browser')
 GUARDS = ["tests.test_linear_qualification", "tests.test_registry"]
+SKILL_PROSE_READERS = ["tests.test_declared_mechanics_corpus", "tests.test_lane_ruling_corpus",
+                       "tests.test_review_bound_corpus", "tests.test_round_brief_template_corpus",
+                       "tests.test_run_event_emission_corpus"]
 # Modules that run as scripts, holding no unittest case.
 SCRIPT_MODULES = ("tests.test_registry",)
 STATE_TOOL = ".agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py"
@@ -484,6 +487,35 @@ class StandingBinding(unittest.TestCase):
                 self.assertEqual("tests.test_compound_learning_corpus" in ids, brought, ids)
                 if brought:
                     self.assertIn({"id": "tests.test_compound_learning_corpus", "why": f"reads {changed[0]}"}, added)
+
+    def test_a_changed_skill_page_brings_the_corpus_tests_that_read_skill_prose(self) -> None:
+        # A journal kind named in a skill that doesn't own it once reached the base twice, unselected both times.
+        import importlib.util
+        previous = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        try:
+            spec = importlib.util.spec_from_file_location("own_delivery_state", ROOT / STATE_TOOL)
+            tool = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(tool)
+        finally:
+            sys.dont_write_bytecode = previous
+        binding = json.loads((ROOT / ".agents/orchestration.json").read_text(encoding="utf-8"))
+        prose = binding["selection"]["readers"][2]
+        self.assertEqual(prose, {"paths": ["skills/**/*.md"], "checks": SKILL_PROSE_READERS})
+        text = " ".join((ROOT / "docs/own-deliveries.md").read_text(encoding="utf-8").split())
+        self.assertIn("A change to any Markdown file under `skills/` brings the five corpus tests that read the "
+                      "shipped skill prose, `tests.test_run_event_emission_corpus` among them,", text)
+        for changed, brought in ((["skills/run-delivery/SKILL.md"], True),
+                                 (["README.md", "skills/orchestrate-work/references/orchestration-guide.md"], True),
+                                 (["skills/run-delivery/scripts/run_delivery.py", "docs/own-deliveries.md"], False)):
+            with self.subTest(changed=changed):
+                checks, added = tool.resolve_selection([], binding, lambda: changed)
+                ids = [check["id"] for check in checks]
+                for reader in SKILL_PROSE_READERS:
+                    self.assertEqual(reader in ids, brought, ids)
+                if brought:
+                    page = next(path for path in changed if path.startswith("skills/"))
+                    self.assertIn({"id": "tests.test_run_event_emission_corpus", "why": f"reads {page}"}, added)
 
     def test_the_checks_section_names_the_binding_s_guards_and_readers(self) -> None:
         binding = json.loads((ROOT / ".agents/orchestration.json").read_text(encoding="utf-8"))

@@ -137,7 +137,10 @@ which holds the corpus pins any doc or skill change can break, and
 `tests.test_registry`. A change to `skills/delivery-views/scripts/snapshot.py` also
 brings `tests.test_delivery_views_adopter` and `tests.test_delivery_views_snapshots`,
 the line map's outside adopter among them. A change under `docs/solutions/` brings
-`tests.test_compound_learning_corpus`, which pins each note's shape. Corpus validation stays in `alwaysRun`.
+`tests.test_compound_learning_corpus`, which pins each note's shape. A change to
+any Markdown file under `skills/` brings the five corpus tests that read the shipped
+skill prose, `tests.test_run_event_emission_corpus` among them, which holds each
+journal kind to the one skill that owns it. Corpus validation stays in `alwaysRun`.
 The acceptance's decision names every check it selected, those added with them.
 
 A lane's gates are in `.agents/run-delivery.json`: corpus validation and the

@@ -1,11 +1,12 @@
 ---
 title: "A suite's time is the processes its tests start, and where they are made to wait"
 date: 2026-11-14
+last_updated: 2026-11-17
 category: best-practices
 module: test-suite
 problem_type: best_practice
 severity: medium
-tags: [tests, run-tests, git, macos, subprocess, budget]
+tags: [tests, run-tests, git, macos, subprocess, budget, fixtures]
 applies_when: "The full suite gets slower, or a new test class is about to be marked to run alone"
 ---
 
@@ -39,6 +40,14 @@ for git. Four causes accounted for the time:
 
 That took the same tests from 62 minutes to 20.
 
+A fifth cause showed once the budget was in place: classes whose every case built the
+same delivery by running the whole flow. Such a class builds its fixture once for each
+set of settings and keeps a copy. Each later case gets the copy restored into the same
+folder, with whatever the earlier case left running there stopped first.
+`kept_fixture()` in `tests/test_run_delivery.py` does this. One class went from 482
+seconds to 181 run alone, eight more gave back 452 unit seconds between them, and the
+suite went from 1,748 seconds to 1,625.
+
 ## Why This Matters
 
 The suite is the gate, so its time is every delivery's time. The work then grew back
@@ -54,6 +63,17 @@ keeps a limit from being raised and makes every unit that runs alone state its r
 Count processes when adding a case: a fixture built by running the whole flow costs
 seconds, and a second fixture in one case costs them again.
 
+Check the budget's headroom before trusting a timed run. The units' own seconds,
+summed and divided by the workers, are the least the run can take; when that sits
+within a few percent of the budget, what else the machine is doing decides the result.
+Stop previews, tunnels and browser tabs you started before a timed run, by the pids
+you recorded.
+
+A class that shares a fixture proves the sharing changed nothing: the same test names
+and count, no assertion line changed, the class passing reversed and shuffled, and its
+longest cases passing alone. An assertion inside the shared build now runs once per
+build, not once per case, so say so in the change.
+
 ## Examples
 
 A bytecode cache does not rescue a script run as a command. Pointing
@@ -67,6 +87,18 @@ pass, where the wait sets the time and not the read.
 
 Eight workers instead of four took the suite from 21.6 to 18.2 minutes, for twice the
 load, because the quiet units were still held to four.
+
+A budget without headroom failed on load, not on tests. The units summed to about
+6,730 seconds, so four workers needed about 1,680 of a 1,740-second budget. Three runs
+on nearly the same code took 1,726, 1,924 and 1,748 seconds; the last two passed every
+test and exited 3. A load average of 7 from previews and a tunnel made every unit
+about 12% slower. Each over-budget run took half an hour to say so.
+
+A shared fixture does not suit a class whose cases listen on a port committed in the
+fixture's own files. A restored copy keeps one port across cases, and a case that
+started its own listener there failed. Three such classes kept a fixture per case;
+their builds took under three seconds. A case with settings no other case uses keeps
+its own fixture too.
 
 ## Related
 
