@@ -38,6 +38,11 @@ happened, why, and where it now stands. The close-out turns open entries into fo
 
 ## The merge queue and checks
 
+- **The queue's sync merge blocks the lane's next push.** When the queue checks a candidate, it pushes its own "Merge
+  main into claude/KEY" to the lane's branch. After a stop, the lane's fix sits on the older head, so its push isn't a
+  fast-forward. And `lead-authorize-base-merge` refuses the sync commit, because it isn't on `main`. This happened to
+  V26-3552 (cherry-picked onto the sync) and V26-3555 (authorized base merge plus one force-push). Open: the queue could
+  keep its sync off the lane's branch, or the authorization could accept it.
 - **A provenance listing change is caught only in the queue, after acceptance.** V26-3552 was stopped for adding
   `wait-words.json`. Fix is V26-3565 (lane 3, in this delivery).
 - **Tests outside a lane's files go unrun until the queue runs them.** `tests.test_registry` (V26-3552) and
