@@ -1020,6 +1020,10 @@ do. A line marked `skipped` names the check it waits on: fix that one first.
   whoever owns that status), then assign it. `lead-assign` refuses the story until then, and `--force` assigns it
   anyway. Neither command moves the item. A snapshot that doesn't list a story's offered moves, or no snapshot at all,
   leaves readiness unchecked, and both commands say so.
+- **``has no `## Summary`; its card will show none``**: the story's tracker ticket has no `## Summary` section, so its
+  card on the live view shows no summary. Add a one-paragraph `## Summary` to the ticket. `lead-setup` notes it while
+  it drafts the delivery file, and `doctor --delivery` reports it as `warn` from the kept tracker snapshot, which
+  doesn't fail the check; with no snapshot kept the row is skipped. The card's reader has no fallback, by design.
 - **`fails on`**: a gate fails on the delivery base itself. Repair the base before any lane starts.
 - **`isn't a valid knowledge-properties/1`**: `.agents/knowledge-properties.json` has a field the knowledge library
   can't use; the line names it. Correct it as [A knowledge library](#a-knowledge-library-optional) shows, or remove the
