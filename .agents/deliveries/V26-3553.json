@@ -290,6 +290,10 @@
         {
           "id": "v26-3574-1",
           "text": "c1: A confirmed note's row leads with its finding's summary and priority from the round that raised it. Its resolution, evidence and id show only when the row is opened."
+        },
+        {
+          "id": "v26-3574-2",
+          "text": "c2: A lens whose confirmed notes were all fixed shows one collapsed line naming the lens and the count fixed, and opening it lists the rows."
         }
       ],
       "after": [
