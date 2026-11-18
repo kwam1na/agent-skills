@@ -19,7 +19,7 @@ The delivery supervisor (`lead-run`) stops on SIGTERM through a handler, `Superv
 the signal in `supervisor.json`, then calls the handler that was there before. That one raises `SystemExit`, which
 unwinds the supervisor through its `finally` blocks.
 
-V26-3554 added a step to every pass that imports `delivery_state` in-process. Under `-B` nothing is cached, so the
+Peer waits between deliveries added a step to every pass that imports `delivery_state` in-process. Under `-B` nothing is cached, so the
 first pass compiles that module from source. When the TERM arrived during that compile, the handler ran and recorded
 the signal, and `_terminate` raised `SystemExit` inside `compile()`. Then `compile()` returned normally, the exit was
 gone, and the supervisor carried on with its passes.
@@ -52,7 +52,7 @@ the new step.
 ## Solution
 
 Record the signal, and act on it at a point where raising is safe. That's the pattern `merge_queue serve` and
-`render_state` already used. In V26-3554 (cdded3d4):
+`render_state` already used. In the peer-waits change (cdded3d4):
 
 - `on_signal` sets `self.signalled = number` before it hands the signal on.
 - `honour_signal()` calls `on_signal` again when a signal is recorded. That re-raises through the same handler, and
@@ -80,8 +80,8 @@ wasn't lost.
 
 ## Related Issues
 
-- V26-3554, which made the compile likely on the first pass and carries the fix.
-- V26-3573, which reported supervisor tests failing a 30-second stop wait. This is a root cause of that.
+- The peer-waits change (cdded3d4), which made the compile likely on the first pass and carries the fix.
+- The open report of supervisor tests failing a 30-second stop wait. This is a root cause of that.
 - `docs/solutions/test-failures/detached-fixture-supervisors-outlive-interrupted-workers-2026-11-09.md`: a different
   way a supervisor outlives a stop.
 - `docs/solutions/test-failures/tests-that-read-the-hosts-load-2026-11-18.md`: the load failures this was first

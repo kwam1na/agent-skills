@@ -21,16 +21,16 @@ disk under a floor, or swap growth past a limit. `LeadListenerTests` in `tests/t
 default thresholds. So on a busy machine, `lead-wait` woke with `"woke": "pressure"`, exit 0, where the tests expected
 `"expired"`, exit 3.
 
-During V26-3553, three lanes, their reviewers and the merge queue ran tests at once, and the 5-minute load reached 30
-to 44 on a 10-core Mac. These cases failed in the queue whenever they ran under that load.
+During the delivery that showed what everything waits on, three lanes, their reviewers and the merge queue ran
+tests at once, and the 5-minute load reached 30 to 44 on a 10-core Mac. These cases failed in the queue whenever they ran under that load.
 
 ## Symptoms
 
 - `AssertionError: 0 != 3` and `Tuples differ: ('pressure', []) != ('expired', [])` from `LeadListenerTests` and
   `LeadMayStopTests`, with `"load5"` over 20 in the printed result.
 - The failures disappear when the case runs alone, or when the load drops.
-- The queue's base rerun passed the same module later, at lower load, so it blamed the candidate. That cost V26-3565
-  two queue stops and V26-3426 a counted check, each holding the queue for most of an hour.
+- The queue's base rerun passed the same module later, at lower load, so it blamed the candidate. That cost one story
+  two queue stops and another a counted check, each holding the queue for most of an hour.
 
 ## What Didn't Work
 
@@ -40,8 +40,8 @@ to 44 on a 10-core Mac. These cases failed in the queue whenever they ran under 
 
 ## Solution
 
-Pin every threshold the command reads from the host, so the machine can't change the test's outcome. In V26-3567
-(08163721), every wait these tests start passes `CALM`:
+Pin every threshold the command reads from the host, so the machine can't change the test's outcome. In the
+one-list Needs-you change (08163721), every wait these tests start passes `CALM`:
 
 ```python
 CALM = ("--load-multiple", "1000000000", "--min-free-bytes", "0", "--swap-growth-bytes", str(2 ** 62))
@@ -65,7 +65,7 @@ change.
 
 ## Related Issues
 
-- V26-3567 c7, which made these tests load-independent.
-- V26-3573 and V26-3478, which reported supervisor and hook-wait tests failing under host pressure.
+- The one-list Needs-you change (08163721), which made these tests load-independent.
+- The open reports of supervisor and hook-wait tests failing under host pressure.
 - `docs/solutions/runtime-errors/a-signal-handlers-exit-is-lost-during-compile-2026-11-18.md`: a stop-wait failure
   that was first mistaken for this one.
