@@ -80,6 +80,20 @@
       "after": [
         "V26-3606"
       ]
+    },
+    "V26-3620": {
+      "title": "Make the delivery's name the live view's headline, with the count under it and a one-line kicker",
+      "lane": "lane-1",
+      "why": "The operator chose this design for the live view's opening from mockups during this delivery and asked for it to join this delivery's work, after V26-3618 on the one lane.",
+      "criteria": [
+        {
+          "id": "v26-3620-1",
+          "text": "The live view's headline is the delivery's name, without a leading ticket key that the kicker already links."
+        }
+      ],
+      "after": [
+        "V26-3618"
+      ]
     }
   },
   "finish": [
