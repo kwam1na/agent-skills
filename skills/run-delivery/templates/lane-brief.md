@@ -27,7 +27,8 @@ assemble briefs, round files or records by hand, and don't edit what they write.
 - The merge queue normally syncs your branch with `{{base_ref}}`. The tool reads the plan, brief and settings from
   that remote base while you work. Before merging the base into your story branch, wait for the lead to record the
   authorization for your story, reviewed head and exact base commits with `lead-authorize-base-merge`.
-  Use the lead's printed merge commands with their authorization trailer. If the story diff and your owned content are unchanged, hand-off keeps the aligned review
+  Use the lead's printed merge commands with their authorization trailer. If a merge stops on a conflict, resolve it,
+  `git add` the files, and finish it with the printed `git commit` command, so its message keeps the trailer. If the story diff and your owned content are unchanged, hand-off keeps the aligned review
   and records the merge. Run gates and any required in-app and PR checks at the new head. A lane commit, an unauthorized
   merge or a merge that changes the story diff or owned content needs a new review.
 - Branch: `{{branch}}`. Commit subjects start with the story key.

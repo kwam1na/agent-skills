@@ -2125,7 +2125,7 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         sh("git", "reset", "-q", "--hard", reviewed, cwd=wt)
         authorized = authorize(upstream)
         sh("git", "reset", "-q", "--hard", premature, cwd=wt)
-        refuse("did not authorize")
+        refuse(f"the base merge {premature} has no Delivery-Base-Merge trailer")
         sh(*authorized, "--no-commit", cwd=wt)
         (wt / "src/one.txt").write_text("manual resolution\n")
         sh("git", "add", "src/one.txt", cwd=wt)
@@ -2188,6 +2188,136 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         hand = next(e for e in doc["journal"] if e["kind"] == "candidate.handed")
         self.assertEqual(hand["data"]["carry"], {"from": reviewed, "to": head, "digest": captured["digest"],
                                                  "baseCommits": [upstream, second]})
+
+    def test_a_conflicted_authorized_base_merge_finished_as_printed_carries_the_review(self) -> None:
+        """The authorization prints the command that finishes a conflicted merge. The trailer is read with every `#`
+        line dropped, whatever git kept or the comment character is, and a merge that lost it is refused with the
+        exact amend, for the last merge only."""
+        fx = self.assigned_fixture()
+        m = fx.main
+        lines = [f"line {n}\n" for n in range(20)]
+        file = "src/shared.txt"
+        delivery = m / ".agents/deliveries/FX-1.json"
+        data = json.loads(delivery.read_text())
+        data["stories"]["FX-2"]["inApp"] = "none"
+        delivery.write_text(json.dumps(data, indent=2))
+        (m / file).write_text("".join(lines))
+        commit(m, "Add shared text")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        base = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
+
+        def flow(*args, cwd=m):
+            code, out = fx.flow(*args, cwd=cwd)
+            self.assertEqual(code, 0, out)
+            return out
+
+        flow("lead-own", "--lane", "lane-1", "--region", file, "--base", base, "--start", 8, "--end", 16)
+        wt = fx.lane("FX-2")
+        lane_line, base_line = lines[:14] + ["lane edit\n"], ["base edit\n"] + lines[16:]
+        (wt / file).write_text("".join(lane_line + lines[15:]))
+        commit(wt, "FX-2: reviewed change")
+        reviewed = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+        review = wt / ".orchestration/review/FX-2"
+        review.mkdir(parents=True)
+        (review / "context.md").write_text("- fixture evidence\n")
+        flow("gate", "FX-2", cwd=wt)
+        flow("review-prepare", "FX-2", "--round", 1, cwd=wt)
+        write_results(review, 1, "FX-2", fx.lenses(wt))
+        flow("review-reduce", "FX-2", "--round", 1, cwd=wt)
+        # The base changes the line just below the lane's, outside its region: git conflicts on adjacent lines.
+        (m / file).write_text("".join(lines[:15] + base_line))
+        commit(m, "Change the line below the lane's region")
+        flow("lead-push")
+        upstream = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
+        flow("push", "FX-2", cwd=wt)
+        body = fx.tmp / "body.md"
+        body.write_text("Summary\n")
+        url = "https://forge.test/pr/1"
+        flow("open-pr", "FX-2", "--title", "FX-2: one", "--body-file", body, cwd=wt)
+
+        def authorize(commit):
+            out = flow("lead-authorize-base-merge", "FX-2", "--reviewed", reviewed, "--base", commit).splitlines()
+            merge = shlex.split(next(line for line in out if line.startswith("git merge ")))
+            token = merge[merge.index("-m", merge.index("-m") + 1) + 1].removeprefix("Delivery-Base-Merge: ")
+            message = ["-m", "FX-2: Merge delivery base", "-m", f"Delivery-Base-Merge: {token}"]
+            finish = shlex.join(["git", "commit", *message])
+            self.assertIn(finish, out, "the authorization doesn't print how to finish a conflicted merge")
+            self.assertLess(max(i for i, line in enumerate(out) if line.startswith("git merge ")), out.index(finish))
+            return merge, shlex.split(finish), message
+
+        def conflicted(merge):
+            sh("git", "reset", "-q", "--hard", reviewed, cwd=wt)
+            done = sh(*merge, cwd=wt, check=False)
+            self.assertNotEqual(done.returncode, 0, "the fixture's merge was meant to conflict")
+            (wt / file).write_text("".join(lane_line + base_line))
+            sh("git", "add", file, cwd=wt)
+
+        def handoff():
+            sh("git", "push", "-q", "--force", "origin", "HEAD:feature/FX-2", cwd=wt)
+            return fx.flow("handoff", "FX-2", "--pr", url, cwd=wt)
+
+        def carries(why):
+            code, out = handoff()
+            self.assertEqual(code, 2, out)
+            self.assertNotIn("review the new head", out, why)
+            self.assertIn("gates ran at", out, why)  # the carry held; only the gates at the new head are missing
+
+        merge, finish, message = authorize(upstream)
+        with self.subTest("finished with `git commit --no-edit`, which keeps git's `# Conflicts:` lines"):
+            conflicted(merge)
+            sh("git", "commit", "-q", "--no-edit", cwd=wt)
+            self.assertIn("# Conflicts:", sh("git", "show", "-s", "--format=%B", cwd=wt).stdout)
+            carries("a merge finished with --no-edit didn't carry")
+        with self.subTest("with core.commentChar=;, a verbatim message whose trailer `#` lines follow"):
+            conflicted(merge)
+            sh("git", "config", "core.commentChar", ";", cwd=wt)
+            self.addCleanup(sh, "git", "config", "--unset", "core.commentChar", cwd=wt, check=False)
+            verbatim = fx.tmp / "verbatim.txt"
+            verbatim.write_text(f"FX-2: Merge delivery base\n\n{message[3]}\n\n# Conflicts:\n#\t{file}\n")
+            sh("git", "commit", "-q", "--cleanup=verbatim", "-F", verbatim, cwd=wt)
+            self.assertTrue(sh("git", "show", "-s", "--format=%B", cwd=wt).stdout.rstrip().endswith(f"#\t{file}"))
+            carries("a verbatim message under another comment character didn't carry")
+            sh("git", "config", "--unset", "core.commentChar", cwd=wt)
+        with self.subTest("a merge that lost its trailer is refused with the exact amend, which fixes it"):
+            conflicted(merge)
+            sh("git", "commit", "-q", "-m", "FX-2: Merge delivery base", cwd=wt)
+            lost = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+            code, out = handoff()
+            self.assertEqual(code, 2, out)
+            self.assertIn(f"the base merge {lost} has no Delivery-Base-Merge trailer", out)
+            amend = shlex.join(["git", "commit", "--amend", *message])
+            self.assertIn(f"\n  {amend}\n", out + "\n")
+            sh(*shlex.split(amend), "-q", cwd=wt)
+            carries("the printed amend didn't make the hand-off carry")
+        (m / "src/app.txt").write_text("another base fix\n")
+        commit(m, "Add another base fix")
+        flow("lead-push")
+        second = sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
+        sh("git", "reset", "-q", "--hard", reviewed, cwd=wt)
+        merge_second, _, _ = authorize(second)
+        with self.subTest("two merges, only the first without its trailer: named, and no amend offered"):
+            conflicted(merge)
+            sh("git", "commit", "-q", "-m", "FX-2: Merge delivery base", cwd=wt)
+            first = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+            sh(*merge_second, cwd=wt)
+            code, out = handoff()
+            self.assertEqual(code, 2, out)
+            self.assertIn(f"the base merge {first} has no Delivery-Base-Merge trailer", out)
+            self.assertIn("It is not the last merge, so no amend fixes it", out)
+            self.assertNotIn("--amend", out)
+        with self.subTest("finished with the printed command, the review carries through the hand-off"):
+            conflicted(merge)
+            # Another trailer beside the authorization's, as `-s` or a commit-msg hook adds: only its key is read.
+            sh(*finish, "--trailer", "Signed-off-by: Lane <lane@example.test>", cwd=wt)
+            self.assertIn("\nSigned-off-by: Lane", sh("git", "show", "-s", "--format=%B", cwd=wt).stdout)
+            sh(*merge_second, cwd=wt)
+            head = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+            carries("a merge finished with the printed command didn't carry")
+            flow("gate", "FX-2", cwd=wt)
+            flow("handoff", "FX-2", "--pr", url, cwd=wt)
+            hand = next(e for e in self.shown(fx.tmp / "record")["journal"] if e["kind"] == "candidate.handed")
+            self.assertEqual((hand["data"]["carry"]["from"], hand["data"]["carry"]["to"],
+                              hand["data"]["carry"]["baseCommits"]), (reviewed, head, [upstream, second]))
 
     def test_lane_and_lead_flow_end_to_end(self) -> None:
         fx = self.fixture()
@@ -2932,7 +3062,9 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         brief = " ".join((m / "docs/lane-brief.md").read_text().split())
         self.assertIn("Before merging the base into your story branch, wait for the lead to record the authorization "
                       "for your story, reviewed head and exact base commits with `lead-authorize-base-merge`.", brief)
-        self.assertIn("Use the lead's printed merge commands with their authorization trailer.", brief)
+        self.assertIn("Use the lead's printed merge commands with their authorization trailer. If a merge stops on a "
+                      "conflict, resolve it, `git add` the files, and finish it with the printed `git commit` command, so "
+                      "its message keeps the trailer.", brief)
         self.assertIn("an unauthorized merge or a merge that changes the story diff or owned content needs a new review.", brief)
 
     def test_video_evidence_is_recorded_required_and_published(self) -> None:
