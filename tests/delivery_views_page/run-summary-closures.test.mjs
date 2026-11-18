@@ -32,7 +32,7 @@ function document() {
       closure("T2", "closed", "test_dropped_attempt covers it."), closure("T3", "closed", "The id is logged once.")]),
     entry(CORRECTNESS, 2, B, [], [closure("C1", "closed", "The receipt reads the last attempt."),
       closure("C2", "withdrawn", "The banner was never shown on error."), closure("C3", "withdrawn", "The empty state was dropped."),
-      closure("C4", "deferred", "The copy waits for the writer.", { deferredIssue: "V26-9999" })])] };
+      closure("C4", "deferred", "The copy waits for the writer.", { deferredIssue: "SHOP-12" })])] };
   return { state: { lanes: [], queue: [{ subject: "WORK-1", title: "Work", stage: "merged", head: B, runId: null }] }, journal: [],
     reviewEvidence: { "WORK-1": { candidateRef: B, digest: "d".repeat(64), outcomes: [one, two] } } };
 }
@@ -104,7 +104,7 @@ test("opened, a confirmed note shows its resolution, its commit and its id", asy
   const [withdrawn, , deferred] = groups(opened.app)[1].querySelectorAll(":scope > .run-findings .run-closures");
   expect([...withdrawn.children].slice(1).map((part) => part.className)).toEqual(["run-closure-resolution", "run-closure"]);
   expect([...deferred.children].slice(1).map((part) => [part.className, part.textContent])).toEqual([
-    ["run-closure-resolution", "The copy waits for the writer."], ["run-followup", "\u21b3 V26-9999"], ["run-closure", "C4"]]);
+    ["run-closure-resolution", "The copy waits for the writer."], ["run-followup", "\u21b3 SHOP-12"], ["run-closure", "C4"]]);
 });
 
 test("a note whose finding isn't on the page leads with its resolution and opens on its id, as before", async () => {
