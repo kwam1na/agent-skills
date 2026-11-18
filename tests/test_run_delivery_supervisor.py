@@ -216,10 +216,13 @@ def running(fx: Fixture) -> dict[str, str]:
 
 
 def hand_off(fx: Fixture, key: str, lane: str, assign: bool = True, deferred: bool = False,
-             files: dict | None = None, checks: str | None = None, before=None):
+             files: dict | None = None, checks: str | None = None, before=None, lenses: tuple = (),
+             prepared=None):
     """A lane's whole flow for one story: its change (and any `files` beside it), its gate, one approved review round
     (with one finding deferred to a follow-up, when asked), its draft PR, its hand-off, naming `checks` when given.
-    `before(wt, url)` runs just before the hand-off. Returns the checkout, or with `checks` the hand-off's output."""
+    `lenses` are round 1's preparations, each `(ids, reason)`, the later ones restarts; `prepared(review)` runs after
+    them. `before(wt, url)` runs just before the hand-off. Returns the checkout, or with `checks` the hand-off's
+    output."""
     m = fx.main
     if assign:
         code, out = fx.flow("lead-assign", key, "--lane", lane, "--title", lane, cwd=m)
@@ -234,10 +237,15 @@ def hand_off(fx: Fixture, key: str, lane: str, assign: bool = True, deferred: bo
     review = wt / ".orchestration/review" / key
     review.mkdir(parents=True, exist_ok=True)
     (review / "context.md").write_text("- fixture evidence\n")
-    for argv in (("gate", key), ("review-prepare", key, "--round", "1")):
+    preparations = [("review-prepare", key, "--round", "1", *(("--restart",) if i else ()), "--lenses", ",".join(ids),
+                     "--lenses-reason", reason) for i, (ids, reason) in enumerate(lenses)]
+    for argv in (("gate", key), *(preparations or [("review-prepare", key, "--round", "1")])):
         code, out = fx.flow(*argv, cwd=wt)
         assert code == 0, out
-    lenses = fx.lenses(wt)
+    if prepared is not None:
+        prepared(review)
+    meta = json.loads((review / "round-1.meta.json").read_text())
+    lenses = [entry for entry in fx.lenses(wt) if entry[0] in meta["lenses"]]
     write_results(review, 1, key, lenses)
     if deferred:
         short = lenses[0][1][0]
@@ -2229,6 +2237,117 @@ if Path({str(started.with_suffix(".armed"))!r}).exists():
         self.assertNotIn("leadSelection", self.item(fx))
         queue_run(fx, "FX-2")
         self.assertNotIn("checkSelection", self.item(fx), "a binding without the option gains nothing on its rows")
+
+
+OC, AT = "lens.outcome-correctness", "lens.adversarial-testing"
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class StoryLensAcceptanceTests(unittest.TestCase):
+    """`lead-accept` checks the last round against the story's lenses, its latest round 1 start's when round 1's meta
+    says they were chosen and every declared lens otherwise, and prints them with their reason."""
+
+    run_quietly = True
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        for name, value in vars(installed_release()).items():
+            setattr(cls, name, value)
+
+    def build_fixture(self) -> Fixture:
+        """The supervised delivery with two more story lenses, `lens.x` and `lens.y`, and a plan-only `lens.q`."""
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        self.addCleanup(stop_supervisors, fx.tmp)
+        supervised(fx)
+        m = fx.main
+        (m / "docs/review").mkdir()
+        conf_path = m / ".agents/run-delivery.json"
+        conf = json.loads(conf_path.read_text())
+        conf["review"]["lenses"] = {}
+        for short, use in (("x", ["story"]), ("y", ["story"]), ("q", ["plan"])):
+            (m / f"docs/review/{short}.md").write_text(f"# Lens {short}\n\nWhat {short} asks.\n")
+            conf["review"]["lenses"][f"lens.{short}"] = {"short": short, "charter": f"docs/review/{short}.md", "use": use}
+        conf_path.write_text(json.dumps(conf, indent=2))
+        commit(m, "FX-1: story and plan lenses")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        return fx
+
+    def fixture(self) -> Fixture:
+        return kept_fixture(self, self.build_fixture)
+
+    def test_a_chosen_set_is_accepted_and_shown_with_its_reason(self) -> None:
+        fx = self.fixture()
+        hand_off(fx, "FX-2", "lane-1", lenses=[((OC, AT, "lens.x"), "x covers the change")])
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"review lenses: {OC}, {AT}, lens.x; reason: x covers the change", out)
+
+    def test_a_last_round_off_the_story_s_set_is_refused(self) -> None:
+        fx = self.fixture()
+        hand_off(fx, "FX-2", "lane-1", lenses=[((OC, AT, "lens.x"), "x covers the change")])
+        # The story's latest round 1 start names lens.y; its last round carries lens.x instead.
+        state_tool(fx, "journal", "--writer", "lane", "--kind", "review.started", "--subject", "FX-2", "--lane",
+                   "lane-1", "--data", json.dumps({"round": 1, "head": "0" * 40, "lenses": [OC, AT, "lens.y"],
+                                                    "restart": True}))
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 1, out)
+        self.assertIn(f"the last journaled round is not approved by every lens of the story's set, {OC}, {AT}, lens.y",
+                      out)
+
+    def test_a_restart_s_set_is_the_one_accepted(self) -> None:
+        fx = self.fixture()
+        hand_off(fx, "FX-2", "lane-1", lenses=[((OC, AT, "lens.x"), "x first"), ((OC, AT, "lens.y"), "y instead")])
+        code, out = fx.flow("lead-accept", "FX-2", "--accept-restarts", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"review lenses: {OC}, {AT}, lens.y; reason: y instead", out)
+
+    def test_a_story_prepared_before_lenses_were_chosen_is_accepted_on_every_declared_lens(self) -> None:
+        fx = self.fixture()
+        every = [OC, AT, "lens.x", "lens.y", "lens.q"]
+
+        def as_before(review: Path) -> None:
+            path = review / "round-1.meta.json"
+            meta = {k: v for k, v in json.loads(path.read_text()).items() if k != "lensesReason"}
+            path.write_text(json.dumps({**meta, "lenses": every}))
+
+        hand_off(fx, "FX-2", "lane-1", prepared=as_before)
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"review lenses: {', '.join(every)}; reason: reason not found", out)
+
+    def test_the_reason_is_read_from_the_kept_evidence_once_the_checkout_is_gone(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        wt = hand_off(fx, "FX-2", "lane-1", lenses=[((OC, AT, "lens.x"), "x covers the change")])
+        kept = Path(fx.call("evidence_dir", "FX-2", cwd=m, delivery="FX-1"))
+        kept.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(wt / ".orchestration/review/FX-2", kept)
+        sh("git", "worktree", "remove", "--force", str(wt), cwd=m)
+        code, out = fx.flow("lead-accept", "FX-2", cwd=m)
+        self.assertEqual(code, 1, out)
+        self.assertIn("no checkout at", out)
+        self.assertIn(f"review lenses: {OC}, {AT}, lens.x; reason: x covers the change", out)
+
+    def test_with_no_round_1_start_or_a_legacy_meta_every_declared_lens_is_required(self) -> None:
+        tool = loaded_run_delivery(self, "run_delivery_accepted_lenses")
+        declared = [OC, AT, "lens.x", "lens.y", "lens.q"]
+        start = lambda lenses, subject="FX-2", n=1: {"kind": "review.started", "subject": subject,
+                                                     "data": {"round": n, "lenses": lenses}}
+        chosen = {"lenses": [OC, AT, "lens.x"], "lensesReason": "R"}
+        for what, journal, meta, expected in (
+                ("no start journaled", [], chosen, declared),
+                ("only another story's or round's start", [start([OC, AT], "FX-3"), start([OC, AT], n=2)], chosen,
+                 declared),
+                ("a legacy meta, its start naming a lens no longer declared", [start([OC, AT, "lens.gone"])],
+                 {"lenses": [OC, AT, "lens.gone"]}, declared),
+                ("no meta found", [start([OC, AT, "lens.x"])], None, declared),
+                ("a chosen set, restarted", [start([OC, AT, "lens.y"]), start([OC, AT, "lens.x"])], chosen,
+                 [OC, AT, "lens.x"])):
+            with self.subTest(what=what):
+                self.assertEqual(tool.accepted_lenses(declared, journal, "FX-2", meta), expected)
 
 
 @unittest.skipIf(os.name == "nt", POSIX_ONLY)

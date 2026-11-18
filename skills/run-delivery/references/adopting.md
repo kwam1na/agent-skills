@@ -534,6 +534,13 @@ it again:
 python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py review-prepare <story-key> --round 1
 ```
 
+Without `--lenses`, round 1 runs every lens the repository declares for story review. A repository that declares
+lenses beyond the workflow's two can give each a use, `plan`, `story` or both, so a lens meant for plan review never
+reviews a story's code; the lane then picks the story lenses that fit what it changes, with
+`--lenses lens.outcome-correctness,lens.adversarial-testing,<its picks> --lenses-reason "<why>"` at round 1. The
+mandated pair is always among them. The set and its reason are fixed for the story's later rounds and shown to the
+lead at hand-off and acceptance (see "Review lenses" in `config.md`).
+
 It prints one prompt per lens. The lane starts one reviewer per lens with its prompt, and saves each reviewer's final
 JSON message, exactly as returned, to the result path printed beside it. Each reduced round shows on the live view's
 line map at once, before any hand-off. Then the lane reduces the round, pushes the branch, opens its draft change

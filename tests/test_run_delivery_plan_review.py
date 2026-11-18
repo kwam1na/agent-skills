@@ -436,6 +436,54 @@ class PlanReviewCommandTests(PlanReviewCase):
         self.assertEqual(code, 2, out)
         self.assertIn("lens.unknown", out)
 
+    def test_plan_lenses_are_taken_and_a_story_only_lens_is_refused_naming_the_plan_lenses(self) -> None:
+        fx = self.fixture()
+        m = fx.main
+        (m / "docs/review").mkdir()
+        for short in "xpbh":
+            (m / f"docs/review/{short}.md").write_text(f"# Lens {short}\n\nWhat {short} asks.\n")
+        conf_path = m / ".agents/run-delivery.json"
+        conf = json.loads(conf_path.read_text())
+        conf["review"]["lenses"] = {
+            "lens.x": {"short": "x", "charter": "docs/review/x.md", "use": ["story"]},
+            "lens.p": {"short": "p", "charter": "docs/review/p.md", "use": ["plan"]},
+            "lens.b": {"short": "b", "charter": "docs/review/b.md"}}
+        node = bool(fx.call("find_node22", cwd=m))
+        if node:
+            (m / "harness.config.ts").write_text(
+                "export default { additionalReviewLenses: [{ lensId: 'lens.h', reviewerId: 'h', "
+                "charterPath: 'docs/review/h.md' }] };\n")
+            conf["review"]["use"] = {"lens.h": ["plan"]}
+        conf_path.write_text(json.dumps(conf, indent=2))
+        commit(m, "FX-1: lenses with their uses")
+        path = review_delivery(fx, lenses=(OC, "lens.x"))
+        code, out = self.flow(fx, "prepare")
+        self.assertEqual(code, 2, out)
+        plan_lenses = ", ".join([OC, AT, *(["lens.h"] if node else []), "lens.p", "lens.b"])
+        self.assertIn(f"names lens.x, whose use excludes plan review; the declared plan lenses are {plan_lenses}", out)
+        self.assertFalse((store(fx) / "round-1.meta.json").exists())
+        taken = ["lens.p", *(["lens.h"] if node else []), "lens.b"]
+        d = json.loads(path.read_text())
+        d["planReview"]["lenses"] = taken
+        path.write_text(json.dumps(d, indent=2))
+        commit(m, "FX-1: plan lenses")
+        code, out = self.flow(fx, "prepare")
+        self.assertEqual(code, 0, out)
+        meta = json.loads((store(fx) / "round-1.meta.json").read_text())
+        self.assertEqual(meta["lenses"], taken)
+        # Aligned and frozen, the plan names no lens a story's round must carry, so the view requires every verdict of
+        # the story's own set to approve, rather than one from every declared lens.
+        for lens in taken:
+            (store(fx) / f"result-r1-{lens.split('.', 1)[1]}.json").write_text(json.dumps({
+                "schemaVersion": "review-lens-result/1", "lensId": lens, "subjectRef": "FX-1.plan",
+                "candidateRef": meta["candidate"], "round": 1, "outcome": "aligned", "findings": [],
+                "evidence": [f"tree {meta['tree']} checked at start and end"]}))
+        code, out = self.flow(fx, "reduce")
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads((fx.tmp / "record/plan.json").read_text())["requiredLenses"], [])
+
     def test_an_unchanged_candidate_is_refused(self) -> None:
         fx = self.fixture()
         review_delivery(fx)
