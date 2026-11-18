@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { CORPUS, REPLAYED_RUNS, expect, openPage, pageWithRuns, readJson, renderPage } from "./support.mjs";
-import { item, journal, minute, record, recordOnlyDelivery } from "./plan-fixtures.mjs";
+import { item, journal, minute, planFor, record, recordOnlyDelivery, unit } from "./plan-fixtures.mjs";
 
 const NOW = "2026-10-30T12:00:00Z";
 
@@ -63,6 +63,29 @@ test("a delivery with nothing landed shows none of its total, and a closed one i
   expect(closed.app.querySelector("#now .stories .fact-said")).toBeNull();
 });
 
+test("only moving work is counted: a stopped piece isn't in the queue, and a planned story not started or settled isn't being built", async () => {
+  const document = underway();
+  document.state.queue.push({ ...item("G", "stopped"), order: 5 });
+  document.state.planned.push(planned("H", "planned"), planned("I", "settled"));
+  const app = await facts(document);
+  // A settled planned story has landed; the stopped piece and the story not started are in the total and nowhere else.
+  expect(app.querySelector("#now .stories .fact-value").textContent).toBe("3 of 9 landed");
+  expect(track(app)).toEqual([["is-landed", 33], ["is-queued", 22], ["is-building", 22]]);
+  expect(app.querySelector("#now .stories .fact-said").textContent).toBe("2 in the queue · 2 being built");
+});
+
+test("a delivery closed partway counts what the close tallied, with nothing in the queue or the build", async () => {
+  const document = record({ queue: [item("A", "merged"), item("B", "checking"), item("C", "queued"), item("D", "stopped")],
+    planned: [planned("E", "building")],
+    journal: journal([[10, "approve", "A"], [11, "candidate.handed", "A"], [12, "candidate.merged", "A"], [40, "delivery.closed", "A"]]) });
+  const plan = planFor(["A", "B", "C", "D", "E", "F"].map((subject) => unit(subject)), { finish: [] });
+  const app = await facts(document, plan);
+  expect(app.querySelector("#now .title").textContent).toBe("Closed with 1 of 6 pieces landed.");
+  expect(app.querySelector("#now .stories .fact-value").textContent).toBe("1 of 6 landed");
+  expect(app.querySelector("#now .stories .fact-said")).toBeNull();
+  expect(track(app)).toEqual([["is-landed", 17]]);
+});
+
 test("last landed names its ticket and, when the forge knows it, its pull request, each a quiet reference", async () => {
   const app = await facts(underway());
   const last = app.querySelectorAll("#now .facts > .fact")[1];
@@ -70,6 +93,8 @@ test("last landed names its ticket and, when the forge knows it, its pull reques
   const refs = [...last.querySelectorAll(".fact-detail .fact-ref")];
   expect(refs.map((ref) => ref.textContent)).toEqual(["B", "#386"]);
   expect(refs[1].getAttribute("href")).toBe("https://github.com/acme/shop/pull/386");
+  expect([refs[1].getAttribute("aria-label"), refs[1].getAttribute("rel"), refs[1].getAttribute("target")])
+    .toEqual(["Open pull request acme/shop #386", "noopener noreferrer", "_blank"]);
   expect(last.querySelector(".fact-detail").textContent).toMatch(/^B · #386 · /);
   // A landing whose pull request the forge doesn't know says its ticket and when, and no number.
   const unknown = underway();
@@ -107,8 +132,11 @@ test("the facts share one grid through subgrid, stack on a phone, and nothing on
   expect(/var\(--landed\)/.test(rule(".fact-track .is-queued"))).toBe(true);
   expect(/var\(--hair\)/.test(rule(".fact-track .is-building"))).toBe(true);
   const phone = stylesheet.slice(stylesheet.indexOf("@media (max-width: 640px)"));
-  expect(/\.facts\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/.test(phone)).toBe(true);
-  for (const block of stylesheet.match(/[^{}]*\{[^}]*\}/g).filter((one) => /\.fact(-track|-count|-of|-progress|-said)?\b/.test(one.split("{")[0]))) {
+  const stacked = (phone.match(/\.facts\s*\{([^}]*)\}/) || [])[1] || "";
+  expect([/grid-template-columns:\s*minmax\(0, 1fr\)/, /grid-template-rows:\s*none/, /row-gap:\s*28px/].map((one) => one.test(stacked))).toEqual([true, true, true]);
+  const moving = stylesheet.match(/[^{}]*\{[^}]*\}/g).filter((one) => /\.facts?(-track|-count|-of|-progress|-said)?\b/.test(one.split("{")[0]));
+  expect(moving.some((one) => /\.facts\b/.test(one.split("{")[0]))).toBe(true);
+  for (const block of moving) {
     expect([block.split("{")[0].trim(), /animation|transition/.test(block)]).toEqual([block.split("{")[0].trim(), false]);
   }
 });
@@ -135,6 +163,11 @@ test("the kicker ends with how long the delivery has run, a time element that sa
   expect(time.getAttribute("tabindex")).toBe("0");
   expect(time.parentNode.textContent).toMatch(/ · delivering · 5 h 50 min$/);
   expect((await at("2026-10-30T06:40:00Z")).textContent).toBe("delivering · 30 min");
+  // A whole hour says no minutes; from 48 hours it says days, to the nearest.
+  for (const [now, said] of [["2026-10-30T12:10:00Z", "6 h"], ["2026-11-01T06:09:00Z", "47 h 59 min"], ["2026-11-01T06:10:00Z", "2 days"],
+    ["2026-11-01T18:10:00Z", "3 days"]]) {
+    expect([now, (await at(now)).textContent]).toEqual([now, "delivering · " + said]);
+  }
   // A journal that no longer holds its first entry has no honest start, so the kicker says no duration.
   const trimmed = underway();
   trimmed.journal = trimmed.journal.slice(1);
@@ -146,7 +179,7 @@ test("the kicker ends with how long the delivery has run, a time element that sa
     runsCommands: readJson(path.join(folder, "runs-commands.json")) });
   const [closed] = await openPage(page, { now: NOW, store: false });
   const span = closed.app.querySelector("#now .kicker time.kicker-time");
-  expect(span.textContent).toMatch(/^delivered in \d+ (h|min|days)/);
+  expect(span.textContent).toBe("delivered in 1 h 34 min");
   const [shut, ends] = await said(page);
   expect([shut, ends.map((line) => /^(Started|Closed) .+ \(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC\)$/.exec(line)?.[1])]).toEqual([false, ["Started", "Closed"]]);
 });

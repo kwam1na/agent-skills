@@ -674,8 +674,10 @@
   function storiesFact(all, tally) {
     var landed = tally ? tally.landed : all.filter(isLanded).length;
     var total = tally ? tally.total : all.length;
-    var queued = tally ? 0 : all.filter(function (piece) { return !piece.planned && !isLanded(piece); }).length;
-    var building = tally ? 0 : all.filter(function (piece) { return piece.planned && !isLanded(piece); }).length;
+    // Only work that is moving is counted: a stopped piece is held, not queued, and a planned story not yet started is
+    // not being built.
+    var queued = tally ? 0 : all.filter(function (piece) { return !piece.planned && !isLanded(piece) && piece.item.stage !== "stopped"; }).length;
+    var building = tally ? 0 : all.filter(function (piece) { return piece.planned && (piece.item.stage === "building" || piece.item.stage === "review"); }).length;
     var value = add(el("span", "fact-count"), String(landed), el("span", "fact-of", " of " + total + " landed"));
     var track = el("span", "fact-track");
     track.setAttribute("aria-hidden", "true");
