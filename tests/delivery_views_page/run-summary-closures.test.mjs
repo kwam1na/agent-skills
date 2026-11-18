@@ -16,13 +16,14 @@ function entry(lens, round, candidate, findings, resolved) {
 }
 const finding = (id, severity, summary) => ({ id, severity, summary, state: "open" });
 const closure = (id, state, resolution, extra = {}) => ({ id, state, resolution, ...(state === "closed" ? { fixCommit: B } : {}), ...extra });
-const CUT = "x".repeat(280);
+// A summary at the renderer's cap was cut there, so it takes no full stop; one a character shorter is whole, and does.
+const CUT = "x".repeat(280), NEAR = "y".repeat(279);
 
 /** Round 1 raises three Testing notes and four Correctness ones; round 2 fixes every Testing note, and of Correctness's
  * fixes one, withdraws two and defers one with its follow-up. */
 function document() {
   const one = { round: 1, outcome: "unresolved", entries: [
-    entry(TESTING, 1, A, [finding("T1", "P1", "A retry after a timeout charges twice"), finding("T2", "P2", "No test covers a dropped attempt."),
+    entry(TESTING, 1, A, [finding("T1", "P1", "A retry after a timeout charges twice"), finding("T2", "P2", NEAR),
       finding("T3", "P3", "The log line repeats the order id.")], []),
     entry(CORRECTNESS, 1, A, [finding("C1", "P1", "The receipt keeps the first total."), finding("C2", "P2", "The banner hides the error."),
       finding("C3", "P3", "The empty state says nothing"), finding("C4", "P2", CUT)], [])] };
@@ -76,10 +77,16 @@ test("the sentence counts every ending, naming the fixes' commit, and each confi
   expect(whole.querySelector(":scope > summary").textContent).toBe("Testing · 3 fixed");
   expect(testing.querySelector(":scope > .run-findings")).toBeNull();
   expect(rows(whole)).toEqual([{ summary: "A retry after a timeout charges twice.", priority: "serious", ending: "fixed" },
-    { summary: "No test covers a dropped attempt.", priority: "moderate", ending: "fixed" },
+    { summary: NEAR + ".", priority: "moderate", ending: "fixed" },
     { summary: "The log line repeats the order id.", priority: "minor", ending: "fixed" }]);
   // Nothing beneath a row shows until it is opened: every row starts closed.
   expect([...app.querySelectorAll(".run-card .run-closures")].map((fold) => fold.hasAttribute("open"))).toEqual(Array(7).fill(false));
+});
+
+test("round 1's raised rows keep the same rule for a summary at the cap and one just below it", async () => {
+  const [, first] = await openPage(page, { steps: [{ click: ".run-pick", index: 0 }] });
+  const raised = [...first.app.querySelectorAll(".run-card li.run-finding .run-finding-text")].map((text) => text.textContent);
+  expect(raised.filter((text) => text.startsWith("x") || text.startsWith("y"))).toEqual([NEAR + ".", CUT]);
 });
 
 test("opened, a confirmed note shows its resolution, its commit and its id", async () => {
