@@ -17,6 +17,7 @@ Lane:
   app-check      <key> <name> --mode hold|fail|loaded --path P [spec flags] [--baseline | --probe] [-- adapter args]
   open-pr        <key> --title T --body-file F
   handoff        <key> --pr URL [--findings TEXT] [--blocked LABEL=REASON ...]
+  base-merge     <key>   (before hand-off, when HEAD conflicts with the moved base)
 Lead:
   lead-setup <key> --plan P --base B --pattern RE ... | lead-init | lead-brief | lead-assign <key...> --lane L --title T
   lead-accept <key> [--accept-blocked LABEL ...] [--accept-restarts] | ship | adapter-test
@@ -1739,6 +1740,13 @@ def flow_command() -> str:
     if c is not None and c.release_override:
         return f"python3 -B {Path(c.release_override) / 'skills/run-delivery/scripts/run_delivery.py'}"
     return f"python3 -B {TOOL_PATH}"
+
+
+def _merge_queue():
+    """The installed release's merge queue, for the rules a hand-off must judge as the queue will."""
+    _validator()  # puts the release's orchestration scripts on the path
+    import merge_queue  # noqa: E402
+    return merge_queue
 
 
 def _validator():
@@ -4595,46 +4603,200 @@ def lead_authorize_base_merge(args) -> None:
                           "--data", json.dumps(authorization))
     token = json.loads(recorded.stdout)["entry"]["data"]["token"]
     print(f"{key}: authorized base merges from {reviewed}. Run in the lane checkout, in this order:")
+    print_base_merge(key, token, bases)
+
+
+def print_base_merge(key: str, token: str, bases: list[str]) -> None:
+    """The authorized merge commands, in order, then how to finish one that stops on a conflict."""
     for base in bases:
-        print(shlex.join(["git", "merge", "--no-ff", "--no-log", "-m", f"{key}: Merge delivery base",
-                          "-m", f"Delivery-Base-Merge: {token}", base]))
+        print(shlex.join(["git", "merge", "--no-ff", "--no-log", *base_merge_message(key, token), base]))
+    print("If a merge stops on a conflict, resolve it, `git add` the files, then finish it with:")
+    print(shlex.join(["git", "commit", *base_merge_message(key, token)]))
 
 
-def delta_entries(helper, root: Path, before: str, after: str) -> dict[bytes, bytes]:
+def base_merge(args) -> None:
+    """Decision 3: the lane authorizes its own merge of the base head, before hand-off, and gets its commands."""
+    c = cfg()
+    key = c.require(args.key)
+    lane = c.lane_of(key)
+    head = clean_head()
+    git("fetch", "-q", c.remote, c.base_branch)
+    doc = load_state()
+    item = next((row for row in doc["state"]["queue"] if row["subject"] == key), None)
+    if item is not None and item["stage"] != "stopped":
+        raise Stop(f"{key} is {item['stage']}: the queue holds it, so a base merge is the lead's, through "
+                   f"lead-authorize-base-merge")
+    base = git("rev-parse", "--verify", "--end-of-options", f"{c.base_ref}^{{commit}}")
+    if is_ancestor(base, head):
+        raise Stop(f"{c.base_ref} at {base[:10]} is already in HEAD's history: there is nothing to merge")
+    rounds = round_files(review_dir(key))
+    last = json.loads(rounds[-1].read_text()) if rounds else None
+    if last is None or last["outcome"] != "aligned":
+        raise Stop(f"{key} has no aligned review round to carry across the merge: review first")
+    reviewed = last["entries"][0]["binding"]["candidateRef"]
+    if head != reviewed:
+        try:
+            verify_base_merge(c, key, lane, reviewed, head, doc)
+        except Stop as error:
+            raise Stop(f"HEAD {head[:10]} is neither the last aligned round's head {reviewed[:10]} nor a head carried "
+                       f"from it ({error}): a merge from here would need a new review") from error
+    recorded = state_tool("journal", "--writer", "lane", "--kind", "base.merge.authorized", "--subject", key,
+                          "--lane", lane, "--data", json.dumps({"reviewed": reviewed, "baseCommits": [base], "by": "lane"}))
+    token = json.loads(recorded.stdout)["entry"]["data"]["token"]
+    print(f"{key}: you authorized your merge of {c.base_ref} at {base} from {reviewed}. Run in this checkout:")
+    print_base_merge(key, token, [base])
+    print("Then rerun the gates and any required in-app and PR checks at the new head, push, and hand off.")
+
+
+def listing_reader(c, key: str, head: str):
+    """The merge queue's runner for this binding, and the values its sync step gives a listing, so a listing read at
+    hand-off, one that names `{head}` included, reads as the queue will read it."""
+    _validator()
+    import merge_queue  # noqa: E402  (the installed release's own queue)
+    queue = merge_queue.Runner(main_checkout(), c.state, remote=c.remote, base=c.base_branch)
+    # A listing read at hand-off has run under the binding's check timeout, or 600 seconds without one.
+    queue.binding = {"checkTimeoutSeconds": 600, **c.binding}
+    root = Path(c.binding.get("workRoot", ".orchestration/work"))
+    queue.work_root = (root if root.is_absolute() else main_checkout() / root).resolve()
+    values = queue.context(key, git("rev-parse", c.base_ref)).with_values(branch=c.branch(key), head=head)
+    return merge_queue, queue, values
+
+
+def check_base_conflict(c, key: str, head: str) -> None:
+    """Decision 2: refuse a head that doesn't merge cleanly into the current base, outside the regenerable paths, so
+    the lane merges it before the queue finds the conflict. A conflicted path with a listing is judged as the queue
+    judges it: refused only when both sides changed what it lists. A clean move is left to the queue's sync."""
+    base = git("rev-parse", "--verify", "--end-of-options", f"{c.base_ref}^{{commit}}")
+    merged = run(["git", "merge-tree", "--write-tree", "--name-only", "--no-messages", "-z", base, head], check=False)
+    if merged.returncode == 0:
+        return
+    if merged.returncode != 1:
+        raise Stop(f"git merge-tree couldn't merge HEAD into {c.base_ref}: {(merged.stderr or merged.stdout).strip()[-400:]}")
+    conflicts = sorted({path for path in merged.stdout.split("\0")[1:] if path})
+    queue = _merge_queue()
+    regenerable = (c.binding or {}).get("regenerable") or {}
+    merge_hint = (f"merge the base before you hand off: run `{flow_command()} base-merge {key}`, then the merge it "
+                  "prints, rerun the gates and checks, push, and hand off again")
+    outside = [path for path in conflicts if not queue.matches_any(path, regenerable.get("paths") or [])]
+    if outside:
+        raise Stop(f"HEAD conflicts with {c.base_ref} at {base[:10]} in {', '.join(outside)}: {merge_hint}")
+    listings = {entry["path"]: entry["argv"] for entry in regenerable.get("listings") or []}
+    conflicted = [path for path in conflicts if path in listings]
+    if not conflicted:
+        return
+    merge_base = git("merge-base", base, head)
+    merge_queue, reader, values = listing_reader(c, key, head)
+    for path in conflicted:
+        try:
+            before, at_base, after = (set(reader.listed_outputs(repo(), path, listings[path], commit, which, values))
+                                      for commit, which in ((merge_base, "merge base"), (base, "base"), (head, "candidate")))
+        except merge_queue.Stop as error:
+            raise Stop(f"{error.detail}, so the queue would stop on it: merge the base before you hand off, with "
+                       f"`{flow_command()} base-merge {key}`") from error
+        if after != before and at_base != before:
+            raise Stop(f"HEAD conflicts with {c.base_ref} at {base[:10]} in {path}, and both this story and the base "
+                       f"changed the outputs it lists (this story {queue.listing_change(before, after)}; the base "
+                       f"{queue.listing_change(before, at_base)}): {merge_hint}, keeping both sides' outputs")
+
+
+BASE_MERGE_TRAILER = "Delivery-Base-Merge"
+
+
+def base_merge_message(key: str, token: str) -> list[str]:
+    """An authorized base merge's message, as `-m` arguments: the subject, then the authorization trailer."""
+    return ["-m", f"{key}: Merge delivery base", "-m", f"{BASE_MERGE_TRAILER}: {token}"]
+
+
+def base_merge_tokens(merge: str) -> list[str]:
+    """The Delivery-Base-Merge trailer values in a merge's message. Lines starting with `#` are dropped first, whatever
+    the comment character or cleanup the merge was committed with, so git's `# Conflicts:` lines never hide the
+    trailer, then `git interpret-trailers --parse` reads the rest."""
+    message = git("show", "-s", "--format=%B", merge)
+    kept = "".join(line + "\n" for line in message.splitlines() if not line.startswith("#"))
+    parsed = run(["git", "-c", "trailer.separators=:", "interpret-trailers", "--parse"], input=kept).stdout
+    values = []
+    for line in parsed.splitlines():
+        name, separator, value = line.partition(":")
+        if separator and name.strip().lower() == BASE_MERGE_TRAILER.lower():
+            values.append(value.strip())
+    return values
+
+
+SEPARATOR_APPENDED = "(separator appended to the preceding line)"
+
+
+def delta_entries(helper, root: Path, before: str, after: str) -> dict[bytes, tuple[bytes, bytes, bytes]]:
+    """Each path the diff changes, with its (old mode, new mode, status). Blob ids are left out: a file both sides
+    changed has a different post-image either way."""
     data = helper.git(root, "diff", "--raw", "-z", "--no-renames", "--no-abbrev",
                       "--ignore-submodules=none", before, after).stdout
     tokens = data.split(b"\0")[:-1]
-    return dict(zip(tokens[1::2], tokens[::2], strict=True))
+    entries = {}
+    for meta, path in zip(tokens[::2], tokens[1::2], strict=True):
+        old_mode, new_mode, _, _, status = meta.lstrip(b":").split(b" ")
+        entries[path] = (old_mode, new_mode, status)
+    return entries
 
 
-def region_delta(helper, root: Path, path: str, base: str, head: str, claims: list[dict]) -> list[list[bytes]]:
-    # Ownership validation confines each hunk to a single mapped span. Adjust
-    # each span's candidate bounds by edits before and within it.
-    helper.check_change(root, path, base, head, claims)
-    _, old = helper.entry(root, base, path)
-    _, new = helper.entry(root, head, path)
-    edits = helper.hunks(root, old, new)
-    lines = helper.lines(root, new)
-    result = []
-    for claim in claims:
-        start, end = helper.mapped(root, claim, base)
-        before = sum(added - removed for first, removed, added in edits if first < start)
-        within = sum(added - removed for first, removed, added in edits if start <= first < end)
-        result.append(lines[start - 1 + before:end - 1 + before + within])
-    return result
+def delta_hunks(helper, root: Path, before: str, after: str, path: bytes) -> list[list[bytes]]:
+    """A path's `--unified=0` hunks from before to after, each as its removed and added lines, without line numbers or
+    context. Within a hunk, a removed line that comes back added with only a trailing `,` is the separator an append
+    adds to the line before it: the pair, matched in order of appearance, reads as one marker."""
+    data = helper.git(root, "-c", "core.quotePath=false", "diff", "--unified=0", "--no-renames", "--no-color",
+                      "--no-ext-diff", "--no-textconv", "--binary", "--diff-algorithm=myers",
+                      "--ignore-submodules=none", before, after, "--",
+                      os.fsdecode(path)).stdout  # the helper reads pathspecs literally
+    hunks: list[list[bytes]] = []
+    body = False
+    for line in data.split(b"\n"):
+        if line.startswith(b"@@") or line == b"GIT binary patch":
+            hunks.append([])
+            body = True
+            if line.startswith(b"@@"):
+                continue
+        if body and line:
+            hunks[-1].append(line)
+    return [separator_marked(hunk) for hunk in hunks]
+
+
+def separator_marked(hunk: list) -> list:
+    """One hunk's removed and added lines, bytes or str, with each removed line that comes back added with only a
+    trailing `,` (before the carriage return, in a CRLF file) read as one marker: the separator an append adds to the line
+    before it. Removed lines are paired in order of appearance, each with the first added line still unpaired."""
+    if not hunk:
+        return []
+    same = (lambda text: text) if isinstance(hunk[0], str) else (lambda text: text.encode())
+    minus, plus, comma, cr = same("-"), same("+"), same(","), same("\r")
+    marked = list(hunk)
+    taken: set[int] = set()
+    for index, line in enumerate(hunk):
+        if not line.startswith(minus):
+            continue
+        content = line[1:]
+        separated = plus + (content[:-1] + comma + cr if content.endswith(cr) else content + comma)
+        match = next((other for other, added in enumerate(hunk) if other not in taken and added == separated), None)
+        if match is not None:
+            taken.add(match)
+            marked[index] = same(SEPARATOR_APPENDED)
+    return [line for index, line in enumerate(marked) if index not in taken]
+
+
+def shown_lines(lines: list[bytes], limit: int = 10) -> list[str]:
+    text = [line.decode("utf-8", "replace") for line in lines[:limit]]
+    if len(lines) > limit:
+        text.append(f"... {len(lines) - limit} more")
+    return text or ["(nothing)"]
 
 
 def check_base_merge_delta(c, state: dict, lane: str, prior: str, head: str, old_base: str, new_base: str) -> None:
+    """Decision 1's carry: the story's own change, `old_base..prior`, reads the same as `new_base..head`. The same
+    paths, each with the same status and modes and the same hunks in order, compared both ways. Who owns what the base
+    touched doesn't matter; a region claim must still map from the old base to the new one, for ownership."""
     helper = _region_ownership()
-    ownership = c.effective_ownership(state)
     regions = [claim for claim in state.get("laneRegions", []) if claim["lane"] == lane]
-    by_path = collections.defaultdict(list)
-    for claim in regions:
-        by_path[claim["path"]].append(claim)
+    differing = []
+    first = None
     try:
-        for path in helper.changed_paths(c.root, old_base, new_base):
-            if lane in owners_of(ownership, path):
-                raise Stop(f"the base merge changes lane-owned file {path}")
         for claim in regions:
             start, end = helper.mapped(c.root, claim, old_base)
             # Verify the transition itself even when the claim was originally
@@ -4644,18 +4806,36 @@ def check_base_merge_delta(c, state: dict, lane: str, prior: str, head: str, old
                          for base, tip in ((old_base, prior), (new_base, head)))
         for raw_path in sorted(before.keys() | after.keys()):
             path = os.fsdecode(raw_path)
-            if raw_path not in before or raw_path not in after:
-                raise Stop(f"the base merge changes the story delta for {path}")
-            if path in by_path:
-                old = region_delta(helper, c.root, path, old_base, prior, by_path[path])
-                new = region_delta(helper, c.root, path, new_base, head, by_path[path])
-                if old == new:
-                    continue
-            elif before[raw_path] == after[raw_path]:
+            old = (before.get(raw_path),
+                   delta_hunks(helper, c.root, old_base, prior, raw_path) if raw_path in before else [])
+            new = (after.get(raw_path),
+                   delta_hunks(helper, c.root, new_base, head, raw_path) if raw_path in after else [])
+            if old == new:
                 continue
-            raise Stop(f"the base merge changes the story delta for {path}")
+            differing.append(path)
+            if first is None:
+                first = (path, old, new)
     except helper.RegionError as error:
         raise Stop(str(error)) from error
+    if not differing:
+        return
+    path, (old_meta, old_hunks), (new_meta, new_hunks) = first
+    lines = [f"the base merge {head} changes the story delta for {', '.join(differing)}"]
+    if old_meta != new_meta:
+        def meta(entry):
+            if entry is None:
+                return "unchanged by the story"
+            old_mode, new_mode, status = (part.decode() for part in entry)
+            return f"status {status}, mode {old_mode} -> {new_mode}"
+        lines.append(f"{path}: before the merge {meta(old_meta)}; after it {meta(new_meta)}")
+    index = next((n for n in range(max(len(old_hunks), len(new_hunks)))
+                  if old_hunks[n:n + 1] != new_hunks[n:n + 1]), None)
+    if index is not None:
+        lines.append(f"{path}, the first hunk that differs, before the merge:")
+        lines += ["  " + line for line in shown_lines((old_hunks[index:index + 1] or [[]])[0])]
+        lines.append("after it:")
+        lines += ["  " + line for line in shown_lines((new_hunks[index:index + 1] or [[]])[0])]
+    raise Stop("\n".join(lines))
 
 
 def verify_base_merge(c, key: str, lane: str, reviewed: str, head: str, doc: dict) -> dict:
@@ -4675,11 +4855,19 @@ def verify_base_merge(c, key: str, lane: str, reviewed: str, head: str, doc: dic
             raise Stop(f"{base} is outside the history of {c.base_ref}")
         # The authorization's unpredictable token must already be in the
         # immutable merge commit. A caller-controlled commit date proves no ordering.
-        trailers = git("-c", "trailer.separators=:", "show", "-s",
-                       "--format=%(trailers:key=Delivery-Base-Merge,valueonly)", merge).splitlines()
-        if not any(base in entry["data"]["baseCommits"]
-                   and trailers == [entry["data"]["token"]] for entry in grants):
+        covering = [entry for entry in grants if base in entry["data"]["baseCommits"]]
+        if not covering:
             raise Stop(f"the lead did not authorize {key} to merge {base} from {reviewed} before the merge")
+        trailers = base_merge_tokens(merge)
+        if not any(trailers == [entry["data"]["token"]] for entry in covering):
+            problem = (f"the base merge {merge} has no {BASE_MERGE_TRAILER} trailer from {key}'s authorization to merge "
+                       f"{base}")
+            if merge != history[-1]:
+                raise Stop(f"{problem}. It is not the last merge, so no amend fixes it: merge again from {prior}, "
+                           "with the authorized commands")
+            fix = shlex.join(["git", "commit", "--amend", *base_merge_message(key, covering[-1]["data"]["token"])])
+            raise Stop(f"{problem}. Fix its message with:\n  {fix}\nA merge already pushed is replaced only by a "
+                       "forced push, which a lane never makes: ask the lead")
         old_base = git("merge-base", c.base_ref, prior)
         new_base = git("merge-base", c.base_ref, merge)
         if new_base != base or old_base == new_base or not is_ancestor(old_base, new_base):
@@ -4706,6 +4894,7 @@ def handoff(args) -> None:
     folder = review_dir(key)
     head = clean_head()
     git("fetch", "-q", c.remote, c.base_branch)
+    check_base_conflict(c, key, head)
     lane = c.lane_of(key)
     pushed(key, head)
     pr = forge("get", "--url", args.pr)
@@ -4738,14 +4927,7 @@ def handoff(args) -> None:
     if (c.binding.get("regenerable") or {}).get("listings"):
         # The merge queue stops a candidate that changes what a regenerable listing lists when its lane doesn't own
         # the listing. Its own check, asked here, says so before the lead accepts rather than after.
-        _validator()
-        import merge_queue  # noqa: E402  (the installed release's own queue)
-        queue = merge_queue.Runner(main_checkout(), c.state, remote=c.remote, base=c.base_branch)
-        queue.binding = c.binding
-        root = Path(c.binding.get("workRoot", ".orchestration/work"))
-        queue.work_root = (root if root.is_absolute() else main_checkout() / root).resolve()
-        # The values the queue's sync step gives a listing, so a listing that names {head} reads the same here.
-        values = queue.context(key, git("rev-parse", c.base_ref)).with_values(branch=c.branch(key), head=head)
+        merge_queue, queue, values = listing_reader(c, key, head)
         try:
             moved = list(queue.unowned_listing_changes(lane, repo(), c.base_ref, head, values))
         except merge_queue.Stop as error:
@@ -8015,6 +8197,9 @@ def accept_story(c, args) -> None:
     if not item:
         raise Stop(f"{key} is not in the queue; the lane has not handed it off")
     merged = item["stage"] == "merged"
+    if not merged and item.get("pending"):
+        # A hand-off that ends a failed run waits beside the row the queue still checks: what it claims is its own.
+        item = _validator().handed_item(doc["state"], doc.get("journal", []), key) or item
     added = handed_additions(c, key, item["head"]) if not merged and lead_selects(c) and not args.full_suite else {}
     chosen = check_ids(c, args.checks, "--checks", added) if args.checks is not None else None
     problems, decisions = [], []
@@ -8243,6 +8428,38 @@ def accept_story(c, args) -> None:
     if needs_video(key):
         print("  once it merges: lead-evidence page, republish the page (same address), lead-evidence published --url, "
               "and link its section from the story in the tracker")
+
+
+def lead_base_broken(args) -> None:
+    """Name the base broken before a base re-run's verdict, through the state tool's base-broken; a re-run at that head
+    ends, and the candidate under it stops. --repair names another queued candidate as the repair; --self-repair says
+    the candidate under the re-run holds the fix, so its next accepted hand-off at another head is the repair."""
+    c = cfg()
+    if not (c.state / "state.json").is_file():
+        raise Stop("initialize the delivery record first")
+    repair = c.require(args.repair) if args.repair else None
+    if repair:
+        item = next((q for q in load_state()["state"]["queue"] if q["subject"] == repair), None)
+        if not item or item["stage"] != "queued" or item.get("pending"):
+            raise Stop(f"--repair names a queued candidate the queue may take; {repair} is "
+                       f"{'not in the queue' if not item else 'waiting for acceptance' if item.get('pending') else item['stage']}")
+    head = git("rev-parse", "--verify", "--quiet", f"{args.head}^{{commit}}")
+    done = state_tool("base-broken", "--head", head, "--check", args.check, "--test", args.test, "--why", args.why,
+                      *(["--self-repair"] if args.self_repair else []), check=False)
+    answer = json.loads(done.stdout) if done.stdout.strip().startswith("{") else {}
+    if done.returncode != 0:
+        raise Stop(f"base-broken refused: {answer.get('error') or (done.stderr or done.stdout).strip()[-400:]}")
+    print(f"journalled base.broken (entry {answer['broken']['id']}) at {head[:10]}: {args.test} in {args.check}")
+    if answer.get("superseded"):
+        print(f"  ended the base re-run of {answer['stopped']} (check.superseded, entry {answer['superseded']['id']}); "
+              f"{answer['stopped']} stopped as base_broken")
+    if repair:
+        state_tool("repair", "--subject", repair)
+        print(f"  named {repair} the repair: serve takes it alone, and its merge journals base.repaired")
+    elif args.self_repair:
+        print(f"  {answer['stopped']} holds the fix: accept its next hand-off at another head and it becomes the repair")
+    else:
+        print("  no repair named: name one with the state tool's repair, or journal base.repaired once the base is fixed")
 
 
 # -- lead: cleanup ---------------------------------------------------------------------------------
@@ -12996,6 +13213,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--pr-review-triage", action="append", help="how a PR review's findings were handled: ID=TEXT "
                    "for each current reviewer (repeat it), or a bare TEXT when exactly one review is current")
     p.add_argument("--findings"); p.add_argument("--blocked", action="append", default=[]); p.set_defaults(fn=handoff)
+    p = command(sub, "base-merge", help="before hand-off: authorize your own merge of the moved base head, and print "
+                "the merge and its finishing command")
+    p.add_argument("key"); p.set_defaults(fn=base_merge)
     p = command(sub, "lead-hints", help="print the delivery's work-hints/1: each story's plan files and its after keys")
     p.set_defaults(fn=lead_hints)
     p = command(sub, "lead-setup"); p.add_argument("key"); p.add_argument("--plan", required=True)
@@ -13082,6 +13302,15 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--full-suite", action="store_true", help="under selection.lead: check on the binding's fallback, "
                    "journalled as the lead's decision")
     p.add_argument("--reason", help="with --checks or --full-suite: why"); p.set_defaults(fn=lead_accept)
+    p = command(sub, "lead-base-broken", help="name the base broken before a base re-run's verdict, ending a re-run at "
+                "that head")
+    p.add_argument("--head", required=True, help="the base head that is broken")
+    p.add_argument("--check", required=True); p.add_argument("--test", required=True)
+    p.add_argument("--why", required=True, help="how you know the base, not the candidate, broke it")
+    repaired = p.add_mutually_exclusive_group()
+    repaired.add_argument("--repair", metavar="KEY", help="another, queued candidate holds the fix")
+    repaired.add_argument("--self-repair", action="store_true", help="the candidate under the re-run holds the fix")
+    p.set_defaults(fn=lead_base_broken)
     p = command(sub, "lead-authorize-base-merge", help="authorize exact delivery-base commits before the lane merges")
     p.add_argument("key"); p.add_argument("--reviewed", required=True); p.add_argument("--base", action="append", required=True)
     p.set_defaults(fn=lead_authorize_base_merge)

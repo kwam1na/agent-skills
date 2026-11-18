@@ -1,0 +1,143 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "writtenBy": "run-delivery plan-review",
+  "plan": "docs/plans/2026-11-17-settle-with-base.md",
+  "planSha256": "11b882ac6e8e4a039a34e1382b0612d5a724fe645dbcda074196b972a460be44",
+  "planCommit": "c5889dcbd8cfcaa82a9894620bef8565afcb54f0",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": [
+    "lens.outcome-correctness",
+    "lens.adversarial-testing"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "candidate": "5ed8f1c7534f3ba0dfd536a7821574199959ab84",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-18T00:59:47.469982Z",
+      "finishedAt": "2026-11-18T01:04:34.402213Z",
+      "open": [
+        "outcome-correctness-r1-1",
+        "outcome-correctness-r1-2",
+        "outcome-correctness-r1-3",
+        "outcome-correctness-r1-4",
+        "outcome-correctness-r1-5",
+        "adversarial-testing-r1-1",
+        "adversarial-testing-r1-2",
+        "adversarial-testing-r1-3",
+        "adversarial-testing-r1-4",
+        "adversarial-testing-r1-5",
+        "adversarial-testing-r1-6",
+        "adversarial-testing-r1-7"
+      ]
+    },
+    {
+      "round": 2,
+      "candidate": "5a44c779906412f4c9012cc0b9ad45861c8952d8",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-18T01:06:25.328389Z",
+      "finishedAt": "2026-11-18T01:08:31.731709Z",
+      "open": [
+        "adversarial-testing-r1-3",
+        "outcome-correctness-r2-1",
+        "adversarial-testing-r2-1",
+        "adversarial-testing-r2-2",
+        "adversarial-testing-r2-3"
+      ]
+    },
+    {
+      "round": 3,
+      "candidate": "c5889dcbd8cfcaa82a9894620bef8565afcb54f0",
+      "outcome": "aligned",
+      "startedAt": "2026-11-18T01:08:55.822671Z",
+      "finishedAt": "2026-11-18T01:10:20.135215Z",
+      "open": []
+    }
+  ],
+  "reviews": [
+    {
+      "lens": "lens.outcome-correctness",
+      "round": 3,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.outcome-correctness",
+        "subjectRef": "settle-with-base.plan",
+        "candidateRef": "c5889dcbd8cfcaa82a9894620bef8565afcb54f0",
+        "round": 3,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [
+          {
+            "id": "outcome-correctness-r2-1",
+            "state": "fixed",
+            "resolution": "Adopted as written. Decision 1 now replaces a matched removed-and-added pair, differing only by a trailing `,`, with one marker, 'separator appended to the preceding line', and compares that marker like any other hunk line. Only a matched pair is replaced. So [separator, +b] against [+b] is refused. V26-3576 adds the scenario for a resolution that drops the separator on the base's last line, and one where a story's comma-only change is lost."
+          }
+        ],
+        "evidence": [
+          "Reviewed tree 8efc043ba35fb626f395342caef1c4d64a5a6bcc at candidateRef c5889dcbd8cfcaa82a9894620bef8565afcb54f0. The start identity check passed: `git rev-parse HEAD^{tree}` matched and `git status --porcelain` was empty. The end identity check passed with the same two results, re-run before this resubmission, so the checkout was unchanged and no probes were left.",
+          "I derived the delta myself with `git diff 5a44c779906412f4c9012cc0b9ad45861c8952d8..c5889dcbd8cfcaa82a9894620bef8565afcb54f0`. It changes only docs/plans/2026-11-17-settle-with-base.md: the separator marker in Decision 1, and new scenarios for V26-3577, V26-3576, V26-3572 and V26-3557. I reviewed all of it.",
+          "Re-checked the only finding carried open into this round, outcome-correctness-r2-1: it is fixed as its approval condition states. The findings closed in round 2, r1-1 to r1-5, are not regressed by this delta.",
+          "Checked in the delta, no finding. V26-3577's revised scenario uses `core.commentChar=;` with `--cleanup=verbatim`: git then does not treat the `#` lines as comments, so they follow the trailer and today's `%(trailers)` reader misses it. Decision 5 drops every line starting with `#` before `git interpret-trailers --parse`, so the row can be proved red against today's reader and green afterwards. The new V26-3572 row, where the base changed the listing and the candidate changed only digests, matches Decision 6's 'take the base side'. The deleted-line and comma-only scenarios are consistent with the two-way comparison and the marker rule. The new `--self-repair` scenarios, a hand-off at the failed head not being marked, and a superseded entry at an unchanged head writing nothing, are consistent with Decisions 7 and 8.",
+          "The P3 note from round 2 still stands, and is not a finding: under `--self-repair`, the queue's existing stopped() path may journal a second base.broken, with source queue, beside the lead's.",
+          "Model class: Claude Opus (claude-opus-5-5), run as a native subagent. The host exposes no progress or permission signals to this lens, a limitation recorded here. Realization basis: host-convention.",
+          "No checks were run, as the brief says for a plan review. No mutation or fault injection was done.",
+          "Approval conditions: none, because this round raises no findings."
+        ]
+      },
+      "resultSha256": "6f06b0ece94b0081b90b8b44a323e69c85299719825b22b75faa57bc3c4759ef"
+    },
+    {
+      "lens": "lens.adversarial-testing",
+      "round": 3,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.adversarial-testing",
+        "subjectRef": "settle-with-base.plan",
+        "candidateRef": "c5889dcbd8cfcaa82a9894620bef8565afcb54f0",
+        "round": 3,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [
+          {
+            "id": "adversarial-testing-r1-3",
+            "state": "fixed",
+            "resolution": "Closed through adversarial-testing-r2-1, adopted as written. The V26-3577 row now uses a fixture repository with `core.commentChar=;` and a `--cleanup=verbatim` message whose trailer is followed by `#` conflict lines, and it keeps the recorded red proof against today's reader. On git 2.54.0 in round 2, I saw today's `%(trailers)` reader print nothing under that setting, while Decision 5's reader printed the trailer. So the row is red before the change and green after it."
+          },
+          {
+            "id": "adversarial-testing-r2-1",
+            "state": "fixed",
+            "resolution": "Adopted as written. The row uses the `core.commentChar=;` setup. The text now says the comment-character setting defeats today's reader, replacing the false claim that a verbatim cleanup does. The lane must prove the row red and record that run."
+          },
+          {
+            "id": "adversarial-testing-r2-2",
+            "state": "fixed",
+            "resolution": "Adopted as written. A V26-3576 row now has the story delete a line from a lane-owned file and the resolution keep it. The hand-off is refused, naming the path and the removed line. A comparison that reads only added lines turns this row red."
+          },
+          {
+            "id": "adversarial-testing-r2-3",
+            "state": "fixed",
+            "resolution": "Adopted as written. A V26-3572 row now covers a conflict only in `provenance.lock.json` where the base changed the listing and the candidate changed only digests. That conflict does not refuse at `handoff`. A comparison that refuses whenever the base's listing moved turns this row red."
+          }
+        ],
+        "evidence": [
+          "Reviewed tree 8efc043ba35fb626f395342caef1c4d64a5a6bcc: at the start, `git rev-parse HEAD^{tree}` matched and `git status --porcelain` was empty, with HEAD at c5889dcbd8cfcaa82a9894620bef8565afcb54f0. Both checks were repeated at the end with the same tree and an empty status.",
+          "Delta derived with `git diff 5a44c779906412f4c9012cc0b9ad45861c8952d8..c5889dcbd8cfcaa82a9894620bef8565afcb54f0`. It touches only docs/plans/2026-11-17-settle-with-base.md, and I reviewed all of it.",
+          "Carried findings re-checked: adversarial-testing-r1-3, r2-1, r2-2 and r2-3 are fixed, as resolvedFindings records. The round-1 findings r1-1, r1-2 and r1-4 to r1-7 were fixed in round 2. Their text is unchanged, apart from Decision 1's normalization, re-checked below.",
+          "Decision 1's normalization changed in the delta. A matched pair, a removed line that comes back as an added line differing only by a trailing `,`, is now replaced by one separator marker instead of being dropped. I traced the incident layout by hand, using the before and after `git diff -U0` lines replayed in round 1. Both deltas reduce to [separator, `+  {\"id\": \"b\"}`] and carry. The new rows pin both sides of the normalization. Losing the separator reads [`+b`] against [separator, `+b`] and is refused, so the round-2 drop-both-lines rule, as a mutant, turns that row red. A story whose only change is a trailing `,` reduces to [separator]; a resolution that loses it leaves an empty delta and is refused, so a mutant that strips commas everywhere turns that row red.",
+          "The round-2 P2 and P3 notes are now pinned in the delta. Under `--self-repair`, a hand-off at the failed head is not marked the repair. A verdict whose build sees a `base.rerun.superseded` naming the checked head, with the row's head unchanged, writes nothing.",
+          "P3 (not filed): Decision 1 does not say how a removed line is matched to its added line when one `-U0` hunk holds several removed and added lines that differ only by `,`. A greedy mutant that pairs them in another order could differ from the intended rule, but no realistic append fixture tells the two apart.",
+          "Model class: Claude Opus-class (claude-opus-5-5), run as a native subagent. The host exposes no progress or permission signals to this lens, and that limitation is recorded here. Run ID: none. activityId review-settle-with-base.plan, attemptId 1, roundId settle-with-base.plan-r3.",
+          "Realization basis: host-convention.",
+          "Scope: plan review. The brief names no scoped sensors and no test files, so no test was run and no mutant was planted in the checkout. Each mutation was reasoned against the plan's revised Decision 1 and Scenarios only. This round used no scratch repository; the incident trace reuses the round-1 replay output.",
+          "Approval conditions: this round raises no findings. Every carried finding's proposed change was adopted as written and resolves it."
+        ]
+      },
+      "resultSha256": "a1aa1cf4d3aec1c4d760b9a569e51dbcce67d08c4d917a4dd92fa651f904c3a3"
+    }
+  ],
+  "residualRisks": [
+    "3 review rounds; findings open after each round: 12, 5, 0."
+  ]
+}

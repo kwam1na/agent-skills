@@ -1493,9 +1493,10 @@ def handoff(
 
     carried = None
     stopped = False
+    superseding = False
 
     def change(state: dict) -> dict:
-        nonlocal carried, stopped
+        nonlocal carried, stopped, superseding
         if lane not in [entry["id"] for entry in state["lanes"]]:
             raise StateError("writer_not_owned", f"there is no lane {lane}")
         if run is not None:
@@ -1509,9 +1510,31 @@ def handoff(
             authorized_lane = queued.get("assignedLane", queued["lane"]) if queued["stage"] == "stopped" else queued["lane"]
             if authorized_lane != lane:
                 raise StateError("writer_not_owned", f"{subject} belongs to {authorized_lane}, not {lane}")
-            if queued["stage"] not in ("queued", "stopped"):
+            if queued["stage"] == "checking":
+                # Once a check of its run has failed, the run only diagnoses: a new head may end it (see supersede).
+                if head == queued["head"]:
+                    raise StateError("handoff_invalid", f"{subject} is checking at {head}; hand off a new head, or "
+                                     "hand it off once it stops")
+                if superseding_phase(state, read_journal(directory), subject) is None:
+                    raise StateError("handoff_invalid", f"{subject} is checking and no check of its run has failed; "
+                                     "hand it off once it stops")
+                if run is not None and run != queued.get("runId"):
+                    raise StateError("handoff_invalid", "a hand-off that ends a failed run keeps the run it was built by")
+                if base_merge is not None and (queued.get("runId") or run):
+                    raise StateError("carry_invalid", "work built by a product run keeps its own review evidence")
+                superseding = True
+            elif queued["stage"] not in ("queued", "stopped"):
                 raise StateError("handoff_invalid", f"{subject} is {queued['stage']}; hand it off once it stops")
             stopped = queued["stage"] == "stopped"
+            if superseding:
+                # The row stays as the queue checks it until the hand-off is taken: its facts are journaled.
+                if state["meta"].get("handoffsNeedAcceptance"):
+                    queued["pending"] = True
+                if base_merge is not None:
+                    carried = base_merge_evidence(directory, read_journal(directory), subject, lane, head, rounds,
+                                                  base_merge)
+                _set_lane_state(state, lane, "handed")
+                return copy.deepcopy(queued)
             queued.update(stage="queued", lane=lane, head=head, syncedHead=None, checks=[], changeRequest=change_request)
             queued.pop("checkSelection", None)
             # A lead selection is for the head it was made at; new code is never checked with it.
@@ -1580,9 +1603,174 @@ def handoff(
         facts["carry"] = dict(carried)
     # A hand-off for a stopped piece answers the stop standing for it.
     stop = standing_stop(read_journal(directory), subject) if stopped else None
-    append_journal(directory, kind="candidate.handed", lane=lane, subject=subject, data=facts,
-                   answers=[stop["id"]] if stop else None)
+    handed = append_journal(directory, kind="candidate.handed", lane=lane, subject=subject, data=facts,
+                            answers=[stop["id"]] if stop else None)
+    if superseding and not item.get("pending"):
+        # No acceptance is needed: the hand-off ends the failed run now, as the lead's acceptance would.
+        item = _take_handed(directory, subject, by=handed["id"])  # type: ignore[assignment]
     return item  # type: ignore[return-value]
+
+
+def superseding_phase(state: dict, journal: list[dict], subject: str) -> str | None:
+    """The phase of a failed candidate's run that a new hand-off may end now: ``checks`` or ``base-rerun``, or None.
+
+    Only a lone candidate's run that is checking, that the checking panel names with its base, and of which a check has
+    failed since it started: then the verdict is already that it won't merge, and the rest only diagnoses. A batch run
+    is never ended this way, and nor is a run whose panel names no base.
+    """
+    item = next((entry for entry in state["queue"] if entry["subject"] == subject), None)
+    checking = state["meta"]["checking"]["now"]
+    if item is None or item["stage"] != "checking" or not checking or checking.get("subject") != subject:
+        return None
+    started = next((entry for entry in reversed(journal)
+                    if entry["kind"] == "check.started" and entry["subject"] == subject), None)
+    if started is None or "batch" in started["data"] or "base" not in checking:
+        return None
+    if not any(entry["kind"] == "check.failed" and entry["subject"] == subject and entry["id"] > started["id"]
+               for entry in journal):
+        return None
+    return "base-rerun" if "baseRerun" in checking else "checks"
+
+
+def _superseded_base(state: dict, journal: list[dict], subject: str, phase: str) -> dict:
+    """The base the ended phase ran against: the re-run's, or the run's own, as its checking panel names it."""
+    if phase == "checks":
+        return dict(state["meta"]["checking"]["now"]["base"])
+    entry = next(entry for entry in reversed(journal) if entry["kind"] == "base.rerun.started" and entry["subject"] == subject)
+    return dict(entry["data"]["base"])
+
+
+def handed_item(state: dict, journal: list[dict], subject: str) -> dict | None:
+    """The queue row as its waiting hand-off makes it, or the row as it is: a hand-off that ends a failed run leaves
+    the row at the checked head until it is taken, and its facts are those its candidate.handed entry journals."""
+    item = next((entry for entry in state["queue"] if entry["subject"] == subject), None)
+    handed = latest_handoff(journal, subject)
+    if (item is None or not item.get("pending") or handed is None or handed["data"].get("noChange")
+            or handed["data"]["head"] == item["head"]):
+        return item
+    return _handed_row(item, handed)
+
+
+def _handed_row(item: dict, handed: dict) -> dict:
+    """``item`` moved to the head ``handed`` journals, with that hand-off's facts, as a hand-off at a new head moves it.
+
+    The checks the ended run was still running or had yet to start read ``superseded``.
+    """
+    data = handed["data"]
+    row = copy.deepcopy(item)
+    row.update(stage="queued", lane=handed["lane"], head=data["head"], syncedHead=None,
+               checks=[{**check, "state": "superseded"} if check["state"] in ("running", "pending") else check
+                       for check in row["checks"]])
+    if "changeRequest" in data:
+        row["changeRequest"] = data["changeRequest"]
+    row.pop("checkSelection", None)
+    if row.get("leadSelection", {}).get("head") != data["head"]:
+        row.pop("leadSelection", None)
+    if "rounds" in data:
+        row["reportedRounds"] = data["rounds"]
+    row.pop("evidence", None)
+    row.pop("acceptedRegionPaths", None)
+    if data.get("evidence"):
+        row["evidence"] = [{**entry, "recordedAt": handed["at"]} for entry in data["evidence"]]
+    row.pop("namedChecks", None)
+    if data.get("checks"):
+        row["namedChecks"] = list(data["checks"])
+    return row
+
+
+def _locked_write(directory: Path, change: Callable[[dict, list[dict]], tuple[object, list[dict]]]) -> tuple[dict, object, list[dict]]:
+    """One write under the state lock: the record's change and the journal entries it makes. Both are checked first,
+    then the entries are appended and the state written, so a reader that sees the new state sees the entries, and a
+    versioned patch read before them fails. ``change`` returns its outcome and the entries, without their ids and
+    times; entry ``n`` of them takes the id after the journal's last plus ``n``."""
+    with file_lock(directory / STATE_LOCK):
+        state = read_state(directory, for_write=True)
+        journal = read_journal(directory)
+        updated = copy.deepcopy(state)
+        outcome, made = change(updated, journal)
+        stamped = []
+        for number, entry in enumerate(made, start=len(journal) + 1):
+            entry = {"id": number, "at": now(), "lane": None, "subject": None, **entry}
+            for link in ("because", "answers"):
+                if not entry.get(link):
+                    entry.pop(link, None)
+            stamped.append(entry)
+        errors = journal_errors([*journal, *stamped])
+        if errors:
+            raise StateError("entry_invalid", "; ".join(errors))
+        problems = state_errors({**updated, "version": state["version"] + 1})
+        if problems:
+            raise StateError("patch_invalid", "; ".join(problems))
+        # The entries go first: a lockless reader that sees the new state sees them too, and one that read the old
+        # state fails its versioned patch and reads again.
+        for entry in stamped:
+            _append_journal_locked(directory, state, journal, entry)
+            journal = [*journal, entry]
+        written = _with_state(directory, state, updated)
+    return written, outcome, stamped
+
+
+def _self_repair(state: dict, journal: list[dict], item: dict) -> None:
+    """A candidate stopped with --self-repair holds the broken base's fix: its row, queued at a head other than the
+    failed one while the base awaits repair, takes the repair mark, as name_repair gives it, when no other row has it."""
+    failed = item.get("supersededAt")
+    if (failed is None or item["head"] == failed or item["stage"] != "queued" or not base_awaits_repair(journal)
+            or any("repair" in entry for entry in state["queue"])):
+        return
+    item["repair"] = {"namedAt": now()}
+
+
+def _take_handed(directory: Path, subject: str, *, by: int | None = None, authorization: dict | None = None,
+                 region_paths: list[str] | None = None) -> dict:
+    """Take a subject's hand-off: the lead's acceptance, or ``by`` the hand-off entry itself when none is needed.
+
+    A hand-off that ends a failed run moves the row to its head, and when the run is still checking journals
+    check.superseded naming the entry that ended it, all in one write: the queue's own writes for the checked head
+    re-read the row, and from here write nothing.
+    """
+
+    def change(state: dict, journal: list[dict]) -> tuple[dict, list[dict]]:
+        if by is None:
+            item = _pending(state, subject)
+            view = handed_item(state, journal, subject)
+            if authorization is not None and authorization != handoff_authorization(state, view):  # type: ignore[arg-type]
+                raise StateError("handoff_invalid", "the handed head or lane ownership changed; check the hand-off again")
+        else:
+            item = next(entry for entry in state["queue"] if entry["subject"] == subject)
+            handed = latest_handoff(journal, subject)
+            view = _handed_row(item, handed) if handed and handed["id"] == by and handed["data"]["head"] != item["head"] \
+                else item
+        phase = superseding_phase(state, journal, subject) if view["head"] != item["head"] else None
+        base = _superseded_base(state, journal, subject, phase) if phase else None
+        old_head = item["head"]
+        if view is not item:
+            item.clear()
+            item.update(view)
+        if region_paths:
+            authorized_paths = {claim["path"] for claim in state.get("laneRegions", []) if claim["lane"] == item["lane"]}
+            if authorization is None or not set(region_paths) <= authorized_paths:
+                raise StateError("handoff_invalid", "accepted region paths must have current claims for the handing lane")
+            item["acceptedRegionPaths"] = sorted(set(region_paths))
+        item.pop("pending", None)
+        if by is None:
+            # The lead's acceptance: the lane's row no longer waits on the lead.
+            _settle_accepted_row(state, item)
+        _self_repair(state, journal, item)
+        entries: list[dict] = []
+        ender = by
+        if by is None:
+            checked = _handoff_checked(journal, subject)
+            ender = len(journal) + 1
+            entries.append({"kind": "handoff.accepted", "subject": subject, "data": {"settled": False},
+                            "because": [checked["id"]] if checked else None})
+        if phase is not None:
+            entries.append({"kind": "check.superseded", "subject": subject, "lane": item["lane"],
+                            "data": {"base": base, "head": old_head, "by": ender,
+                                     "phase": phase},
+                            "because": [ender]})
+        return copy.deepcopy(item), entries
+
+    return _locked_write(directory, change)[1]  # type: ignore[return-value]
 
 
 def standing_stop(journal: list[dict], subject: str) -> dict | None:
@@ -1713,20 +1901,15 @@ def accept_handoff(directory: Path, subject: str, authorization: dict | None = N
                 if row["id"] == waiting["lane"] and row.get("waitingOn") in ("lead", subject):
                     row["waitingOn"] = None
             return copy.deepcopy(waiting)
-        item = _pending(state, subject)
-        if authorization is not None and authorization != handoff_authorization(state, item):
-            raise StateError("handoff_invalid", "the handed head or lane ownership changed; check the hand-off again")
-        if region_paths:
-            authorized_paths = {claim["path"] for claim in state.get("laneRegions", []) if claim["lane"] == item["lane"]}
-            if authorization is None or not set(region_paths) <= authorized_paths:
-                raise StateError("handoff_invalid", "accepted region paths must have current claims for the handing lane")
-            item["acceptedRegionPaths"] = sorted(set(region_paths))
-        item.pop("pending")
-        _settle_accepted_row(state, item)
-        return copy.deepcopy(item)
+        return None
 
+    if _pending_no_change(read_state(directory), subject) is None:
+        # The acceptance names the check the lead journaled for this hand-off, when there is one, in the same write.
+        return _take_handed(directory, subject, authorization=authorization, region_paths=region_paths)
     _, item = _tool_write(directory, change)
-    # The acceptance names the check the lead journaled for this hand-off, when there is one.
+    if item is None:
+        # The no-change hand-off was taken meanwhile: accept the queued one, as a fresh call would.
+        return _take_handed(directory, subject, authorization=authorization, region_paths=region_paths)
     checked = _handoff_checked(read_journal(directory), subject)
     append_journal(directory, kind="handoff.accepted", subject=subject, data={"settled": item.get("stage") == "settled"},
                    because=[checked["id"]] if checked else None)
@@ -1762,6 +1945,16 @@ def reject_handoff(directory: Path, subject: str, reason: str) -> dict:
                 _set_lane_state(state, waiting["lane"], "working")
             return copy.deepcopy(waiting)
         item = _pending(state, subject)
+        if item["stage"] == "checking":
+            # A hand-off that would have ended a failed run: the run goes on, at the head the queue checks, and the
+            # lane takes its work back.
+            item.pop("pending")
+            # A selection the lead made for the rejected head goes with it.
+            if item.get("leadSelection", {}).get("head") != item["head"]:
+                item.pop("leadSelection", None)
+            if item["lane"] is not None:
+                _set_lane_state(state, item["lane"], "working")
+            return {"subject": subject, "lane": item.get("assignedLane", item["lane"])}
         state["queue"] = [entry for entry in state["queue"] if entry["subject"] != subject]
         back = {"subject": subject, "title": item["title"], "lane": item.get("assignedLane", item["lane"]),
                 "stage": "review"}
@@ -2108,8 +2301,10 @@ def select_checks(directory: Path, subject: str, *, binding: dict, head: str | N
             return copy.deepcopy(item)
         if item["stage"] in ("merging", "merged"):
             raise StateError("select_invalid", f"{subject} is {item['stage']}")
-        if head != item["head"]:
-            raise StateError("select_invalid", f"{subject}'s reviewed head is {item['head']}, not {head}")
+        # A hand-off waiting to end a failed run is reviewed at its own head, which the row takes once it is accepted.
+        reviewed = handed_item(state, read_journal(directory), subject)["head"]  # type: ignore[index]
+        if head != reviewed:
+            raise StateError("select_invalid", f"{subject}'s reviewed head is {reviewed}, not {head}")
         item["leadSelection"] = {"head": head, "checks": copy.deepcopy(checks), "reason": reason, "recordedAt": now()}
         return copy.deepcopy(item)
 
@@ -2155,6 +2350,62 @@ def name_repair(directory: Path, subject: str, *, withdraw: bool = False) -> dic
     return _tool_write(directory, change)[1]  # type: ignore[return-value]
 
 
+@writer_operation
+def lead_base_broken(directory: Path, *, head: str, check: str, test: str, why: str, self_repair: bool = False) -> dict:
+    """The lead names the base broken at ``head`` before, or without, a base re-run's verdict.
+
+    Journals base.broken with source ``lead``, the check, the test and the reason. When the base re-run the checking
+    panel shows runs at that base head, the same write also journals check.superseded, phase ``base-rerun``, naming the
+    break, and stops the candidate under it as base_broken, so the queue ends the re-run and writes nothing more for
+    it. ``self_repair`` says that candidate holds its own fix: its row keeps its failed head as ``supersededAt``. Any
+    other re-run goes on. Returns ``{"broken": entry, "superseded": entry or None, "stopped": subject or None}``.
+    """
+    if not isinstance(head, str) or not EVIDENCE_COMMIT.match(head):
+        raise StateError("broken_invalid", "--head is the full commit of the base that is broken")
+    for name, value in (("--check", check), ("--test", test), ("--why", why)):
+        if not isinstance(value, str) or not value.strip():
+            raise StateError("broken_invalid", f"{name} says it, in something other than spaces")
+
+    def change(state: dict, journal: list[dict]) -> tuple[dict, list[dict]]:
+        checking = state["meta"]["checking"]["now"] or {}
+        subject = checking.get("subject") if "baseRerun" in checking else None
+        started = next((entry for entry in reversed(journal) if entry["kind"] == "base.rerun.started"
+                        and entry["subject"] == subject), None) if subject else None
+        item = next((entry for entry in state["queue"] if entry["subject"] == subject), None)
+        # Only a lone candidate's re-run is ended so: a batch's queue never watches for check.superseded.
+        under = (item if item is not None and started is not None and started["data"]["base"]["head"] == head
+                 and superseding_phase(state, journal, item["subject"]) == "base-rerun" else None)
+        if self_repair and under is None:
+            raise StateError("broken_invalid", f"no base re-run is running at {head}: --self-repair names the candidate "
+                             "under it as holding the fix")
+        broken = len(journal) + 1
+        entries = [{"kind": "base.broken", "subject": under["subject"] if under else None,
+                    "data": {"source": "lead", "reason": "base_broken", "head": head, "check": check.strip(),
+                             "test": test.strip(), "why": why.strip()}}]
+        if under is None:
+            return {"broken": broken, "superseded": None, "stopped": None}, entries
+        entries.append({"kind": "check.superseded", "subject": under["subject"], "lane": under["lane"],
+                        "data": {"base": dict(started["data"]["base"]), "head": under["head"], "by": broken,
+                                 "phase": "base-rerun"},
+                        "because": [broken]})
+        detail = f"the lead named {started['data']['base']['ref']} broken at {head}: {test.strip()} in {check.strip()}"
+        if self_repair:
+            detail += f"; {under['subject']} holds the fix, so a hand-off at a head other than {under['head']} is its repair"
+        entries.append({"kind": "candidate.stopped", "subject": under["subject"], "lane": under["lane"],
+                        "data": {"reason": "base_broken", "detail": detail}, "because": [broken]})
+        state["lanes"] = lane_rows_after(directory, state, under["subject"], stopped="base_broken")
+        under.update(stage="stopped", checks=[{**row, "state": "superseded"} if row["state"] in ("running", "pending")
+                                              else row for row in under["checks"]])
+        if self_repair:
+            under["supersededAt"] = under["head"]
+        return {"broken": broken, "superseded": broken + 1, "stopped": under["subject"]}, entries
+
+    _, outcome, entries = _locked_write(directory, change)
+    by_id = {entry["id"]: entry for entry in entries}
+    return {"broken": by_id[outcome["broken"]], "superseded": by_id.get(outcome["superseded"]),  # type: ignore[index]
+            "stopped": outcome["stopped"]}  # type: ignore[index]
+
+
 def _base_broken(entry: dict) -> bool:
     """Whether an entry is a base_broken stop or break, by its reason."""
     return entry["data"].get("reason") == "base_broken"
@@ -2194,10 +2445,13 @@ def repaired_state(state: dict, journal: list[dict]) -> dict | None:
         if item.pop("repair", None) is not None:
             changed = True
         stop = latest.get(item["subject"])
+        # A candidate that holds its own fix (--self-repair) failed at its supersededAt head: that head never goes back.
         if (broken is not None and item["stage"] == "stopped" and stop is not None and stop["id"] > since
-                and _stopped_by(stop, broken, head, entries)):
+                and _stopped_by(stop, broken, head, entries) and item.get("supersededAt") != item["head"]):
             item.update(stage="queued", checks=[])
             updated["lanes"] = lane_rows_put_back(updated, item["subject"])
+            changed = True
+        if item.pop("supersededAt", None) is not None:
             changed = True
     return updated if changed else None
 
@@ -2359,7 +2613,8 @@ def append_journal(
     """Append one entry. ``writer`` is "runner" when the runner writes; the lead and lanes leave it unset.
 
     ``data`` holds the kind's facts, in the shape the registry gives it, and ``because`` and ``answers``
-    name earlier entries by id. A base.merge.authorized entry's token is the tool's own, added here.
+    name earlier entries by id. A base.merge.authorized entry's token is the tool's own, added here. The lead writes
+    one, or the story's assigned lane its own, before hand-off, with ``by: lane``; an entry without ``by`` is the lead's.
     """
     if isinstance(kind, str) and kind.startswith(RESERVED_PREFIX):
         raise StateError("kind_reserved", f"{kind} is reserved: kinds beginning {RESERVED_PREFIX} are an adopter's own, "
@@ -2373,17 +2628,22 @@ def append_journal(
     with file_lock(directory / STATE_LOCK):
         current = read_state(directory, for_write=True)
         if writer == "lane":
-            if kind not in LANE_REVIEW_KINDS:
-                raise StateError("writer_not_owned", f"a lane journals only its review ({', '.join(LANE_REVIEW_KINDS)}); "
-                                 "the tool journals its hand-off")
+            if kind not in LANE_REVIEW_KINDS and kind != AUTHORIZATION_KIND:
+                raise StateError("writer_not_owned", f"a lane journals only its review ({', '.join(LANE_REVIEW_KINDS)}) "
+                                 f"and its own {AUTHORIZATION_KIND}; the tool journals its hand-off")
             owner = next((entry.get("assignedLane", entry["lane"]) if entry["stage"] == "stopped" else entry["lane"]
                           for entry in [*current["queue"], *current.get("planned", [])] if entry["subject"] == subject), None)
             if lane is None or owner != lane:
                 raise StateError("writer_not_owned", f"{subject} is not {lane}'s work")
         entries = read_journal(directory)
         if kind == AUTHORIZATION_KIND:
-            if writer is not None:
-                raise StateError("writer_not_owned", "only the lead authorizes a base merge")
+            if writer == "lane" and data.get("by") != "lane":
+                raise StateError("writer_not_owned", "a lane authorizes only its own base merge, with by: lane; "
+                                 "any other is the lead's")
+            if writer not in (None, "lane"):
+                raise StateError("writer_not_owned", "only the lead, or a lane its own, authorizes a base merge")
+            if writer is None and "by" in data:
+                raise StateError("entry_invalid", "by: lane is a lane's own authorization; the lead's carries no by")
             if "token" in data:
                 raise StateError("entry_invalid", "a base merge authorization's token is the tool's own")
             item = next((row for row in [*current["queue"], *current.get("planned", [])]
@@ -2814,8 +3074,10 @@ def carry_review(directory: Path, *, subject: str, from_head: str, to_head: str,
             raise StateError("carry_invalid", f"{subject}'s evidence covers {covered}, not {from_head}")
         if to_head == from_head:
             raise StateError("carry_invalid", "carry the evidence to a different head")
-        if item["head"] != to_head:
-            raise StateError("carry_invalid", f"{subject} is queued at {item['head']}, not {to_head}")
+        # A hand-off waiting to end a failed run is at its own head, which the row takes once it is accepted.
+        queued_at = handed_item(state, journal, subject)["head"]  # type: ignore[index]
+        if queued_at != to_head:
+            raise StateError("carry_invalid", f"{subject} is queued at {queued_at}, not {to_head}")
         data = _read_review_file(_review_artifact_path(directory, reference["digest"]), REVIEW_ARTIFACT_LIMIT)
         if hashlib.sha256(data).hexdigest() != reference["digest"]:
             raise StateError("carry_invalid", "the captured review artifact is damaged")
@@ -2841,6 +3103,9 @@ def review_observations(directory: Path, state: dict, journal: list[dict]) -> di
         reference = event["data"]
         if subject not in items or items[subject].get("runId"):
             continue
+        if subject in queued:
+            # A hand-off waiting to end a failed run is reviewed at its own head.
+            items[subject] = handed_item(state, journal, subject) or items[subject]
         candidate = reference["candidateRef"]
         try:
             item = items[subject]
@@ -5724,6 +5989,14 @@ def main(argv: list[str] | None = None) -> int:
                                                 "serve takes first and alone")
     repair.add_argument("--subject", required=True)
     repair.add_argument("--withdraw", action="store_true", help="drop the mark, so another candidate can be named")
+    broken = commands.add_parser("base-broken", help="the lead names the base broken before a base re-run's verdict; a "
+                                                     "re-run at that head ends, and the candidate under it stops")
+    broken.add_argument("--head", required=True, help="the base head that is broken")
+    broken.add_argument("--check", required=True, help="the check that fails on it")
+    broken.add_argument("--test", required=True, help="the test that fails in that check")
+    broken.add_argument("--why", required=True, help="how the lead knows")
+    broken.add_argument("--self-repair", action="store_true",
+                        help="the candidate under the re-run holds the fix: its next accepted hand-off is the repair")
     headline = commands.add_parser("headline", help="the lead's status line, shown until it expires")
     told = headline.add_mutually_exclusive_group(required=True)
     told.add_argument("--text", help="the status line")
@@ -5835,6 +6108,9 @@ def main(argv: list[str] | None = None) -> int:
             result = _select_command(args)
         elif args.command == "repair":
             result = {"ok": True, "item": name_repair(args.dir, args.subject, withdraw=args.withdraw)}
+        elif args.command == "base-broken":
+            result = {"ok": True, **lead_base_broken(args.dir, head=args.head, check=args.check, test=args.test,
+                                                     why=args.why, self_repair=args.self_repair)}
         elif args.command == "wait":
             # One run is one document: on stdout, and in --output when it is given, even when the wait fails.
             output = _wait_output(args)

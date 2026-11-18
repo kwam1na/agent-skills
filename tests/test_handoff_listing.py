@@ -151,6 +151,20 @@ class HandoffListingTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn("**Hand-off: FX-3**", out)
 
+    def test_a_listing_that_conflicts_with_a_digest_only_base_change_reads_as_the_queue_reads_it(self) -> None:
+        # The base-conflict check reads each version of a conflicted listing with the queue's own values, so a listing
+        # that names `{head}` resolves here as in the queue's sync, which takes the candidate's side: no refusal.
+        fx = self.delivery()
+        m = fx.main
+        self.assertEqual(fx.flow("lead-own", "--lane", "lane-1", "--grant", LISTING, cwd=m)[0], 0)
+        wt, url = self.candidate(fx, "FX-2", "lane-1", "src/one.txt", ["a", "b"], "2")
+        self.listing(m, ["a"], "9")
+        commit(m, "FX-1: the base refreshes the listing's digest")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        code, out = fx.flow("handoff", "FX-2", "--pr", url, cwd=wt)
+        self.assertEqual(code, 0, out)
+        self.assertIn("**Hand-off: FX-2**", out)
+
     def test_the_brief_names_each_listing_the_binding_declares_and_says_nothing_without_one(self) -> None:
         fx = self.delivery()
         m = fx.main

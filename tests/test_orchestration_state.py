@@ -5919,7 +5919,7 @@ class SchemaAgreementTests(unittest.TestCase):
                          ["idle", "assigned", "working", "reviewing", "handed", "blocked", "done"])
         self.assertEqual(lane["restedFrom"]["properties"]["state"]["enum"], lane["state"]["enum"])
         self.assertEqual(state["$defs"]["stepState"]["enum"],
-                         ["pending", "running", "passed", "failed", "skipped", "timed_out", "reused"])
+                         ["pending", "running", "passed", "failed", "skipped", "timed_out", "reused", "superseded"])
         self.assertEqual(journal["properties"]["id"]["minimum"], 1)
         self.assertEqual(state["properties"]["version"]["minimum"], 1)
         for kind in kinds:
@@ -6726,6 +6726,50 @@ class FactsReviewReaderTests(unittest.TestCase):
         found = self.evidence()
         self.assertEqual((found["evidence"], found["carriedFrom"], found["carriedTo"]), ("captured", HEAD_B, HEAD_C))
 
+    def test_a_lane_authorizes_its_own_base_merge_only_with_by_lane(self) -> None:
+        """A lane journals base.merge.authorized for its own assigned story, with `by: lane`, and nothing else; its words
+        say the lane chose the merge, and its hand-off carries the review as a lead's does."""
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.directory = self.root / "state"
+        state_tool.init(self.directory, "A lane's own base merge")
+        state_tool.patch(self.directory, writer="lead", version=1, changes={
+            "lanes": [lane("lane-1"), lane("lane-2")],
+            "planned": [{"subject": "work-a", "title": "A", "lane": "lane-1", "stage": "review"},
+                        {"subject": "work-b", "title": "B", "lane": "lane-2", "stage": "review"}]})
+        self.facts_round(1)
+        self.facts_round(2)
+        capture = self.capture([review_round(1, HEAD_A, finding=True), review_round(2, HEAD_B, resolved=True)])
+        merge = {"reviewed": HEAD_B, "baseCommits": [HEAD_D]}
+        for name, fields, code in (
+                ("without by", {"lane": "lane-1", "writer": "lane", "data": merge}, "writer_not_owned"),
+                ("by anything but lane", {"lane": "lane-1", "writer": "lane", "data": {**merge, "by": "lead"}},
+                 "writer_not_owned"),
+                ("for another lane's story", {"lane": "lane-2", "writer": "lane", "data": {**merge, "by": "lane"}},
+                 "writer_not_owned"),
+                ("by: lane from the lead", {"lane": "lane-1", "data": {**merge, "by": "lane"}}, "entry_invalid"),
+                ("from the runner", {"lane": "lane-1", "writer": "runner", "data": merge}, "writer_not_owned")):
+            with self.subTest(name), self.assertRaises(state_tool.StateError) as refused:
+                state_tool.append_journal(self.directory, kind="base.merge.authorized", subject="work-a", **fields)
+            self.assertEqual(refused.exception.code, code)
+        self.assertEqual([e["kind"] for e in state_tool.read_journal(self.directory)].count("base.merge.authorized"), 0)
+        authorized = state_tool.append_journal(self.directory, kind="base.merge.authorized", subject="work-a",
+                                               lane="lane-1", writer="lane", data={**merge, "by": "lane"})
+        self.assertEqual({key: value for key, value in authorized["data"].items() if key != "token"},
+                         {**merge, "by": "lane"})
+        self.assertEqual(state_tool.journal_errors(state_tool.read_journal(self.directory)), [])
+        said = state_tool.journal_words.words(authorized)
+        self.assertEqual(said["head"], "Lane 1 chose to merge the main line into work-a")
+        lead = state_tool.append_journal(self.directory, kind="base.merge.authorized", subject="work-a", lane="lane-1",
+                                         data=merge)
+        self.assertEqual(state_tool.journal_words.words(lead)["head"], "The lead let Lane 1 merge the main line into work-a")
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head=HEAD_C, change_request="cr", rounds=2,
+                           base_merge=merge)
+        handed = state_tool.read_journal(self.directory)[-1]
+        self.assertEqual(handed["data"]["carry"], {"from": HEAD_B, "to": HEAD_C, "digest": capture["data"]["digest"],
+                                                   "baseCommits": [HEAD_D]})
+
     def test_rounds_with_only_their_facts_are_counted_captured_and_matched(self) -> None:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -6750,6 +6794,15 @@ class FactsReviewReaderTests(unittest.TestCase):
 
 
 class SkillTextTests(unittest.TestCase):
+    def test_the_guide_says_when_ending_a_re_run_early_is_sound_and_what_the_evidence_is(self) -> None:
+        guide = " ".join(GUIDE.read_text(encoding="utf-8").split())
+        for phrase in ("Ending a re-run early is sound only when the lead knows the cause or holds the fix",
+                       "The lead's entry is then the evidence for the base's state, in place of the re-run's verdict",
+                       "Once a check of a lone candidate's run has failed (`check.failed`), the run won't merge",
+                       "the verdict, its `base.rerun.finished` and its stop go through one write that re-reads the row"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, guide)
+
     def test_every_file_the_skill_text_names_exists(self) -> None:
         shipped = {path.relative_to(SKILL).as_posix() for path in SKILL.rglob("*") if path.is_file()}
         names = {Path(path).name for path in shipped}
@@ -7615,6 +7668,437 @@ class MergeSlotTests(unittest.TestCase):
             pass
         self.assertEqual(slept, [])
         self.assertEqual(list(waiting.iterdir()), [])
+
+
+
+
+class SupersedingHandoffTests(unittest.TestCase):
+    """Once a check of a lone candidate's run has failed, a new hand-off may end the rest of the run: the state tool takes
+    it while the run checks, and its acceptance moves the row and journals check.superseded in one write."""
+
+    BASE = {"ref": "main", "head": HEAD_C}
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.directory = Path(temporary.name) / "state"
+        state_tool.init(self.directory, "Epic underway")
+        checks = [{"id": "unit", "state": "failed"}, {"id": "slow", "state": "running"}, {"id": "late", "state": "pending"},
+                  {"id": "lint", "state": "passed"}]
+        self.write("lead", changes={"lanes": [lane("lane-1"), lane("lane-2")], "queue": [
+            queue_item("work-a", head=HEAD_A, changeRequest="cr 1", reportedRounds=1),
+            queue_item("work-b", stage="queued", head=HEAD_D, order=2, lane="lane-2")]},
+            assignments={"/meta/handoffsNeedAcceptance": True})
+        self.write("runner", selector="queue[subject=work-a]", assignments={"/stage": "checking", "/checks": checks})
+        self.checking("work-a")
+        self.started = self.runner("check.started", "work-a", {})["id"]
+
+    def write(self, writer: str, **patch: object) -> None:
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer=writer, version=version, **patch)  # type: ignore[arg-type]
+
+    def checking(self, subject: str, rerun: bool = False) -> None:
+        now = {"subject": subject, "title": f"Candidate {subject}", "startedAt": "2026-11-17T10:00:00Z", "steps": [],
+               "base": self.BASE}
+        if rerun:
+            now["baseRerun"] = {"startedAt": "2026-11-17T10:05:00Z", "checks": ["unit"]}
+        self.write("runner", assignments={"/meta/checking/now": now})
+
+    def runner(self, kind: str, subject: str, data: dict, because: list[int] | None = None) -> dict:
+        return state_tool.append_journal(self.directory, kind=kind, subject=subject, data=data, writer="runner",
+                                         because=because)
+
+    def failed(self, subject: str = "work-a") -> dict:
+        return self.runner("check.failed", subject, {"check": "unit", "timedOut": False, "failing": ["t"], "more": 0,
+                                                     "log": "logs/unit.log"}, because=[self.started])
+
+    def hand(self, head: str = HEAD_B, subject: str = "work-a", lane_id: str = "lane-1") -> dict:
+        return state_tool.handoff(self.directory, lane=lane_id, subject=subject, head=head, change_request="cr 2",
+                                  rounds=2, checks=["tests.test_unit"])
+
+    def row(self, subject: str = "work-a") -> dict:
+        return next(item for item in state_tool.show(self.directory)["state"]["queue"] if item["subject"] == subject)
+
+    def lane_state(self, lane_id: str = "lane-1") -> str:
+        return next(entry["state"] for entry in state_tool.show(self.directory)["state"]["lanes"] if entry["id"] == lane_id)
+
+    def kinds(self, kind: str) -> list[dict]:
+        return [entry for entry in state_tool.read_journal(self.directory) if entry["kind"] == kind]
+
+    def assertRefused(self, why: str, **hand: object) -> None:
+        before = state_tool.show(self.directory)
+        with self.assertRaises(state_tool.StateError) as raised:
+            self.hand(**hand)  # type: ignore[arg-type]
+        self.assertEqual(raised.exception.code, "handoff_invalid")
+        self.assertIn(why, str(raised.exception))
+        self.assertEqual(state_tool.show(self.directory), before, "a refused hand-off writes nothing")
+
+    def test_a_new_head_is_refused_until_a_check_of_the_run_fails(self) -> None:
+        self.assertRefused("no check of its run has failed")
+        self.failed()
+        self.assertRefused("is checking at", head=HEAD_A)
+
+    def test_only_a_failure_of_the_current_run_takes_a_new_head(self) -> None:
+        # A failure of an earlier run of the subject, before the run checking now started, ends nothing.
+        self.failed()
+        self.started = self.runner("check.started", "work-a", {})["id"]
+        self.assertRefused("no check of its run has failed")
+        self.failed()
+        self.hand()
+        self.assertTrue(self.row()["pending"])
+
+    def test_the_lead_selects_checks_at_the_waiting_hand_offs_head_and_acceptance_keeps_them(self) -> None:
+        self.failed()
+        self.hand()
+        binding, checks = LeadSelectionTests.BINDING, [selected_check("parser")]
+        with self.assertRaises(state_tool.StateError) as raised:
+            state_tool.select_checks(self.directory, "work-a", binding=binding, head=HEAD_A, checks=checks, reason="why")
+        self.assertIn(f"reviewed head is {HEAD_B}", str(raised.exception))
+        state_tool.select_checks(self.directory, "work-a", binding=binding, head=HEAD_B, checks=checks, reason="why")
+        state_tool.accept_handoff(self.directory, "work-a")
+        self.assertEqual((self.row()["head"], self.row()["leadSelection"]["head"]), (HEAD_B, HEAD_B))
+
+    def test_rejecting_it_leaves_the_checked_row_to_the_queue(self) -> None:
+        self.failed()
+        self.hand()
+        state_tool.select_checks(self.directory, "work-a", binding=LeadSelectionTests.BINDING, head=HEAD_B,
+                                 checks=[selected_check("parser")], reason="why")
+        before = self.row()
+        self.assertEqual(before["leadSelection"]["head"], HEAD_B)
+        state_tool.reject_handoff(self.directory, "work-a", "not this fix")
+        row = self.row()
+        self.assertNotIn("pending", row)
+        # The selection made for the rejected head goes with it; the lane takes its work back.
+        self.assertEqual({key: value for key, value in row.items()}, {key: value for key, value in before.items()
+                                                                       if key not in ("pending", "leadSelection")})
+        self.assertEqual(self.lane_state(), "working")
+        self.assertEqual(state_tool.show(self.directory)["state"]["meta"]["checking"]["now"]["subject"], "work-a")
+        [rejected] = self.kinds("handoff.rejected")
+        self.assertEqual((rejected["lane"], rejected["data"]["why"]), ("lane-1", "not this fix"))
+        self.assertEqual(self.kinds("check.superseded"), [])
+
+    def test_a_hand_off_that_ends_a_failed_run_records_its_base_merge_carry(self) -> None:
+        self.failed()
+        carry = {"from": HEAD_A, "to": HEAD_B, "digest": "e" * 64, "baseCommits": [HEAD_C]}
+        merge = {"reviewed": HEAD_A, "baseCommits": [HEAD_C]}
+        with mock.patch.object(state_tool, "base_merge_evidence", return_value=carry) as evidence:
+            state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head=HEAD_B, change_request="cr 2",
+                               rounds=2, base_merge=merge)
+        self.assertEqual(evidence.call_args.args[2:], ("work-a", "lane-1", HEAD_B, 2, merge))
+        self.assertEqual(self.kinds("candidate.handed")[-1]["data"]["carry"], carry)
+
+    def test_a_product_run_s_hand_off_that_ends_a_failed_run_carries_no_base_merge(self) -> None:
+        self.write("lead", selector="queue[subject=work-a]", changes={"runId": "run-1"})
+        self.failed()
+        with self.assertRaises(state_tool.StateError) as raised:
+            state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head=HEAD_B, change_request="cr 2",
+                               base_merge={"reviewed": HEAD_A, "baseCommits": [HEAD_C]})
+        self.assertEqual(raised.exception.code, "carry_invalid")
+        self.assertIn("work built by a product run keeps its own review evidence", str(raised.exception))
+
+    def test_a_hand_off_that_ends_a_failed_run_keeps_the_run_that_built_it(self) -> None:
+        self.failed()
+        before = state_tool.show(self.directory)
+        with self.assertRaises(state_tool.StateError) as raised:
+            state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head=HEAD_B, change_request="cr 2",
+                               run="another-run")
+        self.assertEqual(raised.exception.code, "handoff_invalid")
+        self.assertIn("keeps the run it was built by", str(raised.exception))
+        self.assertEqual(state_tool.show(self.directory), before)
+
+    def test_a_new_head_is_taken_in_either_phase_once_a_check_failed_and_waits_beside_the_checked_row(self) -> None:
+        for rerun in (False, True):
+            with self.subTest(phase="base-rerun" if rerun else "checks"):
+                self.setUp()
+                self.failed()
+                if rerun:
+                    self.checking("work-a", rerun=True)
+                    self.runner("base.rerun.started", "work-a", {"checks": ["unit"], "base": self.BASE},
+                                because=[self.started])
+                self.hand()
+                row = self.row()
+                self.assertEqual(self.lane_state(), "handed")
+                # The row is the queue's until the lead accepts: still checking at the checked head, now waiting.
+                self.assertEqual((row["stage"], row["head"], row["pending"], row["reportedRounds"]),
+                                 ("checking", HEAD_A, True, 1))
+                [handed] = self.kinds("candidate.handed")
+                self.assertEqual((handed["data"]["head"], handed["data"]["rounds"]), (HEAD_B, 2))
+                view = state_tool.handed_item(state_tool.show(self.directory)["state"],
+                                              state_tool.read_journal(self.directory), "work-a")
+                self.assertEqual((view["head"], view["reportedRounds"], view["namedChecks"], view["changeRequest"]),
+                                 (HEAD_B, 2, ["tests.test_unit"], "cr 2"))
+
+    def test_a_run_that_is_not_the_subjects_or_is_a_batch_takes_no_new_head(self) -> None:
+        self.failed()
+        # A panel that names no base is a run that can't say what check.superseded would end.
+        now = state_tool.show(self.directory)["state"]["meta"]["checking"]["now"]
+        self.write("runner", assignments={"/meta/checking/now": {key: value for key, value in now.items() if key != "base"}})
+        self.assertRefused("no check of its run has failed")
+        self.checking("work-a")
+        # The checking panel names another subject's base re-run.
+        self.checking("work-b", rerun=True)
+        self.assertRefused("no check of its run has failed")
+        # A batch run: the run's start names its members.
+        self.checking("work-a")
+        self.runner("check.started", "work-a", {"batch": ["work-a", "work-b"]})
+        self.failed()
+        self.assertRefused("no check of its run has failed")
+
+    def test_acceptance_moves_the_row_and_journals_check_superseded_in_one_write(self) -> None:
+        for rerun in (False, True):
+            with self.subTest(phase="base-rerun" if rerun else "checks"):
+                self.setUp()
+                self.failed()
+                if rerun:
+                    self.checking("work-a", rerun=True)
+                    self.runner("base.rerun.started", "work-a", {"checks": ["unit"], "base": {"ref": "main",
+                                                                                              "head": HEAD_D}},
+                                because=[self.started])
+                self.hand()
+                version = state_tool.show(self.directory)["state"]["version"]
+                authorization = state_tool.handoff_authorization(
+                    state_tool.show(self.directory)["state"],
+                    state_tool.handed_item(state_tool.show(self.directory)["state"],
+                                           state_tool.read_journal(self.directory), "work-a"))
+                self.assertEqual(authorization["head"], HEAD_B)
+                state_tool.accept_handoff(self.directory, "work-a", authorization=authorization)
+                after = state_tool.show(self.directory)["state"]
+                self.assertEqual(after["version"], version + 1, "one write")
+                row = self.row()
+                self.assertEqual((row["stage"], row["head"], row["syncedHead"], row["reportedRounds"],
+                                  row["changeRequest"], row["namedChecks"]),
+                                 ("queued", HEAD_B, None, 2, "cr 2", ["tests.test_unit"]))
+                self.assertNotIn("pending", row)
+                # The lead's acceptance settles the handing lane, as any acceptance does: idle, waiting on the story.
+                lane_row = next(entry for entry in after["lanes"] if entry["id"] == "lane-1")
+                self.assertEqual((lane_row["state"], lane_row.get("waitingOn")), ("idle", "work-a"))
+                # The checks the ended run was still running or had yet to start read superseded.
+                self.assertEqual([(check["id"], check["state"]) for check in row["checks"]],
+                                 [("unit", "failed"), ("slow", "superseded"), ("late", "superseded"),
+                                  ("lint", "passed")])
+                [accepted] = self.kinds("handoff.accepted")
+                [superseded] = self.kinds("check.superseded")
+                base = {"ref": "main", "head": HEAD_D} if rerun else self.BASE
+                self.assertEqual(superseded["data"], {"base": base, "head": HEAD_A, "by": accepted["id"],
+                                                      "phase": "base-rerun" if rerun else "checks"})
+                self.assertEqual((superseded["id"], superseded["because"], superseded["subject"]),
+                                 (accepted["id"] + 1, [accepted["id"]], "work-a"))
+
+    def test_a_hand_off_the_queue_stopped_before_acceptance_is_taken_with_no_check_superseded(self) -> None:
+        self.failed()
+        self.hand()
+        self.write("runner", selector="queue[subject=work-a]", assignments={"/stage": "stopped"})
+        state_tool.accept_handoff(self.directory, "work-a")
+        self.assertEqual((self.row()["stage"], self.row()["head"]), ("queued", HEAD_B))
+        self.assertEqual(self.kinds("check.superseded"), [])
+
+    def test_without_acceptance_the_hand_off_ends_the_run_itself(self) -> None:
+        self.write("lead", assignments={"/meta/handoffsNeedAcceptance": False})
+        self.failed()
+        self.hand()
+        [handed] = self.kinds("candidate.handed")
+        [superseded] = self.kinds("check.superseded")
+        self.assertEqual((superseded["data"]["by"], superseded["data"]["phase"]), (handed["id"], "checks"))
+        self.assertEqual((self.row()["stage"], self.row()["head"]), ("queued", HEAD_B))
+        # No one accepted it, so nothing settles the lane: it reads handed, as a hand-off needing no acceptance leaves it.
+        lane_row = next(entry for entry in state_tool.show(self.directory)["state"]["lanes"] if entry["id"] == "lane-1")
+        self.assertEqual(lane_row["state"], "handed")
+
+    def test_a_carry_targets_the_waiting_hand_offs_head(self) -> None:
+        self.failed()
+        self.hand()
+        state = state_tool.show(self.directory)["state"]
+        self.assertEqual(state_tool.handed_item(state, state_tool.read_journal(self.directory), "work-a")["head"], HEAD_B)
+        # A row with no waiting hand-off reads as it is.
+        self.assertEqual(state_tool.handed_item(state, state_tool.read_journal(self.directory), "work-b")["head"], HEAD_D)
+
+
+class LeadBaseBrokenTests(unittest.TestCase):
+    """The lead names the base broken before a re-run's verdict; a re-run at that head ends, and its candidate stops."""
+
+    BASE = {"ref": "main", "head": HEAD_C}
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.directory = Path(temporary.name) / "state"
+        state_tool.init(self.directory, "Epic underway")
+        self.write("lead", changes={"lanes": [lane("lane-1"), lane("lane-2")], "queue": [
+            queue_item("work-a", head=HEAD_A),
+            queue_item("work-b", stage="queued", head=HEAD_D, order=2, lane="lane-2")]})
+        self.write("runner", selector="queue[subject=work-a]",
+                   assignments={"/stage": "checking", "/checks": [{"id": "unit", "state": "failed"},
+                                                                  {"id": "slow", "state": "running"}]})
+        now = {"subject": "work-a", "title": "Candidate work-a", "startedAt": "2026-11-17T10:00:00Z", "steps": [],
+               "base": self.BASE, "baseRerun": {"startedAt": "2026-11-17T10:05:00Z", "checks": ["unit"]}}
+        self.write("runner", assignments={"/meta/checking/now": now})
+        started = state_tool.append_journal(self.directory, kind="check.started", subject="work-a", writer="runner",
+                                            data={})
+        state_tool.append_journal(self.directory, kind="check.failed", subject="work-a", writer="runner",
+                                  data={"check": "unit", "timedOut": False, "failing": [], "more": 0, "log": "logs/u.log"},
+                                  because=[started["id"]])
+        state_tool.append_journal(self.directory, kind="base.rerun.started", subject="work-a", writer="runner",
+                                  data={"checks": ["unit"], "base": self.BASE}, because=[started["id"]])
+
+    def write(self, writer: str, **patch: object) -> None:
+        version = state_tool.show(self.directory)["state"]["version"]
+        state_tool.patch(self.directory, writer=writer, version=version, **patch)  # type: ignore[arg-type]
+
+    def row(self, subject: str = "work-a") -> dict:
+        return next(item for item in state_tool.show(self.directory)["state"]["queue"] if item["subject"] == subject)
+
+    def kinds(self, kind: str) -> list[dict]:
+        return [entry for entry in state_tool.read_journal(self.directory) if entry["kind"] == kind]
+
+    def broken(self, head: str = HEAD_C, **options: object) -> dict:
+        return state_tool.lead_base_broken(self.directory, head=head, check="unit", test="test_x", why="fails on main",
+                                           **options)  # type: ignore[arg-type]
+
+    def test_at_the_re_runs_head_it_ends_the_re_run_and_stops_the_candidate_in_one_write(self) -> None:
+        version = state_tool.show(self.directory)["state"]["version"]
+        done = self.broken(self_repair=True)
+        self.assertEqual(state_tool.show(self.directory)["state"]["version"], version + 1)
+        [broken] = self.kinds("base.broken")
+        self.assertEqual(broken["data"], {"source": "lead", "reason": "base_broken", "head": HEAD_C, "check": "unit",
+                                          "test": "test_x", "why": "fails on main"})
+        [superseded] = self.kinds("check.superseded")
+        self.assertEqual(superseded["data"], {"base": self.BASE, "head": HEAD_A, "by": broken["id"],
+                                              "phase": "base-rerun"})
+        [stopped] = self.kinds("candidate.stopped")
+        self.assertEqual((stopped["data"]["reason"], stopped["because"]), ("base_broken", [broken["id"]]))
+        self.assertEqual((self.row()["stage"], self.row()["supersededAt"]), ("stopped", HEAD_A))
+        self.assertEqual([(check["id"], check["state"]) for check in self.row()["checks"]],
+                         [("unit", "failed"), ("slow", "superseded")])
+        lane_row = next(entry for entry in state_tool.show(self.directory)["state"]["lanes"] if entry["id"] == "lane-1")
+        self.assertEqual((lane_row["focus"], lane_row["waitingOn"]), ("work-a stopped: base_broken", "lead"))
+        self.assertEqual((done["stopped"], done["superseded"]["id"]), ("work-a", superseded["id"]))
+        self.assertTrue(state_tool.base_awaits_repair(state_tool.read_journal(self.directory)))
+
+    def test_its_entries_are_in_the_journal_before_the_stopped_row_is_written(self) -> None:
+        # A queue build reads the row and the journal without the lock: whenever it can see the stopped row, it must
+        # also see the check.superseded that names the checked head, or it would write its own verdict beside it.
+        seen = []
+        real = state_tool._with_state
+
+        def with_state(directory, current, updated):
+            seen.append([entry["kind"] for entry in state_tool.read_journal(directory)][-3:])
+            return real(directory, current, updated)
+
+        with mock.patch.object(state_tool, "_with_state", with_state):
+            self.broken()
+        self.assertEqual(seen, [["base.broken", "check.superseded", "candidate.stopped"]])
+
+    def test_a_locked_write_whose_state_is_invalid_appends_none_of_its_entries(self) -> None:
+        before, journal = state_tool.show(self.directory), state_tool.read_journal(self.directory)
+
+        def change(state: dict, entries: list[dict]) -> tuple[None, list[dict]]:
+            state["queue"][0]["stage"] = "nowhere"
+            return None, [{"kind": "base.broken", "data": {"source": "lead", "reason": "base_broken"}}]
+
+        with self.assertRaises(state_tool.StateError) as raised:
+            state_tool._locked_write(self.directory, change)
+        self.assertEqual(raised.exception.code, "patch_invalid")
+        self.assertEqual((state_tool.show(self.directory), state_tool.read_journal(self.directory)), (before, journal))
+
+    def test_blank_words_and_a_short_head_are_refused_writing_nothing(self) -> None:
+        before = state_tool.show(self.directory)
+        for name, call in (("why", lambda: state_tool.lead_base_broken(self.directory, head=HEAD_C, check="unit",
+                                                                        test="t", why="  ")),
+                           ("check", lambda: state_tool.lead_base_broken(self.directory, head=HEAD_C, check="",
+                                                                          test="t", why="w")),
+                           ("head", lambda: state_tool.lead_base_broken(self.directory, head="c" * 12, check="unit",
+                                                                         test="t", why="w"))):
+            with self.subTest(name):
+                with self.assertRaises(state_tool.StateError) as raised:
+                    call()
+                self.assertEqual(raised.exception.code, "broken_invalid")
+        self.assertEqual(state_tool.show(self.directory), before)
+
+    def test_a_batch_s_re_run_or_one_whose_panel_names_no_base_is_never_ended_so(self) -> None:
+        for name in ("batch", "no base"):
+            with self.subTest(name):
+                self.setUp()
+                if name == "batch":
+                    started = state_tool.append_journal(self.directory, kind="check.started", subject="work-a",
+                                                        writer="runner", data={"batch": ["work-a", "work-b"]})
+                    failed = state_tool.append_journal(
+                        self.directory, kind="check.failed", subject="work-a", writer="runner", because=[started["id"]],
+                        data={"check": "unit", "timedOut": False, "failing": [], "more": 0, "log": "logs/u.log"})
+                    state_tool.append_journal(self.directory, kind="base.rerun.started", subject="work-a",
+                                              writer="runner", data={"checks": ["unit"], "base": self.BASE},
+                                              because=[failed["id"]])
+                else:
+                    now = state_tool.show(self.directory)["state"]["meta"]["checking"]["now"]
+                    self.write("runner", assignments={"/meta/checking/now": {key: value for key, value in now.items()
+                                                                              if key != "base"}})
+                with self.assertRaises(state_tool.StateError):
+                    self.broken(self_repair=True)
+                self.broken()
+                self.assertEqual(len(self.kinds("base.broken")), 1)
+                self.assertEqual((self.kinds("check.superseded"), self.kinds("candidate.stopped")), ([], []))
+                self.assertEqual(self.row()["stage"], "checking")
+
+    def test_with_no_re_run_at_that_head_it_journals_only_the_break(self) -> None:
+        for name, head in (("another head", HEAD_D), ("no re-run", HEAD_C)):
+            with self.subTest(name):
+                self.setUp()
+                if name == "no re-run":
+                    self.write("runner", assignments={"/meta/checking/now": None})
+                done = self.broken(head=head)
+                self.assertEqual(len(self.kinds("base.broken")), 1)
+                self.assertEqual(self.kinds("check.superseded"), [])
+                self.assertEqual(self.kinds("candidate.stopped"), [])
+                self.assertEqual(self.row()["stage"], "checking")
+                self.assertIsNone(done["stopped"])
+                with self.assertRaises(state_tool.StateError) as raised:
+                    self.broken(head=head, self_repair=True)
+                self.assertIn("--self-repair names the candidate under it", str(raised.exception))
+
+    def test_a_repair_never_requeues_the_self_repairing_head_and_its_next_head_becomes_the_repair(self) -> None:
+        self.broken(self_repair=True)
+        # A hand-off at the failed head itself is not the repair.
+        self.write("lead", assignments={"/meta/handoffsNeedAcceptance": True})
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head=HEAD_A, change_request="cr")
+        state_tool.accept_handoff(self.directory, "work-a")
+        self.assertNotIn("repair", self.row())
+        self.write("runner", selector="queue[subject=work-a]", assignments={"/stage": "stopped"})
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head=HEAD_B, change_request="cr")
+        state_tool.accept_handoff(self.directory, "work-a")
+        self.assertEqual((self.row()["head"], self.row()["stage"]), (HEAD_B, "queued"))
+        self.assertIn("repair", self.row())
+
+    def test_a_self_repairing_hand_off_is_not_marked_while_another_row_is_the_named_repair(self) -> None:
+        self.broken(self_repair=True)
+        state_tool.name_repair(self.directory, "work-b")
+        self.write("lead", assignments={"/meta/handoffsNeedAcceptance": True})
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head=HEAD_B, change_request="cr")
+        state_tool.accept_handoff(self.directory, "work-a")
+        self.assertEqual([item["subject"] for item in state_tool.show(self.directory)["state"]["queue"] if "repair" in item],
+                         ["work-b"])
+
+    def test_repaired_state_requeues_a_self_repairing_row_only_once_its_head_moved(self) -> None:
+        self.broken(self_repair=True)
+        state = state_tool.show(self.directory)["state"]
+        journal = state_tool.read_journal(self.directory)
+        repaired = state_tool.repaired_state(state, journal)
+        row = next(item for item in repaired["queue"] if item["subject"] == "work-a")
+        self.assertEqual(row["stage"], "stopped")
+        self.assertNotIn("supersededAt", row)
+        moved = copy.deepcopy(state)
+        next(item for item in moved["queue"] if item["subject"] == "work-a")["head"] = HEAD_B
+        row = next(item for item in state_tool.repaired_state(moved, journal)["queue"] if item["subject"] == "work-a")
+        self.assertEqual(row["stage"], "queued")
+
+    def test_with_another_candidate_as_the_repair_its_merge_puts_the_stopped_candidate_back_at_its_old_head(self) -> None:
+        self.broken()
+        self.assertNotIn("supersededAt", self.row())
+        self.assertFalse(any("repair" in item for item in state_tool.show(self.directory)["state"]["queue"]),
+                         "neither --repair nor --self-repair names a repair")
+        state_tool.name_repair(self.directory, "work-b")
+        state_tool.append_journal(self.directory, kind="base.repaired", subject="work-b", writer="runner",
+                                  data={"source": "queue", "head": HEAD_D})
+        self.assertEqual((self.row()["stage"], self.row()["head"]), ("queued", HEAD_A))
+        self.assertNotIn("repair", self.row("work-b"))
 
 
 if __name__ == "__main__":

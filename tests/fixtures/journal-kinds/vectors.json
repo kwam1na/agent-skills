@@ -666,6 +666,38 @@
       "line": ""
     },
     {
+      "kind": "check.superseded",
+      "lane": "lane-1",
+      "subject": "APP-12",
+      "data": {
+        "base": {
+          "ref": "main",
+          "head": "cccccccccccccccccccccccccccccccccccccccc"
+        },
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "by": 41,
+        "phase": "base-rerun"
+      },
+      "head": "The run on the main line was ended early",
+      "line": "For the piece at aaaaaaa, against ccccccc"
+    },
+    {
+      "kind": "check.superseded",
+      "lane": "lane-1",
+      "subject": "APP-12",
+      "data": {
+        "base": {
+          "ref": "main",
+          "head": "cccccccccccccccccccccccccccccccccccccccc"
+        },
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "by": 41,
+        "phase": "checks"
+      },
+      "head": "The rest of the checks were ended early",
+      "line": "For the piece at aaaaaaa, against ccccccc"
+    },
+    {
       "kind": "check.retried",
       "lane": "lane-1",
       "subject": "APP-12",
@@ -1122,6 +1154,32 @@
       "line": ""
     },
     {
+      "kind": "base.broken",
+      "lane": null,
+      "subject": "APP-12",
+      "data": {
+        "source": "lead",
+        "reason": "base_broken",
+        "head": "cccccccccccccccccccccccccccccccccccccccc",
+        "check": "unit",
+        "test": "tests.test_guide.test_names_shipped_files",
+        "why": "The same test fails on main in the lead's own run."
+      },
+      "head": "The main line broke",
+      "line": "The lead named it broken at ccccccc: tests.test_guide.test_names_shipped_files in unit. The same test fails on main in the lead's own run."
+    },
+    {
+      "kind": "base.broken",
+      "lane": null,
+      "subject": null,
+      "data": {
+        "source": "lead",
+        "reason": "base_broken"
+      },
+      "head": "The main line broke",
+      "line": "The lead named it broken"
+    },
+    {
       "kind": "base.repaired",
       "lane": "lane-1",
       "subject": "APP-12",
@@ -1265,6 +1323,21 @@
       },
       "head": "The lead let Lane 1 merge the main line into APP-12",
       "line": "9f3c2b1 and 0123456, from 0123456"
+    },
+    {
+      "kind": "base.merge.authorized",
+      "lane": "lane-1",
+      "subject": "APP-12",
+      "data": {
+        "reviewed": "0123456789abcdef0123456789abcdef01234567",
+        "baseCommits": [
+          "9f3c2b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b"
+        ],
+        "token": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "by": "lane"
+      },
+      "head": "Lane 1 chose to merge the main line into APP-12",
+      "line": "9f3c2b1, from 0123456"
     },
     {
       "kind": "ownership.granted",
