@@ -1118,8 +1118,9 @@ this generation doesn't install, the printed command, the status line and "Needs
 file, and reads no CI or forge. It returns on the first thing needing the lead:
 
 - a journal entry after `--after` of kind `candidate.handed`, `check.failed`,
-  `candidate.merged`, `candidate.stopped`, `base.broken`, `blocker.recorded` or
-  `serving.held`;
+  `candidate.merged`, `candidate.stopped`, `base.broken`, `blocker.recorded`,
+  `serving.held` or `sibling.landed`; the last frees a story that waits on a sibling
+  delivery's story;
 - a lane in the `blocked` state. A lane in the `waiting` state waits on a story, which goes on by itself when it
   lands: it wakes no wait, is never reported quiet, isn't in "Needs you" and doesn't hold the close;
 - machine pressure: five-minute load above `--load-multiple` times the cores
