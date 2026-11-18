@@ -169,6 +169,10 @@ function checking(at, gap = 500) {
   if (stage === 3) {
     Object.assign(step("payments behavior scenarios"), { state: "passed", finishedAt: "2026-10-22T05:09:30.600Z" });
   }
+  if (at === "failed-first") {
+    Object.assign(step("storefront build"), { state: "failed", finishedAt: "2026-10-22T05:09:30Z" });
+    Object.assign(step("checkout end-to-end"), { state: "running", startedAt: "2026-10-22T05:09:30Z" });
+  }
   if (at === "smoke") {
     Object.assign(step("payments behavior scenarios"), { state: "passed", finishedAt: "2026-10-22T05:09:30.600Z" });
     steps.push({ label: "smoke test", state: "running", startedAt: "2026-10-22T05:09:30.600Z" });
@@ -282,10 +286,10 @@ test("a check that fails while the row is turning is told by its entry alone, ar
   const [, , failedNow, after] = snapshots;
   const entry = failedNow.app.querySelector('.ck-fails li[data-check="checkout end-to-end"]');
   expect(entry.classList.contains("arriving")).toBe(false);
-  // The storefront build's turn plays out on its kept row, and nothing turns after it.
-  expect(runRows(failedNow).length).toBe(1);
-  expect(turnsOut(snapshots.animations)).toEqual([200]);
-  expect(after.app.querySelectorAll(".checking .ck-run.is-failed").length).toBe(0);
+  // With nothing running after it, the card shows no running row, as with no row turning: the kept row goes, and no
+  // running check is left on the card once its turn would have played out.
+  expect(runRows(failedNow)).toEqual([]);
+  expect(runRows(after)).toEqual([]);
 });
 
 test("a check that fails while the row is turning, with another still running, has its entry arrive at once, not on a delay the kept row may not keep", async () => {
@@ -306,5 +310,14 @@ test("two results while the row turns, each with a check after it: only the late
   // then once more, straight to the smoke test, never stopping on the scenarios.
   expect(turnsOut(snapshots.animations).length).toBe(2);
   expect(runRows(snapshots[4])).toEqual([{ classes: "ck-run", name: "smoke test" }]);
+});
+
+test("with no row turning, a failed check with another after it has its entry arrive after its row's turn", async () => {
+  const page = pageWithRuns(checking(0), {}, { config: CONFIG });
+  const snapshots = await openPage(page, { now: "2026-10-22T05:10:00Z", store: {}, motion: {},
+    steps: [{ push: checking("failed-first") }] });
+  const entry = snapshots[1].app.querySelector('.ck-fails li[data-check="storefront build"]');
+  expect(entry.classList.contains("arriving")).toBe(true);
+  expect(runRows(snapshots[1]).length).toBe(1);
 });
 

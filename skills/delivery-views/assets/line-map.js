@@ -973,9 +973,12 @@
         var arriving = [].filter.call(box.querySelectorAll(".ck-fails li"), function (entry) { return entry.getAttribute("data-check") === text(finished.label); })[0];
         if (arriving) { arriving.classList.add("arriving"); }
       }
-      if (keep && !runningSteps.length) {
+      if (keep && !runningSteps.length && !justFailed) {
         box.appendChild(keep.row);
-        if (finished && !justFailed) { keep.queue = [{ finished: finished, next: null }]; }
+        if (finished) { keep.queue = [{ finished: finished, next: null }]; }
+      } else if (keep && !runningSteps.length) {
+        // A failure with nothing after it is told by its entry alone, as it is with no row turning: the kept row goes.
+        turning = null;
       } else if (finished && !runningSteps.length && !justFailed) {
         var rest = runRow(finished);
         box.appendChild(rest);
