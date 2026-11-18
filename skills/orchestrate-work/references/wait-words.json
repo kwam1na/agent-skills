@@ -47,11 +47,12 @@
     }
   },
   "lanes": {
-    "description": "An idle lane whose next story waits, by that story's cause.",
+    "description": "A lane's own sentences: an idle lane whose next story waits, by that story's cause, and a lane waiting on another story to land.",
     "templates": {
       "order": "{subject:lane} is next on {next:ticket}, which waits for {on:ticket} to land.",
       "files": "{subject:lane} is next on {next:ticket}, which waits for {on:ticket} to land. {onLane:lane} holds {files:list} for it.",
-      "held": "{subject:lane} is next on {next:ticket}, which the lead holds: {text}"
+      "held": "{subject:lane} is next on {next:ticket}, which the lead holds: {text}",
+      "waiting": "{subject:lane} waits for {on:ticket} to land[ before it finishes {own:ticket}]."
     }
   },
   "holding": {

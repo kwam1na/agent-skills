@@ -101,6 +101,9 @@ WRITERS = ("lead", "runner", "lane")
 LANE_FIELDS = ("focus", "state", "waitingOn", "since")
 # The runner writes a row only to say what became of a candidate; focusAt, focusBy, waitingBy and restedFrom are the tool's alone, for every writer.
 RUNNER_LANE = ("focus", "state", "waitingOn", "since")
+# Kept by the tool for a row that waits on a story: the queue's landing, settling or stopping it writes them as the tool
+# says, so its rows may carry them.
+TOOL_LANE = ("waitingFrom", "freed")
 # A review round is the lead's or a lane's record of its own review; the runner
 # never reviews, so it never writes one.
 REVIEW_KIND = "review.round"
@@ -651,6 +654,10 @@ def state_errors(state: object) -> list[str]:
                         and previous["start"] < claim["end"] and claim["start"] < previous["end"]):
                     errors.append(f"{label}: overlaps an earlier region claim on the same base")
                     break
+        held = {item.get("subject") for name in ("queue", "planned") for item in state.get(name, []) if isinstance(item, dict)}
+        for index, row in enumerate(state.get("lanes", [])):
+            if row.get("state") == "waiting" and row.get("waitingOn") not in held:
+                errors.append(f"/lanes/{index}/waitingOn: a waiting lane names a story the record holds")
         flakes = state.get("liveFlakes", [])
         if len({(entry["baseHead"], entry["check"]) for entry in flakes}) != len(flakes):
             errors.append("/liveFlakes: declare each base head and check only once")
@@ -1125,7 +1132,7 @@ def ownership_violations(before: dict, after: dict, writer: str) -> list[str]:
         else:
             for row_before, row_after in zip(rows_before, rows_after):
                 for field in set(row_before) | set(row_after):
-                    if field not in RUNNER_LANE and row_before.get(field) != row_after.get(field):
+                    if field not in (*RUNNER_LANE, *TOOL_LANE) and row_before.get(field) != row_after.get(field):
                         violations.append(f"/lanes[id={row_before.get('id')}]/{field} belongs to the lead")
         old, new = before.get("queue", []), after.get("queue", [])
         if [item.get("subject") for item in old] != [item.get("subject") for item in new]:
@@ -1263,6 +1270,47 @@ def _stamp_waiting(before: dict, after: dict, writer: str, wrote: str | None) ->
             entry["waitingBy"] = _waiting_by(previous)
 
 
+def _stamp_wait_rows(before: dict, after: dict) -> None:
+    """The tool keeps waitingFrom and freed, whoever writes. A row that enters ``waiting`` keeps the state it left and
+    when, as waitingFrom, carried across every write while it stays waiting. A row that leaves ``waiting`` by any other
+    write loses waitingFrom and a waitingOn that still names what it waited on. freed says which landing or settlement
+    last returned the row, so ``wait`` can name it; it is carried until the row waits again."""
+    rows = after.get("lanes")
+    if not isinstance(rows, list):
+        return
+    old = {entry.get("id"): entry for entry in before.get("lanes", []) if isinstance(entry, dict)}
+    for entry in rows:
+        if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
+            continue
+        previous = old.get(entry["id"]) or {}
+        if entry.get("state") == "waiting":
+            entry.pop("freed", None)
+            if previous.get("state") == "waiting" and isinstance(previous.get("waitingFrom"), dict):
+                entry["waitingFrom"] = dict(previous["waitingFrom"])
+            else:
+                entry["waitingFrom"] = {"state": previous.get("state") or "idle", "at": now()}
+            continue
+        entry.pop("waitingFrom", None)
+        if previous.get("state") == "waiting" and entry.get("waitingOn") == previous.get("waitingOn"):
+            entry["waitingOn"] = None
+        if "freed" not in entry and isinstance(previous.get("freed"), dict):
+            entry["freed"] = dict(previous["freed"])
+
+
+def _return_waiting(rows: list[dict], subject: str, lanes: set[str] | None = None) -> list[str]:
+    """Return each row ``waiting`` on ``subject`` (of ``lanes`` when given) to the state it waited from, its waitingOn
+    cleared and waitingFrom removed, marked as freed by ``subject``. Returns the lanes it freed."""
+    freed = []
+    for row in rows:
+        if row.get("state") != "waiting" or row.get("waitingOn") != subject or (lanes is not None and row["id"] not in lanes):
+            continue
+        back = (row.get("waitingFrom") or {}).get("state") or "idle"
+        row.update(state=back, waitingOn=None, since=now(), freed={"by": subject, "at": now()})
+        row.pop("waitingFrom", None)
+        freed.append(row["id"])
+    return freed
+
+
 def _end_queue_wait(row: dict) -> None:
     """End a row's waitingOn if the queue set it; a wait the lane or the lead set stays theirs."""
     if _waiting_by(row) == "runner":
@@ -1287,6 +1335,30 @@ def lane_rows_after(directory: Path, state: dict, subject: str, *, stopped: str 
     rows = [dict(entry) for entry in state["lanes"]]
     lane = next((item.get("lane") for item in state["queue"] if item["subject"] == subject), None)
     row = next((entry for entry in rows if entry["id"] == lane), None)
+    if stopped is None:
+        # A landing first returns every lane waiting on it, whatever its focus names, and ends the wait an acceptance
+        # left on an idle row. For the subject's own lane the return takes the place of the rest.
+        freed = _return_waiting(rows, subject)
+        for entry in rows:
+            if entry.get("state") != "waiting" and entry.get("waitingOn") == subject:
+                entry["waitingOn"] = None
+        if lane in freed:
+            # A lane that waited from handing this story off has nothing of it left to hand: it rests as one does when
+            # its story lands, idle with nothing else open and assigned otherwise.
+            if row["state"] == "handed":
+                work = [*state["queue"], *state.get("planned", [])]
+                open_work = any(item.get("lane") == lane and item["subject"] != subject and item.get("stage") != "merged"
+                                for item in work)
+                row.update(focus=f"{subject} merged", state="assigned" if open_work else "idle")
+            return rows
+    elif row is not None and row.get("state") == "waiting" and row.get("waitingOn") == subject:
+        # A stop returns only the subject's own lane to the state it waited from, and the stop's words and its wait on
+        # the lead then apply, whatever its focus names; another lane waiting on the stopped piece still waits.
+        back = (row.get("waitingFrom") or {}).get("state") or "idle"
+        row.pop("waitingFrom", None)
+        row.update(focus=f"{subject} stopped: {stopped}", state="assigned" if back == "handed" else back,
+                   waitingOn="lead", since=now())
+        return rows
     if row is None:
         return rows
     work = [*state["queue"], *state.get("planned", [])]
@@ -1340,6 +1412,7 @@ def _tool_write(directory: Path, change: Callable[[dict], object]) -> tuple[dict
         state = read_state(directory, for_write=True)
         updated = copy.deepcopy(state)
         outcome = change(updated)
+        _stamp_wait_rows(state, updated)
         updated["version"] = state["version"] + 1
         updated["meta"]["updatedAt"] = now()
         errors = state_errors(updated)
@@ -1556,6 +1629,7 @@ def no_change_handoff(directory: Path, *, lane: str, subject: str, base_head: st
         if not state["meta"].get("handoffsNeedAcceptance"):
             planned["stage"] = "settled"
             planned["noChange"]["settledAt"] = planned["noChange"]["handedAt"]
+            _return_waiting(state["lanes"], subject)
             _rest_if_free(state, lane)
         for entry in state["lanes"]:
             if entry["id"] == lane:
@@ -1585,6 +1659,18 @@ def _rest_if_free(state: dict, lane: str | None) -> None:
     busy += [item for item in state["queue"] if item["lane"] == lane and item["stage"] not in ("merged", "stopped")]
     if not busy:
         _set_lane_state(state, lane, "idle")
+
+
+def _settle_accepted_row(state: dict, item: dict) -> None:
+    """After an acceptance, the accepted lane's row no longer waits on the lead: a row still handing the story off, or
+    blocked asking the lead about it, is idle, waiting on the accepted story's merge, which ends that wait."""
+    for row in state["lanes"]:
+        if row["id"] != item["lane"]:
+            continue
+        names = re.search(rf"(?<![\w-]){re.escape(item['subject'])}(?![\w-])", row.get("focus") or "") is not None
+        asking = row["state"] == "blocked" and row.get("waitingOn") == "lead" and names
+        if row["state"] == "handed" or asking:
+            row.update(state="idle", waitingOn=item["subject"], since=now())
 
 
 def _pending_no_change(state: dict, subject: str) -> dict | None:
@@ -1621,7 +1707,11 @@ def accept_handoff(directory: Path, subject: str, authorization: dict | None = N
             # Settled, not removed: it stays in the record, counted as done, and never enters the queue.
             waiting["stage"] = "settled"
             waiting["noChange"]["settledAt"] = now()
+            _return_waiting(state["lanes"], subject)
             _rest_if_free(state, waiting["lane"])
+            for row in state["lanes"]:
+                if row["id"] == waiting["lane"] and row.get("waitingOn") in ("lead", subject):
+                    row["waitingOn"] = None
             return copy.deepcopy(waiting)
         item = _pending(state, subject)
         if authorization is not None and authorization != handoff_authorization(state, item):
@@ -1632,6 +1722,7 @@ def accept_handoff(directory: Path, subject: str, authorization: dict | None = N
                 raise StateError("handoff_invalid", "accepted region paths must have current claims for the handing lane")
             item["acceptedRegionPaths"] = sorted(set(region_paths))
         item.pop("pending")
+        _settle_accepted_row(state, item)
         return copy.deepcopy(item)
 
     _, item = _tool_write(directory, change)
@@ -2119,6 +2210,8 @@ def set_focus(directory: Path, lane: str, text: str, *, state: str | None = None
     it, a bounded number of times; the lane's checks run under the lock on each attempt. ``between_read_and_write`` is
     ``patch``'s seam, for concurrency tests.
     """
+    if state == "waiting" and (waiting_on is ... or not waiting_on):
+        raise StateError("focus_invalid", "--waiting-on: a waiting lane names the story it waits on")
     changes: dict = {"focus": text}
     if state is not None:
         changes["state"] = state
@@ -2126,6 +2219,9 @@ def set_focus(directory: Path, lane: str, text: str, *, state: str | None = None
     assignments = {} if waiting_on is ... else {"/waitingOn": waiting_on}
     for attempt in range(1, FOCUS_ATTEMPTS + 1):
         current = read_state(directory)
+        if state == "waiting" and waiting_on in _landed_subjects(current):
+            # Nothing would ever return a row waiting on a story that has already landed.
+            raise StateError("focus_invalid", f"--waiting-on: {waiting_on} has already landed, so there is nothing to wait for")
         try:
             return patch(directory, writer="lane", lane=lane, version=current["version"], changes=changes,
                          selector=f"lanes[id={lane}]", assignments=assignments,
@@ -2226,12 +2322,14 @@ def patch(
                     next(entry for entry in updated["lanes"] if entry["id"] == lane)["waitingOn"] = None
             _stamp_waiting(current, updated, writer, wrote)
             _stamp_focus(current, updated, writer, lane if speaks else None)
+            _stamp_wait_rows(current, updated)
         else:
             violations = ownership_violations(current, updated, writer)
             if violations:
                 raise StateError("field_not_owned", "; ".join(sorted(set(violations))))
             _stamp_waiting(current, updated, writer, _written_field(selector, changes, assignments, "waitingOn"))
             _stamp_focus(current, updated, writer, None)
+            _stamp_wait_rows(current, updated)
         updated["version"] = version + 1
         if isinstance(updated.get("meta"), dict):
             updated["meta"]["updatedAt"] = now()
@@ -3788,12 +3886,21 @@ def _from_intent(entry: dict, intent: dict) -> bool:
     return entry["data"] == _recovery_facts(intent)
 
 
-def wait_events(entries: list[dict]) -> list[dict]:
-    """What ``wait`` tells of each entry: who and what, its facts, and its head and line in the registry's words."""
+def wait_events(entries: list[dict], state: dict | None = None) -> list[dict]:
+    """What ``wait`` tells of each entry: who and what, its facts, and its head and line in the registry's words. An
+    entry that landed or settled a story names, as ``freed``, every lane the record says it returned from waiting."""
     registry = kinds_registry() if entries else None
     events = []
     for entry in entries:
         event = {key: entry.get(key) for key in ("id", "kind", "lane", "subject", "data")}
+        data = entry.get("data") or {}
+        # A hand-off frees a lane only when it settles with no change, and an acceptance only when it settles one.
+        landing = (entry["kind"] == "candidate.merged" or (entry["kind"] == "candidate.handed" and data.get("noChange") is True)
+                   or (entry["kind"] == "handoff.accepted" and data.get("settled") is True))
+        if state is not None and landing and entry.get("subject"):
+            freed = [row["id"] for row in state.get("lanes", []) if (row.get("freed") or {}).get("by") == entry["subject"]]
+            if freed:
+                event["freed"] = freed
         try:
             event.update(journal_words.words(entry, registry))
         except journal_words.WordsError:
@@ -4141,6 +4248,16 @@ def waits(document: dict, *, needing: frozenset[str] | set[str] = frozenset(), w
             result.append({"subject": row["id"], "on": following["subject"], "cause": wait["cause"], "stage": "planned",
                            "frees": wait["frees"], **({"since": wait["since"]} if "since" in wait else {}),
                            "needsSomeone": False, "words": said})
+    for row in state["lanes"]:
+        if row.get("state") == "waiting" and row.get("waitingOn") in items and row["waitingOn"] not in landed:
+            # A lane waiting on a story goes on by itself when that story lands: it names the story it will finish.
+            other = items[row["waitingOn"]]
+            own = next((item["subject"] for item in [*planned, *queue] if lane_of(item) == row["id"]
+                        and item["subject"] != other["subject"] and item["subject"] not in landed), None)
+            fields = {"subject": row["id"], "on": other["subject"], "own": own}
+            result.append({"subject": row["id"], "on": other["subject"], "cause": "lane", "stage": other["stage"],
+                           "frees": "landed", **({"since": row["waitingFrom"]["at"]} if row.get("waitingFrom") else {}),
+                           "needsSomeone": needs_someone(other), "words": wait_said(table, "lanes", "waiting", fields)})
     return result
 
 
@@ -5442,7 +5559,7 @@ def wait_for_lead(
             return (WAIT_EXPIRED_EXIT if woke == "expired" else 0), {
                 "ok": True,
                 "woke": woke,
-                "events": wait_events(events),
+                "events": wait_events(events, state),
                 "blockedLanes": [{key: lanes[token].get(key) for key in ("id", "focus", "waitingOn")} for token in newly_blocked],
                 "pressure": pressure,
                 "quietLanes": [quiet[token] for token in sorted(set(quiet) - set(seen_quiet or ()))],
@@ -5603,7 +5720,7 @@ def main(argv: list[str] | None = None) -> int:
     focused = commands.add_parser("focus", help="a lane says what it is doing")
     focused.add_argument("--lane", required=True)
     focused.add_argument("--text", required=True)
-    focused.add_argument("--state", choices=("idle", "assigned", "working", "reviewing", "handed", "blocked", "done"))
+    focused.add_argument("--state", choices=("idle", "assigned", "working", "reviewing", "handed", "blocked", "waiting", "done"))
     focused.add_argument("--waiting-on", help="who or what the lane waits on; an empty value clears it")
     carried = commands.add_parser("carry-review",
                                   help="the lead carries a captured review across a commit it judged needs no new round")

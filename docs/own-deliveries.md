@@ -129,8 +129,15 @@ suite, as the lead's recorded decision. A lane names the catalogue ids it ran wi
 
 Each entry runs its module through `scripts/run-tests.py --workers 4`, as the full
 suite does, except `tests.test_registry`, which holds no unittest case and runs as
-the script it is. A module added later is selectable by id once its entry is added
-to the catalogue and to the pin in `tests/test_own_deliveries.py`.
+the script it is. Every `tests/test_*.py` module is catalogued:
+`test_every_test_module_is_catalogued` in `tests/test_own_deliveries.py` fails naming
+each module that is neither in the catalogue's pin there nor in its
+`UNCATALOGUED_MODULES`, where each exclusion gives its reason. A story that adds a
+module adds its entry to the binding and to that pin in the same diff, and names the
+new id in its own `handoff --checks`. An id the base's catalogue doesn't hold and the
+binding committed at the story's head does is an entry the story adds: the hand-off
+marks it added by this story, and `lead-accept --checks` selects it as the head
+defines it, before the entry reaches the base, so the queue runs it at the handed head.
 
 Two guards join every selection, named or not: `tests.test_linear_qualification`,
 which holds the corpus pins any doc or skill change can break, and
@@ -140,7 +147,9 @@ the line map's outside adopter among them. A change under `docs/solutions/` brin
 `tests.test_compound_learning_corpus`, which pins each note's shape. A change to
 any Markdown file under `skills/` brings the five corpus tests that read the shipped
 skill prose, `tests.test_run_event_emission_corpus` among them, which holds each
-journal kind to the one skill that owns it. Corpus validation stays in `alwaysRun`.
+journal kind to the one skill that owns it. A change to any `tests/test_*.py` module
+brings `tests.test_own_deliveries`, so a module added without its entry fails in the
+queue. Corpus validation stays in `alwaysRun`.
 The acceptance's decision names every check it selected, those added with them.
 
 A lane's gates are in `.agents/run-delivery.json`: corpus validation and the

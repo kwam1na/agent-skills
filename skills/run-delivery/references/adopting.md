@@ -471,7 +471,11 @@ lead's checkout of the base, or in a lead worktree of its own (section 8). `--ki
 `added` adds one to a story (or, for a key the delivery doesn't hold yet, the whole story, below), `removed` takes stories out of the delivery (the plan keeps them, marked removed), and
 `finish` changes or adds a finish line's `covers`, and with `--text` its wording; an existing line's `--text` alone
 rewords it and keeps what it covers. A change of both records two changes, what it covers and then its wording, so
-the plan keeps each before and after. Push the commit so lanes see it:
+the plan keeps each before and after. `--kind removed --subjects <story-key> --criterion <id>` drops that one
+criterion and keeps the story, and the plan chapter shows its wording struck through with the reason. It refuses a
+criterion the story lacks, the story's last criterion (remove the story instead), and one a finish line's `covers`
+still names (change that line first). A flag the kind doesn't use, such as `--text` on a removal or `--subjects` on a
+finish line, is refused by name before anything is written, never ignored. Push the commit so lanes see it:
 
 ```sh example repo
 python3 -B .agent-skills/current/skills/run-delivery/scripts/run_delivery.py lead-plan change --kind relaxed --subjects <story-key> --criterion greeting-shown --text "The front page shows a greeting" --why "The operator accepted any greeting"

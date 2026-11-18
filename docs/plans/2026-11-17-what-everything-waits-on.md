@@ -594,7 +594,7 @@ nothing itself.
 
 ### V26-3568. Draw a setback's thread by its state, and fold long check lists in the story
 
-Lane 2, tier 3, after V26-3554. Test-first. Files: `skills/delivery-views/assets/line-map.js`,
+Lane 3, tier 3, not blocked. Test-first. Files: `skills/delivery-views/assets/line-map.js`,
 `skills/delivery-views/assets/line-map.css`, `skills/orchestrate-work/references/journal-kinds.json`,
 `tests/fixtures/journal-kinds/vectors.json` and `tests/delivery_views_page/line-map-threads.test.mjs`.
 
@@ -614,6 +614,20 @@ finishing check's hand-off is cut short: the arc filling, the tick or cross, the
 in all (`SETTLE_MS`, `HOLD_MS`, `TURN_OUT_MS`, `TURN_IN_MS`). Two-second hosted checks interrupt every one. A redraw
 mid-hand-off keeps the animating row and queues the next result. Checks that finish faster than the animation get a
 shortened one, so the card never falls behind the record.
+
+### V26-3574. Lead each confirmed note with what was found, and fold the fix beneath it
+
+Lane 3, tier 3, not blocked. Test-first. Files: `skills/delivery-views/assets/run-summary.js`,
+`skills/delivery-views/assets/run-summary.css` and `tests/delivery_views_page/run-summary-closures.test.mjs`.
+
+Added mid-delivery. The operator approved a mock of the round card's confirmed notes, in line with V26-3555's findings
+redesign.
+
+A confirmed note's row leads with its finding's summary and priority, taken from the round that raised it, which the
+page already holds. Its resolution, evidence and id fold beneath it. A lens whose confirmed notes were all fixed takes
+one collapsed line, such as "Testing · 6 fixed". A note that ended any other way stays visible with its ending named.
+The confirmation sentence counts every ending. Nothing changes in the round record or the journal. When the raising
+round's finding isn't on the page, the row falls back to its resolution, as today.
 
 ## Calls made
 

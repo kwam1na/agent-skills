@@ -327,6 +327,7 @@
                       "reviewing",
                       "handed",
                       "blocked",
+                      "waiting",
                       "done"
                     ]
                   },
@@ -371,6 +372,7 @@
                           "reviewing",
                           "handed",
                           "blocked",
+                          "waiting",
                           "done"
                         ]
                       },
