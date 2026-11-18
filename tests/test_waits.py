@@ -707,6 +707,24 @@ class NextTests(unittest.TestCase):
         self.assertIn("blocked by APP-9", entry["reason"])
 
 
+class SiblingWaitTests(unittest.TestCase):
+    """An `after` key that names another repository's story: a sibling delivery's, or, in a record with no siblings,
+    nothing this record can see."""
+
+    def ranked(self, document: dict, lane: str, snapshot: dict | None = None) -> dict:
+        return {entry["subject"]: entry for entry in state_tool.next_for_lane(document["state"], lane, snapshot, None)}
+
+    def test_without_siblings_an_after_key_outside_the_record_raises_no_wait_and_next_offers_the_story(self) -> None:
+        """Scenario 18, pinned before any change: today's behaviour for every record without siblings."""
+        document = record()
+        planned(document, "APP-4")["lane"] = None
+        planned(document, "APP-4")["after"] = ["MOB-7"]
+        self.assertNotIn("siblings", document["state"])
+        self.assertEqual(of(document, "APP-4"), [])
+        entry = self.ranked(document, "lane-1")["APP-4"]
+        self.assertEqual((entry["blocked"], entry["waits"]), (False, []))
+
+
 class PurityTests(unittest.TestCase):
     """The same record and table always give the same waits: no clock, no network, no other file."""
 
