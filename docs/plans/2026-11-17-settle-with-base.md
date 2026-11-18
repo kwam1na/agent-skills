@@ -67,9 +67,11 @@ Checked against `main` at `0eb0aee` on 2026-11-17:
    each path has the same status (added, deleted, modified), the same mode, and the same hunks in the same order.
    Hunks are compared as their removed and added lines, ignoring line numbers and context. One normalization comes
    first: within a hunk, a removed line that comes back as an added line differing only by a trailing `,` is the
-   separator an append adds to the line before it. Both lines are dropped from that hunk, as context. So when both
-   sides append to the end of a JSON array whose last element sits on one line, the merge carries. A hunk left empty
-   is dropped. The comparison is two-way: a line the merge adds to the story's change refuses as surely as a line it
+   separator an append adds to the line before it. That pair is replaced by one marker, "separator appended to the
+   preceding line", compared like any other hunk line. Only such a matched pair is replaced; no other line loses its
+   comma. So when both sides append to the end of a JSON array whose last element sits on one line, both deltas read
+   [separator, `+b`] and the merge carries, while a resolution that keeps both elements but loses the separator reads
+   [`+b`] and is refused. The comparison is two-way: a line the merge adds to the story's change refuses as surely as a line it
    drops. The review carries when every merge's deltas are equal, each merge checked against the one before it. Who
    owns the file the base touched does not matter. The refusal `the base merge changes lane-owned file` goes, and so does the per-path `--raw`
    comparison. A region claim must still map from the old base to the new one, as today; that check is about
@@ -196,9 +198,10 @@ V26-3577, in `tests/test_run_delivery.py`:
 - `lead-authorize-base-merge`'s output includes the finishing `git commit -m ... -m ...` for each merge.
 - A merge that conflicts, finished with the printed command, carries the review at hand-off.
 - The same merge finished with `git commit --no-edit`, which keeps `# Conflicts:` lines, carries.
-- A merge committed with `git commit --cleanup=verbatim -F`, whose message has the trailer followed by `# Conflicts:`
-  lines, carries. Today's `%(trailers)` reader returns nothing for it: the lane proves this row red against today's
-  reader before changing it, and records that run in its evidence.
+- In a fixture repository with `core.commentChar=;`, a merge committed with `git commit --cleanup=verbatim -F`, whose
+  message has the trailer followed by `#` conflict lines, carries. The comment-character setting is what defeats
+  today's `%(trailers)` reader, which then returns nothing: the lane proves this row red against today's reader before
+  changing it, and records that run in its evidence.
 - A merge whose message lost its trailer is refused, and the refusal prints the exact `--amend` command. Running that
   command makes the next hand-off carry. With two merges where only the first lost its trailer, the refusal names the
   first and prints no `--amend`.
@@ -210,6 +213,12 @@ V26-3576, in `tests/test_run_delivery.py`:
   with multi-line objects alike.
 - A resolution that drops one of the story's added lines is refused, naming the path and that line.
 - A resolution that adds a line inside the story's change is refused, naming the path and the added line.
+- The story deletes a line from a lane-owned file, and the resolution keeps it: refused, naming the path and the
+  removed line.
+- A resolution that keeps both appended elements but drops the separator on the base's last line is refused, naming
+  the path.
+- A story that changes only a line's trailing `,`, with no line added after it, is a change like any other: a
+  resolution that loses it is refused.
 - A resolution that changes a path outside the story's delta is refused, naming that path.
 - A story file whose mode differs after the merge is refused.
 - Two base merges, the first clean and the second dropping a story line: the second is refused.
@@ -223,6 +232,8 @@ V26-3572, in `tests/test_run_delivery.py` and `tests/test_orchestration_state.py
   the files and prints `base-merge <key>`.
 - A conflict only in `provenance.lock.json` where only the candidate changed the listing does not refuse. One where
   both sides changed the listing is refused, naming it.
+- A conflict only in `provenance.lock.json` where the base changed the listing and the candidate changed only digests
+  does not refuse, as the queue takes the base side.
 - A head that conflicts in both `provenance.lock.json` and a source file is refused, naming the source file.
 - `base-merge` journals an authorization with writer `lane` and `by: lane`, and prints the merge and finishing
   commands. After the merge, `handoff` carries the review, and `lead-accept` accepts it.
@@ -255,10 +266,13 @@ V26-3557, in `tests/test_orchestration_state.py`, `tests/test_merge_queue.py`,
   The test joins `StoppedBaseRerunTests`, which is `run_quietly`.
 - The race: the re-run reaches `candidate_failed`, and the acceptance lands after the queue's last read and before its
   stop write. The row stays queued at the new head, with no `check_failed` stop and no `base.rerun.finished`.
-- A re-run whose verdict arrives after the superseding entry writes none.
+- A re-run whose verdict arrives after the superseding entry writes none. With the row's head unchanged but a
+  `base.rerun.superseded` naming the checked head, the verdict's build writes nothing too.
 - `lead-base-broken --self-repair` journals `base.broken` with check, test and reason, and ends the running re-run.
   The failed head is not re-queued, including after `base.repaired`. The lane hands off the fixed head, `lead-accept`
   marks it the repair, serve takes it alone, and its merge journals `base.repaired`.
+- Under `--self-repair`, a new hand-off at the failed head itself is not marked the repair, and serve does not take
+  it.
 - `lead-base-broken --repair B`, naming another queued story: on `base.repaired` the stopped candidate goes back to
   queued at its old head.
 - `repaired_state`: a `base_broken` row with `supersededAt` H whose head is now H2 is re-queued on `base.repaired`. The
