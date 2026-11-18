@@ -5911,8 +5911,13 @@ class SchemaAgreementTests(unittest.TestCase):
         queue = state["properties"]["queue"]["items"]["properties"]
         self.assertEqual(queue["stage"]["enum"],
                          ["queued", "syncing", "synced", "checking", "checked", "merging", "merged", "stopped"])
-        self.assertEqual(state["properties"]["lanes"]["items"]["properties"]["state"]["enum"],
+        lane = state["properties"]["lanes"]["items"]["properties"]
+        self.assertEqual(lane["state"]["enum"],
+                         ["idle", "assigned", "working", "reviewing", "handed", "blocked", "waiting", "done"])
+        # The state a waiting row left is any but waiting; what the queue kept of a lane's word may be waiting.
+        self.assertEqual(lane["waitingFrom"]["properties"]["state"]["enum"],
                          ["idle", "assigned", "working", "reviewing", "handed", "blocked", "done"])
+        self.assertEqual(lane["restedFrom"]["properties"]["state"]["enum"], lane["state"]["enum"])
         self.assertEqual(state["$defs"]["stepState"]["enum"],
                          ["pending", "running", "passed", "failed", "skipped", "timed_out", "reused", "superseded"])
         self.assertEqual(journal["properties"]["id"]["minimum"], 1)

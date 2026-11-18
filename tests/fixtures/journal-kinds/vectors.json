@@ -344,7 +344,7 @@
         ]
       },
       "head": "The lead checked the hand-off of APP-12",
-      "line": "No change needed, at 4e66a05. Its rounds name the reviewed head."
+      "line": "No change needed, at 4e66a05, with 1 note"
     },
     {
       "kind": "handoff.checked",
@@ -388,7 +388,7 @@
         ]
       },
       "head": "The lead checked the hand-off of APP-12",
-      "line": "At 4e66a05, after 2 review rounds. Its rounds name the reviewed head."
+      "line": "At 4e66a05, after 2 review rounds, with 1 note"
     },
     {
       "kind": "handoff.checked",
@@ -493,7 +493,7 @@
         ]
       },
       "head": "The lead chose the checks for APP-12",
-      "line": "Checks: unit and lint, at 4e66a05, 1 check added. The guide named a file the skill does not ship."
+      "line": "2 checks at 4e66a05, 1 check added. The guide named a file the skill does not ship."
     },
     {
       "kind": "check.selected",
@@ -509,7 +509,7 @@
         "added": []
       },
       "head": "The lead chose the checks for APP-12",
-      "line": "Checks: unit and lint, at 4e66a05. The guide named a file the skill does not ship."
+      "line": "2 checks at 4e66a05. The guide named a file the skill does not ship."
     },
     {
       "kind": "check.selection.cleared",

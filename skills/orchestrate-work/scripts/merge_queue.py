@@ -1849,6 +1849,15 @@ class Runner:
 
     def check_shared_outputs(self, item: dict, checkout: Path, base: str, candidate: str, context: Context) -> None:
         """A lane may refresh a shared output without a claim when its listing stays the same."""
+        for path, _owners, added, removed in self.unowned_listing_changes(item["lane"], checkout, base, candidate, context):
+            raise self.listing_stop(path, added, removed)
+
+    def unowned_listing_changes(
+        self, lane: str, checkout: Path, base: str, candidate: str, context: Context | None,
+    ) -> Iterator[tuple[str, list[str], list[str], list[str]]]:
+        """Each regenerable listing the candidate changed what it lists of, where ``lane`` isn't its only owner: the
+        listing's path, the lanes that own it, and the outputs added and removed, in the binding's order. A hand-off asks the same question
+        before the lead accepts, so a lane is told while the listing can still be granted."""
         ownership = self.state().get("laneOwnership")
         regenerable = self.binding["regenerable"]
         if ownership is None or not regenerable["regenerators"] or not regenerable.get("listings"):
@@ -1860,9 +1869,11 @@ class Runner:
             path = entry["path"]
             if path not in changed:
                 continue
-            owners = [lane for lane, claims in ownership.items() if any(fnmatch.fnmatchcase(path, g) for g in claims)]
-            if owners != [item["lane"]]:
-                self.check_listing(checkout, path, entry["argv"], merge_base, base, candidate, context)
+            owners = [owner for owner, claims in ownership.items() if any(fnmatch.fnmatchcase(path, g) for g in claims)]
+            if owners != [lane]:
+                added, removed = self.listing_change(checkout, path, entry["argv"], merge_base, base, candidate, context)
+                if added or removed:
+                    yield path, owners, added, removed
 
     def merge_base_in(self, checkout: Path, base_head: str, branch: str, context: Context | None = None) -> None:
         self.merge_in(checkout, base_head, base_head, "--theirs", f"Merge {self.base} into {branch}", context=context)
@@ -1944,16 +1955,28 @@ class Runner:
             raise Stop("source_conflict", f"the listing of {path} at the {which} {why}; nothing was regenerated", [path])
         return listed  # type: ignore[return-value]
 
+    def listing_change(
+        self, checkout: Path, path: str, argv: list[str], merge_base: str, base: str, candidate: str, context: Context | None,
+    ) -> tuple[list[str], list[str]]:
+        """The outputs the candidate added to and removed from what ``path`` lists since the merge base, each sorted."""
+        before = set(self.listed_outputs(checkout, path, argv, merge_base, "merge base", context))
+        self.listed_outputs(checkout, path, argv, base, "base", context)
+        after = set(self.listed_outputs(checkout, path, argv, candidate, "candidate", context))
+        return sorted(after - before), sorted(before - after)
+
     def check_listing(
         self, checkout: Path, path: str, argv: list[str], merge_base: str, base: str, candidate: str, context: Context | None,
     ) -> None:
         """Stop when the candidate changed what ``path`` lists: regeneration can't restore an output it added or removed."""
-        before = set(self.listed_outputs(checkout, path, argv, merge_base, "merge base", context))
-        self.listed_outputs(checkout, path, argv, base, "base", context)
-        after = set(self.listed_outputs(checkout, path, argv, candidate, "candidate", context))
-        if after != before:
-            raise Stop("source_conflict", f"the candidate changed the outputs {path} lists ({listing_change(before, after)}); "
-                       "resolve it by hand, taking the candidate's side, and hand off again", [path])
+        added, removed = self.listing_change(checkout, path, argv, merge_base, base, candidate, context)
+        if added or removed:
+            raise self.listing_stop(path, added, removed)
+
+    @staticmethod
+    def listing_stop(path: str, added: list[str], removed: list[str]) -> Stop:
+        changes = [f"added {', '.join(added)}" if added else "", f"removed {', '.join(removed)}" if removed else ""]
+        return Stop("source_conflict", f"the candidate changed the outputs {path} lists ({'; '.join(filter(None, changes))}); "
+                    "resolve it by hand, taking the candidate's side, and hand off again", [path])
 
     def listing_side(
         self, checkout: Path, path: str, argv: list[str], merge_base: str, base: str, candidate: str, against: str,

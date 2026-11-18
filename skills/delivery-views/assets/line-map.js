@@ -228,7 +228,7 @@
     checked: "Checked, about to merge", merging: "Merging", planned: "Not started", building: "Being built", review: "In review",
     settled: "Closed, no change needed", nochange: "Handed over with no change needed, waiting for the lead"
   });
-  var LANE_WORDS = table({ idle: "Standing by", assigned: "Assigned", working: "Building", reviewing: "In review", handed: "Handed over", blocked: "Blocked", done: "Done" });
+  var LANE_WORDS = table({ idle: "Standing by", assigned: "Assigned", working: "Building", reviewing: "In review", handed: "Handed over", blocked: "Blocked", waiting: "Waiting", done: "Done" });
   // The states of a check that ran in this run, and so carries a start time.
   var RAN = table({ running: true, passed: true, failed: true, timed_out: true });
   var STEP_WORDS = table({ pending: "waiting", running: "running", passed: "passed", failed: "failed", skipped: "skipped", timed_out: "timed out", reused: "reused" });
@@ -415,12 +415,19 @@
     list(doc.state.lanes).forEach(function (lane) { if (isObject(lane) && lane.id) { names[lane.id] = text(lane.title) || text(lane.id); } });
     return names;
   }
+  // A lane's colour comes from its id, never from where the record lists it, so no row moving changes a lane's colour.
+  function laneColour(lane) {
+    if (!lane) { return "var(--soft)"; }
+    var numbered = /^lane-(\d+)$/.exec(lane);
+    var slot = 0;
+    if (numbered) { slot = (Number(numbered[1]) + 5) % 6; }
+    else { for (var i = 0; i < lane.length; i += 1) { slot = (slot * 31 + lane.charCodeAt(i)) % 6; } }
+    return "var(--l" + (slot + 1) + ")";
+  }
   function laneColours(doc, all) {
-    var order = [];
-    list(doc.state.lanes).forEach(function (lane) { if (isObject(lane) && lane.id && order.indexOf(lane.id) < 0) { order.push(lane.id); } });
-    all.forEach(function (piece) { var lane = piece.item.lane || ""; if (order.indexOf(lane) < 0) { order.push(lane); } });
     var colours = Object.create(null);
-    order.forEach(function (lane, index) { colours[lane] = lane ? "var(--l" + ((index % 6) + 1) + ")" : "var(--soft)"; });
+    list(doc.state.lanes).forEach(function (lane) { if (isObject(lane) && lane.id) { colours[lane.id] = laneColour(text(lane.id)); } });
+    all.forEach(function (piece) { var lane = piece.item.lane || ""; colours[lane] = laneColour(lane); });
     return colours;
   }
   function titleOf(doc, item) {
@@ -745,11 +752,26 @@
    * cross for a failure), it holds there a beat, then the row turns over on its horizontal axis and the next running check
    * arrives on the back. The settle and the beat are SETTLE_MS and HOLD_MS, the turn TURN_OUT_MS then TURN_IN_MS; a failed
    * check's entry in the list (.ck-fails li.arriving in the stylesheet) waits for all three. Without motion the row simply
-   * shows the next.
+   * shows the next. A redraw while the row turns keeps that row, turning, and the next result waits its turn on it; a
+   * result that came sooner after the last than the whole handoff takes gets a handoff shortened to that gap, a quarter
+   * of the whole at least, so the row never falls behind the record.
    */
   var SETTLE_MS = 480, HOLD_MS = 900, TURN_OUT_MS = 200, TURN_IN_MS = 300;
-  function handOff(row, finished, next) {
-    if (!runMotionWanted(row)) { if (!next) { doneWords(row, finished); } return; }
+  var HANDOFF_MS = SETTLE_MS + HOLD_MS + TURN_OUT_MS + TURN_IN_MS;
+  // The row turning now, the run it belongs to, and the results waiting to turn on it.
+  var turning = null;
+  function handOff(row, finished, next, run, before) {
+    if (!runMotionWanted(row)) { if (!next) { doneWords(row, finished); } turning = null; return; }
+    var gap = before ? (seconds(finished.finishedAt) - seconds(before.finishedAt)) * 1000 : NaN;
+    var scale = gap >= 0 ? Math.max(0.25, Math.min(1, gap / HANDOFF_MS)) : 1;
+    var turn = turning && turning.row === row ? turning : (turning = { row: row, run: run, queue: [] });
+    turn.busy = true;
+    function done() {
+      turn.busy = false;
+      var queued = turn.queue.shift();
+      if (queued && row.isConnected) { handOff(row, queued.finished, queued.next, run, finished); }
+      else if (turning === turn) { turning = null; }
+    }
     // The row is first drawn as the finished check was last seen: running, its arc still turning.
     row.className = "ck-run";
     row.querySelector(".ck-run-words").replaceChildren(el("span", "sr", "Running "), stepName(finished));
@@ -758,25 +780,26 @@
       setTimeout(function () {
         doneWords(row, finished);
         row.classList.add("landing");
-        if (!next) { return; }
         setTimeout(function () {
+          if (!next) { done(); return; }
           // The words roll over: up and away as they fade, the next rolling in from below. The turn stops short of edge-on
           // and the words are gone before it, so they never flatten into a line; the way in eases out with no overshoot.
           var face = row.querySelector(".ck-run-words");
           var out = face.animate([
             { transform: "perspective(400px) translateY(0) rotateX(0deg)", opacity: 1 },
             { transform: "perspective(400px) translateY(-4px) rotateX(70deg)", opacity: 0 }],
-            { duration: TURN_OUT_MS, easing: "cubic-bezier(.4, 0, .7, .4)", fill: "forwards" });
+            { duration: TURN_OUT_MS * scale, easing: "cubic-bezier(.4, 0, .7, .4)", fill: "forwards" });
           out.onfinish = function () {
             runWords(row, next);
-            face.animate([
+            var back = face.animate([
               { transform: "perspective(400px) translateY(4px) rotateX(-70deg)", opacity: 0 },
               { transform: "perspective(400px) translateY(0) rotateX(0deg)", opacity: 1 }],
-              { duration: TURN_IN_MS, easing: "cubic-bezier(.2, .6, .3, 1)" });
+              { duration: TURN_IN_MS * scale, easing: "cubic-bezier(.2, .6, .3, 1)" });
             out.cancel();
+            back.onfinish = done;
           };
-        }, HOLD_MS);
-      }, SETTLE_MS);
+        }, HOLD_MS * scale);
+      }, SETTLE_MS * scale);
     });
   }
   /**
@@ -966,22 +989,39 @@
       var finished = shownBefore && !runningSteps.some(function (step) { return text(step.label) === shownBefore; })
         ? steps.filter(function (step) { return text(step.label) === shownBefore && DONE[step.state]; })[0] : null;
       prev.runningCheck = runningSteps.length ? { run: runId, label: text(runningSteps[0].label) } : null;
+      // A row still turning over from an earlier result is kept, turning, and this result waits its turn on it: only the
+      // latest waits, so the row turns at most once more before it shows the record as it stands.
+      var keep = turning && turning.run === runId && turning.busy ? turning : null;
+      if (turning && turning.run !== runId) { turning = null; }
       runningSteps.forEach(function (step, i) {
+        if (i === 0 && keep) {
+          box.appendChild(keep.row);
+          if (finished) { keep.queue = [{ finished: finished, next: step }]; }
+          return;
+        }
         var row = runRow(step);
         box.appendChild(row);
-        if (i === 0 && finished) { handOff(row, finished, step); }
+        if (i === 0 && finished) { handOff(row, finished, step, runId); }
       });
       // A check that has just failed is told once at a time: its row marks the cross and turns over to the next check,
       // and only then does its entry arrive in the failures above. With no next check its entry alone tells it.
       var justFailed = finished && (finished.state === "failed" || finished.state === "timed_out");
-      if (justFailed && runningSteps.length && runMotionWanted(box)) {
+      // Under a kept row the cross waits its turn, so the entry arrives as it does with no motion rather than on a delay
+      // the row may not keep.
+      if (justFailed && runningSteps.length && !keep && runMotionWanted(box)) {
         var arriving = [].filter.call(box.querySelectorAll(".ck-fails li"), function (entry) { return entry.getAttribute("data-check") === text(finished.label); })[0];
         if (arriving) { arriving.classList.add("arriving"); }
       }
-      if (finished && !runningSteps.length && !justFailed) {
+      if (keep && !runningSteps.length && !justFailed) {
+        box.appendChild(keep.row);
+        if (finished) { keep.queue = [{ finished: finished, next: null }]; }
+      } else if (keep && !runningSteps.length) {
+        // A failure with nothing after it is told by its entry alone, as it is with no row turning: the kept row goes.
+        turning = null;
+      } else if (finished && !runningSteps.length && !justFailed) {
         var rest = runRow(finished);
         box.appendChild(rest);
-        handOff(rest, finished, null);
+        handOff(rest, finished, null, runId);
       }
       var running = steps.filter(function (step) { return step.state === "running"; }).length;
       var tally = function (state) { return steps.filter(function (step) { return step.state === state; }).length; };
@@ -3023,12 +3063,39 @@
   }
   /** One beat as a row: its time, its mark and its words in full. Its ticket, commit and change request are links in the words. */
   function beatRow(doc, story, beat, fresh, depth) {
+    // The kinds whose line counts a list its entry holds, which the beat's fold then names in full: the checks chosen, and
+    // the lead's notes on a hand-off, which may name the checks too.
+    var FOLDED_LISTS = { "check.selected": "checks", "handoff.checked": "notes" };
+    function folded(doc, beat) {
+      var field = beat.form === "entry" ? FOLDED_LISTS[text(beat.kind)] : null;
+      if (!field) { return []; }
+      var entry = list(doc.journal).filter(function (each) { return isObject(each) && each.id === list(beat.entries)[0]; })[0];
+      var named = entry && isObject(entry.data) ? list(entry.data[field]) : [];
+      return named.every(function (name) { return typeof name === "string"; }) ? named : [];
+    }
+    /**
+     * Where a row sits on its setback's margin line, from the thread's own facts: its state, its opening and its closing.
+     * The line runs from a ring on the row holding the opening to a tick on the row holding the closing, so two setbacks
+     * back to back read as two; rows of the thread before its opening or after its closing stand clear of it. It is held
+     * while the thread is open and the page's hairline once it closed.
+     */
+    function threadMarks(li, beat, thread) {
+      var order = list(thread.entries), mine = list(beat.entries);
+      var opens = mine.indexOf(thread.opening) >= 0, closes = thread.closing !== null && thread.closing !== undefined && mine.indexOf(thread.closing) >= 0;
+      var at = order.indexOf(mine[0]), from = order.indexOf(thread.opening);
+      var to = thread.closing === null || thread.closing === undefined ? order.length : order.indexOf(thread.closing);
+      li.classList.add(thread.state === "open" ? "t-open" : "t-closed");
+      if (opens || closes || (from >= 0 && at > from && at < to)) { li.classList.add("t-span"); }
+      if (opens) { li.classList.add("t-opens"); li.appendChild(el("span", "thread-ring")); }
+      if (closes) { li.classList.add("t-closes"); li.appendChild(el("span", "thread-tick")); }
+    }
     var threads = story.threads.filter(function (thread) { return isObject(thread) && thread.id === beat.thread; });
     // Below the headline a setback's entries keep their places in time, tied by a thin line in the margin.
     var li = el("li", "beat is-" + text(beat.tone) + (beat.thread && beat.form !== "thread" && depth !== "headline" ? " threaded" : "") + (fresh ? " fresh" : ""));
     li.setAttribute("data-beat", text(beat.id));
     if (beat.thread) { li.setAttribute("data-thread", text(beat.thread)); }
     if (beat.form === "thread" && threads.length) { return setbackSheet(doc, beat, threads[0], li); }
+    if (threads.length && beat.form !== "thread" && depth !== "headline") { threadMarks(li, beat, threads[0]); }
     var words = add(el("span", "beat-words"), add.apply(null, [el("span", "beat-said")].concat(linked(beat.words.head))),
       text(beat.words.line) ? add.apply(null, [el("span", "beat-line")].concat(linked(beat.words.line))) : null);
     var body = el("div", "beat-body");
@@ -3042,6 +3109,11 @@
       });
       var fold = add(el("details", "beat-fold"), add(el("summary", "beat-head"), words), listed);
       body.appendChild(runFold(fold, { key: "beat:" + text(beat.id) + ":" + list(beat.entries)[0] }));
+    } else if (folded(doc, beat).length) {
+      // A beat whose line counts what its entry lists folds the list: opened, it names each, one to a line.
+      var names = add.apply(null, [el("ul", "beat-items beat-names")].concat(folded(doc, beat).map(function (name) { return el("li", null, name); })));
+      body.appendChild(runFold(add(el("details", "beat-fold"), add(el("summary", "beat-head"), words), names),
+        { key: "beat:" + text(beat.id) + ":" + list(beat.entries)[0] }));
     } else {
       body.appendChild(add(el("div", "beat-head"), words));
     }

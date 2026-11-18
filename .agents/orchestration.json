@@ -2,7 +2,7 @@
   "schemaVersion": "orchestration-binding/1",
   "base": {
     "remote": "origin",
-    "ref": "integrate/settle-with-base"
+    "ref": "main"
   },
   "bases": [
     "main",
@@ -570,6 +570,24 @@
         "cwd": ".",
         "reasons": [
           "The tests in tests/test_forge_adapters.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_handoff_listing",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_handoff_listing.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_handoff_listing.py."
         ],
         "prerequisites": [],
         "timeoutSeconds": 3600

@@ -534,8 +534,10 @@
                 "reviewing",
                 "handed",
                 "blocked",
+                "waiting",
                 "done"
-              ]
+              ],
+              "description": "waiting: the lane waits for the story its waitingOn names to land, and will go on by itself. It is progress, not a question: it doesn't wake a wait, isn't in \"Needs you\" and doesn't hold the close. Its waitingOn names a story the record holds."
             },
             "waitingOn": {
               "anyOf": [
@@ -583,8 +585,51 @@
                     "reviewing",
                     "handed",
                     "blocked",
+                    "waiting",
                     "done"
                   ]
+                },
+                "at": {
+                  "$ref": "#/$defs/timestamp"
+                }
+              }
+            },
+            "waitingFrom": {
+              "description": "Kept by the tool alone: the state a waiting row left, and when, carried across every write while the row stays waiting, whoever writes, and removed when it returns. A landing or settlement of the story it waits on returns it to this state in the same write; any other write that takes the row out of waiting removes it and clears a waitingOn that still names that story.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "state",
+                "at"
+              ],
+              "properties": {
+                "state": {
+                  "enum": [
+                    "idle",
+                    "assigned",
+                    "working",
+                    "reviewing",
+                    "handed",
+                    "blocked",
+                    "done"
+                  ]
+                },
+                "at": {
+                  "$ref": "#/$defs/timestamp"
+                }
+              }
+            },
+            "freed": {
+              "description": "Kept by the tool alone: the landing or settlement that last returned the row from waiting, by the story's key, and when, so a wait names the lanes it freed. Carried until the row waits again.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "by",
+                "at"
+              ],
+              "properties": {
+                "by": {
+                  "$ref": "#/$defs/name"
                 },
                 "at": {
                   "$ref": "#/$defs/timestamp"

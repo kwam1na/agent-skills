@@ -47,7 +47,11 @@ Use `lead-carry-review` for its existing queued-work flow.
 
 A legacy record reads assignments and ownership from the delivery file until the lead runs `lead-own --seed`.
 Lanes may share declared regenerable files with listing guards for digest refreshes. Listing changes still require
-an explicit ownership decision, and the queue applies its conflict and listing guards. The close-out archive
+an explicit ownership decision, and the queue applies its conflict and listing guards. `handoff` asks the queue's own
+listing check first: a candidate that adds or removes an output a listing names, in a listing its lane doesn't own, is
+refused before anything is recorded, naming the file, the outputs and the `lead-own` to ask the lead for: a `--grant`
+for a listing no lane holds, or a `--move` from each other lane that holds it. The
+lane brief names each declared listing once, and says nothing when the binding declares none. The close-out archive
 includes the delivery configuration with the record's effective ownership and assignments.
 
 The agent-skills delivery workflow (`deliver-work` → `orchestrate-work`, `obtain-review`/`review-work`) leaves its

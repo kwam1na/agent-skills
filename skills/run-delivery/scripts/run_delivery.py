@@ -4890,6 +4890,41 @@ def handoff(args) -> None:
             raise Stop(f"the approved round reviewed {reviewed[:10]}, but HEAD is {head[:10]}; "
                        f"review the new head: {error}") from error
     lane = check_candidate_ownership(c, key, git("merge-base", c.base_ref, head), head)
+    if (c.binding.get("regenerable") or {}).get("listings"):
+        # The merge queue stops a candidate that changes what a regenerable listing lists when its lane doesn't own
+        # the listing. Its own check, asked here, says so before the lead accepts rather than after.
+        _validator()
+        import merge_queue  # noqa: E402  (the installed release's own queue)
+        queue = merge_queue.Runner(main_checkout(), c.state, remote=c.remote, base=c.base_branch)
+        queue.binding = c.binding
+        root = Path(c.binding.get("workRoot", ".orchestration/work"))
+        queue.work_root = (root if root.is_absolute() else main_checkout() / root).resolve()
+        # The values the queue's sync step gives a listing, so a listing that names {head} reads the same here.
+        values = queue.context(key, git("rev-parse", c.base_ref)).with_values(branch=c.branch(key), head=head)
+        try:
+            moved = list(queue.unowned_listing_changes(lane, repo(), c.base_ref, head, values))
+        except merge_queue.Stop as error:
+            raise Stop(f"the merge queue's listing check can't run at {head[:10]}: {error.detail}") from error
+        if moved:
+            said = lambda added, removed: "; ".join(filter(None, [added and f"added {', '.join(added)}",
+                                                                   removed and f"removed {', '.join(removed)}"]))
+
+            def ask(path: str, owners: list[str]) -> str:
+                # A listing no lane holds is granted; one another lane holds, even beside this one, is moved from it.
+                others = [owner for owner in owners if owner != lane]
+                if not others:
+                    return f"ask the lead to grant it, with {flow_command()} lead-own --lane {lane} --grant {path}"
+                held = "shared with" if lane in owners else "held by"
+                claims = c.record_state().get("laneOwnership", {})
+                return (f"it is {held} {', '.join(others)}, so ask the lead to make it {lane}'s alone, with "
+                        + " and ".join(f"{flow_command()} lead-own --lane {lane} --move {claim} --from {other}"
+                                       for other in others for claim in claims.get(other, [])
+                                       if fnmatch.fnmatchcase(path, claim)))
+            raise Stop("\n  ".join([f"{key} changes the outputs a listing names, in files {lane} doesn't own alone, and "
+                                    "the merge queue would stop it after acceptance:",
+                                    *(f"{path} ({said(added, removed)}): {ask(path, owners)}"
+                                      for path, owners, added, removed in moved),
+                                    "then hand off again. Refreshing a listing's digests alone needs no grant."]))
     validation, gate_problems = gates_summary(key, repo(), head)
     pr_line = None
     # A lane stopped by a silent reviewer hands off blocked on it, and the lead decides that reviewer. The block holds
@@ -7125,6 +7160,10 @@ def lead_brief(args) -> None:
         "gates": "\n".join(f"   - `{' '.join(expand_argv(g['argv'], base=c.base_ref, key='<key>', delivery=c.delivery))}`"
                            for g in c.gates) or "   - (none declared)",
         "never_touch": ", ".join(f"`{p}`" for p in c.never_touch) or "(nothing listed)",
+        "listings": "".join(f" Adding or removing an output {' or '.join(f'`{p}`' for p in listed)} lists needs that file's "
+                            "owner: ask the lead to grant it before you hand off. Refreshing its digests alone needs no grant."
+                            for listed in [[e["path"] for e in (c.binding.get("regenerable") or {}).get("listings", [])
+                                            if e["path"] in shared_outputs(c)]] if listed),
         "lanes": lane_rows, "stories": story_rows, "in_app": in_app, "notes": notes or "(none)",
         "lease": (c.in_app or {}).get("lease", "in-app"), "port": str((c.in_app or {}).get("port", "")),
         "tracker": c.issue_url.replace("{key}", "<key>"), "authority": authority_text(),
@@ -7817,7 +7856,10 @@ def lead_assign(args) -> None:
         state = doc["state"]
         if args.lane not in c.effective_ownership(state):
             raise Stop(f"{args.lane} is not a lane of {c.delivery}")
-        changes = {"lanes": [*(entry for entry in state["lanes"] if entry["id"] != args.lane), row]}
+        # The row is replaced where it stands: an assignment never reorders the lanes.
+        rows = state["lanes"]
+        changes = {"lanes": [row if entry["id"] == args.lane else entry for entry in rows]
+                   if any(entry["id"] == args.lane for entry in rows) else [*rows, row]}
         if "laneOwnership" not in state:
             for key in keys:
                 if c.lane_of(key, state) != args.lane:
@@ -10039,13 +10081,7 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                           "candidates the break stopped resume on base.repaired, with no --requeue",
                           "clears": ("a fullHealth pass at a later base head, or " if found else "")
                           + "journalling base.repaired"})
-    for lane in doc["state"]["lanes"]:
-        if lane.get("state") == "blocked":
-            items.append({"holding": True, "source": f"{lane['id']}'s state", "clears": "the lane's state changing",
-                          "text": f"{lane['id']} is blocked: {lane.get('focus', '')}"})
-        elif lane.get("waitingOn") == "lead":
-            items.append({"holding": True, "source": f"{lane['id']}'s state", "clears": "the lane no longer waiting on you",
-                          "text": f"{lane['id']} waits on you: {lane.get('focus', '')}"})
+    items += lane_needs(doc["state"])
     for item in doc["state"]["queue"]:
         merge = unaccepted_merge(doc, item)
         if merge:
@@ -10102,6 +10138,25 @@ def listening_words(c, state: dict) -> dict:
             "clears": delivery_state.wait_said(table, "listening", "clears", {})}
 
 
+def lane_needs(state: dict) -> list[dict]:
+    """The lanes "Needs you" lists: one blocked on a question, and one waiting on the lead. A lane in the `waiting`
+    state waits on a story, which goes on by itself when it lands, so it is not listed."""
+    items = []
+    for lane in state["lanes"]:
+        if lane.get("state") == "blocked":
+            items.append({"holding": True, "source": f"{lane['id']}'s state", "clears": "the lane's state changing",
+                          "text": f"{lane['id']} is blocked: {lane.get('focus', '')}"})
+        elif lane.get("waitingOn") == "lead":
+            items.append({"holding": True, "source": f"{lane['id']}'s state", "clears": "the lane no longer waiting on you",
+                          "text": f"{lane['id']} waits on you: {lane.get('focus', '')}"})
+    return items
+
+
+def busy_lanes(state: dict) -> list[str]:
+    """The lanes that hold the close: any not idle or done, except one waiting on a story, which goes on by itself."""
+    return [lane["id"] for lane in state["lanes"] if lane.get("state") not in (*LANE_DONE, "waiting")]
+
+
 def needs_about(doc: dict, item: dict) -> set[str]:
     """The lanes and stories a "Needs you" item is about, read from where it comes from."""
     source = item["source"]
@@ -10129,8 +10184,10 @@ def waits_needing(c, doc: dict, items: list[dict]) -> list[dict]:
     lanes = {row["id"] for row in doc["state"]["lanes"]}
     pieces = {item["subject"]: item for item in [*doc["state"]["queue"], *doc["state"].get("planned", [])]}
     counted: dict[str, list[str]] = {}
+    # A lane's own wait counts; one that repeats its next story's wait doesn't.
     for wait in found:
-        if wait["needsSomeone"] and wait["subject"] not in lanes and wait["subject"] not in counted.get(wait["on"], []):
+        mirror = wait["subject"] in lanes and wait["cause"] != "lane"
+        if wait["needsSomeone"] and not mirror and wait["subject"] not in counted.get(wait["on"], []):
             counted.setdefault(wait["on"], []).append(wait["subject"])
     added = []
     for on, waiting in counted.items():
@@ -10147,7 +10204,7 @@ def waits_needing(c, doc: dict, items: list[dict]) -> list[dict]:
     for free in delivery_state.free_to_start(doc, found, words=table):
         # A story free to start is in "Needs you" itself, so what waits on it is counted on its item.
         waiting = list(dict.fromkeys(wait["subject"] for wait in found
-                                     if wait["on"] == free["subject"] and wait["subject"] not in lanes))
+                                     if wait["on"] == free["subject"] and (wait["subject"] not in lanes or wait["cause"] == "lane")))
         said = free["words"] + (" " + delivery_state.wait_said(table, "needsYou", "count", {"count": len(waiting)})
                                 if waiting else "")
         added.append({"holding": False, "source": f"{free['subject']}'s waits", "text": said,
@@ -10198,7 +10255,7 @@ def close_holds(c, doc: dict, needs: list[dict]) -> list[str]:
     unmet = [line["id"] for line in state["finish"] if not line.get("met")]
     if unmet:
         holds.append(f"finish lines not met: {', '.join(unmet)}")
-    busy = [lane["id"] for lane in state["lanes"] if lane.get("state") not in LANE_DONE]
+    busy = busy_lanes(state)
     if busy:
         holds.append(f"lanes not idle or done: {', '.join(busy)}")
     # A merge can land after the pass's cleanup read the record, and the close ends the passes: it waits for the next

@@ -1960,6 +1960,18 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         self.assertEqual((lanes["lane-2"]["state"], lanes["lane-2"]["focus"]), ("assigned", "assigned FX-3"))
         self.assertEqual(lanes["lane-1"]["focus"], "lane-1 at work (1)", "the write in between was overwritten")
 
+    def test_an_assignment_replaces_its_lanes_row_in_place_and_reorders_no_lane(self) -> None:
+        fx = self.assigned_fixture()
+        lanes = lambda: [lane["id"] for lane in json.loads((fx.tmp / "record/state.json").read_text())["lanes"]]
+        code, out, _ = self.raced_lead(fx, ["lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2"], writes=0)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(lanes(), ["lane-1", "lane-2"])
+        # Lane 1 assigned again, after lane 2: its row is rewritten where it stands.
+        code, out, _ = self.raced_lead(fx, ["lead-assign", "FX-3", "--lane", "lane-1", "--title", "Lane 1 again"], writes=0)
+        self.assertEqual(code, 0, out)
+        rows = json.loads((fx.tmp / "record/state.json").read_text())["lanes"]
+        self.assertEqual([(lane["id"], lane["title"]) for lane in rows], [("lane-1", "Lane 1 again"), ("lane-2", "Lane 2")])
+
     def test_lead_init_seeds_ownership_and_planned_work_in_the_first_state(self) -> None:
         fx = self.fixture()
         setup_delivery(fx)
