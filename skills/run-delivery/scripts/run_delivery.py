@@ -9987,7 +9987,10 @@ PEER_WAITS_FILE = "peer-waits.json"
 
 def peer_waits_said(c) -> list[dict]:
     """This delivery's waits on its peers as the views say them: the last write's, while it is fresh. A pass writes
-    them before it derives "Needs you", so a story the views say waits on another delivery is never free to start."""
+    them before it derives "Needs you", so a story the views say waits on another delivery is never free to start. A
+    context with no record folder has none."""
+    if getattr(c, "state", None) is None:
+        return []
     scripts = str(c.release / "skills/orchestrate-work/scripts")
     if scripts not in sys.path:
         sys.path.insert(0, scripts)
