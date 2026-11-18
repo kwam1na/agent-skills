@@ -4592,7 +4592,7 @@ def base_merge_tokens(merge: str) -> list[str]:
     return values
 
 
-SEPARATOR_APPENDED = b"(separator appended to the preceding line)"
+SEPARATOR_APPENDED = "(separator appended to the preceding line)"
 
 
 def delta_entries(helper, root: Path, before: str, after: str) -> dict[bytes, tuple[bytes, bytes, bytes]]:
@@ -4625,18 +4625,29 @@ def delta_hunks(helper, root: Path, before: str, after: str, path: bytes) -> lis
                 continue
         if body and line:
             hunks[-1].append(line)
-    for hunk in hunks:
-        removed = [index for index, line in enumerate(hunk) if line.startswith(b"-")]
-        taken = set()
-        for index in removed:
-            separated = b"+" + hunk[index][1:] + b","
-            match = next((other for other, line in enumerate(hunk)
-                          if other not in taken and line == separated and line.startswith(b"+")), None)
-            if match is not None:
-                taken.add(match)
-                hunk[index] = SEPARATOR_APPENDED
-        hunk[:] = [line for index, line in enumerate(hunk) if index not in taken]
-    return hunks
+    return [separator_marked(hunk) for hunk in hunks]
+
+
+def separator_marked(hunk: list) -> list:
+    """One hunk's removed and added lines, bytes or str, with each removed line that comes back added with only a
+    trailing `,` (before the carriage return, in a CRLF file) read as one marker: the separator an append adds to the line
+    before it. Removed lines are paired in order of appearance, each with the first added line still unpaired."""
+    if not hunk:
+        return []
+    same = (lambda text: text) if isinstance(hunk[0], str) else (lambda text: text.encode())
+    minus, plus, comma, cr = same("-"), same("+"), same(","), same("\r")
+    marked = list(hunk)
+    taken: set[int] = set()
+    for index, line in enumerate(hunk):
+        if not line.startswith(minus):
+            continue
+        content = line[1:]
+        separated = plus + (content[:-1] + comma + cr if content.endswith(cr) else content + comma)
+        match = next((other for other, added in enumerate(hunk) if other not in taken and added == separated), None)
+        if match is not None:
+            taken.add(match)
+            marked[index] = same(SEPARATOR_APPENDED)
+    return [line for index, line in enumerate(marked) if index not in taken]
 
 
 def shown_lines(lines: list[bytes], limit: int = 10) -> list[str]:
