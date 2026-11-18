@@ -80,6 +80,25 @@ test("a shared file opens its reading: a ruler of each lane's stretches and chan
   expect(closed.app.querySelector(".file-reading")).toBeNull();
 });
 
+test("a readable lane with a stretch of a shared file it hasn't changed draws that stretch hollow", async () => {
+  const files = structuredClone(FILES);
+  files.lanes["lane-3"] = { story: "S-3", branch: "claude/S-3", head: "e".repeat(40), base: "b".repeat(40), files: [] };
+  files.files[0].spans.push({ lane: "lane-3", start: 41, end: 43 });
+  files.files[0].lines = 42;
+  const shown = record();
+  shown.state.lanes.push(lane("lane-3", "Pages"));
+  const [page] = await openPage(renderPage(shown, { config, files }), { now: NOW });
+  expect(marks([...page.app.querySelectorAll("button.file.shared .stretch")]))
+    .toEqual([["lane-1", "solid"], ["lane-2", "unread"], ["lane-3", "hollow"]]);
+});
+
+test("a file of another spec is refused, and claimed files past the bound are counted", async () => {
+  const [other] = await openPage(renderPage(record(), { config, files: { ...FILES, spec: "other/1" } }), { now: NOW });
+  expect(other.app.querySelector(".files-fold .say").textContent).toBe("The lanes' changes can't be read.");
+  const [more] = await openPage(renderPage(record(), { config, files: { ...FILES, more: 2 } }), { now: NOW });
+  expect([...more.app.querySelectorAll(".files-fold .say")].map((p) => p.textContent)).toEqual(["2 more claimed files aren't shown."]);
+});
+
 test("with no region claims the page has no files view, whatever the branch read wrote", async () => {
   const [page] = await openPage(renderPage(record(false), { config, files: FILES }), { now: NOW });
   expect(page.app.querySelector(".files-fold")).toBeNull();

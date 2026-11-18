@@ -196,16 +196,20 @@ class LaneChangesTests(unittest.TestCase):
         lines[held + 2] = "    value_2 = 22\n"  # inside the span
         lines[1] = "    return 100\n"  # outside it, in first_0
         lines[len(lines) - 3:len(lines) - 3] = ["    extra = 1\n", "    extra = 2\n"]  # outside it, in after_3
+        gone = held + 16  # two lines of after_1, outside the span, deleted
+        del lines[gone - 1:gone + 1]
         d.push(checkout, {SHARED: "".join(lines)})
         changes, items = d.one_pass()
         [entry] = changes["lanes"]["lane-1"]["files"]
         self.assertEqual(entry["holds"], "span")
-        self.assertEqual([(c["start"], c["added"], c["removed"], c["name"], c["inside"]) for c in entry["changes"]],
+        self.assertEqual([(c["old"], c["added"], c["removed"], c["name"], c["inside"]) for c in entry["changes"]],
                          [(2, 1, 1, "first_0", False), (held + 3, 1, 1, "held", True),
-                          (len(SHARED_LINES) - 2, 2, 0, "after_3", False)])
+                          (gone, 0, 2, "after_1", False), (len(SHARED_LINES) - 2, 2, 0, "after_3", False)])
+        # Named by the merge base's lines, which the span check judged and a grant names, not the branch's.
         self.assertEqual(self.texts(items), [
             f"Lane 1 changed line 2 of `{SHARED}`, outside its span.",
-            f"Lane 1 changed lines {len(SHARED_LINES) - 2}-{len(SHARED_LINES) - 1} of `{SHARED}`, outside its span."])
+            f"Lane 1 changed lines {gone}-{gone + 1} of `{SHARED}`, outside its span.",
+            f"Lane 1 added 2 lines before line {len(SHARED_LINES) - 2} of `{SHARED}`, outside its span."])
         self.assertEqual({item["fields"]["path"] for item in items}, {SHARED})
         self.assertEqual(changes["files"][0]["path"], SHARED)
         self.assertEqual(changes["files"][0]["spans"], [{"lane": "lane-1", "start": held, "end": held + 9}])
@@ -226,6 +230,72 @@ class LaneChangesTests(unittest.TestCase):
         d.push(checkout, {SHARED: "".join(SHARED_LINES[:-1])})
         _, items = d.one_pass()
         self.assertEqual(self.texts(items), [f"Lane 1 changed `{SHARED}`, which it doesn't hold."])
+
+    def test_a_binary_or_non_utf8_file_on_the_branch_leaves_it_readable(self) -> None:
+        d = self.delivery()
+        checkout = d.story("S-1", "lane-1")
+        (checkout / "docs").mkdir(exist_ok=True)
+        (checkout / "docs/logo.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\xff")
+        (checkout / "docs/latin.md").write_bytes("# Caf\xe9\n".encode("latin-1"))
+        d.push(checkout, {"src/two.js": "function two() {\n  return 22;\n}\n"})
+        changes, items = d.one_pass()
+        entry = changes["lanes"]["lane-1"]
+        self.assertNotIn("unreadable", entry)
+        self.assertEqual({f["path"]: f["holds"] for f in entry["files"]},
+                         {"docs/latin.md": "file", "docs/logo.png": "file", "src/two.js": "none"})
+        self.assertEqual(self.texts(items), ["Lane 1 changed `src/two.js`, which it doesn't hold."])
+
+    def test_lines_outside_a_span_are_named_at_the_merge_base_after_an_insertion_inside_it(self) -> None:
+        d = self.delivery()
+        held = SHARED_LINES.index("def held():\n") + 1
+        d.state["laneRegions"] = [{"lane": "lane-1", "path": SHARED, "baseHead": d.base, "start": held, "end": held + 9}]
+        checkout = d.story("S-1", "lane-1")
+        lines = list(SHARED_LINES)
+        after = held + 12  # a line of after_0, outside the span
+        lines[after - 1] = "    return 1000\n"
+        lines[held:held] = [f"    inserted_{i} = {i}\n" for i in range(5)]
+        d.push(checkout, {SHARED: "".join(lines)})
+        _, items = d.one_pass()
+        self.assertEqual(self.texts(items), [f"Lane 1 changed line {after} of `{SHARED}`, outside its span."])
+
+    def test_after_the_base_moves_spans_are_mapped_and_a_claim_that_no_longer_maps_holds_nothing(self) -> None:
+        d = self.delivery()
+        held = SHARED_LINES.index("def held():\n") + 1
+        d.state["laneRegions"] = [{"lane": "lane-1", "path": SHARED, "baseHead": d.base, "start": held, "end": held + 9},
+                                  {"lane": "lane-2", "path": SHARED, "baseHead": d.base, "start": 1, "end": 3}]
+        lines = list(SHARED_LINES)
+        lines[1] = "    return -1\n"  # inside lane 2's span: it no longer maps
+        lines[4:4] = ["# above\n", "# above\n"]  # above lane 1's span: it moves down two lines
+        d.land({SHARED: "".join(lines)})
+        checkout = d.story("S-2", "lane-2")
+        lines[2] = "    # lane 2 was here\n"
+        d.push(checkout, {SHARED: "".join(lines)})
+        changes, items = d.one_pass()
+        self.assertEqual(changes["files"][0]["spans"], [
+            {"lane": "lane-2", "start": 1, "end": 3, "regrant": True},
+            {"lane": "lane-1", "start": held + 2, "end": held + 11}])
+        self.assertEqual(changes["lanes"]["lane-2"]["files"][0]["holds"], "none")
+        self.assertEqual(self.texts(items), [f"Lane 2 changed `{SHARED}`, which it doesn't hold."])
+
+    def test_an_insertion_at_a_spans_edge_and_a_mode_change_are_outside_it(self) -> None:
+        d = self.delivery()
+        held = SHARED_LINES.index("def held():\n") + 1
+        d.state["laneRegions"] = [{"lane": "lane-1", "path": SHARED, "baseHead": d.base, "start": held, "end": held + 9}]
+        checkout = d.story("S-1", "lane-1")
+        lines = list(SHARED_LINES)
+        lines[held - 1:held - 1] = ["# at the edge\n"]
+        d.push(checkout, {SHARED: "".join(lines)})
+        _, items = d.one_pass()
+        self.assertEqual(self.texts(items), [f"Lane 1 added 1 line before line {held} of `{SHARED}`, outside its span."])
+        git(checkout, "checkout", "-q", "origin/main", "--", SHARED)
+        (checkout / SHARED).chmod(0o755)
+        d.push(checkout, {})
+        changes, items = d.one_pass()
+        self.assertEqual(changes["lanes"]["lane-1"]["files"][0]["holds"], "none")
+        self.assertEqual(self.texts(items), [f"Lane 1 changed `{SHARED}`, which it doesn't hold."])
+        with self.subTest("a lane no longer in the record raises nothing"):
+            d.state["lanes"] = [lane for lane in d.state["lanes"] if lane["id"] != "lane-1"]
+            self.assertEqual(run_delivery.lane_change_needs(d.config(), d.state), [])
 
     def test_a_declared_shared_output_raises_nothing(self) -> None:
         d = self.delivery()
@@ -305,6 +375,13 @@ class LaneChangesTests(unittest.TestCase):
         d.push(checkout, {"src/one.py": "def one():\n    return 2\n"})
         moved, _ = d.one_pass()
         self.assertNotEqual(moved["lanes"]["lane-1"]["readAt"], entry["readAt"])
+        with self.subTest("the lane moves to another story while the first one's branch stands still"):
+            d.state["planned"][0]["stage"] = "settled"
+            nxt = d.story("S-3", "lane-1")
+            d.push(nxt, {"docs/guide.md": "# Guide\n"})
+            later, _ = d.one_pass()
+            self.assertEqual((later["lanes"]["lane-1"]["story"], later["lanes"]["lane-1"]["branch"]), ("S-3", "claude/S-3"))
+            self.assertEqual([f["path"] for f in later["lanes"]["lane-1"]["files"]], ["docs/guide.md"])
 
     def test_needs_you_lists_the_branch_reads_items_before_the_records_own(self) -> None:
         body = inspect.getsource(run_delivery.needs_you)

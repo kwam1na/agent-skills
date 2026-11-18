@@ -10641,8 +10641,9 @@ def read_lane_branch(c, story: str, base: str) -> dict | None:
                                       cwd=c.root).stdout.split("\0")))
         files = []
         for path in paths:
-            patch = run(["git", *LANE_DIFF, merge_base, head, "--", path], cwd=c.root).stdout
-            shown = run(["git", "show", f"{head}:{path}"], cwd=c.root, check=False)
+            # Not strictly decoded: a binary or non-UTF-8 file is still a change the read reports, by its hunks.
+            patch = run(["git", *LANE_DIFF, merge_base, head, "--", path], cwd=c.root, errors="replace").stdout
+            shown = run(["git", "show", f"{head}:{path}"], cwd=c.root, check=False, errors="replace")
             text = shown.stdout.splitlines() if shown.returncode == 0 and "\0" not in shown.stdout else []
             changes = []
             for match in LANE_HUNK.finditer(patch):
@@ -10831,10 +10832,13 @@ def lane_change_needs(c, state: dict) -> list[dict]:
             for change in changes:
                 if change.get("inside", True):
                     continue
-                lines = (lines_said(change["start"], change["added"]) if change["added"]
-                         else lines_said(change["old"], change["removed"]))
+                # Named by the merge base's lines, which the span check judged and a grant names.
+                lines = (lines_said(change["old"], change["removed"]) if change["removed"]
+                         else f"before line {change['old']}")
+                said = (f"changed {lines}" if change["removed"]
+                        else f"added {change['added']} line{'s' if change['added'] != 1 else ''} {lines}")
                 items.append({**facts, "source": source, "kind": "laneOutside",
-                              "text": f"{named} changed {lines} of `{path}`, outside its span.",
+                              "text": f"{named} {said} of `{path}`, outside its span.",
                               "clears": "the branch no longer changing those lines, or the lead granting them",
                               "fields": {"path": path, "lines": lines}})
     return items

@@ -488,8 +488,9 @@ lanes share by lines, with `lines` and `spans`, each claim's `lane`, `start` and
 granted lines with `regrant` when it no longer maps. The line map's files view draws this.
 
 "Needs you" names, from that file, each changed file a lane doesn't hold ("Lane 1 changed `foo.py`, which it doesn't
-hold."), each change outside the spans of a file it holds by span, naming its lines ("Lane 1 changed lines 40-44 of
-`foo.py`, outside its span."), and a branch that can't be read, in place of that lane's items. None of these holds the
+hold."), each change outside the spans of a file it holds by span, naming its lines at the merge base, as the span
+check and a grant read them ("Lane 1 changed lines 40-44 of `foo.py`, outside its span.", or "Lane 1 added 2 lines
+before line 40 of `foo.py`, outside its span."), and a branch that can't be read, in place of that lane's items. None of these holds the
 close. A declared shared output and a change inside a span raise nothing. An item clears when a pass no longer sees
 the change, or once the lead grants the file or the lines.
 
