@@ -4609,12 +4609,13 @@ def delta_entries(helper, root: Path, before: str, after: str) -> dict[bytes, tu
 
 
 def delta_hunks(helper, root: Path, before: str, after: str, path: bytes) -> list[list[bytes]]:
-    """A path's `-U0` hunks from before to after, each as its removed and added lines, without line numbers or
+    """A path's `--unified=0` hunks from before to after, each as its removed and added lines, without line numbers or
     context. Within a hunk, a removed line that comes back added with only a trailing `,` is the separator an append
     adds to the line before it: the pair, matched in order of appearance, reads as one marker."""
-    data = helper.git(root, "-c", "core.quotePath=false", "diff", "-U0", "--no-renames", "--no-color", "--no-ext-diff",
-                      "--no-textconv", "--binary", "--diff-algorithm=myers", "--ignore-submodules=none", before,
-                      after, "--", os.fsdecode(path)).stdout  # the helper reads pathspecs literally
+    data = helper.git(root, "-c", "core.quotePath=false", "diff", "--unified=0", "--no-renames", "--no-color",
+                      "--no-ext-diff", "--no-textconv", "--binary", "--diff-algorithm=myers",
+                      "--ignore-submodules=none", before, after, "--",
+                      os.fsdecode(path)).stdout  # the helper reads pathspecs literally
     hunks: list[list[bytes]] = []
     body = False
     for line in data.split(b"\n"):
