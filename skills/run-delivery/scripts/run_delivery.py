@@ -12407,6 +12407,7 @@ class Doctor:
             ("gh", "gh", ("config",), self.gh),
             ("forge", "forge find", ("config", "gh"), self.forge),
             ("forge-write", "forge write access", ("config",), self.forge_write),
+            ("tracker-scope", "tracker snapshot scope", ("config", "binding"), self.tracker_scope),
             ("tracker-token", "tracker snapshot token", ("binding",), self.tracker_token),
             ("publishing", "snapshots and publishers", ("config", "binding"), self.publishing),
             ("hosted", "hosted delivery", ("config",), self.hosted),
@@ -12772,6 +12773,50 @@ class Doctor:
                                f"snapshot or adapter reads {'it' if len(unset) == 1 else 'them'}; fix: export "
                                f"{', '.join(unset)}")
         return "ok", f"{', '.join(names) or 'no variables'} set"
+
+    def tracker_scope(self):
+        """The Jira snapshot's --scope and --status-state, against the project: run with --check, it names each
+        component, label or status the project doesn't know, the In Progress statuses left to their category, and the
+        in-scope children that carry no value of a scoped kind."""
+        spec = ((self.binding or {}).get("state") or {}).get("trackerSnapshot") or {}
+        argv = list(spec.get("argv") or [])
+        if not any(part in ("--scope", "--status-state") for part in argv):
+            return self.not_applicable("the tracker snapshot sets no --scope or --status-state")
+        if self.tracker_token()[0] != "ok":  # Its own row, next, says which variable to export.
+            return "skipped", "(needs tracker-token)"
+        state = getattr(self.c, "state", None) or self.c.main / self.c.state_rel
+        try:
+            parent = json.loads((Path(state) / "state.json").read_text())["meta"].get("trackerParent")
+        except (OSError, ValueError, KeyError, TypeError):
+            parent = None
+        parent = parent or getattr(self.c, "delivery", None)
+        if not parent:
+            return self.not_applicable("no delivery's tracker parent to check against")
+        try:
+            taken = run(expand_argv(argv, stateDirectory=str(state), parent=parent) + ["--check"], cwd=self.root,
+                        check=False, timeout=int(spec.get("timeoutSeconds", 60)))
+        except subprocess.TimeoutExpired:
+            return "wrong", "the tracker snapshot's --check timed out"
+        try:
+            found = json.loads(taken.stdout) if taken.returncode == 0 else None
+        except ValueError:
+            found = None
+        if not isinstance(found, dict) or found.get("check") != "tracker-scope/1":
+            return "wrong", f"the tracker snapshot's --check failed: {(taken.stderr or taken.stdout).strip()[-200:]}"
+        lines = []
+        if "--scope" in argv and "--state-dir" not in argv:
+            lines.append("it sets --scope without --state-dir {stateDirectory}, so the delivery file's stories aren't "
+                         "kept in scope; fix: add --state-dir {stateDirectory}")
+        if found["unknown"]:
+            lines.append(f"the project has no {', '.join(found['unknown'])}; fix: correct the binding's trackerSnapshot")
+        if found["unmapped"]:
+            lines.append(f"In Progress statuses with no --status-state: {', '.join(found['unmapped'])}; map each, or "
+                         "leave it to its category")
+        if found["unmarked"]:
+            lines.append(f"in scope with no scoped value: {', '.join(found['unmarked'])}; tag each in the tracker")
+        if found["unknown"]:
+            return "wrong", "; ".join(lines)
+        return ("warn", "; ".join(lines)) if lines else ("ok", "every scope value and mapped status is known")
 
     def hosted(self):
         try:

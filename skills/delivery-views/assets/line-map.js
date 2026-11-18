@@ -425,7 +425,8 @@
     var tickets = isObject(doc.state.tickets) ? doc.state.tickets : {};
     var ticket = Object.prototype.hasOwnProperty.call(tickets, id) && isObject(tickets[id]) ? tickets[id] : null;
     var item = list(doc.state.queue).concat(list(doc.state.planned)).filter(function (entry) { return isObject(entry) && entry.subject === id; })[0] ||
-      list(doc.state.followups).filter(function (entry) { return isObject(entry) && (entry.reference === id || entry.id === id); })[0];
+      list(doc.state.followups).filter(function (entry) { return isObject(entry) && (entry.reference === id || entry.id === id); })[0] ||
+      list(doc.state.outside).filter(function (entry) { return isObject(entry) && entry.subject === id; })[0];
     var title = (ticket && text(ticket.title)) || (item && text(item.title)) || "";
     var summary = ticket ? text(ticket.summary) : "";
     return title || summary ? { title: title, summary: summary } : null;
@@ -3431,7 +3432,36 @@
       nodes.push(ul);
       prev.parked = known;
     }
+    var elsewhere = elsewhereFold(doc);
+    if (elsewhere) { nodes.push(elsewhere); }
     inner.replaceChildren.apply(inner, nodes);
+  }
+
+  /**
+   * The parent's children a scoped tracker snapshot put outside this delivery: another repository's work, folded shut,
+   * each with its tracker status and the value that places it elsewhere. The sweep never takes them in.
+   */
+  function elsewhereFold(doc) {
+    var items = list(doc.state.outside).filter(function (item) { return isObject(item) && text(item.subject); });
+    if (!items.length) { return null; }
+    var meta = isObject(doc.state.meta) ? doc.state.meta : {};
+    var parent = text(meta.trackerParent);
+    var words = (parent ? "Elsewhere in " + parent : "Elsewhere") + " · " + items.length +
+      (items.length === 1 ? " piece another delivery holds" : " pieces other deliveries hold");
+    var ul = el("ul", "parked elsewhere");
+    items.forEach(function (item) {
+      var marks = isObject(item.marks) ? item.marks : {};
+      var placed = ["component", "label", "prefix"].map(function (kind) { return list(marks[kind]).filter(text).join(", "); })
+        .filter(Boolean).join(" · ");
+      var row = add(el("li"), add(el("span", "p"), issue(text(item.subject))), text(item.title) || text(item.subject));
+      add(row, el("span", "p", [text(item.status) || text(item.state), placed].filter(Boolean).join(" · ")));
+      ul.appendChild(row);
+    });
+    var fold = add(el("details", "elsewhere-fold"), el("summary", null, words), ul);
+    // Shut by default; a reader who opened it keeps it open through a redraw.
+    if (prev.elsewhereOpen) { fold.setAttribute("open", ""); }
+    fold.addEventListener("toggle", function () { prev.elsewhereOpen = fold.hasAttribute("open"); });
+    return fold;
   }
 
   function usable(doc) { return isObject(doc) && isObject(doc.state); }

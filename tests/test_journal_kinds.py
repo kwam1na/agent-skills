@@ -94,6 +94,7 @@ TABLE = {
     "plan.updated": ("B", "note", "updated changed", "", "-"),
     "cleanup.done": ("B", "note", "base changeRequest? head?", "", "-"),
     "followup.filed": ("B", "note", "finding followup *title*", "", "-"),
+    "work.cleared": ("B", "note", "from *why*", "", "-"),
     "snapshot.stale": ("B", "note", "source cause? exitCode?", "", "-"),
     "snapshot.retaken": ("B", "note", "source", "answers:snapshot.stale", "-"),
     "evidence.published": ("S", "note", "url clips", "", "epic: Evidence published"),

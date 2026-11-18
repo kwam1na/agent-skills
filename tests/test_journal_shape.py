@@ -48,6 +48,7 @@ INVENTORY = {
         _key("capture_review", {"review.recorded"}): 1,
         _key("carry_review", {"review.carried"}): 1,
         _key("_journal_recovery", {"candidate.merged"}): 1,
+        _key("reconcile", {"work.cleared"}): 1,
         _key("take_snapshot", {"snapshot.retaken"}): 1,
         _key("take_snapshot", {"snapshot.stale"}): 1,
     }),

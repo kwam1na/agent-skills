@@ -1,0 +1,287 @@
+{
+  "search": {
+    "isLast": true,
+    "issues": [
+      {
+        "id": "21",
+        "key": "APP-21",
+        "self": "https://example.atlassian.net/rest/api/3/issue/21",
+        "fields": {
+          "summary": "[Mobile] Login screen",
+          "description": null,
+          "status": {
+            "name": "In Progress",
+            "statusCategory": {
+              "key": "indeterminate"
+            }
+          },
+          "components": [
+            {
+              "id": "100",
+              "name": "Mobile App"
+            }
+          ],
+          "labels": [
+            "mobile"
+          ],
+          "issuelinks": [
+            {
+              "type": {
+                "name": "Blocks"
+              },
+              "inwardIssue": {
+                "key": "APP-22"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "id": "22",
+        "key": "APP-22",
+        "self": "https://example.atlassian.net/rest/api/3/issue/22",
+        "fields": {
+          "summary": "[Backend] Login API",
+          "description": null,
+          "status": {
+            "name": "Ready for QA",
+            "statusCategory": {
+              "key": "indeterminate"
+            }
+          },
+          "components": [
+            {
+              "id": "100",
+              "name": "Backend"
+            }
+          ],
+          "labels": [
+            "backend"
+          ],
+          "issuelinks": []
+        }
+      },
+      {
+        "id": "23",
+        "key": "APP-23",
+        "self": "https://example.atlassian.net/rest/api/3/issue/23",
+        "fields": {
+          "summary": "Backend: token refresh",
+          "description": null,
+          "status": {
+            "name": "In QA",
+            "statusCategory": {
+              "key": "indeterminate"
+            }
+          },
+          "components": [
+            {
+              "id": "100",
+              "name": "Backend"
+            }
+          ],
+          "labels": [
+            "backend"
+          ],
+          "issuelinks": []
+        }
+      },
+      {
+        "id": "24",
+        "key": "APP-24",
+        "self": "https://example.atlassian.net/rest/api/3/issue/24",
+        "fields": {
+          "summary": "Settings page",
+          "description": null,
+          "status": {
+            "name": "To Do",
+            "statusCategory": {
+              "key": "new"
+            }
+          },
+          "components": [],
+          "labels": [],
+          "issuelinks": []
+        }
+      },
+      {
+        "id": "25",
+        "key": "APP-25",
+        "self": "https://example.atlassian.net/rest/api/3/issue/25",
+        "fields": {
+          "summary": "[Mobile] Profile",
+          "description": null,
+          "status": {
+            "name": "QA Return",
+            "statusCategory": {
+              "key": "indeterminate"
+            }
+          },
+          "components": [
+            {
+              "id": "100",
+              "name": "Mobile App"
+            }
+          ],
+          "labels": [
+            "mobile"
+          ],
+          "issuelinks": []
+        }
+      },
+      {
+        "id": "26",
+        "key": "APP-26",
+        "self": "https://example.atlassian.net/rest/api/3/issue/26",
+        "fields": {
+          "summary": "[Backend] Push service",
+          "description": null,
+          "status": {
+            "name": "Ready for Release",
+            "statusCategory": {
+              "key": "indeterminate"
+            }
+          },
+          "components": [
+            {
+              "id": "100",
+              "name": "Backend"
+            }
+          ],
+          "labels": [
+            "backend"
+          ],
+          "issuelinks": []
+        }
+      },
+      {
+        "id": "27",
+        "key": "APP-27",
+        "self": "https://example.atlassian.net/rest/api/3/issue/27",
+        "fields": {
+          "summary": "[mobile] Logout",
+          "description": null,
+          "status": {
+            "name": "Done",
+            "statusCategory": {
+              "key": "done"
+            }
+          },
+          "components": [
+            {
+              "id": "100",
+              "name": "Mobile App"
+            }
+          ],
+          "labels": [
+            "mobile"
+          ],
+          "issuelinks": []
+        }
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "100",
+      "name": "Backend"
+    },
+    {
+      "id": "101",
+      "name": "Mobile App"
+    }
+  ],
+  "labels-1": {
+    "startAt": 0,
+    "maxResults": 2,
+    "total": 3,
+    "isLast": false,
+    "values": [
+      "backend",
+      "mobile"
+    ]
+  },
+  "labels-2": {
+    "startAt": 2,
+    "maxResults": 2,
+    "total": 3,
+    "isLast": true,
+    "values": [
+      "web"
+    ]
+  },
+  "statuses": [
+    {
+      "id": "1",
+      "name": "Story",
+      "statuses": [
+        {
+          "name": "To Do",
+          "statusCategory": {
+            "key": "new"
+          }
+        },
+        {
+          "name": "In Progress",
+          "statusCategory": {
+            "key": "indeterminate"
+          }
+        },
+        {
+          "name": "Ready for QA",
+          "statusCategory": {
+            "key": "indeterminate"
+          }
+        },
+        {
+          "name": "In QA",
+          "statusCategory": {
+            "key": "indeterminate"
+          }
+        },
+        {
+          "name": "QA Return",
+          "statusCategory": {
+            "key": "indeterminate"
+          }
+        },
+        {
+          "name": "Ready for Release",
+          "statusCategory": {
+            "key": "indeterminate"
+          }
+        },
+        {
+          "name": "Done",
+          "statusCategory": {
+            "key": "done"
+          }
+        }
+      ]
+    },
+    {
+      "id": "2",
+      "name": "Bug",
+      "statuses": [
+        {
+          "name": "To Do",
+          "statusCategory": {
+            "key": "new"
+          }
+        },
+        {
+          "name": "In Review",
+          "statusCategory": {
+            "key": "indeterminate"
+          }
+        },
+        {
+          "name": "Done",
+          "statusCategory": {
+            "key": "done"
+          }
+        }
+      ]
+    }
+  ]
+}
