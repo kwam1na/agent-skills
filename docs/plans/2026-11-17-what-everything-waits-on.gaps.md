@@ -17,7 +17,9 @@ Seen on release `linear-v3.0.0` (generation `7ff4b0e5`), the installed workflow 
 ### The plan record
 
 - **Plan review refused lens results that re-listed closed findings.** Rounds 3 and 6 needed fresh reviewers, because the
-  brief didn't name which findings were still open. Fix: PR #379 (open).
+  brief didn't name which findings were still open. Fix: PR #379 (open). Story review does the same: on V26-3567's
+  round 3, two fresh adversarial reviewers in a row listed a carried P3 under its round-2 id, and the reduce refused
+  both. PR #379 covers only the plan-review brief.
 - **`lead-plan change --kind removed` ignored `--criterion`.** It removed V26-3565 whole (c13), which then had to be
   restored (c14 to c16). Fix: V26-3566 (lane 3, this delivery).
 - **No command adds a lane.** Lane 3 needed a hand edit to the delivery file and a state-tool patch to `laneOwnership`
@@ -38,10 +40,36 @@ Seen on release `linear-v3.0.0` (generation `7ff4b0e5`), the installed workflow 
 - **One unmappable claim blocks every grant on its file, after the revoke has gone through.** `lead-own --region` maps
   every claim on the path to the current base, so one landed story's stale span, or a span whose mapping repeated lines
   make ambiguous, refuses all grants there. Carving a span is a revoke and then grants, so when the grants were refused,
-  lane 1 was left with unclaimed lines and its review-reduce stopped. Open: carve in one command, and name stale claims
-  when a story lands.
+  lane 1 was left with unclaimed lines and its review-reduce stopped. Later, one regrant in a carve gave up with
+  `version_stale` while the queue was writing the record, leaving another gap. Open: carve in one command, and name
+  stale claims when a story lands.
 - **`lead-assign`'s co-change warning missed files stories needed.** `hosted-snapshot.schema.json` and the pins in
   `tests/test_registry.py` and `tests/test_run_delivery.py` surfaced mid-story, one grant at a time. Open.
+- **Adjacent spans of one lane count as separate.** Lane 2 held `tests/test_waits.py` 588 and 589 as two grants, and an
+  edit replacing both was refused at review-prepare. They were merged into one claim by hand. Open.
+- **Ownership problems surface one refusal at a time.** Lanes learned of a missing grant only when review-prepare or
+  the queue refused it, and then asked again, so one story took several round trips. Open.
+
+- **No preview of the queue's ownership check.** Before re-queuing after a regrant, the lead merged each candidate
+  into `main` with `git merge-tree` and ran `region_ownership.problems` by script, to see whether the queue would
+  refuse it. Open: a lead command that runs the queue's region check on a candidate without queuing it.
+- **No view of which claimed lines a lane is changing.** To carve a span safely, the lead read each lane's working
+  diff by script (`git diff -U0` in its checkout) to learn whether the lines another lane asked for were in use.
+  Open: the record or a command could show each lane's touched lines against its claims.
+
+**Proposal: spans follow the work.** Spans and grants were the largest source of lead work in this delivery: about
+40 stale spans regranted by script after landings, 3 carves that left lines unowned, and a dozen requests corrected by
+a line. One unit of work would close most of it:
+
+1. On `candidate.merged`, release the landed story's spans and carry its lane's other spans to the new base, with the
+   boundary checks the lead ran by hand.
+2. `lead-own --carve PATH --base B --give LANE:START-END`, applied whole or not at all, in place of revoke-then-grant.
+3. Merge a lane's touching spans on grant.
+4. A lane command that checks its committed diff against its claims and lists every file and line it still needs, in
+   one go.
+
+Granting by quoted line or anchor, with edge widening and the end-of-file rule, stays V26-3570. A lane reading its own
+grants from the record (`lane-grants`) belongs with V26-3571.
 
 ### The merge queue and checks
 
@@ -60,6 +88,15 @@ Seen on release `linear-v3.0.0` (generation `7ff4b0e5`), the installed workflow 
   modules that pin a changed file.
 - **A story's new test module can't be among its acceptance checks.** The base's catalogue learns the module only when
   the story lands (`tests.test_waits_review`). Open.
+- **A batch runs every check after one has already failed.** V26-3565 and V26-3426 were checked together. The new
+  catalogue guard failed on V26-3565's uncatalogued module in the first minutes, and the queue still ran the batch's
+  remaining modules and a base rerun before stopping either. The lead has no command to cut a batch short once the
+  cause is known, and V26-3426 waited behind it. Open: stop a batch on the lead's word, or split it when a candidate
+  fails.
+- **Lead pushes starve behind a long batch.** The queue held the merge slot for over an hour checking V26-3565 and
+  V26-3568, so the lead's plan commits for V26-3588 could not publish, and lane 3's gates refused the story as not in
+  the delivery. One `lead-push` gave up with `slot_held`. Open: let plan-only commits publish between checks, or let a
+  lane read new stories from the lead checkout.
 - **A re-queued candidate leaves its lane's row "waiting on the lead".** The row was patched by hand. Fix: V26-3426
   (this delivery).
 

@@ -597,8 +597,34 @@
     // The tracker item the delivery's work is listed under, linked when the renderer linked it.
     if (text(meta.trackerParent)) { add(kicker, kicker.firstChild ? " · " : null, issue(text(meta.trackerParent))); }
     else if (!kicker.firstChild) { add(kicker, el("span", "headline", pageTitle())); }
+    // How long the delivery has run, from the record's first entry: to now while it delivers, to its close once delivered.
+    // The start, and for a closed one the end, read on pointing at it, in local time with UTC beside it.
+    var first = list(doc.journal).filter(isObject)[0];
+    var begun = first && first.id === 1 ? seconds(first.at) : null;
+    var ended = closed ? seconds(eventTime(closed)) : Date.now() / 1000;
+    if (begun !== null && ended !== null && ended >= begun) {
+      var minutes = Math.round((ended - begun) / 60), hours = Math.floor(minutes / 60);
+      var lasted = minutes < 60 ? minutes + " min" : hours < 48 ? hours + " h" + (minutes % 60 ? " " + minutes % 60 + " min" : "") : Math.round(hours / 24) + " days";
+      var stamp = function (at) { var date = new Date(at * 1000); return date.toLocaleString() + " (" + date.toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC") + ")"; };
+      var time = el("time", "kicker-time", closed ? "delivered in " + lasted : "delivering · " + lasted);
+      time.setAttribute("datetime", text(first.at));
+      time.setAttribute("tabindex", "0");
+      // The page's own card says the ends, as a ticket's does, since nothing on the page carries a native tooltip.
+      var ends = closed ? [["Started", begun], ["Closed", ended]] : [["Started", begun]];
+      var showEnds = function () {
+        card.replaceChildren.apply(card, ends.map(function (end) { return el("div", "ic-s", end[0] + " " + stamp(end[1])); }));
+        placeCard(time);
+      };
+      time.addEventListener("mouseenter", showEnds);
+      time.addEventListener("focus", showEnds);
+      time.addEventListener("mouseleave", hideCard);
+      time.addEventListener("blur", hideCard);
+      add(kicker, " · ", time);
+    }
     var nodes = [kicker, title];
-    if (outcome) { nodes.push(el("p", "plan-now", outcome)); }
+    // The outcome, then how much of the plan is proven and how often it changed, linked to the plan chapter.
+    var planLink = planNow(doc);
+    if (outcome || planLink) { nodes.push(add(el("p", "plan-now"), outcome || null, planLink)); }
     var status = sayLine(doc, all);
     if (status) { nodes.push(el("p", "say", status)); }
     // What the lead waits on in another delivery sharing the base, and what waits on the lead, as the state tool says.
@@ -612,8 +638,8 @@
     var partway = closeStoppedPartway(doc, closed);
     if (partway) { nodes.push(partway); }
     nodes.push(journey(doc, all, closed ? tally.landed : landed));
-    // Under the line, the same three facts in one shape: what landed last, how much of the plan is proven, and the record's state.
-    nodes.push(add(el("div", "facts"), lastLanded(doc, all), planNow(doc), since(doc, meta, closed)));
+    // Under the line, three facts in one shape: how many stories have landed, what landed last, and the record's state.
+    nodes.push(add(el("div", "facts"), storiesFact(all, closed ? tally : null), lastLanded(doc, all), since(doc, meta, closed)));
     var was = prev.checkingHeight;
     inner.replaceChildren.apply(inner, nodes);
     // A live update that changes the sheet's height, a check starting or a failure listed, eases it there instead of jumping.
@@ -642,13 +668,52 @@
     return add(el("div", "fact" + (cls ? " " + cls : "")), add(el("div", "fact-label"), label), add(el("div", "fact-value"), value),
       detail ? add(el("div", "fact-detail"), detail) : null);
   }
-  /** The piece that landed last, by its title, with its ticket and when. */
+  /**
+   * How far the delivery has come, from the record: the stories landed out of its total in the display face, a track in
+   * tones of the landed colour (landed, in the queue, being built), and a line counting the queue and the build. A
+   * closed delivery shows its final count.
+   */
+  function storiesFact(all, tally) {
+    var landed = tally ? tally.landed : all.filter(isLanded).length;
+    var total = tally ? tally.total : all.length;
+    // Only work that is moving is counted: a stopped piece is held, not queued, and a planned story not yet started is
+    // not being built.
+    var queued = tally ? 0 : all.filter(function (piece) { return !piece.planned && !isLanded(piece) && piece.item.stage !== "stopped"; }).length;
+    var building = tally ? 0 : all.filter(function (piece) { return piece.planned && (piece.item.stage === "building" || piece.item.stage === "review"); }).length;
+    var value = add(el("span", "fact-count"), String(landed), el("span", "fact-of", " of " + total + " landed"));
+    var track = el("span", "fact-track");
+    track.setAttribute("aria-hidden", "true");
+    [["landed", landed], ["queued", queued], ["building", building]].forEach(function (part) {
+      if (!part[1] || !total) { return; }
+      var span = el("i", "is-" + part[0]);
+      span.style.width = (part[1] / total * 100) + "%";
+      track.appendChild(span);
+    });
+    var said = [queued ? queued + " in the queue" : "", building ? building + " being built" : ""].filter(Boolean).join(" · ");
+    return fact("stories", "Stories", value, add(el("span", "fact-progress"), track, said ? el("span", "fact-said", said) : null));
+  }
+  /** A pull request as a fact's quiet reference: its number, linked to the forge when the renderer gave its address. */
+  function pullRef(changeRequest) {
+    var target = changeTarget(changeRequest);
+    if (!target) { return el("span", "fact-ref", text(changeRequest)); }
+    var link = el("a", "fact-ref", target.label);
+    link.setAttribute("href", target.href);
+    link.setAttribute("target", "_blank");
+    link.setAttribute("rel", "noopener noreferrer");
+    link.setAttribute("aria-label", "Open pull request " + (typeof target.repository === "string" && target.repository ? target.repository + " " : "") + target.label);
+    return link;
+  }
+  /** The piece that landed last, by its title, with its ticket, its pull request when the forge snapshot knows it, and when. */
   function lastLanded(doc, all) {
     var landed = latestMerge(doc);
     if (!landed) { return null; }
     var item = all.filter(function (piece) { return piece.item.subject === landed.subject; })[0];
     var when = spoken(eventTime(landed));
-    var detail = text(landed.subject) ? add(el("span"), issue(text(landed.subject)), when ? " · " + when : null) : when;
+    var request = item && changeTarget(item.item.changeRequest) ? pullRef(item.item.changeRequest) : null;
+    var ticket = text(landed.subject) ? issue(text(landed.subject)) : null;
+    if (ticket) { ticket.classList.add("fact-ref"); }
+    var parts = [ticket, request, when].filter(Boolean);
+    var detail = parts.length ? add.apply(null, [el("span")].concat(parts.reduce(function (made, part, i) { return made.concat(i ? [" · ", part] : [part]); }, []))) : null;
     return fact("", "Last landed", item ? titleOf(doc, item.item) : text(landed.subject), detail);
   }
 
@@ -736,11 +801,26 @@
    * cross for a failure), it holds there a beat, then the row turns over on its horizontal axis and the next running check
    * arrives on the back. The settle and the beat are SETTLE_MS and HOLD_MS, the turn TURN_OUT_MS then TURN_IN_MS; a failed
    * check's entry in the list (.ck-fails li.arriving in the stylesheet) waits for all three. Without motion the row simply
-   * shows the next.
+   * shows the next. A redraw while the row turns keeps that row, turning, and the next result waits its turn on it; a
+   * result that came sooner after the last than the whole handoff takes gets a handoff shortened to that gap, a quarter
+   * of the whole at least, so the row never falls behind the record.
    */
   var SETTLE_MS = 480, HOLD_MS = 900, TURN_OUT_MS = 200, TURN_IN_MS = 300;
-  function handOff(row, finished, next) {
-    if (!runMotionWanted(row)) { if (!next) { doneWords(row, finished); } return; }
+  var HANDOFF_MS = SETTLE_MS + HOLD_MS + TURN_OUT_MS + TURN_IN_MS;
+  // The row turning now, the run it belongs to, and the results waiting to turn on it.
+  var turning = null;
+  function handOff(row, finished, next, run, before) {
+    if (!runMotionWanted(row)) { if (!next) { doneWords(row, finished); } turning = null; return; }
+    var gap = before ? (seconds(finished.finishedAt) - seconds(before.finishedAt)) * 1000 : NaN;
+    var scale = gap >= 0 ? Math.max(0.25, Math.min(1, gap / HANDOFF_MS)) : 1;
+    var turn = turning && turning.row === row ? turning : (turning = { row: row, run: run, queue: [] });
+    turn.busy = true;
+    function done() {
+      turn.busy = false;
+      var queued = turn.queue.shift();
+      if (queued && row.isConnected) { handOff(row, queued.finished, queued.next, run, finished); }
+      else if (turning === turn) { turning = null; }
+    }
     // The row is first drawn as the finished check was last seen: running, its arc still turning.
     row.className = "ck-run";
     row.querySelector(".ck-run-words").replaceChildren(el("span", "sr", "Running "), stepName(finished));
@@ -749,25 +829,26 @@
       setTimeout(function () {
         doneWords(row, finished);
         row.classList.add("landing");
-        if (!next) { return; }
         setTimeout(function () {
+          if (!next) { done(); return; }
           // The words roll over: up and away as they fade, the next rolling in from below. The turn stops short of edge-on
           // and the words are gone before it, so they never flatten into a line; the way in eases out with no overshoot.
           var face = row.querySelector(".ck-run-words");
           var out = face.animate([
             { transform: "perspective(400px) translateY(0) rotateX(0deg)", opacity: 1 },
             { transform: "perspective(400px) translateY(-4px) rotateX(70deg)", opacity: 0 }],
-            { duration: TURN_OUT_MS, easing: "cubic-bezier(.4, 0, .7, .4)", fill: "forwards" });
+            { duration: TURN_OUT_MS * scale, easing: "cubic-bezier(.4, 0, .7, .4)", fill: "forwards" });
           out.onfinish = function () {
             runWords(row, next);
-            face.animate([
+            var back = face.animate([
               { transform: "perspective(400px) translateY(4px) rotateX(-70deg)", opacity: 0 },
               { transform: "perspective(400px) translateY(0) rotateX(0deg)", opacity: 1 }],
-              { duration: TURN_IN_MS, easing: "cubic-bezier(.2, .6, .3, 1)" });
+              { duration: TURN_IN_MS * scale, easing: "cubic-bezier(.2, .6, .3, 1)" });
             out.cancel();
+            back.onfinish = done;
           };
-        }, HOLD_MS);
-      }, SETTLE_MS);
+        }, HOLD_MS * scale);
+      }, SETTLE_MS * scale);
     });
   }
   /**
@@ -943,22 +1024,39 @@
       var finished = shownBefore && !runningSteps.some(function (step) { return text(step.label) === shownBefore; })
         ? steps.filter(function (step) { return text(step.label) === shownBefore && DONE[step.state]; })[0] : null;
       prev.runningCheck = runningSteps.length ? { run: runId, label: text(runningSteps[0].label) } : null;
+      // A row still turning over from an earlier result is kept, turning, and this result waits its turn on it: only the
+      // latest waits, so the row turns at most once more before it shows the record as it stands.
+      var keep = turning && turning.run === runId && turning.busy ? turning : null;
+      if (turning && turning.run !== runId) { turning = null; }
       runningSteps.forEach(function (step, i) {
+        if (i === 0 && keep) {
+          box.appendChild(keep.row);
+          if (finished) { keep.queue = [{ finished: finished, next: step }]; }
+          return;
+        }
         var row = runRow(step);
         box.appendChild(row);
-        if (i === 0 && finished) { handOff(row, finished, step); }
+        if (i === 0 && finished) { handOff(row, finished, step, runId); }
       });
       // A check that has just failed is told once at a time: its row marks the cross and turns over to the next check,
       // and only then does its entry arrive in the failures above. With no next check its entry alone tells it.
       var justFailed = finished && (finished.state === "failed" || finished.state === "timed_out");
-      if (justFailed && runningSteps.length && runMotionWanted(box)) {
+      // Under a kept row the cross waits its turn, so the entry arrives as it does with no motion rather than on a delay
+      // the row may not keep.
+      if (justFailed && runningSteps.length && !keep && runMotionWanted(box)) {
         var arriving = [].filter.call(box.querySelectorAll(".ck-fails li"), function (entry) { return entry.getAttribute("data-check") === text(finished.label); })[0];
         if (arriving) { arriving.classList.add("arriving"); }
       }
-      if (finished && !runningSteps.length && !justFailed) {
+      if (keep && !runningSteps.length && !justFailed) {
+        box.appendChild(keep.row);
+        if (finished) { keep.queue = [{ finished: finished, next: null }]; }
+      } else if (keep && !runningSteps.length) {
+        // A failure with nothing after it is told by its entry alone, as it is with no row turning: the kept row goes.
+        turning = null;
+      } else if (finished && !runningSteps.length && !justFailed) {
         var rest = runRow(finished);
         box.appendChild(rest);
-        handOff(rest, finished, null);
+        handOff(rest, finished, null, runId);
       }
       var running = steps.filter(function (step) { return step.state === "running"; }).length;
       var tally = function (state) { return steps.filter(function (step) { return step.state === state; }).length; };
@@ -2189,7 +2287,7 @@
     var counts = planCounts(doc);
     var link = el("a", "plan-now-link", counts.proven + " of " + counts.total + " criteria proven");
     link.setAttribute("href", "#plan");
-    return fact("", "Plan", link, timesChanged(list(plan.changes).length).replace(/^plan /, ""));
+    return add(el("span", "plan-now-line"), link, " · " + timesChanged(list(plan.changes).length));
   }
 
   /** The criteria a finish line covers, or null when it covers proofs only, over every unit. */
@@ -3000,12 +3098,39 @@
   }
   /** One beat as a row: its time, its mark and its words in full. Its ticket, commit and change request are links in the words. */
   function beatRow(doc, story, beat, fresh, depth) {
+    // The kinds whose line counts a list its entry holds, which the beat's fold then names in full: the checks chosen, and
+    // the lead's notes on a hand-off, which may name the checks too.
+    var FOLDED_LISTS = { "check.selected": "checks", "handoff.checked": "notes" };
+    function folded(doc, beat) {
+      var field = beat.form === "entry" ? FOLDED_LISTS[text(beat.kind)] : null;
+      if (!field) { return []; }
+      var entry = list(doc.journal).filter(function (each) { return isObject(each) && each.id === list(beat.entries)[0]; })[0];
+      var named = entry && isObject(entry.data) ? list(entry.data[field]) : [];
+      return named.every(function (name) { return typeof name === "string"; }) ? named : [];
+    }
+    /**
+     * Where a row sits on its setback's margin line, from the thread's own facts: its state, its opening and its closing.
+     * The line runs from a ring on the row holding the opening to a tick on the row holding the closing, so two setbacks
+     * back to back read as two; rows of the thread before its opening or after its closing stand clear of it. It is held
+     * while the thread is open and the page's hairline once it closed.
+     */
+    function threadMarks(li, beat, thread) {
+      var order = list(thread.entries), mine = list(beat.entries);
+      var opens = mine.indexOf(thread.opening) >= 0, closes = thread.closing !== null && thread.closing !== undefined && mine.indexOf(thread.closing) >= 0;
+      var at = order.indexOf(mine[0]), from = order.indexOf(thread.opening);
+      var to = thread.closing === null || thread.closing === undefined ? order.length : order.indexOf(thread.closing);
+      li.classList.add(thread.state === "open" ? "t-open" : "t-closed");
+      if (opens || closes || (from >= 0 && at > from && at < to)) { li.classList.add("t-span"); }
+      if (opens) { li.classList.add("t-opens"); li.appendChild(el("span", "thread-ring")); }
+      if (closes) { li.classList.add("t-closes"); li.appendChild(el("span", "thread-tick")); }
+    }
     var threads = story.threads.filter(function (thread) { return isObject(thread) && thread.id === beat.thread; });
     // Below the headline a setback's entries keep their places in time, tied by a thin line in the margin.
     var li = el("li", "beat is-" + text(beat.tone) + (beat.thread && beat.form !== "thread" && depth !== "headline" ? " threaded" : "") + (fresh ? " fresh" : ""));
     li.setAttribute("data-beat", text(beat.id));
     if (beat.thread) { li.setAttribute("data-thread", text(beat.thread)); }
     if (beat.form === "thread" && threads.length) { return setbackSheet(doc, beat, threads[0], li); }
+    if (threads.length && beat.form !== "thread" && depth !== "headline") { threadMarks(li, beat, threads[0]); }
     var words = add(el("span", "beat-words"), add.apply(null, [el("span", "beat-said")].concat(linked(beat.words.head))),
       text(beat.words.line) ? add.apply(null, [el("span", "beat-line")].concat(linked(beat.words.line))) : null);
     var body = el("div", "beat-body");
@@ -3019,6 +3144,11 @@
       });
       var fold = add(el("details", "beat-fold"), add(el("summary", "beat-head"), words), listed);
       body.appendChild(runFold(fold, { key: "beat:" + text(beat.id) + ":" + list(beat.entries)[0] }));
+    } else if (folded(doc, beat).length) {
+      // A beat whose line counts what its entry lists folds the list: opened, it names each, one to a line.
+      var names = add.apply(null, [el("ul", "beat-items beat-names")].concat(folded(doc, beat).map(function (name) { return el("li", null, name); })));
+      body.appendChild(runFold(add(el("details", "beat-fold"), add(el("summary", "beat-head"), words), names),
+        { key: "beat:" + text(beat.id) + ":" + list(beat.entries)[0] }));
     } else {
       body.appendChild(add(el("div", "beat-head"), words));
     }
