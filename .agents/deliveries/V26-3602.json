@@ -165,6 +165,20 @@
           "text": "c5: lead-plan change --after accepts a sibling's story, and lead-setup notes an after key that is neither a story nor a known sibling story."
         }
       ]
+    },
+    "V26-3622": {
+      "title": "Word a sibling wait's time from when its outcome began, not its last changing read",
+      "lane": "lane-2",
+      "why": "V26-3604 deferred P2 outcome-correctness-r1-2: the wait sentence and the schema still say last read from readAt, which can understate recency by hours. The operator chose a lane fix with review.",
+      "criteria": [
+        {
+          "id": "v26-3622-1",
+          "text": "A wait on a sibling story whose sibling isn't fresh says \"<reason> since <lastAttemptAt>\", in the same words the views use. A wait on a fresh sibling says nothing about time."
+        }
+      ],
+      "after": [
+        "V26-3604"
+      ]
     }
   },
   "finish": [

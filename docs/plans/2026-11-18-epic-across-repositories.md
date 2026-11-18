@@ -451,6 +451,10 @@ Lane 2, tier 2, after V26-3603. Characterization-first. Files: `skills/orchestra
 Pin today's ignored-key behaviour first (scenario 18). Then add the `sibling` cause, `next`'s blocker, `wait`'s
 wake, and the `lead-plan` and `lead-setup` changes, by Decisions 11 to 13. Scenarios 18 to 24.
 
+### V26-3622. Word a sibling wait's time from when its outcome began, not its last changing read
+
+Lane 2, tier 2, after V26-3604. Added mid-delivery: V26-3604 deferred P2 outcome-correctness-r1-2: the wait sentence and the schema still say last read from readAt, which can understate recency by hours. The operator chose a lane fix with review.
+
 ## Calls made
 
 - Federation over one delivery spanning repositories: agreed with the operator on 2026-11-18, before planning.
