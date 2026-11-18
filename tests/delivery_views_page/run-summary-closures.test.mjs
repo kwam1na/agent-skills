@@ -15,20 +15,23 @@ function entry(lens, round, candidate, findings, resolved) {
     outcome: findings.length ? "changes-requested" : "aligned", findings, resolvedFindings: resolved } };
 }
 const finding = (id, severity, summary) => ({ id, severity, summary, state: "open" });
-const closure = (id, state, resolution) => ({ id, state, resolution, ...(state === "closed" ? { fixCommit: B } : {}) });
+const closure = (id, state, resolution, extra = {}) => ({ id, state, resolution, ...(state === "closed" ? { fixCommit: B } : {}), ...extra });
+const CUT = "x".repeat(280);
 
-/** Round 1 raises three Testing notes and two Correctness ones; round 2 fixes every Testing note, and of Correctness's
- * fixes one and withdraws the other. */
+/** Round 1 raises three Testing notes and four Correctness ones; round 2 fixes every Testing note, and of Correctness's
+ * fixes one, withdraws two and defers one with its follow-up. */
 function document() {
   const one = { round: 1, outcome: "unresolved", entries: [
     entry(TESTING, 1, A, [finding("T1", "P1", "A retry after a timeout charges twice"), finding("T2", "P2", "No test covers a dropped attempt."),
       finding("T3", "P3", "The log line repeats the order id.")], []),
-    entry(CORRECTNESS, 1, A, [finding("C1", "P1", "The receipt keeps the first total."), finding("C2", "P2", "The banner hides the error.")], [])] };
+    entry(CORRECTNESS, 1, A, [finding("C1", "P1", "The receipt keeps the first total."), finding("C2", "P2", "The banner hides the error."),
+      finding("C3", "P3", "The empty state says nothing"), finding("C4", "P2", CUT)], [])] };
   const two = { round: 2, outcome: "aligned", entries: [
     entry(TESTING, 2, B, [], [closure("T1", "closed", "A case now times out the first attempt and asserts one charge."),
       closure("T2", "closed", "test_dropped_attempt covers it."), closure("T3", "closed", "The id is logged once.")]),
     entry(CORRECTNESS, 2, B, [], [closure("C1", "closed", "The receipt reads the last attempt."),
-      closure("C2", "withdrawn", "The banner was never shown on error.")])] };
+      closure("C2", "withdrawn", "The banner was never shown on error."), closure("C3", "withdrawn", "The empty state was dropped."),
+      closure("C4", "deferred", "The copy waits for the writer.", { deferredIssue: "V26-9999" })])] };
   return { state: { lanes: [], queue: [{ subject: "WORK-1", title: "Work", stage: "merged", head: B, runId: null }] }, journal: [],
     reviewEvidence: { "WORK-1": { candidateRef: B, digest: "d".repeat(64), outcomes: [one, two] } } };
 }
@@ -52,14 +55,16 @@ const rows = (scope) => [...scope.querySelectorAll(".run-closures")].map(row);
 test("the sentence counts every ending, naming the fixes' commit, and each confirmed note leads with what was found", async () => {
   const [shown] = await openPage(page);
   const app = shown.app;
-  expect(app.querySelector(".run-card .run-settled").textContent).toBe("This round confirmed 5 earlier notes: 4 fixed in bbbbbbb, 1 withdrawn.");
+  expect(app.querySelector(".run-card .run-settled").textContent).toBe("This round confirmed 7 earlier notes: 4 fixed in bbbbbbb, 2 withdrawn, 1 deferred.");
   expect(app.querySelector(".run-card .run-settled a.run-commit").getAttribute("href")).toBe("https://github.com/acme/shop/commit/" + B);
   const [testing, correctness] = groups(app);
-  // Correctness has an ending other than fixed: the withdrawn note is in sight under the lens, its ending named, and
-  // the fixed one folds beneath a count of its own.
+  // Correctness has endings other than fixed: those notes are in sight under the lens, each ending named, and the
+  // fixed one folds beneath a count of its own. A summary cut at the renderer's cap gets no full stop.
   expect(correctness.querySelector(".run-lens-name").textContent).toBe("Correctness");
   expect([...correctness.querySelectorAll(":scope > .run-findings .run-closures")].map(row)).toEqual([
-    { summary: "The banner hides the error.", priority: "moderate", ending: "withdrawn" }]);
+    { summary: "The banner hides the error.", priority: "moderate", ending: "withdrawn" },
+    { summary: "The empty state says nothing.", priority: "minor", ending: "withdrawn" },
+    { summary: CUT, priority: "moderate", ending: "deferred" }]);
   const folded = correctness.querySelector(":scope > .run-closure-lens");
   expect(folded.hasAttribute("open")).toBe(false);
   expect(folded.querySelector("summary").textContent).toBe("1 fixed");
@@ -74,7 +79,7 @@ test("the sentence counts every ending, naming the fixes' commit, and each confi
     { summary: "No test covers a dropped attempt.", priority: "moderate", ending: "fixed" },
     { summary: "The log line repeats the order id.", priority: "minor", ending: "fixed" }]);
   // Nothing beneath a row shows until it is opened: every row starts closed.
-  expect([...app.querySelectorAll(".run-card .run-closures")].map((fold) => fold.hasAttribute("open"))).toEqual([false, false, false, false, false]);
+  expect([...app.querySelectorAll(".run-card .run-closures")].map((fold) => fold.hasAttribute("open"))).toEqual(Array(7).fill(false));
 });
 
 test("opened, a confirmed note shows its resolution, its commit and its id", async () => {
@@ -88,9 +93,11 @@ test("opened, a confirmed note shows its resolution, its commit and its id", asy
     ["run-closure-evidence", "Fixed in bbbbbbb"],
     ["run-closure", "T1"]]);
   expect(first.querySelector(".run-closure-evidence a").getAttribute("href")).toBe("https://github.com/acme/shop/commit/" + B);
-  // A note whose ending wasn't a fix names no fix commit.
-  const withdrawn = groups(opened.app)[1].querySelector(":scope > .run-findings .run-closures");
+  // A note whose ending wasn't a fix names no fix commit; a deferred one names its follow-up.
+  const [withdrawn, , deferred] = groups(opened.app)[1].querySelectorAll(":scope > .run-findings .run-closures");
   expect([...withdrawn.children].slice(1).map((part) => part.className)).toEqual(["run-closure-resolution", "run-closure"]);
+  expect([...deferred.children].slice(1).map((part) => [part.className, part.textContent])).toEqual([
+    ["run-closure-resolution", "The copy waits for the writer."], ["run-followup", "\u21b3 V26-9999"], ["run-closure", "C4"]]);
 });
 
 test("a note whose finding isn't on the page leads with its resolution and opens on its id, as before", async () => {
@@ -109,4 +116,49 @@ test("each lens's fold and each note's keep their open state through a redraw", 
   expect(testing.querySelector(".run-closure-lens").hasAttribute("open")).toBe(true);
   expect([...testing.querySelectorAll(".run-closures")].map((fold) => fold.hasAttribute("open"))).toEqual([false, true, false]);
   expect(correctness.querySelector(".run-closure-lens").hasAttribute("open")).toBe(false);
+});
+
+/** A run of four rounds: R1 raised in round 1, raised again reworded in round 2 and fixed in round 3; S1 raised in
+ * round 1 and fixed in round 4, which raises R1 again in other words; W1 raised in round 3 and still open. */
+function rounds() {
+  const C = "c".repeat(40), D = "d".repeat(40);
+  const outcomes = [
+    { round: 1, outcome: "unresolved", entries: [entry(TESTING, 1, A, [finding("R1", "P2", "First wording."), finding("S1", "P3", "The second note.")], [])] },
+    { round: 2, outcome: "unresolved", entries: [entry(TESTING, 2, B, [finding("R1", "P1", "Second wording.")], [])] },
+    { round: 3, outcome: "unresolved", entries: [entry(TESTING, 3, C, [finding("W1", "P2", "A note later withdrawn.")],
+      [closure("R1", "closed", "Fixed for good.", { fixCommit: C })])] },
+    { round: 4, outcome: "unresolved", entries: [entry(TESTING, 4, D, [finding("R1", "P0", "A later round's wording.")],
+      [closure("S1", "closed", "Fixed too.", { fixCommit: D })])] },
+  ];
+  return { state: { lanes: [], queue: [{ subject: "WORK-1", title: "Work", stage: "merged", head: D, runId: null }] }, journal: [],
+    reviewEvidence: { "WORK-1": { candidateRef: D, digest: "e".repeat(64), outcomes } } };
+}
+
+test("a confirmed note leads with the latest earlier round's wording, and each card keeps its own lens fold", async () => {
+  const run = pageWithRuns(rounds(), {}, { config });
+  const [latest, opened, third] = await openPage(run, { steps: [{ click: ".run-closure-lens > summary" }, { click: ".run-pick", index: 2 }] });
+  // Round 4 confirms S1, raised in round 1.
+  expect(rows(latest.app.querySelector(".run-card"))).toEqual([{ summary: "The second note.", priority: "minor", ending: "fixed" }]);
+  expect(opened.app.querySelector(".run-card .run-closure-lens").hasAttribute("open")).toBe(true);
+  // Round 3 confirms R1 as round 2 last worded it, not round 1 nor round 4; its Testing fold is its own, closed though
+  // round 4's is open.
+  const card = third.app.querySelector(".run-card");
+  expect(card.querySelector(".run-card-head b").textContent).toBe("Round 3");
+  expect(rows(card)).toEqual([{ summary: "Second wording.", priority: "serious", ending: "fixed" }]);
+  expect(card.querySelector(".run-closure-lens").hasAttribute("open")).toBe(false);
+});
+
+test("a round and a lens that fixed nothing say no fixed count and draw no fixed fold", async () => {
+  const doc = rounds();
+  const outcomes = doc.reviewEvidence["WORK-1"].outcomes;
+  outcomes[3].entries[0].result.resolvedFindings = [closure("W1", "withdrawn", "Not a problem after all.")];
+  outcomes[2].entries[0].result.resolvedFindings = [closure("R1", "closed", "Fixed for good.", { fixCommit: "c".repeat(40) }),
+    closure("S1", "closed", "Fixed early.", { fixCommit: "c".repeat(40) })];
+  const [shown] = await openPage(pageWithRuns(doc, {}, { config }));
+  const card = shown.app.querySelector(".run-card");
+  expect(card.querySelector(".run-settled").textContent).toBe("This round confirmed 1 earlier note: 1 withdrawn.");
+  const [testing] = groups(shown.app);
+  expect(testing.querySelector(".run-closure-lens")).toBeNull();
+  expect([...testing.querySelectorAll(":scope > .run-findings .run-closures")].map(row)).toEqual([
+    { summary: "A note later withdrawn.", priority: "moderate", ending: "withdrawn" }]);
 });

@@ -272,6 +272,10 @@ function runSummaryNode(summary, options) {
     if (verdict !== undefined && kind !== outcome) { head.appendChild(node("span", "run-lens-verdict", verdictWords(kind, verdict))); }
     return head;
   }
+  // A finding's summary as a sentence: one stored without its full stop gets one, unless the renderer cut it at its
+  // cap (SUMMARY_LENGTH, 280 characters), where a full stop would pass a cut sentence off as a whole one.
+  var SUMMARY_CUT = 280;
+  function sentenceOf(text) { return text + (text.length >= SUMMARY_CUT || /[.!?\u2026:)"'\u201D]$/.test(text) ? "" : "."); }
   function isNote(entry) { return entry && typeof entry === "object" && typeof entry.id === "string" && typeof entry.lens === "string" && typeof entry.summary === "string"; }
   function short(commit) { return typeof commit === "string" ? commit.slice(0, 7) : null; }
   // What later rounds said became of each finding, by its id: the first round to settle it wins.
@@ -443,7 +447,7 @@ function runSummaryNode(summary, options) {
     var preview = node("summary", "run-finding");
     if (finding) {
       var severity = SEVERITIES.indexOf(finding.severity) < 0 ? "P3" : finding.severity;
-      preview.appendChild(node("span", "run-finding-text", finding.summary + (/[.!?\u2026:)"'\u201D]$/.test(finding.summary) ? "" : ".")));
+      preview.appendChild(node("span", "run-finding-text", sentenceOf(finding.summary)));
       preview.appendChild(node("span", "run-closure-sev is-" + severity.toLowerCase(), WORDS[severity]));
     } else {
       preview.appendChild(node("span", "run-finding-text", entry.resolution));
@@ -650,7 +654,7 @@ function runSummaryNode(summary, options) {
             var item = node("li", "run-finding is-" + severity.toLowerCase());
             // Summaries are sentences; one stored without its full stop gets one here.
             var said = node("span", "run-finding-line");
-            said.appendChild(node("span", "run-finding-text", entry.summary + (/[.!?\u2026:)"'\u201D]$/.test(entry.summary) ? "" : ".")));
+            said.appendChild(node("span", "run-finding-text", sentenceOf(entry.summary)));
             if (!uniform && fate.band !== shared) {
               said.appendChild(document.createTextNode(" "));
               said.appendChild(node("span", "run-fate is-" + fate.kind, fate.words));
