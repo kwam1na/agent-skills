@@ -3728,11 +3728,14 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
                 and not any(name in entry for name in ("after", "files", "changeRequest", "runId"))
                 and entry["subject"] not in added_by)
 
-    # A sibling delivery's last kept read lists the children it holds, whatever its latest outcome. With or without a
-    # scope, the tracker sweep leaves them to it: by the first sibling in name order that lists each.
+    # A sibling delivery's last kept read lists the children it holds, even while it can't be read. With or without a
+    # scope, the tracker sweep leaves them to it: by the first sibling in name order that lists each. A sibling now
+    # read as another epic's holds nothing here, as the views draw it.
     sibling_of: dict[str, str] = {}
     if any(snapshot["source"] == "tracker" for snapshot in snapshots):
         for row in sorted(state.get("siblings", []), key=lambda row: row["name"]):
+            if row.get("lastOutcome") == "other-epic":
+                continue
             for story in row.get("stories", []):
                 sibling_of.setdefault(story["subject"], row["name"])
 

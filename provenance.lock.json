@@ -238,7 +238,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/public_projection.py",
-          "sha256": "8fa390ed31a85acbf29f4d565f3fc98720c4f23479be113751d0203c2bd65fad"
+          "sha256": "cf8a5e84ad4cee87b116ae67d613f781d0318fa79faacda3eda00f1789484b06"
         },
         {
           "path": "skills/delivery-views/scripts/render.py",
@@ -534,7 +534,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "e01f7e8905e281a7e4570a0398508083b3a3612f683234631c786030d02c60db"
+          "sha256": "9abb95bd93d9087c87d9d26e5a10baa1efe150e620e45ef062910e8c767ca885"
         },
         {
           "path": "skills/orchestrate-work/scripts/journal_words.py",

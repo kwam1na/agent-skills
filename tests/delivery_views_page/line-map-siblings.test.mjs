@@ -189,3 +189,25 @@ test("the built-in page keeps its done words when every sibling is fresh and lan
   expect(plain.folds).toEqual([]);
   expect(plain.headings.includes("Across repositories")).toBe(false);
 });
+
+test("each outcome is said since it began, and a sibling tried but never read says so", async () => {
+  const tried = { name: "web", link: LINK, addedAt: "2026-10-30T10:00:00Z", lastOutcome: "unavailable", lastAttemptAt: ATTEMPT };
+  const [shown] = await open(document([sibling("api", stories("building"), "stale"), sibling("pay", stories("building"), "incompatible"), tried]));
+  const heads = [...shown.app.querySelectorAll("#across .across-head")].map((node) => node.textContent);
+  expect(heads).toEqual(["apiStale since 5 minutes ago", "payNeeds a compatible snapshot since 5 minutes ago",
+    "webCouldn't be read since 5 minutes ago · never read"]);
+  expect(said(shown).across).toEqual([`api has 1 open, couldn't be read since ${ATTEMPT}. pay has 1 open, couldn't be read since ${ATTEMPT}. ` +
+    "web couldn't be read (never read)."]);
+});
+
+test("a link that isn't a web address is drawn as a name, a landed story is marked, and a story's card names its title", async () => {
+  const [shown, hovered] = await open(document([sibling("backend", stories("building", "merged"), "read", { link: "javascript:alert(1)" })]),
+    { steps: [{ hover: '#across [data-ticket="API-1"]' }] });
+  const name = shown.app.querySelector("#across .across-name");
+  expect(name.tagName).toBe("SPAN");
+  expect(name.hasAttribute("href")).toBe(false);
+  expect([...shown.app.querySelectorAll("#across li")].map((row) => row.className)).toEqual(["", "is-landed"]);
+  const card = hovered.app.querySelector(".issue-card");
+  expect(card.hidden).toBe(false);
+  expect(card.textContent).toContain("Backend 1");
+});

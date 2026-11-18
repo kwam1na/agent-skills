@@ -1511,6 +1511,31 @@ class SiblingSweepTests(unittest.TestCase):
         # The scoped snapshot's outside list is still kept whole: the views decide which group draws each child.
         self.assertEqual(self.state()["outside"], OUTSIDE)
 
+    def test_the_tracker_still_reports_on_a_story_of_this_delivery_a_sibling_lists(self) -> None:
+        self.lead({"planned": [{"subject": "APP-70", "title": "Own", "lane": "lane-1", "stage": "building",
+                                "trackerStarted": True}]})
+        self.siblings(sibling_row("backend", [{"subject": "APP-70", "title": "Theirs", "stage": "building"}]))
+        result = self.reconcile(tracker_snapshot([{"subject": "APP-70", "title": "Own", "state": "canceled"}]))
+        self.assertIn({"subject": "APP-70", "note": "canceled in the tracker but still building in the record"},
+                      result["reports"])
+
+    def test_a_subject_two_siblings_hold_is_cleared_for_the_first_in_name_order(self) -> None:
+        self.lead({"planned": [{"subject": "APP-80", "title": "Shared", "lane": None, "stage": "building",
+                                "trackerStarted": True}]})
+        listed = [{"subject": "APP-80", "title": "Shared", "stage": "building"}]
+        self.siblings(sibling_row("web", listed), sibling_row("api", listed))
+        self.reconcile(tracker_snapshot([{"subject": "APP-80", "title": "Shared", "state": "started"}]))
+        self.assertEqual(self.cleared(), [("APP-80", {"from": "planned", "why": "held by sibling api"})])
+
+    def test_a_sibling_now_of_another_epic_holds_nothing_it_listed_before(self) -> None:
+        listed = [{"subject": "APP-90", "title": "Theirs once", "stage": "building"}]
+        self.siblings(sibling_row("backend", listed, outcome="other-epic"))
+        result = self.reconcile(tracker_snapshot([{"subject": "APP-90", "title": "Ours now", "state": "started"}]))
+        # The views draw such a sibling with no stories, so the sweep takes the child in as it would any other.
+        self.assertEqual([entry["subject"] for entry in self.state()["planned"]], ["APP-90"])
+        self.assertIn("APP-90", [change["subject"] for change in result["changes"]])
+        self.assertEqual(self.cleared(), [])
+
     def test_a_forge_snapshot_alone_clears_nothing(self) -> None:
         self.lead({"planned": [{"subject": "APP-40", "title": "Login API", "lane": None, "stage": "building",
                                 "trackerStarted": True}]})

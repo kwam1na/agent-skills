@@ -1180,6 +1180,29 @@ class AcrossViewTests(unittest.TestCase):
                 across = render_state.across(sibling_document(*rows, landed=landed))
                 self.assertEqual(" ".join(across.get("partDone", [])) or None, expected)
 
+    def test_each_outcome_is_said_since_it_began_and_one_never_read_says_so(self) -> None:
+        text = render_state._markdown_text
+        tried = {"name": "web", "link": SIBLING_LINK, "addedAt": "2026-10-20T15:00:00Z", "lastOutcome": "unavailable",
+                 "lastAttemptAt": ATTEMPT_AT}
+        document = sibling_document(sibling_row("api", ("building",), "stale"),
+                                    sibling_row("pay", ("building",), "incompatible"), tried)
+        view = self.view(document)
+        section = view[view.index("## Across repositories"):view.index("## Lanes")]
+        heads = [line for line in section.splitlines() if line.startswith("- ")]
+        tried_words = "couldn't be read since " + ATTEMPT_AT + " · never read"
+        self.assertEqual(heads, [f"- api · {text(SIBLING_LINK)} · {text('stale since ' + ATTEMPT_AT)}",
+                                 f"- pay · {text(SIBLING_LINK)} · {text('needs a compatible snapshot since ' + ATTEMPT_AT)}",
+                                 f"- web · {text(SIBLING_LINK)} · {text(tried_words)}"])
+        self.assertEqual(render_state.across(document)["partDone"],
+                         [render_state.PART_DONE, f"api has 1 open, couldn't be read since {ATTEMPT_AT}.",
+                          f"pay has 1 open, couldn't be read since {ATTEMPT_AT}.", "web couldn't be read (never read)."])
+
+    def test_a_record_with_no_stories_of_its_own_has_no_part_done_line(self) -> None:
+        document = sibling_document(sibling_row("backend", ("building",)))
+        document["state"]["queue"], document["state"]["planned"] = [], []
+        self.assertNotIn("partDone", render_state.across(document))
+        self.assertIsNone(self.part_done(self.view(document)))
+
     def test_another_epic_s_sibling_is_drawn_without_stories(self) -> None:
         view = self.view(sibling_document(sibling_row("legacy", ("building",), "other-epic")))
         section = view[view.index("## Across repositories"):view.index("## Lanes")]
@@ -1197,6 +1220,21 @@ class AcrossViewTests(unittest.TestCase):
         self.assertNotIn("## Across repositories", view)
         section = view[view.index("## Elsewhere in APP-10"):view.index("## Lanes")]
         self.assertEqual([line[:7] for line in section.splitlines()[2:4]], ["- API-1", "- OPS-4"])
+
+    def test_the_wrapper_gives_every_view_and_the_live_stream_the_siblings_words(self) -> None:
+        # The line map and the live server read `across` from the record the wrapper hands them; they never word it.
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / "state"
+            directory.mkdir()
+            document = sibling_document(sibling_row("backend", ("building", "review")))
+            (directory / "state.json").write_text(json.dumps(document["state"], indent=2) + "\n", encoding="utf-8")
+            (directory / "journal.jsonl").write_text("".join(json.dumps(entry) + "\n" for entry in document["journal"]),
+                                                     encoding="utf-8")
+            shown = render_state.with_story(render_state.show(directory), directory)
+            self.assertEqual(shown["across"]["partDone"], [render_state.PART_DONE, "backend has 2 open."])
+            self.assertEqual([group["name"] for group in shown["across"]["groups"]], ["backend"])
+            # So does the live server, whose read is the same record.
+            self.assertEqual(render_state.LiveView(directory, None).read()["across"], shown["across"])
 
     def test_a_record_with_no_siblings_renders_as_before(self) -> None:
         document = {"state": FIXED_STATE, "journal": FIXED_JOURNAL}
