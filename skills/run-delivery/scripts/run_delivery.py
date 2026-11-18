@@ -10,7 +10,7 @@ and lens charters), found in the installed generation it runs from. It reads the
 
 Lane:
   lane-start     <key> [--base B]
-  review-prepare <key> --round N [--grace] [--restart] [--why TEXT]
+  review-prepare <key> --round N [--grace] [--restart] [--why TEXT] [--lenses IDS --lenses-reason TEXT]
   review-reduce  <key> --round N
   gate           <key>
   build          <key>
@@ -101,6 +101,12 @@ SECRET_ARGUMENT = re.compile(r"password|passwd|token|secret|api[-_]?key|credenti
 SEVERITIES = ("P0", "P1", "P2", "P3")
 CLOSED = ("closed", "fixed", "withdrawn", "dropped", "deferred")
 CONTEXT_TODO = "TODO: replace this line with your evidence so far"
+# Every story round runs the workflow's two lenses; each other declared lens is the lane's to choose, by its use.
+MANDATED_LENSES = ("lens.outcome-correctness", "lens.adversarial-testing")
+LENS_USES = ("plan", "story")
+EVERY_STORY_LENS = "every declared story lens"
+LENSES_REASON = 600
+LENS_PURPOSE = 160
 # The round brief's severity rules: a story's review defers P2 and P3; a plan review has no deferral path.
 # The out-of-delta rule, in obtain-review's words, which both kinds of brief carry as obtain-review states it.
 OUT_OF_DELTA = (
@@ -868,6 +874,40 @@ class Config:
             if not charter.exists():
                 self.conflicts.append(f"lens {lens}'s charter {charter} doesn't exist")
         self.lenses = lenses
+        # Each lens's use, plan review, a story's review or both, and where it was declared. A harness.config.ts lens
+        # takes its use from review.use, since the runtime closes that file's entries.
+        self.lens_origin = {lens: "the delivery workflow" for lens in MANDATED_LENSES}
+        for extra in (h or {}).get("additionalReviewLenses", []):
+            self.lens_origin[extra["lensId"]] = "harness.config.ts"
+        declared_use: dict[str, tuple[object, str]] = {}
+        for lens, spec in review.get("lenses", {}).items():
+            self.lens_origin.setdefault(lens, self.config_named)
+            if "use" in spec:
+                declared_use[lens] = (spec["use"], f"{own} review.lenses.{lens}.use")
+        mapped = review.get("use", {})
+        if not isinstance(mapped, dict):
+            self.conflicts.append(f"{own} review.use must map lens ids to their use, not {mapped!r}")
+            mapped = {}
+        for lens, use in mapped.items():
+            if lens not in lenses:
+                self.conflicts.append(f"{own} review.use names {lens}, which isn't a declared lens")
+            elif lens in declared_use and declared_use[lens][0] != use:
+                self.conflicts.append(f"{own} review.use gives {lens} the use {use!r}, but review.lenses gives it "
+                                      f"{declared_use[lens][0]!r}")
+            else:
+                declared_use[lens] = (use, f"{own} review.use.{lens}")
+        self.lens_use: dict[str, tuple[str, ...]] = {}
+        for lens in lenses:
+            use, where = declared_use.get(lens, (list(LENS_USES), ""))
+            if where and (not isinstance(use, list) or not use or len(set(map(str, use))) != len(use)
+                          or any(u not in LENS_USES for u in use)):
+                self.conflicts.append(f"{where} must list plan, story or both, once each, not {use!r}")
+                use = list(LENS_USES)
+            elif where and lens in MANDATED_LENSES and set(use) != set(LENS_USES):
+                self.conflicts.append(f"{where} narrows {lens}, a mandated lens, whose use is plan and story")
+            self.lens_use[lens] = tuple(u for u in LENS_USES if u in use)
+        self.story_lenses = [lens for lens in lenses if "story" in self.lens_use[lens]]
+        self.plan_lenses_declared = [lens for lens in lenses if "plan" in self.lens_use[lens]]
         self.prepare = take("review.prepare", (b.get("prepare"), "orchestration binding"), flow=review.get("prepare"),
                             default=[])
         if b.get("provider") or b.get("alwaysRun") or b.get("profiles"):
@@ -1633,6 +1673,60 @@ def brief(key: str, round_no: int, lens: str, candidate: str, tree: str, merge_b
     return re.sub(r"\{\{(\w+)\}\}", lambda m: values[m.group(1)], template)
 
 
+LEGACY_LENSES = "none recorded: the story's review began before lenses were chosen, so every declared lens runs"
+
+
+def story_lens_set(c, folder: Path) -> tuple[list[str], str | None]:
+    """The story's review lenses and why, fixed by round 1's meta. A round 1 meta with no reason was prepared before
+    lenses were chosen: its story runs every declared lens, as it did then, plan-only lenses included."""
+    first = load_json(folder / "round-1.meta.json") or {}
+    if not first.get("lensesReason"):
+        return list(c.lenses), None
+    gone = [lens for lens in first["lenses"] if lens not in c.lenses]
+    if gone:
+        raise Stop(f"the story's review lenses include {', '.join(gone)}, which this repository no longer declares; "
+                   "declare it again, or restart round 1 with --restart and other --lenses")
+    return list(first["lenses"]), first["lensesReason"]
+
+
+def chosen_lenses(c, args) -> tuple[list[str], str] | None:
+    """`--lenses` and `--lenses-reason`, checked: the set in declaration order and its reason, or None without them."""
+    given, reason = getattr(args, "lenses", None), getattr(args, "lenses_reason", None)
+    if given is None:
+        if reason is not None:
+            raise Stop("--lenses-reason goes with --lenses: name the lenses it gives the reason for")
+        return None
+    if reason is None or not reason.strip():
+        raise Stop("--lenses needs --lenses-reason: say why the story's review takes these lenses")
+    if len(reason.strip()) > LENSES_REASON:
+        raise Stop(f"--lenses-reason is {len(reason.strip())} characters; keep it to {LENSES_REASON}")
+    named = [lens.strip() for lens in given.split(",")]
+    story = f"the declared story lenses are {', '.join(c.story_lenses)}"
+    unknown = [lens or "an empty id" for lens in named if lens not in c.story_lenses]
+    if unknown:
+        raise Stop(f"--lenses names {', '.join(unknown)}, which this repository doesn't declare as a story lens; {story}")
+    repeated = sorted({lens for lens in named if named.count(lens) > 1})
+    if repeated:
+        raise Stop(f"--lenses names {', '.join(repeated)} more than once; {story}")
+    missing = [lens for lens in MANDATED_LENSES if lens not in named]
+    if missing:
+        raise Stop(f"--lenses leaves out {', '.join(missing)}: every story round runs the mandated lenses "
+                   f"{', '.join(MANDATED_LENSES)}; {story}")
+    return [lens for lens in c.story_lenses if lens in named], reason.strip()
+
+
+def lenses_text(lenses: list[str], reason: str | None) -> str:
+    return f"{', '.join(lenses)}; reason: {reason or LEGACY_LENSES}"
+
+
+def charter_purpose(path: Path) -> str:
+    """A charter's purpose: its first line after the title that isn't blank or a heading, cut to LENS_PURPOSE."""
+    lines = Path(path).read_text().splitlines()
+    start = next((i + 1 for i, line in enumerate(lines) if line.lstrip().startswith("#")), 0)
+    found = next((line.strip() for line in lines[start:] if line.strip() and not line.lstrip().startswith("#")), "")
+    return found[:LENS_PURPOSE]
+
+
 def round_files(folder: Path) -> list[Path]:
     files = [p for p in folder.glob("round-*.json") if re.fullmatch(r"round-\d+\.json", p.name)]
     return sorted(files, key=lambda p: int(p.stem.split("-")[1]))
@@ -1666,6 +1760,15 @@ def review_prepare(args) -> None:
     if previous and not args.restart:
         raise Stop(f"round {n} is already prepared (at {previous['candidate'][:10]}). Reduce it, or pass --restart to "
                    "discard it; a restart is recorded and the lead has to accept it")
+    # The story's lenses, fixed at round 1: chosen there with --lenses, else every declared story lens.
+    chosen = chosen_lenses(c, args)
+    if n == 1:
+        lenses, reason = chosen or (list(c.story_lenses), EVERY_STORY_LENS)
+    else:
+        lenses, reason = story_lens_set(c, folder)
+        if chosen and chosen[0] != lenses:
+            raise Stop(f"--lenses names {', '.join(chosen[0])}, but the story's lenses, fixed at round 1, are "
+                       f"{', '.join(lenses)}: leave --lenses out to keep them")
     git("fetch", "-q", c.remote, c.base_branch)  # before the context, which reads the plan from the base
     context = seed_context(key)
     if CONTEXT_TODO in context.read_text():
@@ -1684,15 +1787,22 @@ def review_prepare(args) -> None:
     restarts = list(previous.get("restarts", [])) if previous else []
     attempts = previous.get("attempts", 0) if previous else 0
     if previous:
+        # The previous preparation's lenses, and this one's: no result left from an earlier set is ever reduced.
         discarded = {}
-        for lens, (short, _) in c.lenses.items():
+        for lens in dict.fromkeys([*previous["lenses"], *lenses]):
+            if lens not in c.lenses:
+                continue
+            short = c.lenses[lens][0]
             path = result_path(folder, n, short)
             if path.exists():
                 discarded[lens] = digest(path)
                 path.rename(folder / f"result-r{n}-{short}.discarded{len(restarts) + 1}.json")
-        restarts.append({"at": now(), "previousCandidate": previous["candidate"], "discardedResults": discarded})
+        restarts.append({"at": now(), "previousCandidate": previous["candidate"], "discardedResults": discarded,
+                         "previousLenses": previous["lenses"],
+                         **({"previousLensesReason": previous["lensesReason"]} if previous.get("lensesReason") else {})})
     briefs = []
-    for lens, (short, _) in c.lenses.items():
+    for lens in lenses:
+        short = c.lenses[lens][0]
         checkout = lens_checkout(key, short)
         ready_lens_checkout(checkout, candidate)
         if git("status", "--porcelain", cwd=checkout):
@@ -1702,7 +1812,7 @@ def review_prepare(args) -> None:
         path.write_text(brief(key, n, lens, candidate, tree, merge_base, checkout, prior, prior_candidate))
         briefs.append((lens, path, result_path(folder, n, short)))
     # The round in flight, journaled before its meta: a failed write leaves the round unprepared, to prepare again.
-    started = {"round": n, "head": candidate, "lenses": list(c.lenses), "restart": bool(previous),
+    started = {"round": n, "head": candidate, "lenses": lenses, "restart": bool(previous),
                **({"moved": int(git("rev-list", "--count", f"{prior_candidate}..{candidate}"))} if prior_candidate else {}),
                **({"why": why.strip()} if why is not None else {})}
     # An older generation still running here may not write the record, which another generation now writes: the round
@@ -1715,10 +1825,12 @@ def review_prepare(args) -> None:
         print(f"{key} round {n}: the record's writer is another generation, so this round's start isn't journalled: "
               "the views won't show it as under way")
     meta_path.write_text(json.dumps({"round": n, "candidate": candidate, "tree": tree, "startedAt": now(),
-                                     "lenses": list(c.lenses), "attempts": attempts, "restarts": restarts}, indent=2))
+                                     "lenses": lenses, **({"lensesReason": reason} if reason else {}),
+                                     "attempts": attempts, "restarts": restarts}, indent=2))
     append_log("prepares", key, {"round": n, "candidate": candidate, "restart": bool(previous)})
     state_tool("focus", "--lane", lane, "--text", f"{key} review round {n}", "--state", "reviewing", check=False)
     print(f"{key} round {n}: candidate {candidate[:10]}, tree {tree[:10]}" + (f" (restart {len(restarts)})" if restarts else ""))
+    print(f"lenses: {lenses_text(lenses, reason)}")
     print()
     if n == 1 and not restarts:
         print("Start one reviewer per lens, in parallel, each with exactly this prompt. Keep track of each reviewer: "
@@ -1914,7 +2026,11 @@ def journal_returns(key: str, folder: Path, doc: dict) -> list[str]:
             and e.get("subject") == key and e["id"] > start["id"]}
     prior = [json.loads(p.read_text()) for p in round_files(folder) if int(p.stem.split("-")[1]) < n]
     journaled = []
-    for lens, (short, _) in cfg().lenses.items():
+    declared = cfg().lenses
+    for lens in meta.get("lenses", []):
+        if lens not in declared:
+            continue
+        short = declared[lens][0]
         path = result_path(folder, n, short)
         if lens in back or lens not in start["data"]["lenses"] or not path.exists():
             continue
@@ -1992,14 +2108,17 @@ def review_reduce(args) -> None:
     meta = json.loads(meta_path.read_text())
     candidate = meta["candidate"]
     lane = check_candidate_ownership(c, key, git("merge-base", c.base_ref, candidate), candidate)
-    if meta["lenses"] != list(c.lenses):
-        raise Stop(f"round {n} was prepared for {meta['lenses']}, not this repository's lenses {list(c.lenses)}")
+    expected, _ = story_lens_set(c, folder)
+    if meta["lenses"] != expected:
+        raise Stop(f"round {n} was prepared for {meta['lenses']}, not the story's lenses {expected}")
+    lenses = expected
     prior = [json.loads(p.read_text()) for p in round_files(folder)]
     if [r["round"] for r in prior] != list(range(1, n)):
         raise Stop(f"rounds before {n} are missing or out of order: {[r['round'] for r in prior]}")
     rel, graph = release_tuple(), graph_digest()
     entries, lens_rounds, digests, problems, bad = [], [], {}, [], set()
-    for lens, (short, _) in c.lenses.items():
+    for lens in lenses:
+        short = c.lenses[lens][0]
         path = result_path(folder, n, short)
         if not path.exists():
             problems.append(f"{lens}: missing {path}; save its subagent's final JSON there")
@@ -2082,12 +2201,12 @@ def review_reduce(args) -> None:
     try:
         _validator().validate_review_outcomes([*prior, outcome], key, meta["candidate"])
     except Exception as error:
-        refuse(set(c.lenses), f"the release's validator refuses the round: {error}")
+        refuse(set(lenses), f"the release's validator refuses the round: {error}")
     journal_returns(key, folder, load_state())  # any result the supervisor's pass hasn't journaled yet
     done_path.write_text(json.dumps(outcome, indent=1) + "\n")
     if status != "unresolved":  # another round reuses each lens's checkout; an aligned or bounded review is done with it
-        for lens, (short, _) in c.lenses.items():
-            remove_lens_checkout(lens_checkout(key, short))
+        for lens in lenses:
+            remove_lens_checkout(lens_checkout(key, c.lenses[lens][0]))
     ensure_recorded(key, outcome, lane, folder)
     summarize(key, outcome)
 
@@ -2135,18 +2254,23 @@ def plan_review_lenses(c) -> list[str]:
             rounds = plan_review_rounds(c)
             if rounds:
                 return rounds[0]["lenses"]
-            raise Stop(f"name the plan review's lenses with --lenses, such as --lenses {','.join(c.lenses)}")
+            raise Stop(f"name the plan review's lenses with --lenses, such as --lenses {','.join(c.plan_lenses_declared)}")
     else:
         where = f"{c.delivery_where} planReview.lenses"
         lenses = (c.raw.get("planReview") or {}).get("lenses")
         if not isinstance(lenses, list) or not lenses:
-            raise Stop(f"{c.delivery_where} names no plan review lenses: set planReview.lenses, such as {list(c.lenses)}")
+            raise Stop(f"{c.delivery_where} names no plan review lenses: set planReview.lenses, such as "
+                       f"{c.plan_lenses_declared}")
     if not lenses or len(lenses) > 12 or len(set(lenses)) != len(lenses):
         raise Stop(f"{where} must be 1 to 12 different lenses")
     unknown = [lens for lens in lenses if lens not in c.lenses or not PLAN_REVIEW_ID.fullmatch(lens)]
     if unknown:
         raise Stop(f"{where} names {', '.join(map(str, unknown))}, which this repository doesn't declare; its lenses "
                    f"are {', '.join(c.lenses)}")
+    story_only = [lens for lens in lenses if lens not in c.plan_lenses_declared]
+    if story_only:
+        raise Stop(f"{where} names {', '.join(story_only)}, whose use excludes plan review; the declared plan lenses "
+                   f"are {', '.join(c.plan_lenses_declared)}")
     return lenses
 
 
@@ -4908,8 +5032,9 @@ def handoff(args) -> None:
     last = outcomes[-1]
     if last["outcome"] != "aligned":
         raise Stop(f"round {last['round']} is {last['outcome']}; the lenses have not all approved")
-    if {e["lens"] for e in last["entries"]} != set(c.lenses):
-        raise Stop(f"round {last['round']} doesn't carry every lens")
+    story_lenses, lenses_reason = story_lens_set(c, folder)
+    if {e["lens"] for e in last["entries"]} != set(story_lenses):
+        raise Stop(f"round {last['round']} doesn't carry every lens of the story's set, {', '.join(story_lenses)}")
     notes = evidence_notes(last) if c.no_deferrals else []
     if notes:
         raise Stop(f"round {last['round']}'s evidence holds notes, and this delivery takes no deferrals: fix each, then "
@@ -5013,6 +5138,7 @@ def handoff(args) -> None:
           if base_merge else []),
         "- review rounds: " + "; ".join(f"r{o['round']} {o['outcome']}" for o in outcomes) + " (review evidence captured)"
         + (f"; history: {'; '.join(histories)}" if histories else ""),
+        f"- review lenses: {lenses_text(story_lenses, lenses_reason)}",
         f"- validation: {validation}",
         *([f"- checks run: {checks_shown(ran, added)}"] if ran else []),
         *([f"- PR review: {pr_line}"] if pr_line else []),
@@ -7185,7 +7311,9 @@ def lead_brief(args) -> None:
         "branch": c.branch_pattern.replace("{key}", "<key>"),
         "lane_checkout": c.lane_pattern.replace("{key}", "<key>"),
         "state": str(c.state.resolve()), "lead_checkout": str(c.root.resolve()), "bound": str(c.bound), "work": c.work,
-        "lenses": ", ".join(f"`{lens}`" for lens in c.lenses),
+        "lenses": "\n".join([f"- {', '.join(f'`{lens}`' for lens in MANDATED_LENSES)}: mandated, in every round.",
+                              *(f"- `{lens}`: {charter_purpose(c.lenses[lens][1]) or '(its charter states no purpose)'}"
+                                for lens in c.story_lenses if lens not in MANDATED_LENSES)]),
         "gates": "\n".join(f"   - `{' '.join(expand_argv(g['argv'], base=c.base_ref, key='<key>', delivery=c.delivery))}`"
                            for g in c.gates) or "   - (none declared)",
         "never_touch": ", ".join(f"`{p}`" for p in c.never_touch) or "(nothing listed)",
@@ -8161,6 +8289,26 @@ def print_evidence_notes(key: str, n: int) -> None:
           + ("".join(f"\n  {lens}: {note}" for lens, note in notes) if notes else " none"))
 
 
+def handed_round_one_meta(c, key: str) -> dict | None:
+    """Round 1's meta where the hand-off left it: the lane's checkout, else the lane evidence kept once it went."""
+    for folder in (c.lane_checkout(key) / c.work / "review" / key, evidence_dir(key)):
+        meta = load_json(folder / "round-1.meta.json")
+        if meta is not None:
+            return meta
+    return None
+
+
+def accepted_lenses(declared: list[str], journal: list[dict], key: str, meta: dict | None) -> list[str]:
+    """The lenses a story's last round must carry at acceptance: those of its latest round 1 start, when round 1's
+    meta says they were chosen; otherwise, for a story prepared before they were, or one whose round 1 start isn't
+    journaled, every declared lens."""
+    start = next((e for e in reversed(journal) if e.get("kind") == "review.started" and e.get("subject") == key
+                  and e["data"].get("round") == 1), None)
+    if start is None or not (meta or {}).get("lensesReason"):
+        return list(declared)
+    return list(start["data"]["lenses"])
+
+
 def lead_accept(args) -> None:
     c = cfg()
     if not (c.state / "state.json").is_file():
@@ -8222,8 +8370,13 @@ def accept_story(c, args) -> None:
     if item.get("reportedRounds") != len(set(numbers)):
         problems.append(f"the hand-off reports {item.get('reportedRounds')} rounds; the journal has {len(set(numbers))}")
     last = max(rounds, key=lambda e: e["data"]["round"], default=None)
-    if not last or set(last["data"]["verdicts"]) != set(c.lenses) or set(last["data"]["verdicts"].values()) != {"approve"}:
-        problems.append("the last journaled round is not approved by every lens")
+    first_meta = handed_round_one_meta(c, key)
+    story_lenses = accepted_lenses(list(c.lenses), doc["journal"], key, first_meta)
+    print(f"  review lenses: {', '.join(story_lenses)}; reason: "
+          f"{(first_meta or {}).get('lensesReason') or 'reason not found'}")
+    if not last or set(last["data"]["verdicts"]) != set(story_lenses) or set(last["data"]["verdicts"].values()) != {"approve"}:
+        problems.append(f"the last journaled round is not approved by every lens of the story's set, "
+                        f"{', '.join(story_lenses)}")
     if last and c.no_deferrals:
         print_evidence_notes(key, last["data"]["round"])
     evidence = [e for e in doc["journal"] if e.get("kind") == "review.recorded" and e.get("subject") == key]
@@ -12183,7 +12336,8 @@ def show_config(args) -> None:
         ("remote", c.remote), ("workDirectory", c.work), ("stateDirectory (in the lead's checkout)", c.state_rel),
         ("branchPattern", c.branch_pattern), ("laneCheckout", c.lane_pattern), ("deliveries", c.deliveries),
         ("tracker.issueUrl", c.issue_url), ("forge", json.dumps(c.forge)), ("review.bound", c.bound),
-        ("review.lenses", ", ".join(f"{k} ({v[1]})" for k, v in c.lenses.items())), ("review.prepare", json.dumps(c.prepare)),
+        ("review.lenses", ", ".join(f"{k} ({v[1]}; use: {' and '.join(c.lens_use[k])})" for k, v in c.lenses.items())),
+        ("review.prepare", json.dumps(c.prepare)),
         ("gates", "; ".join(f"{g['id']}: {' '.join(g['argv'])}" for g in c.gates)),
         ("neverTouch", ", ".join(c.never_touch)), ("inApp", "declared" if c.in_app else "none"),
     ]
@@ -12397,6 +12551,7 @@ class Doctor:
             ("binding", "orchestration binding", ("platform",), self.check_binding),
             ("candidate", "merge queue candidate step", ("binding",), self.candidate_step),
             ("config", "configuration", ("platform",), self.config),
+            ("lenses", "review lenses", ("config",), self.review_lenses),
             ("generation", "release generation", ("platform",), self.generation),
             ("hooks", "host hooks", ("config",), self.hooks),
             ("committed", "release on the delivery base", ("config", "binding", "generation"), self.committed),
@@ -12444,10 +12599,15 @@ class Doctor:
                     status, detail = check()
                 except (Stop, ValueError) as error:  # a refusal, or a file that isn't JSON
                     status, detail = "wrong", f"{error}; fix: see the troubleshooting section of {GUIDE}"
-            detail = " ".join(detail.split())  # one line per check
-            self.results[row] = (status, detail)
             shown = "skipped" if status == "skipped-ok" else status
-            print(f"{shown:8} {label}: {detail}".rstrip())
+            if isinstance(detail, list):  # one line per item: (label, detail)
+                for item, said in detail:
+                    print(f"{shown:8} {item}: {' '.join(said.split())}".rstrip())
+                detail = "; ".join(f"{item}: {said}" for item, said in detail)
+            else:
+                detail = " ".join(detail.split())  # one line per check
+                print(f"{shown:8} {label}: {detail}".rstrip())
+            self.results[row] = (status, detail)
             failed |= status in ("missing", "wrong")
         return not failed
 
@@ -12493,6 +12653,11 @@ class Doctor:
             renames = ", ".join(f"{old} -> {new}" for old, new in LEGACY_USED)
             return "wrong", f"earlier names in use: {renames}; fix: rename them (the earlier names still work for now)"
         return "ok", f"{self.c.path} resolves with no conflicts"
+
+    def review_lenses(self):
+        """Each declared lens on its own line: its use and where it was declared."""
+        return "ok", [(f"lens {lens}", f"{', '.join(self.c.lens_use[lens])}, from {self.c.lens_origin[lens]}")
+                      for lens in self.c.lenses]
 
     def release(self) -> Path:
         """The generation the checks read: the configured release, or the one this tool runs from."""
@@ -13152,6 +13317,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--grace", action="store_true"); p.add_argument("--restart", action="store_true")
     p.set_defaults(fn=review_prepare)
     p.add_argument("--why", help="the lane's reason for this round, shown with the round while it runs")
+    p.add_argument("--lenses", help="at round 1: the story's lenses, comma-separated, the mandated pair among them; "
+                   "fixed for the story (default: every declared story lens)")
+    p.add_argument("--lenses-reason", help="with --lenses: why the story's review takes these lenses")
     p = command(sub, "review-reduce"); p.add_argument("key"); p.add_argument("--round", type=int, required=True)
     p.set_defaults(fn=review_reduce)
     p = command(sub, "plan-review", help="review the plan before it is approved: prepare, reduce or end a round")
