@@ -72,9 +72,10 @@ Checked against `main` at `a904245` on 2026-11-18:
    - A claim whose `baseHead` is not a strict ancestor of M is left untouched when settling M: it was granted at or
      after the merge, so the merge is already in its history.
    Each merge is settled once, in journal order: the record keeps the id of the last `candidate.merged` it settled, in
-   the same patch as the claims, so a restarted supervisor neither skips nor repeats one. A record with no settled id
-   yet, such as one written by an earlier release, is seeded by the first pass with the latest `candidate.merged` id,
-   and no earlier merge is settled. The pass journals its `ownership.released` and `ownership.carried` entries after
+   the same patch as the claims, so a restarted supervisor neither skips nor repeats one. `lead-init` writes the
+   settled id as 0 for a new record, and so does a pass that finds no settled id and no `candidate.merged` in the
+   journal. Only a record that already holds a `candidate.merged` and no settled id, one started by an earlier
+   release, is seeded by the first pass with the latest `candidate.merged` id, and no earlier merge is settled. The pass journals its `ownership.released` and `ownership.carried` entries after
    that patch, so a supervisor stopped between the two loses the entries, never the change. The settle takes the
    ownership lock, as `lead-own` and `lead-accept` do.
 3. **A claim that no longer maps doesn't block a grant on its file.** `lead-own --region` checks overlap against the
@@ -235,8 +236,14 @@ V26-3591, in `tests/test_region_claims.py`:
   leaves it unchanged with no regrant item, and the record's settled id is that merge's `candidate.merged` id.
 - Two stories land, and the supervisor stops after settling the first. After the restart, the second is settled,
   with its own `ownership.released`.
-- A record with no settled id and two past merges is seeded with the latest merge's id on the first pass, and settles
-  neither.
+- A record started by an earlier release, with no settled id and two past merges, is seeded on the first pass. Its
+  fixture holds a story-less claim of the first merge's lane, anchored before that merge, whose lines the merge
+  changed inside it, and another lane's claim at an edge that merge crossed, so a settle would carry the one and flag
+  the other. After the first pass both claims are byte-identical to before, no `ownership.released`,
+  `ownership.carried` or `ownership.carved` is journalled, "Needs you" has no regrant item, and the settled id is the
+  latest merge's id.
+- A record started by `lead-init` holds a settled id of 0. After one pass with no merge, its first story lands, and the
+  next pass settles that merge, with `ownership.released` for the story's claim.
 - A grant on a file where another lane's claim no longer maps succeeds and prints that claim as needing a regrant. On
   the same fixture, with the record unchanged each time, a grant whose own span doesn't map to the current base is
   refused, and so is a grant that overlaps a third claim that does map, naming it.
