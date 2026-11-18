@@ -1287,6 +1287,8 @@ class ScopedSweepTests(unittest.TestCase):
              "runId": "run-36"},
             {"subject": "APP-37", "title": "Own, building by its change request alone", "lane": None, "stage": "building"},
             {"subject": "APP-38", "title": "Own, in review", "lane": None, "stage": "review", "trackerStarted": True},
+            {"subject": "APP-39", "title": "Own, placed by its files", "lane": None, "stage": "building",
+             "trackerStarted": True, "files": ["app/settings.py"]},
         ]
         self.lead({
             # What the sweep added before the snapshot was scoped: lane-less building work.
@@ -1494,7 +1496,10 @@ class TrackerScopeDoctorTests(unittest.TestCase):
         self.assertEqual(status, "warn")
         self.assertIn("it sets --scope without --state-dir {stateDirectory}", detail)
         # A status map alone needs no state directory.
-        self.assertEqual(self.row("--status-state", "In QA=completed")[0], "ok")
+        doctor.binding = {"state": {"trackerSnapshot": {"argv": [
+            "python3", "snapshot.py", "--kind", "jira", "--parent", "{parent}", "--status-state", "In QA=completed"]}}}
+        with mock.patch.object(self.module, "run", lambda argv, **kw: self.answer):
+            self.assertEqual(doctor.tracker_scope(), ("ok", "every scope value and mapped status is known"))
 
     def test_with_the_token_unset_the_row_is_skipped_and_runs_nothing(self) -> None:
         self.assertEqual(self.row("--scope", "label=mobile", token=("missing", "JIRA_API_TOKEN is unset")),
