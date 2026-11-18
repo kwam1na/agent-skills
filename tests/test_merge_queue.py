@@ -1190,7 +1190,7 @@ def fixture_lock(files: dict[str, str], **extra: object) -> str:
 
 
 class RegenerableListingTests(MergeQueueTestCase):
-    """A conflicted lock regenerates only when the candidate left its listing alone; otherwise the queue stops."""
+    """A conflicted lock takes the side whose listing changed and regenerates; when both sides changed it, the queue stops."""
 
     START = {"src/app.txt": "app one\n", "src/lib.txt": "lib one\n", "gen/generated.txt": "app one\nlib one\n"}
 
@@ -1240,27 +1240,77 @@ class RegenerableListingTests(MergeQueueTestCase):
         self.assertEqual(digests["src/lib.txt"], hashlib.sha256(b"lib two\n").hexdigest())
         self.assertEqual(sorted(digests), sorted(self.START))
 
-    def test_a_candidate_that_adds_an_output_stops_before_any_check(self) -> None:
-        adopter = self.lock_adopter()
-        head = self.candidate(adopter, self.side({"src/new.txt": "new\n"},
-                                                 listed={**self.START, "src/new.txt": "new\n"}))
-        base = adopter.advance_base(self.side({"src/lib.txt": "lib two\n"}))
-        results = self.run_queue(adopter, "feature")
-        self.stopped_naming_the_lock(adopter, results, base, head, "added src/new.txt")
-        self.assertFalse([line for line in adopter.log_lines() if line.startswith("check ")], "no check ran")
+    def digests(self, adopter: Adopter, revision: str = "origin/main") -> dict[str, str]:
+        lock = json.loads(adopter.show(revision, "gen/lock.json"))
+        return {output["path"]: output["sha256"] for entry in lock["entries"] for output in entry["outputs"]}
 
-    def test_a_candidate_that_removes_an_output_stops(self) -> None:
+    def assertCurrentDigests(self, adopter: Adopter, listed: list[str]) -> None:
+        """The merged lock lists exactly ``listed``, each with the digest of the file the base now holds."""
+        digests = self.digests(adopter)
+        self.assertEqual(sorted(digests), sorted(listed))
+        for path in listed:
+            self.assertEqual(digests[path], hashlib.sha256(adopter.show("origin/main", path).encode("utf-8")
+                                                           + b"\n").hexdigest(), path)
+
+    def test_a_candidate_that_adds_an_output_merges_when_the_base_changed_only_digests(self) -> None:
+        adopter = self.lock_adopter()
+        self.candidate(adopter, self.side({"src/new.txt": "new\n"}, listed={**self.START, "src/new.txt": "new\n"}))
+        adopter.advance_base(self.side({"src/lib.txt": "lib two\n"}))
+        results = self.run_queue(adopter, "feature")
+        self.assertEqual([result.document()["outcome"] for result in results][-1], "merged", results[-1].document().get("stop"))
+        self.assertFalse([result.document().get("stop") for result in results if result.document().get("stop")])
+        # The candidate's listing, with the base's new digest for src/lib.txt and the candidate's own for src/new.txt.
+        self.assertCurrentDigests(adopter, [*self.START, "src/new.txt"])
+        self.assertEqual(self.digests(adopter)["src/lib.txt"], hashlib.sha256(b"lib two\n").hexdigest())
+        self.assertEqual(self.digests(adopter)["src/new.txt"], hashlib.sha256(b"new\n").hexdigest())
+        self.assertEqual(adopter.show("origin/main", "gen/generated.txt"), "app one\nlib two\nnew")
+
+    def test_a_candidate_that_removes_an_output_merges_when_the_base_changed_only_digests(self) -> None:
         adopter = self.lock_adopter()
         listed = {path: text for path, text in self.START.items() if path != "src/lib.txt"}
-        head = self.candidate(adopter, self.side({"src/app.txt": "app two\n"}, listed=listed))
-        base = adopter.advance_base(self.side({"src/lib.txt": "lib two\n"}))
-        self.stopped_naming_the_lock(adopter, self.run_queue(adopter, "feature"), base, head, "removed src/lib.txt")
+        self.candidate(adopter, self.side({"src/app.txt": "app two\n"}, listed=listed))
+        adopter.advance_base(self.side({"src/lib.txt": "lib two\n"}))
+        results = self.run_queue(adopter, "feature")
+        self.assertEqual(results[-1].document()["outcome"], "merged", results[-1].document().get("stop"))
+        self.assertCurrentDigests(adopter, list(listed))
+        self.assertEqual(self.digests(adopter)["src/app.txt"], hashlib.sha256(b"app two\n").hexdigest())
 
-    def test_both_sides_adding_different_outputs_stops(self) -> None:
-        adopter = self.lock_adopter(listing=[PY, "tools/listing.py"])
-        head = self.candidate(adopter, self.side({"src/c.txt": "c\n"}, listed={**self.START, "src/c.txt": "c\n"}))
-        base = adopter.advance_base(self.side({"src/b.txt": "b\n"}, listed={**self.START, "src/b.txt": "b\n"}))
-        self.stopped_naming_the_lock(adopter, self.run_queue(adopter, "feature"), base, head, "added src/c.txt")
+    def test_a_lane_without_the_listings_claim_still_stops_when_the_base_changed_only_digests(self) -> None:
+        # The shared-output guard runs before the merge and is unchanged: another lane's claim on the lock stops a
+        # candidate that changed its listing, whatever the base did.
+        adopter = self.lock_adopter()
+        head = self.candidate(adopter, self.side({"src/new.txt": "new\n"}, listed={**self.START, "src/new.txt": "new\n"}))
+        base = adopter.advance_base(self.side({"src/lib.txt": "lib two\n"}))
+        adopter.lead_write(lambda state: state_tool.patch(adopter.state, writer="lead", version=state["version"], changes={
+            "laneOwnership": {"lane-1": ["src/**"], "lane-2": ["gen/lock.json"]}}))
+        results = self.run_queue(adopter, "feature")
+        self.stopped_naming_the_lock(adopter, results, base, head, "the candidate changed the outputs gen/lock.json lists "
+                                                                    "(added src/new.txt)")
+
+    def test_both_sides_changing_the_listing_stops_naming_both(self) -> None:
+        cases = {
+            "both add": ({"src/b.txt": "b\n"}, {**self.START, "src/b.txt": "b\n"},
+                         {"src/c.txt": "c\n"}, {**self.START, "src/c.txt": "c\n"},
+                         ("the candidate added src/c.txt", "the base added src/b.txt")),
+            "the base removes, the candidate adds": (
+                {"src/app.txt": "app two\n"}, {path: text for path, text in self.START.items() if path != "src/lib.txt"},
+                {"src/c.txt": "c\n"}, {**self.START, "src/c.txt": "c\n"},
+                ("the candidate added src/c.txt", "the base removed src/lib.txt")),
+            "both add the same output": ({"src/b.txt": "b\n"}, {**self.START, "src/b.txt": "b\n"},
+                                         {"src/b.txt": "b\n", "src/app.txt": "app two\n"}, {**self.START, "src/b.txt": "b\n"},
+                                         ("the candidate added src/b.txt", "the base added src/b.txt")),
+        }
+        for name, (base_files, base_listed, files, listed, expect) in cases.items():
+            with self.subTest(name):
+                self.fresh()
+                adopter = self.lock_adopter(listing=[PY, "tools/listing.py"])
+                head = self.candidate(adopter, self.side(files, listed=listed))
+                base = adopter.advance_base(self.side(base_files, listed=base_listed))
+                results = self.run_queue(adopter, "feature")
+                self.stopped_naming_the_lock(adopter, results, base, head, "both the candidate and the base changed")
+                for said in expect:
+                    self.assertIn(said, results[-1].document()["stop"]["detail"])
+                self.assertFalse([line for line in adopter.log_lines() if line.startswith("check ")], "no check ran")
 
     def test_an_output_only_the_base_added_regenerates_and_merges(self) -> None:
         adopter = self.lock_adopter()
@@ -1329,7 +1379,7 @@ class RegenerableListingTests(MergeQueueTestCase):
         base = adopter.advance_base(self.side({"src/lib.txt": "lib two\n"}))
         self.stopped_naming_the_lock(adopter, self.run_queue(adopter, "feature"), base, head, "absent at the merge base")
 
-    def test_in_a_batch_a_member_that_adds_an_output_is_dropped_and_a_digest_only_one_merges(self) -> None:
+    def test_in_a_batch_a_member_that_adds_an_output_merges_beside_digest_only_ones(self) -> None:
         adopter = self.lock_adopter()
         self.candidate(adopter, self.side({"src/lib.txt": "lib two\n"}), name="first")
         self.candidate(adopter, self.side({"src/new.txt": "new\n"}, listed={**self.START, "src/new.txt": "new\n"}),
@@ -1337,12 +1387,13 @@ class RegenerableListingTests(MergeQueueTestCase):
         self.candidate(adopter, self.side({"src/app.txt": "app two\n"}), name="digests")
         documents = {result.document()["candidate"]: result.document()
                      for result in adopter.runner().run_command("batch", ["first", "adds", "digests"])}
-        self.assertEqual(documents["adds"]["stop"]["reason"], "source_conflict")
-        self.assertIn("dropped from the batch", documents["adds"]["stop"]["detail"])
-        self.assertIn("added src/new.txt", documents["adds"]["stop"]["detail"])
-        self.assertEqual((documents["first"]["outcome"], documents["digests"]["outcome"]), ("merged", "merged"))
-        self.assertEqual(self.listed(adopter), sorted(self.START))
-        self.assertEqual(adopter.show("origin/main", "gen/generated.txt"), "app two\nlib two")
+        self.assertEqual({name: document["outcome"] for name, document in documents.items()},
+                         {"first": "merged", "adds": "merged", "digests": "merged"},
+                         {name: document.get("stop") for name, document in documents.items()})
+        # "adds" took its own listing over the batch's digest-only side; "digests" then took the batch's.
+        self.assertCurrentDigests(adopter, [*self.START, "src/new.txt"])
+        self.assertEqual(self.digests(adopter)["src/app.txt"], hashlib.sha256(b"app two\n").hexdigest())
+        self.assertEqual(adopter.show("origin/main", "gen/generated.txt"), "app two\nlib two\nnew")
 
     def batched(self, adopter: Adopter, first: dict[str, str], member: dict[str, str]) -> dict:
         """The member's result when a batch merges it into a tree that already holds ``first``: the batch's base side."""
@@ -1355,24 +1406,29 @@ class RegenerableListingTests(MergeQueueTestCase):
 
     def test_in_a_batch_every_row_holds_as_at_sync(self) -> None:
         listed_without_lib = {path: text for path, text in self.START.items() if path != "src/lib.txt"}
-        stops = {
-            "removes": ({"src/lib.txt": "lib two\n"}, ({"src/app.txt": "app two\n"}, listed_without_lib), "removed src/lib.txt"),
-            "both add": ({"src/b.txt": "b\n"}, ({"src/c.txt": "c\n"}, {**self.START, "src/c.txt": "c\n"}), "added src/c.txt"),
-        }
-        for name, (first, (member, listed), expect) in stops.items():
-            with self.subTest(name):
+        with self.subTest("both add"):
+            self.fresh()
+            adopter = self.lock_adopter()
+            base_listed = {**self.START, "src/b.txt": "b\n"}
+            first = self.side({"src/b.txt": "b\n"}, listed=base_listed)
+            got = self.batched(adopter, first, self.side({"src/c.txt": "c\n"}, listed={**self.START, "src/c.txt": "c\n"}))
+            self.assertEqual(got["document"]["stop"]["reason"], "source_conflict")
+            self.assertIn("dropped from the batch", got["document"]["stop"]["detail"])
+            for said in ("both the candidate and the batch built so far changed", "the candidate added src/c.txt",
+                         "the batch built so far added src/b.txt"):
+                self.assertIn(said, got["document"]["stop"]["detail"])
+            self.assertEqual(got["document"]["stop"]["paths"], ["gen/lock.json"])
+            self.assertEqual(adopter.tip("member"), got["head"])
+            # What landed is the first member's lock, untouched by the dropped one.
+            self.assertEqual(adopter.show("origin/main", "gen/lock.json").rstrip("\n"), first["gen/lock.json"].rstrip("\n"))
+        for name, member, listed in (("adds", {"src/new.txt": "new\n"}, {**self.START, "src/new.txt": "new\n"}),
+                                     ("removes", {"src/app.txt": "app two\n"}, listed_without_lib)):
+            with self.subTest(f"only the member {name} an output"):
                 self.fresh()
                 adopter = self.lock_adopter()
-                base_listed = {**self.START, "src/b.txt": "b\n"} if name == "both add" else None
-                got = self.batched(adopter, self.side(first, listed=base_listed), self.side(member, listed=listed))
-                self.assertEqual(got["document"]["stop"]["reason"], "source_conflict")
-                self.assertIn("dropped from the batch", got["document"]["stop"]["detail"])
-                self.assertIn(expect, got["document"]["stop"]["detail"])
-                self.assertEqual(got["document"]["stop"]["paths"], ["gen/lock.json"])
-                self.assertEqual(adopter.tip("member"), got["head"])
-                # What landed is the first member's lock, untouched by the dropped one.
-                self.assertEqual(adopter.show("origin/main", "gen/lock.json").rstrip("\n"),
-                                 self.side(first, listed=base_listed)["gen/lock.json"].rstrip("\n"))
+                got = self.batched(adopter, self.side({"src/lib.txt": "lib two\n"}), self.side(member, listed=listed))
+                self.assertEqual(got["document"]["outcome"], "merged", got["document"].get("stop"))
+                self.assertCurrentDigests(adopter, list(listed))
         with self.subTest("only the batch's side added an output"):
             self.fresh()
             adopter = self.lock_adopter()
@@ -1380,6 +1436,7 @@ class RegenerableListingTests(MergeQueueTestCase):
                                self.side({"src/app.txt": "app two\n"}))
             self.assertEqual(got["document"]["outcome"], "merged", got["document"].get("stop"))
             self.assertEqual(self.listed(adopter), sorted([*self.START, "src/b.txt"]))
+            self.assertCurrentDigests(adopter, [*self.START, "src/b.txt"])
         for how in ("fails", "empty", "garbage", "deep", "object", "numbers"):
             for version in ("merge base", "base", "candidate"):
                 with self.subTest(listing=how, version=version):

@@ -130,11 +130,11 @@
       "criteria": [
         {
           "id": "v26-3557-1",
-          "text": "c1: A hand-off at a new head for a story whose check failed is accepted while that story's base re-run is running, and the lead can accept it."
+          "text": "c1: A hand-off at a new head for a story whose check failed is accepted once any of its checks has failed, while the rest of its check run or its base re-run is still running, and the lead can accept it."
         },
         {
           "id": "v26-3557-2",
-          "text": "c2: Accepting it ends the old head's re-run, journalled as superseded with no verdict; the old head is never checked again."
+          "text": "c2: Accepting it ends the old head's remaining checks and any base re-run, journalled as superseded with no verdict; the old head is never checked again."
         },
         {
           "id": "v26-3557-3",

@@ -114,23 +114,31 @@ Checked against `main` at `0eb0aee` on 2026-11-17:
    regenerator refreshes the digests. Both differ from the merge base: stop with `source_conflict`, as today, and say
    that both sides changed the listing. `check_shared_outputs`, the guard for a lane without the listing's claim, is
    unchanged.
-7. **A new hand-off supersedes a base re-run.** V26-3557. The state tool's `handoff` accepts a hand-off for a row that
-   is `checking` while `/meta/checking/now/baseRerun` runs for that subject, at a head other than the checked one. It
-   is pending, as any hand-off, and `carry_review` targets it. When the lead accepts it, the state tool journals
-   `base.rerun.superseded` (new kind: `{base, head, by}`, where `head` is the old head and `by` is the acceptance's
-   entry). The queue polls the record every 2 seconds while a base re-run check runs. On seeing that entry it stops its
-   own check process group, by the pid it started, and journals `base.rerun.stopped` with `why` naming the entry. It
-   writes no `base.rerun.finished`, does not re-queue the old head, and the row takes the accepted head as `queued`.
-   The acceptance journals `base.rerun.superseded` and moves the row to the new head in one state-locked write. A
+7. **A new hand-off supersedes a failed candidate's run, from its first failure.** V26-3557, widened by the plan
+   change of 2026-11-17. Once any check of a candidate's run has failed (its `check.failed` is journalled), the verdict
+   is already "won't merge", and the rest is diagnosis: the remaining checks and any base re-run that follows. The state
+   tool's `handoff` then accepts a hand-off for that `checking` row, at a head other than the checked one, while either
+   phase runs: the rest of the candidate's own checks, or `/meta/checking/now/baseRerun` for that subject. Before a
+   check of the run has failed, a new head is still refused with `handoff_invalid`, as today. A batch run is out of
+   this: a member that fails in a batch waits for the batch's culprit search, as today. The hand-off is pending, as any
+   hand-off, and `carry_review` targets it. When the lead accepts it, the state tool journals `check.superseded` (new
+   kind: `{base, head, by, phase}`, where `head` is the old head, `by` is the acceptance's entry and `phase` is
+   `checks` or `base-rerun`). The queue polls the record every 2 seconds while either phase runs. On seeing that entry
+   it stops every check process group it started for that run, by the pid it recorded. In the `checks` phase it marks
+   the running and pending checks `superseded` on the row, runs no `classify` and starts no base re-run, and journals
+   no `check.finished`. In the `base-rerun` phase it journals `base.rerun.stopped` with `why` naming the entry, and
+   writes no `base.rerun.finished`. In both, it does not re-queue the old head, and the row takes the accepted head as
+   `queued`. The acceptance journals `check.superseded` and moves the row to the new head in one state-locked write. A
    verdict reached after that write is dropped, with no window between a read and a write: the queue's verdict, its
    `base.rerun.finished` and its stop all go through one build that re-reads the row under the versioned patch. When
-   the row's head is no longer the checked head, or a `base.rerun.superseded` names the checked head, the build writes
-   nothing, as `_refused_stop` already does for a refused stop.
+   the row's head is no longer the checked head, or a `check.superseded` names the checked head, the build writes
+   nothing, as `_refused_stop` already does for a refused stop. With no new hand-off, the run completes and its
+   failures are all reported, as today.
 8. **The lead can name the base broken before the re-run's verdict.** A new lead command,
    `lead-base-broken --head H --check ID --test T --why W [--repair KEY | --self-repair]`, journals `base.broken` with
    source `lead` and the head, check, test and reason. When a base re-run is running at that base head, it also
-   journals `base.rerun.superseded` with `by` naming the `base.broken` entry, and the queue stops the re-run as in
-   Decision 7. With no running re-run, or one at another base head, it journals no `base.rerun.superseded`. The
+   journals `check.superseded` with phase `base-rerun` and `by` naming the `base.broken` entry, and the queue stops the re-run as in
+   Decision 7. With no running re-run, or one at another base head, it journals no `check.superseded`. The
    candidate under check is stopped as `base_broken`.
    - `--repair KEY` names another, queued candidate as the repair, through `name_repair`, as today. The stopped
      candidate failed only because the base was broken, so `repaired_state` re-queues it at its old head on
@@ -159,7 +167,8 @@ Checked against `main` at `0eb0aee` on 2026-11-17:
 
 - Skipping the base re-run by default. With no lead decision and no new hand-off, a failed check re-runs on the base
   exactly as today.
-- Letting a lane end a re-run without a hand-off the lead accepts.
+- Letting a lane end a run or a re-run without a hand-off the lead accepts.
+- Stopping a candidate's run at its first failure by default (fail-fast). With no new hand-off, the run completes.
 - Requiring a base merge when the base moved without a conflict (Decision 2).
 - Test flakes that make the queue journal `base.broken` (V26-3573, V26-3478).
 - V26-3553's gap "the queue's sync merge blocks a lane's next push". After V26-3572, a candidate that merged the
@@ -257,17 +266,24 @@ V26-3549, in `tests/test_merge_queue.py`:
 V26-3557, in `tests/test_orchestration_state.py`, `tests/test_merge_queue.py`,
 `tests/test_run_delivery_supervisor.py` and `tests/delivery_views_page/`:
 
-- A hand-off at a new head is accepted by the state tool while the subject's base re-run runs. Still refused with
-  `handoff_invalid`: one at the checked head, one at a new head while the row is checking with no base re-run, and one
-  at a new head while a base re-run runs for another subject.
-- `lead-accept` of that hand-off journals `base.rerun.superseded` and queues the new head in one write. The fixture's
-  check blocks far past the test's deadline and records its pid. Within a few poll intervals its process group is
-  gone, and `base.rerun.stopped` is journalled naming the entry, with no verdict. The old head is never checked again.
-  The test joins `StoppedBaseRerunTests`, which is `run_quietly`.
+- A hand-off at a new head is accepted by the state tool once a check of the subject's run has failed: while the rest
+  of its checks run, and while its base re-run runs. Still refused with `handoff_invalid`: one at the checked head, one
+  at a new head while the row is checking and no check has failed yet, one at a new head while a base re-run runs for
+  another subject, and one for a member of a batch run.
+- Superseding in the `checks` phase: the first check fails while a second check, which blocks far past the test's
+  deadline and records its pid, still runs, and a third is pending. `lead-accept` of the hand-off journals
+  `check.superseded` with phase `checks` and queues the new head in one write. Within a few poll intervals the second
+  check's process group is gone, the second and third are `superseded` on the row, the third never starts, no base
+  re-run starts, and no `check.finished` is journalled. The old head is never checked again.
+- Superseding in the `base-rerun` phase: the fixture's base re-run check blocks far past the deadline and records its
+  pid. `lead-accept` journals `check.superseded` with phase `base-rerun`. Within a few poll intervals its process group
+  is gone, and `base.rerun.stopped` is journalled naming the entry, with no verdict. Both rows join
+  `StoppedBaseRerunTests`, which is `run_quietly`.
+- With no new hand-off, a run whose first check fails runs its remaining checks and reports every failure, as today.
 - The race: the re-run reaches `candidate_failed`, and the acceptance lands after the queue's last read and before its
   stop write. The row stays queued at the new head, with no `check_failed` stop and no `base.rerun.finished`.
 - A re-run whose verdict arrives after the superseding entry writes none. With the row's head unchanged but a
-  `base.rerun.superseded` naming the checked head, the verdict's build writes nothing too.
+  `check.superseded` naming the checked head, the verdict's build writes nothing too.
 - `lead-base-broken --self-repair` journals `base.broken` with check, test and reason, and ends the running re-run.
   The failed head is not re-queued, including after `base.repaired`. The lane hands off the fixed head, `lead-accept`
   marks it the repair, serve takes it alone, and its merge journals `base.repaired`.
@@ -278,7 +294,7 @@ V26-3557, in `tests/test_orchestration_state.py`, `tests/test_merge_queue.py`,
 - `repaired_state`: a `base_broken` row with `supersededAt` H whose head is now H2 is re-queued on `base.repaired`. The
   same row at head H is not.
 - `lead-base-broken` with no re-run running, and with one at another base head, journals `base.broken` and no
-  `base.rerun.superseded`, and the running re-run goes on. Without `--repair` or `--self-repair` it names no repair.
+  `check.superseded`, and the running re-run goes on. Without `--repair` or `--self-repair` it names no repair.
 - With no lead decision and no new hand-off, the re-run and its verdicts are unchanged. The existing re-run tests
   pass unmodified.
 - The line map's checking panel shows the purpose, the expected end and the two alternatives. The expected end uses
@@ -360,7 +376,7 @@ Lane 2, tier 1, after V26-3549. Test-first. Files: `skills/orchestrate-work/scri
 `tests/test_run_delivery_supervisor.py`, `tests/test_journal_kinds.py`, `tests/fixtures/journal-kinds/` and
 `tests/delivery_views_page/`.
 
-Implement Decisions 7, 8 and 9, including `lead-accept`'s superseding acceptance and its pending self-repair. Add `base.rerun.superseded` to the kind registry with its vectors. Add
+Implement Decisions 7, 8 and 9, including `lead-accept`'s superseding acceptance and its pending self-repair. Add `check.superseded` to the kind registry with its vectors. Add
 `lead-base-broken` to run-delivery's `SKILL.md`. In the guide's "A stopped base re-run" and "A broken base", say when
 ending a re-run early is sound, which is when the lead knows the cause or holds the fix, and that the lead's entry is
 then the evidence for the base's state.
