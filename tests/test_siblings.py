@@ -506,6 +506,24 @@ class SiblingTests(unittest.TestCase):
         self.assertEqual((self.sibling()["lastOutcome"], self.sibling()["lastAttemptAt"]), ("unavailable", began))
         self.assertEqual(state_tool.read_state(self.record)["version"], version)
 
+    def test_a_later_read_the_freshness_gate_refuses_leaves_a_stale_sibling_as_it_was(self) -> None:
+        """Refused as too old, but later than when the sibling's stale outcome began: nothing changes but times."""
+        self.serve(body("building"))
+        snapshot = self.read()
+
+        def taken(seconds_ago: float) -> dict:
+            copied = copy.deepcopy(snapshot)
+            copied["siblings"][0]["readAt"] = copied["takenAt"] = at(seconds_ago)
+            return copied
+
+        self.reconcile(taken(30), max_age=5)
+        began = self.sibling()["lastAttemptAt"]
+        self.assertEqual((self.sibling()["lastOutcome"], began), ("stale", taken(30)["siblings"][0]["readAt"]))
+        held = ((self.record / "state.json").read_bytes(), (self.record / "journal.jsonl").read_bytes())
+        result = self.reconcile(taken(15), max_age=5)
+        self.assertEqual((result["drift"], result["changes"]), (False, []))
+        self.assertEqual(((self.record / "state.json").read_bytes(), (self.record / "journal.jsonl").read_bytes()), held)
+
     def test_a_field_kept_from_an_earlier_read_clears_when_a_later_read_lacks_it(self) -> None:
         """Round 1's deferred finding: a closing the sibling no longer carries leaves the record."""
         self.first_read()

@@ -724,6 +724,11 @@ class SiblingWaitTests(unittest.TestCase):
         self.assertEqual(of(document, "APP-4"), [])
         entry = self.ranked(document, "lane-1")["APP-4"]
         self.assertEqual((entry["blocked"], entry["waits"]), (False, []))
+        # A record whose last sibling was removed keeps an empty list, and behaves as one that never had any.
+        document["state"]["siblings"] = []
+        self.assertEqual(state_tool.state_errors(document["state"]), [])
+        self.assertEqual(of(document, "APP-4"), [])
+        self.assertFalse(self.ranked(document, "lane-1")["APP-4"]["blocked"])
 
     # -- a record with siblings ------------------------------------------------------------------------------------
 
@@ -817,6 +822,8 @@ class SiblingWaitTests(unittest.TestCase):
                             "Waits for ZZZ-1, which no story here holds; mobile hasn't been read yet."),
             "never read": ((self.sibling(outcome=None),), False,
                            "Waits for ZZZ-1, which no story here holds; mobile hasn't been read yet."),
+            "read, beside one not fresh": ((self.sibling(), self.sibling("web", outcome="unavailable", subject="WEB-1")),
+                                           False, "Waits for ZZZ-1, which no story here holds; web hasn't been read yet."),
             "read, beside another epic's": ((self.sibling(), self.sibling("web", outcome="other-epic", subject="ZZZ-1")),
                                             True, "Waits for ZZZ-1, which no story here or sibling lists: add the "
                                                   "sibling, or fix the key."),
@@ -838,8 +845,12 @@ class SiblingWaitTests(unittest.TestCase):
 
     def test_the_trackers_blocker_and_the_siblings_read_must_both_say_done(self) -> None:
         """Scenario 23."""
+        for stage in ("merged", "settled"):
+            with self.subTest(stage=stage):
+                done = self.after_sibling(self.sibling(stage=stage))
+                self.assertEqual(of(done, "APP-4"), [])
+                self.assertFalse(self.ranked(done, "lane-1")["APP-4"]["blocked"])
         landed = self.after_sibling(self.sibling(stage="merged"))
-        self.assertEqual(of(landed, "APP-4"), [])
         snapshot = {"items": [{"subject": "APP-4", "state": "backlog", "blockedBy": ["MOB-7"]},
                               {"subject": "MOB-7", "state": "started"}]}
         self.assertTrue(self.ranked(landed, "lane-1", snapshot)["APP-4"]["blocked"])

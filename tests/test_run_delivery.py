@@ -6425,6 +6425,14 @@ class RunDeliveryPlanTests(unittest.TestCase):
         code, out = fx.flow(*story, "ZZZ-1", cwd=m)
         self.assertEqual(code, 2, out)
         self.assertIn("--after ZZZ-1 isn't a story of FX-1 or of a sibling delivery it has read", out)
+        # A key only another epic's sibling holds is no sibling story of this epic's.
+        state = json.loads((fx.tmp / "record/state.json").read_text())
+        state["siblings"][0]["lastOutcome"] = "other-epic"
+        (fx.tmp / "record/state.json").write_text(json.dumps(state, indent=2) + "\n")
+        code, out = fx.flow(*story, "MOB-7", cwd=m)
+        self.assertEqual(code, 2, out)
+        self.assertIn("--after MOB-7 isn't a story of FX-1 or of a sibling delivery it has read", out)
+        read_sibling_into(fx.tmp / "record", "MOB-7")
         code, out = fx.flow(*story, "MOB-7", cwd=m)
         self.assertEqual(code, 0, out)
         planned = next(item for item in json.loads((fx.tmp / "record/state.json").read_text())["planned"]
