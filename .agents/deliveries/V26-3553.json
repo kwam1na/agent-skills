@@ -342,6 +342,10 @@
         {
           "id": "v26-3588-6",
           "text": "c6: Nothing moves under reduced motion, and both themes keep the track legible."
+        },
+        {
+          "id": "v26-3588-7",
+          "text": "c7: The kicker line ends with the delivery's duration, from the record's first entry to now (\"V26-3553 \u00b7 delivering \u00b7 9 h 13 min\"), with the start time on hover. A closed delivery reads its total there (\"delivered in 17 h 27 min\"), with the start and end on hover."
         }
       ]
     }
