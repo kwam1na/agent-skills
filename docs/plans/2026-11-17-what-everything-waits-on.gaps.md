@@ -88,6 +88,9 @@ grants from the record (`lane-grants`) belongs with V26-3571.
   `hosted.build` and `hosted.test` the same way: the hosted viewer's build script patches `line-map.js` at fixed hooks,
   and two were inside code the story removed, after its grace round. Open: nothing proposes the test modules or
   services that read a changed file before the queue does.
+- **A reviewer's checkout can't run the hosted viewer's tests.** On V26-3567's round 6, the outcome lens couldn't run
+  vitest: review-prepare's prepare commands install the Python and page dependencies, but not `hosted/delivery-viewer`'s
+  `node_modules`. The lane's own run stood in. Open: prepare a lens's checkout for every service the story's checks name.
 - **A story's new test module can't be among its acceptance checks.** The base's catalogue learns the module only when
   the story lands (`tests.test_waits_review`). Open.
 - **A batch runs every check after one has already failed.** V26-3565 and V26-3426 were checked together. The new
