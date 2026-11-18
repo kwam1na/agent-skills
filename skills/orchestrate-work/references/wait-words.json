@@ -24,7 +24,6 @@
       "sibling": {
         "by": "stage",
         "cases": {
-          "unread": "Last read {at}.",
           "planned": "Not started.",
           "building": "Building.",
           "review": "In review.",
@@ -37,6 +36,15 @@
           "stopped": "Stopped."
         },
         "otherwise": "{stage}."
+      },
+      "siblingSince": {
+        "by": "outcome",
+        "cases": {
+          "stale": "Stale since {at}.",
+          "unavailable": "Couldn't be read since {at}.",
+          "incompatible": "Needs a compatible snapshot since {at}."
+        },
+        "otherwise": "Not read fresh since {at}."
       }
     }
   },

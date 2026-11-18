@@ -573,11 +573,11 @@
               ]
             },
             "lastAttemptAt": {
-              "description": "When the latest read reconcile applied was taken.",
+              "description": "When the sibling's current lastOutcome began: the time of the read that changed the outcome. Later reads with the same outcome leave it as it was.",
               "$ref": "#/$defs/timestamp"
             },
             "readAt": {
-              "description": "When the last read whose outcome was read was taken. stories, trackerParent, updatedAt, closing and terminal come from that read.",
+              "description": "When the last read that changed the sibling was taken: its stories, trackerParent, updatedAt, closing and terminal come from that read. A later read that changes nothing leaves it as it was, so it can be older than the latest read.",
               "$ref": "#/$defs/timestamp"
             },
             "trackerParent": {
