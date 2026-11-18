@@ -481,6 +481,15 @@ test("says what a lone piece's rerun is for, when it should end by the failed ch
   const [both] = await open(document);
   expect(both.app.querySelector(".checking .ck-rerun-why")?.textContent).toBe("storefront build and payments unit failed on " +
     "PAY-2361; the rerun decides whether the main line or the piece broke it · expected to end in 4 minutes");
+  // Started at 05:07 and read at 05:10: one past its expected end says by how much, one due now says about now.
+  for (const [build, unit, words] of [[60, 0, " · expected to have ended 2 minutes ago"],
+                                      [120, 60, " · expected to end about now"]]) {
+    document.state.meta.checkHistory.checks["storefront build"] = { seconds: [build], flakes: 0 };
+    document.state.meta.checkHistory.checks["payments unit"] = { seconds: [unit], flakes: 0 };
+    const [due] = await open(document);
+    expect(due.app.querySelector(".checking .ck-rerun-why")?.textContent).toBe("storefront build and payments unit " +
+      "failed on PAY-2361; the rerun decides whether the main line or the piece broke it" + words);
+  }
   delete document.state.meta.checkHistory.checks["payments unit"];
   const [partly] = await open(document);
   expect(partly.app.querySelector(".checking .ck-rerun-why")?.textContent).toBe("storefront build and payments unit failed " +

@@ -4850,6 +4850,66 @@ class StoppedBaseRerunTests(MergeQueueTestCase):
         self.assertEqual([entry["data"]["check"] for entry in self.journal(adopter, "check.failed")], ["unit"])
         self.assertEqual(len(self.journal(adopter, "check.retried")), 1)
 
+    def moved_on(self) -> tuple[Adopter, "queue.Runner", str, str]:
+        """A run that checked `feature` at its first head, whose row a new head has since replaced, with the entry that
+        ended it. Returns the adopter, a runner that still checks the old head, and the two heads."""
+        adopter = self.adopter()
+        old = self.candidate(adopter, {"src/app.txt": "app two\n"})
+        self.lanes(adopter)
+        new = adopter.lane_commit("feature", {"src/candidate.txt": "fixed\n"})
+        state_tool.handoff(adopter.state, lane="lane-1", subject="feature", head=new, change_request="cr")
+        state_tool.append_journal(adopter.state, kind="check.superseded", subject="feature", writer="runner",
+                                  data={"base": {"ref": "main", "head": adopter.tip("main")}, "head": old, "by": 1,
+                                        "phase": "checks"}, because=[1])
+        runner = adopter.runner()
+        runner.checked["feature"] = old
+        return adopter, runner, old, new
+
+    def test_a_check_superseded_ends_only_the_run_at_the_head_it_names(self) -> None:
+        adopter, runner, old, new = self.moved_on()
+        self.assertEqual(runner.ending("feature")["data"]["head"], old)
+        self.assertTrue(runner.overtaken(state_tool.read_state(adopter.state), "feature"))
+        # The accepted head's own run is not the one the entry ended.
+        later = adopter.runner()
+        later.checked["feature"] = new
+        self.assertIsNone(later.ending("feature"))
+        self.assertFalse(later.overtaken(state_tool.read_state(adopter.state), "feature"))
+
+    def test_an_overtaken_run_writes_no_progress_and_journals_no_refused_stop(self) -> None:
+        adopter, runner, old, new = self.moved_on()
+        before = adopter.item("feature")
+        runner.write_progress(["feature"], [{"id": "unit", "state": "running"}])
+        self.assertEqual(adopter.item("feature"), before)
+        stopped = len(self.journal(adopter, "candidate.stopped"))
+        result = queue.Result("check", "feature")
+        # A refusal, which leaves a queued row where it stands: the run's read of the row decides what it journals.
+        runner.stopped(result, queue.Stop("not_synced", "no synced head"), "feature")
+        self.assertEqual((result.outcome, result.stop["reason"]), ("refused", "not_synced"))
+        self.assertEqual(len(self.journal(adopter, "candidate.stopped")), stopped)
+        self.assertEqual((adopter.item("feature")["stage"], adopter.item("feature")["head"]), ("queued", new))
+
+    def test_a_process_started_once_the_run_was_stopped_is_stopped_at_once(self) -> None:
+        adopter = self.adopter()
+        runner = adopter.runner()
+        runner.stop_live()
+        began = time.monotonic()
+        completed = runner.run_argv([PY, "-c", "import time; time.sleep(30)"], adopter.operator, queue.Context(), 60)
+        self.assertLess(time.monotonic() - began, 10)
+        self.assertEqual(completed.returncode, -signal.SIGKILL)
+
+    def test_a_base_flake_retry_the_hand_off_ends_gives_no_verdict(self) -> None:
+        adopter = self.stoppable("flake")
+        self.lanes(adopter)
+        heads: list[str] = []
+        self.when(lambda: bool(list(adopter.log.parent.glob(adopter.log.name + ".pid-2"))),
+                  lambda: heads.append(self.supersede(adopter)))
+        document = self.run_queue(adopter, "feature")[-1].document()
+        self.assertSuperseded(adopter, document, heads[0], "base-rerun")
+        [retried] = self.journal(adopter, "check.retried")
+        self.assertTrue(retried["data"]["onBase"])
+        self.assertEqual(len(self.journal(adopter, "base.rerun.stopped")), 1)
+        self.assertEqual(state_tool.read_state(adopter.state)["meta"].get("baseReruns") or [], [])
+
     def test_a_new_hand_off_ends_the_base_re_run(self) -> None:
         adopter = self.stoppable("die")
         self.lanes(adopter)
