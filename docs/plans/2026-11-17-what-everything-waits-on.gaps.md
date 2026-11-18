@@ -105,6 +105,12 @@ grants from the record (`lane-grants`) belongs with V26-3571.
 - **A re-queued candidate leaves its lane's row "waiting on the lead".** The row was patched by hand. Fix: V26-3426
   (this delivery).
 
+- **The supervisor can lose a SIGTERM.** Its handler raises SystemExit from inside a signal, and when that lands while
+  CPython 3.11 compiles a module on a first in-process import, the exit is lost (206 of 300 probes; 0 on 3.14). The
+  supervisor then keeps running past a stop. V26-3554's new import made it likely, and it failed the queue twice. Fixed
+  in V26-3554 by honouring a recorded signal at each step and wait. Separately, `run_delivery.py`'s state reader catches
+  `BaseException` while it loads, which would also swallow a stop. Open.
+
 ### The lead's loop
 
 - **`lead-push` refuses any change in the checkout,** including the operator-approved patch to the installed copy.
