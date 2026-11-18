@@ -70,6 +70,75 @@
       "line": "Keep facts in the journal"
     },
     {
+      "kind": "review.started",
+      "lane": "lane-1",
+      "subject": "APP-12",
+      "data": {
+        "round": 4,
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "lenses": [
+          "outcome-correctness",
+          "adversarial-testing"
+        ],
+        "restart": false,
+        "moved": 11,
+        "why": "Fixes the two open P1s"
+      },
+      "head": "Review round 4 started on APP-12",
+      "line": "At 4e66a05, read by outcome-correctness and adversarial-testing, 11 commits since the last round. Fixes the two open P1s"
+    },
+    {
+      "kind": "review.started",
+      "lane": "lane-1",
+      "subject": "APP-12",
+      "data": {
+        "round": 1,
+        "head": "4e66a0571b2c3d4e5f60718293a4b5c6d7e8f901",
+        "lenses": [
+          "outcome-correctness"
+        ],
+        "restart": true
+      },
+      "head": "Review round 1 started again on APP-12",
+      "line": "At 4e66a05, read by outcome-correctness"
+    },
+    {
+      "kind": "review.lens.returned",
+      "lane": "lane-1",
+      "subject": "APP-12",
+      "data": {
+        "round": 4,
+        "lens": "outcome-correctness",
+        "verdict": "approve",
+        "findings": {
+          "P0": 0,
+          "P1": 0,
+          "P2": 1,
+          "P3": 0
+        }
+      },
+      "head": "outcome-correctness approved round 4 of APP-12",
+      "line": "Findings: 0 P0, 0 P1, 1 P2 and 0 P3"
+    },
+    {
+      "kind": "review.lens.returned",
+      "lane": "lane-1",
+      "subject": "APP-12",
+      "data": {
+        "round": 4,
+        "lens": "adversarial-testing",
+        "verdict": "changes",
+        "findings": {
+          "P0": 0,
+          "P1": 2,
+          "P2": 0,
+          "P3": 1
+        }
+      },
+      "head": "adversarial-testing asked for changes on round 4 of APP-12",
+      "line": "Findings: 0 P0, 2 P1, 0 P2 and 1 P3"
+    },
+    {
       "kind": "review.round",
       "lane": "lane-1",
       "subject": "APP-12",

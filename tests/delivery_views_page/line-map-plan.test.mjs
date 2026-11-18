@@ -104,7 +104,7 @@ test("opens with only what the engineer acts on, and folds the rest behind count
   expect(openRows(app)).toEqual(["CART-105Cart step 52 proofs left · It still has to merge."]);
   expect(app.querySelector("#plan .plan-meter")).toBeNull();
   expect([...app.querySelectorAll("#left .plan-meter")].map((meter) => meter.textContent)).toEqual(
-    ["Every cart criterion mergedNot yet13 of 14 criteria · merged", "Checked in the appNot yet27 of 29 criteria · in-app check, 1 more by waiver"]);
+    ["Every cart criterion mergedNot yet13 of 14 criteria · merged", "Checked in the appNot yet27 of 29 criteria · in-app check, 1 more by waiverAdded since approval at 11:00 am."]);
   // Nothing else shows until a fold opens: six folds, each closed, each with its count.
   const folds = [...inner.querySelectorAll(":scope > .plan-folds > .plan-fold")];
   expect(folds.map((fold) => fold.querySelector("summary").textContent)).toEqual(

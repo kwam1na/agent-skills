@@ -78,6 +78,8 @@ INVENTORY = {
     }),
     "run_delivery.py": Counter({
         _key("ensure_journaled", {"review.round"}): 1,
+        _key("review_prepare", {"review.started"}): 1,
+        _key("journal_returns", {"review.lens.returned"}): 1,
         _key("lead_evidence", {"evidence.published"}): 1,
         _key("lead_authorize_base_merge", {"base.merge.authorized"}): 1,
         _key("rebuild_plan", {"plan.updated"}): 1,

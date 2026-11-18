@@ -10,7 +10,7 @@ and lens charters), found in the installed generation it runs from. It reads the
 
 Lane:
   lane-start     <key> [--base B]
-  review-prepare <key> --round N [--grace] [--restart]
+  review-prepare <key> --round N [--grace] [--restart] [--why TEXT]
   review-reduce  <key> --round N
   gate           <key>
   build          <key>
@@ -1619,6 +1619,9 @@ def review_prepare(args) -> None:
     key = c.require(args.key)
     release_tuple()  # refuse an unidentified generation before anything is discarded, checked out or written
     n = args.round
+    why = getattr(args, "why", None)
+    if why is not None and not why.strip():
+        raise Stop("--why is empty: give the round's reason, or leave --why out")
     folder = review_dir(key)
     if n < 1 or n > c.bound + 1:
         raise Stop(f"round {n} is outside 1..{c.bound} (plus one grace round)")
@@ -1670,6 +1673,19 @@ def review_prepare(args) -> None:
         path = folder / f"brief-r{n}-{short}.md"
         path.write_text(brief(key, n, lens, candidate, tree, merge_base, checkout, prior, prior_candidate))
         briefs.append((lens, path, result_path(folder, n, short)))
+    # The round in flight, journaled before its meta: a failed write leaves the round unprepared, to prepare again.
+    started = {"round": n, "head": candidate, "lenses": list(c.lenses), "restart": bool(previous),
+               **({"moved": int(git("rev-list", "--count", f"{prior_candidate}..{candidate}"))} if prior_candidate else {}),
+               **({"why": why.strip()} if why is not None else {})}
+    # An older generation still running here may not write the record, which another generation now writes: the round
+    # goes on unjournalled, as rounds did before their start was, and the views show none under way.
+    done = state_tool("journal", "--writer", "lane", "--kind", "review.started", "--subject", key, "--lane", lane,
+                      "--data", json.dumps(started), check=False)
+    if done.returncode != 0:
+        if '"writer_generation_mismatch"' not in (done.stdout or "") + (done.stderr or ""):
+            raise Stop(f"journal review.started failed: {(done.stderr or done.stdout).strip()[-600:]}")
+        print(f"{key} round {n}: the record's writer is another generation, so this round's start isn't journalled: "
+              "the views won't show it as under way")
     meta_path.write_text(json.dumps({"round": n, "candidate": candidate, "tree": tree, "startedAt": now(),
                                      "lenses": list(c.lenses), "attempts": attempts, "restarts": restarts}, indent=2))
     append_log("prepares", key, {"round": n, "candidate": candidate, "restart": bool(previous)})
@@ -1811,8 +1827,86 @@ def ensure_journaled(key: str, outcome: dict, lane: str, doc: dict) -> None:
              "verdicts": verdicts, "findings": counts,
              **({"refused": outcome["attempts"]} if outcome.get("attempts") else {}),
              **({"restarts": len(outcome["restarts"])} if outcome.get("restarts") else {})}
+    start = latest_start(doc, key, n)
     state_tool("journal", "--writer", "lane", "--kind", "review.round", "--subject", key, "--lane", lane,
-               "--data", json.dumps(facts))
+               "--data", json.dumps(facts), *(("--answers", str(start["id"])) if start else ()))
+
+
+def latest_start(doc: dict, key: str, n: int | None = None) -> dict | None:
+    """The story's latest review.started, when it is for round `n` (any round when `n` is None)."""
+    start = next((e for e in reversed(doc["journal"]) if e.get("kind") == "review.started" and e.get("subject") == key), None)
+    return start if start is not None and (n is None or start["data"]["round"] == n) else None
+
+
+def carried_findings(prior: list[dict], lens: str) -> set[str]:
+    """The lens's findings still open from earlier rounds: each round's result must say what became of them."""
+    carried: set[str] = set()
+    for r in prior:
+        for e in r["entries"]:
+            if e["lens"] == lens:
+                carried |= {f["id"] for f in e["result"].get("findings", []) if f.get("state") != "deferred"}
+                carried -= {x["id"] for x in e["result"].get("resolvedFindings", e["result"].get("resolutions", []))
+                            if x.get("state") in CLOSED}
+    return carried
+
+
+def read_result(path: Path) -> object:
+    """A lens's saved final message as JSON, a fenced block included; raises ValueError when it isn't JSON."""
+    return json.loads(re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", path.read_bytes().decode()))
+
+
+def journal_returns(key: str, folder: Path, doc: dict) -> list[str]:
+    """Each lens result of the story's round in flight that matches its brief, journaled once as review.lens.returned.
+
+    The round in flight is the latest review.started, until a review.round answers it or names its round, or the
+    story is handed off or picked up again. A result that doesn't match its brief is never journaled, so the lens's
+    next result for the same brief is; a restart's new start journals its lenses afresh. Both the supervisor's pass
+    and review-reduce call it, so whichever sees a result first journals it."""
+    start = latest_start(doc, key)
+    if start is None or any(e.get("subject") == key and e["id"] > start["id"] and (
+            e.get("kind") in ("candidate.handed", "lane.assigned")
+            or (e.get("kind") == "review.round" and (start["id"] in e.get("answers", []) or e["data"]["round"] == start["data"]["round"])))
+            for e in doc["journal"]):
+        return []
+    n = start["data"]["round"]
+    meta_path = folder / f"round-{n}.meta.json"
+    if not meta_path.exists() or (folder / f"round-{n}.json").exists():
+        return []
+    meta = json.loads(meta_path.read_text())
+    if meta.get("candidate") != start["data"]["head"]:
+        return []
+    back = {e["data"]["lens"] for e in doc["journal"] if e.get("kind") == "review.lens.returned"
+            and e.get("subject") == key and e["id"] > start["id"]}
+    prior = [json.loads(p.read_text()) for p in round_files(folder) if int(p.stem.split("-")[1]) < n]
+    journaled = []
+    for lens, (short, _) in cfg().lenses.items():
+        path = result_path(folder, n, short)
+        if lens in back or lens not in start["data"]["lenses"] or not path.exists():
+            continue
+        try:
+            result = read_result(path)
+        except (ValueError, UnicodeDecodeError):
+            continue
+        if check_result(result, key=key, lens=lens, short=short, n=n, meta=meta, carried=carried_findings(prior, lens)):
+            continue
+        findings = {p: sum(1 for f in result["findings"] if f.get("severity") == p) for p in SEVERITIES}
+        facts = {"round": n, "lens": lens, "verdict": "approve" if result["outcome"] == "aligned" else "changes",
+                 "findings": findings}
+        state_tool("journal", "--writer", "lane", "--kind", "review.lens.returned", "--subject", key,
+                   "--lane", start["lane"], "--data", json.dumps(facts))
+        journaled.append(f"{key} {lens}")
+    return journaled
+
+
+def journal_lens_returns(c) -> list[str]:
+    """The supervisor's pass: each running round's new lens results, read from its lane's checkout."""
+    doc = load_state()
+    journaled = []
+    for key in sorted({e["subject"] for e in doc["journal"] if e.get("kind") == "review.started" and e.get("subject")}):
+        folder = c.lane_checkout(key) / c.work / "review" / key
+        if folder.is_dir():
+            journaled += journal_returns(key, folder, doc)
+    return journaled
 
 
 def round_history_text(outcome: dict) -> str:
@@ -1875,23 +1969,14 @@ def review_reduce(args) -> None:
         if not path.exists():
             problems.append(f"{lens}: missing {path}; save its subagent's final JSON there")
             continue
-        raw = path.read_bytes()
-        digests[lens] = hashlib.sha256(raw).hexdigest()
-        text = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", raw.decode())
+        digests[lens] = hashlib.sha256(path.read_bytes()).hexdigest()
         try:
-            result = json.loads(text)
+            result = read_result(path)
         except json.JSONDecodeError as error:
             problems.append(f"{lens}: {path.name} is not JSON ({error})")
             bad.add(lens)
             continue
-        carried: set[str] = set()
-        for r in prior:
-            for e in r["entries"]:
-                if e["lens"] == lens:
-                    carried |= {f["id"] for f in e["result"].get("findings", []) if f.get("state") != "deferred"}
-                    carried -= {x["id"] for x in e["result"].get("resolvedFindings", e["result"].get("resolutions", []))
-                                if x.get("state") in CLOSED}
-        own = check_result(result, key=key, lens=lens, short=short, n=n, meta=meta, carried=carried)
+        own = check_result(result, key=key, lens=lens, short=short, n=n, meta=meta, carried=carried_findings(prior, lens))
         if own:
             bad.add(lens)
             problems += [f"{lens}: {p}" for p in own]
@@ -1963,6 +2048,7 @@ def review_reduce(args) -> None:
         _validator().validate_review_outcomes([*prior, outcome], key, meta["candidate"])
     except Exception as error:
         refuse(set(c.lenses), f"the release's validator refuses the round: {error}")
+    journal_returns(key, folder, load_state())  # any result the supervisor's pass hasn't journaled yet
     done_path.write_text(json.dumps(outcome, indent=1) + "\n")
     if status != "unresolved":  # another round reuses each lens's checkout; an aligned or bounded review is done with it
         for lens, (short, _) in c.lenses.items():
@@ -4356,19 +4442,55 @@ def catalogue_ids(c) -> list[str]:
             if isinstance(entry, dict) and isinstance(entry.get("id"), str)]
 
 
-def check_ids(c, text: str, what: str) -> list[str]:
-    """A comma-separated list of the binding's catalogue ids, each once, in the order given; refused naming any other."""
-    known = catalogue_ids(c)
-    if not known:
+def catalogue_additions(c, ref: str, cwd: Path | None = None) -> dict[str, dict]:
+    """The catalogue entries a candidate adds, by id, in its binding's order: each entry of selection.catalogue in
+    the binding committed at `ref` whose id the base's catalogue lacks and no binding check of the base's uses. Read
+    with git, never from a working tree, so an uncommitted edit adds nothing; a binding missing at `ref`, or one that
+    doesn't parse, adds nothing either."""
+    shown = run(["git", "show", f"{ref}:.agents/orchestration.json"], cwd=cwd, check=False)
+    try:
+        head = json.loads(shown.stdout) if shown.returncode == 0 else {}
+    except ValueError:
+        head = {}
+    selection = head.get("selection") if isinstance(head, dict) else None
+    entries = selection.get("catalogue") if isinstance(selection, dict) else None
+    taken = set(catalogue_ids(c)) | {str(check.get("id")) for name in ("alwaysRun", "fallback")
+                                     for check in (c.binding or {}).get(name) or [] if isinstance(check, dict)}
+    added: dict[str, dict] = {}
+    for entry in entries if isinstance(entries, list) else []:
+        if isinstance(entry, dict) and isinstance(entry.get("id"), str) and entry["id"] not in taken:
+            added.setdefault(entry["id"], entry)
+    return added
+
+
+def handed_additions(c, key: str, head: str, cwd: Path | None = None) -> dict[str, dict]:
+    """The entries the handed head's committed binding adds to the catalogue, read in the checkout at `cwd` once the
+    head's objects are there: the story's branch is fetched when they aren't."""
+    if run(["git", "cat-file", "-e", f"{head}^{{commit}}"], cwd=cwd, check=False).returncode != 0:
+        run(["git", "fetch", "-q", c.remote, c.branch(key)], cwd=cwd, check=False)
+    return catalogue_additions(c, head, cwd=cwd)
+
+
+def check_ids(c, text: str, what: str, added: dict[str, dict] | None = None) -> list[str]:
+    """A comma-separated list of catalogue ids, each once, in the order given: the base's catalogue ids and the
+    entries the candidate adds (`catalogue_additions`); refused naming any other, and both catalogues."""
+    known, added = catalogue_ids(c), added or {}
+    if not known and not added:
         raise Stop(f"{what} takes catalogue ids, and the binding declares no selection.catalogue")
     names = [name.strip() for name in text.split(",")]
     if not all(names) or len(set(names)) != len(names):
         raise Stop(f"{what} is a comma-separated list of catalogue ids, each once: {text!r}")
-    unknown = [name for name in names if name not in known]
+    unknown = [name for name in names if name not in known and name not in added]
     if unknown:
-        raise Stop(f"{what} names checks the binding's catalogue doesn't have: {', '.join(unknown)} (it has "
-                   f"{', '.join(known)})")
+        raise Stop(f"{what} names checks in neither the base's catalogue nor the one at the candidate's head: "
+                   f"{', '.join(unknown)} (the base's has {', '.join(known) or 'none'}; the head adds "
+                   f"{', '.join(added) or 'none'})")
     return names
+
+
+def checks_shown(names: list[str], added: dict[str, dict]) -> str:
+    """The checks as a hand-off shows them: each id the candidate's own diff adds to the catalogue marked so."""
+    return ", ".join(f"{name} (added by this story)" if name in added else name for name in names)
 
 
 def provider_selects(c) -> bool:
@@ -4381,10 +4503,11 @@ def fallback_ids(c) -> list[str]:
     return [str(entry.get("id")) for entry in (c.binding or {}).get("fallback") or [] if isinstance(entry, dict)]
 
 
-def proposed_checks(c, changed: list[str], named: list[str]) -> list[str]:
+def proposed_checks(c, changed: list[str], named: list[str], added: dict[str, dict] | None = None) -> list[str]:
     """What lead-accept proposes when the lead chose nothing: the catalogue ids of the test modules the diff changes,
-    then the checks the lane named at hand-off, each once. select adds the guards and the readers' checks."""
-    known = set(catalogue_ids(c))
+    then the checks the lane named at hand-off, each once, from the base's catalogue and the entries the candidate
+    adds. select adds the guards and the readers' checks."""
+    known = set(catalogue_ids(c)) | set(added or {})
     ids = [f"tests.{match.group(1)}" for path in changed
            for match in [re.fullmatch(r"tests/(test_\w+)\.py", path)] if match]
     ids += list(named)
@@ -4546,7 +4669,8 @@ def handoff(args) -> None:
         raise Stop("a hand-off needs --pr, the story's open PR; a story that needs no change hands off with "
                    "--no-change --evidence")
     review_conf = pr_review_config()  # refused here, before anything else, when review.pr is malformed
-    ran = check_ids(c, args.checks, "--checks") if args.checks is not None else []
+    added = catalogue_additions(c, "HEAD")
+    ran = check_ids(c, args.checks, "--checks", added) if args.checks is not None else []
     folder = review_dir(key)
     head = clean_head()
     git("fetch", "-q", c.remote, c.base_branch)
@@ -4676,7 +4800,7 @@ def handoff(args) -> None:
         "- review rounds: " + "; ".join(f"r{o['round']} {o['outcome']}" for o in outcomes) + " (review evidence captured)"
         + (f"; history: {'; '.join(histories)}" if histories else ""),
         f"- validation: {validation}",
-        *([f"- checks run: {', '.join(ran)}"] if ran else []),
+        *([f"- checks run: {checks_shown(ran, added)}"] if ran else []),
         *([f"- PR review: {pr_line}"] if pr_line else []),
         "- in-app checks: " + ("; ".join(lines) or "none required"),
         "- run: none",
@@ -4989,7 +5113,7 @@ def plan_drift(c, log: list[dict]) -> list[dict]:
         for change in recorded:
             if kind == "story-added" and change["kind"] == "added" and key in change["subjects"] and not change.get("criteria"):
                 return True
-            if kind == "story-removed" and change["kind"] == "removed" and key in change["subjects"]:
+            if kind == "story-removed" and change["kind"] == "removed" and key in change["subjects"] and not change.get("criteria"):
                 return True
             if kind == "criterion" and criterion in change.get("criteria", []) and change.get("after") == after:
                 return True
@@ -5277,13 +5401,24 @@ def plan_publish_command(c) -> str:
 def lead_plan(args) -> None:
     """Record a change to the approved plan in the delivery file, or a reason for one already recorded."""
     c = cfg()
+    if args.action == "change":
+        # A flag the kind doesn't read is refused rather than ignored: --criterion on a story's removal once removed
+        # the whole story. --lane and --after are for a story --kind added brings into the delivery.
+        takes = {"subjects": ("added", "removed", "relaxed", "changed"), "criterion": ("added", "removed", "relaxed", "changed"),
+                 "text": ("added", "relaxed", "changed", "finish"), "lane": ("added",), "after": ("added",),
+                 "finish": ("finish",), "covers": ("finish",), "label": ("finish",)}
+        for flag, kinds in takes.items():
+            given = getattr(args, flag) != [] if flag == "subjects" else getattr(args, flag) is not None  # --subjects defaults to []
+            if given and args.kind not in kinds:
+                raise Stop(f"--kind {args.kind} doesn't use --{flag}; it is for --kind {' or '.join(kinds)}")
+    dropping = args.action == "change" and args.kind == "removed" and args.criterion is not None
     log = read_plan_log(c)
     if not plan_declared(c) and not any(entry["type"] == "snapshot" for entry in log):
         raise Stop(f"{c.delivery_where} declares no criteria, so the plan chapter is off; add criteria to its stories first")
     # Its rebuild registers any story added since, so a story registration would refuse is refused before anything
     # is written; one this change removes needs no reason.
     if (c.state / "state.json").exists():
-        removing = set(args.subjects or []) if args.action == "change" and args.kind == "removed" else set()
+        removing = set(args.subjects or []) if args.action == "change" and args.kind == "removed" and not dropping else set()
         problems = unreasoned_problems(c, [key for key in unregistered(c, load_state()["state"]) if key not in removing])
         if problems:
             raise unreasoned_refusal(c, problems)
@@ -5342,6 +5477,10 @@ def lead_plan(args) -> None:
     elif args.kind in ("added", "changed", "relaxed"):
         if len(change["subjects"]) != 1 or not args.criterion or args.text is None:
             raise Stop(f"--kind {args.kind} takes one story in --subjects, --criterion and --text")
+        for flag in ("lane", "after"):
+            if getattr(args, flag) is not None:
+                raise Stop(f"{change['subjects'][0]} is already a story of {c.delivery}, so --kind added doesn't use "
+                           f"--{flag}; it is for a story not yet in the delivery")
         criteria = stories[change["subjects"][0]].setdefault("criteria", [])
         existing = next((item for item in criteria if item["id"] == args.criterion), None)
         taken = [item["id"] for story in stories.values() for item in story.get("criteria", [])]
@@ -5355,6 +5494,25 @@ def lead_plan(args) -> None:
             change["before"] = existing["text"]
             existing["text"] = args.text
         change.update(criteria=[args.criterion], after=args.text)
+    elif dropping:
+        # One criterion leaves the story, which stays; the change keeps its wording, and no `after` says it is gone.
+        if len(change["subjects"]) != 1:
+            raise Stop("--kind removed with --criterion drops that criterion from one story in --subjects")
+        key = change["subjects"][0]
+        criteria = stories[key].get("criteria", [])
+        existing = next((item for item in criteria if item["id"] == args.criterion), None)
+        if existing is None:
+            raise Stop(f"{key} has no criterion {args.criterion}")
+        if len(criteria) == 1:
+            raise Stop(f"{args.criterion} is {key}'s last criterion; a story keeps at least one, so remove the story "
+                       f"instead, with --kind removed --subjects {key}")
+        naming = [line["id"] for line in raw.get("finish", [])
+                  if isinstance(plan_covers(line).get("criteria"), list) and args.criterion in plan_covers(line)["criteria"]]
+        if naming:
+            raise Stop(f"finish line {', '.join(naming)} covers {args.criterion}; take it out of its --covers first, with "
+                       f"--kind finish")
+        criteria.remove(existing)
+        change.update(criteria=[args.criterion], before=existing["text"])
     elif args.kind == "removed":
         if not change["subjects"]:
             raise Stop("--kind removed names the stories it removes in --subjects")
@@ -5385,6 +5543,9 @@ def lead_plan(args) -> None:
             record_finish = {"id": args.finish, "text": args.text, "met": False}
             change.update(after=covers)
         else:
+            if args.label is not None:
+                raise Stop(f"finish line {args.finish} already exists, so --kind finish doesn't use --label; it is for a "
+                           "new line")
             reworded = args.text is not None and args.text != line["text"]
             if not reworded and covers == plan_covers(line):
                 raise Stop(f"finish line {args.finish} already reads so and covers that: nothing to change")
@@ -5424,8 +5585,10 @@ def lead_plan(args) -> None:
         ids = entry["id"]
         if wording is not None:
             ids += f" and {record_plan_change(c, {**change, 'before': wording[0], 'after': wording[1]})['id']}"
-        git("commit", "-q", "-m", f"{c.delivery}: plan change {ids} ({'added story' if new_story else args.kind} "
-            f"{', '.join(change['subjects']) or change.get('finish', '')})".rstrip(), cwd=root)
+        said = f"{'added story' if new_story else args.kind} {', '.join(change['subjects']) or change.get('finish', '')}".rstrip()
+        if dropping:
+            said = f"removed {args.criterion} from {change['subjects'][0]}"
+        git("commit", "-q", "-m", f"{c.delivery}: plan change {ids} ({said})", cwd=root)
         if planned_after is not None:  # as it stands now: a story registered since the check above stays planned
             patch_from(lambda doc: {"planned": [p for p in doc["state"].get("planned", [])
                                                 if p["subject"] not in change["subjects"]]}, "the plan change's planned work")
@@ -5448,7 +5611,8 @@ def lead_plan(args) -> None:
             if patched is not None:
                 state_tool("journal", "--kind", "story.added", "--subject", key, "--data", json.dumps(story_added(c, key, change.get("why"))))
         rebuild_plan(c)
-    print(f"recorded {ids}: {args.kind} {', '.join(change['subjects']) or change.get('finish', '')}".rstrip())
+    print(f"recorded {ids}: {said}" if dropping else
+          f"recorded {ids}: {args.kind} {', '.join(change['subjects']) or change.get('finish', '')}".rstrip())
     print(f"committed the delivery file{' and the plan' if plan_text is not None else ''}; push it so lanes see it: "
           f"{plan_publish_command(c)}")
 
@@ -7791,18 +7955,21 @@ def accept_story(c, args) -> None:
         raise Stop("the binding names a provider, so a candidate with no lead selection runs the provider's answer, "
                    "and the fallback only when the provider can't give one: --full-suite can't promise the fallback; "
                    "choose the checks with --checks")
-    chosen = check_ids(c, args.checks, "--checks") if args.checks is not None else None
     doc = load_state()
     item = next((q for q in doc["state"]["queue"] if q["subject"] == key), None)
     waiting = next((p for p in doc["state"].get("planned", []) if p["subject"] == key and p.get("noChange")), None)
     if not item and waiting:
+        if args.checks is not None:
+            check_ids(c, args.checks, "--checks")  # refused as before; a no-change story runs no checks
         accept_no_change(c, key, waiting)
         return
     if not item:
         raise Stop(f"{key} is not in the queue; the lane has not handed it off")
+    merged = item["stage"] == "merged"
+    added = handed_additions(c, key, item["head"]) if not merged and lead_selects(c) and not args.full_suite else {}
+    chosen = check_ids(c, args.checks, "--checks", added) if args.checks is not None else None
     problems, decisions = [], []
     # Work merged outside the queue skipped the lead's acceptance; its decisions can still be recorded, once.
-    merged = item["stage"] == "merged"
     if merged and item.get("reportedRounds") is None:
         raise Stop(f"{key} merged with no hand-off, so there are no claims to check: journal your decision on it")
     if merged:
@@ -7905,7 +8072,7 @@ def accept_story(c, args) -> None:
     proposal = None
     if lead_selects(c) and not merged and chosen is None and not args.full_suite:
         # Under lead selection, a candidate accepted with no choice would check on the fallback: the lead says which.
-        proposal = proposed_checks(c, changed, item.get("namedChecks") or [])
+        proposal = proposed_checks(c, changed, item.get("namedChecks") or [], added)
         if provider_selects(c):
             problems.append(f"choose {key}'s checks: the binding enables lead selection, and a candidate accepted with "
                             "none checks on the provider's selection, widened to the fallback "
@@ -7957,10 +8124,12 @@ def accept_story(c, args) -> None:
     before = item.get("leadSelection") if item else None
     if chosen is not None and not merged and not problems:
         # Through the state tool's own select, with its validation, guards and readers (read from this checkout, the
-        # one the command runs in): what it refuses, this refuses.
+        # one the command runs in): what it refuses, this refuses. A base catalogue id goes as its id, and an entry the
+        # candidate adds as the head binding's object, unchanged, in the order chosen.
         reason = args.reason or f"chosen at acceptance from {key}'s diff and its hand-off's checks"
+        listed = [added[name] if name in added else name for name in chosen]
         done = state_tool("select", "--subject", key, "--binding", str(c.binding_path), "--head", head, "--checks",
-                          ",".join(chosen), "--reason", reason, check=False)
+                          json.dumps(listed), "--reason", reason, check=False)
         answer = json.loads(done.stdout or "{}") if done.stdout.strip().startswith("{") else {}
         if done.returncode != 0:
             problems.append(f"the selection was refused: {answer.get('error') or (done.stderr or done.stdout).strip()[-400:]}")
@@ -9830,7 +9999,7 @@ def write_needs(c, items: list[dict] | None, number: int, started: float) -> Non
 
 def removed_subjects(c) -> set[str]:
     return {key for entry in read_plan_log(c) if entry.get("type") == "change" and entry.get("kind") == "removed"
-            for key in entry.get("subjects", [])}
+            and not entry.get("criteria") for key in entry.get("subjects", [])}  # a dropped criterion keeps its story
 
 
 def close_holds(c, doc: dict, needs: list[dict]) -> list[str]:
@@ -10879,6 +11048,7 @@ class Supervisor:
 
         steps = (("reconcile", reconcile_once), ("cleanup", cleanup), ("fullHealth", lambda: post_merge_step(c, self.once)),
                  ("peers", lambda: self.peer_merges(entry)),
+                 ("lenses", lambda: journal_lens_returns(c)),
                  ("finish", lambda: journal_finish_met(c, load_state())),
                  ("deferrals", lambda: deferral_breaches(c, load_state())),
                  ("publish", lambda: render_views(c, only="publishers")), ("needs", derive),
@@ -12455,6 +12625,7 @@ def main(argv: list[str] | None = None) -> None:
     p = command(sub, "review-prepare"); p.add_argument("key"); p.add_argument("--round", type=int, required=True)
     p.add_argument("--grace", action="store_true"); p.add_argument("--restart", action="store_true")
     p.set_defaults(fn=review_prepare)
+    p.add_argument("--why", help="the lane's reason for this round, shown with the round while it runs")
     p = command(sub, "review-reduce"); p.add_argument("key"); p.add_argument("--round", type=int, required=True)
     p.set_defaults(fn=review_reduce)
     p = command(sub, "plan-review", help="review the plan before it is approved: prepare, reduce or end a round")

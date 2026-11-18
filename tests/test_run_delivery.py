@@ -2284,8 +2284,9 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         expect({k: round_entry["data"].get(k) for k in ("round", "refused", "restarts")} == {"round": 1, "refused": 1, "restarts": 1}
                and set(round_entry["data"]) == {"round", "startedAt", "finishedAt", "verdicts", "findings", "refused", "restarts"}
                and "review" not in round_entry
-               and "because" not in round_entry and "answers" not in round_entry,
-               f"the journal doesn't carry the round's history: {round_entry}")
+               and "because" not in round_entry
+               and round_entry.get("answers") == [max(e["id"] for e in journal if e["kind"] == "review.started")],
+               f"the journal doesn't carry the round's history, answering the restart's start: {round_entry}")
         (wt / "src/one.txt").write_text("one fixed\n")
         commit(wt, "FX-2: fix")
         code, out = flow_run("review-prepare", "FX-2", "--round", "2", cwd=wt)
@@ -4075,6 +4076,10 @@ class RunDeliveryReleaseAndNamesTests(unittest.TestCase):
         review = wt / ".orchestration/review/FX-3"
         code, out = fx.flow("review-prepare", "FX-3", "--round", 1, cwd=wt, tool=old / TOOL_RELATIVE)
         expect(code == 0, out)
+        # The record's writer is the current generation, so the older one journals no start, and says so.
+        self.assertIn("this round's start isn't journalled", out)
+        journal = (fx.tmp / "record/journal.jsonl").read_text()
+        self.assertNotIn('"review.started"', journal)
         brief_text = (review / "brief-r1-adversarial-testing.md").read_text()
         previous, current = receipt_tuple(receipt["previous"]), receipt_tuple(receipt)
         self.assertIn(f"`{previous['releaseId']}`", brief_text)
@@ -11463,6 +11468,174 @@ def older_shape_errors(*entries: dict) -> list[str]:
     finally:
         sys.path.remove(scripts)
     return delivery_state.journal_errors(list(entries))
+
+
+class AddedCatalogueEntryTests(unittest.TestCase):
+    """A story's own catalogue entry is nameable from its committed head: an id the base's catalogue lacks, held by
+    the binding at the head and not a binding check's, is an added entry; a working-tree edit, a binding that doesn't
+    parse and an id in neither catalogue add nothing."""
+
+    BINDING = ".agents/orchestration.json"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.tool = fresh_tool("run_delivery_for_added_entries")
+
+    @staticmethod
+    def entry(name: str, argv: str = "tools/check.py") -> dict:
+        return {"id": name, "argv": ["python3", "-B", argv], "cwd": ".", "reasons": [name], "prerequisites": []}
+
+    def setUp(self) -> None:
+        self.repo = Path(tempfile.mkdtemp(prefix="run-delivery-added-"))
+        self.addCleanup(shutil.rmtree, self.repo, True)
+        sh("git", "init", "-q", cwd=self.repo)
+        self.base = {"alwaysRun": [self.entry("validate-registry")], "fallback": [self.entry("full-suite")],
+                     "selection": {"lead": True, "catalogue": [self.entry("tests.test_run_delivery")]}}
+        self.write(self.base)
+        commit(self.repo, "base")
+        self.c = types.SimpleNamespace(binding=copy.deepcopy(self.base))
+
+    def write(self, binding: dict | str) -> None:
+        path = self.repo / self.BINDING
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(binding if isinstance(binding, str) else json.dumps(binding, indent=2) + "\n")
+
+    def head_adds(self, *entries: dict) -> dict:
+        head = copy.deepcopy(self.base)
+        head["selection"]["catalogue"] += list(entries)
+        return head
+
+    def added(self) -> dict:
+        return self.tool.catalogue_additions(self.c, "HEAD", cwd=self.repo)
+
+    def refusal(self, text: str, added: dict) -> str:
+        with self.assertRaises(self.tool.Stop) as stop:
+            self.tool.check_ids(self.c, text, "--checks", added)
+        return str(stop.exception)
+
+    def test_an_entry_the_head_commits_is_accepted_and_shown_as_added(self) -> None:
+        self.write(self.head_adds(self.entry("tests.test_new")))
+        (self.repo / "tests").mkdir()
+        (self.repo / "tests/test_new.py").write_text("# new\n")
+        commit(self.repo, "the story adds a module and its entry")
+        added = self.added()
+        self.assertEqual(added, {"tests.test_new": self.entry("tests.test_new")})
+        ran = self.tool.check_ids(self.c, "tests.test_run_delivery,tests.test_new", "--checks", added)
+        self.assertEqual(ran, ["tests.test_run_delivery", "tests.test_new"])
+        self.assertEqual(self.tool.checks_shown(ran, added),
+                         "tests.test_run_delivery, tests.test_new (added by this story)")
+
+    def test_an_entry_only_in_the_working_tree_adds_nothing(self) -> None:
+        self.write(self.head_adds(self.entry("tests.test_new")))
+        added = self.added()
+        self.assertEqual(added, {})
+        self.assertIn("tests.test_new", self.refusal("tests.test_run_delivery,tests.test_new", added))
+
+    def test_a_head_binding_that_does_not_parse_or_is_missing_adds_nothing(self) -> None:
+        for name, spoil in (("unparseable", lambda: self.write("{not json")),
+                            ("not an object", lambda: self.write("[]")),
+                            ("missing", lambda: (self.repo / self.BINDING).unlink())):
+            with self.subTest(name):
+                spoil()
+                commit(self.repo, name)
+                added = self.added()
+                self.assertEqual(added, {})
+                self.assertIn("tests.test_new", self.refusal("tests.test_new", added))
+                self.write(self.base)
+                commit(self.repo, "back")
+
+    def test_an_id_in_neither_catalogue_is_refused_naming_both(self) -> None:
+        self.write(self.head_adds(self.entry("tests.test_new")))
+        commit(self.repo, "adds one")
+        said = self.refusal("tests.test_nowhere", self.added())
+        self.assertIn("--checks names checks in neither the base's catalogue nor the one at the candidate's head: "
+                      "tests.test_nowhere (the base's has tests.test_run_delivery; the head adds tests.test_new)", said)
+        self.assertIn("the head adds none)", self.refusal("tests.test_nowhere", {}))
+
+    def test_an_added_entry_is_accepted_when_the_base_has_no_catalogue(self) -> None:
+        self.write(self.head_adds(self.entry("tests.test_new")))
+        commit(self.repo, "adds one")
+        self.c.binding["selection"].pop("catalogue")
+        added = self.added()
+        self.assertEqual(list(added), ["tests.test_run_delivery", "tests.test_new"])
+        self.assertEqual(self.tool.check_ids(self.c, "tests.test_new", "--checks", added), ["tests.test_new"])
+        with self.assertRaises(self.tool.Stop) as stop:
+            self.tool.check_ids(self.c, "tests.test_new", "--checks")
+        self.assertIn("declares no selection.catalogue", str(stop.exception))
+
+    def test_acceptance_fetches_the_story_s_branch_when_the_handed_head_is_not_in_its_checkout(self) -> None:
+        origin = self.repo.parent / (self.repo.name + "-origin.git")
+        lead = self.repo.parent / (self.repo.name + "-lead")
+        self.addCleanup(shutil.rmtree, origin, True)
+        self.addCleanup(shutil.rmtree, lead, True)
+        sh("git", "clone", "-q", "--bare", self.repo, origin)
+        sh("git", "clone", "-q", origin, lead)
+        self.write(self.head_adds(self.entry("tests.test_new")))
+        commit(self.repo, "the story adds its entry")
+        head = sh("git", "rev-parse", "HEAD", cwd=self.repo).stdout.strip()
+        sh("git", "push", "-q", origin, "HEAD:refs/heads/claude/FX-2", cwd=self.repo)
+        missing = sh("git", "cat-file", "-e", f"{head}^{{commit}}", cwd=lead, check=False)
+        self.assertNotEqual(missing.returncode, 0, "the lead's checkout already holds the head")
+        c = types.SimpleNamespace(binding=self.c.binding, remote="origin", branch=lambda key: f"claude/{key}")
+        self.assertEqual(self.tool.handed_additions(c, "FX-2", head, cwd=lead),
+                         {"tests.test_new": self.entry("tests.test_new")})
+        # Where the branch can't be had, nothing is added and nothing escapes.
+        self.assertEqual(self.tool.handed_additions(c, "FX-9", "f" * 40, cwd=lead), {})
+        # And lead-accept's acceptance takes the head's entry through that fetch: run in a checkout that lacks the head
+        # again, its --checks accepts the added id.
+        sh("git", "update-ref", "-d", "refs/remotes/origin/claude/FX-2", cwd=lead, check=False)
+        sh("git", "reflog", "expire", "--expire=now", "--all", cwd=lead)
+        sh("git", "gc", "-q", "--prune=now", cwd=lead)
+        self.assertNotEqual(sh("git", "cat-file", "-e", f"{head}^{{commit}}", cwd=lead, check=False).returncode, 0)
+        real_run, real_check_ids, seen = self.tool.run, self.tool.check_ids, []
+
+        def run(argv, cwd=None, check=True, **kw):
+            return real_run(argv, cwd=lead if cwd is None else cwd, check=check, **kw)
+
+        def check_ids(c_, text, what, added=None):
+            seen.append(real_check_ids(c_, text, what, added))
+            raise self.tool.Stop("checked")
+
+        doc = {"state": {"queue": [{"subject": "FX-2", "stage": "handed", "head": head}], "planned": []}}
+        accepting = types.SimpleNamespace(**vars(c), require=lambda key: key)
+        args = argparse.Namespace(requeue=None, key="FX-2", checks="tests.test_run_delivery,tests.test_new",
+                                  full_suite=False)
+        with mock.patch.object(self.tool, "pr_review_config", return_value=None), \
+                mock.patch.object(self.tool, "load_state", return_value=doc), \
+                mock.patch.object(self.tool, "run", run), mock.patch.object(self.tool, "check_ids", check_ids), \
+                self.assertRaises(self.tool.Stop):
+            self.tool.accept_story(accepting, args)
+        self.assertEqual(seen, [["tests.test_run_delivery", "tests.test_new"]])
+
+    def test_a_no_change_acceptance_still_refuses_an_unknown_check(self) -> None:
+        doc = {"state": {"queue": [], "planned": [{"subject": "FX-2", "noChange": {"baseHead": "a" * 40}}]}}
+        c = types.SimpleNamespace(binding=self.c.binding, require=lambda key: key)
+        settled = []
+        args = argparse.Namespace(requeue=None, key="FX-2", checks="tests.test_nope", full_suite=False)
+        with mock.patch.object(self.tool, "pr_review_config", return_value=None), \
+                mock.patch.object(self.tool, "load_state", return_value=doc), \
+                mock.patch.object(self.tool, "accept_no_change", lambda *a: settled.append(a[1])):
+            with self.assertRaises(self.tool.Stop) as stop:
+                self.tool.accept_story(c, args)
+            self.assertIn("tests.test_nope", str(stop.exception))
+            self.assertEqual(settled, [])
+            self.tool.accept_story(c, argparse.Namespace(**{**vars(args), "checks": "tests.test_run_delivery"}))
+            self.tool.accept_story(c, argparse.Namespace(**{**vars(args), "checks": None}))
+        self.assertEqual(settled, ["FX-2", "FX-2"])
+
+    def test_a_binding_checks_id_or_a_base_id_is_never_an_added_entry(self) -> None:
+        redefined = self.entry("tests.test_run_delivery", "tools/other.py")
+        self.write(self.head_adds(self.entry("validate-registry"), self.entry("full-suite")))
+        head = json.loads((self.repo / self.BINDING).read_text())
+        head["selection"]["catalogue"][0] = redefined
+        self.write(head)
+        commit(self.repo, "reuses a binding check's id and redefines a base entry")
+        added = self.added()
+        self.assertEqual(added, {})
+        self.assertIn("validate-registry", self.refusal("validate-registry", added))
+        # The base's own id stands, as the base defines it.
+        self.assertEqual(self.tool.check_ids(self.c, "tests.test_run_delivery", "--checks", added),
+                         ["tests.test_run_delivery"])
 
 
 class FactReaderTests(unittest.TestCase):

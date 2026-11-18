@@ -1,5 +1,9 @@
 // The round a reader picked in each run, kept across live redraws.
 var runRoundPicked = {};
+// The round each review last showed in flight, so the redraws that find it reduced settle its bead, for the length of
+// that one motion (the page's --move).
+var runInFlight = {};
+var RUN_SETTLE_MS = 700;
 // How a height change moves, by the repository's motion guidance (emil-design-eng): a morph on screen eases in and out
 // on a strong curve, stays within 300ms (longer only as far as it travels), and never runs for a keyboard action, which a
 // reader repeats too often to wait on.
@@ -268,6 +272,10 @@ function runSummaryNode(summary, options) {
     if (verdict !== undefined && kind !== outcome) { head.appendChild(node("span", "run-lens-verdict", verdictWords(kind, verdict))); }
     return head;
   }
+  // A finding's summary as a sentence: one stored without its full stop gets one, unless the renderer cut it at its
+  // cap (SUMMARY_LENGTH, 280 characters), where a full stop would pass a cut sentence off as a whole one.
+  var SUMMARY_CUT = 280;
+  function sentenceOf(text) { return text + (text.length >= SUMMARY_CUT || /[.!?\u2026:)"'\u201D]$/.test(text) ? "" : "."); }
   function isNote(entry) { return entry && typeof entry === "object" && typeof entry.id === "string" && typeof entry.lens === "string" && typeof entry.summary === "string"; }
   function short(commit) { return typeof commit === "string" ? commit.slice(0, 7) : null; }
   // What later rounds said became of each finding, by its id: the first round to settle it wins.
@@ -312,15 +320,28 @@ function runSummaryNode(summary, options) {
     });
     return commits;
   }
-  // A finding's state, as the run last observed it: a quiet check when a later round confirmed it fixed,
-  // a faint ring while it is open, and any other state in words.
-  function stateNode(entry, fate) {
-    var fixed = entry.state === "resolved" && fate && fate.entry.state === "fixed";
-    var words = fixed ? "\u2713 fixed" : entry.state === "unresolved" ? "open"
-      : entry.state === "deferred" ? "deferred" + (entry.deferredIssue || (fate && fate.entry.deferredIssue) ? " · " + (entry.deferredIssue || fate.entry.deferredIssue) : "")
-      : entry.state === "resolved" && fate ? String(fate.entry.state) : String(entry.state);
-    var kind = fixed ? "fixed" : entry.state === "unresolved" ? "open" : "other";
-    var made = node("span", "run-fate is-" + kind, words);
+  // A finding's fate, as the run last observed it: fixed when a later round confirmed it, open, deferred, or any other
+  // ending in words. `band` is how a band heading says it when every finding under it shares it.
+  function fateOf(entry, fate) {
+    if (entry.state === "resolved" && fate && fate.entry.state === "fixed") { return { kind: "fixed", words: "\u2713 fixed", band: "fixed" }; }
+    if (entry.state === "unresolved") { return { kind: "open", words: "open", band: "open" }; }
+    if (entry.state === "deferred") { return { kind: "deferred", words: "deferred", band: "deferred" }; }
+    var other = entry.state === "resolved" && fate ? String(fate.entry.state) : String(entry.state);
+    return { kind: "other", words: other, band: other };
+  }
+  // A deferral's follow-up, as one faint line under its finding: linked when it is a ticket the page can address, or
+  // an address itself.
+  function followUpNode(issue) {
+    var made = node("p", "run-followup", "\u21b3 ");
+    var href = /^https:\/\/\S+$/.test(issue) ? issue
+      : options && typeof options.issueHref === "function" && /^[A-Z][A-Z0-9]*-[0-9]+$/.test(issue) ? options.issueHref(issue) : null;
+    if (typeof href !== "string" || !/^https:\/\//.test(href)) { made.appendChild(document.createTextNode(issue)); return made; }
+    var link = node("a", null, issue);
+    link.setAttribute("href", href);
+    link.setAttribute("target", "_blank");
+    link.setAttribute("rel", "noopener noreferrer");
+    link.addEventListener("click", function (event) { event.stopPropagation(); });
+    made.appendChild(link);
     return made;
   }
   // "round 4", "rounds 2 and 4", "rounds 2, 3 and 4".
@@ -348,16 +369,25 @@ function runSummaryNode(summary, options) {
       ", and " + roundsSaid(confirmed) + " confirmed " + (fixed.length === 1 ? "it" : "them") + "." +
       (open ? " " + open + (open === 1 ? " is" : " are") + " still open." : "")]);
   }
-  // Earlier notes this round confirmed, as a sentence: "This round confirmed 5 earlier notes fixed in 61f086d."
+  // How a confirmed note ended, in words: "fixed", "withdrawn" for a dropped one, or the ending as recorded.
+  function endingOf(entry) { return entry.state === "fixed" ? "fixed" : entry.state === "dropped" ? "withdrawn" : String(entry.state); }
+  // Earlier notes this round confirmed, as a sentence counting every ending, fixed first with its commits:
+  // "This round confirmed 7 earlier notes: 6 fixed in 61f086d, 1 withdrawn."
   function settledNode(settled) {
-    var fixed = settled.filter(function (entry) { return entry && entry.state === "fixed"; });
-    var others = settled.length - fixed.length;
-    var parts = ["This round confirmed "];
+    var notes = settled.filter(function (entry) { return entry && typeof entry === "object"; });
+    var fixed = notes.filter(function (entry) { return entry.state === "fixed"; });
+    var parts = ["This round confirmed " + notes.length + (notes.length === 1 ? " earlier note: " : " earlier notes: ")];
+    var said = [];
     if (fixed.length) {
       var commits = commitsOf(fixed);
-      parts.push(fixed.length + (fixed.length === 1 ? " earlier note" : " earlier notes") + " fixed" + (commits.length ? " in " : ""), commits);
+      said.push([fixed.length + " fixed" + (commits.length ? " in " : ""), commits]);
     }
-    if (others) { parts.push((fixed.length ? ", and " : "") + others + (fixed.length ? "" : others === 1 ? " earlier note" : " earlier notes") + " settled another way"); }
+    var endings = [];
+    notes.forEach(function (entry) { if (entry.state !== "fixed" && endings.indexOf(endingOf(entry)) < 0) { endings.push(endingOf(entry)); } });
+    endings.forEach(function (ending) {
+      said.push([notes.filter(function (entry) { return entry.state !== "fixed" && endingOf(entry) === ending; }).length + " " + ending]);
+    });
+    said.forEach(function (pieces, index) { if (index) { parts.push(", "); } pieces.forEach(function (piece) { parts.push(piece); }); });
     parts.push(".");
     return line("run-settled", parts);
   }
@@ -397,6 +427,164 @@ function runSummaryNode(summary, options) {
     });
     return box;
   }
+  // The finding an earlier round raised, by its id: the latest round before this one that raised it, or null when
+  // no round on the page holds it.
+  function raisedBefore(round, id) {
+    var found = null;
+    rounds.slice(0, Math.max(0, rounds.indexOf(round))).forEach(function (earlier) {
+      (Array.isArray(earlier.raised) ? earlier.raised : []).forEach(function (entry) { if (isNote(entry) && entry.id === id) { found = entry; } });
+    });
+    return found;
+  }
+  // One confirmed note, a fold of its own. It leads with what its lens found and how serious it was, from the round
+  // that raised it; opened, it shows how it was settled, the commit or follow-up that shows it, and the note's id. A
+  // note whose finding no round on the page holds leads with its resolution, as before. A tick stands for "fixed",
+  // said in words only for a screen reader, and any other ending is named.
+  function closureRow(round, entry) {
+    var item = node("li", "");
+    var finding = raisedBefore(round, entry.id);
+    var disclosure = node("details", "run-closures is-" + (entry.state === "fixed" ? "fixed" : "other"));
+    var preview = node("summary", "run-finding");
+    if (finding) {
+      var severity = SEVERITIES.indexOf(finding.severity) < 0 ? "P3" : finding.severity;
+      preview.appendChild(node("span", "run-finding-text", sentenceOf(finding.summary)));
+      preview.appendChild(node("span", "run-closure-sev is-" + severity.toLowerCase(), WORDS[severity]));
+    } else {
+      preview.appendChild(node("span", "run-finding-text", entry.resolution));
+    }
+    preview.appendChild(node("span", "run-fate", endingOf(entry)));
+    disclosure.appendChild(preview);
+    if (finding) {
+      disclosure.appendChild(node("p", "run-closure-resolution", entry.resolution));
+      if (typeof entry.fixCommit === "string") { disclosure.appendChild(line("run-closure-evidence", ["Fixed in ", [entry.fixCommit]])); }
+      if (typeof entry.deferredIssue === "string" && entry.deferredIssue) { disclosure.appendChild(followUpNode(entry.deferredIssue)); }
+    }
+    disclosure.appendChild(node("p", "run-closure", entry.id));
+    item.appendChild(runFold(disclosure, { key: "closure:" + (summary.observationKey || summary.runId || "") + ":" + round.round + ":" + entry.id, oneLine: true }));
+    return item;
+  }
+  // The earlier notes a round confirmed: its sentence, then each lens's notes. A lens whose notes were all fixed is
+  // one line, "Testing · 6 fixed", that opens on them; in a lens with any other ending, the notes that ended otherwise
+  // stay in sight, each named, and its fixed ones fold beneath a count of their own.
+  function settledParts(round) {
+    var outcome = outcomeOf(round);
+    var verdicts = round.verdicts && typeof round.verdicts === "object" ? round.verdicts : {};
+    var settled = Array.isArray(round.settled) ? round.settled : [];
+    var parts = settled.length ? [settledNode(settled)] : [];
+    var closures = settled.filter(function (entry) { return summary.observational && entry && typeof entry.resolution === "string"; });
+    var closureLenses = [];
+    closures.forEach(function (entry) { if (closureLenses.indexOf(entry.lens) < 0) { closureLenses.push(entry.lens); } });
+    var foldKey = function (name) { return "closures:" + (summary.observationKey || summary.runId || "") + ":" + round.round + ":" + name; };
+    closureLenses.sort().forEach(function (lens) {
+      var own = closures.filter(function (entry) { return entry.lens === lens; });
+      var fixed = own.filter(function (entry) { return entry.state === "fixed"; });
+      var others = own.filter(function (entry) { return entry.state !== "fixed"; });
+      var group = node("div", "run-reviewer run-closure-reviewer");
+      var head = reviewerHead("run-reviewer-head", lens, verdictOf(verdicts, lens), outcome);
+      var fixedList = node("ul", "run-findings");
+      fixed.forEach(function (entry) { fixedList.appendChild(closureRow(round, entry)); });
+      if (!others.length) {
+        var whole = node("details", "run-closure-lens");
+        var top = node("summary", "run-closure-count");
+        head.appendChild(node("span", "run-closure-fixed", " \u00b7 " + fixed.length + " fixed"));
+        top.appendChild(head);
+        whole.appendChild(top);
+        whole.appendChild(fixedList);
+        group.appendChild(runFold(whole, { key: foldKey(lens) }));
+        parts.push(group);
+        return;
+      }
+      group.appendChild(head);
+      var list = node("ul", "run-findings");
+      others.forEach(function (entry) { list.appendChild(closureRow(round, entry)); });
+      group.appendChild(list);
+      if (fixed.length) {
+        var folded = node("details", "run-closure-lens");
+        folded.appendChild(node("summary", "run-closure-count", fixed.length + " fixed"));
+        folded.appendChild(fixedList);
+        group.appendChild(runFold(folded, { key: foldKey(lens + ":fixed") }));
+      }
+      parts.push(group);
+    });
+    return parts;
+  }
+  // How long ago something began, for a round or a lens still at work: "moments", "4 min", "2 h 5 min", "3 days".
+  function since(date) {
+    var minutes = Math.max(0, Math.round((Date.now() - date.getTime()) / 60000));
+    if (minutes < 1) { return "moments"; }
+    if (minutes < 60) { return minutes + " min"; }
+    if (minutes < 1440) { var rest = minutes % 60; return Math.floor(minutes / 60) + " h" + (rest ? " " + rest + " min" : ""); }
+    var days = Math.round(minutes / 1440);
+    return days + (days === 1 ? " day" : " days");
+  }
+  // The round in flight's lenses: those it started with, then any other that came back.
+  function runningLenses() {
+    var lenses = running.lenses.slice();
+    Object.keys(running.back).forEach(function (lens) { if (lenses.indexOf(lens) < 0) { lenses.push(lens); } });
+    return lenses;
+  }
+  function backOf(lens) { return Object.prototype.hasOwnProperty.call(running.back, lens) ? running.back[lens] : null; }
+  function backCount() { return runningLenses().filter(backOf).length; }
+  // The round in flight: the head it reads, how long ago it began, how many lenses are back, the lane's reason when
+  // it gave one, a row per lens, back with its verdict or still reading, and the last round's confirmed notes folded.
+  function runningCard(previous) {
+    var lenses = runningLenses();
+    var box = node("div", "run-card is-running");
+    var head = node("p", "run-card-head");
+    head.appendChild(node("b", null, "Round " + running.round));
+    head.appendChild(node("span", "run-card-outcome", backCount() + " of " + lenses.length + " back"));
+    box.appendChild(head);
+    var began = when(running.at);
+    var reading = line("run-quiet run-reading-at", ["Reviewing ", [running.head]]);
+    if (began) {
+      reading.appendChild(document.createTextNode(" · started "));
+      reading.appendChild(timeNode("run-since", began, since(began) + " ago"));
+    }
+    box.appendChild(reading);
+    if (typeof running.why === "string" && running.why.trim()) { box.appendChild(node("p", "run-why", running.why)); }
+    var rows = node("ul", "run-lens-rows");
+    lenses.forEach(function (lens) {
+      var back = backOf(lens);
+      var row = node("li", "run-lens-row " + (back ? "is-back" : "is-reading"));
+      row.setAttribute("data-lens", lens);
+      if (back) {
+        row.appendChild(reviewerHead("", lens, back.verdict, null));
+        var counts = counted(back.findings);
+        row.appendChild(node("span", "run-quiet", noteWords(counts) || "nothing raised"));
+      } else {
+        row.appendChild(reviewerHead("", lens, undefined, null));
+        row.appendChild(node("span", "run-reading", "reading" + (began ? " · " + since(began) : "")));
+      }
+      rows.appendChild(row);
+    });
+    box.appendChild(rows);
+    var earlier = previous ? settledParts(previous) : [];
+    if (earlier.length) {
+      // The notes the last round confirmed fold to their one sentence while a round runs, and open as they do today.
+      var fold = node("details", "run-earlier");
+      var said = node("summary", "run-earlier-head");
+      while (earlier[0].firstChild) { said.appendChild(earlier[0].firstChild); }
+      said.firstChild.textContent = said.firstChild.textContent.replace(/^This round/, nameOf(previous, rounds.length - 1));
+      fold.appendChild(said);
+      earlier.slice(1).forEach(function (part) { fold.appendChild(part); });
+      box.appendChild(runFold(fold, { key: "earlier:" + key + ":" + running.round, oneLine: true }));
+    }
+    return box;
+  }
+  // The round in flight's bead: a ring in the lane's colour whose halo breathes on the page's tempo.
+  function runningBead(picked, choose) {
+    var item = node("li", "run-bead is-running");
+    var button = node("button", "run-pick");
+    button.type = "button";
+    button.setAttribute("aria-pressed", String(picked));
+    button.setAttribute("aria-label", "Round " + running.round + ", under way, " + backCount() + " of " + runningLenses().length + " lenses back");
+    button.appendChild(node("span", "run-dot", running.round));
+    button.addEventListener("click", function (event) { event.stopPropagation(); choose(); });
+    item.appendChild(button);
+    var began = when(running.at);
+    if (began) { item.appendChild(timeNode("run-at", began, "under way")); }
+    return item;
+  }
   // The picked round in full. With the round's report, each reviewer lists what it raised and what became
   // of it; without one, the lenses' verdicts and the round's counts.
   function card(round, index) {
@@ -422,8 +610,8 @@ function runSummaryNode(summary, options) {
       raised.forEach(function (entry) { if (lenses.indexOf(entry.lens) < 0) { lenses.push(entry.lens); } });
       Object.keys(briefsOf(round) || {}).forEach(function (lens) { if (lenses.indexOf(lens) < 0) { lenses.push(lens); } });
       var known = fates(index);
-      // When every finding is fixed, or every one is still open, the footer says so once and the lines carry no mark.
-      var fixedAll = raised.length && raised.every(function (entry) { return entry.state === "resolved" && known[entry.id] && known[entry.id].entry.state === "fixed"; });
+      // When every finding is fixed, or every one is still open, the footer says so once and the rows carry no fate.
+      var fixedAll = raised.length && raised.every(function (entry) { return fateOf(entry, known[entry.id]).kind === "fixed"; });
       var openAll = raised.length && raised.every(function (entry) { return entry.state === "unresolved"; });
       var uniform = Boolean(fixedAll || openAll);
       // A round that raised nothing is the reviewers in one row and one line, not a "nothing raised" each.
@@ -445,29 +633,35 @@ function runSummaryNode(summary, options) {
         var record = recordNode(round, lens, false);
         if (record) { group.appendChild(record); }
         if (own.length) {
-          // Each severity is said once, as a quiet band heading over its findings, worst first; a minor
-          // finding's text is lighter than a worse one's.
+          // Each severity is said once, as a quiet band heading over its findings, worst first, with the fate they
+          // share said once beside it; a finding says its own fate only when it differs. A minor finding's text is
+          // lighter than a worse one's.
           var list = node("ul", "run-findings");
-          var band = null;
+          var band = null, shared = null;
+          var severityOf = function (entry) { return SEVERITIES.indexOf(entry.severity) < 0 ? "P3" : entry.severity; };
           own.forEach(function (entry) {
-            var severity = SEVERITIES.indexOf(entry.severity) < 0 ? "P3" : entry.severity;
+            var severity = severityOf(entry);
+            var fate = fateOf(entry, known[entry.id]);
             if (severity !== band) {
               band = severity;
-              var size = own.filter(function (other) { return (SEVERITIES.indexOf(other.severity) < 0 ? "P3" : other.severity) === severity; }).length;
+              var members = own.filter(function (other) { return severityOf(other) === severity; });
+              var bands = members.map(function (other) { return fateOf(other, known[other.id]).band; });
+              shared = uniform ? null : bands.every(function (word) { return word === bands[0]; }) ? bands[0] : null;
               var name = WORDS[severity];
-              list.appendChild(node("li", "run-band is-" + severity.toLowerCase(), name.charAt(0).toUpperCase() + name.slice(1) + (size > 1 ? " · " + size : "")));
+              list.appendChild(node("li", "run-band is-" + severity.toLowerCase(), name.charAt(0).toUpperCase() + name.slice(1)
+                + (members.length > 1 ? " · " + members.length : "") + (shared ? " · " + (members.length > 1 ? "all " : "") + shared : "")));
             }
             var item = node("li", "run-finding is-" + severity.toLowerCase());
             // Summaries are sentences; one stored without its full stop gets one here.
-            var said = node("span", "run-finding-text", entry.summary + (/[.!?\u2026:)"'\u201D]$/.test(entry.summary) ? "" : "."));
-            item.appendChild(said);
-            // A finding its lens filed as deferred says so beside its fate, the two sharing the row's second cell.
-            var marks = item;
-            if (entry.filed === "deferred") {
-              marks = item.appendChild(node("span", "run-marks"));
-              marks.appendChild(node("span", "run-filed", "Deferred · " + WORDS[severity]));
+            var said = node("span", "run-finding-line");
+            said.appendChild(node("span", "run-finding-text", sentenceOf(entry.summary)));
+            if (!uniform && fate.band !== shared) {
+              said.appendChild(document.createTextNode(" "));
+              said.appendChild(node("span", "run-fate is-" + fate.kind, fate.words));
             }
-            if (!uniform) { marks.appendChild(stateNode(entry, known[entry.id])); }
+            item.appendChild(said);
+            var issue = entry.deferredIssue || (known[entry.id] && known[entry.id].entry.deferredIssue);
+            if ((entry.filed === "deferred" || fate.kind === "deferred") && fate.kind !== "fixed" && typeof issue === "string" && issue) { item.appendChild(followUpNode(issue)); }
             list.appendChild(item);
           });
           group.appendChild(list);
@@ -476,32 +670,7 @@ function runSummaryNode(summary, options) {
       });
       var told = outcomeOfNotes(raised, known);
       if (told) { box.appendChild(told); }
-      var settled = Array.isArray(round.settled) ? round.settled : [];
-      if (settled.length) { box.appendChild(settledNode(settled)); }
-      var closures = settled.filter(function (entry) { return summary.observational && typeof entry.resolution === "string"; });
-      var closureLenses = [];
-      closures.forEach(function (entry) { if (closureLenses.indexOf(entry.lens) < 0) { closureLenses.push(entry.lens); } });
-      closureLenses.sort().forEach(function (lens) {
-        var group = node("div", "run-reviewer run-closure-reviewer");
-        group.appendChild(reviewerHead("run-reviewer-head", lens, verdictOf(verdicts, lens), outcome));
-        var list = node("ul", "run-findings");
-        closures.filter(function (entry) { return entry.lens === lens; }).forEach(function (entry) {
-          var item = node("li", "");
-          // A settled note is quiet: a tick stands for "fixed", said in words only for a screen reader, and any other
-          // ending is named. Opened, the line shows whole in place, with the note's id beneath, not the words twice.
-          var fate = entry.state === "fixed" ? "fixed" : entry.state === "dropped" ? "withdrawn" : entry.state;
-          var disclosure = node("details", "run-closures is-" + (entry.state === "fixed" ? "fixed" : "other"));
-          var preview = node("summary", "run-finding");
-          preview.appendChild(node("span", "run-finding-text", entry.resolution));
-          preview.appendChild(node("span", "run-fate", fate));
-          disclosure.appendChild(preview);
-          disclosure.appendChild(node("p", "run-closure", entry.id));
-          item.appendChild(runFold(disclosure, { key: "closure:" + (summary.observationKey || summary.runId || "") + ":" + round.round + ":" + entry.id, oneLine: true }));
-          list.appendChild(item);
-        });
-        group.appendChild(list);
-        box.appendChild(group);
-      });
+      settledParts(round).forEach(function (part) { box.appendChild(part); });
       var listed = clippedNode(round);
       if (listed) { box.appendChild(listed); }
       return box;
@@ -545,27 +714,67 @@ function runSummaryNode(summary, options) {
   }
   else if (summary.observational) { box.appendChild(node("p", "run-quiet", "Recorded reviewer reports · display only")); }
   var rounds = Array.isArray(summary.roundDetail) ? summary.roundDetail.filter(function (round) { return round && typeof round === "object"; }) : [];
-  box.appendChild(node("p", "run-story", rounds.length ? story(rounds) : "No review rounds yet"));
-  if (rounds.length) {
-    var key = typeof summary.runId === "string" ? summary.runId : (summary.observationKey || "");
-    var picked = typeof runRoundPicked[key] === "number" && runRoundPicked[key] < rounds.length ? runRoundPicked[key] : rounds.length - 1;
+  var running = summary.running && typeof summary.running === "object" && typeof summary.running.round === "number"
+    && typeof summary.running.head === "string" ? summary.running : null;
+  if (running) {
+    running = Object.assign({}, running, { lenses: Array.isArray(running.lenses) ? running.lenses : [],
+                                           back: running.back && typeof running.back === "object" ? running.back : {} });
+  }
+  var key = typeof summary.runId === "string" ? summary.runId : (summary.observationKey || "");
+  if (running) {
+    // The present tense: the round under way, and the last finished round beneath it, dated by its candidate and how
+    // far the branch has moved since.
+    box.appendChild(node("p", "run-story", typeof running.headline === "string" && running.headline ? running.headline : "Round " + running.round + " under way"));
+    var finished = rounds[rounds.length - 1];
+    if (finished) {
+      var parts = [nameOf(finished, rounds.length - 1) + " " + outcomeWords(finished)];
+      if (typeof finished.candidateRef === "string" && finished.candidateRef) { parts.push(" ", [finished.candidateRef]); }
+      if (typeof running.moved === "number") { parts.push(" · " + plural(running.moved, "commit") + " since"); }
+      box.appendChild(line("run-last", parts));
+    }
+  } else {
+    box.appendChild(node("p", "run-story", rounds.length ? story(rounds) : "No review rounds yet"));
+  }
+  // The redraw that finds the round it last showed in flight reduced settles that round's bead: for the one motion's
+  // length, since a hover or a push redraws the panel again at once, and never after. It is kept by the story the page
+  // names, since the card's own key changes when the finished rounds' evidence does.
+  var flightKey = options && typeof options.subject === "string" ? options.subject : key;
+  var lastNumber = rounds.length ? numberOf(rounds[rounds.length - 1], rounds.length - 1) : null;
+  var flown = runInFlight[flightKey];
+  if (running) { runInFlight[flightKey] = { round: running.round, settledAt: null }; }
+  else if (flown && flown.settledAt === null && flown.round === lastNumber) { flown.settledAt = Date.now(); }
+  else if (flown && flown.round !== lastNumber) { delete runInFlight[flightKey]; }
+  var settling = !running && flown && flown.round === lastNumber && typeof flown.settledAt === "number"
+    && Date.now() - flown.settledAt < RUN_SETTLE_MS;
+  if (rounds.length || running) {
+    var beads = rounds.length + (running ? 1 : 0);
+    // While a round runs it is shown first; a reader's own pick of a finished round stands.
+    var picked = typeof runRoundPicked[key] === "number" && runRoundPicked[key] < beads ? runRoundPicked[key] : beads - 1;
     var track = node("ol", "run-track");
     var buttons = [];
+    var cardAt = function (index) { return index < rounds.length ? card(rounds[index], index) : runningCard(rounds[rounds.length - 1]); };
     // Picking a round updates the beads in place, so the button a reader pressed keeps keyboard focus.
+    var choose = function (chosen) {
+      runRoundPicked[key] = chosen;
+      buttons.forEach(function (button, at) { button.setAttribute("aria-pressed", String(at === chosen)); });
+      var next = cardAt(chosen);
+      var from = runHeldHeight(shown);
+      shown.replaceWith(next);
+      shown = next;
+      runEaseHeight(next, from);
+    };
     rounds.forEach(function (round, index) {
-      var made = bead(round, index, index ? rounds[index - 1] : null, index === picked, function (chosen) {
-        runRoundPicked[key] = chosen;
-        buttons.forEach(function (button, at) { button.setAttribute("aria-pressed", String(at === chosen)); });
-        var next = card(rounds[chosen], chosen);
-        var from = runHeldHeight(shown);
-        shown.replaceWith(next);
-        shown = next;
-        runEaseHeight(next, from);
-      });
+      var made = bead(round, index, index ? rounds[index - 1] : null, index === picked, choose);
+      if (settling && index === rounds.length - 1) { made.classList.add("is-settling"); }
       buttons.push(made.querySelector(".run-pick"));
       track.appendChild(made);
     });
-    var shown = card(rounds[picked], picked);
+    if (running) {
+      var flight = runningBead(picked === rounds.length, function () { choose(rounds.length); });
+      buttons.push(flight.querySelector(".run-pick"));
+      track.appendChild(flight);
+    }
+    var shown = cardAt(picked);
     box.appendChild(track);
     box.appendChild(shown);
   }

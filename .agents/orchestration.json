@@ -755,6 +755,24 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_lead_plan_changes",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_lead_plan_changes.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_lead_plan_changes.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_lead_wait",
         "argv": [
           ".venv/bin/python",
@@ -1579,6 +1597,24 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_suite_budget",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_suite_budget.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_suite_budget.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_test_dependency_guard",
         "argv": [
           ".venv/bin/python",
@@ -1682,6 +1718,24 @@
         "cwd": ".",
         "reasons": [
           "The tests in tests/test_waits.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
+        "id": "tests.test_waits_review",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_waits_review.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_waits_review.py."
         ],
         "prerequisites": [],
         "timeoutSeconds": 3600
@@ -1871,6 +1925,14 @@
           "tests.test_review_bound_corpus",
           "tests.test_round_brief_template_corpus",
           "tests.test_run_event_emission_corpus"
+        ]
+      },
+      {
+        "paths": [
+          "tests/test_*.py"
+        ],
+        "checks": [
+          "tests.test_own_deliveries"
         ]
       },
       {

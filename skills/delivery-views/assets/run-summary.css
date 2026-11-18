@@ -37,12 +37,12 @@
 /* A finding's weight is a mark: a filled square for critical, a hollow one for serious, a filled disc for moderate and a
    hollow disc for minor. Bands and counts carry the same mark, and their words stay quiet. */
 .run-band { display: flex; align-items: center; gap: 8px; margin-top: 12px; margin-bottom: 0; font-size: 12px; font-weight: 500; color: var(--faint, #646c71); }
-.run-band::before, .run-sev::before { content: ""; flex: none; display: inline-block; width: 8px; height: 8px; box-sizing: border-box; border-radius: 2px; }
+.run-band::before, .run-sev::before, .run-closure-sev::before { content: ""; flex: none; display: inline-block; width: 8px; height: 8px; box-sizing: border-box; border-radius: 2px; }
 .run-band:first-child { margin-top: 0; }
-.run-band.is-p0::before, .run-sev.is-p0::before { background: var(--held, #b93d22); }
-.run-band.is-p1::before, .run-sev.is-p1::before { border: 2px solid var(--held, #b93d22); }
-.run-band.is-p2::before, .run-sev.is-p2::before { border-radius: 50%; background: var(--wait, #946414); }
-.run-band.is-p3::before, .run-sev.is-p3::before { border-radius: 50%; border: 1.5px solid var(--edge, #878f93); }
+.run-band.is-p0::before, .run-sev.is-p0::before, .run-closure-sev.is-p0::before { background: var(--held, #b93d22); }
+.run-band.is-p1::before, .run-sev.is-p1::before, .run-closure-sev.is-p1::before { border: 2px solid var(--held, #b93d22); }
+.run-band.is-p2::before, .run-sev.is-p2::before, .run-closure-sev.is-p2::before { border-radius: 50%; background: var(--wait, #946414); }
+.run-band.is-p3::before, .run-sev.is-p3::before, .run-closure-sev.is-p3::before { border-radius: 50%; border: 1.5px solid var(--edge, #878f93); }
 .run-finding { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: baseline; font-size: 13px; line-height: 1.5; color: var(--ink, #161a1d); font-weight: 500; }
 .run-finding.is-p3 { color: var(--soft, #5f676d); font-weight: 400; }
 .run-record { margin: 4px 0 6px; }
@@ -56,8 +56,14 @@
 .run-fate { font: 500 11px/16px var(--mono, ui-monospace, monospace); white-space: nowrap; color: var(--soft, #4d545a); font-variant-numeric: tabular-nums; }
 .run-fate.is-fixed { color: var(--ink, #141719); font-weight: 500; }
 .run-fate.is-open { color: var(--faint, #8f979c); }
-.run-marks { display: inline-flex; gap: 8px; align-items: baseline; }
-.run-filed { font: 500 11px/16px var(--mono, ui-monospace, monospace); white-space: nowrap; color: var(--soft, #4d545a); }
+/* A raised finding is its text across the card, clamped at three lines, its own fate a faint word after it when it
+   differs from its band's, and a deferral's follow-up one faint line beneath. */
+li.run-finding { display: block; }
+li.run-finding .run-finding-line { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+li.run-finding .run-finding-text { display: inline; }
+li.run-finding .run-fate { white-space: nowrap; }
+.run-followup { margin: 2px 0 0; font-size: 12px; line-height: 1.5; color: var(--faint, #8f979c); overflow-wrap: anywhere; font-weight: 400; }
+.run-followup a { color: inherit; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 2px; }
 .run-commit { font: 12px var(--mono, ui-monospace, monospace); color: inherit; }
 a.run-commit { text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 2px; }
 .run-settled { margin: 0; padding-top: 12px; border-top: 1px solid var(--hair, #dfe2de); font-size: 13px; color: var(--ink, #141719); }
@@ -99,3 +105,47 @@ a.run-commit { text-decoration: underline; text-decoration-color: color-mix(in s
 .run-closures:not([open]) .run-finding-text { -webkit-line-clamp: 1; }
 .run-closures[open] .run-finding-text { display: block; }
 .run-closures .run-closure { margin: 4px 0 6px; overflow-wrap: anywhere; font: 400 11px/16px var(--mono, ui-monospace, monospace); color: var(--faint, #868f94); }
+/* A confirmed note leads with what was found and how serious it was, its mark the band's own; a note with an ending
+   other than fixed names it after that. Opened, the fix reads beneath, then the commit that shows it, then the id. */
+.run-closure-sev { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font: 400 11px/16px var(--mono, ui-monospace, monospace); color: var(--faint, #868f94); }
+.run-closures.is-other > summary:has(.run-closure-sev) { grid-template-columns: minmax(0, 1fr) auto auto 10px; }
+.run-closure-resolution { margin: 4px 0 0; overflow-wrap: anywhere; color: var(--ink, #161a1d); }
+.run-closure-evidence { margin: 2px 0 0; font-size: 12px; color: var(--faint, #868f94); }
+/* A lens whose notes were all fixed is one line, its count faint beside its name; a lens with any other ending folds
+   only its fixed notes, beneath a count of their own. Both open with the chevron the notes use. */
+.run-closure-lens > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 8px; }
+.run-closure-lens > summary::-webkit-details-marker { display: none; }
+.run-closure-lens > summary:focus-visible { outline: 2px solid var(--ink, #161a1d); outline-offset: 3px; border-radius: 2px; }
+.run-closure-lens > summary::after { content: ""; width: 5px; height: 5px; border-right: 1.5px solid var(--faint, #868f94); border-bottom: 1.5px solid var(--faint, #868f94);
+  transform: translateY(-2px) rotate(45deg); transition: transform .15s ease; }
+.run-closure-lens[open] > summary::after { transform: translateY(1px) rotate(-135deg); }
+.run-closure-fixed { color: var(--faint, #646c71); font-weight: 400; }
+.run-closure-reviewer > .run-closure-lens > summary.run-closure-count:not(:has(.run-lens)) { margin-top: 4px; font-size: 12px; color: var(--faint, #868f94); }
+.run-closure-lens > .run-findings { margin-top: 6px; }
+/* A round in flight: the last finished round dated beneath the headline, its bead a ring in the lane's colour whose
+   halo breathes on the page's one tempo, the lane's reason behind a thin margin rule, and a row per lens. */
+.run-last { margin: -10px 0 0; font-size: 13px; color: var(--soft, #5f676d); }
+.run-bead.is-running .run-dot { position: relative; border: 2px solid var(--c, var(--ink, #141719)); color: var(--c, var(--ink, #141719)); background: var(--lift, #fff); }
+.run-bead.is-running .run-dot::after { content: ""; position: absolute; inset: -6px; border-radius: 50%; opacity: .55;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--c, var(--ink, #141719)) 22%, transparent); pointer-events: none; }
+.run-card.is-running .run-card-outcome { color: var(--ink, #141719); font-variant-numeric: tabular-nums; }
+.run-why { margin: 0; padding-left: 12px; border-left: 1.5px solid var(--hair, #dfe2de); font-size: 13px; color: var(--soft, #4d545a); overflow-wrap: anywhere; }
+.run-lens-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.run-lens-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: 13px; }
+.run-reading { color: var(--faint, #8f979c); font-variant-numeric: tabular-nums; }
+.run-earlier { font-size: 13px; padding-top: 12px; border-top: 1px solid var(--hair, #dfe2de); }
+.run-earlier > summary { cursor: pointer; list-style: none; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 4px; color: var(--soft, #4d545a); }
+.run-earlier > summary::-webkit-details-marker { display: none; }
+.run-earlier > summary::after { content: ""; align-self: center; margin-left: 6px; width: 5px; height: 5px; border-right: 1.5px solid var(--faint, #868f94);
+  border-bottom: 1.5px solid var(--faint, #868f94); transform: translateY(-2px) rotate(45deg); }
+.run-earlier[open] > summary::after { transform: translateY(1px) rotate(-135deg); }
+.run-earlier[open] > summary { color: var(--ink, #161a1d); margin-bottom: 10px; }
+.run-earlier > summary:focus-visible { outline: 2px solid var(--ink, #161a1d); outline-offset: 3px; border-radius: 2px; }
+.run-earlier .run-reviewer { margin-top: 10px; }
+@media (prefers-reduced-motion: no-preference) {
+  .run-bead.is-running .run-dot::after { animation: run-breathe calc(var(--beat, 1.2s) * 2) ease-in-out infinite; }
+  .run-bead.is-settling .run-dot { animation: run-settle var(--move, .7s) var(--ease, ease); }
+  .run-earlier > summary::after { transition: transform .15s ease; }
+}
+@keyframes run-breathe { 0%, 100% { opacity: .2; transform: scale(.92); } 50% { opacity: .7; transform: scale(1); } }
+@keyframes run-settle { 0% { transform: scale(1); } 50% { transform: scale(1.12); } 100% { transform: scale(1); } }

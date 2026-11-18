@@ -15,8 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 TOOL = ".agent-skills/current/skills/run-delivery/scripts/run_delivery.py"
 
 
-# Every test module, by its module name: the lead selects checks by these ids. A module added later is selectable once
-# its entry is added here and in the binding; until then a JSON list still selects it.
+# Every test module, by its module name: the lead selects checks by these ids. A story that adds a module adds its
+# entry here and in the binding in the same diff, and both its hand-off and its acceptance can name it from its head.
 CATALOGUE_MODULES = (
     "adoption", "bootstrap_qualification", "catalog", "compound_learning_corpus", "core_boundary", "corpus_copy",
     "cut_release", "declared_mechanics_corpus", "delivery_posture_vectors", "delivery_provider",
@@ -24,7 +24,7 @@ CATALOGUE_MODULES = (
     "delivery_views_hosted", "delivery_views_hosted_projection", "delivery_views_page", "delivery_views_plan", "delivery_views_plan_fixtures", "delivery_views_render",
     "delivery_views_review_projection", "delivery_views_snapshots", "diagnosis", "documented_install_surface",
     "fault_injection", "forge_adapters", "historical_qualifications", "hive_knowledge_adapter", "hooks", "host_exposure", "jira_profile", "journal_kinds", "journal_shape", "knowledge_library", "lane_rows",
-    "lane_ruling_corpus", "lead_wait", "lifecycle", "linear_profile", "linear_qualification", "measure_test_writes",
+    "lane_ruling_corpus", "lead_plan_changes", "lead_wait", "lifecycle", "linear_profile", "linear_qualification", "measure_test_writes",
     "merge_occurrence", "merge_queue", "narrator", "no_current_set_names", "orchestration_adopter", "orchestration_render",
     "orchestration_state", "own_deliveries", "product_descriptors", "product_launcher", "product_release",
     "profile_inventory", "provenance", "provider_qualification", "qualification", "readme", "receipt", "registry",
@@ -33,10 +33,14 @@ CATALOGUE_MODULES = (
     "router", "run_delivery", "run_delivery_hooks", "run_delivery_hosted", "run_delivery_peers", "run_delivery_plan_review",
     "run_delivery_pr_review",
     "run_delivery_pr_review_gates", "run_delivery_supervisor", "run_delivery_tracker", "run_event_emission_corpus",
-    "run_tests", "runless_reviews", "test_dependency_guard", "test_environment", "tracker_contract", "update_provenance",
-    "validate", "waits", "workflow_graph_contract", "workflow_observation", "workflows",
+    "run_tests", "runless_reviews", "suite_budget", "test_dependency_guard", "test_environment", "tracker_contract", "update_provenance",
+    "validate", "waits", "waits_review", "workflow_graph_contract", "workflow_observation", "workflows",
 )
 CATALOGUE_IDS = tuple("tests.test_" + name for name in CATALOGUE_MODULES)
+# Test modules left out of the catalogue on purpose, each as (module name, why): none today.
+UNCATALOGUED_MODULES: tuple[tuple[str, str], ...] = ()
+# A change to any test module brings the guard below, so a module added without its entry fails in the queue.
+TEST_MODULE_READER = {"paths": ["tests/test_*.py"], "checks": ["tests.test_own_deliveries"]}
 SERVICE_IDS = ('hosted.install', 'hosted.typecheck', 'hosted.build', 'hosted.test',
                'hosted.browser-install', 'hosted.browser')
 GUARDS = ["tests.test_linear_qualification", "tests.test_registry"]
@@ -488,6 +492,42 @@ class StandingBinding(unittest.TestCase):
                 self.assertEqual("tests.test_compound_learning_corpus" in ids, brought, ids)
                 if brought:
                     self.assertIn({"id": "tests.test_compound_learning_corpus", "why": f"reads {changed[0]}"}, added)
+
+    def test_every_test_module_is_catalogued(self) -> None:
+        found = {path.stem.removeprefix("test_") for path in (ROOT / "tests").glob("test_*.py")}
+        excluded = [name for name, _ in UNCATALOGUED_MODULES]
+        self.assertTrue(all(why.strip() for _, why in UNCATALOGUED_MODULES), "each exclusion gives its reason")
+        both = sorted(set(CATALOGUE_MODULES) & set(excluded))
+        self.assertEqual(both, [], f"catalogued and excluded both: {both}")
+        expected = set(CATALOGUE_MODULES) | set(excluded)
+        missing, extra = sorted(found - expected), sorted(expected - found)
+        self.assertEqual((missing, extra), ([], []),
+                         f"test modules in neither the catalogue nor UNCATALOGUED_MODULES: {missing}; listed but not "
+                         f"found under tests/: {extra}")
+
+    def test_a_changed_test_module_brings_the_catalogue_guard(self) -> None:
+        import importlib.util
+        previous = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        try:
+            spec = importlib.util.spec_from_file_location("own_delivery_state", ROOT / STATE_TOOL)
+            tool = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(tool)
+        finally:
+            sys.dont_write_bytecode = previous
+        binding = json.loads((ROOT / ".agents/orchestration.json").read_text(encoding="utf-8"))
+        readers = binding["selection"]["readers"]
+        # Before the hosted service's reader, which the integration recipe takes as the last one.
+        self.assertEqual(readers[-2], TEST_MODULE_READER)
+        self.assertEqual(readers[-1]["checks"][0], "hosted.install")
+        for changed, brought in ((["tests/test_brand_new.py"], True), (["tests/test_run_delivery.py", "README.md"], True),
+                                 (["tests/fixtures/test_data.py", "tests/corpus_copy.py", "docs/own-deliveries.md"], False)):
+            with self.subTest(changed=changed):
+                checks, added = tool.resolve_selection([], binding, lambda: changed)
+                ids = [check["id"] for check in checks]
+                self.assertEqual("tests.test_own_deliveries" in ids, brought, ids)
+                if brought:
+                    self.assertIn({"id": "tests.test_own_deliveries", "why": f"reads {changed[0]}"}, added)
 
     def test_a_changed_skill_page_brings_the_corpus_tests_that_read_skill_prose(self) -> None:
         # A journal kind named in a skill that doesn't own it once reached the base twice, unselected both times.
