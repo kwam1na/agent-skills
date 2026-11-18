@@ -71,6 +71,10 @@
         {
           "id": "v26-3618-2",
           "text": "A stale lead-suite checkout in the work root doesn't leave the queue silently stopped: it is cleaned up when that's safe, and otherwise the refusal names it and its fix in the lead's wake."
+        },
+        {
+          "id": "v26-3618-3",
+          "text": "Tests cover both, including a checkout that is still in use, which is never removed."
         }
       ],
       "after": [
