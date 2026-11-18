@@ -1557,9 +1557,10 @@ def _handed_row(item: dict, handed: dict) -> dict:
 
 
 def _locked_write(directory: Path, change: Callable[[dict, list[dict]], tuple[object, list[dict]]]) -> tuple[dict, object, list[dict]]:
-    """One write under the state lock: the record's change and the journal entries it makes, so no reader, and no
-    versioned patch, ever sees one without the other. ``change`` returns its outcome and the entries, without their
-    ids and times; entry ``n`` of them takes the id after the journal's last plus ``n``."""
+    """One write under the state lock: the record's change and the journal entries it makes. Both are checked first,
+    then the entries are appended and the state written, so a reader that sees the new state sees the entries, and a
+    versioned patch read before them fails. ``change`` returns its outcome and the entries, without their ids and
+    times; entry ``n`` of them takes the id after the journal's last plus ``n``."""
     with file_lock(directory / STATE_LOCK):
         state = read_state(directory, for_write=True)
         journal = read_journal(directory)
@@ -1575,10 +1576,15 @@ def _locked_write(directory: Path, change: Callable[[dict, list[dict]], tuple[ob
         errors = journal_errors([*journal, *stamped])
         if errors:
             raise StateError("entry_invalid", "; ".join(errors))
-        written = _with_state(directory, state, updated)
+        problems = state_errors({**updated, "version": state["version"] + 1})
+        if problems:
+            raise StateError("patch_invalid", "; ".join(problems))
+        # The entries go first: a lockless reader that sees the new state sees them too, and one that read the old
+        # state fails its versioned patch and reads again.
         for entry in stamped:
-            _append_journal_locked(directory, written, journal, entry)
+            _append_journal_locked(directory, state, journal, entry)
             journal = [*journal, entry]
+        written = _with_state(directory, state, updated)
     return written, outcome, stamped
 
 

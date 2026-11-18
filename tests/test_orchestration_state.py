@@ -7895,6 +7895,20 @@ class LeadBaseBrokenTests(unittest.TestCase):
         self.assertEqual((done["stopped"], done["superseded"]["id"]), ("work-a", superseded["id"]))
         self.assertTrue(state_tool.base_awaits_repair(state_tool.read_journal(self.directory)))
 
+    def test_its_entries_are_in_the_journal_before_the_stopped_row_is_written(self) -> None:
+        # A queue build reads the row and the journal without the lock: whenever it can see the stopped row, it must
+        # also see the check.superseded that names the checked head, or it would write its own verdict beside it.
+        seen = []
+        real = state_tool._with_state
+
+        def with_state(directory, current, updated):
+            seen.append([entry["kind"] for entry in state_tool.read_journal(directory)][-3:])
+            return real(directory, current, updated)
+
+        with mock.patch.object(state_tool, "_with_state", with_state):
+            self.broken()
+        self.assertEqual(seen, [["base.broken", "check.superseded", "candidate.stopped"]])
+
     def test_with_no_re_run_at_that_head_it_journals_only_the_break(self) -> None:
         for name, head in (("another head", HEAD_D), ("no re-run", HEAD_C)):
             with self.subTest(name):
