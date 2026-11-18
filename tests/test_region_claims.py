@@ -635,6 +635,11 @@ class GrantCarveTests(CommandCase):
         self.grant("lib/h.txt", "lane-1", head, 14, 16)
         self.grant("lib/h.txt", "lane-1", head, 17, 19)
         self.assertEqual(len(self.claims("lib/h.txt")), 5)
+        # Over its own lane's claim of another story (here, of none), a grant is still refused.
+        before = self.claims("lib/h.txt")
+        out = self.grant("lib/h.txt", "lane-1", head, 13, 15, "--story", "FX-5", ok=False)
+        self.assertIn("overlaps lane-1's [14, 16)", out)
+        self.unchanged("lib/h.txt", before)
         self.grant("lib/h.txt", "lane-3", head, 16, 17)
 
 
