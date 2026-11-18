@@ -455,6 +455,52 @@ test("draws a passed post-merge fullHealth and a provider's refused selection in
   }
 });
 
+test("says what a lone piece's rerun is for, when it should end by the failed check's own history, and how to end it sooner", async () => {
+  const document = fixtureDocument();
+  const now = document.state.meta.checking.now;
+  Object.assign(now.steps.find((step) => step.label === "storefront build"), { state: "failed", finishedAt: "2026-10-22T05:06:50Z" });
+  now.baseRerun = { startedAt: "2026-10-22T05:07:00Z", checks: ["storefront build"] };
+  // Two checks in the history: the end is the rerun's start plus the failed check's last time, not the other's.
+  document.state.meta.checkHistory = { checks: { "storefront build": { seconds: [300, 600], flakes: 0 },
+                                                 "payments unit": { seconds: [60], flakes: 0 } }, runs: [] };
+  const [shown] = await open(document);
+  const checking = shown.app.querySelector(".checking");
+  expect(checking.querySelector(".ck-rerun-why")?.textContent).toBe("storefront build failed on PAY-2361; the rerun decides " +
+    "whether the main line or the piece broke it · expected to end in 7 minutes");
+  expect(checking.querySelector(".ck-rerun-alt")?.textContent).toBe("To end it sooner: the lane hands off a fixed head and " +
+    "the lead accepts it, or the lead names the main line broken with lead-base-broken.");
+  // With no history for the failed check, there is no expected end, never a guess.
+  delete document.state.meta.checkHistory.checks["storefront build"];
+  const [unknown] = await open(document);
+  expect(unknown.app.querySelector(".checking .ck-rerun-why")?.textContent).toBe("storefront build failed on PAY-2361; the " +
+    "rerun decides whether the main line or the piece broke it");
+  // Two rerun checks end after both their last times; one of them without history leaves the end out.
+  document.state.meta.checkHistory.checks["storefront build"] = { seconds: [300], flakes: 0 };
+  document.state.meta.checkHistory.checks["payments unit"] = { seconds: [120], flakes: 0 };
+  document.state.meta.checking.now.baseRerun.checks = ["storefront build", "payments unit"];
+  const [both] = await open(document);
+  expect(both.app.querySelector(".checking .ck-rerun-why")?.textContent).toBe("storefront build and payments unit failed on " +
+    "PAY-2361; the rerun decides whether the main line or the piece broke it · expected to end in 4 minutes");
+  // Started at 05:07 and read at 05:10: one past its expected end says by how much, one due now says about now.
+  for (const [build, unit, words] of [[60, 0, " · expected to have ended 2 minutes ago"],
+                                      [120, 60, " · expected to end about now"]]) {
+    document.state.meta.checkHistory.checks["storefront build"] = { seconds: [build], flakes: 0 };
+    document.state.meta.checkHistory.checks["payments unit"] = { seconds: [unit], flakes: 0 };
+    const [due] = await open(document);
+    expect(due.app.querySelector(".checking .ck-rerun-why")?.textContent).toBe("storefront build and payments unit " +
+      "failed on PAY-2361; the rerun decides whether the main line or the piece broke it" + words);
+  }
+  delete document.state.meta.checkHistory.checks["payments unit"];
+  const [partly] = await open(document);
+  expect(partly.app.querySelector(".checking .ck-rerun-why")?.textContent).toBe("storefront build and payments unit failed " +
+    "on PAY-2361; the rerun decides whether the main line or the piece broke it");
+  // Without a running rerun nothing of it shows.
+  delete document.state.meta.checking.now.baseRerun;
+  const [none] = await open(document);
+  expect(none.app.querySelector(".checking .ck-rerun-why")).toBeNull();
+  expect(none.app.querySelector(".checking .ck-rerun-alt")).toBeNull();
+});
+
 test("says a piece whose check failed is waiting on the main line's rerun, on the line, in its detail and in the now block", async () => {
   const document = fixtureDocument();
   const now = document.state.meta.checking.now;
@@ -514,6 +560,8 @@ test("says a piece whose check failed is waiting on the main line's rerun, on th
   expect(batchShown.app.querySelector(".checking .ck-h-words")?.textContent).toBe("Being checked together · 2 pieces");
   expect(batchShown.app.querySelector(".checking .ck-rerun")?.textContent)
     .toBe("Rerunning storefront build on the main line, to tell whether it fails there too · started 3 minutes ago");
+  // A batch's rerun is never ended early, so it names no way to end it.
+  expect(batchShown.app.querySelector(".checking .ck-rerun-alt")).toBeNull();
   // The same failure before the rerun starts, or once it is over, is a check that failed, not a wait on the main line.
   delete document.state.meta.checking.now.baseRerun;
   const [before] = await open(document);

@@ -33,6 +33,7 @@ import signal
 import stat
 import subprocess
 import tempfile
+import threading
 import time
 import unicodedata
 import uuid
@@ -69,6 +70,8 @@ REFUSALS = frozenset({
 IDENTITY = ("merge-queue", "merge-queue@localhost")
 PRIVATE_REF = "refs/merge-queue"
 STATE_PATCH_ATTEMPTS = 5
+# While a lone candidate's run is checking, how often the queue reads the journal for a check.superseded that ends it.
+SUPERSEDE_POLL_SECONDS = 2.0
 # How many passing durations, and whole runs, the check history keeps.
 HISTORY_LENGTH = 5
 # How many failing tests a stop names before it says how many more there are.
@@ -611,11 +614,15 @@ def run_process(
     env: dict[str, str],
     timeout: float | None = None,
     stdin: str | None = None,
+    track: Callable[[subprocess.Popen], None] | None = None,
+    untrack: Callable[[subprocess.Popen], None] | None = None,
 ) -> Completed:
     """Run ``argv`` without a shell, in its own process group.
 
     On timeout the whole group is killed, so children a check spawned go with
-    it. A missing executable is reported as a failure, not raised.
+    it. A missing executable is reported as a failure, not raised. ``track``
+    is given the process once it starts, and ``untrack`` once it has ended, so
+    a caller can stop its group meanwhile, by the pid it started.
     """
     started = time.monotonic()
     kwargs: dict = {}
@@ -640,6 +647,17 @@ def run_process(
         )
     except (FileNotFoundError, PermissionError, NotADirectoryError) as error:
         return Completed(None, "", str(error), False, time.monotonic() - started)
+    if track is not None:
+        track(process)
+    try:
+        return _communicate(process, stdin, timeout, started)
+    finally:
+        if untrack is not None:
+            untrack(process)
+
+
+def _communicate(process: subprocess.Popen, stdin: str | None, timeout: float | None, started: float) -> Completed:
+    """Wait for a started process, killing its group when it runs past ``timeout``."""
     try:
         stdout, stderr = process.communicate(stdin, timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -897,6 +915,15 @@ class Runner:
         self.rerun_started: dict[str, int] = {}
         self.verdicts: dict[str, tuple[int, str]] = {}
         self.last_break: int | None = None
+        # A lone candidate's run being checked, by subject: the head it checks, and the check.superseded that ended
+        # it once seen. Its processes are tracked so that entry can stop their groups.
+        self.checked: dict[str, str] = {}
+        self.ended: dict[str, dict] = {}
+        self.pending_verdicts: dict[str, dict] = {}
+        self.pending_judged: dict[str, list[dict]] = {}
+        self._live: set[subprocess.Popen] = set()
+        self._live_lock = threading.Lock()
+        self._stopping = False
         self._counter = 0
         self._logs = 0
 
@@ -1014,7 +1041,80 @@ class Runner:
     def run_argv(self, argv: list[str], cwd: Path, context: Context, timeout: float, extra_env: dict | None = None, stdin: str | None = None) -> Completed:
         resolved = context.argv(argv)
         env = {key: context.element(value) for key, value in (extra_env or {}).items()}
-        return run_process(resolved, cwd=cwd, env=self.environment(env), timeout=timeout, stdin=stdin)
+        return run_process(resolved, cwd=cwd, env=self.environment(env), timeout=timeout, stdin=stdin,
+                           track=self._track, untrack=self._untrack)
+
+    def _track(self, process: subprocess.Popen) -> None:
+        with self._live_lock:
+            self._live.add(process)
+            stopping = self._stopping
+        if stopping:
+            # Started as the run was ended: it goes at once.
+            kill_group(process)
+
+    def _untrack(self, process: subprocess.Popen) -> None:
+        with self._live_lock:
+            self._live.discard(process)
+
+    def stop_live(self) -> None:
+        """Stop every process group this runner started and is still waiting on, by the pid it started."""
+        with self._live_lock:
+            self._stopping = True
+            live = list(self._live)
+        for process in live:
+            kill_group(process)
+
+    def ending(self, subject: str) -> dict | None:
+        """The check.superseded that ended the run checking ``subject`` at its checked head, once journaled."""
+        head = self.checked.get(subject)
+        if head is None:
+            return None
+        if subject in self.ended:
+            return self.ended[subject]
+        entry = next((entry for entry in reversed(delivery_state.read_journal(self.state_directory))
+                      if entry["kind"] == "check.superseded" and entry["subject"] == subject
+                      and entry["data"]["head"] == head), None)
+        if entry is not None:
+            self.ended[subject] = entry
+        return entry
+
+    def overtaken(self, current: dict, subject: str | None) -> bool:
+        """Whether the run checking ``subject`` no longer owns its row: the row moved off the checked head, or a
+        check.superseded names that head. Read in a write's build, so a versioned patch decides on what it read."""
+        if subject is None or subject not in self.checked:
+            return False
+        item = next((entry for entry in current["queue"] if entry["subject"] == subject), None)
+        return item is None or item["head"] != self.checked[subject] or self.ending(subject) is not None
+
+    @contextlib.contextmanager
+    def watching(self, subject: str, head: str) -> Iterator[None]:
+        """While a lone candidate's run checks ``head``, read the journal every SUPERSEDE_POLL_SECONDS for a
+        check.superseded that ends it, and on seeing one stop the run's process groups."""
+        self.checked[subject] = head
+        self.ended.pop(subject, None)
+        self._stopping = False
+        done = threading.Event()
+
+        def poll() -> None:
+            while not done.wait(SUPERSEDE_POLL_SECONDS):
+                with contextlib.suppress(delivery_state.StateError, OSError):
+                    if self.ending(subject) is not None:
+                        self.stop_live()
+                        return
+
+        watcher = threading.Thread(target=poll, name=f"supersede-{subject}", daemon=True)
+        watcher.start()
+        try:
+            yield
+        finally:
+            done.set()
+            watcher.join()
+
+    def superseded_stop(self, subject: str) -> Stop:
+        entry = self.ended[subject]
+        what = "its re-run on the base" if entry["data"]["phase"] == "base-rerun" else "the rest of its checks"
+        return Stop("superseded", f"{subject} at {entry['data']['head']} won't merge, so entry {entry['data']['by']} "
+                                  f"ended {what} (check.superseded, entry {entry['id']}); the row is the lead's from here")
 
     def changed_paths(self, checkout: Path) -> list[str]:
         status = self.git("status", "--porcelain=v1", "-z", "--untracked-files=all", cwd=checkout).stdout
@@ -1050,18 +1150,22 @@ class Runner:
         changes: dict | None = None,
         selector: str | None = None,
         assignments: dict | None = None,
-        build: Callable[[dict], tuple[dict, dict]] | None = None,
-    ) -> None:
-        """Write runner-owned fields, retrying when the lead wrote first.
+        build: Callable[[dict], tuple[dict, dict] | None] | None = None,
+    ) -> bool:
+        """Write runner-owned fields, retrying when the lead wrote first; returns whether it wrote.
 
         ``build`` derives the changes and assignments from the state read for
         each attempt, for a patch that must carry the rest of a list as it is now.
+        A build that returns None writes nothing.
         """
         for _ in range(STATE_PATCH_ATTEMPTS):
             current = self.state()
             version = current["version"]
             if build is not None:
-                changes, assignments = build(current)
+                built = build(current)
+                if built is None:
+                    return False
+                changes, assignments = built
             try:
                 delivery_state.patch(
                     self.state_directory,
@@ -1078,6 +1182,7 @@ class Runner:
         else:
             raise delivery_state.StateError("version_stale", "the state kept changing under the runner")
         self.render()
+        return True
 
     def write_progress(self, subjects: list[str], states: list[dict]) -> None:
         """Show the checks' live states in the checking panel and the queue rows, in one write.
@@ -1102,7 +1207,9 @@ class Runner:
             for record in states
         ]
 
-        def build(current: dict) -> tuple[dict, dict]:
+        def build(current: dict) -> tuple[dict, dict] | None:
+            if any(self.overtaken(current, subject) for subject in subjects):
+                return None
             queue = [dict(item) for item in current["queue"]]
             for item in queue:
                 if item["subject"] in subjects:
@@ -1200,6 +1307,9 @@ class Runner:
         """
 
         def build(current: dict) -> tuple[dict, dict]:
+            if self.overtaken(current, subject):
+                # The row is the lead's now: only the panel this run showed is cleared.
+                return {}, {"/meta/checking/now": None}
             queue = [dict(item) for item in current["queue"]]
             for item in queue:
                 if item["subject"] == subject:
@@ -1258,12 +1368,41 @@ class Runner:
 
         self.write(build=build)
 
-    def finish_item(self, subject: str, stage: str, stopped: str | None = None) -> None:
-        """Merge or stop an item and say so on its lane's row, in one write, so the row and the line agree."""
-        self.write(build=_finish_build(self.state_directory, subject, stage, stopped))
+    def finish_item(self, subject: str, stage: str, stopped: str | None = None,
+                    before: Callable[[], None] | None = None, also: Callable[[dict], dict] | None = None) -> bool:
+        """Merge or stop an item and say so on its lane's row, in one write, so the row and the line agree.
+
+        Writes nothing, and returns False, when the run checking it no longer owns the row (see overtaken).
+        ``also`` adds assignments to the same write. ``before`` runs once, after the first read and before the
+        first write, for concurrency tests.
+        """
+        finish = _finish_build(self.state_directory, subject, stage, stopped)
+
+        def build(current: dict) -> tuple[dict, dict] | None:
+            nonlocal before
+            if before is not None:
+                seam, before = before, None
+                seam()
+            if self.overtaken(current, subject):
+                return None
+            changes, assignments = finish(current)
+            return changes, {**assignments, **(also(current) if also else {})}
+
+        return self.write(build=build)
 
     def set_item(self, subject: str, **fields: object) -> None:
-        self.write(selector=f"queue[subject={subject}]", assignments={f"/{key}": value for key, value in fields.items()})
+        if subject not in self.checked:
+            self.write(selector=f"queue[subject={subject}]",
+                       assignments={f"/{key}": value for key, value in fields.items()})
+            return
+
+        def build(current: dict) -> tuple[dict, dict] | None:
+            if self.overtaken(current, subject):
+                return None
+            queue = [{**item, **fields} if item["subject"] == subject else item for item in current["queue"]]
+            return {"queue": queue}, {}
+
+        self.write(build=build)
 
     def journal(self, kind: str, subject: str | None = None, *, data: dict,
                 because: Iterable[int | None] = (), answers: Iterable[int | None] = ()) -> int:
@@ -1292,9 +1431,11 @@ class Runner:
             return [self.last_break]
         return []
 
-    def checking(self, subject: str | None, title: str = "", steps: list[dict] | None = None) -> None:
+    def checking(self, subject: str | None, title: str = "", steps: list[dict] | None = None,
+                 base: dict | None = None) -> None:
         value = None if subject is None else {
             "subject": subject, "title": title, "startedAt": now(), "steps": steps or [],
+            **({"base": base} if base else {}),
         }
         self.write(assignments={"/meta/checking/now": value})
 
@@ -1930,9 +2071,17 @@ class Runner:
             raise Stop("base_moved", f"{self.base} moved since {subject} was synced")
         context = context.with_values(branch=branch, head=synced, expectedHead=synced)
         self.set_item(subject, stage="checking", checks=[])
-        self.checking(subject, item["title"], [{"label": "selecting checks", "state": "running"}])
+        # A lone candidate's panel names the base it is checked against, which a check.superseded that ends it repeats.
+        self.checking(subject, item["title"], [{"label": "selecting checks", "state": "running"}],
+                      base={"ref": self.base, "head": base_head})
         self.started[subject] = self.journal("check.started", subject, data={})
         self.failed[subject] = {}
+        # Once a check fails, a new hand-off the lead accepts may end the rest of this run (check.superseded).
+        with self.watching(subject, item["head"]):
+            self.check_watched(subject, item, synced, base_head, context, result, carried)
+
+    def check_watched(self, subject: str, item: dict, synced: str, base_head: str, context: Context, result: Result,
+                      carried: dict | None) -> None:
         checkout = self.checkout(synced, "check", context=context.with_values(treeSha=self.tree(synced)))
         self.assert_clean(checkout, "a fresh checkout of the synced head")
         changes = self.changes(base_head, synced)
@@ -1948,6 +2097,8 @@ class Runner:
         reused = self.reusable([(subject, item)], checks, self.tree(synced))
         outcomes = self.run_checks([subject], checks, checkout, context.with_values(treeSha=self.tree(synced)), result,
                                    reused=reused, carried=carry)
+        if self.ending(subject) is not None:
+            raise self.superseded_stop(subject)
         self.assert_clean(checkout, "the checkout after the checks")
         failed = [check for check in checks if outcomes[check["id"]] in ("failed", "timed_out")]
         if failed:
@@ -2432,6 +2583,12 @@ class Runner:
                 if not running:
                     continue
                 done, _ = concurrent.futures.wait(running, return_when=concurrent.futures.FIRST_COMPLETED)
+                ended = next((subject for subject in subjects if self.ending(subject) is not None), None)
+                if ended is not None:
+                    # The run won't merge and a new head replaces it: nothing more starts, retries or is journaled.
+                    self.stop_live()
+                    concurrent.futures.wait(running)
+                    raise self.superseded_stop(ended)
                 failing: list[dict] = []
                 for future in done:
                     check = running.pop(future)
@@ -2456,6 +2613,12 @@ class Runner:
                         show()
                         again = self.run_one(check, checkout, context)
                         assert again is not None
+                        ended = next((subject for subject in subjects if self.ending(subject) is not None), None)
+                        if ended is not None:
+                            # A retry the supersede stopped is no failure of the run: nothing more is recorded.
+                            self.stop_live()
+                            concurrent.futures.wait(running)
+                            raise self.superseded_stop(ended)
                         entry = {**finish(check, again), "retried": first}
                     outcomes[check["id"]] = entry["state"]
                     result.checks.append(entry)
@@ -2534,11 +2697,15 @@ class Runner:
             base_context = context.with_values(head=base_head, treeSha=self.tree(base_head))
             by_id = {check["id"]: check for check in selected}
             for check in candidates:
+                if self.ending(subject) is not None:
+                    break
                 if not self.base_prerequisites_pass(check, by_id, base_checkout, base_context):
                     # The check cannot be judged on the base; the failure stays the candidate's.
                     results.append({"check": check["id"], "result": "not_judged"})
                     continue
                 completed = self.run_one(check, base_checkout, base_context)
+                if self.ending(subject) is not None:
+                    break
                 # A re-run that could not start says nothing about the base.
                 if not started_run(completed):
                     results.append({"check": check["id"], "result": "not_started"})
@@ -2561,6 +2728,8 @@ class Runner:
                     self.record_history({}, {check["id"]: 1}, None)
                     completed = self.run_one(check, base_checkout, base_context)
                     retried = True
+                    if self.ending(subject) is not None:
+                        break
                     if not started_run(completed):
                         self.record_rerun(subject, check["id"], failures, log)
                         results.append({"check": check["id"], "result": "not_started", "retried": True, "log": log})
@@ -2590,12 +2759,20 @@ class Runner:
         except BaseException:
             self.end_rerun(subject, base_head, began, verdict_code="no_verdict", results=results)
             raise
+        if self.ending(subject) is not None:
+            # Ended by a new hand-off or the lead's broken base: no verdict, and the old head is not queued again.
+            entry = self.ended[subject]
+            self.end_rerun(subject, base_head, began, kind="base.rerun.stopped", head=self.checked[subject],
+                           why=f"check.superseded (entry {entry['id']}) ended it, for entry {entry['data']['by']}")
+            raise self.superseded_stop(subject)
         if stopped is not None:
+            self.flush_judged(subject)
             raise self.rerun_stopped(subject, base_head, began, stopped)
+        # The verdict is journaled with the stop it leads to, in one write that re-reads the row (see stopped).
+        self.pending_verdicts[subject] = {"base_head": base_head, "began": began, "results": results,
+                                          "verdict_code": "base_broken" if broken is not None else "candidate_failed"}
         if broken is not None:
-            self.end_rerun(subject, base_head, began, verdict_code="base_broken", results=results)
             raise broken
-        self.end_rerun(subject, base_head, began, verdict_code="candidate_failed", results=results)
 
     def rerun_stopped(self, subject: str, base_head: str, began: float, why: str) -> Stop:
         """A base re-run stopped before its verdict: journal base.rerun.stopped, record no verdict, and say what follows.
@@ -2635,7 +2812,15 @@ class Runner:
         """
         rerun = {**({"failures": [failure["id"] for failure in failures]} if failures else {}), "log": log}
 
-        def build(current: dict) -> tuple[dict, dict]:
+        if verdict is not None and subject in self.checked:
+            # A lone candidate's verdict joins baseReruns in the write that stops it (see stopped and rerun_verdict).
+            self.pending_judged.setdefault(subject, []).append(
+                {"check": check_id, "baseHead": verdict[1], "result": verdict[0], "subject": subject, "recordedAt": now()})
+            verdict = None
+
+        def build(current: dict) -> tuple[dict, dict] | None:
+            if self.overtaken(current, subject):
+                return None
             queue = [dict(item) for item in current["queue"]]
             for item in queue:
                 if item["subject"] == subject:
@@ -2649,6 +2834,33 @@ class Runner:
 
         with contextlib.suppress(Stop, delivery_state.StateError):
             self.write(build=build)
+
+    def flush_judged(self, subject: str) -> None:
+        """Record the checks a re-run judged before it was stopped, as their own runs did before any stop."""
+        judged = self.pending_judged.pop(subject, [])
+        if not judged:
+            return
+
+        def build(current: dict) -> tuple[dict, dict] | None:
+            if self.overtaken(current, subject):
+                return None
+            kept = [*(current["meta"].get("baseReruns") or []), *judged][-delivery_state.BASE_RERUNS_KEPT:]
+            return {}, {"/meta/baseReruns": kept}
+
+        with contextlib.suppress(Stop, delivery_state.StateError):
+            self.write(build=build)
+
+    def rerun_verdict(self, subject: str, pending: dict) -> Callable[[dict], dict]:
+        """The assignments that record a lone candidate's judged re-run in baseReruns, made in the stop's own write."""
+        judged = self.pending_judged.pop(subject, [])
+
+        def assignments(current: dict) -> dict:
+            if not judged:
+                return {}
+            kept = [*(current["meta"].get("baseReruns") or []), *judged][-delivery_state.BASE_RERUNS_KEPT:]
+            return {"/meta/baseReruns": kept}
+
+        return assignments
 
     def end_rerun(self, subject: str, base_head: str, began: float, kind: str = "base.rerun.finished", *,
                   verdict_code: str = "no_verdict", results: list[dict] | None = None, why: str = "",
@@ -3125,6 +3337,11 @@ class Runner:
             with contextlib.suppress(Exception):
                 if subject is not None and result.outcome != "refused":
                     self.finish_checking(subject)
+            if subject is not None:
+                self.checked.pop(subject, None)
+                self.ended.pop(subject, None)
+                self.pending_verdicts.pop(subject, None)
+                self.pending_judged.pop(subject, None)
             result.notes.extend(note for note in self.notes if note not in result.notes)
         return result
 
@@ -3147,11 +3364,24 @@ class Runner:
                 with contextlib.suppress(Stop, delivery_state.StateError):
                     self.write(build=_put_back(subject))
             return
+        pending = self.pending_verdicts.pop(subject, None) if subject is not None else None
         with contextlib.suppress(Stop, delivery_state.StateError):
             # A refusal leaves the queue as it was, but never a stage mid-step.
             in_progress = subject is not None and self.item(subject)["stage"] in ("syncing", "checking", "merging")
+            wrote = True
             if subject is not None and (not refused or in_progress):
-                self.finish_item(subject, "stopped", stop.reason)
+                # The re-run's verdict, its base.rerun.finished and this stop go in one write that re-reads the row:
+                # a run a new hand-off or the lead's broken base ended since writes and journals nothing more.
+                wrote = self.finish_item(subject, "stopped", stop.reason,
+                                         before=lambda: self.seam("before_stop_write", subject),
+                                         also=self.rerun_verdict(subject, pending) if pending else None)
+            elif subject is not None:
+                wrote = not self.overtaken(self.state(), subject)
+            if not wrote:
+                return
+            if pending:
+                self.end_rerun(subject, pending["base_head"], pending["began"], verdict_code=pending["verdict_code"],
+                               results=pending["results"])
             if queue_stopped:
                 # Every stop that stops the queue leaves the base to confirm by hand; serve waits for base.repaired.
                 # A break a re-run declared names its verdict and the base head it failed at; any other names no cause.

@@ -428,6 +428,24 @@
     var ticket = isObject(tickets[item.subject]) ? tickets[item.subject] : null;
     return (ticket && text(ticket.title)) || text(item.title) || text(item.subject);
   }
+  /**
+   * When a rerun on the main line should end: its start plus each rerun check's last recorded passing time, from the
+   * queue's history. Null when any of them has none, since a guess is not an estimate.
+   */
+  function rerunEndsAt(doc, rerun, checks) {
+    var meta = isObject(doc.state.meta) ? doc.state.meta : {};
+    var history = isObject(meta.checkHistory) && isObject(meta.checkHistory.checks) ? meta.checkHistory.checks : {};
+    var start = seconds(rerun.startedAt);
+    if (start === null || !checks.length) { return null; }
+    var total = 0;
+    for (var index = 0; index < checks.length; index += 1) {
+      var times = isObject(history[checks[index]]) ? list(history[checks[index]].seconds) : [];
+      var last = times.length ? times[times.length - 1] : null;
+      if (typeof last !== "number" || !isFinite(last) || last < 0) { return null; }
+      total += last;
+    }
+    return start + total;
+  }
   function checkingNow(doc) {
     var meta = isObject(doc.state.meta) ? doc.state.meta : {};
     return isObject(meta.checking) && isObject(meta.checking.now) ? meta.checking.now : null;
@@ -820,6 +838,20 @@
       var rerunSince = spoken(current.baseRerun.startedAt);
       add(box, el("div", "ck-rerun", "Rerunning " + (rerunChecks.length ? rerunChecks.join(", ") : "the failing checks") +
         " on the main line, to tell whether it fails there too" + (rerunSince ? " · started " + rerunSince : "")));
+      // A lone piece's rerun says what it is for, when it should end, and how the lead may end it sooner.
+      if (!batch && byId[current.subject]) {
+        var rerunEnd = rerunEndsAt(doc, current.baseRerun, rerunChecks);
+        var endWords = "";
+        if (rerunEnd !== null) {
+          var left = rerunEnd - Date.now() / 1000;
+          endWords = left >= 60 ? " · expected to end in " + spokenDuration(left)
+            : left > -60 ? " · expected to end about now" : " · expected to have ended " + spokenDuration(-left) + " ago";
+        }
+        add(box, el("div", "ck-rerun ck-rerun-why", (rerunChecks.length ? spokenList(rerunChecks) : "A check") +
+          " failed on " + text(current.subject) + "; the rerun decides whether the main line or the piece broke it" + endWords));
+        add(box, el("div", "ck-rerun ck-rerun-alt", "To end it sooner: the lane hands off a fixed head and the lead accepts " +
+          "it, or the lead names the main line broken with lead-base-broken."));
+      }
     }
     // Checks the lead chose never pass for the provider's answer: each member's reason is said beside the run, one
     // line each until opened, after the run's progress, which is what the panel is for.
