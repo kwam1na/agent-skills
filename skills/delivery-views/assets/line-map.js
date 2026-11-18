@@ -950,13 +950,14 @@
       var finished = shownBefore && !runningSteps.some(function (step) { return text(step.label) === shownBefore; })
         ? steps.filter(function (step) { return text(step.label) === shownBefore && DONE[step.state]; })[0] : null;
       prev.runningCheck = runningSteps.length ? { run: runId, label: text(runningSteps[0].label) } : null;
-      // A row still turning over from an earlier result is kept, turning, and this result waits its turn on it.
+      // A row still turning over from an earlier result is kept, turning, and this result waits its turn on it: only the
+      // latest waits, so the row turns at most once more before it shows the record as it stands.
       var keep = turning && turning.run === runId && turning.busy ? turning : null;
       if (turning && turning.run !== runId) { turning = null; }
       runningSteps.forEach(function (step, i) {
         if (i === 0 && keep) {
           box.appendChild(keep.row);
-          if (finished) { keep.queue.push({ finished: finished, next: step }); }
+          if (finished) { keep.queue = [{ finished: finished, next: step }]; }
           return;
         }
         var row = runRow(step);
@@ -966,13 +967,15 @@
       // A check that has just failed is told once at a time: its row marks the cross and turns over to the next check,
       // and only then does its entry arrive in the failures above. With no next check its entry alone tells it.
       var justFailed = finished && (finished.state === "failed" || finished.state === "timed_out");
-      if (justFailed && runningSteps.length && runMotionWanted(box)) {
+      // Under a kept row the cross waits its turn, so the entry arrives as it does with no motion rather than on a delay
+      // the row may not keep.
+      if (justFailed && runningSteps.length && !keep && runMotionWanted(box)) {
         var arriving = [].filter.call(box.querySelectorAll(".ck-fails li"), function (entry) { return entry.getAttribute("data-check") === text(finished.label); })[0];
         if (arriving) { arriving.classList.add("arriving"); }
       }
       if (keep && !runningSteps.length) {
         box.appendChild(keep.row);
-        if (finished) { keep.queue.push({ finished: finished, next: null }); }
+        if (finished && !justFailed) { keep.queue = [{ finished: finished, next: null }]; }
       } else if (finished && !runningSteps.length && !justFailed) {
         var rest = runRow(finished);
         box.appendChild(rest);

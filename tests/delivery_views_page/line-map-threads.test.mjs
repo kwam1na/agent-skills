@@ -82,11 +82,26 @@ test("two setbacks back to back read as two: the first ends on its tick and the 
     ["t2", "t2", "t1", "t1", "t1", "t1"]);
 });
 
+test("the stylesheet draws the line only on a thread's span, the hairline once closed, and never joins across a closing", () => {
+  const stylesheet = readFileSync(path.join(ROOT, "skills", "delivery-views", "assets", "line-map.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const rules = stylesheet.match(/[^{}]*\{[^}]*\}/g).map((block) => block.trim());
+  const selectors = (block) => block.split("{")[0].split(",").map((each) => each.trim());
+  const drawing = rules.filter((block) => /content:\s*""/.test(block) && selectors(block).some((one) => /\.beat\.threaded.*::before$/.test(one)));
+  // Every rule that draws a threaded row's line names the span: no rule draws it on a row outside one.
+  expect(drawing.length > 0).toBe(true);
+  for (const block of drawing) expect(selectors(block).every((one) => one.includes(".t-span"))).toBe(true);
+  expect(rules.some((block) => selectors(block).includes(".beat.threaded.t-span.t-closed::before") && /background:\s*var\(--hair\)/.test(block))).toBe(true);
+  const joins = rules.filter((block) => /top:\s*-1px/.test(block) && /\.beat\.threaded/.test(block));
+  expect(joins.length).toBe(1);
+  expect(joins[0].includes(":not(.t-closes)")).toBe(true);
+});
+
 test("nothing on a thread moves, under reduced motion or not", async () => {
   for (const reduced of [true, false]) {
-    const [, shown] = await openPage(pageWithRuns(storied("thread-at-story"), {}, { config: CONFIG }),
+    const snapshots = await openPage(pageWithRuns(storied("thread-at-story"), {}, { config: CONFIG }),
       { now: "2026-11-16T12:00:00Z", store: false, motion: { reduced }, steps: [{ click: '#happened [data-depth="story"]' }] });
-    expect(shown.app.querySelectorAll("#happened .thread-ring").length).toBe(1);
+    expect(snapshots[1].app.querySelectorAll("#happened .thread-ring").length).toBe(1);
+    expect(snapshots.animations.filter((animation) => /thread-|beat/.test(String(animation.target)))).toEqual([]);
   }
   const stylesheet = readFileSync(path.join(ROOT, "skills", "delivery-views", "assets", "line-map.css"), "utf8");
   for (const rule of stylesheet.match(/[^{}]*\{[^}]*\}/g).filter((block) => /thread-ring|thread-tick|t-span|t-opens|t-closes/.test(block))) {
@@ -134,7 +149,11 @@ test("a hand-off check counts the lead's notes in its line and lists them only i
 
 // The Checking card: the storefront build runs, then passes and hands off to the end-to-end run, which passes half a
 // second later and hands off to the behavior scenarios.
-function checking(stage) {
+function checking(at, gap = 500) {
+  // "failed" is the first result, then the end-to-end run failing with nothing after it. `gap` is how long after the
+  // storefront build the end-to-end run finishes, in milliseconds.
+  const stage = at === "failed" || at === "failed-running" ? 1 : at === "smoke" ? 2 : at;
+  const second = new Date(Date.parse("2026-10-22T05:09:30Z") + gap).toISOString();
   const state = readJson(path.join(CORPUS, "source", "state.json"));
   const journal = readFileSync(path.join(CORPUS, "source", "journal.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
   const steps = state.meta.checking.now.steps;
@@ -144,7 +163,20 @@ function checking(stage) {
     Object.assign(step("checkout end-to-end"), { state: "running", startedAt: "2026-10-22T05:09:30Z" });
   }
   if (stage >= 2) {
-    Object.assign(step("checkout end-to-end"), { state: "passed", finishedAt: "2026-10-22T05:09:30.500Z" });
+    Object.assign(step("checkout end-to-end"), { state: "passed", finishedAt: second });
+    Object.assign(step("payments behavior scenarios"), { state: "running", startedAt: second });
+  }
+  if (stage === 3) {
+    Object.assign(step("payments behavior scenarios"), { state: "passed", finishedAt: "2026-10-22T05:09:30.600Z" });
+  }
+  if (at === "smoke") {
+    Object.assign(step("payments behavior scenarios"), { state: "passed", finishedAt: "2026-10-22T05:09:30.600Z" });
+    steps.push({ label: "smoke test", state: "running", startedAt: "2026-10-22T05:09:30.600Z" });
+  }
+  if (at === "failed" || at === "failed-running") {
+    Object.assign(step("checkout end-to-end"), { state: "failed", finishedAt: "2026-10-22T05:09:30.500Z" });
+  }
+  if (at === "failed-running") {
     Object.assign(step("payments behavior scenarios"), { state: "running", startedAt: "2026-10-22T05:09:30.500Z" });
   }
   return { state, journal, focus: {}, stats: {}, estimates: {} };
@@ -153,11 +185,17 @@ const runRows = (shown) => [...shown.app.querySelectorAll(".checking .ck-run")].
   classes: row.className, name: row.querySelector(".ck-run-name")?.textContent ?? row.querySelector(".ck-run-words").textContent }));
 const turnsOut = (animations) => animations.filter((animation) => animation.target === "ck-run-words"
   && JSON.stringify(animation.keyframes).includes("rotateX(70deg)")).map((animation) => Math.round(animation.options.duration));
+const turnsIn = (animations) => animations.filter((animation) => animation.target === "ck-run-words"
+  && JSON.stringify(animation.keyframes).includes("rotateX(-70deg)")).map((animation) => Math.round(animation.options.duration));
 
 test("a redraw mid-handoff keeps the turning row, the next result waits its turn, and a quicker result turns quicker", async () => {
+  // Timers run four times faster in these cases: a whole handoff is under half a second, and each push lands well inside it.
   const page = pageWithRuns(checking(0), {}, { config: CONFIG });
-  const snapshots = await openPage(page, { now: "2026-10-22T05:10:00Z", store: {}, motion: {}, quicker: 10,
-    steps: [{ push: checking(1) }, { push: checking(2) }, { wait: 600 }] });
+  // At the page's own pace, so the settle and the hold can be timed: the first handoff takes its whole 1.88 s, the
+  // second about half a second. Read 3.2 s after the first result, the row has turned twice; had the second handoff
+  // taken its whole length it would still be turning until about 3.8 s.
+  const snapshots = await openPage(page, { now: "2026-10-22T05:10:00Z", store: {}, motion: {},
+    steps: [{ push: checking(1) }, { push: checking(2) }, { wait: 3150 }] });
   const [, handing, redrawn, rested] = snapshots;
   // The storefront build's row is handing off, and the redraw that brings the next result keeps it as it was: one row,
   // still the storefront build's, not rebuilt on the newest running check.
@@ -171,6 +209,50 @@ test("a redraw mid-handoff keeps the turning row, the next result waits its turn
   expect(turns.length).toBe(2);
   expect(turns[0]).toBe(200);
   expect(turns[1]).toBe(Math.round(200 * 500 / 1880));
+  expect(turnsIn(snapshots.animations)).toEqual([300, Math.round(300 * 500 / 1880)]);
+});
+
+test("a quicker result's whole handoff is shortened, its settle and hold with its turn", async () => {
+  // The second result came 100 ms after the first, so its handoff is a quarter of the whole: 470 ms in all, where the
+  // whole is 1880 ms. Timed from the row showing the end-to-end run to its showing the behavior scenarios, measured on
+  // the test's own clock, at the page's own pace.
+  const page = pageWithRuns(checking(0), {}, { config: CONFIG });
+  const marks = [];
+  const polls = Array.from({ length: 45 }, () => ({ run: () => marks.push(performance.now()), wait: 80 }));
+  const snapshots = await openPage(page, { now: "2026-10-22T05:10:00Z", store: {}, motion: {},
+    steps: [{ push: checking(1) }, { push: checking(2, 100) }, ...polls] });
+  const rows = snapshots.slice(3).map(runRows);
+  // The second handoff begins when the row first names the end-to-end run, and ends when it shows the scenarios running.
+  const second = rows.findIndex((shown) => shown.some((row) => row.name.includes("checkout end-to-end")));
+  const third = rows.findIndex((shown) => shown.some((row) => row.classes === "ck-run" && row.name === "payments behavior scenarios"));
+  expect([second >= 0, third > second]).toEqual([true, true]);
+  // About 470 ms, well under the 830 ms it takes with an unshortened settle, or the 1145 ms with an unshortened hold.
+  const took = marks[third] - marks[second];
+  expect([took < 650, took]).toEqual([true, took]);
+});
+
+test("a quicker result's handoff is a quarter of the whole at the least, and one that took longer is the whole", async () => {
+  const turned = async (gap) => {
+    const page = pageWithRuns(checking(0), {}, { config: CONFIG });
+    const snapshots = await openPage(page, { now: "2026-10-22T05:10:00Z", store: {}, motion: {}, quicker: 4,
+      steps: [{ push: checking(1) }, { push: checking(2, gap) }, { wait: 1500 }] });
+    return turnsOut(snapshots.animations);
+  };
+  expect(await turned(100)).toEqual([200, 50]);
+  expect(await turned(5000)).toEqual([200, 200]);
+});
+
+test("a new run mid-handoff drops the turning row and shows the new run's running check", async () => {
+  const page = pageWithRuns(checking(0), {}, { config: CONFIG });
+  const next = checking(0);
+  next.state.meta.checking.now.startedAt = "2026-10-22T05:09:40Z";
+  next.state.meta.checking.now.steps.forEach((step) => {
+    if (step.label === "storefront build") Object.assign(step, { startedAt: "2026-10-22T05:09:40Z" });
+  });
+  const snapshots = await openPage(page, { now: "2026-10-22T05:10:00Z", store: {}, motion: {}, quicker: 4,
+    steps: [{ push: checking(1) }, { push: next }, { wait: 1500 }] });
+  expect(runRows(snapshots[2])).toEqual([{ classes: "ck-run", name: "storefront build" }]);
+  expect(runRows(snapshots[3])).toEqual([{ classes: "ck-run", name: "storefront build" }]);
 });
 
 test("under reduced motion a finished check simply gives way to the next, with nothing turning", async () => {
@@ -181,3 +263,48 @@ test("under reduced motion a finished check simply gives way to the next, with n
   expect(runRows(snapshots[2])).toEqual([{ classes: "ck-run", name: "payments behavior scenarios" }]);
   expect(turnsOut(snapshots.animations)).toEqual([]);
 });
+
+test("results a moment apart don't pile up: only the latest waits, so the row turns once more and rests on the record", async () => {
+  const page = pageWithRuns(checking(0), {}, { config: CONFIG });
+  // At the page's own pace, so all three pushes land inside the first handoff.
+  const snapshots = await openPage(page, { now: "2026-10-22T05:10:00Z", store: {}, motion: {},
+    steps: [{ push: checking(1) }, { push: checking(2) }, { push: checking(3) }, { wait: 3000 }] });
+  // The first result turned the row to the end-to-end run; the next two came while it turned, and only the last of
+  // them, the behavior scenarios passing with nothing after, played: it settles on its tick, with no second turn.
+  expect(turnsOut(snapshots.animations)).toEqual([200]);
+  expect(runRows(snapshots[4])).toEqual([{ classes: "ck-run settled is-passed landing", name: "payments behavior scenarios passed" }]);
+});
+
+test("a check that fails while the row is turning is told by its entry alone, arriving at once, with no second telling queued", async () => {
+  const page = pageWithRuns(checking(0), {}, { config: CONFIG });
+  const snapshots = await openPage(page, { now: "2026-10-22T05:10:00Z", store: {}, motion: {}, quicker: 4,
+    steps: [{ push: checking(1) }, { push: checking("failed") }, { wait: 1500 }] });
+  const [, , failedNow, after] = snapshots;
+  const entry = failedNow.app.querySelector('.ck-fails li[data-check="checkout end-to-end"]');
+  expect(entry.classList.contains("arriving")).toBe(false);
+  // The storefront build's turn plays out on its kept row, and nothing turns after it.
+  expect(runRows(failedNow).length).toBe(1);
+  expect(turnsOut(snapshots.animations)).toEqual([200]);
+  expect(after.app.querySelectorAll(".checking .ck-run.is-failed").length).toBe(0);
+});
+
+test("a check that fails while the row is turning, with another still running, has its entry arrive at once, not on a delay the kept row may not keep", async () => {
+  const page = pageWithRuns(checking(0), {}, { config: CONFIG });
+  const snapshots = await openPage(page, { now: "2026-10-22T05:10:00Z", store: {}, motion: {},
+    steps: [{ push: checking(1) }, { push: checking("failed-running") }] });
+  const entry = snapshots[2].app.querySelector('.ck-fails li[data-check="checkout end-to-end"]');
+  expect(entry.classList.contains("arriving")).toBe(false);
+  expect(runRows(snapshots[2]).length).toBe(1);
+  expect(runRows(snapshots[2])[0].name).toContain("storefront build");
+});
+
+test("two results while the row turns, each with a check after it: only the latest turns next, straight to the newest check", async () => {
+  const page = pageWithRuns(checking(0), {}, { config: CONFIG });
+  const snapshots = await openPage(page, { now: "2026-10-22T05:10:00Z", store: {}, motion: {},
+    steps: [{ push: checking(1) }, { push: checking(2) }, { push: checking("smoke") }, { wait: 3000 }] });
+  // The end-to-end result was overtaken while it waited: the row turns from the storefront build to the end-to-end run,
+  // then once more, straight to the smoke test, never stopping on the scenarios.
+  expect(turnsOut(snapshots.animations).length).toBe(2);
+  expect(runRows(snapshots[4])).toEqual([{ classes: "ck-run", name: "smoke test" }]);
+});
+
