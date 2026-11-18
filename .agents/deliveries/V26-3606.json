@@ -89,6 +89,10 @@
         {
           "id": "v26-3620-1",
           "text": "The live view's headline is the delivery's name, without a leading ticket key that the kicker already links."
+        },
+        {
+          "id": "v26-3620-2",
+          "text": "The count leads the line under the name, in each open and closed state."
         }
       ],
       "after": [
