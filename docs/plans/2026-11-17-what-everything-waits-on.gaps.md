@@ -115,6 +115,10 @@ grants from the record (`lane-grants`) belongs with V26-3571.
   journals `finish.met`, but only the state tool does that, by hand (`patch --element finish[id=…]` and `journal`), and
   `finish.met` takes no evidence, so the reason went into a separate decision the entry points at. Open: a
   `lead-finish LINE --evidence T` that does both.
+- **Applying a release here turns `main` red until the attested-archive list learns it.** `tests/test_own_deliveries.py`
+  pins `ATTESTED_ARCHIVES`, and the apply's commit (c587bf66) didn't add linear-v3.1.0-rc.1, so the standing-binding
+  test failed on `main` until a later commit did. Nothing in the apply or `docs/own-deliveries.md` says to add it.
+  Repo: say so in that doc, or have the test read the receipt's attestation.
 - **"Waits shown" couldn't be shown on its own record.** The delivery ran its whole course on the installed release,
   which has none of its views, and by the time the candidate was applied nothing was waiting. A line that needs a live
   state should be checked while that state exists, on a delivery already running the release. Repo practice.
