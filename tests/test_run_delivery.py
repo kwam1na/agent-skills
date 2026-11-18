@@ -6668,7 +6668,9 @@ def troubleshooting_section() -> str:
     return text[text.index("## Troubleshooting"):]
 
 
-DOCTOR_LABELS = ["host and tools", "orchestration binding", "merge queue candidate step", "configuration", "release generation",
+# One line per declared lens follows the configuration: the fixture declares the workflow's two.
+DOCTOR_LABELS = ["host and tools", "orchestration binding", "merge queue candidate step", "configuration",
+                 "lens lens.outcome-correctness", "lens lens.adversarial-testing", "release generation",
                  "host hooks", "release on the delivery base", "gates", "lane checkouts ignored", "tracker issue URL",
                  "pipeline PR review", "gh", "forge find", "forge write access", "tracker snapshot token",
                  "snapshots and publishers", "hosted delivery", "in-app adapters", "in-app adapter contract", "video evidence tools",
