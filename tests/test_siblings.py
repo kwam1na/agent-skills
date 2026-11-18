@@ -160,9 +160,11 @@ class SiblingTests(unittest.TestCase):
     # -- helpers ---------------------------------------------------------------------------------------------------
 
     def serve(self, value: dict | bytes, *, stale: bool = False, renderer: str | None = None,
-              digest: str | None = None, fingerprint: str | None = None, newer: bool = False) -> None:
+              digest: str | None = None, fingerprint: str | None = None, newer: bool = False,
+              second: tuple | None = None, meta_changes: dict | None = None, current_headers: dict | None = None,
+              padding: int = 0) -> None:
         """Publish ``value`` as the sibling's current cut. ``newer`` answers a second read of current with a later
-        pointer."""
+        pointer, and ``second`` with that answer instead; ``meta_changes`` change the receipt current serves."""
         data = value if isinstance(value, bytes) else public.encode(value)
         type(self).sequence += 1
         now_ms = int(time.time() * 1000)
@@ -170,10 +172,13 @@ class SiblingTests(unittest.TestCase):
                 "epoch": 1, "sequence": self.sequence, "digest": digest or hashlib.sha256(data).hexdigest(),
                 "sourceFingerprint": fingerprint or (value["sourceFingerprint"] if isinstance(value, dict) else "f" * 64),
                 "publishedAt": now_ms - 1000, "sourceConfirmedAt": now_ms - 1000, "serverNow": now_ms,
-                "staleAfterMs": 120000, "stale": stale}
-        answers = [(200, {}, json.dumps(meta).encode(), 0)]
+                "staleAfterMs": 120000, "stale": stale, **(meta_changes or {})}
+        served = json.dumps(meta).encode() + b" " * padding
+        answers = [(200, current_headers or {}, served, 0)]
         if newer:
             answers.append((200, {}, json.dumps({**meta, "sequence": meta["sequence"] + 1}).encode(), 0))
+        if second:
+            answers.append(second)
         self.receiver.answer(f"/d/{self.public_id}/current", *answers)
         self.receiver.answer(f"/d/{self.public_id}/snapshots/{meta['digest']}", (200, {}, data, 0))
 
@@ -380,12 +385,15 @@ class SiblingTests(unittest.TestCase):
         old["takenAt"] = old["siblings"][0]["readAt"] = at(2000)
         forge = {"takenAt": at(), "source": "forge",
                  "items": [{"subject": "OWN-1", "state": "open", "changeRequest": "https://forge.test/pr/1"}]}
+        attempted = self.sibling()["lastAttemptAt"]
         result = self.reconcile(old, forge)
         self.assertTrue(result["ok"])
         own = next(item for item in state_tool.read_state(self.record)["planned"] if item["subject"] == "OWN-1")
         self.assertEqual(own.get("changeRequest"), "https://forge.test/pr/1")
         self.assertEqual((self.stored_stage(), self.sibling()["lastOutcome"]), ("building", "stale"))
         self.assertEqual(self.journal("sibling.landed"), [])
+        # Refused, it never moves the latest attempt back to when it was read.
+        self.assertEqual(self.sibling()["lastAttemptAt"], attempted)
 
     def test_a_stale_read_frees_nothing_either_way_and_a_fresh_one_lands_the_story_once(self) -> None:
         self.first_read()
@@ -420,12 +428,70 @@ class SiblingTests(unittest.TestCase):
 
     def test_a_malformed_sibling_snapshot_is_refused_whole(self) -> None:
         snapshot = self.first_read()
-        broken = copy.deepcopy(snapshot)
-        broken["siblings"][0]["outcome"] = "maybe"
-        before = (self.record / "state.json").read_bytes()
-        with self.assertRaises(state_tool.StateError):
-            self.reconcile(broken)
-        self.assertEqual((self.record / "state.json").read_bytes(), before)
+        def changed(change):
+            broken = copy.deepcopy(snapshot)
+            change(broken["siblings"][0])
+            return broken
+
+        refused = {
+            "an unknown outcome": [changed(lambda entry: entry.update(outcome="maybe"))],
+            "stories on an unavailable read": [changed(lambda entry: entry.update(outcome="unavailable"))],
+            "a read with no stories": [changed(lambda entry: entry.pop("stories"))],
+            "a read taken in the future": [changed(lambda entry: entry.update(readAt=at(-3600)))],
+            "one sibling in two snapshots": [snapshot, copy.deepcopy(snapshot)],
+        }
+        for name, snapshots in refused.items():
+            with self.subTest(case=name):
+                before = ((self.record / "state.json").read_bytes(), (self.record / "journal.jsonl").read_bytes())
+                with self.assertRaises(state_tool.StateError):
+                    self.reconcile(*snapshots)
+                self.assertEqual(((self.record / "state.json").read_bytes(), (self.record / "journal.jsonl").read_bytes()),
+                                 before)
+
+    def test_reconcile_passes_over_an_earlier_read_a_relinked_sibling_and_a_read_of_another_epic(self) -> None:
+        first = self.first_read()
+        # An earlier read, applied after a later attempt, changes nothing.
+        self.receiver.answer(f"/d/{self.public_id}/current", (500, {}, b"{}", 0))
+        self.reconcile(self.read())
+        kept = self.sibling()
+        self.assertEqual(kept["lastOutcome"], "unavailable")
+        # Read times are whole seconds: this one is a minute before the attempt the record holds.
+        first["siblings"][0]["readAt"] = at(60)
+        self.reconcile(first)
+        self.assertEqual(self.sibling(), kept)
+        # A read that says read under another parent counts as other-epic, whatever the command called it.
+        self.serve(body("merged"))
+        other = self.read()
+        other["siblings"][0]["trackerParent"] = "EPIC-9"
+        self.reconcile(other)
+        self.assertEqual((self.sibling()["lastOutcome"], self.stored_stage()), ("other-epic", "building"))
+        self.assertEqual(self.journal("sibling.landed"), [])
+        self.assertEqual([entry["data"] for entry in self.journal("sibling.mismatched")],
+                         [{"sibling": "mobile", "parent": "EPIC-9"}])
+        # A read of a link the record no longer names for that sibling is passed over.
+        fresh = self.read()
+        state_tool.set_sibling(self.record, name="mobile", remove=True)
+        state_tool.set_sibling(self.record, name="mobile", link=f"https://views.example.com/d/{'a' * 64}")
+        self.reconcile(fresh)
+        self.assertNotIn("lastOutcome", self.sibling())
+        self.assertNotIn("stories", self.sibling())
+        self.assertEqual(self.journal("sibling.landed"), [])
+
+    def test_a_settled_story_lands_and_a_queued_stage_wins_over_a_planned_one(self) -> None:
+        self.first_read()
+        self.serve(body("settled"))
+        snapshot = self.read()
+        self.reconcile(snapshot)
+        [landed] = self.journal("sibling.landed")
+        self.assertEqual(landed["data"], {"sibling": "mobile", "subject": "SIB-1",
+                                          "firstSeenAt": snapshot["siblings"][0]["readAt"]})
+        both = body("merged")
+        both["document"]["state"]["planned"] = [{"subject": "SIB-1", "title": "The sibling's story", "lane": "lane-1",
+                                                 "stage": "building"}]
+        public.validate(both)
+        self.serve(both)
+        [entry] = self.read()["siblings"]
+        self.assertEqual([story["stage"] for story in entry["stories"]], ["merged"])
 
     # -- scenario 10 -----------------------------------------------------------------------------------------------
 
@@ -445,6 +511,34 @@ class SiblingTests(unittest.TestCase):
         self.assertEqual((self.stored_stage(), self.sibling()["lastOutcome"], self.sibling()["terminal"]),
                          ("merged", "read", True))
         self.assertEqual(len(self.journal("sibling.landed")), 1)
+        # A later read of a cut that isn't terminal says so.
+        self.serve(body("merged"))
+        self.reconcile(self.read())
+        self.assertEqual((self.sibling()["lastOutcome"], self.sibling()["terminal"]), ("read", False))
+
+    def test_a_terminal_cut_whose_current_cannot_be_read_again_is_stale(self) -> None:
+        self.first_read()
+        self.serve(body("merged", journal=closed_journal()), stale=True, second=(500, {}, b"{}", 0))
+        [entry] = self.read()["siblings"]
+        self.assertEqual((entry["outcome"], entry["terminal"]), ("stale", False))
+
+    def test_the_reader_checks_currents_receipt_and_answer_as_the_viewer_does(self) -> None:
+        self.first_read()
+        cases = {
+            "another protocol": (dict(meta_changes={"protocolVersion": "hosted-delivery-api/2"}), "incompatible"),
+            "another stale window": (dict(meta_changes={"staleAfterMs": 60000}), "incompatible"),
+            "not JSON by its type": (dict(current_headers={"Content-Type": "text/html"}), "incompatible"),
+            "current over its bound": (dict(padding=5000), "incompatible"),
+            "confirmed too long ago": (dict(meta_changes={"sourceConfirmedAt": int(time.time() * 1000) - 130000}), "stale"),
+        }
+        for name, (serving, outcome) in cases.items():
+            with self.subTest(case=name):
+                self.serve(body("merged"), **serving)
+                [entry] = self.read()["siblings"]
+                self.assertEqual(entry["outcome"], outcome)
+        with mock.patch("sys.stderr"), self.assertRaises(SystemExit) as stopped:
+            hosted.main(["status", "--state-dir", str(self.record)])
+        self.assertEqual(stopped.exception.code, 2)
 
     # -- scenario 11 -----------------------------------------------------------------------------------------------
 
@@ -469,6 +563,29 @@ class SiblingTests(unittest.TestCase):
         status, detail = doctor.siblings()
         self.assertEqual(status, "ok")
         self.assertIn("mobile: read", detail)
+        # The check is part of the snapshots and publishers line.
+        doctor.c = SimpleNamespace(state=self.record, name="run-delivery.json", flow_raw={})
+        doctor.root = self.tmp
+        settings = {"publisher": "linear", "mode": "none", "transitions": {}}
+        with mock.patch.object(run_delivery, "publishing_problems", side_effect=lambda *_: []), \
+                mock.patch.object(run_delivery.tracker_publisher, "settings", return_value=settings):
+            doctor.binding = {"state": {}}
+            status, detail = doctor.publishing()
+            self.assertEqual(status, "wrong")
+            self.assertIn("the record names sibling deliveries (mobile: read)", detail)
+            doctor.binding = {"state": member}
+            status, detail = doctor.publishing()
+            self.assertEqual(status, "ok")
+            self.assertIn("sibling deliveries (mobile: read)", detail)
+
+    def test_a_sibling_command_that_prints_an_old_read_leaves_the_last_one_standing(self) -> None:
+        self.first_read()
+        old = {"schemaVersion": "sibling-snapshot/1", "takenAt": at(2000), "siblings": []}
+        member = {"siblingSnapshot": {"argv": [sys.executable, "-c", f"print({json.dumps(json.dumps(old))})"]}}
+        result = state_tool.refresh_sources(self.record, member)
+        self.assertEqual(result["sources"]["siblings"]["status"], "stale", result)
+        self.assertIn("too old", result["sources"]["siblings"]["reason"])
+        self.assertEqual(self.sibling()["lastOutcome"], "read")
 
     # -- scenario 12 -----------------------------------------------------------------------------------------------
 
