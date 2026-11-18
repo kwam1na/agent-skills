@@ -4824,10 +4824,13 @@ def waits(document: dict, *, needing: frozenset[str] | set[str] = frozenset(), w
                 continue
             if story["stage"] in SIBLING_LANDED:
                 return None
+            # A fresh sibling's story says where it stands, with no time. Any other says since when its outcome
+            # began, as the views do: readAt is the last read that changed it, which can be hours older.
             fresh = row.get("lastOutcome") == "read"
-            fields = {"on": key, "sibling": row["name"], "case": "held",
-                      "where": wait_said(table, "stages", "sibling",
-                                         {"stage": story["stage"] if fresh else "unread", "at": row.get("readAt")})}
+            where = (wait_said(table, "stages", "sibling", {"stage": story["stage"]}) if fresh else
+                     wait_said(table, "stages", "siblingSince", {"outcome": row.get("lastOutcome"),
+                                                                 "at": row.get("lastAttemptAt") or row.get("readAt")}))
+            fields = {"on": key, "sibling": row["name"], "case": "held", "where": where}
             return ({"subject": subject, "on": key, "cause": "sibling", "stage": story["stage"], "frees": "landed",
                      "needsSomeone": False}, fields)
         # Held by no story and no sibling: the lead has to add the sibling or fix the key, unless a sibling that

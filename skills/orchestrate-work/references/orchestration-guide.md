@@ -330,8 +330,10 @@ decision. Lanes post on their own tickets at the points the lane brief names.
   In a record with siblings, a key no story of its own holds raises a `sibling`
   wait, after `order` among the causes. While a same-epic sibling's last kept
   read holds the story unlanded, the story waits for it to land there, and the
-  sentence says how far it has got, or, when the sibling isn't fresh, when it
-  was last read. The wait goes when a fresh read shows the story `merged` or
+  sentence says how far it has got, with no time. When the sibling isn't fresh,
+  it says what is wrong and since when, from `lastAttemptAt`, in the views'
+  words: "Couldn't be read since <at>", say. It never gives `readAt`, which can
+  be hours older than the latest read. The wait goes when a fresh read shows the story `merged` or
   `settled`, which journals `sibling.landed`; that wakes `wait`, and no lead
   command is needed, even after the sibling's delivery has closed. A key that no
   story and no sibling holds is held too: it needs the lead, to add the sibling

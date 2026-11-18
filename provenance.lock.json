@@ -518,11 +518,11 @@
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "816786e575f28b41143f48e82db28c60e511c2b6cbbc49da84187f26a0b7d265"
+          "sha256": "34dc9dc09dfb0307464a39dd90b1cf139a796b976c3c9146d51ff6c68416b127"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
-          "sha256": "8429066460c63001f0f1e28af9af24dd223190e23d7eaeb8dd7bebcffe1512d2"
+          "sha256": "9673ee4649ae617797628223238611520c7f35fb62308d0e8c05575444965015"
         },
         {
           "path": "skills/orchestrate-work/references/story.schema.json",
@@ -530,11 +530,11 @@
         },
         {
           "path": "skills/orchestrate-work/references/wait-words.json",
-          "sha256": "580e104f518b59c5811c54d48a6cfb147c328ce4a7ed52abea94d3c07b9afd50"
+          "sha256": "0bfb05dbf82e5fd7a73204fb7b73281e792ae80721b8865c8a1e2f0f3fefcfe5"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "29aa91c463e44140fbcac9a893c6d7397e839bf48a4488d9c73cd651dfcd8192"
+          "sha256": "ab81ecbaabd95db323b9400f55cf730dcceb19fef32f1945df09a08f7741c54d"
         },
         {
           "path": "skills/orchestrate-work/scripts/journal_words.py",
