@@ -12885,8 +12885,12 @@ class Doctor:
     def siblings(self):
         """Each sibling delivery the record names, with its last read's outcome, and a binding that never reads them:
         part of the snapshots and publishers check."""
+        # A configuration resolves its state directory only once a delivery is selected.
+        state = getattr(self.c, "state", None)
+        if state is None:
+            return self.not_applicable("no delivery selected")
         try:
-            record = json.loads((Path(self.c.state) / "state.json").read_text(encoding="utf-8"))
+            record = json.loads((Path(state) / "state.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return self.not_applicable("no record yet")
         named = [row for row in (record.get("siblings") or []) if isinstance(row, dict)] if isinstance(record, dict) else []

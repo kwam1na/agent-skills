@@ -319,11 +319,14 @@ class SiblingTests(unittest.TestCase):
         data = public.encode(merged)
         refused_schema = copy.deepcopy(merged)
         refused_schema["unexpected"] = True
+        stageless = copy.deepcopy(merged)
+        del stageless["document"]["state"]["queue"][0]["stage"]
         cases = {
             "digest": dict(value=data, digest="d" * 64),
             "renderer": dict(value=merged, renderer="delivery-line-map/3"),
             "fingerprint": dict(value=merged, fingerprint="e" * 64),
             "schema": dict(value=refused_schema),
+            "a row with no stage": dict(value=stageless),
         }
         for name, case in cases.items():
             with self.subTest(case=name):
@@ -563,6 +566,9 @@ class SiblingTests(unittest.TestCase):
         status, detail = doctor.siblings()
         self.assertEqual(status, "ok")
         self.assertIn("mobile: read", detail)
+        # A configuration with no delivery selected has no state directory: the check doesn't apply.
+        doctor.c = SimpleNamespace()
+        self.assertEqual(doctor.siblings()[0], "skipped-ok")
         # The check is part of the snapshots and publishers line.
         doctor.c = SimpleNamespace(state=self.record, name="run-delivery.json", flow_raw={})
         doctor.root = self.tmp

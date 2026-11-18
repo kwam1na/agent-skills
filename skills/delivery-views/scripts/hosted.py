@@ -923,7 +923,9 @@ def read_sibling(name, link, parent, *, timeout=SIBLING_SECONDS):
         try:
             value = json.loads(data)
             public.validate(value)
-        except (ValueError, UnicodeError, RecursionError, public.ProjectionError):
+            stories = sibling_stories(value['document']['state'])
+        except (ValueError, UnicodeError, RecursionError, KeyError, TypeError, public.ProjectionError):
+            # A body the schema admits but whose rows the reader can't use is incompatible for this sibling alone.
             raise SiblingRead('incompatible') from None
         if value['sourceFingerprint'] != meta['sourceFingerprint']:
             raise SiblingRead('incompatible')
@@ -945,7 +947,7 @@ def read_sibling(name, link, parent, *, timeout=SIBLING_SECONDS):
         return {**entry, 'outcome': 'other-epic', **kept}
     outcome = 'stale' if stale and not terminal else 'read'
     return {**entry, 'outcome': outcome, **kept, 'stale': stale, 'terminal': terminal,
-            'stories': sibling_stories(state)}
+            'stories': stories}
 
 
 def read_siblings(directory, *, timeout=SIBLING_SECONDS):

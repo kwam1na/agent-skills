@@ -234,7 +234,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/hosted.py",
-          "sha256": "c8cae7b61329336bbd36a8a05701e3323b33265f88168de170f1af1ac85bffa5"
+          "sha256": "07d1a464655465e717b77abde24c970bd9eaa61404efcc6f788c86c0391b547b"
         },
         {
           "path": "skills/delivery-views/scripts/public_projection.py",
@@ -1123,7 +1123,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "ea082ce323e3e64598c99398ed9d47e1a3d79f3cc351b3866e7e408039f5695f"
+          "sha256": "d8cbd5092e40864060ba00e477d7c784ba8571b165190b9426f75a2a5f7f5061"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",
