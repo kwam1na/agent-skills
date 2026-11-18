@@ -50,6 +50,13 @@ Seen on release `linear-v3.0.0` (generation `7ff4b0e5`), the installed workflow 
 - **Ownership problems surface one refusal at a time.** Lanes learned of a missing grant only when review-prepare or
   the queue refused it, and then asked again, so one story took several round trips. Open.
 
+- **No preview of the queue's ownership check.** Before re-queuing after a regrant, the lead merged each candidate
+  into `main` with `git merge-tree` and ran `region_ownership.problems` by script, to see whether the queue would
+  refuse it. Open: a lead command that runs the queue's region check on a candidate without queuing it.
+- **No view of which claimed lines a lane is changing.** To carve a span safely, the lead read each lane's working
+  diff by script (`git diff -U0` in its checkout) to learn whether the lines another lane asked for were in use.
+  Open: the record or a command could show each lane's touched lines against its claims.
+
 **Proposal: spans follow the work.** Spans and grants were the largest source of lead work in this delivery: about
 40 stale spans regranted by script after landings, 3 carves that left lines unowned, and a dozen requests corrected by
 a line. One unit of work would close most of it:
