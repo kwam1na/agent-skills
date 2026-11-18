@@ -2488,7 +2488,7 @@ class WorkRootSafetyTests(MergeQueueTestCase):
         results = self.run_from(adopter, adopter.operator, "feature")
         self.assertRefused(results, "contain a checkout")
         # Only a lead-suite checkout's refusal says it is one.
-        self.assertTrue(self.assertStopped(results, "binding_invalid")["stop"]["detail"].endswith(str(lane)))
+        self.assertNotIn("lead-suite", self.assertStopped(results, "binding_invalid")["stop"]["detail"])
         self.assertTrue((lane / "src" / "app.txt").exists())
 
     def test_a_lead_suite_checkout_left_in_work_root_is_refused_naming_its_origin_and_fix(self) -> None:

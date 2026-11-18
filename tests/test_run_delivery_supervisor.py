@@ -11,7 +11,6 @@ import datetime
 import fcntl
 import html
 import importlib.util
-import inspect
 import json
 import os
 import platform
@@ -2402,6 +2401,30 @@ class SupervisorBlockerTests(unittest.TestCase):
         self.assertEqual([e["kind"] for e in written], ["blocker.recorded", "blocker.resolved"])
         self.assertEqual(resolutions[-1]["why"], "the supervisor's live has stayed up for a pass")
 
+    def test_the_live_view_s_start_is_noted_whether_adopted_or_started(self) -> None:
+        tool = self.tool
+        sup, _, _ = self.supervisor([])
+        state = self.tmp / "state"
+        state.mkdir()
+        sup.c = types.SimpleNamespace(**vars(self.c), release=self.tmp, state=state)
+        sup.started_at, sup.write_lock, sup.say = {}, lambda: None, lambda line: None
+        script = str((self.tmp / "skills/orchestrate-work/scripts/render_state.py").resolve())
+        before = time.monotonic()
+        with mock.patch.multiple(tool, recorded_live=lambda state: {"pid": 4242, "port": 1, "renderState": script},
+                                 pid_runs=lambda pid: True, listens=lambda pid, port: True,
+                                 live_address=lambda port: f"http://127.0.0.1:{port}/"):
+            sup.start_live()  # adopted
+        self.assertEqual(sup.view_pid, 4242)
+        self.assertGreaterEqual(sup.started_at.get("live", 0.0), before)
+        sup.started_at, sup.view, sup.view_pid = {}, None, None
+        before = time.monotonic()
+        sup.spawn_view = lambda port: (types.SimpleNamespace(pid=4343), 5555)
+        with mock.patch.multiple(tool, recorded_live=lambda state: None, live_port_setting=lambda: 0,
+                                 live_address=lambda port: f"http://127.0.0.1:{port}/"):
+            sup.start_live()  # started
+        self.assertEqual(sup.view_pid, 4343)
+        self.assertGreaterEqual(sup.started_at.get("live", 0.0), before)
+
     def test_a_blocker_the_lead_resolved_is_not_resolved_again_nor_recorded_while_it_flaps(self) -> None:
         journal: list[dict] = []
         alive = types.SimpleNamespace(poll=lambda: None)
@@ -2425,9 +2448,22 @@ class SupervisorBlockerTests(unittest.TestCase):
             # Once it no longer flaps, or with no supervisor to say so, its blocker shows as any other; a suite
             # checkout's blocker always does.
             self.assertEqual(self.tool.flapping_blockers(self.c, ()), set())
-        # The filter is the one needs_you applies.
-        self.assertIn("shown = flapping_blockers(c, flapping)", inspect.getsource(self.tool.needs_you))
-        self.assertIn('entry["id"] not in shown', inspect.getsource(self.tool.needs_you))
+        # needs_you applies that filter, and no wider one: with serve flapping only its blocker is left to the "won't
+        # stay up" item, and with nothing flapping both blockers show and hold.
+        doc = {"journal": [{"id": n, "kind": "blocker.recorded", "data": {"text": f"blocker {n}"}, "at": "t"}
+                           for n in (3, 4)], "state": {"queue": [], "meta": {}}}
+        c = types.SimpleNamespace(**vars(self.c), state=self.tmp, flow_log=flow, forge={})
+        stand_ins = {"tracker_conf": lambda c: {}, "base_head": lambda c: None, "full_health_running": lambda c: None,
+                     "lane_needs": lambda state: [], "listener_needed": lambda state: False,
+                     "record_needs": lambda doc, items: [], "waits_needing": lambda c, doc, items: [],
+                     "say_needs": lambda c, doc, items: items, "read_log": lambda name, delivery: [],
+                     "lead_file": lambda c, name: flow / f"FX-1.{name}"}
+        with mock.patch.multiple(self.tool, **stand_ins), \
+                mock.patch.object(self.tool.tracker_publisher, "needs_you", lambda *a, **k: []):
+            blockers = lambda flapping: {item["fields"]["entry"]: item["holding"] for item in
+                                         self.tool.needs_you(c, doc, flapping) if item["kind"] == "blocker"}
+            self.assertEqual(blockers(("serve",)), {4: True})
+            self.assertEqual(blockers(()), {3: True, 4: True})
 
     def test_the_supervisor_s_blockers_are_pinned_where_the_lead_reads_them(self) -> None:
         root = Path(__file__).resolve().parents[1]
