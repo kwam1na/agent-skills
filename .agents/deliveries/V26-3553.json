@@ -242,6 +242,10 @@
         {
           "id": "v26-3567-6",
           "text": "c6: Each row's meta line opens with who must act: You for the operator, The lead, or a lane by name. Rows that need the operator come first. On the page, 'you' always means the reader and the lead is always named."
+        },
+        {
+          "id": "v26-3567-7",
+          "text": "c7: The lead-listener tests (LeadListenerTests in tests/test_run_delivery_supervisor.py, and LeadMayStopTests in tests/test_run_delivery_hooks.py) pass at any machine load: they set lead-wait's load threshold, or mark load pressure as seen, rather than reading the real machine's load."
         }
       ],
       "after": [
