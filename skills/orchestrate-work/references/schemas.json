@@ -1049,9 +1049,36 @@
             "end": {
               "type": "integer",
               "minimum": 2
+            },
+            "story": {
+              "description": "The story of the claim's lane it is for: released when that story lands. A claim without one is the lane's.",
+              "$ref": "#/$defs/name"
+            },
+            "regrant": {
+              "description": "Set when a landing left the claim unable to map to the merge, and it was neither the landed story's nor carried: why, and the merge. A regrant to its lane and story, or its revocation, clears it.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "reason",
+                "merge"
+              ],
+              "properties": {
+                "reason": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "merge": {
+                  "$ref": "#/$defs/commit"
+                }
+              }
             }
           }
         }
+      },
+      "regionsSettled": {
+        "description": "The id of the last candidate.merged whose region claims were settled: 0 before any.",
+        "type": "integer",
+        "minimum": 0
       },
       "planned": {
         "description": "Work the lead knows is under way but has not handed to the queue. Optional; the lead owns it.",
