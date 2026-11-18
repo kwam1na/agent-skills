@@ -1016,5 +1016,43 @@ class PeerWaitViewTests(unittest.TestCase):
         (record / "peer-waits.json").unlink()
         self.assertNotIn(claim, json.dumps(self.render_state.with_story(self.render_state.show(record), record), ensure_ascii=False))
 
+
+class LostSignalTests(unittest.TestCase):
+    """The peer-waits step imports the state tool's modules in the supervisor's process on its first pass. A stop
+    landing while Python compiles one runs the handler, and CPython before 3.14 then drops what it raised: the
+    supervisor honours the signal it recorded at the pass's next step."""
+
+    def supervisor(self, state: Path) -> flow.Supervisor:
+        sup = object.__new__(flow.Supervisor)
+        sup.c = types.SimpleNamespace(state=state, delivery="FX-1", load_delivery=lambda delivery: None)
+        sup.once, sup.before_signals, sup.signalled = False, {signal.SIGTERM: flow._terminate}, None
+        sup.lose = lambda: False
+        return sup
+
+    def swallowed(self, sup: flow.Supervisor) -> str:
+        """The handler runs and its raise is lost, as inside compile()."""
+        try:
+            sup.on_signal(signal.SIGTERM, None)
+        except SystemExit:
+            pass
+        return "reconciled"
+
+    def test_a_signal_whose_raise_was_lost_stops_the_pass_at_its_next_step(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "state.json").write_text("{}\n")
+            sup = self.supervisor(Path(tmp))
+            sup.honour_signal()  # nothing recorded: nothing to honour
+            later = mock.Mock(side_effect=AssertionError("a step ran after the signal"))
+            with mock.patch.object(flow, "read_log", lambda *args: []), \
+                    mock.patch.object(flow, "reconcile_once", lambda: self.swallowed(sup)), \
+                    mock.patch.object(flow, "load_state", later), \
+                    self.assertRaises(SystemExit) as stopped:
+                sup.one_pass(1)
+            self.assertEqual(stopped.exception.code, 128 + signal.SIGTERM)
+            later.assert_not_called()
+            status = json.loads((Path(tmp) / flow.SUPERVISOR_FILE).read_text())
+            self.assertEqual((status["state"], status["why"], status["signal"]), ("stopped", "signal", "SIGTERM"))
+
+
 if __name__ == "__main__":
     unittest.main()

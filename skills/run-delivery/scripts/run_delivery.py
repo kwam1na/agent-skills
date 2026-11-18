@@ -10901,6 +10901,7 @@ class Supervisor:
         self.held_lines: list[str] | None = []
         # The handlers its own signal handler stands in front of.
         self.before_signals: dict[int, object] = {}
+        self.signalled: int | None = None
         self.restarts: dict[str, list[float]] = {}
         self.address: str | None = None
         self.handle = None
@@ -11083,12 +11084,19 @@ class Supervisor:
         if not (status.get("pid") == os.getpid() and status.get("state") == "stopped"):
             with contextlib.suppress(OSError):
                 write_supervisor_status(self.c.state, os.getpid(), False, "signal", signal.Signals(number).name)
+        self.signalled = number
         before = self.before_signals.get(number, signal.SIG_DFL)
         if callable(before):
             before(number, frame)
             return
         signal.signal(number, signal.SIG_DFL)
         os.kill(os.getpid(), number)
+
+    def honour_signal(self) -> None:
+        """A signal's raise can be lost where Python cannot raise, as while it compiles a module a pass imports:
+        CPython before 3.14 drops it there. The recorded signal is honoured at the pass's next step or wait."""
+        if self.signalled is not None:
+            self.on_signal(self.signalled, None)
 
     def stop_children(self) -> None:
         for proc in self.children.values():
@@ -11136,6 +11144,7 @@ class Supervisor:
                  ("needs", derive),
                  ("render", lambda: render_views(c, only="renderers")), ("latest", lambda: str(copy_latest(c))))
         for name, step in steps:
+            self.honour_signal()
             if self.lose():
                 return False
             try:
@@ -11310,6 +11319,7 @@ class Supervisor:
                     break
                 deadline = time.monotonic() + supervisor_pass_seconds(c)
                 while time.monotonic() < deadline and not self.stop_asked():
+                    self.honour_signal()
                     if self.lose():
                         break
                     self.keep_alive()
