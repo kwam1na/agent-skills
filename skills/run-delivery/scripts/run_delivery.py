@@ -6376,6 +6376,8 @@ def draft_delivery(c, args, integration_target: str | None = None) -> None:
             else:
                 notes.append(f"plan story {subject}'s tracker item has no Acceptance Criteria section: drafted no "
                              "criteria for it")
+            if subject in tracked and not tracked[subject].get("summary"):
+                notes.append(no_summary(subject))
     drafted = {}
     for field, name, noun in (("approvals", args.approvals_section, "approvals"),
                             ("outOfScope", args.out_of_scope_section, "out-of-scope items")):
@@ -7048,6 +7050,12 @@ def tracker_snapshot_items(c) -> dict | None:
     if newest is None:
         return None
     return {item["subject"]: item for item in newest["items"] if isinstance(item, dict) and "subject" in item}
+
+
+def no_summary(key: str) -> str:
+    """The note for a story whose tracker item carries no summary: the live view's card reads one only from the
+    first paragraph under the ticket's `## Summary` heading, so it would show none."""
+    return f"{key}'s ticket has no `## Summary`; its card will show none"
 
 
 def story_readiness(c, key: str) -> tuple[str, str | None]:
@@ -12204,6 +12212,7 @@ class Doctor:
             ("plan-sections", "plan sections", ("delivery",), self.stories_planned),
             ("story-files", "story files", ("plan-sections",), self.story_files),
             ("readiness", "story readiness", ("delivery",), self.story_readiness),
+            ("summaries", "story summaries", ("delivery",), self.story_summaries),
             ("context-sections", "context sections", ("delivery",), self.context_planned),
             ("finish-lines", "finish lines", ("delivery",), self.finish_lines),
             ("remote-base", "configuration on the remote base", ("delivery",), self.remote_base),
@@ -12772,6 +12781,19 @@ class Doctor:
             return self.not_applicable("; ".join(unchecked))
         return "ok", (f"each of the {len(found)} stories still planned is offered its first start move"
                       if found else "no story is still waiting to start")
+
+    def story_summaries(self):
+        d = self.delivery
+        items = tracker_snapshot_items(d)
+        if items is None:
+            return self.not_applicable("there is no tracker snapshot")
+        bare = [key for key in d.stories if key in items and not items[key].get("summary")]
+        if bare:
+            # A warning, not a failure: a story with no summary still delivers; only its card shows none.
+            return "warn", ("; ".join(no_summary(key) for key in bare)
+                            + "; fix: add a one-paragraph `## Summary` to each ticket")
+        listed = sum(1 for key in d.stories if key in items)
+        return "ok", f"each of the {listed} stories the tracker snapshot lists has a summary"
 
     def context_planned(self):
         d = self.delivery

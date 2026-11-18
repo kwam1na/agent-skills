@@ -4800,7 +4800,7 @@ class RunDeliveryPlanFormatTests(unittest.TestCase):
         snapshot.write_text(json.dumps({"takenAt": "2026-11-09T00:00:00Z", "source": "tracker", "items": [
             {"subject": "EX-2", "state": "backlog", "criteria": ["The API serves it", "It says when it fails"]},
             {"subject": "EX-3", "state": "backlog"},
-            {"subject": "EX-4", "state": "backlog", "criteria": []}]}))
+            {"subject": "EX-4", "state": "backlog", "summary": "The API is described.", "criteria": []}]}))
         code, out, drafted = self.setup(fx, plan_format_example(), "--tracker-snapshot", str(snapshot))
         self.assertEqual(code, 0, out)
         self.assertEqual(drafted["stories"]["EX-2"]["criteria"], [{"id": "ex-2-1", "text": "The API serves it"},
@@ -4808,6 +4808,10 @@ class RunDeliveryPlanFormatTests(unittest.TestCase):
         for key in ("EX-3", "EX-4"):
             self.assertNotIn("criteria", drafted["stories"][key])
             self.assertIn(f"note: plan story {key}'s tracker item has no Acceptance Criteria section", out)
+        # A summary is noted apart from criteria: EX-2 has criteria and no summary, EX-4 a summary and no criteria.
+        for key in ("EX-2", "EX-3"):
+            self.assertIn(f"note: {key}'s ticket has no `## Summary`; its card will show none", out)
+        self.assertNotIn("EX-4's ticket has no", out)
         # The binding's own tracker snapshot, run for the delivery, when no file is given.
         binding = fx.main / ".agents/orchestration.json"
         document = json.loads(binding.read_text()) if binding.exists() else {}
@@ -4818,11 +4822,17 @@ class RunDeliveryPlanFormatTests(unittest.TestCase):
         document.setdefault("state", {})["trackerSnapshot"] = {"argv": argv}
         binding.write_text(json.dumps(document, indent=2))
         commit(fx.main, "EX-1: the binding's tracker snapshot")
+        # A plan story the snapshot doesn't list is named as untracked, not as a ticket without a summary.
+        listed = json.loads(snapshot.read_text())
+        listed["items"] = [item for item in listed["items"] if item["subject"] != "EX-3"]
+        snapshot.write_text(json.dumps(listed))
         code, out = rerun()
         self.assertEqual(code, 0, out)
         drafted = json.loads((fx.main / ".agents/deliveries/EX-1.json").read_text())
         self.assertEqual([c["id"] for c in drafted["stories"]["EX-2"]["criteria"]], ["ex-2-1", "ex-2-2"])
         self.assertNotIn("no tracker snapshot", out)
+        self.assertIn("note: plan story EX-3 has no tracker item", out)
+        self.assertNotIn("EX-3's ticket has no", out)
         # When the command fails, prints no snapshot or outlives its timeout, lead-setup says so and drafts no criteria.
         for failing, words in (({"argv": ["sh", "-c", "echo boom >&2; exit 3"]},
                                 "the binding's tracker snapshot failed (3: boom)"),
@@ -6093,7 +6103,7 @@ DOCTOR_LABELS = ["host and tools", "orchestration binding", "merge queue candida
                  "pipeline PR review", "gh", "forge find", "forge write access", "tracker snapshot token",
                  "snapshots and publishers", "hosted delivery", "in-app adapters", "in-app adapter contract", "video evidence tools",
                  "Node", "harness configuration", "knowledge library properties", "delivery file", "plan chapter", "added stories' reasons",
-                 "plan sections", "story files", "story readiness", "context sections", "finish lines",
+                 "plan sections", "story files", "story readiness", "story summaries", "context sections", "finish lines",
                  "configuration on the remote base", "pull requests marked ready", "delivery supervisor", "deliveries on this base", "merge slot",
                  "gates on the base"]
 
@@ -8232,7 +8242,7 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         lines = doctor_lines(out)
         self.assertEqual(list(lines), DOCTOR_LABELS, out)
         expected_skips = {"pipeline PR review", "gh", "forge write access", "plan chapter", "added stories' reasons",
-                          "pull requests marked ready", "delivery supervisor", "hosted delivery"}
+                          "story summaries", "pull requests marked ready", "delivery supervisor", "hosted delivery"}
         expected_skips |= set() if self.ffmpeg else {"video evidence tools"}
         expected_skips |= set() if self.node22 else {"harness configuration"}
         self.assertEqual({label for label, (status, _) in lines.items() if status == "skipped"}, expected_skips, out)
@@ -10484,6 +10494,7 @@ class LaneStartAndReadinessTests(unittest.TestCase):
         own.write_text(json.dumps(conf, indent=2))
         code, out = fx.flow("doctor", "--delivery", "FX-1", "--offline", cwd=fx.main)
         self.assertIn("story readiness", doctor_lines(out), out)
+        fx.doctor_lines = doctor_lines(out)  # Each other row of the same run, for a test that reads one.
         return doctor_lines(out)["story readiness"]
 
     def snapshot(self, fx, path: str = "record/snapshots/tracker.json", ago: int = 0, subject: str = "FX-3",
@@ -10607,6 +10618,12 @@ class LaneStartAndReadinessTests(unittest.TestCase):
         self.assertNotIn("isn't offered", out)
         self.assertIn("lane-start FX-3", out)
         self.assertEqual(self.doctor(fx)[0], "ok")
+        # A warning that doesn't fail the check, naming each story whose ticket has no summary, and the fix.
+        status, detail = fx.doctor_lines["story summaries"]
+        self.assertEqual(status, "warn", detail)
+        self.assertEqual(detail, "FX-2's ticket has no `## Summary`; its card will show none; FX-3's ticket has no "
+                                 "`## Summary`; its card will show none; fix: add a one-paragraph `## Summary` to "
+                                 "each ticket")
 
     def test_a_story_not_offered_its_start_move_is_refused_and_nothing_is_written(self) -> None:
         fx = self.delivery(assign=False)
@@ -10640,6 +10657,7 @@ class LaneStartAndReadinessTests(unittest.TestCase):
         _, out = self.assign(fx)
         self.assertIn(line, out)
         self.assertIn(line, self.doctor(fx)[1])
+        self.assertEqual(fx.doctor_lines["story summaries"], ("skipped", "(there is no tracker snapshot)"))
 
     def test_a_snapshot_without_offered_moves_says_why_readiness_wasnt_checked(self) -> None:
         fx = self.delivery(assign=False)
@@ -10684,10 +10702,13 @@ class LaneStartAndReadinessTests(unittest.TestCase):
     def test_doctor_checks_readiness_before_lead_init(self) -> None:
         fx = self.delivery(init=False)
         self.assertFalse((fx.tmp / "record/state.json").exists())
-        self.snapshot(fx, state="backlog", status="To Be Refined", offeredTransitions=["Refined"])
+        self.snapshot(fx, state="backlog", status="To Be Refined", offeredTransitions=["Refined"],
+                      summary="Thing two is served.")
         status, detail = self.doctor(fx)
         self.assertEqual(status, "warn", detail)
         self.assertIn("FX-3 is in To Be Refined: \"Start work\" isn't offered; refine it first", detail)
+        self.assertEqual(fx.doctor_lines["story summaries"],
+                         ("ok", "each of the 1 stories the tracker snapshot lists has a summary"))
 
     def test_with_no_start_move_there_is_no_readiness_to_check(self) -> None:
         fx = self.delivery(transitions={}, assign=False)
