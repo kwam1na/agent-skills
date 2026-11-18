@@ -66,6 +66,10 @@ Seen on release `linear-v3.0.0` (generation `7ff4b0e5`), the installed workflow 
   remaining modules and a base rerun before stopping either. The lead has no command to cut a batch short once the
   cause is known, and V26-3426 waited behind it. Open: stop a batch on the lead's word, or split it when a candidate
   fails.
+- **Lead pushes starve behind a long batch.** The queue held the merge slot for over an hour checking V26-3565 and
+  V26-3568, so the lead's plan commits for V26-3588 could not publish, and lane 3's gates refused the story as not in
+  the delivery. One `lead-push` gave up with `slot_held`. Open: let plan-only commits publish between checks, or let a
+  lane read new stories from the lead checkout.
 - **A re-queued candidate leaves its lane's row "waiting on the lead".** The row was patched by hand. Fix: V26-3426
   (this delivery).
 
