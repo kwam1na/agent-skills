@@ -2719,6 +2719,11 @@ class SupervisorPassTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         state_tool(fx, "focus", "--lane", "lane-2", "--text", "done", "--state", "done")
         self.holds_alone(fx, "not merged: FX-3")
+        # A lane waiting on a story goes on by itself when it lands: it holds nothing while the story does.
+        state_tool(fx, "focus", "--lane", "lane-2", "--text", "waiting for FX-3", "--state", "waiting", "--waiting-on", "FX-3")
+        held = self.once(fx)["closeHeldBy"]
+        self.assertTrue(any("not merged: FX-3" in h for h in held), held)
+        self.assertEqual([h for h in held if "lanes not idle or done" in h], [], held)
         queue_run(fx, "FX-3")
         self.once(fx)
         self.assertEqual(len(kinds(fx, "delivery.closed")), 1, passes(fx)[-1])

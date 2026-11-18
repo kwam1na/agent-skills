@@ -408,7 +408,7 @@ a.issue-link { color: inherit; cursor: pointer; }
 /* A lane's state, said in a soft pill. Success stays ink; only a block is coloured. */
 .chip { display: inline-flex; align-items: center; height: 26px; padding: 0 12px; border-radius: 6px; background: var(--well); font-size: 12px; font-weight: 500;
   color: var(--soft); white-space: nowrap; }
-.chip.assigned, .chip.working, .chip.reviewing, .chip.handed, .chip.done { color: var(--ink); }
+.chip.assigned, .chip.working, .chip.reviewing, .chip.handed, .chip.waiting, .chip.done { color: var(--ink); }
 .chip.blocked { background: var(--held-wash); color: var(--held); }
 .person .on { font: 400 12px/16px var(--mono); color: var(--faint); max-width: 100%; overflow-wrap: anywhere; text-align: right; }
 .person .on.waiting { color: var(--wait); }

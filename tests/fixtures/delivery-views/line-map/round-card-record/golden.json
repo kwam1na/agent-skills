@@ -567,10 +567,10 @@
       ]
     },
     "V26-2836": {
-      "detail": "Line-map laneThe line map's round card lists each finding and the fix that closed itV26-2836 · #1157 · Landed just nowClosing a review round stores each finding with the run, so the round card can list them.Approved on round 2 · 1 moderate note, 4 minor notes raised1512:42 am22 min laterRound 2ApprovedTestingCorrectnessNothing new raisedThis round confirmed 5 earlier notes fixed in 61f086d.2 review roundsMerge check · Landed just now · 2 steps3:20 amLine-map lane handed off V26-2836: Ready after 2 review rounds3:20 amV26-2836 landed: At 2c8772e",
+      "detail": "Line-map laneThe line map's round card lists each finding and the fix that closed itV26-2836 · #1157 · Landed just nowClosing a review round stores each finding with the run, so the round card can list them.Approved on round 2 · 1 moderate note, 4 minor notes raised1512:42 am22 min laterRound 2ApprovedTestingCorrectnessNothing new raisedThis round confirmed 5 earlier notes: 5 fixed in 61f086d.2 review roundsMerge check · Landed just now · 2 steps3:20 amLine-map lane handed off V26-2836: Ready after 2 review rounds3:20 amV26-2836 landed: At 2c8772e",
       "rounds": [
         "Round 1Changes requestedTestingModerateThe fixed-without-a-commit refusal test passes on the unknown-id check, so removing the fixCommit rule goes undetected.Minor · 3The duplicate resolution id refusal has no test.The 280-code-point summary limit is only tested from above, so counting UTF-16 units goes undetected.mkdtemp runs outside the try, so a temp-directory failure escapes and can change harness:review-outcome's exit code.CorrectnessMinorA changed-file rerun that changes a severity prints two warnings, and the second wrongly says the run lacks review.round.closed.All 5 of this round's notes were fixed in 61f086d, and round 2 confirmed them.",
-        "Round 2ApprovedTestingCorrectnessNothing new raisedThis round confirmed 5 earlier notes fixed in 61f086d."
+        "Round 2ApprovedTestingCorrectnessNothing new raisedThis round confirmed 5 earlier notes: 5 fixed in 61f086d."
       ]
     }
   }

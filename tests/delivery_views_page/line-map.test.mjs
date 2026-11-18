@@ -708,7 +708,7 @@ test("lists each reviewer's findings on its round, and on the confirming round t
     ["Correctness", [["run-finding is-p3", "The retry log line repeats the order id.", null]]],
   ]);
   expect(two.querySelector(".run-reviewer .run-quiet")?.textContent).toBe("nothing raised");
-  expect(two.querySelector(".run-settled")?.textContent).toBe("This round confirmed 1 earlier note fixed in abc1234, and 1 settled another way.");
+  expect(two.querySelector(".run-settled")?.textContent).toBe("This round confirmed 2 earlier notes: 1 fixed in abc1234, 1 withdrawn.");
   const link = two.querySelector(".run-settled a.run-commit");
   expect(link.getAttribute("href")).toBe(`https://github.com/acme/shop/commit/${FIX}`);
   expect(link.getAttribute("rel")).toBe("noopener noreferrer");

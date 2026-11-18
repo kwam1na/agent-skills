@@ -49,6 +49,10 @@ Seen on release `linear-v3.0.0` (generation `7ff4b0e5`), the installed workflow 
   main into claude/KEY" to the lane's branch. After a stop, the lane's fix sits on the older head, so its push isn't a
   fast-forward. And `lead-authorize-base-merge` refuses the sync commit, because it isn't on `main`. This happened to
   V26-3552 (cherry-picked onto the sync) and V26-3555 (authorized base merge plus one force-push). Open.
+- **A base merge that regenerates digests can't carry its review.** Resolving `provenance.lock.json` in V26-3426's
+  authorized base merge reran the writer, which changed nine digests the branch's own files feed. The hand-off then
+  refused to carry round 3's review, because a lane-owned file had changed, and the story spent a round on generated
+  output. Open: treat a regenerable file that matches its regenerator's output as unchanged for carrying a review.
 - **A provenance listing change is caught only in the queue, after acceptance.** V26-3552 was stopped for adding
   `wait-words.json`. Fix: V26-3565 (lane 3, this delivery).
 - **Tests outside a lane's files go unrun until the queue runs them.** `tests.test_registry` (V26-3552) and
@@ -102,6 +106,10 @@ Seen on release `linear-v3.0.0` (generation `7ff4b0e5`), the installed workflow 
 - **Exact-set pins nearly serialized two stories.** `tests/test_waits.py`'s pinned `waits` template set had to gain
   "review" (V26-3555) and "lane" (V26-3426). Lane 1 avoided it by putting its sentence in the `lanes` group. Open: pins
   that every new template must extend could read the table instead.
+- **The lead-wait tests read the real machine's load.** `LeadListenerTests` (three cases) and one `LeadMayStopTests`
+  case expect `lead-wait` to time out. Over twice the cores, it wakes on load pressure instead. With three lanes, their
+  reviewers and the queue running, the 5-minute load reached 30 on 10 cores. That stopped V26-3565 in the queue on a
+  change it didn't make. Open: the tests could pin the load threshold, or pass `--seen-pressure=load`.
 - **Hand-editing the delivery file shows as drift.** V26-3564's criteria went in by hand, which made changes c2 to c6.
   Reasons were recorded with `lead-plan why`. Practice: always use `lead-plan`.
 
