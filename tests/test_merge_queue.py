@@ -2488,6 +2488,18 @@ class WorkRootSafetyTests(MergeQueueTestCase):
         self.assertRefused(self.run_from(adopter, adopter.operator, "feature"), "contain a checkout")
         self.assertTrue((lane / "src" / "app.txt").exists())
 
+    def test_a_lead_suite_checkout_left_in_work_root_is_refused_naming_its_origin_and_fix(self) -> None:
+        # An interrupted lead-suite run leaves its detached checkout at workRoot/suite/<commit>-<random>/checkout.
+        adopter = self.adopter({"workRoot": ".worktrees"})
+        self.exclude(adopter, ".worktrees/")
+        left = self.linked(adopter, adopter.operator / ".worktrees" / "suite" / "e2974aa81ef1-8ru58fsb" / "checkout")
+        self.candidate(adopter)
+        results = self.run_from(adopter, adopter.operator, "feature")
+        self.assertRefused(results, f"workRoot must not contain a checkout of the repository: {left}; it is a lead-suite "
+                           "checkout of e2974aa81ef1 that its run didn't remove")
+        self.assertRefused(results, f"remove it: git worktree remove --force {left}")
+        self.assertTrue((left / "src" / "app.txt").exists())
+
     def test_from_a_linked_worktree_an_ignored_work_root_is_accepted(self) -> None:
         adopter = self.adopter({"workRoot": ".merge-queue"})
         self.exclude(adopter, ".worktrees/", ".merge-queue/")

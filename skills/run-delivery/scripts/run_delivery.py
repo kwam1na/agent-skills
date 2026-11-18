@@ -10295,8 +10295,11 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                           f"--subject {item['subject']} if lead-accept can't take it", "kind": "unaccepted",
                           "who": "lead", "subject": item["subject"], "since": merge.get("at")})
     resolutions = {entry.get("journal") for entry in read_log("resolutions", c.delivery)}
+    # While a child flaps, its "won't stay up" item below stands for the blocker the supervisor journalled for it.
+    shown = {number for key, number in json_object(lead_file(c, "supervisor.blockers.json")).items()
+             if key.startswith("child:") and key.split(":", 1)[1] in flapping}
     for entry in doc["journal"]:
-        if entry["kind"] in HOLDING_KINDS and not blocker_resolved(c, doc, entry, resolutions):
+        if entry["kind"] in HOLDING_KINDS and entry["id"] not in shown and not blocker_resolved(c, doc, entry, resolutions):
             runners = runner_held(entry)
             items.append({"holding": True, "source": f"journal entry {entry['id']} ({entry['kind']})",
                           "text": f"Blocker {entry['id']}"
@@ -11459,6 +11462,78 @@ def close_out(c, flapping: tuple[str, ...] = (), wait: bool = False) -> tuple[li
     return said, True
 
 
+SUITE_OWNER = "owner.json"
+
+
+def suite_folder(c) -> Path:
+    """Where lead-suite makes its checkouts: the binding's work folder's `suite/`."""
+    binding = c.shelf.json(".agents/orchestration.json") or {}
+    return c.root / (binding.get("workRoot") or f"{c.work}/work") / "suite"
+
+
+def cwd_holders(path: Path) -> list[int]:
+    """The processes whose working directory is `path` or inside it, as lsof names them."""
+    listing = run(["lsof", "-nP", "-d", "cwd", "-Fpn"], check=False).stdout
+    found, pid = [], None
+    root = path.resolve()
+    for line in listing.splitlines():
+        if line.startswith("p"):
+            pid = int(line[1:]) if line[1:].isdigit() else None
+        elif line.startswith("n") and pid is not None:
+            here = Path(line[1:])
+            if here == root or root in here.parents:
+                found.append(pid)
+    return sorted(set(found))
+
+
+def stale_suite_checkout(checkout: Path) -> tuple[str | None, str]:
+    """What keeps a lead-suite checkout from being removed safely, or None, and the commit it holds. It is removed only
+    when its run has ended (the pid its folder names is gone), no process works inside it, it is detached and it holds
+    no change."""
+    owner = json_object(checkout.parent / SUITE_OWNER)
+    commit = str(owner.get("commit") or checkout.parent.name.split("-", 1)[0])
+    if valid_pid(owner.get("pid")) and pid_runs(owner["pid"]):
+        return f"its run (pid {owner['pid']}) is still going", commit
+    held = cwd_holders(checkout)
+    if held:
+        return f"process {', '.join(map(str, held))} works inside it", commit
+    if run(["git", "symbolic-ref", "-q", "HEAD"], cwd=checkout, check=False).returncode == 0:
+        return "it is on a branch, not detached", commit
+    status = run(["git", "status", "--porcelain"], cwd=checkout, check=False)
+    if status.returncode != 0:
+        return f"git can't read it: {(status.stderr or status.stdout).strip()[-200:]}", commit
+    if status.stdout.strip():
+        return "it holds uncommitted changes", commit
+    return None, commit
+
+
+def clear_suite_checkouts(c) -> tuple[list[str], dict[str, str]]:
+    """Remove each checkout an interrupted lead-suite left under the work folder, which the merge queue's serve refuses
+    to run beside, when that is safe: what was removed, and each one kept with why and how to remove it."""
+    folder = suite_folder(c)
+    removed, kept = [], {}
+    for checkout in sorted(folder.glob("*/checkout")) if folder.is_dir() else []:
+        why, commit = stale_suite_checkout(checkout)
+        if why is None:
+            run(["git", "worktree", "remove", "--force", str(checkout)], cwd=c.root, check=False)
+            shutil.rmtree(checkout.parent, ignore_errors=True)
+            run(["git", "worktree", "prune"], cwd=c.root, check=False)
+            removed.append(f"removed the lead-suite checkout of {commit[:12]} that a run left at {checkout}")
+        else:
+            kept[str(checkout)] = (f"A lead-suite checkout of {commit[:12]} is left at {checkout}, and the merge queue's "
+                                   f"serve refuses to run while it is under the work folder, but {why}. Once no run "
+                                   f"uses it, remove it: git worktree remove --force {checkout}")
+    return removed, kept
+
+
+def last_line(path: Path) -> str:
+    try:
+        lines = [line for line in path.read_text(errors="replace").splitlines() if line.strip()]
+    except OSError:
+        return ""
+    return lines[-1].strip()[-300:] if lines else ""
+
+
 class Supervisor:
     """lead-run: one process per record. It holds the flow log's supervisor lock, recording its pid, start time,
     children and the live view's address; keeps `serve` and the live view running; and runs one pass after another
@@ -11477,6 +11552,8 @@ class Supervisor:
         self.before_signals: dict[int, object] = {}
         self.signalled: int | None = None
         self.restarts: dict[str, list[float]] = {}
+        # When each child last started, so a flapping child reads as cleared only once it has stayed up for a pass.
+        self.started_at: dict[str, float] = {}
         self.address: str | None = None
         self.handle = None
         self.started = now()
@@ -11535,6 +11612,7 @@ class Supervisor:
             # In the supervisor's own group, so stopping the group stops them; signals are the defaults it set.
             self.children[name] = subprocess.Popen(argv, cwd=self.c.root, stdin=subprocess.DEVNULL, stdout=out,
                                                    stderr=subprocess.STDOUT)
+        self.started_at[name] = time.monotonic()
         self.write_lock()
 
     def start_live(self) -> None:
@@ -11628,6 +11706,56 @@ class Supervisor:
         return tuple(name for name, times in self.restarts.items()
                      if len([t for t in times if t > horizon]) >= CHILD_FLAPS)
 
+    def blockers(self) -> str:
+        """Journal what the supervisor finds holding the delivery, so the lead's wait hears it: a blocker.recorded when a
+        child first won't stay up, and when a stale lead-suite checkout can't be removed safely; a blocker.resolved,
+        with its reason in the resolutions log, when the child has stayed up for a pass or the checkout has gone. Each
+        is recorded once, keyed in the flow log's supervisor.blockers.json."""
+        c = self.c
+        path = lead_file(c, "supervisor.blockers.json")
+        open_ = {k: v for k, v in json_object(path).items() if type(v) is int}
+        removed, kept = clear_suite_checkouts(c)
+        said = list(removed)
+        holding: dict[str, str] = {f"suite:{where}": text for where, text in kept.items()}
+        flapping = self.flapping()
+        for name in flapping:
+            log = lead_file(c, f"supervisor.{name}.log")
+            line = last_line(log)
+            holding[f"child:{name}"] = (f"The supervisor's {name} won't stay up; its log is {log}"
+                                        + (f", whose last line is: {line}" if line else ""))
+        settled = {}
+        for key in open_:
+            if key in holding:
+                continue
+            if key.startswith("child:"):
+                name = key.split(":", 1)[1]
+                proc = self.children.get(name)
+                up = proc is not None and proc.poll() is None and \
+                    time.monotonic() - self.started_at.get(name, time.monotonic()) >= supervisor_pass_seconds(c)
+                if not up:
+                    holding[key] = ""  # still down, or not up long enough: kept open, not recorded again
+                    continue
+                settled[key] = f"the supervisor's {name} has stayed up for a pass"
+            else:
+                settled[key] = f"the lead-suite checkout {key.split(':', 1)[1]} is gone"
+        doc = load_state() if settled or any(k not in open_ for k in holding) else None
+        resolutions = {r.get("journal") for r in read_log("resolutions", c.delivery)}
+        for key, why in settled.items():
+            number = open_.pop(key)
+            entry = next((e for e in doc["journal"] if e["id"] == number), None)
+            if entry is not None and not blocker_resolved(c, doc, entry, resolutions):
+                append_log("resolutions", c.delivery, {"journal": number, "why": why})
+                state_tool("journal", "--kind", "blocker.resolved", "--data", json.dumps({"why": why}),
+                           "--answers", str(number))
+                said.append(f"resolved blocker {number}: {why}")
+        for key, text in holding.items():
+            if key in open_ or not text:
+                continue
+            open_[key] = journal_id(state_tool("journal", "--kind", "blocker.recorded", "--text", text))
+            said.append(f"recorded blocker {open_[key]}: {text[:120]}")
+        path.write_text(json.dumps(open_, indent=2) + "\n")
+        return "; ".join(said) or "none"
+
     def keep_alive(self) -> None:
         """Restart a child that exited, at most once a pass once it has exited CHILD_FLAPS times in the window: a
         child that won't stay up is shown in "Needs you", and a restart that fails never ends the supervisor."""
@@ -11715,7 +11843,7 @@ class Supervisor:
                  ("finish", lambda: journal_finish_met(c, load_state())),
                  ("deferrals", lambda: deferral_breaches(c, load_state())),
                  ("peerWaits", lambda: write_peer_waits(c)), ("publish", lambda: render_views(c, only="publishers")),
-                 ("needs", derive),
+                 ("blockers", self.blockers), ("needs", derive),
                  ("render", lambda: render_views(c, only="renderers")), ("latest", lambda: str(copy_latest(c))))
         for name, step in steps:
             self.honour_signal()
@@ -11880,6 +12008,9 @@ class Supervisor:
                 for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
                     self.before_signals[number] = signal.signal(number, self.on_signal)
                 self.start_live()
+                with contextlib.suppress(OSError, Stop, subprocess.SubprocessError):
+                    for line in clear_suite_checkouts(c)[0]:
+                        self.say(line)
                 self.start("serve")
                 print(self.address, flush=True)  # the first line: where the delivery is watched
                 lines, self.held_lines = self.held_lines or [], None
@@ -11994,6 +12125,8 @@ def lead_suite(args) -> None:
     folder = c.root / (binding.get("workRoot") or f"{c.work}/work") / "suite"
     folder.mkdir(parents=True, exist_ok=True)
     checkout = Path(tempfile.mkdtemp(prefix=f"{commit[:12]}-", dir=folder)) / "checkout"
+    # Whose run the folder is: a checkout an interrupted run leaves is the supervisor's to remove once this pid is gone.
+    (checkout.parent / SUITE_OWNER).write_text(json.dumps({"pid": os.getpid(), "commit": commit, "startedAt": now()}))
     # A stop ends the run through main's handler, as an interruption does: its command's group is stopped, by
     # run_group, and its checkout removed, by in_detached_checkout.
     began = time.monotonic()
