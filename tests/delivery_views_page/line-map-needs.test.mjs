@@ -1,5 +1,5 @@
-// The "Now" chapter shows the supervisor's "Needs you" list: holding items first, then shown ones, each with its source
-// and what clears it. A list from a stopped supervisor, one older than a pass, or one that can't be read isn't shown.
+// The "Now" chapter shows the supervisor's "Needs you" list: holding items first, then shown ones, each in the words the
+// supervisor gave it. A list from a stopped supervisor, one older than a pass, or one that can't be read isn't shown.
 import { test } from "node:test";
 import { expect, openPage, renderPage } from "./support.mjs";
 
@@ -27,24 +27,21 @@ async function shown(list, now = NOW) {
   return page.app.querySelector(".needs-you");
 }
 
-test("holding items come first, then shown ones, each with its source and what clears it", async () => {
+test("holding items come first, then shown ones, in one list with no group headers", async () => {
   const box = await shown(needs());
-  expect(box.querySelector(".ah").textContent).toBe("Needs you");
-  const groups = [...box.querySelectorAll(".needs-group")].map((group) => group.querySelector(".needs-kind").textContent);
-  expect(groups).toEqual(["Holds the close", "Shown only"]);
+  expect(box.querySelector(".needs-group, .needs-kind")).toBeNull();
   const rows = [...box.querySelectorAll("li")];
   expect(rows.map((row) => row.querySelector(".a1").textContent)).toEqual([
     "The tracker publisher hasn't posted journal entries 12",
     "fullHealth failed at abcdef0123: 1 test failed",
     "FX-9: the move \"Done\" isn't offered from Review",
   ]);
-  expect(rows[1].querySelector(".a2").textContent).toBe("From fullHealth. Clears with a pass at a later base head, or lead-resolve full-health --why TEXT.");
-  expect(rows[2].querySelector(".a2").textContent).toBe("From tracker ledger. Clears with nothing: it stays listed for the friction note.");
+  expect(rows.map((row) => row.className)).toEqual(["needs-row is-holding", "needs-row is-holding", "needs-row is-quiet"]);
 });
 
-test("an empty current list says nothing needs you", async () => {
-  const box = await shown(needs({ items: [] }));
-  expect(box.querySelector(".needs-none").textContent).toBe("Nothing needs you; the supervisor's last pass found nothing.");
+test("an empty current list draws no rows, only the sentence its supervisor gave", async () => {
+  const box = await shown(needs({ items: [], summary: "Nothing needs anyone." }));
+  expect(box.querySelector(".needs-summary").textContent).toBe("Nothing needs anyone.");
   expect(box.querySelector("li")).toBeNull();
 });
 
@@ -80,10 +77,12 @@ test("without a supervisor's list the chapter has no Needs you box at all", asyn
 });
 
 test("item text is shown as text, never as markup", async () => {
-  const box = await shown(needs({ items: [{ holding: true, source: "<b>x</b>", text: "</script><img src=x onerror=alert(1)>", clears: "<i>y</i>" }] }));
-  expect(box.querySelector("img")).toBeNull();
-  expect(box.querySelector(".a1").textContent).toBe("</script><img src=x onerror=alert(1)>");
-  expect(box.querySelector(".a2").textContent).toBe("From <b>x</b>. Clears with <i>y</i>.");
+  const box = await shown(needs({ items: [{ holding: true, source: "<b>x</b>", text: "</script><img src=x onerror=alert(1)>", clears: "<i>y</i>",
+    said: { headline: "<img src=y onerror=alert(2)>", why: "<b>why</b>", clears: "<i>clears</i>", who: "<u>who</u>" } }] }));
+  expect(box.querySelector("img, b, i, u")).toBeNull();
+  expect(box.querySelector(".a1").textContent).toBe("<img src=y onerror=alert(2)>");
+  expect(box.querySelector(".a2").textContent).toBe("<b>why</b>");
+  expect(box.querySelector(".nr-meta").textContent).toBe("<u>who</u><i>clears</i>");
 });
 
 test("a live push takes the list from the page the server renders after it", async () => {
@@ -133,10 +132,4 @@ test("a closed delivery shows the box only while a running, current list still h
   }
   const open = await shown({ ...needs(), running: false });
   expect(open.textContent).toContain("lead-run --resume starts it again");
-});
-
-test("each item in the box carries the page's own drawn mark", async () => {
-  const box = await shown(needs());
-  expect([...box.querySelectorAll("li .g")].map((mark) => mark.className)).toEqual(["g stop", "g stop", "g wait"]);
-  expect([...box.querySelectorAll("li .g")].every((mark) => mark.querySelector("svg") !== null && mark.textContent === "")).toBe(true);
 });

@@ -2831,11 +2831,100 @@
                   "clears": {
                     "type": "string",
                     "maxLength": 65536
+                  },
+                  "kind": {
+                    "type": "string",
+                    "maxLength": 65536
+                  },
+                  "who": {
+                    "type": "string",
+                    "maxLength": 65536
+                  },
+                  "lane": {
+                    "type": "string",
+                    "maxLength": 65536
+                  },
+                  "subject": {
+                    "type": "string",
+                    "maxLength": 65536
+                  },
+                  "state": {
+                    "type": "string",
+                    "maxLength": 65536
+                  },
+                  "since": {
+                    "type": "string",
+                    "maxLength": 65536
+                  },
+                  "blocker": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "subject": {
+                        "type": "string",
+                        "maxLength": 65536
+                      },
+                      "lane": {
+                        "type": "string",
+                        "maxLength": 65536
+                      },
+                      "state": {
+                        "type": "string",
+                        "maxLength": 65536
+                      }
+                    },
+                    "maxProperties": 10000
+                  },
+                  "said": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "headline": {
+                        "type": "string",
+                        "maxLength": 65536
+                      },
+                      "why": {
+                        "type": "string",
+                        "maxLength": 65536
+                      },
+                      "clears": {
+                        "type": "string",
+                        "maxLength": 65536
+                      },
+                      "who": {
+                        "type": "string",
+                        "maxLength": 65536
+                      }
+                    },
+                    "maxProperties": 10000
                   }
                 },
                 "maxProperties": 10000
               },
               "maxItems": 10000
+            },
+            "summary": {
+              "type": "string",
+              "maxLength": 65536
+            },
+            "words": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "heading": {
+                  "type": "string",
+                  "maxLength": 65536
+                },
+                "holding": {
+                  "type": "string",
+                  "maxLength": 65536
+                },
+                "age": {
+                  "type": "string",
+                  "maxLength": 65536
+                }
+              },
+              "maxProperties": 10000
             }
           },
           "maxProperties": 10000

@@ -134,6 +134,9 @@
   }
   var needsBlock = document.getElementById("delivery-needs");
   var NEEDS = needsBlock ? readNeeds(needsBlock.textContent) : null;
+  // What a closed delivery left open, as the renderer derived it from the record and said it from the table.
+  var leftBlock = document.getElementById("delivery-left-open");
+  var LEFT_OPEN = leftBlock ? readNeeds(leftBlock.textContent) : null;
   function changeLink(changeRequest) {
     var target = changeTarget(changeRequest);
     if (!target) { return el("span", "pr-num", text(changeRequest)); }
@@ -631,10 +634,10 @@
     waitLines(doc, "lead", "p", "say say-wait").forEach(function (line) { nodes.push(line); });
     var panel = closed ? null : checkingPanel(doc, all);
     if (panel) { nodes.push(panel); }
-    var needs = attention(doc);
-    if (needs) { nodes.push(needs); }
-    var supervisor = needsYou(Boolean(closed));
+    var supervisor = needsYou(doc, all, Boolean(closed));
     if (supervisor) { nodes.push(supervisor); }
+    var left = closed ? leftOpen(doc, all) : null;
+    if (left) { nodes.push(left); }
     var partway = closeStoppedPartway(doc, closed);
     if (partway) { nodes.push(partway); }
     nodes.push(journey(doc, all, closed ? tally.landed : landed));
@@ -1235,7 +1238,7 @@
     failedSteps.forEach(function (step) {
       var label = text(step.label);
       var record = records[label] || {};
-      // Laid out like the Needs attention list: a small mark, the check, then what is known about it.
+      // Laid out like a "Needs you" row: a small mark, the check, then what is known about it.
       // Numbered as its stop on the run line above.
       var mark = el("span", "g num", String(failedSteps.indexOf(step) + 1));
       mark.setAttribute("aria-hidden", "true");
@@ -1260,46 +1263,6 @@
       box.appendChild(more);
     }
     return box;
-  }
-
-  function attention(doc) {
-    var state = doc.state, meta = isObject(state.meta) ? state.meta : {};
-    var names = laneNames(doc);
-    var rows = [];
-    function row(tone, title, why) {
-      var li = el("li");
-      add(li, glyph(tone), add(el("div"), el("div", "a1", title), why ? el("div", "a2", why) : null));
-      rows.push(li);
-    }
-    if (isObject(meta.hold) && !closedEntry(doc)) { row("stop", "Serving is paused", text(meta.hold.reason)); }
-    list(state.queue).filter(function (item) { return isObject(item) && item.stage === "stopped"; }).forEach(function (item) {
-      var why = failures(item);
-      var stopped = journalFor(doc, item.subject, { "candidate.stopped": true }).pop();
-      row("stop", titleOf(doc, item) + " stopped", why.length ? why.join("; ") : stopped ? toldLine(doc, stopped) : "No reason recorded.");
-    });
-    var baseEvents = list(doc.journal).filter(function (entry) { return isObject(entry) && (entry.kind === "base.broken" || entry.kind === "base.repaired"); });
-    var lastBase = baseEvents[baseEvents.length - 1];
-    if (lastBase && lastBase.kind === "base.broken" && (!isObject(meta.hold) || closedEntry(doc))) { row("stop", "The main line is broken", toldLine(doc, lastBase) || "No reason recorded."); }
-    list(state.lanes).filter(function (lane) { return isObject(lane) && lane.state === "blocked" && !closedEntry(doc); }).forEach(function (lane) {
-      row("wait", (names[lane.id] || text(lane.id)) + " is blocked", lane.waitingOn ? "Waiting on " + text(lane.waitingOn) : "No reason recorded.");
-    });
-    list(meta.sourceReports).forEach(function (report) {
-      if (isObject(report)) { row("wait", report.subject ? text(report.subject) : "For the lead", text(report.note)); }
-    });
-    var sources = isObject(meta.sources) ? meta.sources : {};
-    Object.keys(sources).forEach(function (name) {
-      var source = sources[name];
-      // A source that stopped answering only matters while the page still has something to read from it.
-      if (isObject(source) && source.status === "stale" && !closedEntry(doc)) {
-        row("wait", "The " + name + " is not answering", (text(source.reason) ? text(source.reason) + ". " : "") +
-          (source.lastReadAt ? "Last read " + ago(source.lastReadAt) + "." : "Never read."));
-      }
-    });
-    if (!rows.length) { return null; }
-    var box = el("div", "attention");
-    var ul = el("ul");
-    rows.forEach(function (li) { ul.appendChild(li); });
-    return add(box, el("div", "ah", closedEntry(doc) ? "Left open at close" : "Needs attention"), ul);
   }
 
   /**
@@ -1334,7 +1297,59 @@
       ? "Finish it with lead-run --resume."
       : "Finish it with lead-close, which doesn't wait for the tracker; a resumed supervisor would hold on what is still open.")));
   }
-  function needsYou(closed) {
+  // Keys that all share a prefix such as "V26-" show without it on the line and beside a "Needs you" row.
+  function keyPrefix(all) {
+    var keys = all.map(function (piece) { return subjectOf(piece.item); });
+    var shared = /^(.*-)[^-]+$/.exec(keys[0] || "");
+    return shared && keys.length > 1 && keys.every(function (key) { return key.indexOf(shared[1]) === 0 && key.length > shared[1].length; }) ? shared[1] : "";
+  }
+  /**
+   * What a closed delivery left open: a stopped piece, a broken base, a source's report. A closed page is the
+   * delivery's record, so it keeps them under words that ask nothing of anyone, drawn like a "Needs you" row with no
+   * meta line, every word the renderer's from the table of wait sentences.
+   */
+  function leftOpen(doc, all) {
+    if (!isObject(LEFT_OPEN) || !list(LEFT_OPEN.rows).filter(isObject).length) { return null; }
+    var box = add(el("div", "attention left-open"), add(el("div", "ah"), text(LEFT_OPEN.heading)));
+    var ul = el("ul", "needs-rows");
+    list(LEFT_OPEN.rows).filter(isObject).forEach(function (row) {
+      var said = isObject(row.said) ? row.said : {};
+      ul.appendChild(add(el("li", "needs-row is-quiet"), needsMargin(doc, all, row),
+        add(el("div", "nr-body"), el("div", "a1", text(said.headline)), text(said.why) ? el("div", "a2", text(said.why)) : null)));
+    });
+    return add(box, ul);
+  }
+  // A row's margin: a faint stroke of its lane's line, the story's stop as the line draws it with its short key
+  // beneath, and for a wait the blocker's stop in its own lane's colour, joined by a hairline. Hovering a stop names
+  // its lane, story and state.
+  function needsMargin(doc, all, item) {
+    var names = laneNames(doc);
+    var bySubject = Object.create(null);
+    all.forEach(function (piece) { bySubject[subjectOf(piece.item)] = piece; });
+    var prefix = keyPrefix(all);
+    var current = checkingNow(doc);
+    var nowSubject = current && current.subject !== undefined && current.subject !== null ? String(current.subject) : null;
+    function stop(subject, lane, state) {
+      var piece = bySubject[subject] || { item: { subject: subject, stage: text(state), lane: lane }, planned: false };
+      var kind = stopKind(piece, nowSubject);
+      var lineLane = text(lane) || text(piece.item.lane);
+      var mark = el("span", "nr-stop");
+      mark.style.setProperty("--c", laneColour(lineLane));
+      mark.setAttribute("title", [names[lineLane] || lineLane, subject, stageWords(piece.item)].filter(Boolean).join(" · "));
+      add(mark, el("span", "stop-btn " + kind), el("span", "nr-key", prefix && subject.indexOf(prefix) === 0 ? subject.slice(prefix.length) : subject));
+      return mark;
+    }
+    var margin = el("div", "nr-mark");
+    margin.style.setProperty("--c", laneColour(text(item.lane)));
+    margin.appendChild(el("span", "nr-stroke"));
+    if (text(item.subject)) { margin.appendChild(stop(text(item.subject), text(item.lane), item.state)); }
+    if (isObject(item.blocker) && text(item.blocker.subject)) {
+      margin.appendChild(el("span", "nr-hair"));
+      margin.appendChild(stop(text(item.blocker.subject), text(item.blocker.lane), item.blocker.state));
+    }
+    return margin;
+  }
+  function needsYou(doc, all, closed) {
     if (NEEDS === null) { return null; }
     if (closed) {
       var current = seconds(NEEDS.staleAfter);
@@ -1342,8 +1357,9 @@
         && list(NEEDS.items).filter(isObject).some(function (item) { return item.holding === true; });
       if (!holding) { return null; }
     }
-    var box = add(el("div", "attention needs-you"), add(el("div", "ah"), persona("supervisor"), "Needs you"));
-    function none(words) { return add(box, el("p", "needs-none", words)); }
+    var words = isObject(NEEDS.words) ? NEEDS.words : {};
+    var box = add(el("div", "needs-you"), add(el("div", "ah"), persona("supervisor"), text(words.heading) || "Needs you"));
+    function none(said) { return add(box, el("p", "needs-none", said)); }
     if (NEEDS.unreadable === true) { return none("Unavailable: the supervisor's list can't be read, so it isn't shown."); }
     if (NEEDS.running !== true) {
       return none("Unavailable: the supervisor isn't running, so its list isn't shown. lead-run --resume starts it again.");
@@ -1353,18 +1369,32 @@
       return none("Unavailable: the supervisor's list is from " + (ago(NEEDS.at) || "an unknown time") +
         ", more than a pass old, so it isn't shown. Its supervisor may have stopped.");
     }
-    var items = list(NEEDS.items).filter(isObject);
-    if (!items.length) { return none("Nothing needs you; the supervisor's last pass found nothing."); }
-    [[true, "Holds the close", "stop"], [false, "Shown only", "wait"]].forEach(function (kind) {
-      var mine = items.filter(function (item) { return item.holding === kind[0]; });
-      if (!mine.length) { return; }
-      var ul = el("ul");
-      mine.forEach(function (item) {
-        ul.appendChild(add(el("li"), glyph(kind[2]), add(el("div"), el("div", "a1", text(item.text)),
-          el("div", "a2", "From " + text(item.source) + ". Clears with " + text(item.clears) + "."))));
-      });
-      box.appendChild(add(el("div", "needs-group"), el("div", "needs-kind", kind[1]), ul));
+    // Every word of a row comes from the list, which the supervisor said from the table of wait sentences; the page
+    // only lays it out. Holding rows lead, and within each, the rows the reader acts on.
+    var items = list(NEEDS.items).filter(isObject).map(function (item, at) { return { item: item, at: at }; });
+    var rank = function (entry) { return (entry.item.holding === true ? 0 : 2) + (entry.item.who === "operator" ? 0 : 1); };
+    items.sort(function (a, b) { return rank(a) - rank(b) || a.at - b.at; });
+    if (text(NEEDS.summary)) { box.appendChild(el("p", "needs-summary", text(NEEDS.summary))); }
+    if (!items.length) { return box; }
+    var ul = el("ul", "needs-rows");
+    items.forEach(function (entry) {
+      var item = entry.item, said = isObject(item.said) ? item.said : {};
+      var li = el("li", "needs-row " + (item.holding === true ? "is-holding" : "is-quiet"));
+      var margin = needsMargin(doc, all, item);
+      var meta = add(el("div", "nr-meta"), el("span", "nr-who", text(said.who)));
+      if (item.holding === true) { add(meta, add(el("span", "nr-holding"), el("span", "nr-dot"), text(words.holding))); }
+      if (text(said.clears)) { add(meta, el("span", "nr-clears", text(said.clears))); }
+      var body = add(el("div", "nr-body"), el("div", "a1", text(said.headline) || text(item.text)),
+        text(said.why) ? el("div", "a2", text(said.why)) : null, meta);
+      var age = el("span", "nr-age");
+      var since = seconds(item.since);
+      if (since !== null && Date.now() / 1000 >= since && text(words.age)) {
+        age.textContent = text(words.age).replace("{age}", duration(Date.now() / 1000 - since));
+        age.setAttribute("title", clock(item.since));
+      }
+      ul.appendChild(add(li, margin, body, age));
     });
+    box.appendChild(ul);
     if (typeof NEEDS.more === "number" && NEEDS.more > 0) { box.appendChild(el("p", "needs-more", NEEDS.more + " more not shown.")); }
     return box;
   }
@@ -1571,9 +1601,7 @@
     var ends = [];
     // Keys that all share a prefix such as "V26-" show without it on the line, so a lane's stops fit beside the merge; the
     // full key stays the link's accessible name and its data.
-    var keys = all.map(function (piece) { return subjectOf(piece.item); });
-    var shared = /^(.*-)[^-]+$/.exec(keys[0] || "");
-    var prefix = shared && keys.length > 1 && keys.every(function (key) { return key.indexOf(shared[1]) === 0 && key.length > shared[1].length; }) ? shared[1] : "";
+    var prefix = keyPrefix(all);
     var flows = [];
     lanes.forEach(function (lane, laneIndex) {
       var items = all.filter(function (piece) { return (piece.item.lane || "") === lane; });
@@ -1909,6 +1937,8 @@
         if (reviews) { nativeReviews = JSON.parse(reviews[1]); }
         var listed = /<script type="application\/json" id="delivery-needs">([^<]*)<\/script>/.exec(page);
         NEEDS = listed ? readNeeds(listed[1]) : null;
+        var opened = /<script type="application\/json" id="delivery-left-open">([^<]*)<\/script>/.exec(page);
+        LEFT_OPEN = opened ? readNeeds(opened[1]) : null;
         if (isObject(next)) { runs = next; safely(lastGood || shown); }
       }).catch(function () { /* the runs already shown stay */ });
     }, 3000);
