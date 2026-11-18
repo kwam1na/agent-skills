@@ -450,8 +450,9 @@ and every lead command repeats it. It keeps the merge queue's `serve` and the li
    `lead-close` or `lead-init --replace` stops it, recording no result. `lead-run --once` waits for the run it
    starts;
 4. `finish.met`, once for each finish line whose covered criteria have every covered proof done;
-5. the binding's `state` publishers; then "Needs you", written over the last pass's list in the record's
-   `needs-you.json`; then the binding's renderers, so the line map shows this pass's list;
+5. the binding's `state` publishers; then each lane's pushed branch, read into the record's `lane-changes.json`
+   (below); then "Needs you", written over the last pass's list in the record's `needs-you.json`; then the binding's
+   renderers, so the line map shows this pass's list;
 6. a copy of the record and the flow log into `latest` at the archive location, under the state lock;
 7. the close-out, when the close condition holds. When the only thing holding it is a merged story's checkout still there, the pass first runs that cleanup once more and reads the condition again, so a lane that moved off its story during the pass doesn't leave its checkout behind a closed delivery, and a checkout the cleanup can't remove holds the close until a later pass removes it.
 
@@ -465,6 +466,32 @@ the base returns to `gate`). The runner's own
 blocker clears when its hold does, or with `base.repaired`. Each item says whether it holds the close or is only
 shown, where it comes from and what clears it. The line map's Now chapter lists the holding items first. A list
 from a supervisor that has stopped, or one more than a pass overdue, is shown as unavailable rather than stale.
+
+Each pass reads every assigned lane's story branch on the remote, as a diff from its merge base with the delivery
+base, and writes `lane-changes.json` beside the record, replaced whole, with spec `delivery-lane-changes/1`. It
+refuses nothing: acceptance still decides. It holds `at`, the base head as `base`, and `lanes`, keyed by lane:
+
+- a branch it read: `story`, `branch`, `head`, `base`, `mergeBase`, `readAt`, and `files`, one per changed path,
+  each with `holds`, what the lane holds of it by the ownership acceptance uses (`file`, `span`, `shared` for a
+  declared shared output, or `none`), and `changes`, one per hunk: `old` and `removed`, its first line and size on
+  the merge base's side, `start` and `added` on the branch's side, `name`, the nearest enclosing `def` or `class` in
+  Python, `function` or `const NAME =` in JavaScript, or heading in Markdown, and `inside`, whether the lane's ground
+  holds it;
+- a branch that exists but can't be read: `story`, `branch`, what of `head` and `base` it got, and `unreadable`,
+  saying why, with no files.
+
+A story with no pushed branch has no entry. A branch whose head and base are those of the last pass's read is not
+read again: the read, with its `readAt`, is kept, and only what the lane holds is judged afresh, so a grant shows on
+the next pass. When the record has region claims, `files` also lists the delivery's claimed files at the base, at
+most 400, with `more` counting the rest: a file whole-file claims name, with `lines` and its `lanes`, and a file
+lanes share by lines, with `lines` and `spans`, each claim's `lane`, `start` and `end` mapped to the base, or its
+granted lines with `regrant` when it no longer maps. The line map's files view draws this.
+
+"Needs you" names, from that file, each changed file a lane doesn't hold ("Lane 1 changed `foo.py`, which it doesn't
+hold."), each change outside the spans of a file it holds by span, naming its lines ("Lane 1 changed lines 40-44 of
+`foo.py`, outside its span."), and a branch that can't be read, in place of that lane's items. None of these holds the
+close. A declared shared output and a change inside a span raise nothing. An item clears when a pass no longer sees
+the change, or once the lead grants the file or the lines.
 
 The close-out runs in order, each step succeeding before the next: `fullHealth`, once per base head, in a fresh
 checkout of the base, or skipped under the `focused` posture, which after a merge has already run at that head, so

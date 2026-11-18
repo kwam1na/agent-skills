@@ -221,6 +221,10 @@
   }
   var needsBlock = document.getElementById("delivery-needs");
   var NEEDS = needsBlock ? readNeeds(needsBlock.textContent) : null;
+  // What each lane has pushed, as the supervisor's branch read wrote it beside the record: { at, lanes, files, more },
+  // or { unreadable }. With no block no pass has read the branches yet.
+  var filesBlock = document.getElementById("delivery-files");
+  var FILES = filesBlock ? readNeeds(filesBlock.textContent) : null;
   // What a closed delivery left open, as the renderer derived it from the record and said it from the table.
   var leftBlock = document.getElementById("delivery-left-open");
   var LEFT_OPEN = leftBlock ? readNeeds(leftBlock.textContent) : null;
@@ -2063,6 +2067,8 @@
         if (reviews) { nativeReviews = JSON.parse(reviews[1]); }
         var listed = /<script type="application\/json" id="delivery-needs">([^<]*)<\/script>/.exec(page);
         NEEDS = listed ? readNeeds(listed[1]) : null;
+        var pushed = /<script type="application\/json" id="delivery-files">([^<]*)<\/script>/.exec(page);
+        FILES = pushed ? readNeeds(pushed[1]) : null;
         var opened = /<script type="application\/json" id="delivery-left-open">([^<]*)<\/script>/.exec(page);
         LEFT_OPEN = opened ? readNeeds(opened[1]) : null;
         if (isObject(next)) { runs = next; safely(lastGood || shown); }
@@ -2137,7 +2143,140 @@
     var old = delta > ROW_OLD_SECONDS && lane.state !== "idle" && lane.state !== "done";
     return el("p", "said" + (old ? " old" : ""), (delta < 45 ? "Updated just now" : "Updated " + duration(delta) + " ago") + (old ? "; may be out of date" : ""));
   }
+  /*
+   * Who holds which files, when lanes share files by lines: the claimed files by area, the folder under the root they
+   * sit in, each solid where its lane has changed it and hollow where it hasn't, and each shared file split by its
+   * lanes' stretches. A shared file opens its reading: a ruler of the file with each lane's stretches and changes, and
+   * per lane the functions it changed with their sizes. A lane whose branch can't be read is said so, and nothing of
+   * its is drawn as changed.
+   */
+  var fileReading = null;
+  var whoDrawn = null;
+  function filesView(doc, colours) {
+    var box = el("details", "files-fold");
+    var body = el("div", "files-body");
+    add(box, el("summary", null, "Who holds which files"), body);
+    var fold = runFold(box, { key: "files" });
+    if (!FILES) { body.appendChild(el("p", "say", "No pass has read the lanes' branches yet.")); return fold; }
+    if (FILES.unreadable) { body.appendChild(el("p", "say", "The lanes' changes can't be read.")); return fold; }
+    var reads = isObject(FILES.lanes) ? FILES.lanes : {};
+    var names = Object.create(null);
+    list(doc.state.lanes).filter(isObject).forEach(function (lane) { names[text(lane.id)] = text(lane.title) || text(lane.id); });
+    var named = function (lane) { return names[lane] || lane; };
+    Object.keys(reads).forEach(function (lane) {
+      var read = reads[lane];
+      if (isObject(read) && typeof read.unreadable === "string") {
+        body.appendChild(el("p", "files-unread", named(lane) + "'s branch " + text(read.branch) + " can't be read, so none of its changes are shown: " + read.unreadable));
+      }
+    });
+    // A lane's read of a path, when its branch could be read and changed it.
+    var changed = function (lane, path) {
+      var read = reads[lane];
+      if (!isObject(read) || typeof read.unreadable === "string") { return null; }
+      return list(read.files).filter(function (file) { return isObject(file) && file.path === path; })[0] || null;
+    };
+    var unread = function (lane) { return isObject(reads[lane]) && typeof reads[lane].unreadable === "string"; };
+    var areas = Object.create(null);
+    var order = [];
+    list(FILES.files).filter(function (file) { return isObject(file) && typeof file.path === "string"; }).forEach(function (file) {
+      var area = file.path.indexOf("/") > 0 ? file.path.slice(0, file.path.indexOf("/")) : "";
+      if (!areas[area]) { areas[area] = []; order.push(area); }
+      areas[area].push(file);
+    });
+    var reading = null;
+    order.forEach(function (area) {
+      var shelf = el("div", "files-shelf");
+      areas[area].forEach(function (file) {
+        var base = file.path.slice(area ? area.length + 1 : 0);
+        if (Array.isArray(file.spans)) {
+          var lines = Math.max(1, file.lines || 0);
+          var button = el("button", "file shared" + (fileReading === file.path ? " open" : ""));
+          button.setAttribute("type", "button");
+          button.setAttribute("data-path", file.path);
+          button.setAttribute("aria-expanded", fileReading === file.path ? "true" : "false");
+          var bar = el("span", "file-split");
+          file.spans.filter(isObject).forEach(function (span) {
+            var touched = changed(span.lane, file.path);
+            var stretch = el("span", "stretch " + (unread(span.lane) ? "unread" : touched ? "solid" : "hollow") + (span.regrant ? " regrant" : ""));
+            stretch.style.setProperty("--c", colours[span.lane] || "var(--soft)");
+            stretch.style.left = (100 * (span.start - 1) / lines) + "%";
+            stretch.style.width = (100 * (span.end - span.start) / lines) + "%";
+            stretch.setAttribute("data-lane", span.lane);
+            stretch.setAttribute("title", named(span.lane) + ": lines " + span.start + "-" + (span.end - 1) + (span.regrant ? ", needs a regrant" : ""));
+            bar.appendChild(stretch);
+          });
+          add(button, el("span", "file-name", base), bar);
+          button.addEventListener("click", function () {
+            fileReading = fileReading === file.path ? null : file.path;
+            if (whoDrawn) { drawWho(whoDrawn[0], whoDrawn[1]); }
+          });
+          shelf.appendChild(button);
+          if (fileReading === file.path) { reading = file; }
+        } else {
+          var owner = list(file.lanes)[0] || "";
+          var mark = unread(owner) ? "unread" : changed(owner, file.path) ? "solid" : "hollow";
+          var chip = el("span", "file whole " + mark, base);
+          chip.style.setProperty("--c", colours[owner] || "var(--soft)");
+          chip.setAttribute("data-path", file.path);
+          chip.setAttribute("data-lane", owner);
+          chip.setAttribute("title", file.path + " · " + list(file.lanes).map(named).join(", "));
+          shelf.appendChild(chip);
+        }
+      });
+      body.appendChild(add(el("div", "files-area"), el("h4", null, area ? area + "/" : "Top level"), shelf));
+    });
+    if (FILES.more) { body.appendChild(el("p", "say", FILES.more + " more claimed " + (FILES.more === 1 ? "file isn't" : "files aren't") + " shown.")); }
+    if (reading) { body.appendChild(fileRead(reading, colours, changed, unread, named)); }
+    return fold;
+  }
+  /** A shared file's reading: its ruler, with each lane's stretches and changes, and per lane what it changed. */
+  function fileRead(file, colours, changed, unread, named) {
+    var lines = Math.max(1, file.lines || 0);
+    var box = add(el("div", "file-reading"), el("h4", null, file.path));
+    box.setAttribute("data-path", file.path);
+    var ruler = el("div", "ruler");
+    var lanes = [];
+    file.spans.filter(isObject).forEach(function (span) {
+      if (lanes.indexOf(span.lane) < 0) { lanes.push(span.lane); }
+      var stretch = el("span", "stretch" + (span.regrant ? " regrant" : ""));
+      stretch.style.setProperty("--c", colours[span.lane] || "var(--soft)");
+      stretch.style.top = (100 * (span.start - 1) / lines) + "%";
+      stretch.style.height = (100 * (span.end - span.start) / lines) + "%";
+      stretch.setAttribute("data-lane", span.lane);
+      ruler.appendChild(stretch);
+    });
+    var rows = el("ul", "file-lanes");
+    lanes.forEach(function (lane) {
+      var row = add(el("li"), el("b", null, named(lane)));
+      row.style.setProperty("--c", colours[lane] || "var(--soft)");
+      row.setAttribute("data-lane", lane);
+      if (unread(lane)) { rows.appendChild(add(row, " · its branch can't be read")); return; }
+      var read = changed(lane, file.path);
+      var changes = read ? list(read.changes).filter(isObject) : [];
+      changes.forEach(function (change) {
+        var tick = el("span", "tick" + (change.inside ? "" : " out"));
+        tick.style.setProperty("--c", colours[lane] || "var(--soft)");
+        tick.style.top = (100 * (change.start - 1) / lines) + "%";
+        tick.style.height = Math.max(0.5, 100 * Math.max(change.added, 1) / lines) + "%";
+        tick.setAttribute("data-lane", lane);
+        ruler.appendChild(tick);
+      });
+      if (!changes.length) { rows.appendChild(add(row, " · no changes")); return; }
+      var sizes = Object.create(null);
+      var order = [];
+      changes.forEach(function (change) {
+        var name = typeof change.name === "string" && change.name ? change.name : "outside any function";
+        if (!sizes[name]) { sizes[name] = { added: 0, removed: 0 }; order.push(name); }
+        sizes[name].added += change.added;
+        sizes[name].removed += change.removed;
+      });
+      var said = order.map(function (name) { return name + " +" + sizes[name].added + " \u2212" + sizes[name].removed; });
+      rows.appendChild(add(row, " · " + said.join(", ")));
+    });
+    return add(box, ruler, rows);
+  }
   function drawWho(doc, all) {
+    whoDrawn = [doc, all];
     var inner = parts.who;
     var lanes = list(doc.state.lanes).filter(isObject);
     var colours = laneColours(doc, all);
@@ -2174,6 +2313,7 @@
       nodes.push(people);
       prev.lanes = seen;
     }
+    if (list(doc.state.laneRegions).filter(isObject).length) { nodes.push(filesView(doc, colours)); }
     var leases = list(doc.state.leases).filter(isObject);
     if (leases.length && !closed) {
       var held = el("div", "leases");
