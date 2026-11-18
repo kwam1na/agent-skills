@@ -322,6 +322,10 @@
         {
           "id": "v26-3588-1",
           "text": "c1: The facts row opens with a Stories fact showing the landed count out of the delivery's total in the display serif, a track of landed, queued and being-built stories in tones of the landed colour, and a detail line counting the queue and the build, all from the record."
+        },
+        {
+          "id": "v26-3588-2",
+          "text": "c2: The facts row holds three facts, Stories, Last landed and Live, and the Plan fact's link and change count sit under the plan-now sentence."
         }
       ]
     }
