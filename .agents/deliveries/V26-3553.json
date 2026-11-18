@@ -334,6 +334,10 @@
         {
           "id": "v26-3588-4",
           "text": "c4: Last landed's detail links the ticket, and the pull request when the forge snapshot knows it."
+        },
+        {
+          "id": "v26-3588-5",
+          "text": "c5: A delivery with nothing landed shows \"0 of N landed\", and a closed delivery shows its final count."
         }
       ]
     }
