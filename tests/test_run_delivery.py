@@ -6659,7 +6659,7 @@ TROUBLESHOOTING_KEYS = [
     "no plan at", "has no configuration for lanes", "forge.mergeNeedsReady says the merge step refuses a draft",
     "the supervisor is down", "don't have the default signal dispositions", "it runs Node",
     "it runs with no node on its PATH", "it recorded no Node", "supervisor: down (<why>)", "it wanted port",
-    "binding doesn't serve the base", "isn't offered; refine it first", "isn't a valid knowledge-properties/1",
+    "binding doesn't serve the base", "isn't offered; refine it first", "isn't a valid knowledge-properties/1", "the record names sibling deliveries",
 ]
 
 
