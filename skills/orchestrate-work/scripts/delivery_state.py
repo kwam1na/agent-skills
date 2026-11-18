@@ -475,18 +475,63 @@ def holder_words(holder: dict | None) -> str:
     return f"delivery {holder.get('delivery', 'unknown')} (pid {holder.get('pid', '?')}, since {holder.get('since', '?')})"
 
 
+# What a command holds or waits for a merge slot to do, as its holder and waiter files say it.
+SLOT_DOING = ("push", "sync", "upgrade", "check", "merge", "release")
+
+
+def _slot_doing(doing: dict | None) -> dict | None:
+    """``doing`` as the slot's files keep it, ``{what, subject?}``, or None for a caller that says nothing."""
+    if doing is None:
+        return None
+    if doing.get("what") not in SLOT_DOING or not isinstance(doing.get("subject", ""), str):
+        raise StateError("slot_doing_invalid", f"a merge slot is held for one of {', '.join(SLOT_DOING)}: {doing!r}")
+    return {"what": doing["what"], **({"subject": doing["subject"]} if doing.get("subject") else {})}
+
+
+def slot_parties(lock: Path) -> dict:
+    """Who holds the slot at ``lock`` and who waits for it, each ``{delivery, pid, since, doing?}``, as their files say:
+    a holder only while its pid runs, and the live waiters in the order they began to wait. A file written before
+    ``doing`` was kept has none, and one that can't be read is left out."""
+    holder = slot_holder(lock)
+    if not (holder and isinstance(holder.get("pid"), int) and pid_alive(holder["pid"])):
+        holder = None
+    waiting = lock.parent / "waiting" / lock.name[:-len(".lock")]
+    waiters = []
+    for pid in slot_waiters(waiting):
+        with contextlib.suppress(OSError, ValueError):
+            said = json.loads((waiting / str(pid)).read_text(encoding="utf-8"))
+            if isinstance(said, dict) and said.get("pid") == pid:
+                waiters.append(said)
+    waiters.sort(key=lambda said: (str(said.get("since")), said["pid"]))
+    return {"holder": holder, "waiters": waiters}
+
+
+def slot_doing(lock: Path, doing: dict) -> None:
+    """Say the slot this command holds at ``lock`` is now held for ``doing``; a slot another command holds is left."""
+    said = slot_holder(lock)
+    if said is None or said.get("pid") != os.getpid():
+        return
+    _write_atomically(lock.parent / f"{lock.name[:-len('.lock')]}.holder",
+                      json.dumps({**said, "doing": _slot_doing(doing)}, sort_keys=True) + "\n")
+
+
 @contextlib.contextmanager
 def merge_slot(repository: Path, base: str, *, delivery: str, timeout: float, poll: float = SLOT_POLL_SECONDS,
                after_merge: bool = False, sleep: Callable[[float], None] = time.sleep,
-               clock: Callable[[], float] = time.monotonic) -> Iterator[Path]:
+               clock: Callable[[], float] = time.monotonic, doing: dict | None = None,
+               on_wait: Callable[[bool], None] | None = None) -> Iterator[Path]:
     """Hold ``base``'s merge slot, shared by every delivery on this machine, for the duration of one command.
 
     A command that finds it held writes its pid in the slot's ``waiting`` folder, tries again every ``poll``
     seconds within ``timeout``, and removes its file when it takes the slot or gives up, which raises
     ``slot_held`` naming the holder. ``after_merge``, for a queue whose last command merged, waits one poll first
     when another live command waits, and never more, so the waiter goes first. The holder file names the holder's
-    delivery, pid and start; only the lock, which the operating system releases with a dead holder, decides.
+    delivery, pid and start, and the waiter's file the same; ``doing``, ``{what, subject?}`` with ``what`` one of
+    ``SLOT_DOING``, says in both what the command holds it for. ``on_wait`` is called with False once, its waiter file
+    written, when the command first finds the slot held, and with True once it takes the slot after waiting. Only the lock, which the operating system releases with a dead
+    holder, decides.
     """
+    doing = _slot_doing(doing)
     lock = merge_slot_path(repository, base)
     stem = lock.name[:-len(".lock")]
     waiting = lock.parent / "waiting" / stem
@@ -509,8 +554,10 @@ def merge_slot(repository: Path, base: str, *, delivery: str, timeout: float, po
                 if mine is None:
                     waiting.mkdir(parents=True, exist_ok=True)
                     mine = waiting / str(own)
-                    mine.write_text(json.dumps({"pid": own, "delivery": delivery, "since": now()}) + "\n",
-                                    encoding="utf-8")
+                    mine.write_text(json.dumps({"pid": own, "delivery": delivery, "since": now(),
+                                                **({"doing": doing} if doing else {})}) + "\n", encoding="utf-8")
+                    if on_wait is not None:
+                        on_wait(False)
                 if clock() >= deadline:
                     raise StateError("slot_held", f"the merge slot for {base} is held by "
                                                   f"{holder_words(slot_holder(lock))}")
@@ -519,8 +566,10 @@ def merge_slot(repository: Path, base: str, *, delivery: str, timeout: float, po
             if mine is not None:
                 with contextlib.suppress(OSError):
                     mine.unlink()
-        _write_atomically(holder, json.dumps({"delivery": delivery, "pid": own, "since": now(),
-                                              "base": base}, sort_keys=True) + "\n")
+        _write_atomically(holder, json.dumps({"delivery": delivery, "pid": own, "since": now(), "base": base,
+                                              **({"doing": doing} if doing else {})}, sort_keys=True) + "\n")
+        if mine is not None and on_wait is not None:
+            on_wait(True)
         try:
             yield lock
         finally:
@@ -4239,6 +4288,140 @@ def free_to_start(document: dict, found: list[dict], *, words: dict | None = Non
              "words": wait_said(table, "needsYou", "free", {"subject": entry["subject"], "lane": entry["lane"]})}
             for entry in state.get("planned", []) if entry["stage"] == "planned" and entry["lane"] in idle
             and entry["subject"] not in waiting]
+
+
+def _claimed(state: dict) -> list[str]:
+    """The paths a delivery's record claims on the shared base."""
+    extensions = state.get("extensions") if isinstance(state.get("extensions"), dict) else {}
+    return [path for path in extensions.get("claims") or [] if isinstance(path, str)]
+
+
+def _unlanded_on(state: dict, path: str) -> list[dict]:
+    """A delivery's unlanded stories on ``path``: those of the lanes whose grants or regions cover it, record order."""
+    ownership = state.get("laneOwnership") if isinstance(state.get("laneOwnership"), dict) else {}
+    lanes = {lane for lane, grants in ownership.items() if isinstance(grants, list)
+             and any(isinstance(grant, str) and _overlap(path, grant) for grant in grants)}
+    lanes |= {claim.get("lane") for claim in state.get("laneRegions") or []
+              if isinstance(claim, dict) and claim.get("path") == path}
+    return [item for name in ("planned", "queue") for item in state.get(name) or []
+            if isinstance(item, dict) and isinstance(item.get("subject"), str)
+            and item.get("stage") not in ("merged", "settled")
+            and (item.get("lane") in lanes or item.get("assignedLane") in lanes)]
+
+
+def _clock(at: object) -> str | None:
+    """An instant as a wait says it, ``14:10 UTC``, or None when it isn't one."""
+    try:
+        moment = datetime.datetime.strptime(str(at)[:19], "%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        return None
+    return moment.strftime("%H:%M UTC")
+
+
+def peer_waits(document: dict, delivery: str, peers: list[dict], slot: dict, *,
+               words: dict | None = None) -> dict:
+    """What this delivery waits on in the other deliveries on its base, and what they wait on in it:
+    ``{waits, waitedOn}``, each in the shape ``waits`` and ``waited_on`` give, ``on`` and ``by`` naming
+    ``{delivery, subject?}``.
+
+    ``peers`` are the other deliveries registered on the base, each ``{key, state}`` with its record's state;
+    ``slot`` is the base's merge slot as ``slot_parties`` reads it. A planned story whose files a peer claims waits on
+    that claim (``claim``), and so does an idle lane whose next story it is; a peer's planned story whose files this
+    delivery claims is said under this delivery's story on the file, or the lead. A command of this delivery waiting
+    for the slot a peer holds waits on it (``slot``), said under the piece it is for or the lead, and a peer's command
+    waiting on this delivery's hold is said under what holds it. Each pass derives both sides from the same facts, so
+    a released claim or slot clears both.
+
+    It reads only what it is given and the table of sentences: no clock, no network, no other file.
+    """
+    table = load_wait_words() if words is None else words
+    state = document["state"]
+    found: list[dict] = []
+    holding: list[dict] = []
+    planned = [entry for entry in state.get("planned", []) if entry.get("stage") == "planned"]
+    told: dict[str, list[tuple[dict, dict]]] = {}
+    for peer in peers:
+        theirs = peer.get("state") if isinstance(peer.get("state"), dict) else {}
+        claims = _claimed(theirs)
+        for entry in planned:
+            hits = [path for path in entry.get("files", []) if any(_overlap(path, claim) for claim in claims)]
+            if not hits:
+                continue
+            stories = _unlanded_on(theirs, hits[0])
+            on = {"delivery": peer["key"], **({"subject": stories[0]["subject"]} if stories else {})}
+            fields = {"peer": peer["key"], "named": bool(stories), "files": hits,
+                      **({"story": stories[0]["subject"]} if stories else {})}
+            wait = {"subject": entry["subject"], "on": on, "cause": "claim",
+                    "stage": stories[0]["stage"] if stories else "claimed", "frees": "released", "needsSomeone": False,
+                    "words": wait_said(table, "waits", "claim", fields)}
+            found.append(wait)
+            told.setdefault(entry["subject"], []).append((wait, fields))
+        ours = _claimed(state)
+        for entry in theirs.get("planned") or []:
+            if not (isinstance(entry, dict) and entry.get("stage") == "planned" and isinstance(entry.get("subject"), str)):
+                continue
+            hits = [path for path in entry.get("files") or [] if isinstance(path, str)
+                    and any(_overlap(path, claim) for claim in ours)]
+            if not hits:
+                continue
+            stories = _unlanded_on(state, hits[0])
+            holding.append({"subject": stories[0]["subject"] if stories else "lead",
+                            "by": [{"delivery": peer["key"], "subject": entry["subject"]}],
+                            "words": wait_said(table, "holding", "claim", {"peer": peer["key"], "story": entry["subject"],
+                                                                         "files": hits})})
+    for row in state.get("lanes", []):
+        if row.get("state") != "idle":
+            continue
+        following = next((entry for entry in state.get("planned", [])
+                          if entry.get("lane") == row["id"] and entry.get("stage") == "planned"), None)
+        for wait, fields in told.get(following["subject"], []) if following else []:
+            found.append({"subject": row["id"], "on": wait["on"], "cause": "claim", "stage": wait["stage"],
+                          "frees": "released", "needsSomeone": False,
+                          "words": wait_said(table, "lanes", "claim",
+                                             {**fields, "subject": row["id"], "next": following["subject"]})})
+    # The queue names a delivery in the slot's files by its record's headline, a lead command by its key: both are it.
+    def headline(record: object) -> object:
+        meta = record.get("meta") if isinstance(record, dict) else None
+        return meta.get("headline") if isinstance(meta, dict) else None
+
+    # A key always names its own delivery, whatever headline another delivery's record has.
+    named = {**{headline(peer.get("state")): peer["key"] for peer in peers}, headline(state): delivery,
+             **{peer["key"]: peer["key"] for peer in peers}, delivery: delivery}
+    named.pop(None, None)
+
+    def party(said: object) -> dict | None:
+        if not isinstance(said, dict):
+            return None
+        return {**said, "delivery": named.get(said.get("delivery"), said.get("delivery"))}
+
+    holder = party(slot.get("holder"))
+    if holder is not None:
+        held = holder.get("doing") if isinstance(holder.get("doing"), dict) else {}
+        doing = wait_said(table, "doing", "slot", {"what": held.get("what"), **({"subject": held["subject"]}
+                                                                               if held.get("subject") else {})})
+        for waiter in map(party, slot.get("waiters") or []):
+            if waiter is None or waiter.get("delivery") == holder.get("delivery"):
+                continue
+            wanted = waiter.get("doing") if isinstance(waiter.get("doing"), dict) else {}
+            piece = wanted.get("subject") if wanted.get("what") in ("check", "merge") else None
+            if waiter.get("delivery") == delivery:
+                fields = {"waiter": piece or "lead", "work": wait_said(table, "doing", "work", {"what": wanted.get("what")}),
+                          "holder": holder.get("delivery"), "doing": doing, "at": _clock(holder.get("since"))}
+                found.append({"subject": piece or "lead",
+                              "on": {"delivery": holder.get("delivery"), **({"subject": held["subject"]}
+                                                                             if held.get("subject") else {})},
+                              "cause": "slot", "stage": held.get("what") or "using", "frees": "released",
+                              **({"since": holder["since"]} if isinstance(holder.get("since"), str) else {}),
+                              "needsSomeone": False, "words": wait_said(table, "waits", "slot", fields)})
+            elif holder.get("delivery") == delivery:
+                want = wait_said(table, "doing", "slot", {"what": wanted.get("what"), **({"subject": piece}
+                                                                                         if piece else {})})
+                ours = held.get("subject") if held.get("what") in ("check", "merge") else None
+                holding.append({"subject": ours or "lead",
+                                "by": [{"delivery": waiter.get("delivery"), **({"subject": piece} if piece else {})}],
+                                "words": wait_said(table, "holding", "slot", {"peer": waiter.get("delivery"),
+                                                                              "doing": want})})
+    return {"waits": found, "waitedOn": holding}
 
 
 def next_for_lane(state: dict, lane: str, snapshot: dict | None, hints: dict | None) -> list[dict]:
