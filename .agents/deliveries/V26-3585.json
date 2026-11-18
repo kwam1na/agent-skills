@@ -134,7 +134,7 @@
         },
         {
           "id": "v26-3557-2",
-          "text": "c2: Accepting it ends the old head's re-run, journalled as superseded with no verdict; the old head is never checked again."
+          "text": "c2: Accepting it ends the old head's remaining checks and any base re-run, journalled as superseded with no verdict; the old head is never checked again."
         },
         {
           "id": "v26-3557-3",
