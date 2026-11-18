@@ -19,3 +19,19 @@ Gaps in the workflow or the tool found while delivering this plan, each recorded
   this delivery runs still has the old brief. The round-3 clarification stands in for it until a release carrying
   a0dffff5 is applied. V26-3430 is still in Backlog; whether its other half, `reduce` skipping a closed finding, is
   done was not checked.
+
+## A holding item in the needs-you list never wakes the lead (workflow)
+
+- **What happened.** From `lead-init` at 19:27 the supervisor's merge queue `serve` was refused every minute,
+  `binding_invalid: workRoot must not contain a checkout of the repository`, because another delivery's interrupted
+  `lead-suite` run had left its detached checkout under `.orchestration/work/suite/`. The live view showed "The
+  supervisor's serve won't stay up", holding up the finish, for about 12 minutes. The operator saw it there first.
+- **Why the tool couldn't tell the lead.** `lead-wait` wakes only on journal entries. The supervisor works out a
+  flapping child on each pass and writes it only to `needs-you.json`, never to the journal, so no wake reaches the lead
+  for an item the view itself marks as holding up the finish. Separately, an interrupted `lead-suite` leaves its
+  checkout behind, and nothing removes it before the next delivery's queue meets it.
+- **What was done.** The stale checkout was removed with `git worktree remove`, as `lead-suite` would have, after
+  checking that it was clean, detached and held open by no process. Two one-off shell watches then checked that `serve`
+  stayed up, because nothing would report it.
+- **Where it stands.** Tracked as V26-3618: a holding needs-you item should journal an entry the lead's wait hears, and
+  the stale suite checkout should be cleaned up, or named with its fix, before `serve` refuses on it.
