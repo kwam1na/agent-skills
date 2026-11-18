@@ -9946,7 +9946,7 @@ def waits_needing(c, doc: dict, items: list[dict]) -> list[dict]:
         elif piece.get("stage") == "stopped":
             added.append({"holding": False, "source": f"{on}'s waits", "clears": f"{on} put back, landing or settling",
                           "text": delivery_state.wait_said(table, "needsYou", "stopped", {"subject": on}) + " " + count})
-    for free in delivery_state.free_to_start(doc, found, words=table):
+    for free in delivery_state.free_to_start(doc, [*found, *peer_waits_said(c)], words=table):
         # A story free to start is in "Needs you" itself, so what waits on it is counted on its item.
         waiting = list(dict.fromkeys(wait["subject"] for wait in found
                                      if wait["on"] == free["subject"] and (wait["subject"] not in lanes or wait["cause"] == "lane")))
@@ -9983,6 +9983,17 @@ def write_needs(c, items: list[dict] | None, number: int, started: float) -> Non
 
 
 PEER_WAITS_FILE = "peer-waits.json"
+
+
+def peer_waits_said(c) -> list[dict]:
+    """This delivery's waits on its peers as the views say them: the last write's, while it is fresh. A pass writes
+    them before it derives "Needs you", so a story the views say waits on another delivery is never free to start."""
+    scripts = str(c.release / "skills/orchestrate-work/scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import render_state
+    said = render_state.fresh_peer_waits(c.state)
+    return said["waits"] if said else []
 
 
 def write_peer_waits(c, lasting: float = 0) -> str:

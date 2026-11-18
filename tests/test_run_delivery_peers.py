@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 import unittest
 import urllib.request
 from pathlib import Path
@@ -34,6 +35,7 @@ sys.path.insert(0, str(ROOT / "skills" / "run-delivery" / "scripts"))
 sys.path.insert(0, str(ROOT / "skills" / "orchestrate-work" / "scripts"))
 sys.modules.update(KEPT)
 import delivery_state  # noqa: E402
+import run_delivery as flow  # noqa: E402
 import tracker_publisher  # noqa: E402
 
 # The fixture plan, with each story naming the file its lane changes.
@@ -677,10 +679,12 @@ class PeerWaitsTests(unittest.TestCase):
         self.assertEqual(said(found), [
             ("APP-2", "Waits for delivery PEER-1, whose PEER-2 claims skills/render.py."),
             ("lane-1", "Lane 1 is next on APP-2, which waits for delivery PEER-1, whose PEER-2 claims skills/render.py.")])
-        [wait] = [wait for wait in found["waits"] if wait["subject"] == "APP-2"]
-        self.assertEqual({k: wait[k] for k in ("on", "cause", "stage", "frees", "needsSomeone")},
-                         {"on": {"delivery": "PEER-1", "subject": "PEER-2"}, "cause": "claim", "stage": "building",
-                          "frees": "released", "needsSomeone": False})
+        # The idle lane's wait is its next story's: on the same delivery and story, freed the same way.
+        for subject in ("APP-2", "lane-1"):
+            [wait] = [wait for wait in found["waits"] if wait["subject"] == subject]
+            self.assertEqual({k: wait[k] for k in ("on", "cause", "stage", "frees", "needsSomeone")},
+                             {"on": {"delivery": "PEER-1", "subject": "PEER-2"}, "cause": "claim", "stage": "building",
+                              "frees": "released", "needsSomeone": False})
         # PEER-3 waits on APP-1's claim: said under APP-3, the story on the file.
         self.assertEqual(said(found, "waitedOn"), [("APP-3", "Delivery PEER-1's PEER-3 waits on this delivery's claim on skills/views.py.")])
         self.assertEqual(found["waitedOn"][0]["by"], [{"delivery": "PEER-1", "subject": "PEER-3"}])
@@ -722,6 +726,48 @@ class PeerWaitsTests(unittest.TestCase):
         found = delivery_state.peer_waits(document, "APP-1", [peer], FREE)
         self.assertEqual([subject for subject, _ in said(found)], ["APP-2", "lane-1"])
         self.assertEqual([wait["by"] for wait in found["waitedOn"]], [[{"delivery": "PEER-1", "subject": "PEER-3"}]])
+
+    def test_only_an_idle_lane_says_a_claim_wait_and_only_its_next_planned_storys(self) -> None:
+        document = ours()
+        # Lane 1 is idle and next on APP-4, which names no claimed file; lane 2 is working: neither says APP-2's or
+        # APP-6's wait.
+        document["state"]["planned"] = [
+            {"subject": "APP-4", "lane": "lane-1", "stage": "planned", "files": ["docs/unclaimed.md"]},
+            {"subject": "APP-2", "lane": "lane-1", "stage": "planned", "files": ["skills/render.py"]},
+            {"subject": "APP-6", "lane": "lane-2", "stage": "planned", "files": ["skills/render.py"]}]
+        found = delivery_state.peer_waits(document, "APP-1", [theirs()], FREE)
+        self.assertEqual([subject for subject, _ in said(found)], ["APP-2", "APP-6"])
+        # A story lane 1 has already started is not what it is next on: its next planned story, APP-2, is.
+        document["state"]["planned"] = [
+            {"subject": "APP-7", "lane": "lane-1", "stage": "building", "files": ["docs/unclaimed.md"]},
+            {"subject": "APP-2", "lane": "lane-1", "stage": "planned", "files": ["skills/render.py"]}]
+        found = delivery_state.peer_waits(document, "APP-1", [theirs()], FREE)
+        self.assertEqual(said(found)[1:], [
+            ("lane-1", "Lane 1 is next on APP-2, which waits for delivery PEER-1, whose PEER-2 claims skills/render.py.")])
+
+    def test_needs_you_never_calls_a_story_free_to_start_while_the_views_say_it_waits_on_a_peer(self) -> None:
+        document = ours()
+        document["state"]["planned"].append({"subject": "APP-4", "lane": "lane-1", "stage": "planned", "files": []})
+        with tempfile.TemporaryDirectory() as folder:
+            c = types.SimpleNamespace(release=ROOT, state=Path(folder))
+
+            def free() -> list[str]:
+                return [item["source"] for item in flow.waits_needing(c, document, []) if "free to start" in item["text"]]
+
+            def write(seconds: int) -> None:
+                at = datetime.datetime.now(datetime.timezone.utc)
+                stale = (at + datetime.timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                (Path(folder) / "peer-waits.json").write_text(json.dumps({
+                    "spec": "delivery-peer-waits/1", "at": at.strftime("%Y-%m-%dT%H:%M:%SZ"), "staleAfter": stale,
+                    **delivery_state.peer_waits(document, "APP-1", [theirs()], FREE)}))
+
+            self.assertEqual(free(), ["APP-2's waits", "APP-4's waits"])
+            # While the views say APP-2 waits on PEER-1's claim, "Needs you" doesn't call it free; stale, they say
+            # nothing of other deliveries, and neither does it.
+            write(600)
+            self.assertEqual(free(), ["APP-4's waits"])
+            write(-60)
+            self.assertEqual(free(), ["APP-2's waits", "APP-4's waits"])
 
     def test_a_peers_landed_story_is_not_named_and_one_its_region_covers_is(self) -> None:
         peer = theirs()
