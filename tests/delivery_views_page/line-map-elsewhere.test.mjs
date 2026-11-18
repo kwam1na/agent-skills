@@ -56,3 +56,11 @@ test("a record with no outside work, or an empty list, draws no fold", async () 
     expect(shown.app.querySelector("#parked .elsewhere-fold")).toBeNull();
   }
 });
+
+test("an Elsewhere row's ticket card names the outside work's own title", async () => {
+  const [, hovered] = await open(pageWithRuns(document(OUTSIDE), {}, { config: CONFIG }),
+    { steps: [{ hover: '#parked .elsewhere-fold [data-ticket="APP-23"]' }] });
+  const card = hovered.app.querySelector(".issue-card");
+  expect(card.hidden).toBe(false);
+  expect(card.textContent).toContain("Backend: token refresh");
+});

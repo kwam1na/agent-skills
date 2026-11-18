@@ -3700,7 +3700,7 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
         return next((item for item in lead["queue"] if item["subject"] == subject), None)
 
     def planned(subject: str) -> dict | None:
-        return next((item for item in lead["planned"] if item["subject"] == subject), None)
+        return next((item for item in lead.get("planned", []) if item["subject"] == subject), None)
 
     def followed(subject: str) -> bool:
         return any(subject in (item["id"], item["reference"]) for item in lead["followups"])
@@ -3728,10 +3728,17 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
                 and not any(name in entry for name in ("after", "files", "changeRequest", "runId"))
                 and entry["subject"] not in added_by)
 
-    def own(subject: str) -> bool:
-        return queued(subject) is not None or (planned(subject) is not None and not tracker_added(planned(subject)))
+    # Decided once, on the record as read: what this sweep then does to the work never changes whose it is.
+    owned = {subject for subject in outside if queued(subject) is not None
+             or (planned(subject) is not None and not tracker_added(planned(subject)))}
+    # Lane-less work of this delivery that the tracker files elsewhere keeps its shape: the tracker's start doesn't
+    # move it, so a later sweep never takes it for work the sweep added.
+    held = {subject for subject in owned if planned(subject) is not None and planned(subject)["lane"] is None}
 
-    for subject in outside:
+    def own(subject: str) -> bool:
+        return subject in owned
+
+    for subject in sorted(outside):  # In subject order, whatever order the snapshots list them in.
         if own(subject):
             continue
         why = "outside this delivery's scope"
@@ -3777,6 +3784,8 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
                     pass  # closed with no change needed: whatever the tracker says, the record holds it settled
                 elif word == "started" and not known:
                     report(subject, "a follow-up the tracker now shows started: assign it a lane")
+                elif word == "started" and subject in held:
+                    pass
                 elif word == "started" and planned(subject) and planned(subject)["stage"] == "planned":
                     # A lane moves its ticket to started as it begins; that alone moves the stop.
                     planned(subject).update(stage="building", trackerStarted=True)
@@ -3861,8 +3870,9 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
     if not lead["planned"] and "planned" not in state:
         del lead["planned"]
     changed = {key: value for key, value in lead.items() if value != state.get(key, [] if key == "planned" else None)}
-    if scoped:
-        # What the views draw as "Elsewhere": the outside children this delivery doesn't hold, as the tracker shows them.
+    if scoped or (state.get("outside") and any(snapshot["source"] == "tracker" for snapshot in snapshots)):
+        # What the views draw as "Elsewhere": the outside children this delivery doesn't hold, as the tracker shows
+        # them. A tracker snapshot no longer scoped empties it, so dropping --scope leaves no stale fold.
         kept = [{name: item[name] for name in ("subject", "title", "state", "status", "marks") if name in item}
                 for item in outside.values() if not own(item["subject"])]
         kept.sort(key=lambda item: item["subject"])

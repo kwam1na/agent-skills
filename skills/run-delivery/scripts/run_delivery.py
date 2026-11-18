@@ -12804,6 +12804,9 @@ class Doctor:
         if not isinstance(found, dict) or found.get("check") != "tracker-scope/1":
             return "wrong", f"the tracker snapshot's --check failed: {(taken.stderr or taken.stdout).strip()[-200:]}"
         lines = []
+        if "--scope" in argv and "--state-dir" not in argv:
+            lines.append("it sets --scope without --state-dir {stateDirectory}, so the delivery file's stories aren't "
+                         "kept in scope; fix: add --state-dir {stateDirectory}")
         if found["unknown"]:
             lines.append(f"the project has no {', '.join(found['unknown'])}; fix: correct the binding's trackerSnapshot")
         if found["unmapped"]:

@@ -467,12 +467,17 @@ ignoring case. With `--state-dir {stateDirectory}`, every story the
 delivery's `plan.json` lists stays in scope too, whatever the tracker marks
 it with. A child that carries a value of a scoped kind and matches no
 `--scope` is listed under `outside`, with its state, status and `marks`, the
-values that place it there (for `prefix`, a leading `[Tag]` or `Word:`).
+values that place it there (for `prefix`, a leading `[Tag]` or `Word:`), and
+its summary and blockers.
 `reconcile` never adds an outside child as planned work or a follow-up and
 never reports on it. It clears a copy the sweep added earlier, planned work
 with no lane or a follow-up, journaling `work.cleared` once. It keeps
 `outside` in the record, and the line map shows it in a collapsed "Elsewhere
-in KEY" fold. A child with no value of any scoped kind stays in scope,
+in KEY" fold. An unscoped tracker snapshot empties it. Work of this delivery
+that the tracker marks outside is never cleared: queued work, work with a
+lane, or planned work with the plan's order, files, change request or run. A
+lane-less story of this delivery that the tracker marks outside keeps its
+shape: its ticket's start doesn't move it. A child with no value of any scoped kind stays in scope,
 flagged `unmarked`. Without `--scope`, every child is in scope, as before.
 
 Each `--status-state "<status name>=<state>"`, repeatable, reads that status

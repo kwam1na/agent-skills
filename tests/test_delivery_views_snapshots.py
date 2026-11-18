@@ -1080,6 +1080,16 @@ class JiraScopeTests(SnapshotCase):
         self.assertEqual(fields.split(","), ["summary", "description", "status", "issuelinks", "components", "labels"])
         self.assertEqual(document["items"][0]["blockedBy"], ["APP-22"])
         self.assertNotIn("statusStates", document)
+        # An outside child keeps its summary and blockers, as an item would.
+        search = copy.deepcopy(SCOPE["search"])
+        search["issues"][2]["fields"]["description"] = {"type": "doc", "version": 1, "content": [
+            {"type": "paragraph", "content": [{"type": "text", "text": "Refresh before expiry."}]}]}
+        search["issues"][2]["fields"]["issuelinks"] = [{"type": {"name": "Blocks"}, "inwardIssue": {"key": "APP-22"}}]
+        document, _ = self.take("--scope", "component=Mobile App", search=search)
+        self.assertEqual(document["outside"][1], {"subject": "APP-23", "title": "Backend: token refresh",
+                                                  "state": "started", "summary": "Refresh before expiry.",
+                                                  "blockedBy": ["APP-22"], "status": "In QA",
+                                                  "marks": {"component": ["Backend"]}})
 
     def test_labels_prefixes_and_several_scopes_split_the_same_way(self) -> None:
         for extra, inside, outside in (
@@ -1133,7 +1143,7 @@ class JiraScopeTests(SnapshotCase):
         self.failed(err, "the plan could not be read through --state-dir state")
 
     def test_a_mapped_status_reads_as_its_state_whatever_its_category(self) -> None:
-        document, _ = self.take(*QA_MAP, "--canceled-statuses", "Done")
+        document, _ = self.take(*QA_MAP, "--canceled-statuses", "Done", "--status-state", "In QA=completed")
         states = {item["subject"]: item["state"] for item in document["items"]}
         self.assertEqual(states, {"APP-21": "started", "APP-22": "completed", "APP-23": "completed", "APP-24": "backlog",
                                   "APP-25": "started", "APP-26": "completed", "APP-27": "canceled"})
@@ -1264,43 +1274,78 @@ class ScopedSweepTests(unittest.TestCase):
         self.assertNotIn("outside", self.state())
 
     def test_a_record_already_holding_outside_work_drops_it_once_and_keeps_its_own_stories(self) -> None:
+        own_planned = [
+            # Stories of this delivery that the tracker marks outside, each kept by one sign of the plan or a lane.
+            {"subject": "APP-30", "title": "Own, with a lane", "lane": "lane-1", "stage": "building", "trackerStarted": True},
+            {"subject": "APP-31", "title": "Own, assigned", "lane": "lane-1", "stage": "planned"},
+            {"subject": "APP-33", "title": "Own, not yet started", "lane": None, "stage": "planned"},
+            {"subject": "APP-34", "title": "Own, ordered after", "lane": None, "stage": "building", "trackerStarted": True,
+             "after": ["APP-30"]},
+            {"subject": "APP-35", "title": "Own, with a change request", "lane": None, "stage": "building",
+             "trackerStarted": True, "changeRequest": "https://example.test/pull/35"},
+            {"subject": "APP-36", "title": "Own, with a run", "lane": None, "stage": "building", "trackerStarted": True,
+             "runId": "run-36"},
+            {"subject": "APP-37", "title": "Own, building by its change request alone", "lane": None, "stage": "building"},
+            {"subject": "APP-38", "title": "Own, in review", "lane": None, "stage": "review", "trackerStarted": True},
+        ]
         self.lead({
-            "planned": [
-                # What the sweep added before the snapshot was scoped: lane-less building work.
-                {"subject": "APP-22", "title": "[Backend] Login API", "lane": None, "stage": "building",
-                 "trackerStarted": True},
-                # Stories of this delivery, outside by the tracker's marks: one with a lane, one the plan placed.
-                {"subject": "APP-30", "title": "Own, filed wrongly", "lane": "lane-1", "stage": "building",
-                 "trackerStarted": True},
-                {"subject": "APP-31", "title": "Own, unassigned", "lane": None, "stage": "building",
-                 "trackerStarted": True, "files": ["app/settings.py"]},
-            ],
-            # A follow-up the tracker added, and one the lead moved there by hand, as the workaround did.
+            # What the sweep added before the snapshot was scoped: lane-less building work.
+            "planned": [{"subject": "APP-22", "title": "[Backend] Login API", "lane": None, "stage": "building",
+                         "trackerStarted": True}, *own_planned],
+            # Follow-ups the tracker added, one with no reference; one the lead filed by hand under an outside key; and
+            # one the lead filed for a finding.
             "followups": [{"id": "APP-23", "title": "Backend: token refresh", "reference": "APP-23"},
+                          {"id": "APP-26", "title": "Push service", "reference": None},
+                          {"id": "APP-27", "title": "Check the backend's logout", "reference": "https://example.test/APP-27"},
                           {"id": "F-3", "title": "Measure it", "reference": "https://example.test/F-3"}],
             "queue": [queued("APP-32")],
             "tickets": {"APP-22": {"title": "[Backend] Login API", "summary": "The API."}},
         })
-        own = [{"subject": subject, "title": subject, "state": "started", "status": "In Progress",
-                "marks": {"component": ["Backend"]}} for subject in ("APP-30", "APP-31", "APP-32")]
-        result = self.reconcile(tracker_snapshot([], outside=[*OUTSIDE, *own]))
+        states = {"APP-30": "completed"}
+        own = [{"subject": entry["subject"], "title": entry["title"], "state": states.get(entry["subject"], "started"),
+                "status": "In Progress", "marks": {"component": ["Backend"]}} for entry in [*own_planned, queued("APP-32")]]
+        elsewhere = [*OUTSIDE,
+                     {"subject": "APP-26", "title": "Push service", "state": "started", "marks": {"component": ["Backend"]}},
+                     {"subject": "APP-27", "title": "Logout API", "state": "backlog", "marks": {"component": ["Backend"]}}]
+        snapshot = tracker_snapshot([], outside=[*reversed(elsewhere), *own])
+        result = self.reconcile(snapshot)
         state = self.state()
-        self.assertEqual([entry["subject"] for entry in state["planned"]], ["APP-30", "APP-31"])
-        self.assertEqual([entry["id"] for entry in state["followups"]], ["F-3"])
+        self.assertEqual([entry["subject"] for entry in state["planned"]], [entry["subject"] for entry in own_planned])
+        self.assertEqual([entry["id"] for entry in state["followups"]], ["APP-27", "F-3"])
         self.assertEqual([entry["subject"] for entry in state["queue"]], ["APP-32"])
         self.assertNotIn("APP-22", state.get("tickets", {}))
-        self.assertEqual(state["outside"], OUTSIDE, "the delivery's own stories are not elsewhere")
+        self.assertEqual(state["outside"], sorted(elsewhere, key=lambda item: item["subject"]),
+                         "the delivery's own stories are not elsewhere, and the list is in subject order")
         why = "outside this delivery's scope"
         self.assertEqual(self.cleared(), [("APP-22", {"from": "planned", "why": why}),
-                                          ("APP-23", {"from": "followups", "why": why})])
+                                          ("APP-23", {"from": "followups", "why": why}),
+                                          ("APP-26", {"from": "followups", "why": why})])
         self.assertTrue(all("cleared" not in change for change in result["changes"]))
+        # The delivery's own stories still follow the tracker, outside or not: a started ticket moves planned work on,
+        # and a completed one is reported against work still building.
+        planned = {entry["subject"]: entry for entry in state["planned"]}
+        self.assertEqual(planned["APP-31"]["stage"], "building")
+        self.assertIn({"subject": "APP-31", "change": "started in the tracker: now building", "recovery": False},
+                      result["changes"])
+        # Lane-less work of this delivery keeps its shape, so no later sweep can take it for work the sweep added.
+        self.assertEqual((planned["APP-33"]["stage"], "trackerStarted" in planned["APP-33"]), ("planned", False))
+        self.assertNotIn("trackerStarted", planned["APP-37"])
+        self.assertFalse([change for change in result["changes"] if change["subject"] in ("APP-33", "APP-37")])
+        self.assertIn({"subject": "APP-30", "note": "completed in the tracker but still building in the record: check the forge"},
+                      result["reports"])
         # The next sweep, and the one after, find nothing more to clear.
         for _ in range(2):
-            self.reconcile(tracker_snapshot([], outside=[*OUTSIDE, *own]))
-        self.assertEqual(len(self.cleared()), 2)
-        # The delivery's own stories still follow the tracker: the one it holds as unassigned moves on.
-        self.assertEqual(next(entry for entry in self.state()["planned"] if entry["subject"] == "APP-31")["stage"],
-                         "building")
+            self.reconcile(snapshot)
+        self.assertEqual(len(self.cleared()), 3)
+        self.assertEqual([entry["subject"] for entry in self.state()["planned"]], [entry["subject"] for entry in own_planned])
+
+    def test_a_tracker_snapshot_no_longer_scoped_empties_the_outside_member(self) -> None:
+        self.reconcile(tracker_snapshot([], outside=OUTSIDE))
+        self.assertEqual(self.state()["outside"], OUTSIDE)
+        self.reconcile({**tracker_snapshot([]), "source": "forge"})
+        self.assertEqual(self.state()["outside"], OUTSIDE, "a forge snapshot says nothing of the tracker's scope")
+        self.reconcile(tracker_snapshot([]))
+        self.assertNotIn("outside", self.state())
 
     def test_a_story_of_the_delivery_journaled_as_added_is_never_cleared(self) -> None:
         self.lead({"planned": [{"subject": "APP-40", "title": "Added", "lane": None, "stage": "building",
@@ -1313,11 +1358,13 @@ class ScopedSweepTests(unittest.TestCase):
         self.assertEqual(self.cleared(), [])
 
     def test_a_merged_story_whose_ticket_moves_to_a_status_mapped_to_started_is_reported(self) -> None:
-        self.lead({"queue": [queued("APP-25"), queued("APP-21")]})
+        self.lead({"queue": [queued("APP-25"), queued("APP-21"), queued("APP-28", stage="queued")]})
         mapped = {"QA Return": "started", "Ready for QA": "completed"}
         result = self.reconcile(tracker_snapshot([
             {"subject": "APP-25", "title": "Profile", "state": "started", "status": "QA Return"},
             {"subject": "APP-21", "title": "Login", "state": "completed", "status": "Ready for QA"},
+            # Handed and not yet merged, its ticket sent back: not returned after a merge that hasn't happened.
+            {"subject": "APP-28", "title": "Logout", "state": "started", "status": "QA Return"},
         ], statusStates=mapped))
         self.assertEqual(result["reports"], [{"subject": "APP-25",
                                               "note": "returned after merge (QA Return): assign a fix"}])
@@ -1356,6 +1403,8 @@ class ScopedSweepTests(unittest.TestCase):
             ({**tracker_snapshot([], statusStates={"QA": "started"}), "source": "forge"}, "/statusStates: only"),
             (tracker_snapshot([], statusStates={"QA": "deployed"}), "statusStates"),
             (tracker_snapshot([{"subject": "APP-21", "state": "started", "unmarked": False}]), "unmarked"),
+            ({**tracker_snapshot([{"subject": "APP-21", "state": "open", "unmarked": True}]), "source": "forge"},
+             "/items/0/unmarked: only a tracker snapshot carries it"),
         ):
             with self.subTest(needle=needle):
                 with self.assertRaises(delivery_state.StateError) as raised:
@@ -1388,7 +1437,7 @@ class TrackerScopeDoctorTests(unittest.TestCase):
         doctor = object.__new__(self.module.Doctor)
         doctor.tracker_token = lambda: token
         doctor.root = self.state.parent
-        doctor.c = SimpleNamespace(state=self.state, delivery="APP-10")
+        doctor.c = SimpleNamespace(state=self.state, delivery="DELIVERY-1")
         doctor.binding = {"state": {"trackerSnapshot": {"argv": [
             "python3", "snapshot.py", "--kind", "jira", "--parent", "{parent}", "--state-dir", "{stateDirectory}",
             *extra], "timeoutSeconds": 30}}}
@@ -1412,6 +1461,11 @@ class TrackerScopeDoctorTests(unittest.TestCase):
     def test_the_check_runs_the_binding_s_own_snapshot_filled_in(self) -> None:
         self.assertEqual(self.row("--scope", "component=Mobile App"),
                          ("ok", "every scope value and mapped status is known"))
+        # The parent is the record's tracker parent, never the delivery's own key; with no record, the key.
+        (self.state / "state.json").unlink()
+        self.row("--scope", "component=Mobile App")
+        self.assertEqual(self.ran[-1][5], "DELIVERY-1")
+        del self.ran[-1]
         self.assertEqual(self.ran, [["python3", "snapshot.py", "--kind", "jira", "--parent", "APP-10", "--state-dir",
                                      str(self.state), "--scope", "component=Mobile App", "--check"]])
 
@@ -1428,6 +1482,19 @@ class TrackerScopeDoctorTests(unittest.TestCase):
         self.found(unmarked=["APP-24"])
         self.assertEqual(self.row("--scope", "label=mobile"),
                          ("warn", "in scope with no scoped value: APP-24; tag each in the tracker"))
+
+    def test_a_scope_without_the_state_directory_warns_that_the_delivery_file_is_not_kept(self) -> None:
+        doctor_argv = ["python3", "snapshot.py", "--kind", "jira", "--parent", "{parent}", "--scope", "label=mobile"]
+        doctor = object.__new__(self.module.Doctor)
+        doctor.root, doctor.tracker_token = self.state.parent, lambda: ("ok", "set")
+        doctor.c = SimpleNamespace(state=self.state, delivery="DELIVERY-1")
+        doctor.binding = {"state": {"trackerSnapshot": {"argv": doctor_argv}}}
+        with mock.patch.object(self.module, "run", lambda argv, **kw: self.answer):
+            status, detail = doctor.tracker_scope()
+        self.assertEqual(status, "warn")
+        self.assertIn("it sets --scope without --state-dir {stateDirectory}", detail)
+        # A status map alone needs no state directory.
+        self.assertEqual(self.row("--status-state", "In QA=completed")[0], "ok")
 
     def test_with_the_token_unset_the_row_is_skipped_and_runs_nothing(self) -> None:
         self.assertEqual(self.row("--scope", "label=mobile", token=("missing", "JIRA_API_TOKEN is unset")),

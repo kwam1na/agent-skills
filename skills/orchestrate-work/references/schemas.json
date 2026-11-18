@@ -3439,6 +3439,11 @@
             "title": {
               "type": "string"
             },
+            "summary": {
+              "description": "Optional: the ticket's summary, as an item's, kept so work of this delivery the tracker files elsewhere keeps it.",
+              "type": "string",
+              "maxLength": 1000
+            },
             "state": {
               "enum": [
                 "backlog",
@@ -3450,6 +3455,13 @@
             "status": {
               "type": "string",
               "minLength": 1
+            },
+            "blockedBy": {
+              "description": "Optional: the subjects of the parent's children that block this one, as an item's.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/name"
+              }
             },
             "marks": {
               "description": "The values of each scoped kind the item carries, by kind: its components, its labels, or its summary's own marker.",

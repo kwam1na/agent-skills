@@ -416,17 +416,6 @@ def jira_snapshot(args: argparse.Namespace, environ: dict, transport: Transport,
             raise Failure(f"{_shown(key)} has no fields")
         state, name = _jira_state(key, fields, canceled, mapped)
         item = {"subject": key, "title": _text(fields.get("summary"), f"{_shown(key)}'s summary"), "state": state}
-        if scopes:
-            # In scope when the delivery's plan lists it or it matches any --scope; outside when it carries a value of
-            # a scoped kind and matches none; unmarked, and still in scope, when it carries no such value at all.
-            marks = _marks(key, fields, kinds)
-            unmarked = not any(marks.values())
-            if not unmarked and key not in listed and not _in_scope(fields, marks, scopes):
-                outside.append({**item, "status": name, "marks": {kind: values for kind, values in marks.items()
-                                                                  if values}})
-                continue
-            if unmarked:
-                item["unmarked"] = True
         transitions = issue.get("transitions")
         if isinstance(transitions, list):
             # Only with the issue's transitions expanded: its own status name and the moves offered from it.
@@ -456,6 +445,19 @@ def jira_snapshot(args: argparse.Namespace, environ: dict, transport: Transport,
                 blockers.append(blocker)
         if blockers:
             item["blockedBy"] = blockers
+        if scopes:
+            # In scope when the delivery's plan lists it or it matches any --scope; outside when it carries a value of
+            # a scoped kind and matches none; unmarked, and still in scope, when it carries no such value at all. An
+            # outside child keeps its summary and blockers, for work of this delivery the tracker files elsewhere.
+            marks = _marks(key, fields, kinds)
+            unmarked = not any(marks.values())
+            if not unmarked and key not in listed and not _in_scope(fields, marks, scopes):
+                outside.append({**{field: item[field] for field in ("subject", "title", "state", "summary", "blockedBy")
+                                   if field in item},
+                                "status": name, "marks": {kind: values for kind, values in marks.items() if values}})
+                continue
+            if unmarked:
+                item["unmarked"] = True
         items.append(item)
     # The search lists the children only: the parent's own status is read once, by its key. A read that fails, as
     # one the credentials may not reach or one answered with something other than JSON, leaves the parent's state
