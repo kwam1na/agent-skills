@@ -48,7 +48,7 @@
     }
   },
   "needsYou": {
-    "description": "The two forms a wait reaches \"Needs you\" in, and the item for a stopped story no other item names.",
+    "description": "What \"Needs you\" says: the two forms a wait reaches it in, the item for a stopped story no other item names, and each row's headline, why, what clears it and who acts, by the item's kind, with the list's heading, opening sentence, holding mark and age, and the heading of what a closed delivery left open.",
     "templates": {
       "count": {
         "by": "count",
@@ -58,7 +58,126 @@
         "otherwise": "{count} pieces wait on it."
       },
       "free": "{subject:ticket} is free to start. {lane:lane} is idle.",
-      "stopped": "{subject:ticket} was stopped."
+      "stopped": "{subject:ticket} was stopped.",
+      "headline": {
+        "by": "kind",
+        "cases": {
+          "trackerLag": "The tracker is behind the record",
+          "trackerLedger": "A tracker update needs a hand",
+          "healthRunning": "The full health run is under way[ at {head:commit}]",
+          "healthFailed": "The full health run failed at {head:commit}",
+          "healthFlaky": "Flaky tests failed the full health run at {head:commit}",
+          "baseBroken": "The main line is broken",
+          "baseHealth": "The main line is broken",
+          "baseFocused": "The main line is broken, under the focused posture",
+          "unaccepted": "{subject:ticket} merged before it was accepted",
+          "runnerHold": "The queue holds serving[ for {subject:ticket}]",
+          "blocker": "Blocker {entry}[ on {subject:ticket}]",
+          "listener": "The lead isn't listening",
+          "flapping": "The supervisor's {name} won't stay up",
+          "drafts": "{subjects:list:ticket} wait to be marked ready",
+          "laneBlocked": "{lane:lane} is blocked[ on {subject:ticket}]",
+          "laneAsks": "{lane:lane} waits on {whom}[ about {subject:ticket}]",
+          "stopped": "{subject:ticket} was stopped",
+          "free": "{subject:ticket} is free to start",
+          "paused": "Serving is paused",
+          "report": "A report for the lead[ on {about}]",
+          "stale": "The {name} is not answering"
+        },
+        "otherwise": "Something needs {whom}"
+      },
+      "why": {
+        "by": "kind",
+        "cases": {
+          "trackerLag": "{detail}.",
+          "trackerLedger": "{detail}.",
+          "healthRunning": "The close waits for its result.",
+          "healthFailed": "[{detail}]",
+          "healthFlaky": "[{tests:list} failed, then passed alone, so ]the main line isn't broken.",
+          "baseBroken": "[{detail}]",
+          "baseHealth": "[{detail}]",
+          "baseFocused": "It holds nothing under the focused posture on {source}, and serve still waits for base.repaired.",
+          "unaccepted": "Its checkout is kept until the lead decides.",
+          "runnerHold": "[{detail}]",
+          "blocker": "[{detail}]",
+          "listener": "{detail}",
+          "flapping": "Its log is {log}.",
+          "drafts": "The merge step refuses drafts, and the lead may not mark them ready.",
+          "laneBlocked": "[{focus}]",
+          "laneAsks": "[{focus}]",
+          "stopped": "[{detail}]",
+          "free": "{lane:lane} is idle.",
+          "paused": "[{reason}]",
+          "report": "[{detail}]",
+          "stale": "[{reason}]"
+        },
+        "otherwise": ""
+      },
+      "clears": {
+        "by": "kind",
+        "cases": {
+          "trackerLag": "Clears when the publisher posts them on a later pass.",
+          "trackerLedger": "Stays listed for the friction note.",
+          "healthRunning": "Clears when the run ends, or with lead-close, which stops it.",
+          "healthFailed": "Clears with a pass at a later base head, or lead-resolve full-health.",
+          "healthFlaky": "Clears with a full health pass at a later base head.",
+          "baseBroken": "Clears with base.repaired in the journal.",
+          "baseHealth": "Clears with a full health pass at a later base head, or base.repaired in the journal.",
+          "baseFocused": "Clears with base.repaired in the journal, or a full health pass once the base returns to gate.",
+          "unaccepted": "Clears with lead-accept {subject:ticket}, or lead-decide.",
+          "runnerHold": "Clears when the queue's hold clears, with base.repaired, or with lead-resolve {entry}.",
+          "blocker": "Clears with lead-resolve {entry}.",
+          "listener": "Clears when the lead is watching again.",
+          "flapping": "Clears when the {name} stays up.",
+          "drafts": "Clears when each is marked ready, then lead-accept --requeue for one that stopped.",
+          "laneBlocked": "Clears when {lane:lane}'s state changes.",
+          "laneAsks": "Clears when {lane:lane} no longer waits on {whom}.",
+          "stopped": "Clears when {subject:ticket} is put back, lands or settles.",
+          "free": "Clears when {subject:ticket} is assigned, held, or waits again.",
+          "paused": "Clears when the lead lifts the hold.",
+          "report": "Clears when the report leaves the record.",
+          "stale": "Clears when the {name} answers again."
+        },
+        "otherwise": ""
+      },
+      "who": {
+        "by": "who",
+        "cases": {
+          "operator": "You",
+          "lead": "The lead"
+        },
+        "otherwise": "{who:lane}"
+      },
+      "whom": {
+        "by": "who",
+        "cases": {
+          "operator": "you",
+          "lead": "the lead"
+        },
+        "otherwise": "{who:lane}"
+      },
+      "part": {
+        "by": "count",
+        "cases": {
+          "1": "1 thing needs {whom}"
+        },
+        "otherwise": "{count} things need {whom}"
+      },
+      "summary": {
+        "by": "shape",
+        "cases": {
+          "empty": "Nothing needs anyone, and nothing is holding up the finish.",
+          "none": "{parts:list}. Nothing is holding up the finish.",
+          "it": "{parts:list}, and it's holding up the finish.",
+          "all": "{parts:list}, and all of them are holding up the finish.",
+          "one": "{parts:list}, and 1 of them is holding up the finish."
+        },
+        "otherwise": "{parts:list}, and {holding} of them are holding up the finish."
+      },
+      "heading": "Waiting on someone",
+      "holding": "Holding up the finish",
+      "age": "for {age}",
+      "leftOpen": "Left open at close"
     }
   },
   "listening": {

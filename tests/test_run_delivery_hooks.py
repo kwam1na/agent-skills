@@ -302,7 +302,9 @@ class LeadMayStopTests(HookCase):
         after = self.journal(fx)[-1]["id"]
         wait = subprocess.Popen([sys.executable, "-B", str(fx.release / "skills/orchestrate-work/scripts/delivery_state.py"),
                                  "--dir", str(self.state(fx)), "wait", "--after", str(after), "--timeout", "6",
-                                 "--poll", "0.2", "--output", str(fx.tmp / "wait.json")],
+                                 "--poll", "0.2", "--output", str(fx.tmp / "wait.json"),
+                                 # Told the machine is calm, so it runs to its timeout whatever the machine's load.
+                                 "--load-multiple", "1000000000", "--min-free-bytes", "0", "--swap-growth-bytes", str(2 ** 62)],
                                 env=fx.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.addCleanup(lambda: (wait.poll() is None and wait.kill(), wait.communicate()))
         self.assertEqual(self.stop(fx)["verdict"], "block")

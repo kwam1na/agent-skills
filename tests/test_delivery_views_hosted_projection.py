@@ -283,6 +283,22 @@ class ProjectionTests(unittest.TestCase):
         self.assertEqual(value['needs']['items'], [item])
         public.validate(value)
 
+    def test_a_needs_you_row_projects_with_its_facts_and_words_and_the_list_with_its_own(self):
+        doc, _ = source()
+        item = {'holding': True, 'source': "lane-1's state", 'text': 'lane-1 is blocked: which API',
+                'clears': "the lane's state changing", 'kind': 'laneBlocked', 'who': 'lead', 'lane': 'lane-1',
+                'subject': 'APP-2', 'state': 'building', 'since': '2026-11-15T00:00:00Z',
+                'blocker': {'subject': 'APP-1', 'lane': 'lane-2', 'state': 'stopped'},
+                'said': {'headline': 'Lane 1 is blocked on APP-2', 'why': 'which API',
+                         'clears': "Clears when Lane 1's state changes.", 'who': 'The lead'}}
+        needs = {'running': True, 'at': '2026-11-15T00:00:00Z', 'staleAfter': '2026-11-15T00:02:00Z', 'items': [item],
+                 'summary': "1 thing needs the lead, and it's holding up the finish.",
+                 'words': {'heading': 'Waiting on someone', 'holding': 'Holding up the finish', 'age': 'for {age}'}}
+        value = public.project(doc, {}, config(), source_fingerprint='1' * 64, needs=needs)
+        self.assertEqual((value['needs']['items'], value['needs']['words'], value['needs']['summary']),
+                         ([item], needs['words'], needs['summary']))
+        public.validate(value)
+
     def test_a_need_naming_a_command_omits_option_paths_without_dropping_the_need(self):
         doc, _ = source()
         prefix = ("The lead's wake: lane-2 (working). Start one in the "
