@@ -228,7 +228,7 @@
     checked: "Checked, about to merge", merging: "Merging", planned: "Not started", building: "Being built", review: "In review",
     settled: "Closed, no change needed", nochange: "Handed over with no change needed, waiting for the lead"
   });
-  var LANE_WORDS = table({ idle: "Standing by", assigned: "Assigned", working: "Building", reviewing: "In review", handed: "Handed over", blocked: "Blocked", done: "Done" });
+  var LANE_WORDS = table({ idle: "Standing by", assigned: "Assigned", working: "Building", reviewing: "In review", handed: "Handed over", blocked: "Blocked", waiting: "Waiting", done: "Done" });
   // The states of a check that ran in this run, and so carries a start time.
   var RAN = table({ running: true, passed: true, failed: true, timed_out: true });
   var STEP_WORDS = table({ pending: "waiting", running: "running", passed: "passed", failed: "failed", skipped: "skipped", timed_out: "timed out", reused: "reused" });
@@ -415,12 +415,19 @@
     list(doc.state.lanes).forEach(function (lane) { if (isObject(lane) && lane.id) { names[lane.id] = text(lane.title) || text(lane.id); } });
     return names;
   }
+  // A lane's colour comes from its id, never from where the record lists it, so no row moving changes a lane's colour.
+  function laneColour(lane) {
+    if (!lane) { return "var(--soft)"; }
+    var numbered = /^lane-(\d+)$/.exec(lane);
+    var slot = 0;
+    if (numbered) { slot = (Number(numbered[1]) + 5) % 6; }
+    else { for (var i = 0; i < lane.length; i += 1) { slot = (slot * 31 + lane.charCodeAt(i)) % 6; } }
+    return "var(--l" + (slot + 1) + ")";
+  }
   function laneColours(doc, all) {
-    var order = [];
-    list(doc.state.lanes).forEach(function (lane) { if (isObject(lane) && lane.id && order.indexOf(lane.id) < 0) { order.push(lane.id); } });
-    all.forEach(function (piece) { var lane = piece.item.lane || ""; if (order.indexOf(lane) < 0) { order.push(lane); } });
     var colours = Object.create(null);
-    order.forEach(function (lane, index) { colours[lane] = lane ? "var(--l" + ((index % 6) + 1) + ")" : "var(--soft)"; });
+    list(doc.state.lanes).forEach(function (lane) { if (isObject(lane) && lane.id) { colours[lane.id] = laneColour(text(lane.id)); } });
+    all.forEach(function (piece) { var lane = piece.item.lane || ""; colours[lane] = laneColour(lane); });
     return colours;
   }
   function titleOf(doc, item) {

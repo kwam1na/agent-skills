@@ -121,8 +121,12 @@ prints the text), and at each finding you pass to the lead. One attempt each, ne
 ## Focus
 
 Say what you're doing as it changes, with the installed release's state tool:
-`python3 -B .agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py --dir {{state}} focus --lane <lane> --text "<what you are doing>" [--state working|reviewing|blocked] [--waiting-on <who>]`.
+`python3 -B .agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py --dir {{state}} focus --lane <lane> --text "<what you are doing>" [--state working|reviewing|waiting|blocked] [--waiting-on <who>]`.
 `review-prepare` sets `reviewing` for you.
+
+When your work waits for another story to land, say so with `--state waiting --waiting-on <KEY>`: the views show it as
+progress, it isn't in "Needs you", and your row goes back to the state you left by itself when that story lands. Use
+`blocked` only for a question someone has to answer.
 
 If a product run builds your story, bind its run id at start, before your first round:
 `python3 -B .agent-skills/current/skills/orchestrate-work/scripts/delivery_state.py --dir {{state}} bind-run --lane <lane> --subject <key> --run <run id>`.

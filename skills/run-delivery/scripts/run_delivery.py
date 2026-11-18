@@ -7630,7 +7630,10 @@ def lead_assign(args) -> None:
         state = doc["state"]
         if args.lane not in c.effective_ownership(state):
             raise Stop(f"{args.lane} is not a lane of {c.delivery}")
-        changes = {"lanes": [*(entry for entry in state["lanes"] if entry["id"] != args.lane), row]}
+        # The row is replaced where it stands: an assignment never reorders the lanes.
+        rows = state["lanes"]
+        changes = {"lanes": [row if entry["id"] == args.lane else entry for entry in rows]
+                   if any(entry["id"] == args.lane for entry in rows) else [*rows, row]}
         if "laneOwnership" not in state:
             for key in keys:
                 if c.lane_of(key, state) != args.lane:
@@ -9817,13 +9820,7 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                           "candidates the break stopped resume on base.repaired, with no --requeue",
                           "clears": ("a fullHealth pass at a later base head, or " if found else "")
                           + "journalling base.repaired"})
-    for lane in doc["state"]["lanes"]:
-        if lane.get("state") == "blocked":
-            items.append({"holding": True, "source": f"{lane['id']}'s state", "clears": "the lane's state changing",
-                          "text": f"{lane['id']} is blocked: {lane.get('focus', '')}"})
-        elif lane.get("waitingOn") == "lead":
-            items.append({"holding": True, "source": f"{lane['id']}'s state", "clears": "the lane no longer waiting on you",
-                          "text": f"{lane['id']} waits on you: {lane.get('focus', '')}"})
+    items += lane_needs(doc["state"])
     for item in doc["state"]["queue"]:
         merge = unaccepted_merge(doc, item)
         if merge:
@@ -9880,6 +9877,25 @@ def listening_words(c, state: dict) -> dict:
             "clears": delivery_state.wait_said(table, "listening", "clears", {})}
 
 
+def lane_needs(state: dict) -> list[dict]:
+    """The lanes "Needs you" lists: one blocked on a question, and one waiting on the lead. A lane in the `waiting`
+    state waits on a story, which goes on by itself when it lands, so it is not listed."""
+    items = []
+    for lane in state["lanes"]:
+        if lane.get("state") == "blocked":
+            items.append({"holding": True, "source": f"{lane['id']}'s state", "clears": "the lane's state changing",
+                          "text": f"{lane['id']} is blocked: {lane.get('focus', '')}"})
+        elif lane.get("waitingOn") == "lead":
+            items.append({"holding": True, "source": f"{lane['id']}'s state", "clears": "the lane no longer waiting on you",
+                          "text": f"{lane['id']} waits on you: {lane.get('focus', '')}"})
+    return items
+
+
+def busy_lanes(state: dict) -> list[str]:
+    """The lanes that hold the close: any not idle or done, except one waiting on a story, which goes on by itself."""
+    return [lane["id"] for lane in state["lanes"] if lane.get("state") not in (*LANE_DONE, "waiting")]
+
+
 def needs_about(doc: dict, item: dict) -> set[str]:
     """The lanes and stories a "Needs you" item is about, read from where it comes from."""
     source = item["source"]
@@ -9907,8 +9923,10 @@ def waits_needing(c, doc: dict, items: list[dict]) -> list[dict]:
     lanes = {row["id"] for row in doc["state"]["lanes"]}
     pieces = {item["subject"]: item for item in [*doc["state"]["queue"], *doc["state"].get("planned", [])]}
     counted: dict[str, list[str]] = {}
+    # A lane's own wait counts; one that repeats its next story's wait doesn't.
     for wait in found:
-        if wait["needsSomeone"] and wait["subject"] not in lanes and wait["subject"] not in counted.get(wait["on"], []):
+        mirror = wait["subject"] in lanes and wait["cause"] != "lane"
+        if wait["needsSomeone"] and not mirror and wait["subject"] not in counted.get(wait["on"], []):
             counted.setdefault(wait["on"], []).append(wait["subject"])
     added = []
     for on, waiting in counted.items():
@@ -9925,7 +9943,7 @@ def waits_needing(c, doc: dict, items: list[dict]) -> list[dict]:
     for free in delivery_state.free_to_start(doc, found, words=table):
         # A story free to start is in "Needs you" itself, so what waits on it is counted on its item.
         waiting = list(dict.fromkeys(wait["subject"] for wait in found
-                                     if wait["on"] == free["subject"] and wait["subject"] not in lanes))
+                                     if wait["on"] == free["subject"] and (wait["subject"] not in lanes or wait["cause"] == "lane")))
         said = free["words"] + (" " + delivery_state.wait_said(table, "needsYou", "count", {"count": len(waiting)})
                                 if waiting else "")
         added.append({"holding": False, "source": f"{free['subject']}'s waits", "text": said,
@@ -9976,7 +9994,7 @@ def close_holds(c, doc: dict, needs: list[dict]) -> list[str]:
     unmet = [line["id"] for line in state["finish"] if not line.get("met")]
     if unmet:
         holds.append(f"finish lines not met: {', '.join(unmet)}")
-    busy = [lane["id"] for lane in state["lanes"] if lane.get("state") not in LANE_DONE]
+    busy = busy_lanes(state)
     if busy:
         holds.append(f"lanes not idle or done: {', '.join(busy)}")
     # A merge can land after the pass's cleanup read the record, and the close ends the passes: it waits for the next
