@@ -1698,7 +1698,9 @@ binding declares may change.
   of its checks and any base re-run, only diagnoses. A lane may then hand off a
   new head while the row is still `checking`. The state tool takes it as
   pending, beside the row, which stays at the checked head until the lead
-  accepts it, and `carry-review` and `lead-accept` read the hand-off's own head.
+  accepts it, and `carry-review`, `select` and `lead-accept` read the hand-off's
+  own head. Rejecting it only drops the wait: the row stays as the queue checks
+  it, and the run goes on to its verdict.
   Before any check of the run has failed, and for a batch's member, a new head
   is refused with `handoff_invalid`, as before. Accepting it moves the row to
   the new head as `queued` and journals `check.superseded` in one write: the

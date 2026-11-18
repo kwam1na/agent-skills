@@ -7695,6 +7695,40 @@ class SupersedingHandoffTests(unittest.TestCase):
         self.hand()
         self.assertTrue(self.row()["pending"])
 
+    def test_the_lead_selects_checks_at_the_waiting_hand_offs_head_and_acceptance_keeps_them(self) -> None:
+        self.failed()
+        self.hand()
+        binding, checks = LeadSelectionTests.BINDING, [selected_check("parser")]
+        with self.assertRaises(state_tool.StateError) as raised:
+            state_tool.select_checks(self.directory, "work-a", binding=binding, head=HEAD_A, checks=checks, reason="why")
+        self.assertIn(f"reviewed head is {HEAD_B}", str(raised.exception))
+        state_tool.select_checks(self.directory, "work-a", binding=binding, head=HEAD_B, checks=checks, reason="why")
+        state_tool.accept_handoff(self.directory, "work-a")
+        self.assertEqual((self.row()["head"], self.row()["leadSelection"]["head"]), (HEAD_B, HEAD_B))
+
+    def test_rejecting_it_leaves_the_checked_row_to_the_queue(self) -> None:
+        self.failed()
+        self.hand()
+        before = self.row()
+        state_tool.reject_handoff(self.directory, "work-a", "not this fix")
+        row = self.row()
+        self.assertNotIn("pending", row)
+        self.assertEqual({key: value for key, value in row.items()}, {key: value for key, value in before.items()
+                                                                       if key != "pending"})
+        self.assertEqual(state_tool.show(self.directory)["state"]["meta"]["checking"]["now"]["subject"], "work-a")
+        [rejected] = self.kinds("handoff.rejected")
+        self.assertEqual((rejected["lane"], rejected["data"]["why"]), ("lane-1", "not this fix"))
+        self.assertEqual(self.kinds("check.superseded"), [])
+
+    def test_a_product_run_s_hand_off_that_ends_a_failed_run_carries_no_base_merge(self) -> None:
+        self.write("lead", selector="queue[subject=work-a]", changes={"runId": "run-1"})
+        self.failed()
+        with self.assertRaises(state_tool.StateError) as raised:
+            state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head=HEAD_B, change_request="cr 2",
+                               base_merge={"reviewed": HEAD_A, "baseCommits": [HEAD_C]})
+        self.assertEqual(raised.exception.code, "carry_invalid")
+        self.assertIn("work built by a product run keeps its own review evidence", str(raised.exception))
+
     def test_a_hand_off_that_ends_a_failed_run_keeps_the_run_that_built_it(self) -> None:
         self.failed()
         before = state_tool.show(self.directory)

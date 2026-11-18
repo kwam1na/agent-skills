@@ -2613,6 +2613,12 @@ class Runner:
                         show()
                         again = self.run_one(check, checkout, context)
                         assert again is not None
+                        ended = next((subject for subject in subjects if self.ending(subject) is not None), None)
+                        if ended is not None:
+                            # A retry the supersede stopped is no failure of the run: nothing more is recorded.
+                            self.stop_live()
+                            concurrent.futures.wait(running)
+                            raise self.superseded_stop(ended)
                         entry = {**finish(check, again), "retried": first}
                     outcomes[check["id"]] = entry["state"]
                     result.checks.append(entry)

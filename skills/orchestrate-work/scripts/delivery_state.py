@@ -1398,6 +1398,8 @@ def handoff(
                                      "hand it off once it stops")
                 if run is not None and run != queued.get("runId"):
                     raise StateError("handoff_invalid", "a hand-off that ends a failed run keeps the run it was built by")
+                if base_merge is not None and (queued.get("runId") or run):
+                    raise StateError("carry_invalid", "work built by a product run keeps its own review evidence")
                 superseding = True
             elif queued["stage"] not in ("queued", "stopped"):
                 raise StateError("handoff_invalid", f"{subject} is {queued['stage']}; hand it off once it stops")
@@ -1795,6 +1797,16 @@ def reject_handoff(directory: Path, subject: str, reason: str) -> dict:
                 _set_lane_state(state, waiting["lane"], "working")
             return copy.deepcopy(waiting)
         item = _pending(state, subject)
+        if item["stage"] == "checking":
+            # A hand-off that would have ended a failed run: the run goes on, at the head the queue checks, and the
+            # lane takes its work back.
+            item.pop("pending")
+            # A selection the lead made for the rejected head goes with it.
+            if item.get("leadSelection", {}).get("head") != item["head"]:
+                item.pop("leadSelection", None)
+            if item["lane"] is not None:
+                _set_lane_state(state, item["lane"], "working")
+            return {"subject": subject, "lane": item.get("assignedLane", item["lane"])}
         state["queue"] = [entry for entry in state["queue"] if entry["subject"] != subject]
         back = {"subject": subject, "title": item["title"], "lane": item.get("assignedLane", item["lane"]),
                 "stage": "review"}
@@ -2141,8 +2153,10 @@ def select_checks(directory: Path, subject: str, *, binding: dict, head: str | N
             return copy.deepcopy(item)
         if item["stage"] in ("merging", "merged"):
             raise StateError("select_invalid", f"{subject} is {item['stage']}")
-        if head != item["head"]:
-            raise StateError("select_invalid", f"{subject}'s reviewed head is {item['head']}, not {head}")
+        # A hand-off waiting to end a failed run is reviewed at its own head, which the row takes once it is accepted.
+        reviewed = handed_item(state, read_journal(directory), subject)["head"]  # type: ignore[index]
+        if head != reviewed:
+            raise StateError("select_invalid", f"{subject}'s reviewed head is {reviewed}, not {head}")
         item["leadSelection"] = {"head": head, "checks": copy.deepcopy(checks), "reason": reason, "recordedAt": now()}
         return copy.deepcopy(item)
 

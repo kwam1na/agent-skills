@@ -163,6 +163,17 @@ if args[:1] == ["--stoppable"]:
     while time.monotonic() < deadline:
         time.sleep(0.05)
     sys.exit(0)
+if args[:1] == ["--flake-then-hang"]:
+    # Fails on a declared flake a second after it starts; its retry records its pid and runs past any deadline.
+    flag = pathlib.Path(os.environ["MQ_LOG"] + ".flaked-" + name)
+    if not flag.exists():
+        flag.write_text("")
+        time.sleep(1)
+        print("FAIL: test_flaky flaked")
+        sys.exit(1)
+    pathlib.Path(os.environ["MQ_LOG"] + ".retry").write_text(str(os.getpid()))
+    time.sleep(30)
+    sys.exit(0)
 if args[:1] == ["--flaky-once"]:
     # Fails the first time only, naming its tests; a flag file remembers the first run.
     flag = pathlib.Path(os.environ["MQ_LOG"] + ".flaked-" + name)
@@ -4822,6 +4833,22 @@ class StoppedBaseRerunTests(MergeQueueTestCase):
         self.assertNotIn("check late", adopter.log.read_text())
         self.assertEqual(self.journal(adopter, "base.rerun.started"), [])
         self.assertEqual(len(self.journal(adopter, "check.failed")), 1)
+
+    def test_a_flake_retry_the_hand_off_ends_is_not_journaled_as_a_failure(self) -> None:
+        unit = check_entry("unit", "--fail-with", "test_real", parallelSafe=True)
+        flaky = check_entry("flaky", "--flake-then-hang", parallelSafe=True)
+        adopter = self.adopter({"alwaysRun": [unit, flaky], "parallelChecks": 2, "checkOutput": FAILURE_OUTPUT,
+                                "flakes": [{"check": "flaky", "tests": ["test_flaky"], "ref": "FLAKE-1"}]})
+        self.candidate(adopter, {"src/app.txt": "app two\n"})
+        self.lanes(adopter)
+        retry = Path(str(adopter.log) + ".retry")
+        heads: list[str] = []
+        self.when(retry.exists, lambda: heads.append(self.supersede(adopter)))
+        document = self.run_queue(adopter, "feature")[-1].document()
+        self.assertGone(int(retry.read_text()))
+        self.assertSuperseded(adopter, document, heads[0], "checks")
+        self.assertEqual([entry["data"]["check"] for entry in self.journal(adopter, "check.failed")], ["unit"])
+        self.assertEqual(len(self.journal(adopter, "check.retried")), 1)
 
     def test_a_new_hand_off_ends_the_base_re_run(self) -> None:
         adopter = self.stoppable("die")
