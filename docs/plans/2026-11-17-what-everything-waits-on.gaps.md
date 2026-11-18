@@ -84,8 +84,10 @@ grants from the record (`lane-grants`) belongs with V26-3571.
 - **A provenance listing change is caught only in the queue, after acceptance.** V26-3552 was stopped for adding
   `wait-words.json`. Fix: V26-3565 (lane 3, this delivery).
 - **Tests outside a lane's files go unrun until the queue runs them.** `tests.test_registry` (V26-3552) and
-  `tests.test_run_delivery` (V26-3555) failed in the queue on pins the lanes never ran. Open: nothing proposes the test
-  modules that pin a changed file.
+  `tests.test_run_delivery` (V26-3555) failed in the queue on pins the lanes never ran. V26-3567 failed `hosted.typecheck`,
+  `hosted.build` and `hosted.test` the same way: the hosted viewer's build script patches `line-map.js` at fixed hooks,
+  and two were inside code the story removed, after its grace round. Open: nothing proposes the test modules or
+  services that read a changed file before the queue does.
 - **A story's new test module can't be among its acceptance checks.** The base's catalogue learns the module only when
   the story lands (`tests.test_waits_review`). Open.
 - **A batch runs every check after one has already failed.** V26-3565 and V26-3426 were checked together. The new
