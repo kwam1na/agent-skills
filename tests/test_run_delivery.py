@@ -6668,7 +6668,9 @@ def troubleshooting_section() -> str:
     return text[text.index("## Troubleshooting"):]
 
 
-DOCTOR_LABELS = ["host and tools", "orchestration binding", "merge queue candidate step", "configuration", "release generation",
+# One line per declared lens follows the configuration: the fixture declares the workflow's two.
+DOCTOR_LABELS = ["host and tools", "orchestration binding", "merge queue candidate step", "configuration",
+                 "lens lens.outcome-correctness", "lens lens.adversarial-testing", "release generation",
                  "host hooks", "release on the delivery base", "gates", "lane checkouts ignored", "tracker issue URL",
                  "pipeline PR review", "gh", "forge find", "forge write access", "tracker snapshot token",
                  "snapshots and publishers", "hosted delivery", "in-app adapters", "in-app adapter contract", "video evidence tools",
@@ -12335,6 +12337,360 @@ class FactReaderTests(unittest.TestCase):
                             self.tool.lead_resolve(types.SimpleNamespace(id=target, why=why))
                         self.assertIn("--why is required", str(refused.exception))
         self.assertEqual(written, [])
+
+
+OC, AT = "lens.outcome-correctness", "lens.adversarial-testing"
+CHARTERS = {
+    "x": "# Story lens X\n\n## Purpose\n\nChecks what the change does to x.\n",
+    "p": "# Plan lens P\n\nAsks whether the plan is feasible.\n",
+    "b": "# Lens B\n\n" + "b" * 200 + "\n",
+    "h": "# Harness lens H\n\nA harness lens, made plan-only.\n",
+}
+
+
+@unittest.skipIf(os.name == "nt", POSIX_ONLY)
+class StoryLensSelectionTests(unittest.TestCase):
+    """A story round runs the mandated pair plus the lane's choice of the declared story lenses, fixed at round 1 with
+    its reason and shown at hand-off; without a choice, every declared story lens; with no use declared, every lens."""
+
+    run_quietly = True
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        for name, value in vars(installed_release()).items():
+            setattr(cls, name, value)
+
+    def build_lensed(self) -> tuple[Fixture, Path, bool]:
+        """FX-3's lane, its change committed, in a repository declaring, beside the mandated pair, `lens.x` (story),
+        `lens.p` (plan) and `lens.b` (no use) in run-delivery.json, and with Node, `lens.h` from harness.config.ts,
+        made plan-only through review.use."""
+        fx = Fixture(self.generation, self.receipt)
+        self.addCleanup(fx.close)
+        m = fx.main
+        setup_delivery(fx)
+        (m / "docs/review").mkdir()
+        for short, text in CHARTERS.items():
+            (m / f"docs/review/{short}.md").write_text(text)
+        conf_path = m / ".agents/run-delivery.json"
+        conf = json.loads(conf_path.read_text())
+        conf["review"]["lenses"] = {
+            "lens.x": {"short": "x", "charter": "docs/review/x.md", "use": ["story"]},
+            "lens.p": {"short": "p", "charter": "docs/review/p.md", "use": ["plan"]},
+            "lens.b": {"short": "b", "charter": "docs/review/b.md"}}
+        node = bool(fx.call("find_node22", cwd=m))
+        if node:
+            (m / "harness.config.ts").write_text(
+                "export default { additionalReviewLenses: [{ lensId: 'lens.h', reviewerId: 'h', "
+                "charterPath: 'docs/review/h.md' }] };\n")
+            conf["review"]["use"] = {"lens.h": ["plan"]}
+        conf_path.write_text(json.dumps(conf, indent=2))
+        commit(m, "FX-1: declared lenses, each with its use")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        for argv in (("lead-init",), ("lead-assign", "FX-3", "--lane", "lane-2", "--title", "Lane 2")):
+            code, out = fx.flow(*argv, cwd=m)
+            self.assertEqual(code, 0, out)
+        wt = fx.lane("FX-3")
+        (wt / "src/two.txt").write_text("two\n")
+        commit(wt, "FX-3: two")
+        (wt / ".orchestration/review/FX-3").mkdir(parents=True)
+        (wt / ".orchestration/review/FX-3/context.md").write_text("- evidence")
+        return fx, wt, node
+
+    def lensed(self) -> tuple[Fixture, Path, bool]:
+        return kept_fixture(self, self.build_lensed)
+
+    def results(self, fx: Fixture, wt: Path, n: int, lenses: list[str], **kw) -> None:
+        write_results(wt / ".orchestration/review/FX-3", n, "FX-3",
+                      [entry for entry in fx.lenses(wt) if entry[0] in lenses], **kw)
+
+    def journal(self, fx: Fixture, kind: str) -> list[dict]:
+        lines = (fx.tmp / "record/journal.jsonl").read_text().splitlines()
+        return [entry for entry in map(json.loads, lines) if entry["kind"] == kind]
+
+    def test_a_chosen_set_is_fixed_at_round_1_shown_and_carried_to_the_hand_off(self) -> None:
+        fx, wt, node = self.lensed()
+        review = wt / ".orchestration/review/FX-3"
+        chosen = [OC, AT, "lens.x"]
+        code, out = fx.flow("review-prepare", "FX-3", "--round", 1, "--lenses",
+                            "lens.x,lens.adversarial-testing,lens.outcome-correctness", "--lenses-reason", "R one", cwd=wt)
+        self.assertEqual(code, 0, out)
+        self.assertIn("lenses: lens.outcome-correctness, lens.adversarial-testing, lens.x; reason: R one", out)
+        self.assertEqual(sorted(p.name for p in review.glob("brief-r1-*")),
+                         ["brief-r1-adversarial-testing.md", "brief-r1-outcome-correctness.md", "brief-r1-x.md"])
+        meta = json.loads((review / "round-1.meta.json").read_text())
+        self.assertEqual((meta["lenses"], meta["lensesReason"]), (chosen, "R one"))
+        self.assertEqual(self.journal(fx, "review.started")[-1]["data"]["lenses"], chosen)
+        self.results(fx, wt, 1, chosen, findings=[{"id": "outcome-correctness-r1-1", "severity": "P1", "summary": "fix"}])
+        code, out = fx.flow("review-reduce", "FX-3", "--round", 1, cwd=wt)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(set(self.journal(fx, "review.round")[-1]["data"]["verdicts"]), set(chosen))
+        (wt / "src/two.txt").write_text("two, fixed\n")
+        commit(wt, "FX-3: the fix")
+        # A later round keeps round 1's set: a different --lenses is refused, naming it, and writes nothing.
+        code, out = fx.flow("review-prepare", "FX-3", "--round", 2, "--lenses", f"{OC},{AT},lens.b",
+                            "--lenses-reason", "wider", cwd=wt)
+        self.assertEqual(code, 2, out)
+        self.assertIn("the story's lenses, fixed at round 1, are lens.outcome-correctness, lens.adversarial-testing, "
+                      "lens.x", out)
+        self.assertFalse((review / "round-2.meta.json").exists())
+        code, out = fx.flow("review-prepare", "FX-3", "--round", 2, "--lenses", f"lens.x,{OC},{AT}",
+                            "--lenses-reason", "the same", cwd=wt)
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("review-prepare", "FX-3", "--round", 2, "--restart", cwd=wt)
+        self.assertEqual(code, 0, out)
+        meta = json.loads((review / "round-2.meta.json").read_text())
+        self.assertEqual((meta["lenses"], meta["lensesReason"]), (chosen, "R one"), "round 2 didn't copy round 1's set")
+        self.assertFalse((review / "brief-r2-b.md").exists())
+        self.results(fx, wt, 2, chosen, resolved=[{"id": "outcome-correctness-r1-1", "state": "fixed", "resolution": "ok"}])
+        # A meta whose set isn't the story's is refused.
+        widened = {**meta, "lenses": [*chosen, "lens.b"]}
+        (review / "round-2.meta.json").write_text(json.dumps(widened))
+        code, out = fx.flow("review-reduce", "FX-3", "--round", 2, cwd=wt)
+        self.assertEqual(code, 2, out)
+        self.assertIn("not the story's lenses", out)
+        (review / "round-2.meta.json").write_text(json.dumps(meta, indent=2))
+        code, out = fx.flow("review-reduce", "FX-3", "--round", 2, cwd=wt)
+        self.assertEqual(code, 0, out)
+        self.assertIn("aligned", out)
+        # The hand-off takes the three lenses, names them with the reason, and refuses a last round missing one.
+        self.assertEqual(fx.flow("gate", "FX-3", cwd=wt)[0], 0)
+        sh("git", "push", "-q", "-u", "origin", "HEAD:feature/FX-3", cwd=wt)
+        body = fx.tmp / "body.md"
+        body.write_text("x\n")
+        self.assertEqual(fx.flow("open-pr", "FX-3", "--title", "FX-3: two", "--body-file", body, cwd=wt)[0], 0)
+        handoff = ("handoff", "FX-3", "--pr", "https://forge.test/pr/1", "--blocked", "needs-loaded=no data in the fixture")
+        round_file = review / "round-2.json"
+        kept = round_file.read_text()
+        thinned = json.loads(kept)
+        thinned["entries"] = [e for e in thinned["entries"] if e["lens"] != "lens.x"]
+        round_file.write_text(json.dumps(thinned))
+        code, out = fx.flow(*handoff, cwd=wt)
+        self.assertEqual(code, 2, out)
+        self.assertIn("doesn't carry every lens of the story's set, lens.outcome-correctness, lens.adversarial-testing, "
+                      "lens.x", out)
+        round_file.write_text(kept)
+        code, out = fx.flow(*handoff, cwd=wt)
+        self.assertEqual(code, 0, out)
+        self.assertIn("- review lenses: lens.outcome-correctness, lens.adversarial-testing, lens.x; reason: R one", out)
+
+    def test_lenses_are_refused_with_the_declared_story_lenses_and_a_restart_may_change_them(self) -> None:
+        fx, wt, node = self.lensed()
+        review = wt / ".orchestration/review/FX-3"
+        story = f"the declared story lenses are {OC}, {AT}, lens.x, lens.b"
+        cases = [
+            ((f"{OC},lens.x", "R"), [f"leaves out {AT}", f"the mandated lenses {OC}, {AT}", story]),
+            ((f"{OC},{AT},{OC}", "R"), [f"names {OC} more than once", story]),
+            (("lens.nowhere", "R"), ["names lens.nowhere", story]),
+            ((f"{OC},{AT},lens.p", "R"), ["names lens.p", story]),
+            ((f"{OC},{AT},lens.x", None), ["--lenses needs --lenses-reason"]),
+            ((f"{OC},{AT},lens.x", "   "), ["--lenses needs --lenses-reason"]),
+            ((f"{OC},{AT},lens.x", "r" * 601), ["--lenses-reason is 601 characters; keep it to 600"]),
+            ((None, "R"), ["--lenses-reason goes with --lenses"]),
+        ]
+        if node:
+            cases.append(((f"{OC},{AT},lens.h", "R"), ["names lens.h", story]))
+        for (lenses, reason), said in cases:
+            with self.subTest(lenses=lenses, reason=reason and reason[:5]):
+                argv = [*(["--lenses", lenses] if lenses is not None else []),
+                        *(["--lenses-reason", reason] if reason is not None else [])]
+                code, out = fx.flow("review-prepare", "FX-3", "--round", 1, *argv, cwd=wt)
+                self.assertEqual(code, 2, out)
+                for words in said:
+                    self.assertIn(words, out)
+                self.assertEqual(sorted(p.name for p in review.iterdir()), ["context.md"], "a refusal wrote something")
+        # A reason of exactly 600 characters is taken; restarts may change the set, recording the one they replace,
+        # and discard the results of both: the first attempt's lens.x result is never reduced.
+        code, out = fx.flow("review-prepare", "FX-3", "--round", 1, "--lenses", f"{OC},{AT},lens.x",
+                            "--lenses-reason", "r" * 600, cwd=wt)
+        self.assertEqual(code, 0, out)
+        self.results(fx, wt, 1, [OC, AT, "lens.x"])
+        code, out = fx.flow("review-prepare", "FX-3", "--round", 1, "--restart", "--lenses", f"{OC},{AT},lens.b",
+                            "--lenses-reason", "B instead", cwd=wt)
+        self.assertEqual(code, 0, out)
+        meta = json.loads((review / "round-1.meta.json").read_text())
+        self.assertEqual((meta["lenses"], meta["lensesReason"]), ([OC, AT, "lens.b"], "B instead"))
+        restart = meta["restarts"][-1]
+        self.assertEqual((restart["previousLenses"], restart["previousLensesReason"]), ([OC, AT, "lens.x"], "r" * 600))
+        self.assertEqual(set(restart["discardedResults"]), {OC, AT, "lens.x"})
+        self.assertFalse((review / "result-r1-x.json").exists())
+        # A late result for lens.x, saved while the set lacks it, is discarded by the restart that takes it back.
+        (review / "result-r1-x.json").write_text("{}")
+        code, out = fx.flow("review-prepare", "FX-3", "--round", 1, "--restart", "--lenses", f"{OC},{AT},lens.x",
+                            "--lenses-reason", "X again", cwd=wt)
+        self.assertEqual(code, 0, out)
+        self.assertIn("lens.x", json.loads((review / "round-1.meta.json").read_text())["restarts"][-1]["discardedResults"])
+        self.assertFalse((review / "result-r1-x.json").exists())
+        self.results(fx, wt, 1, [OC, AT])
+        code, out = fx.flow("review-reduce", "FX-3", "--round", 1, cwd=wt)
+        self.assertEqual(code, 2, out)
+        self.assertIn("lens.x: missing", out)
+        self.results(fx, wt, 1, [OC, AT, "lens.x"])
+        code, out = fx.flow("review-reduce", "FX-3", "--round", 1, cwd=wt)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads((review / "round-1.json").read_text())["acquisitionEnvelope"]["requestedLenses"],
+                         [OC, AT, "lens.x"])
+
+    def test_the_story_lens_selection_is_pinned_where_adopters_and_lanes_read_it(self) -> None:
+        def normal(path: str) -> str:
+            return " ".join((ROOT / path).read_text(encoding="utf-8").split())
+        config = normal("skills/run-delivery/references/config.md")
+        self.assertIn("Declared means available, not run: a lens whose use includes `story` is available to a story's "
+                      "review, and one whose use includes `plan` to the plan's.", config)
+        self.assertIn("A story's review runs the mandated pair plus the story lenses its lane chooses, at round 1: "
+                      "`review-prepare <key> --round 1 --lenses <ids> --lenses-reason \"<why>\"`.", config)
+        self.assertIn("The set and its reason are fixed at round 1, in its meta: later rounds copy them, take "
+                      "`--lenses` only when it names the same set, and refuse any other.", config)
+        self.assertIn("a story-only lens is refused, naming the declared plan lenses.", config)
+        self.assertIn("so a lens meant for plan review never reviews a story's code; the lane then picks the story "
+                      "lenses that fit what it changes", normal("skills/run-delivery/references/adopting.md"))
+        skill = normal("skills/run-delivery/SKILL.md")
+        self.assertIn("`review-prepare <key> --round N [--grace] [--restart] [--lenses IDS --lenses-reason T]` | The "
+                      "story's lenses are the mandated pair plus the declared story lenses the lane chooses at round 1",
+                      skill)
+        self.assertIn("the last round must carry every lens of the story's set, which the message names with its reason",
+                      skill)
+        self.assertIn("Otherwise prints the story's review lenses and their reason (`reason not found`", skill)
+        self.assertIn("The set and its reason are fixed at round 1: later rounds keep them, a different `--lenses` is "
+                      "refused, and the lead sees both at hand-off and at acceptance.",
+                      normal("skills/run-delivery/templates/lane-brief.md"))
+
+    def test_a_chosen_lens_no_longer_declared_is_refused_by_name(self) -> None:
+        fx, wt, node = self.lensed()
+        m, review = fx.main, wt / ".orchestration/review/FX-3"
+        code, out = fx.flow("review-prepare", "FX-3", "--round", 1, "--lenses", f"{OC},{AT},lens.x",
+                            "--lenses-reason", "x", cwd=wt)
+        self.assertEqual(code, 0, out)
+        conf_path = m / ".agents/run-delivery.json"
+        conf = json.loads(conf_path.read_text())
+        del conf["review"]["lenses"]["lens.x"]
+        conf_path.write_text(json.dumps(conf, indent=2))
+        commit(m, "FX-1: lens.x withdrawn")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        sh("git", "-c", "user.email=t@t", "-c", "user.name=t", "merge", "-q", "origin/feature/FX-1", cwd=wt)
+        self.results(fx, wt, 1, [OC, AT])
+        before = sorted(p.name for p in review.iterdir())
+        code, out = fx.flow("review-reduce", "FX-3", "--round", 1, cwd=wt)
+        self.assertEqual(code, 2, out)
+        self.assertIn("the story's review lenses include lens.x, which this repository no longer declares", out)
+        self.assertIn("--restart", out)
+        self.assertEqual(sorted(p.name for p in review.iterdir()), before, "the refusal wrote something")
+
+    def test_without_lenses_every_story_lens_runs_and_with_no_use_every_declared_lens(self) -> None:
+        fx, wt, node = self.lensed()
+        m, review = fx.main, wt / ".orchestration/review/FX-3"
+        code, out = fx.flow("review-prepare", "FX-3", "--round", 1, cwd=wt)
+        self.assertEqual(code, 0, out)
+        meta = json.loads((review / "round-1.meta.json").read_text())
+        self.assertEqual((meta["lenses"], meta["lensesReason"]), ([OC, AT, "lens.x", "lens.b"], "every declared story lens"))
+        self.assertFalse((review / "brief-r1-p.md").exists() or (review / "brief-r1-h.md").exists())
+        # With no use and no review.use declared, every declared lens is a story lens, as before uses existed.
+        conf_path = m / ".agents/run-delivery.json"
+        conf = json.loads(conf_path.read_text())
+        conf["review"].pop("use", None)
+        for spec in conf["review"]["lenses"].values():
+            spec.pop("use", None)
+        conf_path.write_text(json.dumps(conf, indent=2))
+        commit(m, "FX-1: no uses")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        sh("git", "-c", "user.email=t@t", "-c", "user.name=t", "merge", "-q", "origin/feature/FX-1", cwd=wt)
+        code, out = fx.flow("review-prepare", "FX-3", "--round", 1, "--restart", cwd=wt)
+        self.assertEqual(code, 0, out)
+        every = [OC, AT, *(["lens.h"] if node else []), "lens.x", "lens.p", "lens.b"]
+        self.assertEqual(json.loads((review / "round-1.meta.json").read_text())["lenses"], every)
+
+    def test_a_story_prepared_before_lenses_were_chosen_runs_every_declared_lens(self) -> None:
+        fx, wt, node = self.lensed()
+        review = wt / ".orchestration/review/FX-3"
+        every = [entry[0] for entry in fx.lenses(wt)]
+        code, out = fx.flow("review-prepare", "FX-3", "--round", 1, cwd=wt)
+        self.assertEqual(code, 0, out)
+        # As the earlier generation left it: every declared lens, and no reason.
+        meta_path = review / "round-1.meta.json"
+        legacy = {k: v for k, v in json.loads(meta_path.read_text()).items() if k != "lensesReason"}
+        fewer = {**legacy, "lenses": [OC, AT]}
+        meta_path.write_text(json.dumps(fewer))
+        self.results(fx, wt, 1, [OC, AT])
+        code, out = fx.flow("review-reduce", "FX-3", "--round", 1, cwd=wt)
+        self.assertEqual(code, 2, out)
+        self.assertIn("not the story's lenses", out)
+        meta_path.write_text(json.dumps({**legacy, "lenses": every}))
+        self.results(fx, wt, 1, every)
+        code, out = fx.flow("review-reduce", "FX-3", "--round", 1, cwd=wt)
+        self.assertEqual(code, 0, out)
+        (wt / "src/two.txt").write_text("two, again\n")
+        commit(wt, "FX-3: again")
+        code, out = fx.flow("review-prepare", "FX-3", "--round", 2, cwd=wt)
+        self.assertEqual(code, 0, out)
+        self.assertIn("reason: none recorded", out)
+        meta = json.loads((review / "round-2.meta.json").read_text())
+        self.assertEqual(meta["lenses"], every)
+        self.assertNotIn("lensesReason", meta)
+        self.assertTrue((review / "brief-r2-p.md").exists())
+        if node:
+            self.assertTrue((review / "brief-r2-h.md").exists())
+        self.results(fx, wt, 2, every)
+        code, out = fx.flow("review-reduce", "FX-3", "--round", 2, cwd=wt)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(fx.flow("gate", "FX-3", cwd=wt)[0], 0)
+        sh("git", "push", "-q", "-u", "origin", "HEAD:feature/FX-3", cwd=wt)
+        body = fx.tmp / "body.md"
+        body.write_text("x\n")
+        self.assertEqual(fx.flow("open-pr", "FX-3", "--title", "FX-3: two", "--body-file", body, cwd=wt)[0], 0)
+        code, out = fx.flow("handoff", "FX-3", "--pr", "https://forge.test/pr/1", "--blocked",
+                            "needs-loaded=no data in the fixture", cwd=wt)
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"- review lenses: {', '.join(every)}; reason: none recorded", out)
+
+    def test_uses_are_checked_shown_by_doctor_and_config_and_the_lane_brief_lists_the_story_lenses(self) -> None:
+        fx, wt, node = self.lensed()
+        m = fx.main
+        conf_path = m / ".agents/run-delivery.json"
+        conf = json.loads(conf_path.read_text())
+        _, out = fx.flow("doctor", "--offline", cwd=m)
+        lines = doctor_lines(out)
+        self.assertEqual(lines["lens lens.b"], ("ok", "plan, story, from .agents/run-delivery.json"))
+        self.assertEqual(lines["lens lens.x"], ("ok", "story, from .agents/run-delivery.json"))
+        self.assertEqual(lines["lens lens.p"], ("ok", "plan, from .agents/run-delivery.json"))
+        self.assertEqual(lines[f"lens {OC}"], ("ok", "plan, story, from the delivery workflow"))
+        if node:
+            self.assertEqual(lines["lens lens.h"], ("ok", "plan, from harness.config.ts"))
+        code, out = fx.flow("config", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertIn("lens.x (", out)
+        self.assertIn("docs/review/x.md; use: story)", out)
+        self.assertIn("docs/review/b.md; use: plan and story)", out)
+        code, out = fx.flow("lead-brief", cwd=m)
+        self.assertEqual(code, 0, out)
+        brief_text = (m / "docs/lane-brief.md").read_text()
+        self.assertIn(f"- `{OC}`, `{AT}`: mandated, in every round.", brief_text)
+        self.assertIn("- `lens.x`: Checks what the change does to x.\n", brief_text)
+        self.assertIn(f"- `lens.b`: {'b' * 160}\n", brief_text)
+        self.assertNotIn("`lens.p`", brief_text)
+        self.assertNotIn("`lens.h`", brief_text)
+        self.assertIn("--lenses-reason", brief_text)
+        self.assertNotIn("{{", brief_text)
+        # Each misdeclared use is a conflict every command reports.
+        x = conf["review"]["lenses"]["lens.x"]
+        bad = [
+            ("an empty use", {"lenses": {**conf["review"]["lenses"], "lens.x": {**x, "use": []}}},
+             "review.lenses.lens.x.use must list plan, story or both"),
+            ("an unknown use", {"lenses": {**conf["review"]["lenses"], "lens.x": {**x, "use": ["code"]}}},
+             "review.lenses.lens.x.use must list plan, story or both"),
+            ("an undeclared lens", {"use": {"lens.nowhere": ["plan"]}}, "review.use names lens.nowhere, which isn't a declared lens"),
+            ("a narrowed mandated lens", {"use": {OC: ["story"]}}, f"review.use.{OC} narrows {OC}, a mandated lens"),
+            ("a repeated use", {"lenses": {**conf["review"]["lenses"], "lens.x": {**x, "use": ["story", "story"]}}},
+             "review.lenses.lens.x.use must list plan, story or both"),
+            ("review.use against review.lenses", {"use": {"lens.x": ["plan"]}},
+             "review.use gives lens.x the use ['plan'], but review.lenses gives it ['story']"),
+            ("a review.use that isn't a map", {"use": ["lens.x"]}, "review.use must map lens ids to their use"),
+        ]
+        for what, review_part, said in bad:
+            with self.subTest(what=what):
+                conf_path.write_text(json.dumps({**conf, "review": {**conf["review"], **review_part}}))
+                code, out = fx.flow("config", cwd=m)
+                self.assertEqual(code, 2, out)
+                self.assertIn("disagree", out)
+                self.assertIn(said, out)
 
 
 if __name__ == "__main__":
