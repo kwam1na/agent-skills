@@ -67,6 +67,10 @@
         {
           "id": "v26-3618-1",
           "text": "A flapping child that holds the finish wakes a running lead-wait, and its clearing is journalled too."
+        },
+        {
+          "id": "v26-3618-2",
+          "text": "A stale lead-suite checkout in the work root doesn't leave the queue silently stopped: it is cleaned up when that's safe, and otherwise the refusal names it and its fix in the lead's wake."
         }
       ],
       "after": [
