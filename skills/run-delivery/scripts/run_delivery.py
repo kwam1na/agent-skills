@@ -8248,16 +8248,17 @@ def settle_landings(c) -> str:
     helper = _region_ownership()
     said = []
     with ownership_lock(c):
-        doc = load_state()
-        merges = [entry for entry in doc["journal"] if entry["kind"] == "candidate.merged"]
-        if "regionsSettled" not in doc["state"]:
+        # What to settle is read here; each write is computed again from the record it is pinned to.
+        merges = [entry for entry in load_state()["journal"] if entry["kind"] == "candidate.merged"]
+        state = c.record_state()
+        if "regionsSettled" not in state:
             seed = merges[-1]["id"] if merges else 0
             patch_from(lambda fresh: None if "regionsSettled" in fresh["state"] else {"regionsSettled": seed},
                        "the first settled merge")
             return f"settled from journal entry {seed}"
         fetched = False
         for merge in merges:
-            if merge["id"] <= doc["state"]["regionsSettled"]:
+            if merge["id"] <= state["regionsSettled"]:
                 continue
             if not fetched:
                 git("fetch", "-q", c.remote, c.base_branch)
@@ -8308,7 +8309,7 @@ def settle_landings(c) -> str:
             if outcome:
                 said.append(f"{subject}: {len(outcome['released'])} released, {len(outcome['carried'])} carried, "
                             f"{len(outcome['regrant'])} to regrant")
-            doc = load_state()
+            state = c.record_state()
     return "; ".join(said) or "nothing to settle"
 
 
