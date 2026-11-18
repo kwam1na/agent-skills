@@ -111,6 +111,14 @@ grants from the record (`lane-grants`) belongs with V26-3571.
   in V26-3554 by honouring a recorded signal at each step and wait. Separately, `run_delivery.py`'s state reader catches
   `BaseException` while it loads, which would also swallow a stop. Open.
 
+- **No lead command marks a finish line the record can't prove.** The guide says the lead sets the line's `met` and
+  journals `finish.met`, but only the state tool does that, by hand (`patch --element finish[id=…]` and `journal`), and
+  `finish.met` takes no evidence, so the reason went into a separate decision the entry points at. Open: a
+  `lead-finish LINE --evidence T` that does both.
+- **"Waits shown" couldn't be shown on its own record.** The delivery ran its whole course on the installed release,
+  which has none of its views, and by the time the candidate was applied nothing was waiting. A line that needs a live
+  state should be checked while that state exists, on a delivery already running the release. Repo practice.
+
 ### The lead's loop
 
 - **`lead-push` refuses any change in the checkout,** including the operator-approved patch to the installed copy.
