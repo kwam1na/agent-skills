@@ -1,0 +1,123 @@
+{
+  "schemaVersion": "plan-review-evidence/1",
+  "writtenBy": "run-delivery plan-review",
+  "plan": "docs/plans/2026-11-18-integration-step-on-the-live-view.md",
+  "planSha256": "330a1699a8ee107d6f6e4b001f9793b0acded77d8399fc70825026177c5c190c",
+  "planCommit": "76a9b3d3f23639775d457dce0f82c003746ecac3",
+  "outcome": "unanimous-alignment",
+  "requiredLenses": [
+    "lens.outcome-correctness",
+    "lens.adversarial-testing"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "candidate": "9fa7cc4cb559d2a8fc6770d65d1a9cfe1fb061fb",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-18T06:38:29.676508Z",
+      "finishedAt": "2026-11-18T06:41:08.427636Z",
+      "open": [
+        "outcome-correctness-r1-1",
+        "outcome-correctness-r1-2",
+        "outcome-correctness-r1-3",
+        "adversarial-testing-r1-1",
+        "adversarial-testing-r1-2",
+        "adversarial-testing-r1-3",
+        "adversarial-testing-r1-4",
+        "adversarial-testing-r1-5"
+      ]
+    },
+    {
+      "round": 2,
+      "candidate": "fcaba047417da4bb360ea523686ddedac9a3d6f2",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-18T06:42:11.108059Z",
+      "finishedAt": "2026-11-18T06:43:45.546878Z",
+      "open": [
+        "outcome-correctness-r2-1",
+        "adversarial-testing-r2-1"
+      ]
+    },
+    {
+      "round": 3,
+      "candidate": "0883f80269a78ce84550a98cd0056d4b21c42cea",
+      "outcome": "unresolved",
+      "startedAt": "2026-11-18T06:44:07.306478Z",
+      "finishedAt": "2026-11-18T06:45:47.538174Z",
+      "open": [
+        "adversarial-testing-r3-1"
+      ]
+    },
+    {
+      "round": 4,
+      "candidate": "76a9b3d3f23639775d457dce0f82c003746ecac3",
+      "outcome": "aligned",
+      "startedAt": "2026-11-18T06:45:58.777280Z",
+      "finishedAt": "2026-11-18T06:46:36.940275Z",
+      "open": []
+    }
+  ],
+  "reviews": [
+    {
+      "lens": "lens.outcome-correctness",
+      "round": 4,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.outcome-correctness",
+        "subjectRef": "integration-step-on-the-live-view.plan",
+        "candidateRef": "76a9b3d3f23639775d457dce0f82c003746ecac3",
+        "round": 4,
+        "outcome": "aligned",
+        "findings": [],
+        "resolvedFindings": [],
+        "evidence": [
+          "Reviewed tree db9004c18025f4b523d24c573eaf995e13085813 at 76a9b3d3f23639775d457dce0f82c003746ecac3. The start check (HEAD^{tree} matched, git status --porcelain empty) and the end check (same tree, porcelain empty) both passed. No probes or mutants were made.",
+          "Re-check of the carried findings: none was open going into this round. outcome-correctness-r2-1 was fixed in round 3, and the delta keeps its fix: exit 3 is over-budget only under a suite-budget/1 `--budget` file, and every other exit 3 is failed.",
+          "Delta derived with git diff 0883f80269a78ce84550a98cd0056d4b21c42cea..76a9b3d3f23639775d457dce0f82c003746ecac3: one file, the plan. Decision 2 now reads the budget file in the run's own checkout at the head it ran, not in the lead's checkout. Two scenario rows were added: exit 3 with a `--budget` file that is not suite-budget/1 journals failed with no budgetSeconds, and when the run's checkout and the lead's hold different budget files, the run's file is read.",
+          "The delta was reviewed for new defects, and none was found. Reading the file in the run's checkout matches lead_suite: the suite runs in a detached checkout of the commit through in_detached_checkout, which removes that checkout afterwards. The file therefore has to be read inside the run, which the new scenario pins. The non-suite-budget/1 row agrees with Decision 2's mapping.",
+          "Model class: Claude Opus (claude-opus-5-5). Realization basis: host-convention. Host: a native subagent, with no progress or permission signals exposed to it. No run-event command (Run ID none).",
+          "Scoped checks: none, as the brief says (plan review).",
+          "Approval conditions: no finding was raised this round, so there are none to state."
+        ]
+      },
+      "resultSha256": "937e2bdd0a936e4f6cfc129fb9636cda068f3df17453c3c77dd9f8c947f46ac9"
+    },
+    {
+      "lens": "lens.adversarial-testing",
+      "round": 4,
+      "findings": [],
+      "result": {
+        "schemaVersion": "review-lens-result/1",
+        "lensId": "lens.adversarial-testing",
+        "subjectRef": "integration-step-on-the-live-view.plan",
+        "candidateRef": "76a9b3d3f23639775d457dce0f82c003746ecac3",
+        "round": 4,
+        "outcome": "aligned",
+        "findings": [],
+        "evidence": [
+          "Reviewed tree SHA db9004c18025f4b523d24c573eaf995e13085813 in /Users/kwamina/code/agent-skills/.orchestration/plan-review/integration-step-on-the-live-view/checkouts/lens.adversarial-testing. The start identity check (`git rev-parse HEAD^{tree}` equal to db9004c18025f4b523d24c573eaf995e13085813, `git status --porcelain` empty) passed, and the same check at the end passed with a clean tree.",
+          "Delta derived myself: `git diff 0883f80269a78ce84550a98cd0056d4b21c42cea..76a9b3d3f23639775d457dce0f82c003746ecac3` touches only docs/plans/2026-11-18-integration-step-on-the-live-view.md. It adds one sentence to Decision 2 saying the budget file is read in the run's own checkout at the head it ran, and two exit-3 rows to the lead-suite scenario.",
+          "Re-check of adversarial-testing-r3-1: fixed as written. Line 147 adds exit 3 with a `--budget` file that is not `suite-budget/1`, which journals `failed` with no `budgetSeconds`. The round-3 mutant (classify exit 3 as over-budget whenever `--budget` is present, skipping the schema check) now fails that row.",
+          "Round 3's P2 note is adopted. Decision 2 states the file is read in the run's checkout at H, and line 148 adds a row where the run's checkout and the lead's hold different budget files and the run's is read. A mutant that reads the lead's copy fails it, provided the two files differ in what they yield (schema or wallSeconds). The row's wording 'reading the run's' implies asserting the run's value; the lane should make the two files differ.",
+          "Delta review: the new rows add only coverage. No earlier row is removed or weakened, and the delta introduces no new conditional without a row. No new finding.",
+          "Findings from rounds 1 and 2 (adversarial-testing-r1-1 to r1-5 and r2-1) were closed in earlier rounds. The delta does not touch their rows.",
+          "Model class: Claude Opus 5.5 (claude-opus-5-5), a native subagent. Realization basis: host-convention. The host exposes no progress or permission signals to this lens, and that limitation is recorded here. Run ID: none (activityId review-integration-step-on-the-live-view.plan, attemptId 1, roundId integration-step-on-the-live-view.plan-r4).",
+          "Checks: the brief names no sensors and no test files for a plan review, so none ran. No mutants were planted in any file. The mutations are reasoned against the plan's scenarios and kept to the plan's changed lines and the code the plan changes (run_delivery.py lead_suite and the suite-budget/1 contract it reads).",
+          "Approval conditions: no findings are raised this round, so none are pending. adversarial-testing-r3-1's condition is met as written."
+        ],
+        "resolvedFindings": [
+          {
+            "id": "adversarial-testing-r3-1",
+            "state": "fixed",
+            "resolution": "Line 147 adds the lead-suite row for exit 3 with a --budget file that is not suite-budget/1, which journals failed with no budgetSeconds. Decision 2 and line 148 also pin that the budget file is read in the run's own checkout."
+          }
+        ]
+      },
+      "resultSha256": "1b441b030cedb0c2f361fedb54bb72c8bdc8f2585b756a8c8190f92c7d1ecf65"
+    }
+  ],
+  "residualRisks": [
+    "4 review rounds; findings open after each round: 8, 2, 1, 0."
+  ]
+}
