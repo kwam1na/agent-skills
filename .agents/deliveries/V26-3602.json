@@ -182,6 +182,10 @@
         {
           "id": "v26-3622-3",
           "text": "schemas.json describes readAt as the last read that changed the sibling, and lastAttemptAt as when its current outcome began."
+        },
+        {
+          "id": "v26-3622-4",
+          "text": "The wait-words marker test and the delivery's wait tests pass with the new sentence."
         }
       ],
       "after": [
