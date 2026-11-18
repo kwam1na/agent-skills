@@ -1785,7 +1785,8 @@ class LeadAcceptChoosesChecksTests(unittest.TestCase):
                 {"id": "check", "argv": [sys.executable, "-B", "tools/check.py"]}]}, indent=2))
         binding_path.write_text(json.dumps(binding, indent=2))
         d = json.loads(path.read_text())
-        d["lanes"]["lane-1"]["owns"] = [*d["lanes"]["lane-1"]["owns"], "tests/test_one.py", "tests/test_three.py"]
+        d["lanes"]["lane-1"]["owns"] = [*d["lanes"]["lane-1"]["owns"], "tests/test_one.py", "tests/test_three.py",
+                                        "tests/test_new.py", ".agents/orchestration.json"]
         path.write_text(json.dumps(d, indent=2))
         commit(m, "FX-1: lead selection, with a catalogue")
         sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
@@ -1982,7 +1983,8 @@ if Path({str(started.with_suffix(".armed"))!r}).exists():
         head = self.item(fx)["head"]
         code, out = fx.flow("lead-accept", "FX-2", "--checks", "tests.test_nope", cwd=fx.main)
         self.assertEqual(code, 2, out)
-        self.assertIn("--checks names checks the binding's catalogue doesn't have: tests.test_nope", out)
+        self.assertIn("--checks names checks in neither the base's catalogue nor the one at the candidate's head: "
+                      "tests.test_nope (the base's has tests.test_one, tests.test_two; the head adds none)", out)
         code, out = fx.flow("lead-accept", "FX-2", "--checks", "tests.test_one", "--reason", "only one changed",
                             cwd=fx.main)
         self.assertEqual(code, 0, out)
@@ -2116,7 +2118,8 @@ if Path({str(started.with_suffix(".armed"))!r}).exists():
         fx = self.fixture()
 
         def refused(wt: Path, url: str) -> None:
-            for bad, said in (("tests.test_two,tests.test_nope", "doesn't have: tests.test_nope"),
+            for bad, said in (("tests.test_two,tests.test_nope", "the candidate's head: tests.test_nope (the base's "
+                                                                  "has tests.test_one, tests.test_two; the head adds none)"),
                               ("tests.test_two,tests.test_two", "each once"), ("", "each once")):
                 code, out = fx.flow("handoff", "FX-2", "--pr", url, "--checks", bad, cwd=wt)
                 self.assertEqual(code, 2, out)
@@ -2131,6 +2134,51 @@ if Path({str(started.with_suffix(".armed"))!r}).exists():
         assert_facts(self, handed, "candidate.handed", {
             "head": item["head"], "changeRequest": item["changeRequest"], "rounds": 1,
             "checks": ["tests.test_two", "tests.test_one"]})
+
+    def test_a_check_the_story_adds_is_named_at_handoff_selected_at_acceptance_and_run_by_the_queue(self) -> None:
+        fx = self.fixture()
+        base = json.loads((fx.main / ".agents/orchestration.json").read_text())
+        catalogue = {entry["id"]: entry for entry in base["selection"]["catalogue"]}
+        ran = fx.tmp / "test_new-ran"
+        new = {"id": "tests.test_new", "argv": [sys.executable, "-B", "tests/test_new.py"], "cwd": ".",
+               "reasons": ["the story's own module"], "prerequisites": []}
+        needy = {**new, "id": "tests.test_needy", "prerequisites": ["tests.test_one"]}
+        head = copy.deepcopy(base)
+        # The candidate redefines a base entry, adds two of its own, and reuses a binding check's id: only its own count.
+        head["selection"]["catalogue"] = [{**catalogue["tests.test_one"]},
+                                          {**catalogue["tests.test_two"], "argv": [sys.executable, "-B", "tools/gone.py"]},
+                                          new, needy, {**new, "id": "check"}]
+        out = hand_off(fx, "FX-2", "lane-1", checks="tests.test_two,tests.test_new", files={
+            ".agents/orchestration.json": json.dumps(head, indent=2),
+            "tests/test_new.py": f"from pathlib import Path\nPath({str(ran)!r}).write_text('ran')\n",
+            "tests/test_three.py": "# a module in neither catalogue\n"})
+        self.assertIn("- checks run: tests.test_two, tests.test_new (added by this story)", out)
+        self.assertEqual(self.item(fx)["namedChecks"], ["tests.test_two", "tests.test_new"])
+        handed = self.item(fx)["head"]
+        # The lane's working tree, not its head, now says otherwise: acceptance reads the head.
+        wt = fx.main / "lanes/FX-2"
+        (wt / ".agents/orchestration.json").write_text(json.dumps(base, indent=2))
+        code, out = fx.flow("lead-accept", "FX-2", cwd=fx.main)
+        self.assertEqual(code, 1, out)
+        self.assertIn('proposed: lead-accept FX-2 --checks tests.test_new,tests.test_two --reason', out)
+        code, out = fx.flow("lead-accept", "FX-2", "--checks", "tests.test_needy", "--reason", "why", cwd=fx.main)
+        self.assertEqual(code, 1, out)
+        self.assertIn("the selection was refused: ", out)
+        self.assertIn("tests.test_needy: prerequisites name unselected checks", out)
+        code, out = fx.flow("lead-accept", "FX-2", "--checks", "check", cwd=fx.main)
+        self.assertEqual(code, 2, out)
+        self.assertIn("the candidate's head: check (", out)
+        code, out = fx.flow("lead-accept", "FX-2", "--checks", "tests.test_two,tests.test_new", "--reason",
+                            "the new module and its neighbour", cwd=fx.main)
+        self.assertEqual(code, 0, out)
+        selection = self.item(fx)["leadSelection"]
+        self.assertEqual((selection["head"], selection["checks"]), (handed, [catalogue["tests.test_two"], new]))
+        self.assertEqual(kinds(fx, "check.selected")[-1]["data"]["checks"], ["tests.test_two", "tests.test_new"])
+        sh("git", "checkout", "-q", "--", ".agents/orchestration.json", cwd=wt)
+        queue_run(fx, "FX-2")
+        item = self.item(fx)
+        self.assertEqual((item["stage"], item["checkSelection"]["by"]), ("merged", "lead"))
+        self.assertEqual(ran.read_text(), "ran", "the queue ran the story's own check at its head")
 
     def test_without_lead_selection_acceptance_is_as_before_and_refuses_a_choice(self) -> None:
         fx = self.fixture(lead=False)
