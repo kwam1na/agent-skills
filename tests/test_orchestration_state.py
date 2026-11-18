@@ -7933,6 +7933,18 @@ class LeadBaseBrokenTests(unittest.TestCase):
             self.broken()
         self.assertEqual(seen, [["base.broken", "check.superseded", "candidate.stopped"]])
 
+    def test_a_locked_write_whose_state_is_invalid_appends_none_of_its_entries(self) -> None:
+        before, journal = state_tool.show(self.directory), state_tool.read_journal(self.directory)
+
+        def change(state: dict, entries: list[dict]) -> tuple[None, list[dict]]:
+            state["queue"][0]["stage"] = "nowhere"
+            return None, [{"kind": "base.broken", "data": {"source": "lead", "reason": "base_broken"}}]
+
+        with self.assertRaises(state_tool.StateError) as raised:
+            state_tool._locked_write(self.directory, change)
+        self.assertEqual(raised.exception.code, "patch_invalid")
+        self.assertEqual((state_tool.show(self.directory), state_tool.read_journal(self.directory)), (before, journal))
+
     def test_blank_words_and_a_short_head_are_refused_writing_nothing(self) -> None:
         before = state_tool.show(self.directory)
         for name, call in (("why", lambda: state_tool.lead_base_broken(self.directory, head=HEAD_C, check="unit",
