@@ -1362,10 +1362,10 @@ whole epic; no lead, queue or lane spans repositories.
   `incompatible` or `other-epic`, and whose `stories`, present only for `read`
   and `stale`, are `{subject, title, stage, changeRequest?}`.
 - Reconcile applies each entry for the sibling the record holds by that name
-  and link, and passes over one read before the latest it applied. Only a
+  and link, and passes over one read before its `lastAttemptAt`. Only a
   `read` entry changes the sibling's `stories`, `readAt`, `trackerParent`,
-  `updatedAt`, `closing` and `terminal`; every entry sets `lastOutcome` and
-  `lastAttemptAt`. An entry read longer ago than `snapshotMaxAgeSeconds` counts
+  `updatedAt`, `closing` and `terminal`; an entry whose outcome differs from
+  the sibling's `lastOutcome` sets it and `lastAttemptAt`. An entry read longer ago than `snapshotMaxAgeSeconds` counts
   as `stale`, and the tracker and forge snapshots in the same call still apply.
   A sibling is fresh while its `lastOutcome` is `read`: nothing downstream
   compares times with a clock.
