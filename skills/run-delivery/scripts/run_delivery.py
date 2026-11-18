@@ -4709,6 +4709,41 @@ def handoff(args) -> None:
             raise Stop(f"the approved round reviewed {reviewed[:10]}, but HEAD is {head[:10]}; "
                        f"review the new head: {error}") from error
     lane = check_candidate_ownership(c, key, git("merge-base", c.base_ref, head), head)
+    if (c.binding.get("regenerable") or {}).get("listings"):
+        # The merge queue stops a candidate that changes what a regenerable listing lists when its lane doesn't own
+        # the listing. Its own check, asked here, says so before the lead accepts rather than after.
+        _validator()
+        import merge_queue  # noqa: E402  (the installed release's own queue)
+        queue = merge_queue.Runner(main_checkout(), c.state, remote=c.remote, base=c.base_branch)
+        queue.binding = c.binding
+        root = Path(c.binding.get("workRoot", ".orchestration/work"))
+        queue.work_root = (root if root.is_absolute() else main_checkout() / root).resolve()
+        # The values the queue's sync step gives a listing, so a listing that names {head} reads the same here.
+        values = queue.context(key, git("rev-parse", c.base_ref)).with_values(branch=c.branch(key), head=head)
+        try:
+            moved = list(queue.unowned_listing_changes(lane, repo(), c.base_ref, head, values))
+        except merge_queue.Stop as error:
+            raise Stop(f"the merge queue's listing check can't run at {head[:10]}: {error.detail}") from error
+        if moved:
+            said = lambda added, removed: "; ".join(filter(None, [added and f"added {', '.join(added)}",
+                                                                   removed and f"removed {', '.join(removed)}"]))
+
+            def ask(path: str, owners: list[str]) -> str:
+                # A listing no lane holds is granted; one another lane holds, even beside this one, is moved from it.
+                others = [owner for owner in owners if owner != lane]
+                if not others:
+                    return f"ask the lead to grant it, with {flow_command()} lead-own --lane {lane} --grant {path}"
+                held = "shared with" if lane in owners else "held by"
+                claims = c.record_state().get("laneOwnership", {})
+                return (f"it is {held} {', '.join(others)}, so ask the lead to make it {lane}'s alone, with "
+                        + " and ".join(f"{flow_command()} lead-own --lane {lane} --move {claim} --from {other}"
+                                       for other in others for claim in claims.get(other, [])
+                                       if fnmatch.fnmatchcase(path, claim)))
+            raise Stop("\n  ".join([f"{key} changes the outputs a listing names, in files {lane} doesn't own alone, and "
+                                    "the merge queue would stop it after acceptance:",
+                                    *(f"{path} ({said(added, removed)}): {ask(path, owners)}"
+                                      for path, owners, added, removed in moved),
+                                    "then hand off again. Refreshing a listing's digests alone needs no grant."]))
     validation, gate_problems = gates_summary(key, repo(), head)
     pr_line = None
     # A lane stopped by a silent reviewer hands off blocked on it, and the lead decides that reviewer. The block holds
@@ -6944,6 +6979,10 @@ def lead_brief(args) -> None:
         "gates": "\n".join(f"   - `{' '.join(expand_argv(g['argv'], base=c.base_ref, key='<key>', delivery=c.delivery))}`"
                            for g in c.gates) or "   - (none declared)",
         "never_touch": ", ".join(f"`{p}`" for p in c.never_touch) or "(nothing listed)",
+        "listings": "".join(f" Adding or removing an output {' or '.join(f'`{p}`' for p in listed)} lists needs that file's "
+                            "owner: ask the lead to grant it before you hand off. Refreshing its digests alone needs no grant."
+                            for listed in [[e["path"] for e in (c.binding.get("regenerable") or {}).get("listings", [])
+                                            if e["path"] in shared_outputs(c)]] if listed),
         "lanes": lane_rows, "stories": story_rows, "in_app": in_app, "notes": notes or "(none)",
         "lease": (c.in_app or {}).get("lease", "in-app"), "port": str((c.in_app or {}).get("port", "")),
         "tracker": c.issue_url.replace("{key}", "<key>"), "authority": authority_text(),

@@ -551,6 +551,15 @@ If a lens asks for changes, the lane fixes them, commits, runs the gates again a
 inside its turn for reviewers, gates and the pipeline, and ends the turn only to hand off, to report itself blocked, or
 to ask the lead: the message `handoff` prints is its report.
 
+When the binding declares `regenerable.listings`, `handoff` asks the merge queue's own listing check before it records
+anything, with the values the queue's sync step gives a listing. A candidate that adds or removes an output a listing
+names, in a listing file its lane doesn't own alone, is refused there, rather than stopped by the queue after you
+accept it. The refusal names the file and the outputs added or removed. For a listing no lane holds it names
+`lead-own --lane <lane> --grant <file>` to ask you for. For one another lane holds, beside the lane or not, it names the
+`lead-own --lane <lane> --move <claim> --from <other lane>` that makes it the lane's alone. A change that only refreshes a listing's
+digests needs no grant, from any lane. The lane brief names each declared listing once, and says nothing of them when
+the binding declares none.
+
 A story whose criteria already hold on the base needs no change, so the lane has no branch to push and no round to
 review. It runs the tests or commands that show each criterion holds, in its checkout at the base, and hands off with
 that evidence instead, naming each criterion by its id: `handoff <story-key> --no-change --evidence TEXT` (or
