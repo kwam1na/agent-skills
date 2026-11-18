@@ -4120,6 +4120,13 @@ def _apply_siblings(directory: Path, reads: list[dict], max_age: float) -> list[
     """
     clock = datetime.datetime.now(datetime.timezone.utc)
     changes: list[dict] = []
+
+    def _sibling_unchanged(row: dict, before: dict) -> bool:
+        """Whether a read changed nothing but its own times: then it writes nothing. readAt stays the last read that
+        changed the sibling's stories or fields, and lastAttemptAt when its lastOutcome began."""
+        timeless = lambda value: {key: item for key, item in value.items() if key not in ("readAt", "lastAttemptAt")}
+        return timeless(row) == timeless(before)
+
     with file_lock(directory / STATE_LOCK):
         state = read_state(directory, for_write=True)
         journal = read_journal(directory)
@@ -4140,7 +4147,10 @@ def _apply_siblings(directory: Path, reads: list[dict], max_age: float) -> list[
                     row["lastOutcome"] = "stale"
                     if not earlier:
                         row["lastAttemptAt"] = entry["readAt"]
-                    if row != before:
+                    if _sibling_unchanged(row, before):
+                        row.clear()
+                        row.update(before)
+                    else:
                         changes.append({"subject": None, "change": f"sibling {row['name']} read stale", "recovery": False})
                     continue
                 if earlier:
@@ -4170,7 +4180,11 @@ def _apply_siblings(directory: Path, reads: list[dict], max_age: float) -> list[
                             for kind, data in pending):
                         pending.append(("sibling.mismatched", {"sibling": row["name"],
                                                                **({"parent": seen} if seen else {})}))
-                if row != before:
+                if _sibling_unchanged(row, before):
+                    # Read again, and nothing to say: the record isn't written, so an idle refresh leaves it as it was.
+                    row.clear()
+                    row.update(before)
+                else:
                     changes.append({"subject": None, "change": f"sibling {row['name']} read {outcome}", "recovery": False})
         current = _write_locked(directory, state, updated) if updated != state else state
         for kind, data in pending:

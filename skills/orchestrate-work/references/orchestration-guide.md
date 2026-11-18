@@ -1369,6 +1369,13 @@ whole epic; no lead, queue or lane spans repositories.
   as `stale`, and the tracker and forge snapshots in the same call still apply.
   A sibling is fresh while its `lastOutcome` is `read`: nothing downstream
   compares times with a clock.
+- A read that changes nothing about a sibling but its own times writes
+  nothing, so an idle refresh leaves the record, its version and
+  `meta.updatedAt` as they were. So `readAt` is the time of the last read that
+  changed the sibling's stories or fields, not of the latest read, and
+  `lastAttemptAt` is when its current `lastOutcome` began: a read whose
+  outcome differs is a change, and later reads with the same outcome leave it
+  as it was.
 - A sibling story has landed at `merged`, or `settled` for planned work. The
   first `read` showing it landed journals `sibling.landed` once, with
   `firstSeenAt` the read's time: when it was seen, never when it merged. A
