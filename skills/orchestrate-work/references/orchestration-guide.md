@@ -325,6 +325,21 @@ decision. Lanes post on their own tickets at the points the lane brief names.
   an unlanded story of another lane whose whole-file grant covers a file both
   stories' `files` name. An idle lane says what its next story waits on. Each
   wait goes away when what frees it happens, with no action from anyone.
+- An `after` key may name a story of a sibling delivery: another repository's
+  delivery of the same epic, which the record reads (see Sibling deliveries).
+  In a record with siblings, a key no story of its own holds raises a `sibling`
+  wait, after `order` among the causes. While a same-epic sibling's last kept
+  read holds the story unlanded, the story waits for it to land there, and the
+  sentence says how far it has got, or, when the sibling isn't fresh, when it
+  was last read. The wait goes when a fresh read shows the story `merged` or
+  `settled`, which journals `sibling.landed`; that wakes `wait`, and no lead
+  command is needed, even after the sibling's delivery has closed. A key that no
+  story and no sibling holds is held too: it needs the lead, to add the sibling
+  or fix the key, only when every same-epic sibling's `lastOutcome` is `read`,
+  and otherwise says which sibling hasn't been read yet. In a record with no
+  siblings such a key is ignored, as it always was. `next` counts a `sibling`
+  wait as an open blocker, and, beside the tracker's `blockedBy`, offers the
+  story only once both say the blocker is done.
 - A lane whose work waits for another story to land says so with `focus --state waiting --waiting-on KEY`, which
   must name a story the record holds; a `waiting` state without one is refused. The tool keeps the state the row left
   as `waitingFrom`, across every write while it waits. When KEY lands, or settles with no change, the row returns to
