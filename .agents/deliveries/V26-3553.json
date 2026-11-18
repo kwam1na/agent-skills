@@ -330,6 +330,10 @@
         {
           "id": "v26-3588-3",
           "text": "c3: Each fact's label, value and detail align across the three columns, with the count's baseline on the other values' first line, and the facts stack in one column on a phone."
+        },
+        {
+          "id": "v26-3588-4",
+          "text": "c4: Last landed's detail links the ticket, and the pull request when the forge snapshot knows it."
         }
       ]
     }
