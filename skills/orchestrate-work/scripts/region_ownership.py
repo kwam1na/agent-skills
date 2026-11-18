@@ -340,6 +340,16 @@ def settle(repo: Path, regions: list[dict], story: str, lane: str, merge: str) -
             try:
                 start, end = carried(repo, claim, merge)
                 moved = claim_at(claim, merge, start, end)
+                for other in regions:
+                    if other is claim or other["path"] != claim["path"] or other.get("story") == story:
+                        continue
+                    try:
+                        held = mapped(repo, other, merge)
+                    except RegionError:
+                        continue
+                    if overlapping((start, end), held):
+                        raise RegionError(f"carried to [{start}, {end}) it would overlap {other['lane']}'s "
+                                          f"[{held[0]}, {held[1]}) at {merge[:12]}")
                 result["regions"].append(moved)
                 result["carried"].append((claim, moved))
                 continue

@@ -550,7 +550,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/region_ownership.py",
-          "sha256": "86687361a57eaf1b4fcc4d944526ac5605f6e4ec467fb258014c06c34339cb99"
+          "sha256": "3c72061753ee69348043610178ec7890e28e8b21feb27b700d4f1fb03d6bb0ee"
         },
         {
           "path": "skills/orchestrate-work/scripts/render_state.py",
@@ -1123,7 +1123,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "6781aaa663ba939ee5855929ad32aae7590d41fa7e8b2533ea9d262acdddc1b6"
+          "sha256": "195bcbbb2d9fb2a4cb70b93af42cda4675dc945487f505fb871f5b9775b83f6d"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",

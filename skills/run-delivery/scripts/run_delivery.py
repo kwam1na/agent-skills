@@ -8114,6 +8114,8 @@ def change_regions(c, args) -> None:
             for other in on_path:
                 if any(other is gone for gone in replaced):
                     continue
+                if other["lane"] == args.lane and other.get("story") == story:
+                    continue  # Decision 5: one lane's claims of one story are made one below, overlapping or touching
                 try:
                     first, last = helper.mapped(c.root, other, base)
                 except helper.RegionError:
@@ -8291,6 +8293,11 @@ def settle_landings(c) -> str:
             except helper.RegionError as error:
                 raise Stop(f"settling {merge['subject']}'s landing: {error}") from error
             if written is None and landed is None:
+                later = [entry for entry in merges if entry["id"] > merge["id"]]
+                if any(helper.merge_commit(c.root, c.base_ref, entry["data"]["head"]) for entry in later):
+                    raise Stop(f"can't find where {merge['subject']} (journal entry {merge['id']}) landed on "
+                               f"{c.base_ref}, though a later merge is there: its claims wait, and so does every later "
+                               "landing's settle, until the lead settles its claims by hand and sets regionsSettled")
                 said.append(f"{merge['subject']}'s merge isn't on {c.base_ref} yet")
                 break
             subject = merge["subject"]

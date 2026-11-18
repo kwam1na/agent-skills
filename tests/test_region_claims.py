@@ -112,6 +112,27 @@ class SettleTests(unittest.TestCase):
         self.assertIn("crosses the span's edge", marked["regrant"]["reason"])
         self.assertEqual(result["regions"], [marked])
 
+    def test_the_landing_lane_s_own_claim_with_an_insertion_at_its_edge_needs_a_regrant(self) -> None:
+        lane = claim("lane-1", self.base, 10, 16)
+        for name, landed in (("after", [*self.lines[:15], "after\n", *self.lines[15:]]),
+                             ("before", [*self.lines[:9], "before\n", *self.lines[9:]])):
+            with self.subTest(name):
+                merge = self.land(landed)
+                result = regions.settle(self.repo.root, [lane], "S1", "lane-1", merge)
+                self.assertEqual(result["carried"], [])
+                [marked] = result["regrant"]
+                self.assertIn("sits at the span's edge", marked["regrant"]["reason"])
+
+    def test_a_carry_onto_lines_another_claim_holds_at_the_merge_needs_a_regrant_instead(self) -> None:
+        lane = claim("lane-1", self.base, 10, 16)
+        merge = self.land([*self.lines[:11], "twelve\n", *self.lines[12:]])
+        granted = claim("lane-2", merge, 14, 18)  # granted after the landing, before its settle
+        result = regions.settle(self.repo.root, [lane, granted], "S1", "lane-1", merge)
+        self.assertEqual(result["carried"], [])
+        [marked] = result["regrant"]
+        self.assertIn("would overlap lane-2's [14, 18)", marked["regrant"]["reason"])
+        self.assertEqual(result["regions"], [marked, granted])
+
     def test_another_lane_s_claim_at_the_edge_of_a_landed_insertion_keeps_its_place_and_needs_a_regrant(self) -> None:
         own = claim("lane-1", self.base, 5, 10, "S1")
         neighbour = claim("lane-2", self.base, 10, 14)
@@ -175,6 +196,12 @@ class CarveTests(unittest.TestCase):
         self.assertEqual(result["removed"], [one, two])
         self.assertEqual(result["added"], [claim("lane-1", self.base, 3, 10), claim("lane-2", self.base, 18, 25, "S2"),
                                            claim("lane-3", self.base, 10, 18, "S3")])
+
+    def test_a_give_touching_a_claim_of_its_lane_and_story_leaves_one_claim(self) -> None:
+        held = claim("lane-1", self.old, 2, 7)  # [3, 8) at the base
+        result = regions.carve(self.repo.root, [held], "f.txt", self.base, [{"lane": "lane-1", "start": 8, "end": 12}])
+        self.assertEqual(result["claims"], [claim("lane-1", self.base, 3, 12)])
+        self.assertEqual((result["removed"], result["added"]), ([held], [claim("lane-1", self.base, 3, 12)]))
 
     def test_a_carve_is_refused_whole_when_a_claim_on_the_path_does_not_map_or_gives_overlap(self) -> None:
         stale = claim("lane-1", self.base, 1, 3)  # the header line is not in the old blob
@@ -297,7 +324,8 @@ class LandingTests(CommandCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        cls.fx, _ = command_fixture(cls, {"FX-5": "lane-1", "FX-6": "lane-1", "FX-7": "lane-2", "FX-8": "lane-3"})
+        cls.fx, _ = command_fixture(cls, {"FX-5": "lane-1", "FX-6": "lane-1", "FX-7": "lane-2", "FX-8": "lane-3",
+                                          "FX-9": "lane-1"})
         doc = json.loads(subprocess.run([sys.executable, "-B", cls.fx.release / "skills/orchestrate-work/scripts/delivery_state.py",
                                          "--dir", cls.fx.tmp / "record", "show"], capture_output=True, text=True,
                                         check=True).stdout)
@@ -320,6 +348,7 @@ class LandingTests(CommandCase):
         landed = [*lines[:3], "a four\n", *lines[4:11], "x\n", "y\n", "z\n", *lines[13:18], "crossing\n", *lines[20:]]
         merge = self.land("FX-5", {"lib/a.txt": landed, "lib/b.txt": numbered(5, "b") + ["b over\n"] + numbered(12, "b")[6:]})
         merged_id = self.last_id()
+        sh("git", "push", "-q", "origin", f"{merge}:refs/heads/feature/FX-9", cwd=self.fx.main)  # began at the merge
         last = self.one_pass()
         state = self.record()["state"]
         self.assertEqual(state["regionsSettled"], merged_id, last.get("regions"))
@@ -345,6 +374,9 @@ class LandingTests(CommandCase):
         out = self.grant("lib/a.txt", "lane-3", merge, 26, 30)
         self.assertIn("lane-2's [20, 25)", out)
         self.assertIn("needs a regrant", out)
+        # A grant to lane-2 for one of its stories replaces none of its flagged claims, which are the lane's.
+        self.grant("lib/a.txt", "lane-2", merge, 17, 20, "--story", "FX-7")
+        self.assertTrue(any(c["lane"] == "lane-2" and "regrant" in c for c in self.claims("lib/a.txt")))
         # The flagged claim is regranted on a.txt, and revoked on b.txt: each clears its item.
         out = self.grant("lib/a.txt", "lane-2", merge, 21, 25)
         self.assertIn("replaces lane-2's [20, 25)", out)
@@ -354,6 +386,42 @@ class LandingTests(CommandCase):
         last = self.one_pass()
         self.assertEqual([item for item in last["needsYou"] if item["kind"] == "regrant"], [])
         self.assertFalse(any("regrant" in claim for claim in self.claims("lib/a.txt")))
+
+    def test_a_merge_the_base_does_not_hold_yet_waits_and_one_it_never_will_is_said(self) -> None:
+        from tests.test_run_delivery import sh
+        lines = numbered(10, "m")
+        base = self.push_base({"lib/m.txt": lines})
+        self.one_pass()
+        self.grant("lib/m.txt", "lane-1", base, 2, 5, "--story", "FX-5")
+        (self.fx.main / "lib/m.txt").write_text("".join(["m top\n", *lines]))
+        sh("git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qam", "Merge feature/FX-5", cwd=self.fx.main)
+        head = sh("git", "rev-parse", "HEAD", cwd=self.fx.main).stdout.strip()
+        settled = self.record()["state"]["regionsSettled"]
+        self.state("journal", "--kind", "candidate.merged", "--subject", "FX-5", "--data", json.dumps({"head": head}))
+        last = self.one_pass()
+        self.assertIn("isn't on origin/feature/FX-1 yet", last["regions"])
+        self.assertEqual(self.record()["state"]["regionsSettled"], settled)
+        self.assertEqual(len(self.claims("lib/m.txt")), 1)
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=self.fx.main)
+        self.one_pass()
+        self.assertEqual(self.claims("lib/m.txt"), [])
+        self.assertEqual(self.record()["state"]["regionsSettled"], self.entries("candidate.merged")[-1]["id"])
+        # A merge whose head never reaches the base, followed by one that does: the settle says so, and waits.
+        sh("git", "checkout", "-q", "-b", "never", cwd=self.fx.main)
+        (self.fx.main / "lib/m.txt").write_text("never\n")
+        sh("git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qam", "never landed", cwd=self.fx.main)
+        never = sh("git", "rev-parse", "HEAD", cwd=self.fx.main).stdout.strip()
+        sh("git", "checkout", "-q", "feature/FX-1", cwd=self.fx.main)
+        self.state("journal", "--kind", "candidate.merged", "--subject", "FX-6", "--data", json.dumps({"head": never}))
+        stuck = self.record()["state"]["regionsSettled"]
+        self.land("FX-9", {"lib/m.txt": ["m later\n", *lines]})
+        last = self.one_pass()
+        self.assertIn("failed: can't find where FX-6", last["regions"])
+        self.assertIn("though a later merge is there", last["regions"])
+        self.assertEqual(self.record()["state"]["regionsSettled"], stuck)
+        state = self.record()["state"]
+        self.state("patch", "--writer", "lead", "--version", str(state["version"]), "--patch",
+                   json.dumps({"regionsSettled": self.entries("candidate.merged")[-1]["id"]}))
 
     def test_the_settle_waits_for_the_ownership_lock(self) -> None:
         import fcntl
@@ -394,14 +462,14 @@ class LandingTests(CommandCase):
         self.grant("lib/c.txt", "lane-1", second, 16, 19)
         after_grant = self.claims("lib/c.txt")
         self.one_pass()
-        released = self.entries("ownership.released", since)
+        released = [e for e in self.entries("ownership.released", since) if e["data"]["path"] == "lib/c.txt"]
         self.assertEqual([(entry["subject"], entry["data"]["merge"]) for entry in released], [("FX-7", first), ("FX-8", second)])
         self.assertEqual(self.claims("lib/c.txt"), [after_grant[-1]])
         self.assertEqual(self.record()["state"]["regionsSettled"], self.entries("candidate.merged")[-1]["id"])
         # A supervisor restarted after a settle repeats nothing.
         settled = self.record()["state"]["regionsSettled"]
         self.one_pass()
-        self.assertEqual(self.entries("ownership.released", since), released)
+        self.assertEqual([e for e in self.entries("ownership.released", since) if e["data"]["path"] == "lib/c.txt"], released)
         self.assertEqual(self.record()["state"]["regionsSettled"], settled)
 
         # A record from an earlier release, with past merges and no settled id: seeded at the latest, settling none.
@@ -555,11 +623,14 @@ class GrantCarveTests(CommandCase):
         out = self.grant("lib/h.txt", "lane-1", base, 6, 9)
         self.assertIn("made one claim", out)
         self.assertEqual(self.claims("lib/h.txt"), [claim("lane-1", base, 2, 9, path="lib/h.txt")])
+        out = self.grant("lib/h.txt", "lane-1", base, 5, 11)  # overlapping its own claim: made one, not refused
+        self.assertIn("made one claim", out)
+        self.assertEqual(self.claims("lib/h.txt"), [claim("lane-1", base, 2, 11, path="lib/h.txt")])
         # An edit replacing lines across the old boundary now lies in one span.
         head = self.push_base({"lib/h.txt": [*lines[:4], "h five\n", "h six\n", *lines[6:]]}, "FX-1: across the boundary")
         regions_ = _load("region_ownership")
         regions_.check_change(self.fx.main, "lib/h.txt", base, head, self.claims("lib/h.txt"))
-        self.grant("lib/h.txt", "lane-2", head, 9, 12)
+        self.grant("lib/h.txt", "lane-2", head, 11, 12)
         self.grant("lib/h.txt", "lane-1", head, 12, 14, "--story", "FX-5")
         self.grant("lib/h.txt", "lane-1", head, 14, 16)
         self.grant("lib/h.txt", "lane-1", head, 17, 19)
