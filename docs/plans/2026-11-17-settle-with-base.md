@@ -62,26 +62,40 @@ Checked against `main` at `0eb0aee` on 2026-11-17:
 
 1. **One carry rule: compare the story's own change before and after the merge.** It is used by V26-3572, V26-3576
    and V26-3577. For each base merge after the reviewed head, take the story delta before the merge,
-   `git diff -U0 <old merge base> <prior>`, and the delta after it, `git diff -U0 <new merge base> <merge>`. They are
-   equal when the set of changed paths is the same, and each path has the same status (added, deleted, modified), the
-   same mode, and the same hunks in the same order. Hunks are compared as their removed and added lines, ignoring line
-   numbers and context. The review carries when every merge's deltas are equal. Who owns the file the base touched
-   does not matter. The refusal `the base merge changes lane-owned file` goes, and so does the per-path `--raw`
+   `git diff -U0 --no-renames <old merge base> <prior>`, and the delta after it,
+   `git diff -U0 --no-renames <new merge base> <merge>`. They are equal when the set of changed paths is the same, and
+   each path has the same status (added, deleted, modified), the same mode, and the same hunks in the same order.
+   Hunks are compared as their removed and added lines, ignoring line numbers and context. One normalization comes
+   first: within a hunk, a removed line that comes back as an added line differing only by a trailing `,` is the
+   separator an append adds to the line before it. Both lines are dropped from that hunk, as context. So when both
+   sides append to the end of a JSON array whose last element sits on one line, the merge carries. A hunk left empty
+   is dropped. The comparison is two-way: a line the merge adds to the story's change refuses as surely as a line it
+   drops. The review carries when every merge's deltas are equal, each merge checked against the one before it. Who
+   owns the file the base touched does not matter. The refusal `the base merge changes lane-owned file` goes, and so does the per-path `--raw`
    comparison. A region claim must still map from the old base to the new one, as today; that check is about
    ownership, not about the carry. When the deltas differ, the refusal names each path that differs, and for the first
    differing hunk the removed and added lines on each side, at most 20 lines.
 2. **A base that moved without a conflict needs no merge before hand-off** (operator's ruling, 2026-11-17).
-   `handoff` refuses only when the head does not merge cleanly into the current base outside `regenerable.paths`. A
-   clean move is left to the queue's sync, as today.
+   `handoff` refuses when the head does not merge cleanly into the current base outside `regenerable.paths`, with
+   `git merge-tree --write-tree`. A conflict in a listed regenerable path, `provenance.lock.json`, is judged by
+   Decision 6's three-way listing comparison, run the same way the queue runs it: `handoff` refuses when both sides
+   changed the listing, and otherwise lets it through to the queue. A clean move is left to the queue's sync, as
+   today. A head that conflicts both in a listed path and outside the regenerable paths is refused, naming the files
+   outside.
 3. **The lane authorizes its own base merge before hand-off** (operator's ruling, 2026-11-17). A new lane command,
    `base-merge <key>`, run in the lane checkout, fetches the base, and journals `base.merge.authorized` with writer
-   `lane`, the lane's reviewed head and the base head as its one base commit. It then prints the merge command and its
-   finishing command (Decision 5). It refuses when the story is queued, checking or merged: a candidate the queue holds
-   is the lead's, through `lead-authorize-base-merge`, as today. It refuses when the lane checkout's `HEAD` is not the
-   last aligned round's `candidateRef`, or when the base head is already in its history. `verify_base_merge` and the
-   state tool's `base_merge_evidence` accept an authorization written by the story's lane, with writer `lane`, the
-   same as one by the lead. The entry's data gains an optional `by: lane`, which the kind registry's words read, so the
-   record says who authorized it. An entry without `by` is the lead's.
+   `lane`, `by: lane`, the lane's reviewed head and the base head as its one base commit. It then prints the merge
+   command and its finishing command (Decision 5). It refuses when the story is queued, checking or merged: a
+   candidate the queue holds is the lead's, through `lead-authorize-base-merge`, as today. It refuses when the base
+   head is already in `HEAD`'s history. It refuses when `HEAD` is neither the last aligned round's `candidateRef` nor
+   a head that `verify_base_merge` would carry from it. So after one base merge, a lane whose base moves again with a
+   conflict runs `base-merge` again from the merged head, without resetting. The change site for the writer is the
+   state tool's `append_journal`, which today refuses both a lane writing anything but its review ("a lane journals
+   only its review") and anyone but the lead writing `base.merge.authorized` ("only the lead authorizes a base
+   merge"). It admits writer `lane` for `base.merge.authorized` only when the entry's lane is the subject's assigned
+   lane and the data carries `by: lane`. Every other lane-written authorization is still refused.
+   `base_merge_evidence` and `verify_base_merge` read no writer, so they need no change. The kind registry's words read
+   `by`, so the record says who authorized it. An entry without `by` is the lead's.
 4. **A round forced by a base merge counts against the bound** (operator's ruling, 2026-11-17). Under Decision 1, a
    merge forces a round only when the story's own change differs, so that round is about the story. This closes
    V26-1654. The orchestrate-work guide says so where it describes carrying a review across a base merge.
@@ -104,17 +118,30 @@ Checked against `main` at `0eb0aee` on 2026-11-17:
    `base.rerun.superseded` (new kind: `{base, head, by}`, where `head` is the old head and `by` is the acceptance's
    entry). The queue polls the record every 2 seconds while a base re-run check runs. On seeing that entry it stops its
    own check process group, by the pid it started, and journals `base.rerun.stopped` with `why` naming the entry. It
-   writes no `base.rerun.finished`, does not re-queue the old head, and the row takes the accepted head as `queued`. A
-   verdict reached after the entry was journalled is dropped: the queue reads the record before it writes a verdict.
+   writes no `base.rerun.finished`, does not re-queue the old head, and the row takes the accepted head as `queued`.
+   The acceptance journals `base.rerun.superseded` and moves the row to the new head in one state-locked write. A
+   verdict reached after that write is dropped, with no window between a read and a write: the queue's verdict, its
+   `base.rerun.finished` and its stop all go through one build that re-reads the row under the versioned patch. When
+   the row's head is no longer the checked head, or a `base.rerun.superseded` names the checked head, the build writes
+   nothing, as `_refused_stop` already does for a refused stop.
 8. **The lead can name the base broken before the re-run's verdict.** A new lead command,
-   `lead-base-broken --head H --check ID --test T --why W [--repair KEY]`, journals `base.broken` with source `lead`
-   and the head, check, test and reason, naming the repair when given, as `name_repair` does. When a base re-run is
-   running at that base head, it also journals `base.rerun.superseded` with `by` naming the `base.broken` entry. The
-   queue then stops the re-run as in Decision 7. The candidate under check is stopped as `base_broken`, with
-   `supersededAt` set to its failed head. `repaired_state` re-queues a `base_broken` row only when its head differs from
-   `supersededAt`, so the failed head is never queued again. When the repair is the failing story itself, its next
-   hand-off at the fixed head is the repair. `base.broken`'s data gains optional `check`, `test` and `why`, and the
-   kind registry's words show them for source `lead`.
+   `lead-base-broken --head H --check ID --test T --why W [--repair KEY | --self-repair]`, journals `base.broken` with
+   source `lead` and the head, check, test and reason. When a base re-run is running at that base head, it also
+   journals `base.rerun.superseded` with `by` naming the `base.broken` entry, and the queue stops the re-run as in
+   Decision 7. With no running re-run, or one at another base head, it journals no `base.rerun.superseded`. The
+   candidate under check is stopped as `base_broken`.
+   - `--repair KEY` names another, queued candidate as the repair, through `name_repair`, as today. The stopped
+     candidate failed only because the base was broken, so `repaired_state` re-queues it at its old head on
+     `base.repaired`, as today.
+   - `--self-repair` says the candidate under check holds its own fix. Its row is stopped with `supersededAt` set to
+     its failed head, and the record holds a pending repair for that subject. When the lead accepts that story's next
+     hand-off, at a head other than `supersededAt`, `lead-accept` applies the repair mark to the queued row through
+     `name_repair`, so serve takes it alone and its merge journals `base.repaired`. `repaired_state` never re-queues a
+     row at its `supersededAt` head. A row whose head has since moved past it is re-queued as any other.
+   - With neither, nothing is named, and the guide's repair step applies as today.
+
+   `base.broken`'s data gains optional `check`, `test` and `why`, and the kind registry's words show them for source
+   `lead`.
 9. **The views say what a re-run is for.** While `/meta/checking/now/baseRerun` runs, the line map's checking panel
    says which check failed on which candidate, that the re-run decides whether the base or the candidate broke it, and
    its expected end. The expected end is its start plus the check's last recorded duration from the queue history,
@@ -169,26 +196,42 @@ V26-3577, in `tests/test_run_delivery.py`:
 - `lead-authorize-base-merge`'s output includes the finishing `git commit -m ... -m ...` for each merge.
 - A merge that conflicts, finished with the printed command, carries the review at hand-off.
 - The same merge finished with `git commit --no-edit`, which keeps `# Conflicts:` lines, carries.
+- A merge committed with `git commit --cleanup=verbatim -F`, whose message has the trailer followed by `# Conflicts:`
+  lines, carries. Today's `%(trailers)` reader returns nothing for it: the lane proves this row red against today's
+  reader before changing it, and records that run in its evidence.
 - A merge whose message lost its trailer is refused, and the refusal prints the exact `--amend` command. Running that
-  command makes the next hand-off carry.
+  command makes the next hand-off carry. With two merges where only the first lost its trailer, the refusal names the
+  first and prints no `--amend`.
 
 V26-3576, in `tests/test_run_delivery.py`:
 
-- The base and the story each append an entry to the same lane-owned JSON file. The authorized merge keeps both, and
-  the review carries.
-- A merge whose resolution drops one of the story's added lines is refused, and the refusal names the path and that
-  line.
+- The incident's layout: the base and the story each append an element to the end of the same lane-owned JSON array,
+  each adding a comma to the old last line, and the authorized merge keeps both. It carries with one-line elements and
+  with multi-line objects alike.
+- A resolution that drops one of the story's added lines is refused, naming the path and that line.
+- A resolution that adds a line inside the story's change is refused, naming the path and the added line.
+- A resolution that changes a path outside the story's delta is refused, naming that path.
+- A story file whose mode differs after the merge is refused.
+- Two base merges, the first clean and the second dropping a story line: the second is refused.
 - A base change to a lane-owned file the story never touched carries.
 - A region claim that no longer maps after the merge is still refused.
+- The orchestration guide pin: a round forced by a base merge counts against the bound (Decision 4).
 
-V26-3572, in `tests/test_run_delivery.py`:
+V26-3572, in `tests/test_run_delivery.py` and `tests/test_orchestration_state.py`:
 
 - A head that conflicts with the current base outside `regenerable.paths` is refused by `handoff`. The refusal names
   the files and prints `base-merge <key>`.
-- A conflict only in `provenance.lock.json` does not refuse.
-- `base-merge` journals an authorization with writer `lane`, and prints the merge and finishing commands. After the
-  merge, `handoff` carries the review, and `lead-accept` accepts it.
-- `base-merge` refuses on a queued story, and on a checkout not at the last aligned round's head.
+- A conflict only in `provenance.lock.json` where only the candidate changed the listing does not refuse. One where
+  both sides changed the listing is refused, naming it.
+- A head that conflicts in both `provenance.lock.json` and a source file is refused, naming the source file.
+- `base-merge` journals an authorization with writer `lane` and `by: lane`, and prints the merge and finishing
+  commands. After the merge, `handoff` carries the review, and `lead-accept` accepts it.
+- After that merge the base moves again with a conflict: `base-merge` from the merged head authorizes the next base
+  commit, and the second merge carries too.
+- `base-merge` refuses a story that is queued, one that is checking and one that is merged. It refuses a checkout not
+  at the last aligned round's head or a head carried from it, and a base head already in `HEAD`'s history.
+- The state tool refuses a lane-written `base.merge.authorized` for a story assigned to another lane, and one without
+  `by: lane`. `handoff` does not carry with a refused one.
 - A conflict-free head on an unmoved base hands off as today, and so does one on a base that moved without a conflict.
 - The rendered lane brief says, in this order: run `base-merge`, merge, rerun gates and checks, push, hand off.
 
@@ -203,18 +246,29 @@ V26-3549, in `tests/test_merge_queue.py`:
 V26-3557, in `tests/test_orchestration_state.py`, `tests/test_merge_queue.py`,
 `tests/test_run_delivery_supervisor.py` and `tests/delivery_views_page/`:
 
-- A hand-off at a new head is accepted by the state tool while the subject's base re-run runs. One at the checked head
-  is still refused.
-- `lead-accept` of that hand-off journals `base.rerun.superseded`. The queue stops the re-run's check, journals
-  `base.rerun.stopped` naming the entry, writes no verdict, and queues the new head. The old head is never checked
-  again.
+- A hand-off at a new head is accepted by the state tool while the subject's base re-run runs. Still refused with
+  `handoff_invalid`: one at the checked head, one at a new head while the row is checking with no base re-run, and one
+  at a new head while a base re-run runs for another subject.
+- `lead-accept` of that hand-off journals `base.rerun.superseded` and queues the new head in one write. The fixture's
+  check blocks far past the test's deadline and records its pid. Within a few poll intervals its process group is
+  gone, and `base.rerun.stopped` is journalled naming the entry, with no verdict. The old head is never checked again.
+  The test joins `StoppedBaseRerunTests`, which is `run_quietly`.
+- The race: the re-run reaches `candidate_failed`, and the acceptance lands after the queue's last read and before its
+  stop write. The row stays queued at the new head, with no `check_failed` stop and no `base.rerun.finished`.
 - A re-run whose verdict arrives after the superseding entry writes none.
-- `lead-base-broken` with `--repair` journals `base.broken` with check, test and reason, names the repair, and ends
-  the running re-run. The failed head is not re-queued, including after `base.repaired`.
+- `lead-base-broken --self-repair` journals `base.broken` with check, test and reason, and ends the running re-run.
+  The failed head is not re-queued, including after `base.repaired`. The lane hands off the fixed head, `lead-accept`
+  marks it the repair, serve takes it alone, and its merge journals `base.repaired`.
+- `lead-base-broken --repair B`, naming another queued story: on `base.repaired` the stopped candidate goes back to
+  queued at its old head.
+- `repaired_state`: a `base_broken` row with `supersededAt` H whose head is now H2 is re-queued on `base.repaired`. The
+  same row at head H is not.
+- `lead-base-broken` with no re-run running, and with one at another base head, journals `base.broken` and no
+  `base.rerun.superseded`, and the running re-run goes on. Without `--repair` or `--self-repair` it names no repair.
 - With no lead decision and no new hand-off, the re-run and its verdicts are unchanged. The existing re-run tests
   pass unmodified.
-- The line map's checking panel shows the purpose, the expected end with and without history, and the two
-  alternatives.
+- The line map's checking panel shows the purpose, the expected end and the two alternatives. The expected end uses
+  the failed check's own history when the history holds two checks, and is left out with none.
 - The guide pin: the orchestration guide says when ending a re-run early is sound, and that the lead's entry is then
   the evidence for the base's state.
 
@@ -225,14 +279,17 @@ V26-3557, in `tests/test_orchestration_state.py`, `tests/test_merge_queue.py`,
 | 1 | 1 | V26-3577, V26-3576, V26-3572 | `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/templates/lane-brief.md`, `skills/run-delivery/SKILL.md`, `tests/test_run_delivery.py` |
 | 1 | 2 | V26-3549, V26-3557 | `skills/orchestrate-work/scripts/merge_queue.py`, `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/scripts/render_state.py`, `skills/orchestrate-work/references/journal-kinds.json`, `skills/orchestrate-work/references/orchestration-guide.md`, `skills/orchestrate-work/SKILL.md`, `skills/delivery-views/assets/line-map.js`, `tests/test_merge_queue.py`, `tests/test_orchestration_state.py`, `tests/test_run_delivery_supervisor.py`, `tests/test_journal_kinds.py`, `tests/test_journal_shape.py`, `tests/fixtures/journal-kinds/`, `tests/delivery_views_page/` |
 
-Lane 1 changes two lane-2 files for V26-3572: `delivery_state.py`'s `base_merge_evidence`, which must accept a
-lane-written authorization, and `journal-kinds.json`'s `base.merge.authorized`, which gains `by`. Lane 2 changes three
-lane-1 files for V26-3557: `run_delivery.py` gains `lead-base-broken`, and `lead-accept` takes a superseding hand-off;
-`SKILL.md` gains its row; `tests/test_run_delivery.py` is not touched by lane 2. Lane 1 likewise documents carrying a
-review in the orchestration guide (Decision 4). Before assigning each of those stories, the lead turns the whole-file
-claims on these files into line spans with `lead-own --revoke` and `lead-own --region`, against the current base: the
-owning lane keeps spans over what it changes, and the other lane gets spans over the functions and rows the story
-names. The lane's assignment message names them.
+Lane 1 changes lane-2 files for V26-3572: in `delivery_state.py`, `append_journal`, which must admit a lane-written
+authorization (Decision 3), and in `journal-kinds.json`, `base.merge.authorized`, which gains `by`. `handoff`'s listing
+comparison (Decision 2) runs the binding's listing `argv` on the three versions itself, in `run_delivery.py`, and
+changes nothing in `merge_queue.py`. Lane 1's V26-3576 also writes
+Decision 4 into the orchestration guide. Lane 2 changes lane-1 files for V26-3557: `run_delivery.py` gains
+`lead-base-broken`, and `lead-accept` takes a superseding hand-off and applies a pending self-repair; run-delivery's
+`SKILL.md` gains its row. Lane 2 does not touch `tests/test_run_delivery.py`. `tests/test_orchestration_state.py` is
+lane 2's, and lane 1 gets a span for V26-3572's state-tool rows. Before assigning each of those stories, the lead turns
+the whole-file claims on these files into line spans with `lead-own --revoke` and `lead-own --region`, against the
+current base: the owning lane keeps spans over what it changes, and the other lane gets spans over the functions,
+kinds and rows named here. The lane's assignment message names them.
 
 `catalog.json` and `profiles/*` are the lead's (Decision 10). `provenance.lock.json` is regenerable.
 
@@ -263,11 +320,12 @@ brief's sentence on what a carry needs.
 
 Lane 1, tier 1, after V26-3576. Test-first. Files: `skills/run-delivery/scripts/run_delivery.py`,
 `skills/run-delivery/templates/lane-brief.md`, `skills/run-delivery/SKILL.md`,
-`skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/references/journal-kinds.json` and
-`tests/test_run_delivery.py`.
+`skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/references/journal-kinds.json`,
+`tests/test_run_delivery.py` and `tests/test_orchestration_state.py`.
 
 Implement Decision 2's conflict check in `handoff`, after its fetch, with `git merge-tree --write-tree` against the
-base head, and Decision 3's `base-merge` command. The brief makes the order a step: `base-merge`, merge, gates and
+base head, and the listing comparison for a conflicted listed path. Implement Decision 3's `base-merge` command, and
+admit its entry in the state tool's `append_journal`. The brief makes the order a step: `base-merge`, merge, gates and
 checks, push, hand off. Add `base-merge` to `SKILL.md`'s command table.
 
 ### V26-3549. Let the merge queue merge a candidate's new provenance outputs when the base only changed digests
@@ -288,7 +346,7 @@ Lane 2, tier 1, after V26-3549. Test-first. Files: `skills/orchestrate-work/scri
 `tests/test_run_delivery_supervisor.py`, `tests/test_journal_kinds.py`, `tests/fixtures/journal-kinds/` and
 `tests/delivery_views_page/`.
 
-Implement Decisions 7, 8 and 9. Add `base.rerun.superseded` to the kind registry with its vectors. Add
+Implement Decisions 7, 8 and 9, including `lead-accept`'s superseding acceptance and its pending self-repair. Add `base.rerun.superseded` to the kind registry with its vectors. Add
 `lead-base-broken` to run-delivery's `SKILL.md`. In the guide's "A stopped base re-run" and "A broken base", say when
 ending a re-run early is sound, which is when the lead knows the cause or holds the fix, and that the lead's entry is
 then the evidence for the base's state.
