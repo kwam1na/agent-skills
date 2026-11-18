@@ -1259,7 +1259,7 @@ it is not a freshness proof or permission to skip any admission check.
 | `candidate` | An argv that resolves a candidate reference to `{branch, head}` as JSON. |
 | `prepare` | An argv list run in every fresh checkout, such as installing dependencies or creating a ref the checks need from `{baseHead}`. |
 | `hooks` | `bypass` or `run`. See "Git hooks" below. |
-| `regenerable` | `{paths, regenerators}`: the generated-only paths, which may use `*` and `**` globs, and the regenerator argv list. |
+| `regenerable` | `{paths, regenerators, listings?}`: the generated-only paths, which may use `*` and `**` globs, the regenerator argv list, and optional `listings`, each `{path, argv}`: one regenerable file and the argv that reads a version of it on stdin and prints the outputs it lists as a JSON array of strings. See "A conflicted listed path". |
 | `postSync` | Entries of `{argv, paths}`; each declares the paths it may change. |
 | `leadInputs` | Each input's `id`, `argv` and `paths`, plus an optional `lease` it needs and an optional `timeoutSeconds`. |
 | `profiles` | `{name: {environment}}`, with placeholder values. A check names one profile; an unknown profile is refused. |
@@ -1533,6 +1533,33 @@ its hand-off; the runner runs exactly those, during sync.
   `lease_withdraw_failed` and nothing is pushed.
 - No other checkout ever receives lease material.
 
+### A conflicted listed path
+
+A sync merges the base in, and a batch merges each member into the tree it has
+built so far. Only `regenerable` paths may conflict; a conflict anywhere else
+stops the candidate with `source_conflict`, naming the paths. A conflicted
+regenerable path takes the base side and the regenerators refresh it, unless
+the binding lists it under `regenerable.listings`. A regenerator such as a
+provenance writer refreshes digests but never adds or removes an output, so for
+a listed path the runner reads the outputs each of the three versions lists:
+the merge base's, the base's and the candidate's.
+
+- The candidate lists what the merge base did: it takes the base side.
+- Only the candidate changed the listing, and the base left it as the merge
+  base had it: it takes the candidate's whole file. The regenerators then
+  refresh its digests, so the merged file lists the candidate's outputs with
+  the digests of the merged tree. Any other edit the base made to that file is
+  dropped without a stop.
+- Both sides changed the listing, even to the same outputs: it stops with
+  `source_conflict`, saying what each side added or removed. Resolve it by hand,
+  keeping both sides' outputs, and hand off again.
+
+A listing that fails, prints anything but a JSON array of strings, or reads a
+version without the path stops the candidate with `source_conflict` too, and
+nothing is regenerated. Before merging, a lane that is not the only owner of a
+listed path it changed is checked the stricter way: its listing must match the
+merge base's, whatever the base did.
+
 ### What sync proves
 
 After merging the base in and running the lead inputs, the regenerators and
@@ -1703,8 +1730,9 @@ when the batch's combined tree is that member's checked tree.
 ### What a batch proves
 
 `batch` builds one tree from the base tip, adding each member in queue order
-with the same steps a sync runs: it merges the member in, takes the base side
-of a conflict confined to `regenerable` paths and regenerates, runs the
+with the same steps a sync runs: it merges the member in, resolves a conflict
+confined to `regenerable` paths as "A conflicted listed path" says, with the
+tree built so far as the base, and regenerates, runs the
 member's lead inputs and the post-sync steps, and proves the same two things
 a sync proves, against the tree built so far. A member that stops on any of
 these drops out of the batch with that code; the rest continue. The runner
