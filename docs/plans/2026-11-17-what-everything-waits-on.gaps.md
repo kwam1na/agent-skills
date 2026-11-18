@@ -38,8 +38,9 @@ Seen on release `linear-v3.0.0` (generation `7ff4b0e5`), the installed workflow 
 - **One unmappable claim blocks every grant on its file, after the revoke has gone through.** `lead-own --region` maps
   every claim on the path to the current base, so one landed story's stale span, or a span whose mapping repeated lines
   make ambiguous, refuses all grants there. Carving a span is a revoke and then grants, so when the grants were refused,
-  lane 1 was left with unclaimed lines and its review-reduce stopped. Open: carve in one command, and name stale claims
-  when a story lands.
+  lane 1 was left with unclaimed lines and its review-reduce stopped. Later, one regrant in a carve gave up with
+  `version_stale` while the queue was writing the record, leaving another gap. Open: carve in one command, and name
+  stale claims when a story lands.
 - **`lead-assign`'s co-change warning missed files stories needed.** `hosted-snapshot.schema.json` and the pins in
   `tests/test_registry.py` and `tests/test_run_delivery.py` surfaced mid-story, one grant at a time. Open.
 
