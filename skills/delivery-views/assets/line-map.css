@@ -206,15 +206,27 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
 .journey .tick { position: absolute; top: 23px; width: 2px; height: 10px; border-radius: 1px; background: var(--edge); margin-left: -1px; }
 /* The headline and its sentence read as one statement, and freshness belongs to the journey above it. */
 .chapter-now .title + .say, .chapter-now .title + .plan-now, .chapter-now .plan-now + .say { margin-top: -10px; }
-.facts { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr); gap: 20px 40px; margin-right: 10px; }
-.chapter-now .journey + .facts { margin-top: -4px; padding-top: 20px; border-top: 1px solid var(--hair); }
-.fact { display: grid; gap: 4px; align-content: start; min-width: 0; }
+/* Three facts on one grid: each spans the grid's three rows (label, value, detail) through subgrid, so the labels, the
+   values and the details line up across the columns, and every value sits on one baseline with the stories count. */
+.facts { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.4fr) minmax(0, 1fr); grid-template-rows: auto auto auto;
+  column-gap: 56px; row-gap: 10px; margin-right: 10px; }
+.chapter-now .journey + .facts { margin-top: -4px; padding-top: 28px; border-top: 1px solid var(--hair); }
+.fact { display: grid; grid-row: span 3; grid-template-rows: subgrid; row-gap: 10px; align-content: start; min-width: 0; }
 .fact-label { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--faint); letter-spacing: 0.01em; }
 .fact-label > span { display: inline-flex; gap: 8px; align-items: center; }
-.fact-value { font-size: 15px; line-height: 1.4; color: var(--ink); text-wrap: pretty; }
+.fact-value { align-self: baseline; font-size: 15px; line-height: 1.4; color: var(--ink); text-wrap: pretty; }
 .fact-detail { font-size: 12px; line-height: 16px; color: var(--faint); }
 .fact .issue-link { white-space: nowrap; }
-.fact .plan-now-link { display: inline; margin: 0; font-size: inherit; color: inherit; white-space: normal; }
+/* The stories count in the display face, its "of 9 landed" in the text face; under it a thin track in three tones of the
+   landed colour, full for landed, a wash for in the queue and the hairline for being built, then what the queue holds. */
+.fact-count { font: 400 34px/1 var(--display); letter-spacing: -0.01em; color: var(--ink); font-variant-numeric: lining-nums tabular-nums; }
+.fact-of { font: 400 14px/1.4 var(--text); letter-spacing: 0; color: var(--soft); }
+.fact-progress { display: grid; gap: 8px; }
+.fact-track { display: flex; height: 4px; border-radius: 2px; overflow: hidden; background: var(--hair); }
+.fact-track i { display: block; height: 100%; }
+.fact-track .is-landed { background: var(--landed); }
+.fact-track .is-queued { background: color-mix(in oklab, var(--landed) 35%, transparent); }
+.fact-track .is-building { background: var(--hair); }
 .since i { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); display: inline-block; }
 .since.live i { background: var(--ink); box-shadow: 0 0 0 3px color-mix(in oklab, var(--ink) 12%, transparent); }
 .since.closed i { background: transparent; box-shadow: inset 0 0 0 1.5px var(--edge); }
@@ -507,9 +519,22 @@ a.issue-link { color: inherit; cursor: pointer; }
 a.fact-ref { text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); text-underline-offset: 3px; }
 .beat-items { list-style: none; margin: 0; padding: 6px 0 2px 16px; display: grid; gap: 4px; font-size: 12px; line-height: 17px; color: var(--soft); overflow-wrap: anywhere; }
 .beat.is-note:not(.threaded) .beat-said { font-size: 14px; color: var(--soft); }
-/* At the story altitude, a thin line in the margin ties a setback's entries together; no arrows. */
-.beat.threaded::before { content: ""; position: absolute; left: 104px; top: 0; bottom: 0; width: 1.5px; background: color-mix(in oklab, var(--held) 45%, transparent); }
-.beat.threaded + .beat.threaded[data-thread]::before { top: -1px; }
+/* A beat's folded list of checks names each in the face check names wear elsewhere on the page. */
+.beat-names li { font: 400 12px/18px var(--mono); color: var(--soft); overflow-wrap: anywhere; }
+/* At the story altitude, a thin line in the margin ties a setback's entries together, from a ring where it opened to a
+   tick where it closed; no arrows. It is held while the setback stands and the page's hairline once it ended, so the
+   progress made inside an ended setback never reads as alarm, and two in a row read as two. */
+.beat.threaded.t-span::before { content: ""; position: absolute; left: 104px; top: 0; bottom: 0; width: 1.5px; background: color-mix(in oklab, var(--held) 45%, transparent); }
+.beat.threaded.t-span.t-closed::before { background: var(--hair); }
+/* The newest row is drawn first, so the line runs up from the ring on the opening row to the tick on the closing one. */
+.beat.threaded.t-span + .beat.threaded.t-span[data-thread]:not(.t-closes)::before { top: -1px; }
+.beat.threaded.t-closes::before { top: 22px; }
+.beat.threaded.t-opens::before { bottom: calc(100% - 22px); }
+.thread-ring { position: absolute; left: 101px; top: 15px; width: 8px; height: 8px; box-sizing: border-box; border-radius: 50%;
+  border: 1.5px solid var(--held); background: var(--paper); }
+.beat.t-closed .thread-ring { border-color: var(--faint); }
+.thread-tick { position: absolute; left: 101px; top: 21.25px; width: 8px; height: 1.5px; background: var(--faint); }
+.beat.t-opens.t-closes .thread-tick { top: 27px; }
 /* A setback is the one thing with a surface: a quiet sheet, its cause, what it held up and how it ended, and its cost as
    the only number in view. */
 .beat.setback { border-bottom: 0; padding: 10px 0; }
@@ -596,7 +621,7 @@ a.fact-ref { text-decoration: underline; text-decoration-color: color-mix(in srg
   .stop-btn.active { box-shadow: 0 0 0 3px color-mix(in oklab, var(--c, var(--ink)) 18%, transparent); }
 }
 @media (max-width: 640px) {
-  .facts { grid-template-columns: minmax(0, 1fr); }
+  .facts { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; row-gap: 28px; }
   .chapter { padding: 48px 20px; }
   .chapter-now { min-height: auto; }
   .checking { padding: 18px 16px; border-radius: 12px; }
@@ -610,7 +635,8 @@ a.fact-ref { text-decoration: underline; text-decoration-color: color-mix(in srg
   .person .on { text-align: left; }
   .beat { grid-template-columns: 18px minmax(0, 1fr); }
   .beat time { grid-column: 2; order: 2; display: flex; gap: 8px; justify-content: start; }
-  .beat.threaded::before { left: 8px; }
+  .beat.threaded.t-span::before { left: 8px; }
+  .thread-ring, .thread-tick { left: 5px; }
   .setback-sheet { grid-template-columns: minmax(0, 1fr); }
   .setback-cost { justify-items: start; text-align: left; }
 }
@@ -619,6 +645,9 @@ a.fact-ref { text-decoration: underline; text-decoration-color: color-mix(in srg
 .plan-now { margin: 0; color: var(--soft); max-width: 62ch; font-size: 18px; line-height: 1.45; }
 .plan-now-outcome { color: var(--ink); }
 .plan-now-link { display: table; margin-top: 6px; font-size: 14px; color: var(--soft); text-decoration-color: var(--hair); text-underline-offset: 3px; white-space: nowrap; }
+/* Under the outcome, how much is proven, linked to the plan, and how often the plan changed, on one quiet line. */
+.plan-now-line { display: block; margin-top: 6px; font-size: 14px; color: var(--soft); }
+.plan-now-line .plan-now-link { display: inline; margin: 0; }
 .plan-now-link:hover, .plan-now-link:focus-visible { color: var(--ink); text-decoration-color: currentColor; }
 .plan-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; max-width: none; }
 /* The plan on the page is older than the record's: said in a quiet line under the headline, with the one thing to do. */

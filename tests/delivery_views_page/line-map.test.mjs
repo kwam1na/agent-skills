@@ -95,8 +95,8 @@ test("draws the run as a line map, chapter by chapter", async () => {
   // The tracker item the delivery is listed under opens in the tracker.
   expect(now.querySelector(".kicker a")?.getAttribute("href")).toBe("https://tracker.example/issue/PAY-2354");
   expect(now.querySelector("h1")?.textContent).toBe("1 of 8 pieces have landed.");
-  // What landed last is one of the chapter's facts: its title, then its ticket and how long ago.
-  expect(now.querySelector(".fact")?.textContent).toBe("Last landedHold the cart through a payment redirectPAY-2358 · 44 minutes ago");
+  // What landed last is the chapter's second fact, after the stories landed: its title, then its ticket, its pull request and how long ago.
+  expect(now.querySelector(".facts > .fact:nth-child(2)")?.textContent).toBe("Last landedHold the cart through a payment redirectPAY-2358 · #1101 · 44 minutes ago");
   const checking = now.querySelector(".checking").textContent;
   expect(now.querySelector(".checking .ck-h-words")?.textContent).toBe("Checking · PAY-2361");
   expect(checking).toContain("Retry card payments once on a dropped connection");
@@ -907,7 +907,7 @@ test("marks what changed since the last update, as the earlier map did", async (
   // The story's new beat arrives as a new row does; the beats it already held stay as they were.
   expect([...app.querySelectorAll("#happened .beat.fresh > time")].map((time) => time.getAttribute("datetime"))).toEqual(["2026-10-22T05:09:00Z"]);
   expect([...app.querySelectorAll(".parked li.fresh")].map((item) => item.textContent)).toEqual(["PAY-2399Show the retry count to support"]);
-  expect(app.querySelector("#now .fact")?.textContent).toBe("Last landedRetry card payments once on a dropped connectionPAY-2361 · a minute ago");
+  expect(app.querySelector("#now .facts > .fact:nth-child(2)")?.textContent).toBe("Last landedRetry card payments once on a dropped connectionPAY-2361 · #1106 · a minute ago");
 });
 
 test("shows pieces checked as one batch together, each with its change request", async () => {
