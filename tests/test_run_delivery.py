@@ -2620,7 +2620,7 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         base_moves({unlisted: "base\n"})
         with self.subTest("a listed path whose listing prints no JSON array"):
             candidate(adding, {unlisted: "story\n"})
-            unjudged(f"the listing of {unlisted}", "didn't print a JSON array")
+            unjudged(f"the listing of {unlisted}", "printed something other than a JSON array of strings")
 
     def test_a_lane_merges_the_base_before_hand_off_and_the_review_carries(self) -> None:
         """Decision 3: `base-merge` journals the lane's own authorization and prints the merge and its finish. The merge

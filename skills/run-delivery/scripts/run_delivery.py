@@ -4622,7 +4622,8 @@ def listing_reader(c, key: str, head: str):
     _validator()
     import merge_queue  # noqa: E402  (the installed release's own queue)
     queue = merge_queue.Runner(main_checkout(), c.state, remote=c.remote, base=c.base_branch)
-    queue.binding = c.binding
+    # A listing read at hand-off has run under the binding's check timeout, or 600 seconds without one.
+    queue.binding = {"checkTimeoutSeconds": 600, **c.binding}
     root = Path(c.binding.get("workRoot", ".orchestration/work"))
     queue.work_root = (root if root.is_absolute() else main_checkout() / root).resolve()
     values = queue.context(key, git("rev-parse", c.base_ref)).with_values(branch=c.branch(key), head=head)
