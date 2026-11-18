@@ -240,11 +240,20 @@ test("the kicker ends with how long the delivery has run, a time element that sa
     const [shown] = await openPage(pageWithRuns(underway(), {}, { config: FORGE }), { now, store: false });
     return shown.app.querySelector("#now .kicker time.kicker-time");
   };
+  // Pointing at it shows the page's card, never a native tooltip, saying each end in local time with UTC beside it.
+  const said = async (page) => {
+    const [, pointed] = await openPage(page, { now: NOW, store: false, steps: [{ hover: "#now .kicker time.kicker-time" }] });
+    const card = pointed.app.querySelector(".issue-card");
+    return [card.hidden, [...card.children].map((line) => line.textContent), pointed.titled];
+  };
   // The record's first entry is minute 10, 06:10 UTC; the clock reads on, so a later look says a longer run.
   const time = await at(NOW);
   expect(time.textContent).toBe("delivering · 5 h 50 min");
   expect(time.getAttribute("datetime")).toBe(minute(10));
-  expect(time.getAttribute("title")).toMatch(/^Started .+ \(2026-10-30 06:10:00 UTC\)$/);
+  const [hidden, lines, titled] = await said(pageWithRuns(underway(), {}, { config: FORGE }));
+  expect([hidden, lines.length, titled]).toEqual([false, 1, 0]);
+  expect(lines[0]).toMatch(/^Started .+ \(2026-10-30 06:10:00 UTC\)$/);
+  expect(time.getAttribute("tabindex")).toBe("0");
   expect(time.parentNode.textContent).toMatch(/ · delivering · 5 h 50 min$/);
   expect((await at("2026-10-30T06:40:00Z")).textContent).toBe("delivering · 30 min");
   // A journal that no longer holds its first entry has no honest start, so the kicker says no duration.
@@ -259,5 +268,6 @@ test("the kicker ends with how long the delivery has run, a time element that sa
   const [closed] = await openPage(page, { now: NOW, store: false });
   const span = closed.app.querySelector("#now .kicker time.kicker-time");
   expect(span.textContent).toMatch(/^delivered in \d+ (h|min|days)/);
-  expect(span.getAttribute("title")).toMatch(/^From .+ UTC\) to .+ UTC\)$/);
+  const [shut, ends] = await said(page);
+  expect([shut, ends.map((line) => /^(Started|Closed) .+ \(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC\)$/.exec(line)?.[1])]).toEqual([false, ["Started", "Closed"]]);
 });

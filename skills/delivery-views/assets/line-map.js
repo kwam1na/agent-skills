@@ -608,7 +608,17 @@
       var stamp = function (at) { var date = new Date(at * 1000); return date.toLocaleString() + " (" + date.toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC") + ")"; };
       var time = el("time", "kicker-time", closed ? "delivered in " + lasted : "delivering · " + lasted);
       time.setAttribute("datetime", text(first.at));
-      time.setAttribute("title", closed ? "From " + stamp(begun) + " to " + stamp(ended) : "Started " + stamp(begun));
+      time.setAttribute("tabindex", "0");
+      // The page's own card says the ends, as a ticket's does, since nothing on the page carries a native tooltip.
+      var ends = closed ? [["Started", begun], ["Closed", ended]] : [["Started", begun]];
+      var showEnds = function () {
+        card.replaceChildren.apply(card, ends.map(function (end) { return el("div", "ic-s", end[0] + " " + stamp(end[1])); }));
+        placeCard(time);
+      };
+      time.addEventListener("mouseenter", showEnds);
+      time.addEventListener("focus", showEnds);
+      time.addEventListener("mouseleave", hideCard);
+      time.addEventListener("blur", hideCard);
       add(kicker, " · ", time);
     }
     var nodes = [kicker, title];
