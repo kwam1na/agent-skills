@@ -35,3 +35,19 @@ Gaps in the workflow or the tool found while delivering this plan, each recorded
   stayed up, because nothing would report it.
 - **Where it stands.** Tracked as V26-3618: a holding needs-you item should journal an entry the lead's wait hears, and
   the stale suite checkout should be cleaned up, or named with its fix, before `serve` refuses on it.
+
+## No command adds a lane to a live delivery (workflow)
+
+- **What happened.** The operator asked for V26-3618, added to this delivery as lane-1's second story, to run on a new
+  lane-2 alongside lane-1, with the two lanes holding disjoint regions of `run_delivery.py` and the supervisor tests.
+- **Why the tool couldn't.** A delivery's lanes are the record's `laneOwnership`, which only `lead-init` (and
+  `lead-own --seed` on a legacy record) writes. `lead-own --grant`, `--move` and `--region`, `lead-assign` and
+  `lead-plan change --kind added --lane` each refuse a lane the record doesn't hold, and nothing adds one. The only
+  routes left are a hand edit of the record or `lead-init --replace` mid-delivery.
+- **What was done.** The operator kept V26-3618 on lane-1, after V26-3606, rather than set it up as a delivery of its
+  own or hand-edit the record. Lane-1's claims, briefly carved into regions, were restored to whole files.
+- **Where it stands.** Tracked with the region mechanics in V26-3591, as a comment there. The carve hit its c2: lane-1's
+  whole-file claims were revoked, lane-2's grants were then refused, and the V26-3618 lines were left unowned until
+  lane-1's claims were restored. It also hit its c3: three adjacent lane-1 regions would have left boundary lines where
+  no insertion fits, so whole files were restored instead. Adding a lane to a live delivery is not yet in V26-3591's
+  scope.
