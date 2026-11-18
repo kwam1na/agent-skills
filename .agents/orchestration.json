@@ -1723,6 +1723,24 @@
         "timeoutSeconds": 3600
       },
       {
+        "id": "tests.test_siblings",
+        "argv": [
+          ".venv/bin/python",
+          "-B",
+          "scripts/run-tests.py",
+          "--workers",
+          "4",
+          "-p",
+          "test_siblings.py"
+        ],
+        "cwd": ".",
+        "reasons": [
+          "The tests in tests/test_siblings.py."
+        ],
+        "prerequisites": [],
+        "timeoutSeconds": 3600
+      },
+      {
         "id": "tests.test_waits",
         "argv": [
           ".venv/bin/python",
