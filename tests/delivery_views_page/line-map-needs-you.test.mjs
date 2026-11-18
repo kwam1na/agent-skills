@@ -135,3 +135,15 @@ test("c6: each meta line opens with who acts, and the rows the reader acts on le
   expect(all.map((row) => row.querySelector(".a1").textContent)).toEqual([
     "Mark it ready", "Lane 2 is blocked on APP-2", "APP-1 waits to be marked ready", "APP-1 was stopped", "Lane 2 waits on Lane 1"]);
 });
+
+test("a page that watches its delivery close shows what it left open after that push, with no reload", async () => {
+  const open = record();
+  const closed = record();
+  closed.journal.push({ id: 2, at: "2026-11-17T11:50:00Z", kind: "delivery.closed", lane: null, subject: null, data: {} });
+  const [before, after] = await openPage(renderPage(open, { config }), { now: NOW, rendered: renderPage(closed, { config }),
+    steps: [{ push: closed }, { wait: 3100 }] }).then((snapshots) => [snapshots[0], snapshots[2]]);
+  expect(before.app.querySelector(".left-open")).toBeNull();
+  const box = after.app.querySelector("#now .left-open");
+  expect(box.querySelector(".ah").textContent).toBe("Left open at close");
+  expect([...box.querySelectorAll(".a1")].map((row) => row.textContent)).toEqual(["APP-1 was stopped"]);
+});

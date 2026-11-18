@@ -495,6 +495,12 @@ class NeedsYouRowTests(unittest.TestCase):
         items = {item["lane"]: item for item in run_delivery.lane_needs(document["state"])}
         self.assertEqual({lane: item["who"] for lane, item in items.items()},
                          {"lane-1": "operator", "lane-2": "lead", "lane-3": "lane-2"})
+        for name in ("user", "You"):
+            row(document, "lane-1")["waitingOn"] = name
+            self.assertEqual(run_delivery.lane_needs(document["state"])[0]["who"], "operator", name)
+        # A stopped piece is on the lane it was assigned to, whatever lane it now names.
+        queue(document, "APP-3", "stopped", lane=None, assignedLane="lane-3")
+        self.assertEqual(run_delivery.lane_story(document["state"], "lane-3")["subject"], "APP-3")
         self.assertEqual(items["lane-2"]["subject"], "APP-1")
         self.assertNotIn("subject", items["lane-1"])
         self.assertEqual(items["lane-2"]["text"], "lane-2 is blocked: which API")
@@ -544,6 +550,49 @@ class NeedsYouRowTests(unittest.TestCase):
         [said] = self.said(document, items)
         self.assertEqual(said["said"]["why"], "2 pieces wait on it.")
         self.assertNotIn("waiting", said)
+
+    def test_every_kind_needs_you_gives_is_said_by_the_table_with_its_own_headline(self) -> None:
+        source = (PRODUCT_ROOT / "skills/run-delivery/scripts/run_delivery.py").read_text(encoding="utf-8")
+        body = source[source.index("def tracker_item("):source.index("NEEDS_FILE = ")]
+        # Each kind, with who it names, as needs_you and its helpers write it.
+        found = re.findall(r'"kind": "(\w+)"(?: if \w+ else "(\w+)")?,(?:\s*\n\s*)? ?(?:"who": "(\w+)")?', body)
+        kinds = {kind for pair in found for kind in pair[:2] if kind}
+        table = json.loads(WORDS.read_text(encoding="utf-8"))["needsYou"]["templates"]
+        for name in ("headline", "why", "clears"):
+            self.assertEqual(kinds - set(table[name]["cases"]), set(), name)
+        self.assertEqual(kinds, set(table["headline"]["cases"]))
+        self.assertEqual({pair[0]: pair[2] for pair in found if pair[2] and pair[0] == "drafts"}, {"drafts": "operator"})
+        # Each kind's headline, from the facts its producer gives it.
+        document = record()
+        given = {
+            "trackerLag": ({"detail": "The tracker publisher hasn't posted journal entries 4"}, {}, "The tracker is behind the record"),
+            "trackerLedger": ({"detail": "APP-1: the move isn't offered"}, {}, "A tracker update needs a hand"),
+            "healthRunning": ({"head": "a" * 40}, {}, "The full health run is under way at aaaaaaa"),
+            "healthFailed": ({"head": "b" * 40, "detail": "1 failed"}, {}, "The full health run failed at bbbbbbb"),
+            "healthFlaky": ({"head": "c" * 40, "tests": ["t.T.test_a"]}, {}, "Flaky tests failed the full health run at ccccccc"),
+            "baseBroken": ({"detail": "Main is red"}, {}, "The main line is broken"),
+            "baseHealth": ({"detail": "Main is red"}, {}, "The main line is broken"),
+            "baseFocused": ({"detail": "Main is red", "source": "main"}, {}, "The main line is broken, under the focused posture"),
+            "unaccepted": ({}, {"subject": "APP-1"}, "APP-1 merged before it was accepted"),
+            "runnerHold": ({"entry": 7, "detail": "a break"}, {}, "The queue holds serving"),
+            "blocker": ({"entry": 7, "detail": "the API"}, {"subject": "APP-1"}, "Blocker 7 on APP-1"),
+            "listener": ({"detail": "Lane 1 can't reach the lead."}, {}, "The lead isn't listening"),
+            "flapping": ({"name": "publisher", "log": "p.log"}, {}, "The supervisor's publisher won't stay up"),
+            "drafts": ({"subjects": ["APP-1", "APP-2"]}, {}, "APP-1 and APP-2 wait to be marked ready"),
+            "laneBlocked": ({"focus": "which API"}, {"lane": "lane-2", "subject": "APP-1"}, "Lane 2 is blocked on APP-1"),
+            "laneAsks": ({"focus": "which API"}, {"lane": "lane-2"}, "Lane 2 waits on the lead"),
+            "stopped": ({"detail": "e2e failed"}, {"subject": "APP-1"}, "APP-1 was stopped"),
+            "free": ({}, {"subject": "APP-2", "lane": "lane-1"}, "APP-2 is free to start"),
+            "paused": ({"reason": "a break"}, {}, "Serving is paused"),
+            "report": ({"about": "APP-3", "detail": "moved"}, {}, "A report for the lead on APP-3"),
+            "stale": ({"name": "tracker", "reason": "timed out"}, {}, "The tracker is not answering"),
+        }
+        self.assertEqual(set(given), kinds)
+        items = [{"holding": False, "source": "s", "text": "t", "clears": "c", "kind": kind, "who": "lead", "fields": fields, **facts}
+                 for kind, (fields, facts, _) in given.items()]
+        said = self.said(document, items)
+        self.assertEqual({item["kind"]: item["said"]["headline"] for item in said}, {kind: words for kind, (_, _, words) in given.items()})
+        self.assertTrue(all(item["said"]["clears"] for item in said))
 
     def test_the_list_opens_with_one_sentence_counting_whom_its_items_wait_on_and_what_holds_the_finish(self) -> None:
         summary = lambda *items: run_delivery.needs_summary(self.RELEASE, [{"holding": held, "who": who} for held, who in items])

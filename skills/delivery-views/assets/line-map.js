@@ -1837,6 +1837,8 @@
         if (reviews) { nativeReviews = JSON.parse(reviews[1]); }
         var listed = /<script type="application\/json" id="delivery-needs">([^<]*)<\/script>/.exec(page);
         NEEDS = listed ? readNeeds(listed[1]) : null;
+        var opened = /<script type="application\/json" id="delivery-left-open">([^<]*)<\/script>/.exec(page);
+        LEFT_OPEN = opened ? readNeeds(opened[1]) : null;
         if (isObject(next)) { runs = next; safely(lastGood || shown); }
       }).catch(function () { /* the runs already shown stay */ });
     }, 3000);

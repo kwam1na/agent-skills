@@ -4677,6 +4677,13 @@ class CloseStoppedPartwayTests(unittest.TestCase):
         needs = json.loads((fx.tmp / "record/needs-you.json").read_text())
         # What the page reads as a close still running: the list current, its supervisor running, the publisher holding it.
         self.assertTrue(needs["running"], needs)
+        # The list carries its own words and each row's, said from the table: the page words none of them.
+        self.assertEqual(needs["words"], {"heading": "Waiting on someone", "holding": "Holding up the finish", "age": "for {age}"})
+        [lag] = [item for item in needs["items"] if item.get("kind") == "trackerLag"]
+        self.assertEqual((lag["who"], lag["said"]["headline"], lag["said"]["who"]), ("lead", "The tracker is behind the record", "The lead"))
+        words = run_delivery_module("run_delivery_for_the_lists_words")
+        self.assertEqual(needs["summary"], words.needs_summary(types.SimpleNamespace(release=Path(__file__).resolve().parents[1]), needs["items"]))
+        self.assertTrue(needs["summary"].endswith("holding up the finish."), needs["summary"])
         self.assertGreater(datetime.datetime.fromisoformat(needs["staleAfter"].replace("Z", "+00:00")),
                            datetime.datetime.now(datetime.timezone.utc))
         self.assertEqual(self.marks(fx.tmp / "record").get("finished"), None)

@@ -295,7 +295,8 @@ class ProjectionTests(unittest.TestCase):
                  'summary': "1 thing needs the lead, and it's holding up the finish.",
                  'words': {'heading': 'Waiting on someone', 'holding': 'Holding up the finish', 'age': 'for {age}'}}
         value = public.project(doc, {}, config(), source_fingerprint='1' * 64, needs=needs)
-        self.assertEqual((value['needs']['items'], value['needs']['words']), ([item], needs['words']))
+        self.assertEqual((value['needs']['items'], value['needs']['words'], value['needs']['summary']),
+                         ([item], needs['words'], needs['summary']))
         public.validate(value)
 
     def test_a_need_naming_a_command_omits_option_paths_without_dropping_the_need(self):

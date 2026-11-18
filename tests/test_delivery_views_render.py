@@ -1092,7 +1092,8 @@ class LeftOpenTests(unittest.TestCase):
 
     def test_an_open_or_reopened_delivery_and_one_that_left_nothing_open_have_none(self) -> None:
         self.assertIsNone(render.left_open(self.record()))
-        self.assertIsNone(render.left_open(self.record("delivery.closed", "lane.assigned")))
+        for reopening in ("lane.assigned", "candidate.handed", "check.started"):
+            self.assertIsNone(render.left_open(self.record("delivery.closed", reopening)), reopening)
         quiet = self.record("delivery.closed")
         quiet["state"]["queue"] = []
         self.assertIsNone(render.left_open(quiet))
