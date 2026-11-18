@@ -87,8 +87,8 @@
    * its changed digits over from the old ones, lined up from the right as on a counter, and a digit with none before
    * it flips in from blank. The words stay one plain text, the new value, so the line never moves: while a digit turns,
    * a highlight hides it and a layer drawn over its place, with no words of its own, rolls the old digit out and the
-   * new one in. A first draw, an unchanged number, a reader who asked for less motion and a browser without
-   * highlights get the words as they are.
+   * new one in. A first draw, an unchanged number, words that now hold more numbers or fewer, a reader who asked for
+   * less motion and a browser without highlights get the words as they are.
    */
   function figures(node, key, words) {
     var was = prev.figures[key];
@@ -96,7 +96,9 @@
     node.textContent = words;
     var registry = highlights();
     if (typeof was !== "string" || was === words || reduced() || !registry) { return node; }
+    // Words that now hold more numbers or fewer say something else, and their numbers no longer pair up: no flip.
     var old = was.match(/\d+/g) || [];
+    if (old.length !== (words.match(/\d+/g) || []).length) { return node; }
     var turns = [];
     var at = 0, offset = 0;
     words.split(/(\d+)/).forEach(function (part, i) {
@@ -694,7 +696,7 @@
       var minutes = Math.round((ended - begun) / 60), hours = Math.floor(minutes / 60);
       var lasted = minutes < 60 ? minutes + " min" : hours < 48 ? hours + " h" + (minutes % 60 ? " " + minutes % 60 + " min" : "") : Math.round(hours / 24) + " days";
       var stamp = function (at) { var date = new Date(at * 1000); return date.toLocaleString() + " (" + date.toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC") + ")"; };
-      var time = el("time", "kicker-time", closed ? "delivered in " + lasted : "delivering · " + lasted);
+      var time = figures(el("time", "kicker-time"), "kicker", closed ? "delivered in " + lasted : "delivering · " + lasted);
       time.setAttribute("datetime", text(first.at));
       time.setAttribute("tabindex", "0");
       // The page's own card says the ends, as a ticket's does, since nothing on the page carries a native tooltip.
@@ -768,7 +770,7 @@
     // not being built.
     var queued = tally ? 0 : all.filter(function (piece) { return !piece.planned && !isLanded(piece) && piece.item.stage !== "stopped"; }).length;
     var building = tally ? 0 : all.filter(function (piece) { return piece.planned && (piece.item.stage === "building" || piece.item.stage === "review"); }).length;
-    var value = add(el("span", "fact-count"), String(landed), el("span", "fact-of", " of " + total + " landed"));
+    var value = add(el("span", "fact-count"), figures(el("span"), "stories", String(landed)), figures(el("span", "fact-of"), "stories-of", " of " + total + " landed"));
     var track = el("span", "fact-track");
     track.setAttribute("aria-hidden", "true");
     [["landed", landed], ["queued", queued], ["building", building]].forEach(function (part) {
@@ -778,7 +780,7 @@
       track.appendChild(span);
     });
     var said = [queued ? queued + " in the queue" : "", building ? building + " being built" : ""].filter(Boolean).join(" · ");
-    return fact("stories", "Stories", value, add(el("span", "fact-progress"), track, said ? el("span", "fact-said", said) : null));
+    return fact("stories", "Stories", value, add(el("span", "fact-progress"), track, said ? figures(el("span", "fact-said"), "stories-said", said) : null));
   }
   /** A pull request as a fact's quiet reference: its number, linked to the forge when the renderer gave its address. */
   function pullRef(changeRequest) {
@@ -1474,13 +1476,13 @@
       var age = el("span", "nr-age");
       var since = seconds(item.since);
       if (since !== null && Date.now() / 1000 >= since && text(words.age)) {
-        age.textContent = text(words.age).replace("{age}", duration(Date.now() / 1000 - since));
+        figures(age, "need:" + [item.kind, item.who, item.lane, item.subject].map(text).join("/"), text(words.age).replace("{age}", duration(Date.now() / 1000 - since)));
         age.setAttribute("title", clock(item.since));
       }
       ul.appendChild(add(li, margin, body, age));
     });
     box.appendChild(ul);
-    if (typeof NEEDS.more === "number" && NEEDS.more > 0) { box.appendChild(el("p", "needs-more", NEEDS.more + " more not shown.")); }
+    if (typeof NEEDS.more === "number" && NEEDS.more > 0) { box.appendChild(figures(el("p", "needs-more"), "needs-more", NEEDS.more + " more not shown.")); }
     return box;
   }
 
@@ -2407,7 +2409,7 @@
     var counts = planCounts(doc);
     var link = figures(el("a", "plan-now-link"), "plan-now", counts.proven + " of " + counts.total + " criteria proven");
     link.setAttribute("href", "#plan");
-    return add(el("span", "plan-now-line"), link, " · " + timesChanged(list(plan.changes).length));
+    return add(el("span", "plan-now-line"), link, figures(el("span"), "plan-changes", " · " + timesChanged(list(plan.changes).length)));
   }
 
   /** The criteria a finish line covers, or null when it covers proofs only, over every unit. */

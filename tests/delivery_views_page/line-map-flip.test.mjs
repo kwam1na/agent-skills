@@ -1,9 +1,10 @@
 // The line map's numbers flip when a live redraw changes them: each changed digit turns over from the old one, lined
 // up from the right, in a layer over the words, which stay one plain text of the new value so the line never moves. A
-// first draw, an unchanged number, a reader who asked for less motion and a browser without highlights get plain words.
+// first draw, an unchanged number, words of a new shape, a reader who asked for less motion and a browser without
+// highlights get plain words.
 import { test } from "node:test";
 
-import { REPLAYED_RUNS, expect, openPage, pageWithRuns } from "./support.mjs";
+import { REPLAYED_RUNS, expect, openPage, pageWithRuns, renderPage } from "./support.mjs";
 import { finishLine, item, journal, planFor, record, unit } from "./plan-fixtures.mjs";
 
 const NOW = "2026-10-30T12:00:00Z";
@@ -28,6 +29,8 @@ const flips = (node) => [...node.querySelectorAll(".flip")].map((digit) => [digi
 function counts(app) {
   const places = {
     now: app.querySelector("#now h1.title b"),
+    stories: app.querySelector("#now .fact-count span"),
+    queued: app.querySelector("#now .fact-said"),
     plan: app.querySelector("#now .plan-now-link"),
     lane: app.querySelector("#line .name span"),
     left: app.querySelector("#left .left-number span"),
@@ -54,10 +57,12 @@ function merge(app) {
 test("a live update flips each changed digit of every count, from the right, and leaves unchanged digits as text", async () => {
   const [, first, second] = await open({ steps: [{ push: delivery(10, true) }, { push: delivery(11, true) }] });
   // While a digit turns, the words hide it; the rest of the words show as they are.
-  expect(first.held).toEqual(["1", "0", "1", "0", "1", "0", "2", "1", "0", "1", "0", "1", "0"]);
+  expect(first.held).toEqual(["1", "0", "1", "0", "1", "0", "2", "1", "0", "2", "1", "0", "1", "0", "1", "0"]);
   // Nine to ten: the units digit turns over from 9, and the tens digit flips in from blank.
   expect(counts(first.app)).toEqual({
     now: { words: "10 of 12", flips: [["", "1"], ["9", "0"]] },
+    stories: { words: "10", flips: [["", "1"], ["9", "0"]] },
+    queued: { words: "2 in the queue", flips: [["3", "2"]] },
     plan: { words: "10 of 12 criteria proven", flips: [["", "1"], ["9", "0"]] },
     lane: { words: "10 of 12 landed", flips: [["", "1"], ["9", "0"]] },
     left: { words: "2", flips: [["3", "2"]] },
@@ -73,7 +78,7 @@ test("a live update flips each changed digit of every count, from the right, and
     held: ["1", "0", "1"],
   });
   // Ten to eleven, mid-turn: the redraw took the turning words off the page, so only the new turns are held.
-  expect(second.held).toEqual(["1", "1", "1", "1", "1", "1", "1"]);
+  expect(second.held).toEqual(["1", "1", "1", "1", "1", "1", "1", "1", "1"]);
   // The tens digit stays as it was, and the met count, unchanged, does not move.
   expect(counts(second.app).now).toEqual({ words: "11 of 12", flips: [["0", "1"]] });
   expect(counts(second.app).left).toEqual({ words: "1", flips: [["2", "1"]] });
@@ -108,7 +113,7 @@ test("once the new digits land the words show their own again, and the layer goe
   expect(landed.app.querySelectorAll(".flip, .flipping")).toHaveLength(0);
   expect(landed.held).toEqual([]);
   expect(Object.values(counts(landed.app)).map((place) => place.words))
-    .toEqual(["10 of 12", "10 of 12 criteria proven", "10 of 12 landed", "2", "10 of 12 pieces have landed.", "10 of 12 criteria proven", "10 of 12 criteria proven."]);
+    .toEqual(["10 of 12", "10", "2 in the queue", "10 of 12 criteria proven", "10 of 12 landed", "2", "10 of 12 pieces have landed.", "10 of 12 criteria proven", "10 of 12 criteria proven."]);
 });
 
 test("a redraw that changes no number mid-turn draws the words plain and lets go of the digits it hid", async () => {
@@ -136,7 +141,7 @@ test("for a reader who asked for less motion, or a browser without highlights, a
     expect(pushed.app.querySelectorAll(".flip, .flipping")).toHaveLength(0);
     expect(pushed.held).toEqual([]);
     expect(Object.values(counts(pushed.app)).map((place) => place.words))
-      .toEqual(["10 of 12", "10 of 12 criteria proven", "10 of 12 landed", "2", "10 of 12 pieces have landed.", "10 of 12 criteria proven", "10 of 12 criteria proven."]);
+      .toEqual(["10 of 12", "10", "2 in the queue", "10 of 12 criteria proven", "10 of 12 landed", "2", "10 of 12 pieces have landed.", "10 of 12 criteria proven", "10 of 12 criteria proven."]);
   }
   // The merge's counts are drawing, not words, and need no highlight; they rest under reduced motion only.
   expect(reduced.app.querySelectorAll(".flip-in, .flip-out, .flip-gap")).toHaveLength(0);
@@ -154,4 +159,24 @@ test("a landing that moves the stop shown to the next piece eases its panel from
   expect(last[1].app.querySelector("#detail .d1").textContent).toBe("Work P1");
   // The page's own arrays, copied out of its window.
   expect(eased(last).map((animation) => Array.from(animation.keyframes, (frame) => frame.height))).toEqual([["180px", "260px"]]);
+});
+
+test("as time passes, the kicker's running time and a waiting row's age flip; words that change shape are simply the new ones", async () => {
+  const needs = {
+    spec: "delivery-needs-you/1", running: true, pass: 4, at: "2026-10-30T11:59:30Z", staleAfter: "2026-10-30T14:00:00Z",
+    words: { heading: "Waiting on someone", holding: "Holding up the finish", age: "for {age}" },
+    items: [{ holding: false, source: "s", text: "t", clears: "c", kind: "drafts", who: "operator", since: "2026-10-30T11:58:00Z",
+      said: { headline: "P10 waits to be marked ready", who: "You" } }],
+  };
+  const page = renderPage(delivery(9), { config: { spec: "delivery-views-config/1", runs: REPLAYED_RUNS }, plan: PLAN, needs });
+  // The page's own redraw, a minute on and then an hour on.
+  const at = (when) => [{ run: (window) => { window.Date.now = () => Date.parse(when); } }, { tick: true }];
+  const [, , minute, , hour] = await openPage(page, { now: NOW, store: {}, motion: {}, steps: [...at("2026-10-30T12:01:00Z"), ...at("2026-10-30T13:01:00Z")] });
+  const place = (shot, selector) => { const node = shot.app.querySelector(selector); return { words: node.firstChild.data, flips: flips(node) }; };
+  expect(place(minute, ".kicker-time")).toEqual({ words: "delivering · 5 h 51 min", flips: [["0", "1"]] });
+  expect(place(minute, ".nr-age")).toEqual({ words: "for 3m", flips: [["2", "3"]] });
+  expect(minute.app.querySelector(".kicker-time").getAttribute("tabindex")).toBe("0");
+  // An hour on, the age reads in hours where it read in minutes: a new shape, not a turn of the same number.
+  expect(place(hour, ".nr-age").flips).toEqual([]);
+  expect(place(hour, ".kicker-time")).toEqual({ words: "delivering · 6 h 51 min", flips: [["5", "6"]] });
 });
