@@ -61,6 +61,11 @@ Seen on release `linear-v3.0.0` (generation `7ff4b0e5`), the installed workflow 
   modules that pin a changed file.
 - **A story's new test module can't be among its acceptance checks.** The base's catalogue learns the module only when
   the story lands (`tests.test_waits_review`). Open.
+- **A batch runs every check after one has already failed.** V26-3565 and V26-3426 were checked together. The new
+  catalogue guard failed on V26-3565's uncatalogued module in the first minutes, and the queue still ran the batch's
+  remaining modules and a base rerun before stopping either. The lead has no command to cut a batch short once the
+  cause is known, and V26-3426 waited behind it. Open: stop a batch on the lead's word, or split it when a candidate
+  fails.
 - **A re-queued candidate leaves its lane's row "waiting on the lead".** The row was patched by hand. Fix: V26-3426
   (this delivery).
 
