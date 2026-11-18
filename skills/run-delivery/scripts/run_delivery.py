@@ -4564,8 +4564,32 @@ def lead_authorize_base_merge(args) -> None:
     token = json.loads(recorded.stdout)["entry"]["data"]["token"]
     print(f"{key}: authorized base merges from {reviewed}. Run in the lane checkout, in this order:")
     for base in bases:
-        print(shlex.join(["git", "merge", "--no-ff", "--no-log", "-m", f"{key}: Merge delivery base",
-                          "-m", f"Delivery-Base-Merge: {token}", base]))
+        print(shlex.join(["git", "merge", "--no-ff", "--no-log", *base_merge_message(key, token), base]))
+    print("If a merge stops on a conflict, resolve it, `git add` the files, then finish it with:")
+    print(shlex.join(["git", "commit", *base_merge_message(key, token)]))
+
+
+BASE_MERGE_TRAILER = "Delivery-Base-Merge"
+
+
+def base_merge_message(key: str, token: str) -> list[str]:
+    """An authorized base merge's message, as `-m` arguments: the subject, then the authorization trailer."""
+    return ["-m", f"{key}: Merge delivery base", "-m", f"{BASE_MERGE_TRAILER}: {token}"]
+
+
+def base_merge_tokens(merge: str) -> list[str]:
+    """The Delivery-Base-Merge trailer values in a merge's message. Lines starting with `#` are dropped first, whatever
+    the comment character or cleanup the merge was committed with, so git's `# Conflicts:` lines never hide the
+    trailer, then `git interpret-trailers --parse` reads the rest."""
+    message = git("show", "-s", "--format=%B", merge)
+    kept = "".join(line + "\n" for line in message.splitlines() if not line.startswith("#"))
+    parsed = run(["git", "-c", "trailer.separators=:", "interpret-trailers", "--parse"], input=kept).stdout
+    values = []
+    for line in parsed.splitlines():
+        name, separator, value = line.partition(":")
+        if separator and name.strip().lower() == BASE_MERGE_TRAILER.lower():
+            values.append(value.strip())
+    return values
 
 
 def delta_entries(helper, root: Path, before: str, after: str) -> dict[bytes, bytes]:
@@ -4643,11 +4667,19 @@ def verify_base_merge(c, key: str, lane: str, reviewed: str, head: str, doc: dic
             raise Stop(f"{base} is outside the history of {c.base_ref}")
         # The authorization's unpredictable token must already be in the
         # immutable merge commit. A caller-controlled commit date proves no ordering.
-        trailers = git("-c", "trailer.separators=:", "show", "-s",
-                       "--format=%(trailers:key=Delivery-Base-Merge,valueonly)", merge).splitlines()
-        if not any(base in entry["data"]["baseCommits"]
-                   and trailers == [entry["data"]["token"]] for entry in grants):
+        covering = [entry for entry in grants if base in entry["data"]["baseCommits"]]
+        if not covering:
             raise Stop(f"the lead did not authorize {key} to merge {base} from {reviewed} before the merge")
+        trailers = base_merge_tokens(merge)
+        if not any(trailers == [entry["data"]["token"]] for entry in covering):
+            problem = (f"the base merge {merge} has no {BASE_MERGE_TRAILER} trailer from {key}'s authorization to merge "
+                       f"{base}")
+            if merge != history[-1]:
+                raise Stop(f"{problem}. It is not the last merge, so no amend fixes it: merge again from {prior}, "
+                           "with the authorized commands")
+            fix = shlex.join(["git", "commit", "--amend", *base_merge_message(key, covering[-1]["data"]["token"])])
+            raise Stop(f"{problem}. Fix its message with:\n  {fix}\nA merge already pushed is replaced only by a "
+                       "forced push, which a lane never makes: ask the lead")
         old_base = git("merge-base", c.base_ref, prior)
         new_base = git("merge-base", c.base_ref, merge)
         if new_base != base or old_base == new_base or not is_ancestor(old_base, new_base):
