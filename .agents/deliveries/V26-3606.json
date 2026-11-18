@@ -1,0 +1,122 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3606",
+  "headline": "V26-3606: let a lane pick its story review's lenses",
+  "plan": "docs/plans/2026-11-18-story-review-lens-selection.md",
+  "laneBrief": "docs/plans/2026-11-18-story-review-lens-selection.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-18-story-review-lens-selection.lane-notes.md"
+  },
+  "context": {
+    "sections": [
+      "Decisions"
+    ]
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "skills/run-delivery/scripts/run_delivery.py",
+        "skills/run-delivery/SKILL.md",
+        "skills/run-delivery/references/config.md",
+        "skills/run-delivery/references/adopting.md",
+        "skills/run-delivery/templates/lane-brief.md",
+        "tests/test_run_delivery.py",
+        "tests/test_run_delivery_supervisor.py",
+        "tests/test_run_delivery_plan_review.py",
+        "catalog.json",
+        "profiles/*"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3606": {
+      "title": "Let a lane pick its story review's lenses instead of running every declared lens",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "c1",
+          "text": "A story round can run the mandated pair plus a lane-chosen subset of the declared lenses. The set is fixed at round 1, recorded with its reason, and shown at hand-off and `lead-accept`."
+        },
+        {
+          "id": "c2",
+          "text": "Leaving out a mandated lens, or adding an undeclared one, is refused with the declared list. A different set in a later round is refused."
+        },
+        {
+          "id": "c3",
+          "text": "A lens declared plan-only is accepted by `plan-review` and refused, and never defaulted, in a story round."
+        },
+        {
+          "id": "c4",
+          "text": "Without `--lenses` and without any default set, behaviour is unchanged: every declared lens runs."
+        },
+        {
+          "id": "c5",
+          "text": "`doctor` lists each declared lens with its use (plan, story, or both)."
+        },
+        {
+          "id": "c6",
+          "text": "The config reference, the adoption guide and the lane brief describe the selection."
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "The story",
+      "text": "V26-3606 lands on main through the merge queue",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at the base head after the landing, inside tests/suite-budget.json",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "readyPullRequests": true,
+    "grantedBy": "Kwamina",
+    "grantedOn": "2026-11-18"
+  },
+  "approvals": [
+    {
+      "id": "approval-1",
+      "text": "The operator approves this plan before `lead-setup`.",
+      "state": "done",
+      "who": "Kwamina"
+    },
+    {
+      "id": "approval-2",
+      "text": "The operator grants lanes `push` and `draftPullRequests`, and the lead `readyPullRequests`.",
+      "state": "done",
+      "who": "Kwamina"
+    }
+  ],
+  "outOfScope": [
+    "A `use` member in `harness.config.ts` itself. That needs a runtime change, which goes out as a candidate first.",
+    "Changing the round brief template or the review validator. A round's `requestedLenses` already names its own set.",
+    "Choosing lenses per round. The set is held for the story.",
+    "Plan review's own rules beyond Decision 8.",
+    "A default story set in the delivery file (`storyReview.lenses`, or a story's own set), which the ticket proposed: no command writes either and `lead-setup`'s redraft drops them. A lead asks for a set in the lane brief.",
+    "Journaling the reason or a restart's old set. `review.started`'s data is closed, so either is a record-shape change."
+  ],
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  },
+  "stateDirectory": ".orchestration/deliveries/V26-3606/state"
+}
