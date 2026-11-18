@@ -1964,14 +1964,6 @@ class Runner:
         after = set(self.listed_outputs(checkout, path, argv, candidate, "candidate", context))
         return sorted(after - before), sorted(before - after)
 
-    def check_listing(
-        self, checkout: Path, path: str, argv: list[str], merge_base: str, base: str, candidate: str, context: Context | None,
-    ) -> None:
-        """Stop when the candidate changed what ``path`` lists: regeneration can't restore an output it added or removed."""
-        added, removed = self.listing_change(checkout, path, argv, merge_base, base, candidate, context)
-        if added or removed:
-            raise self.listing_stop(path, added, removed)
-
     @staticmethod
     def listing_stop(path: str, added: list[str], removed: list[str]) -> Stop:
         changes = [f"added {', '.join(added)}" if added else "", f"removed {', '.join(removed)}" if removed else ""]

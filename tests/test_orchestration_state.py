@@ -7869,6 +7869,9 @@ class SupersedingHandoffTests(unittest.TestCase):
                                   row["changeRequest"], row["namedChecks"]),
                                  ("queued", HEAD_B, None, 2, "cr 2", ["tests.test_unit"]))
                 self.assertNotIn("pending", row)
+                # The lead's acceptance settles the handing lane, as any acceptance does: idle, waiting on the story.
+                lane_row = next(entry for entry in after["lanes"] if entry["id"] == "lane-1")
+                self.assertEqual((lane_row["state"], lane_row.get("waitingOn")), ("idle", "work-a"))
                 # The checks the ended run was still running or had yet to start read superseded.
                 self.assertEqual([(check["id"], check["state"]) for check in row["checks"]],
                                  [("unit", "failed"), ("slow", "superseded"), ("late", "superseded"),
@@ -7897,6 +7900,9 @@ class SupersedingHandoffTests(unittest.TestCase):
         [superseded] = self.kinds("check.superseded")
         self.assertEqual((superseded["data"]["by"], superseded["data"]["phase"]), (handed["id"], "checks"))
         self.assertEqual((self.row()["stage"], self.row()["head"]), ("queued", HEAD_B))
+        # No one accepted it, so nothing settles the lane: it reads handed, as a hand-off needing no acceptance leaves it.
+        lane_row = next(entry for entry in state_tool.show(self.directory)["state"]["lanes"] if entry["id"] == "lane-1")
+        self.assertEqual(lane_row["state"], "handed")
 
     def test_a_carry_targets_the_waiting_hand_offs_head(self) -> None:
         self.failed()

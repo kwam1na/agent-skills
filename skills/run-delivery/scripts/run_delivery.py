@@ -4616,6 +4616,19 @@ def base_merge(args) -> None:
     print("Then rerun the gates and any required in-app and PR checks at the new head, push, and hand off.")
 
 
+def listing_reader(c, key: str, head: str):
+    """The merge queue's runner for this binding, and the values its sync step gives a listing, so a listing read at
+    hand-off, one that names `{head}` included, reads as the queue will read it."""
+    _validator()
+    import merge_queue  # noqa: E402  (the installed release's own queue)
+    queue = merge_queue.Runner(main_checkout(), c.state, remote=c.remote, base=c.base_branch)
+    queue.binding = c.binding
+    root = Path(c.binding.get("workRoot", ".orchestration/work"))
+    queue.work_root = (root if root.is_absolute() else main_checkout() / root).resolve()
+    values = queue.context(key, git("rev-parse", c.base_ref)).with_values(branch=c.branch(key), head=head)
+    return merge_queue, queue, values
+
+
 def check_base_conflict(c, key: str, head: str) -> None:
     """Decision 2: refuse a head that doesn't merge cleanly into the current base, outside the regenerable paths, so
     the lane merges it before the queue finds the conflict. A conflicted path with a listing is judged as the queue
@@ -4635,34 +4648,22 @@ def check_base_conflict(c, key: str, head: str) -> None:
     if outside:
         raise Stop(f"HEAD conflicts with {c.base_ref} at {base[:10]} in {', '.join(outside)}: {merge_hint}")
     listings = {entry["path"]: entry["argv"] for entry in regenerable.get("listings") or []}
+    conflicted = [path for path in conflicts if path in listings]
+    if not conflicted:
+        return
     merge_base = git("merge-base", base, head)
-    for path in conflicts:
-        if path not in listings:
-            continue
-        before, at_base, after = (set(listed_outputs(c, key, path, listings[path], commit, which))
-                                  for commit, which in ((merge_base, "merge base"), (base, "base"), (head, "HEAD")))
+    merge_queue, reader, values = listing_reader(c, key, head)
+    for path in conflicted:
+        try:
+            before, at_base, after = (set(reader.listed_outputs(repo(), path, listings[path], commit, which, values))
+                                      for commit, which in ((merge_base, "merge base"), (base, "base"), (head, "candidate")))
+        except merge_queue.Stop as error:
+            raise Stop(f"{error.detail}, so the queue would stop on it: merge the base before you hand off, with "
+                       f"`{flow_command()} base-merge {key}`") from error
         if after != before and at_base != before:
             raise Stop(f"HEAD conflicts with {c.base_ref} at {base[:10]} in {path}, and both this story and the base "
                        f"changed the outputs it lists (this story {queue.listing_change(before, after)}; the base "
                        f"{queue.listing_change(before, at_base)}): {merge_hint}, keeping both sides' outputs")
-
-
-def listed_outputs(c, key: str, path: str, argv: list[str], commit: str, which: str) -> list[str]:
-    """The outputs one version of a listed path lists, as the queue reads them: its listing command, given the file."""
-    shown = run(["git", "show", f"{commit}:{path}"], check=False)
-    if shown.returncode != 0:
-        raise Stop(f"{path} is absent at the {which} ({commit[:10]}), so the queue can't compare its listings: merge the "
-                   f"base before you hand off, with `{flow_command()} base-merge {key}`")
-    timeout = float((c.binding or {}).get("checkTimeoutSeconds") or 600)
-    try:
-        done = run([str(part) for part in argv], cwd=repo(), check=False, input=shown.stdout, timeout=timeout)
-        listed = json.loads(done.stdout) if done.returncode == 0 else None
-    except (subprocess.TimeoutExpired, ValueError, RecursionError):
-        listed = None
-    if not isinstance(listed, list) or not all(isinstance(entry, str) for entry in listed):
-        raise Stop(f"the listing of {path} at the {which} ({commit[:10]}) didn't print a JSON array of paths, so the "
-                   f"queue would stop on it: merge the base before you hand off, with `{flow_command()} base-merge {key}`")
-    return listed
 
 
 BASE_MERGE_TRAILER = "Delivery-Base-Merge"
@@ -4893,14 +4894,7 @@ def handoff(args) -> None:
     if (c.binding.get("regenerable") or {}).get("listings"):
         # The merge queue stops a candidate that changes what a regenerable listing lists when its lane doesn't own
         # the listing. Its own check, asked here, says so before the lead accepts rather than after.
-        _validator()
-        import merge_queue  # noqa: E402  (the installed release's own queue)
-        queue = merge_queue.Runner(main_checkout(), c.state, remote=c.remote, base=c.base_branch)
-        queue.binding = c.binding
-        root = Path(c.binding.get("workRoot", ".orchestration/work"))
-        queue.work_root = (root if root.is_absolute() else main_checkout() / root).resolve()
-        # The values the queue's sync step gives a listing, so a listing that names {head} reads the same here.
-        values = queue.context(key, git("rev-parse", c.base_ref)).with_values(branch=c.branch(key), head=head)
+        merge_queue, queue, values = listing_reader(c, key, head)
         try:
             moved = list(queue.unowned_listing_changes(lane, repo(), c.base_ref, head, values))
         except merge_queue.Stop as error:
