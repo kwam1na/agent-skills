@@ -550,6 +550,29 @@ class NeedsYouRowTests(unittest.TestCase):
         # The queue's own hold already says serving is paused, so the record's hold adds nothing beside it.
         self.assertNotIn("paused", [item["kind"] for item in run_delivery.record_needs(document, [{"kind": "runnerHold"}])])
 
+    def needs_you(self, document: dict) -> list[dict]:
+        """needs_you itself on a record, with nothing outside the record answering: no tracker, no fullHealth run, a
+        listener running, and no log or resolution on disk."""
+        here = SimpleNamespace(release=PRODUCT_ROOT, state=Path("/nonexistent"), flow_log=Path("/nonexistent"),
+                               delivery="APP", forge={})
+        with mock.patch.multiple(run_delivery, tracker_conf=lambda c: {}, base_head=lambda c: None,
+                                 full_health_running=lambda c: None, read_log=lambda *a, **k: [],
+                                 lead_listener=lambda *a, **k: {"pid": 1}, only_full_health_breaks=lambda journal: False), \
+                mock.patch.object(run_delivery.tracker_publisher, "needs_you", lambda *a, **k: []):
+            return run_delivery.needs_you(here, document)
+
+    def test_a_stop_with_no_failed_check_and_a_break_are_said_in_their_entries_story_words_as_written_or_reworded(self) -> None:
+        for detail in ("Its review is for an older head.", "Other words."):
+            document = record()
+            queue(document, "APP-1", "stopped")
+            stop = journal(document, "candidate.stopped", "APP-1", {"reason": "check_failed", "detail": detail, "stage": "checking"},
+                           lane="lane-2")
+            broken = journal(document, "base.broken", None, {"source": "queue", "detail": detail})
+            said = {item["kind"]: item["said"]["why"] for item in self.needs_you(document)}
+            self.assertEqual((said["stopped"], said["baseBroken"]),
+                             (f"{run_delivery.entry_said(stop)} 2 pieces wait on it.", run_delivery.entry_said(broken)[:300]), detail)
+            self.assertTrue(detail in said["stopped"] and detail in said["baseBroken"], said)
+
     def test_a_stopped_story_others_wait_on_is_one_item_carrying_their_count_in_its_why(self) -> None:
         document = record()
         queue(document, "APP-1", "stopped")
