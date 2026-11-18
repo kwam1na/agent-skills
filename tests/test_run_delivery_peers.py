@@ -642,7 +642,7 @@ CLOCK = "2026-11-17T14:10:02Z"
 
 
 def ours() -> dict:
-    """APP-1's record: APP-2 planned in lane 1, naming skills/render.py; APP-3 building in lane 2, which holds
+    """APP-1's record: APP-2 planned in idle lane 1, naming skills/render.py; APP-3 building in lane 2, which holds
     skills/views.py, which APP-1 claims; APP-5 queued in lane 2."""
     return {"state": {"lanes": [{"id": "lane-1", "state": "idle"}, {"id": "lane-2", "state": "working"}],
                       "queue": [{"subject": "APP-5", "lane": "lane-2", "stage": "queued"}],
@@ -674,7 +674,9 @@ class PeerWaitsTests(unittest.TestCase):
 
     def test_a_claimed_file_is_a_wait_on_the_peer_and_its_story_and_the_peer_says_who_waits_on_its_claim(self) -> None:
         found = delivery_state.peer_waits(ours(), "APP-1", [theirs()], FREE)
-        self.assertEqual(said(found), [("APP-2", "Waits for delivery PEER-1, whose PEER-2 claims skills/render.py.")])
+        self.assertEqual(said(found), [
+            ("APP-2", "Waits for delivery PEER-1, whose PEER-2 claims skills/render.py."),
+            ("lane-1", "Lane 1 is next on APP-2, which waits for delivery PEER-1, whose PEER-2 claims skills/render.py.")])
         [wait] = [wait for wait in found["waits"] if wait["subject"] == "APP-2"]
         self.assertEqual({k: wait[k] for k in ("on", "cause", "stage", "frees", "needsSomeone")},
                          {"on": {"delivery": "PEER-1", "subject": "PEER-2"}, "cause": "claim", "stage": "building",
@@ -718,7 +720,7 @@ class PeerWaitsTests(unittest.TestCase):
         peer["state"]["planned"].append({"subject": "PEER-4", "lane": "lane-2", "stage": "building",
                                          "files": ["skills/views.py"]})
         found = delivery_state.peer_waits(document, "APP-1", [peer], FREE)
-        self.assertEqual([subject for subject, _ in said(found)], ["APP-2"])
+        self.assertEqual([subject for subject, _ in said(found)], ["APP-2", "lane-1"])
         self.assertEqual([wait["by"] for wait in found["waitedOn"]], [[{"delivery": "PEER-1", "subject": "PEER-3"}]])
 
     def test_a_peers_landed_story_is_not_named_and_one_its_region_covers_is(self) -> None:
@@ -892,7 +894,7 @@ class PeerWaitViewTests(unittest.TestCase):
     def test_every_template_the_cases_reach_carries_its_own_marker(self) -> None:
         reached = {re.search(r"⟦([a-zA-Z]+\.[a-zA-Z]+(?:\.[a-z0-9]+)?)⟧", wait["words"]).group(1)
                    for name in ("waits", "waitedOn") for wait in self.found[name]}
-        self.assertEqual(reached, {"waits.claim.true", "holding.claim", "waits.slot.lead", "waits.slot",
+        self.assertEqual(reached, {"waits.claim.true", "lanes.claim.true", "holding.claim", "waits.slot.lead", "waits.slot",
                                    "holding.slot"})
         # The holder's doing is said from its own template inside the sentence.
         self.assertTrue(any("⟦doing.slot.check⟧" in wait["words"] for wait in self.found["waits"]))

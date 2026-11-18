@@ -4326,7 +4326,7 @@ def peer_waits(document: dict, delivery: str, peers: list[dict], slot: dict, *,
 
     ``peers`` are the other deliveries registered on the base, each ``{key, state}`` with its record's state;
     ``slot`` is the base's merge slot as ``slot_parties`` reads it. A planned story whose files a peer claims waits on
-    that claim (``claim``); a peer's planned story whose files this
+    that claim (``claim``), and so does an idle lane whose next story it is; a peer's planned story whose files this
     delivery claims is said under this delivery's story on the file, or the lead. A command of this delivery waiting
     for the slot a peer holds waits on it (``slot``), said under the piece it is for or the lead, and a peer's command
     waiting on this delivery's hold is said under what holds it. Each pass derives both sides from the same facts, so
@@ -4339,6 +4339,7 @@ def peer_waits(document: dict, delivery: str, peers: list[dict], slot: dict, *,
     found: list[dict] = []
     holding: list[dict] = []
     planned = [entry for entry in state.get("planned", []) if entry.get("stage") == "planned"]
+    told: dict[str, list[tuple[dict, dict]]] = {}
     for peer in peers:
         theirs = peer.get("state") if isinstance(peer.get("state"), dict) else {}
         claims = _claimed(theirs)
@@ -4350,9 +4351,11 @@ def peer_waits(document: dict, delivery: str, peers: list[dict], slot: dict, *,
             on = {"delivery": peer["key"], **({"subject": stories[0]["subject"]} if stories else {})}
             fields = {"peer": peer["key"], "named": bool(stories), "files": hits,
                       **({"story": stories[0]["subject"]} if stories else {})}
-            found.append({"subject": entry["subject"], "on": on, "cause": "claim",
-                          "stage": stories[0]["stage"] if stories else "claimed", "frees": "released",
-                          "needsSomeone": False, "words": wait_said(table, "waits", "claim", fields)})
+            wait = {"subject": entry["subject"], "on": on, "cause": "claim",
+                    "stage": stories[0]["stage"] if stories else "claimed", "frees": "released", "needsSomeone": False,
+                    "words": wait_said(table, "waits", "claim", fields)}
+            found.append(wait)
+            told.setdefault(entry["subject"], []).append((wait, fields))
         ours = _claimed(state)
         for entry in theirs.get("planned") or []:
             if not (isinstance(entry, dict) and entry.get("stage") == "planned" and isinstance(entry.get("subject"), str)):
@@ -4366,6 +4369,16 @@ def peer_waits(document: dict, delivery: str, peers: list[dict], slot: dict, *,
                             "by": [{"delivery": peer["key"], "subject": entry["subject"]}],
                             "words": wait_said(table, "holding", "claim", {"peer": peer["key"], "story": entry["subject"],
                                                                          "files": hits})})
+    for row in state.get("lanes", []):
+        if row.get("state") != "idle":
+            continue
+        following = next((entry for entry in state.get("planned", [])
+                          if entry.get("lane") == row["id"] and entry.get("stage") == "planned"), None)
+        for wait, fields in told.get(following["subject"], []) if following else []:
+            found.append({"subject": row["id"], "on": wait["on"], "cause": "claim", "stage": wait["stage"],
+                          "frees": "released", "needsSomeone": False,
+                          "words": wait_said(table, "lanes", "claim",
+                                             {**fields, "subject": row["id"], "next": following["subject"]})})
     # The queue names a delivery in the slot's files by its record's headline, a lead command by its key: both are it.
     def headline(record: object) -> object:
         meta = record.get("meta") if isinstance(record, dict) else None

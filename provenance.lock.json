@@ -530,11 +530,11 @@
         },
         {
           "path": "skills/orchestrate-work/references/wait-words.json",
-          "sha256": "b32304fe2794db0a40a1f66fa723bfbb382e05a767b5db84d1aadaaf335d756b"
+          "sha256": "608efe9b43b75b13934784e7f425ea2e12ee459b2b3e57fe7007c3dd313e011f"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "1d020cff8ad8c525262ec8b509273a1b885c35d023e46483674561e27daf731d"
+          "sha256": "1300f83976d799715259d43a23647468fa0ee8ef883ab9aaf09cb95240d31f8c"
         },
         {
           "path": "skills/orchestrate-work/scripts/journal_words.py",
