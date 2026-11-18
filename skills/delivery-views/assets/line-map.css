@@ -612,6 +612,9 @@ a.fact-ref { text-decoration: underline; text-decoration-color: color-mix(in srg
 .plan-now { margin: 0; color: var(--soft); max-width: 62ch; font-size: 18px; line-height: 1.45; }
 .plan-now-outcome { color: var(--ink); }
 .plan-now-link { display: table; margin-top: 6px; font-size: 14px; color: var(--soft); text-decoration-color: var(--hair); text-underline-offset: 3px; white-space: nowrap; }
+/* Under the outcome, how much is proven, linked to the plan, and how often the plan changed, on one quiet line. */
+.plan-now-line { display: block; margin-top: 6px; font-size: 14px; color: var(--soft); }
+.plan-now-line .plan-now-link { display: inline; margin: 0; }
 .plan-now-link:hover, .plan-now-link:focus-visible { color: var(--ink); text-decoration-color: currentColor; }
 .plan-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; max-width: none; }
 /* The plan on the page is older than the record's: said in a quiet line under the headline, with the one thing to do. */

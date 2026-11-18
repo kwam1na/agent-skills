@@ -2224,9 +2224,9 @@
   function planNow(doc) {
     if (!plan) { return null; }
     var counts = planCounts(doc);
-    var link = el("a", "plan-now-link", counts.proven + " of " + counts.total + " criteria proven · " + timesChanged(list(plan.changes).length));
+    var link = el("a", "plan-now-link", counts.proven + " of " + counts.total + " criteria proven");
     link.setAttribute("href", "#plan");
-    return link;
+    return add(el("span", "plan-now-line"), link, " · " + timesChanged(list(plan.changes).length));
   }
 
   /** The criteria a finish line covers, or null when it covers proofs only, over every unit. */

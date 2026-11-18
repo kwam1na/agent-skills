@@ -205,7 +205,8 @@ test("the plan's proof moves under the plan-now sentence with its change count, 
   plan.changes = [{ id: "c1", at: minute(30), kind: "changed", subjects: ["PAY-2"], by: "lead", why: "Clarified." }];
   const app = await facts(document, plan);
   const now = app.querySelector("#now .plan-now");
-  expect(now.querySelector(".plan-now-link").textContent).toBe("4 of 6 criteria proven · plan changed 1 time");
+  expect(now.querySelector(".plan-now-line").textContent).toBe("4 of 6 criteria proven · plan changed 1 time");
+  expect(now.querySelector(".plan-now-line .plan-now-link").textContent).toBe("4 of 6 criteria proven");
   expect(now.querySelector(".plan-now-link").getAttribute("href")).toBe("#plan");
   expect(app.querySelector("#now .facts .plan-now-link")).toBeNull();
   expect([...app.querySelectorAll("#now .facts > .fact .fact-label")].map((label) => label.textContent).includes("Plan")).toBe(false);
