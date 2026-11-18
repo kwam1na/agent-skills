@@ -3391,6 +3391,126 @@
       }
     }
   },
+  "sibling-snapshot/1": {
+    "$id": "urn:agent-skills:orchestrate-work:sibling-snapshot:1",
+    "title": "sibling-snapshot/1",
+    "description": "One read of each sibling delivery the record names, from its published hosted snapshot, as delivery-views' hosted.py siblings prints it. reconcile applies it entry by entry: an entry older than snapshotMaxAgeSeconds counts as stale.",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "takenAt",
+      "siblings"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "sibling-snapshot/1"
+      },
+      "takenAt": {
+        "$ref": "#/$defs/timestamp"
+      },
+      "siblings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "link",
+            "readAt",
+            "outcome"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+            },
+            "link": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9+.-]*://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?/d/[a-f0-9]{64}$"
+            },
+            "readAt": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "outcome": {
+              "enum": [
+                "read",
+                "stale",
+                "unavailable",
+                "incompatible",
+                "other-epic"
+              ]
+            },
+            "trackerParent": {
+              "$ref": "#/$defs/name"
+            },
+            "updatedAt": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "closing": {
+              "type": "object"
+            },
+            "stale": {
+              "type": "boolean"
+            },
+            "terminal": {
+              "type": "boolean"
+            },
+            "stories": {
+              "description": "The sibling's stories, from its body's planned and queue: present only when the outcome is read or stale.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "subject",
+                  "title",
+                  "stage"
+                ],
+                "properties": {
+                  "subject": {
+                    "$ref": "#/$defs/name"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "stage": {
+                    "enum": [
+                      "planned",
+                      "building",
+                      "review",
+                      "settled",
+                      "queued",
+                      "syncing",
+                      "synced",
+                      "checking",
+                      "checked",
+                      "merging",
+                      "merged",
+                      "stopped"
+                    ]
+                  },
+                  "changeRequest": {
+                    "$ref": "#/$defs/name"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "$defs": {
+      "name": {
+        "type": "string",
+        "minLength": 1
+      },
+      "timestamp": {
+        "type": "string",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+      }
+    }
+  },
   "work-snapshot/1": {
     "$id": "urn:agent-skills:orchestrate-work:work-snapshot:1",
     "title": "work-snapshot/1",
@@ -3523,126 +3643,6 @@
       "commit": {
         "type": "string",
         "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
-      }
-    }
-  },
-  "sibling-snapshot/1": {
-    "$id": "urn:agent-skills:orchestrate-work:sibling-snapshot:1",
-    "title": "sibling-snapshot/1",
-    "description": "One read of each sibling delivery the record names, from its published hosted snapshot, as delivery-views' hosted.py siblings prints it. reconcile applies it entry by entry: an entry older than snapshotMaxAgeSeconds counts as stale.",
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "schemaVersion",
-      "takenAt",
-      "siblings"
-    ],
-    "properties": {
-      "schemaVersion": {
-        "const": "sibling-snapshot/1"
-      },
-      "takenAt": {
-        "$ref": "#/$defs/timestamp"
-      },
-      "siblings": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "name",
-            "link",
-            "readAt",
-            "outcome"
-          ],
-          "properties": {
-            "name": {
-              "type": "string",
-              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
-            },
-            "link": {
-              "type": "string",
-              "pattern": "^[a-z][a-z0-9+.-]*://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?/d/[a-f0-9]{64}$"
-            },
-            "readAt": {
-              "$ref": "#/$defs/timestamp"
-            },
-            "outcome": {
-              "enum": [
-                "read",
-                "stale",
-                "unavailable",
-                "incompatible",
-                "other-epic"
-              ]
-            },
-            "trackerParent": {
-              "$ref": "#/$defs/name"
-            },
-            "updatedAt": {
-              "$ref": "#/$defs/timestamp"
-            },
-            "closing": {
-              "type": "object"
-            },
-            "stale": {
-              "type": "boolean"
-            },
-            "terminal": {
-              "type": "boolean"
-            },
-            "stories": {
-              "description": "The sibling's stories, from its body's planned and queue: present only when the outcome is read or stale.",
-              "type": "array",
-              "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "subject",
-                  "title",
-                  "stage"
-                ],
-                "properties": {
-                  "subject": {
-                    "$ref": "#/$defs/name"
-                  },
-                  "title": {
-                    "type": "string"
-                  },
-                  "stage": {
-                    "enum": [
-                      "planned",
-                      "building",
-                      "review",
-                      "settled",
-                      "queued",
-                      "syncing",
-                      "synced",
-                      "checking",
-                      "checked",
-                      "merging",
-                      "merged",
-                      "stopped"
-                    ]
-                  },
-                  "changeRequest": {
-                    "$ref": "#/$defs/name"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "$defs": {
-      "name": {
-        "type": "string",
-        "minLength": 1
-      },
-      "timestamp": {
-        "type": "string",
-        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
       }
     }
   }
