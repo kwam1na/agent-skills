@@ -3705,6 +3705,10 @@ class SupervisorTrackerTests(unittest.TestCase):
         window = (moment(drawn["staleAfter"]) - moment(drawn["at"])).total_seconds()
         self.assertTrue(2 <= window <= 61, window)
         self.assertTrue(all(item["clears"] for item in drawn["items"]), drawn)
+        # The break's row is said in the story's words for its entry, as the page's story says it.
+        [base] = [item for item in drawn["items"] if item["source"].endswith("(base.broken)")]
+        said = run_delivery_module("run_delivery_for_the_breaks_words").entry_said(kinds(fx, "base.broken")[-1])[:300]
+        self.assertEqual((base["said"]["headline"], base["said"]["why"]), ("The main line is broken", said))
         last = passes(fx)[-1]
         for item in last["needsYou"]:
             if item["holding"]:

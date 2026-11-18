@@ -92,7 +92,7 @@ function storyLine(document, id) {
   return beat.words.line || beat.words.head;
 }
 
-test("the base's flag takes a break's words from the story", async () => {
+test("what a closed delivery left open and the base's flag take a stop's and a break's words from the story", async () => {
   const plan = planFor([unit("A")], { finish: [], updated: "2026-10-30T09:00:00Z" });
   const journal = [
     entry(1, 10, "candidate.stopped", { reason: "check_failed", detail: "Its review is for an older head.", stage: "checking" }, "A"),
@@ -103,6 +103,11 @@ test("the base's flag takes a break's words from the story", async () => {
     const app = await first(document, plan);
     expect([...app.querySelectorAll("#plan .plan-needs li")].find((row) => row.querySelector(".a1").textContent === "The base is broken")
       .querySelector(".a2").textContent).toBe(storyLine(document, 2));
+    // Closed, the stop and the break it left open are said in the same story words, by the renderer from the record.
+    const closed = record({ queue: [item("A", "stopped")], journal: [...entries, entry(3, 14, "delivery.closed", {})] });
+    const left = await first(closed, plan);
+    expect([...left.querySelectorAll("#now .left-open li .a2")].map((row) => row.textContent))
+      .toEqual([storyLine(closed, 1), storyLine(closed, 2)]);
   }
 });
 

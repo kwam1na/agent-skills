@@ -539,6 +539,14 @@ class NeedsYouRowTests(unittest.TestCase):
         self.assertEqual(said["report"]["said"]["headline"], "A report for the lead on APP-3")
         self.assertEqual(said["stale"]["said"], {"headline": "The tracker is not answering", "why": "it timed out",
                                                  "clears": "Clears when the tracker answers again.", "who": "The lead"})
+        # A stop with no failed check is said in the story's words for its entry.
+        planned(document, "APP-4")
+        queue(document, "APP-4", "stopped")
+        quiet = journal(document, "candidate.stopped", "APP-4", {"reason": "check_failed", "detail": "Its review is for an older head.",
+                                                                  "stage": "checking"}, lane="lane-2")
+        [item] = [entry for entry in self.said(document, run_delivery.record_needs(document, [])) if entry.get("subject") == "APP-4"]
+        self.assertEqual(item["said"]["why"], run_delivery.entry_said(quiet))
+        self.assertTrue(item["said"]["why"])
         # The queue's own hold already says serving is paused, so the record's hold adds nothing beside it.
         self.assertNotIn("paused", [item["kind"] for item in run_delivery.record_needs(document, [{"kind": "runnerHold"}])])
 
@@ -562,6 +570,9 @@ class NeedsYouRowTests(unittest.TestCase):
             self.assertEqual(kinds - set(table[name]["cases"]), set(), name)
         self.assertEqual(kinds, set(table["headline"]["cases"]))
         self.assertEqual({pair[0]: pair[2] for pair in found if pair[2] and pair[0] == "drafts"}, {"drafts": "operator"})
+        # The items about one story name it, so their rows draw its stop: the merge not accepted, and a blocker on a story.
+        self.assertRegex(body, r'"kind": "unaccepted",\s*"who": "lead", "subject": item\["subject"\]')
+        self.assertRegex(body, r'"kind": "runnerHold" if runners else "blocker", "who": "lead"[^\n]*\n\s*\*\*\(\{"subject": entry\["subject"\]\} if entry\.get\("subject"\) else \{\}\)')
         # Each kind's headline, from the facts its producer gives it.
         document = record()
         given = {
