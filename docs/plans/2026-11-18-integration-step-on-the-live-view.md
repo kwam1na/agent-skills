@@ -52,7 +52,8 @@ Checked against `main` at `e935fe4` on 2026-11-18:
      `suite-budget/1`: every test passed and the run went over, which doesn't hold a release; every other exit,
      including a 3 without such a budget, is `failed`, since exit 3 means something else to another repository's
      suite; and `unreadable` is a run whose checkout or prepare step
-     failed before the suite started. `budgetSeconds` is that file's `wallSeconds`, and absent otherwise. The flow log line carries the same `result`, so `over-budget` and `unreadable` are new
+     failed before the suite started. `budgetSeconds` is that file's `wallSeconds`, and absent otherwise. The file is read in the run's own checkout at
+     the head it ran, not in the lead's checkout. The flow log line carries the same `result`, so `over-budget` and `unreadable` are new
      values there too.
    - `integration.requested` `{changeRequest, head}`: the change request into the target, opened at `head`.
    - `integration.landed` `{target, head}`: that change request merged, `head` the target's new head.
@@ -143,7 +144,8 @@ In `tests/test_run_delivery.py`, for the record and the commands:
 - `lead-init` on a delivery file with `integrationTarget` writes `meta.integration` with base, target and remote; one
   without writes none.
 - `lead-suite --at H` on such a record journals `integration.suite` with H and its result, for each exit: 0 `passed`,
-  3 under a `suite-budget/1` `--budget` file `over-budget` with its `wallSeconds`, 3 with no `--budget` `failed`, 1 `failed` (journalled before the command exits
+  3 under a `suite-budget/1` `--budget` file `over-budget` with its `wallSeconds`, 3 with no `--budget` `failed`, 3 with a `--budget` file that isn't `suite-budget/1` `failed` with no
+  `budgetSeconds`, 3 where the run's checkout and the lead's hold different budget files reading the run's, 1 `failed` (journalled before the command exits
   non-zero), and a prepare step that fails `unreadable`. The flow log line carries the same result each time. On a
   record without `meta.integration`, it journals nothing, and its flow log line is as before apart from the result
   values.
