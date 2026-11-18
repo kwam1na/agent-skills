@@ -1415,6 +1415,138 @@ class ScopedSweepTests(unittest.TestCase):
 
 
 
+def sibling_row(name: str, stories: list[dict], outcome: str = "read", **fields: object) -> dict:
+    """A sibling as reconcile leaves it: its last kept read's stories, and its latest read's outcome."""
+    at = "2026-11-18T10:00:00Z"
+    return {"name": name, "link": "https://example.test/d/" + "a" * 64, "addedAt": at, "lastOutcome": outcome,
+            "lastAttemptAt": at, "readAt": at, "trackerParent": "APP-1", "stories": stories, **fields}
+
+
+class SiblingSweepTests(unittest.TestCase):
+    """The tracker sweep leaves a child a sibling delivery holds to it, with or without a scope."""
+
+    # The scoped sweep's fixture, without its cases.
+    setUp, reconcile, state, lead, cleared = (ScopedSweepTests.setUp, ScopedSweepTests.reconcile, ScopedSweepTests.state,
+                                              ScopedSweepTests.lead, ScopedSweepTests.cleared)
+
+    def siblings(self, *rows: dict) -> None:
+        path = self.directory / delivery_state.STATE_FILE
+        state = json.loads(path.read_text(encoding="utf-8"))
+        state["meta"]["trackerParent"] = "APP-1"
+        state["siblings"] = list(rows)
+        path.write_text(json.dumps(state), encoding="utf-8")
+        self.assertEqual(delivery_state.state_errors(state), [])
+
+    def test_a_child_a_sibling_holds_is_never_taken_in_and_a_copy_the_sweep_added_is_cleared_once(self) -> None:
+        backend = [{"subject": "APP-40", "title": "Login API", "stage": "building"},
+                   {"subject": "APP-41", "title": "Token refresh", "stage": "planned"}]
+        self.lead({
+            # A copy the sweep took in before the sibling was read, and a follow-up it filed the same way.
+            "planned": [{"subject": "APP-40", "title": "Login API", "lane": None, "stage": "building", "trackerStarted": True}],
+            "followups": [{"id": "APP-41", "title": "Token refresh", "reference": "APP-41"}],
+            "tickets": {"APP-40": {"title": "Login API", "summary": "The API."}},
+        })
+        self.siblings(sibling_row("backend", backend))
+        children = [{"subject": "APP-40", "title": "Login API", "state": "started"},
+                    {"subject": "APP-41", "title": "Token refresh", "state": "backlog"},
+                    {"subject": "APP-42", "title": "Login screen", "state": "started"}]
+        # No --scope: the tracker lists every child of the parent as its own.
+        result = self.reconcile(tracker_snapshot(children))
+        state = self.state()
+        self.assertEqual([entry["subject"] for entry in state["planned"]], ["APP-42"])
+        self.assertEqual(state["followups"], [])
+        self.assertNotIn("APP-40", state.get("tickets", {}))
+        self.assertNotIn("outside", state, "a child a sibling holds is drawn in its group, not elsewhere")
+        why = "held by sibling backend"
+        self.assertEqual(self.cleared(), [("APP-40", {"from": "planned", "why": why}),
+                                          ("APP-41", {"from": "followups", "why": why})])
+        self.assertFalse([entry for entry in result["reports"] if entry["subject"] in ("APP-40", "APP-41")])
+        # A second sweep finds nothing more to clear, and takes nothing in.
+        again = self.reconcile(tracker_snapshot(children))
+        self.assertEqual(len(self.cleared()), 2)
+        self.assertEqual((again["drift"], again["reports"]), (False, []))
+        # A sibling that can't be read now still holds what its last kept read listed: nothing comes back.
+        self.siblings(sibling_row("backend", backend, outcome="unavailable"))
+        self.reconcile(tracker_snapshot(children))
+        self.assertEqual([entry["subject"] for entry in self.state()["planned"]], ["APP-42"])
+        self.assertEqual(self.state()["followups"], [])
+        self.assertEqual(len(self.cleared()), 2)
+
+    def test_a_story_of_this_delivery_with_a_subject_a_sibling_lists_is_never_cleared(self) -> None:
+        own = [{"subject": "APP-50", "title": "Own, with a lane", "lane": "lane-1", "stage": "building", "trackerStarted": True},
+               {"subject": "APP-51", "title": "Own, not yet started", "lane": None, "stage": "planned"},
+               {"subject": "APP-52", "title": "Own, ordered after", "lane": None, "stage": "building",
+                "trackerStarted": True, "after": ["APP-50"]}]
+        self.lead({"planned": own, "queue": [queued("APP-53")]})
+        listed = [{"subject": subject, "title": "Theirs", "stage": "building"} for subject in ("APP-50", "APP-51", "APP-52", "APP-53")]
+        self.siblings(sibling_row("backend", listed))
+        snapshot = tracker_snapshot([{"subject": subject, "title": "Ours", "state": "started"}
+                                     for subject in ("APP-50", "APP-51", "APP-52", "APP-53")])
+        for _ in range(2):
+            self.reconcile(snapshot)
+        state = self.state()
+        self.assertEqual([entry["subject"] for entry in state["planned"]], ["APP-50", "APP-51", "APP-52"])
+        self.assertEqual([entry["subject"] for entry in state["queue"]], ["APP-53"])
+        self.assertEqual(self.cleared(), [])
+        # Lane-less work of this delivery keeps its shape, so no later sweep takes it for work the sweep added.
+        planned = {entry["subject"]: entry for entry in state["planned"]}
+        self.assertEqual((planned["APP-51"]["stage"], "trackerStarted" in planned["APP-51"]), ("planned", False))
+
+    def test_a_story_journaled_as_added_is_never_cleared_though_it_looks_tracker_added(self) -> None:
+        self.lead({"planned": [{"subject": "APP-60", "title": "Added by the lead", "lane": None, "stage": "building",
+                                "trackerStarted": True}]})
+        delivery_state.append_journal(self.directory, kind="story.added", subject="APP-60",
+                                      data={"title": "Added by the lead", "why": "found during review"})
+        self.siblings(sibling_row("backend", [{"subject": "APP-60", "title": "Theirs", "stage": "building"}]))
+        self.reconcile(tracker_snapshot([{"subject": "APP-60", "title": "Ours", "state": "started"}]))
+        self.assertEqual([entry["subject"] for entry in self.state()["planned"]], ["APP-60"])
+        self.assertEqual(self.cleared(), [])
+
+    def test_with_a_scope_a_child_a_sibling_holds_is_cleared_for_the_sibling_and_left_out_of_elsewhere(self) -> None:
+        self.lead({"planned": [{"subject": "APP-22", "title": "[Backend] Login API", "lane": None, "stage": "building",
+                                "trackerStarted": True}]})
+        self.siblings(sibling_row("backend", [{"subject": "APP-22", "title": "Login API", "stage": "review"}]))
+        self.reconcile(tracker_snapshot([], outside=OUTSIDE))
+        self.assertEqual(self.cleared(), [("APP-22", {"from": "planned", "why": "held by sibling backend"})])
+        # The scoped snapshot's outside list is still kept whole: the views decide which group draws each child.
+        self.assertEqual(self.state()["outside"], OUTSIDE)
+
+    def test_the_tracker_still_reports_on_a_story_of_this_delivery_a_sibling_lists(self) -> None:
+        self.lead({"planned": [{"subject": "APP-70", "title": "Own", "lane": "lane-1", "stage": "building",
+                                "trackerStarted": True}]})
+        self.siblings(sibling_row("backend", [{"subject": "APP-70", "title": "Theirs", "stage": "building"}]))
+        result = self.reconcile(tracker_snapshot([{"subject": "APP-70", "title": "Own", "state": "canceled"}]))
+        self.assertIn({"subject": "APP-70", "note": "canceled in the tracker but still building in the record"},
+                      result["reports"])
+
+    def test_a_subject_two_siblings_hold_is_cleared_for_the_first_in_name_order(self) -> None:
+        self.lead({"planned": [{"subject": "APP-80", "title": "Shared", "lane": None, "stage": "building",
+                                "trackerStarted": True}]})
+        listed = [{"subject": "APP-80", "title": "Shared", "stage": "building"}]
+        self.siblings(sibling_row("web", listed), sibling_row("api", listed))
+        self.reconcile(tracker_snapshot([{"subject": "APP-80", "title": "Shared", "state": "started"}]))
+        self.assertEqual(self.cleared(), [("APP-80", {"from": "planned", "why": "held by sibling api"})])
+
+    def test_a_sibling_now_of_another_epic_holds_nothing_it_listed_before(self) -> None:
+        listed = [{"subject": "APP-90", "title": "Theirs once", "stage": "building"}]
+        self.siblings(sibling_row("backend", listed, outcome="other-epic"))
+        result = self.reconcile(tracker_snapshot([{"subject": "APP-90", "title": "Ours now", "state": "started"}]))
+        # The views draw such a sibling with no stories, so the sweep takes the child in as it would any other.
+        self.assertEqual([entry["subject"] for entry in self.state()["planned"]], ["APP-90"])
+        self.assertIn("APP-90", [change["subject"] for change in result["changes"]])
+        self.assertEqual(self.cleared(), [])
+
+    def test_a_forge_snapshot_alone_clears_nothing(self) -> None:
+        self.lead({"planned": [{"subject": "APP-40", "title": "Login API", "lane": None, "stage": "building",
+                                "trackerStarted": True}]})
+        self.siblings(sibling_row("backend", [{"subject": "APP-40", "title": "Login API", "stage": "building"}]))
+        self.count += 1
+        path = self.root / f"forge-{self.count}.json"
+        path.write_text(json.dumps({**tracker_snapshot([]), "source": "forge"}), encoding="utf-8")
+        delivery_state.reconcile(self.directory, [path])
+        self.assertEqual(self.cleared(), [])
+
+
 class TrackerScopeDoctorTests(unittest.TestCase):
     """doctor's tracker snapshot scope row runs the binding's snapshot with --check and reads what it names."""
 

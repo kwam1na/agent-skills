@@ -600,8 +600,18 @@ class SiblingTests(unittest.TestCase):
         self.reconcile(self.read())
         document = {"state": state_tool.read_state(self.record), "journal": state_tool.read_journal(self.record)}
         self.assertTrue(document["state"]["siblings"])
-        value = public.project(document, {}, config(), source_fingerprint="1" * 64)
+        # As the state wrapper hands it to every view and publisher: with the words the views give its siblings.
+        render_state = sys.modules.get("render_state_for_siblings") or _load("render_state_for_siblings",
+                                                                             STATE_SCRIPTS / "render_state.py")
+        document = render_state.with_across(document)
+        self.assertIn("SIB-1", document["across"]["held"])
+        # A tracker that links every key, so a sibling's story would be linked if anything let it through.
+        tracker = {"name": "Tracker", "issueUrl": "https://tracker.test/issue/{key}"}
+        value = public.project(document, {}, config(tracker=tracker), source_fingerprint="1" * 64)
         public.validate(value)
+        self.assertNotIn("across", value["document"])
+        self.assertNotIn("SIB-1", value["links"]["issues"])
+        self.assertIn(PARENT, value["links"]["issues"], "the tracker links what the hosted page does draw")
         self.assertEqual(value["schemaVersion"], "hosted-delivery-snapshot/2")
         self.assertNotIn("siblings", value["document"]["state"])
         text = json.dumps(value)
