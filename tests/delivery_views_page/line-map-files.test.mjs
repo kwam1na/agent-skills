@@ -99,6 +99,15 @@ test("a file of another spec is refused, and claimed files past the bound are co
   expect([...more.app.querySelectorAll(".files-fold .say")].map((p) => p.textContent)).toEqual(["2 more claimed files aren't shown."]);
 });
 
+test("a live page re-reads the files block when it refreshes, with no reload", async () => {
+  const moved = structuredClone(FILES);
+  moved.lanes["lane-1"].files = [];
+  const [before, , after] = await openPage(renderPage(record(), { config, files: FILES }), { now: NOW,
+    rendered: renderPage(record(), { config, files: moved }), steps: [{ push: record() }, { wait: 3100 }] });
+  expect(marks([...before.app.querySelectorAll(".file.whole")])[0]).toEqual(["src/one.py", "solid"]);
+  expect(marks([...after.app.querySelectorAll(".file.whole")])[0]).toEqual(["src/one.py", "hollow"]);
+});
+
 test("with no region claims the page has no files view, whatever the branch read wrote", async () => {
   const [page] = await openPage(renderPage(record(false), { config, files: FILES }), { now: NOW });
   expect(page.app.querySelector(".files-fold")).toBeNull();

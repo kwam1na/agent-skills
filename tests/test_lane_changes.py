@@ -287,12 +287,20 @@ class LaneChangesTests(unittest.TestCase):
         d.push(checkout, {SHARED: "".join(lines)})
         _, items = d.one_pass()
         self.assertEqual(self.texts(items), [f"Lane 1 added 1 line before line {held} of `{SHARED}`, outside its span."])
+        # A mode change with a hunk outside the span beside it: the mode is what no span holds.
         git(checkout, "checkout", "-q", "origin/main", "--", SHARED)
         (checkout / SHARED).chmod(0o755)
-        d.push(checkout, {})
+        lines = list(SHARED_LINES)
+        lines[1] = "    return 100\n"
+        d.push(checkout, {SHARED: "".join(lines)})
         changes, items = d.one_pass()
         self.assertEqual(changes["lanes"]["lane-1"]["files"][0]["holds"], "none")
         self.assertEqual(self.texts(items), [f"Lane 1 changed `{SHARED}`, which it doesn't hold."])
+        with self.subTest("a holdings check that stops is written as an unreadable branch"):
+            with mock.patch.object(run_delivery, "candidate_ownership", side_effect=run_delivery.Stop("git diff failed")):
+                changes, items = d.one_pass()
+            self.assertEqual(changes["lanes"]["lane-1"]["unreadable"], "git diff failed")
+            self.assertEqual([item["kind"] for item in items], ["laneUnreadable"])
         with self.subTest("a lane no longer in the record raises nothing"):
             d.state["lanes"] = [lane for lane in d.state["lanes"] if lane["id"] != "lane-1"]
             self.assertEqual(run_delivery.lane_change_needs(d.config(), d.state), [])
