@@ -1384,8 +1384,9 @@ class TrackerScopeDoctorTests(unittest.TestCase):
         self.answer = subprocess.CompletedProcess([], 0, json.dumps(
             {"check": "tracker-scope/1", "unknown": [], "unmapped": [], "unmarked": []}), "")
 
-    def row(self, *extra: str) -> tuple[str, str]:
+    def row(self, *extra: str, token: tuple[str, str] = ("ok", "JIRA_API_TOKEN set")) -> tuple[str, str]:
         doctor = object.__new__(self.module.Doctor)
+        doctor.tracker_token = lambda: token
         doctor.root = self.state.parent
         doctor.c = SimpleNamespace(state=self.state, delivery="APP-10")
         doctor.binding = {"state": {"trackerSnapshot": {"argv": [
@@ -1427,6 +1428,11 @@ class TrackerScopeDoctorTests(unittest.TestCase):
         self.found(unmarked=["APP-24"])
         self.assertEqual(self.row("--scope", "label=mobile"),
                          ("warn", "in scope with no scoped value: APP-24; tag each in the tracker"))
+
+    def test_with_the_token_unset_the_row_is_skipped_and_runs_nothing(self) -> None:
+        self.assertEqual(self.row("--scope", "label=mobile", token=("missing", "JIRA_API_TOKEN is unset")),
+                         ("skipped", "(needs tracker-token)"))
+        self.assertEqual(self.ran, [])
 
     def test_a_failed_check_is_wrong_and_names_why(self) -> None:
         self.answer = subprocess.CompletedProcess([], 1, "", "snapshot: the provider refused the credentials: HTTP 401\n")

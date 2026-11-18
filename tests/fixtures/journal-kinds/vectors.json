@@ -1490,6 +1490,17 @@
       "line": "APP-40: Keep facts in the journal"
     },
     {
+      "kind": "work.cleared",
+      "lane": null,
+      "subject": "APP-22",
+      "data": {
+        "from": "planned",
+        "why": "outside this delivery's scope"
+      },
+      "head": "APP-22 was cleared from the record",
+      "line": "outside this delivery's scope"
+    },
+    {
       "kind": "followup.filed",
       "lane": null,
       "subject": null,
@@ -1500,17 +1511,6 @@
       },
       "head": "A follow-up was filed",
       "line": "APP-40: Keep facts in the journal"
-    },
-    {
-      "kind": "work.cleared",
-      "lane": null,
-      "subject": "APP-22",
-      "data": {
-        "from": "planned",
-        "why": "outside this delivery's scope"
-      },
-      "head": "APP-22 was cleared from the record",
-      "line": "outside this delivery's scope"
     },
     {
       "kind": "snapshot.stale",

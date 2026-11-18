@@ -12407,8 +12407,8 @@ class Doctor:
             ("gh", "gh", ("config",), self.gh),
             ("forge", "forge find", ("config", "gh"), self.forge),
             ("forge-write", "forge write access", ("config",), self.forge_write),
+            ("tracker-scope", "tracker snapshot scope", ("config", "binding"), self.tracker_scope),
             ("tracker-token", "tracker snapshot token", ("binding",), self.tracker_token),
-            ("tracker-scope", "tracker snapshot scope", ("config", "tracker-token"), self.tracker_scope),
             ("publishing", "snapshots and publishers", ("config", "binding"), self.publishing),
             ("hosted", "hosted delivery", ("config",), self.hosted),
             ("in-app", "in-app adapters", ("config",), self.in_app),
@@ -12782,6 +12782,8 @@ class Doctor:
         argv = list(spec.get("argv") or [])
         if not any(part in ("--scope", "--status-state") for part in argv):
             return self.not_applicable("the tracker snapshot sets no --scope or --status-state")
+        if self.tracker_token()[0] != "ok":  # Its own row, next, says which variable to export.
+            return "skipped", "(needs tracker-token)"
         state = getattr(self.c, "state", None) or self.c.main / self.c.state_rel
         try:
             parent = json.loads((Path(state) / "state.json").read_text())["meta"].get("trackerParent")
