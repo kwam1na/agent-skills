@@ -2515,6 +2515,240 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
             with self.subTest(hunk=hunk):
                 self.assertEqual(self.call("separator_marked", hunk), expected)
 
+    def test_a_head_that_conflicts_with_the_base_is_refused_at_hand_off_and_told_to_merge_it(self) -> None:
+        """Decision 2: hand-off refuses a head that doesn't merge cleanly into the current base outside the regenerable
+        paths, naming the files and `base-merge`. A conflicted listed path is judged as the queue judges it: refused
+        only when both sides changed its listing. A clean move, or none, hands off as today."""
+        fx = self.assigned_fixture()
+        m = fx.main
+        lock, source = "provenance.lock.json", "src/one-file.txt"
+        (m / "tools/list_outputs.py").write_text(
+            "import json, sys\nprint(json.dumps(sorted(entry['path'] for entry in json.load(sys.stdin)['outputs'])))\n")
+        added, unlisted = "added.lock.json", "unlisted.lock.json"
+        (m / ".agents/orchestration.json").write_text(json.dumps({"regenerable": {
+            "paths": [lock, added, unlisted], "regenerators": [["true"]],
+            "listings": [{"path": path, "argv": [sys.executable, "-B", "tools/list_outputs.py"]} for path in (lock, added)]
+            + [{"path": unlisted, "argv": [sys.executable, "-c", "print('{}')"]}]}}, indent=2))
+
+        def listed(*outputs):
+            return json.dumps({"outputs": [{"path": path, "sha": sha} for path, sha in outputs]}, indent=2) + "\n"
+
+        def base_moves(files):
+            for path, content in files.items():
+                (m / path).write_text(content)
+            commit(m, "Move the base")
+            sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+            return sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
+
+        first = base_moves({lock: listed(("a", "1")), source: "start\n", unlisted: "start\n"})
+        wt = fx.lane("FX-2")
+
+        def candidate(parent, files):
+            sh("git", "reset", "-q", "--hard", parent, cwd=wt)
+            for path, content in files.items():
+                (wt / path).write_text(content)
+            commit(wt, "FX-2: the story")
+
+        def handoff():
+            return fx.flow("handoff", "FX-2", "--pr", "https://forge.test/pr/1", cwd=wt)
+
+        def passes(why):
+            code, out = handoff()
+            self.assertEqual(code, 2, out)
+            self.assertNotIn("base-merge", out, why)
+            self.assertIn("push first", out, why)  # past the conflict check, at the push check that follows it
+
+        def refused(*said):
+            code, out = handoff()
+            self.assertEqual(code, 2, out)
+            self.assertIn("conflicts with origin/feature/FX-1", out)
+            self.assertIn("base-merge FX-2", out)
+            for text in said:
+                self.assertIn(text, out)
+            return out
+
+        with self.subTest("a head on an unmoved base"):
+            candidate(first, {source: "story\n"})
+            passes("a head on an unmoved base was refused")
+        moved = base_moves({"src/app.txt": "moved\n"})
+        with self.subTest("a base that moved without a conflict"):
+            passes("a clean base move was refused")
+        conflicting = base_moves({source: "base\n"})
+        with self.subTest("a head that conflicts outside the regenerable paths"):
+            candidate(moved, {source: "story\n"})
+            refused(source)
+        digests = base_moves({lock: listed(("a", "2"))})
+        with self.subTest("a listed path in conflict, where only the candidate changed its listing"):
+            candidate(conflicting, {lock: listed(("a", "3"), ("b", "1"))})
+            passes("only the candidate changed the listing, and the queue takes its side")
+        both = base_moves({lock: listed(("a", "2"), ("c", "1"))})
+        with self.subTest("a listed path in conflict, where both sides changed its listing"):
+            candidate(digests, {lock: listed(("a", "2"), ("b", "1"))})
+            out = refused(lock, "both")
+            self.assertNotIn(source, out)
+        with self.subTest("a listed path in conflict, where the base changed its listing and the candidate only digests"):
+            candidate(digests, {lock: listed(("a", "9"))})
+            passes("only the base changed the listing, and the queue takes its side")
+        again = base_moves({source: "base again\n"})
+        with self.subTest("a head that conflicts in a listed path and a source file"):
+            candidate(digests, {lock: listed(("a", "9")), source: "story\n"})
+            out = refused(source)
+            self.assertNotIn(f"conflicts with origin/feature/FX-1 at {both[:10]} in {lock}", out)
+
+        def unjudged(*said):
+            code, out = handoff()
+            self.assertEqual(code, 2, out)
+            for text in (*said, "base-merge FX-2"):
+                self.assertIn(text, out)
+
+        adding = base_moves({added: listed(("x", "1"))})
+        with self.subTest("a listed path both sides added, absent at the merge base"):
+            candidate(again, {added: listed(("y", "1"))})
+            unjudged(f"{added} is absent at the merge base")
+        base_moves({unlisted: "base\n"})
+        with self.subTest("a listed path whose listing prints no JSON array"):
+            candidate(adding, {unlisted: "story\n"})
+            unjudged(f"the listing of {unlisted}", "didn't print a JSON array")
+
+    def test_a_lane_merges_the_base_before_hand_off_and_the_review_carries(self) -> None:
+        """Decision 3: `base-merge` journals the lane's own authorization and prints the merge and its finish. The merge
+        carries at hand-off, a second one from the merged head too, and the lead accepts it. Once the queue holds the
+        story, or nothing has moved, or the checkout isn't the reviewed head or one carried from it, it refuses."""
+        fx = self.assigned_fixture()
+        m = fx.main
+        delivery = m / ".agents/deliveries/FX-1.json"
+        data = json.loads(delivery.read_text())
+        data["stories"]["FX-2"]["inApp"] = "none"
+        delivery.write_text(json.dumps(data, indent=2))
+        listed = "src/one-list.json"
+
+        def array(*items):
+            return "[\n" + ",\n".join(f'  "{item}"' for item in items) + "\n]\n"
+
+        (m / listed).write_text(array("a"))
+        commit(m, "Add a lane-owned array")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+
+        def flow(*args, cwd=m):
+            code, out = fx.flow(*args, cwd=cwd)
+            self.assertEqual(code, 0, out)
+            return out
+
+        def refuses(said, *args, cwd=None):
+            code, out = fx.flow(*args, cwd=cwd or wt)
+            self.assertEqual(code, 2, out)
+            self.assertIn(said, out)
+            return out
+
+        wt = fx.lane("FX-2")
+        (wt / listed).write_text(array("a", "b"))
+        commit(wt, "FX-2: append b")
+        reviewed = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+        review = wt / ".orchestration/review/FX-2"
+        review.mkdir(parents=True)
+        (review / "context.md").write_text("- fixture evidence\n")
+        flow("gate", "FX-2", cwd=wt)
+        flow("review-prepare", "FX-2", "--round", 1, cwd=wt)
+        write_results(review, 1, "FX-2", fx.lenses(wt))
+        flow("review-reduce", "FX-2", "--round", 1, cwd=wt)
+        flow("push", "FX-2", cwd=wt)
+        body = fx.tmp / "body.md"
+        body.write_text("Summary\n")
+        url = "https://forge.test/pr/1"
+        flow("open-pr", "FX-2", "--title", "FX-2: one", "--body-file", body, cwd=wt)
+
+        def base_appends(*items):
+            (m / listed).write_text(array(*items))
+            commit(m, "Append to the array in the base")
+            flow("lead-push")
+            return sh("git", "rev-parse", "HEAD", cwd=m).stdout.strip()
+
+        refuses("already in HEAD's history", "base-merge", "FX-2")
+        first = base_appends("a", "c")
+        refuses("base-merge FX-2", "handoff", "FX-2", "--pr", url)
+        record = fx.tmp / "record"
+        state_tool = fx.release / "skills/orchestrate-work/scripts/delivery_state.py"
+
+        def journal(*args):
+            return subprocess.run([sys.executable, "-B", state_tool, "--dir", record, "journal", *args],
+                                  text=True, capture_output=True, env=fx.env)
+
+        with self.subTest("the state tool refuses a lane's authorization without by: lane, and hand-off carries none"):
+            refused = journal("--writer", "lane", "--kind", "base.merge.authorized", "--subject", "FX-2", "--lane",
+                              "lane-1", "--data", json.dumps({"reviewed": reviewed, "baseCommits": [first]}))
+            self.assertNotEqual(refused.returncode, 0, refused.stdout)
+            self.assertIn("writer_not_owned", refused.stdout + refused.stderr)
+            sh("git", "merge", "-q", "--no-ff", "-m", "FX-2: Merge delivery base", "-m",
+               f"Delivery-Base-Merge: {'0' * 32}", first, cwd=wt, check=False)
+            (wt / listed).write_text(array("a", "c", "b"))
+            sh("git", "add", "-A", cwd=wt)
+            sh("git", "commit", "-q", "--no-edit", cwd=wt)
+            sh("git", "push", "-q", "--force", "origin", "HEAD:feature/FX-2", cwd=wt)
+            refuses("did not authorize", "handoff", "FX-2", "--pr", url)
+            sh("git", "reset", "-q", "--hard", reviewed, cwd=wt)
+            sh("git", "push", "-q", "--force", "origin", "HEAD:feature/FX-2", cwd=wt)
+        with self.subTest("a last round that asked for changes, so nothing aligned to carry"):
+            asked = review / "round-2.json"
+            asked.write_text(json.dumps({"round": 2, "outcome": "changes-requested", "entries": [
+                {"lens": "lens.outcome-correctness", "binding": {"subjectRef": "FX-2", "candidateRef": reviewed}}]}))
+            refuses("has no aligned review round", "base-merge", "FX-2")
+            asked.unlink()
+            self.assertFalse([e for e in self.shown(record)["journal"] if e["kind"] == "base.merge.authorized"])
+        with self.subTest("a checkout neither at the reviewed head nor at a head carried from it"):
+            sh("git", "commit", "-q", "--allow-empty", "-m", "FX-2: a lane commit", cwd=wt)
+            refuses("is neither", "base-merge", "FX-2")
+            sh("git", "reset", "-q", "--hard", reviewed, cwd=wt)
+
+        def merge_base(*items):
+            out = flow("base-merge", "FX-2", cwd=wt).splitlines()
+            merge = shlex.split(next(line for line in out if line.startswith("git merge ")))
+            finish = next(line for line in out if line.startswith("git commit "))
+            token = merge[merge.index("-m", merge.index("-m") + 1) + 1].removeprefix("Delivery-Base-Merge: ")
+            self.assertEqual(finish, shlex.join(["git", "commit", "-m", "FX-2: Merge delivery base", "-m",
+                                                 f"Delivery-Base-Merge: {token}"]))
+            self.assertNotEqual(sh(*merge, cwd=wt, check=False).returncode, 0, "the fixture's merge was meant to conflict")
+            (wt / listed).write_text(array(*items))
+            sh("git", "add", "-A", cwd=wt)
+            sh(*shlex.split(finish), cwd=wt)
+            entry = [e for e in self.shown(record)["journal"] if e["kind"] == "base.merge.authorized"][-1]
+            return entry, token
+
+        entry, token = merge_base("a", "c", "b")
+        self.assertEqual((entry["lane"], entry["subject"], entry["data"]),
+                         ("lane-1", "FX-2", {"reviewed": reviewed, "baseCommits": [first], "by": "lane", "token": token}))
+        refuses("already in HEAD's history", "base-merge", "FX-2")
+        second = base_appends("a", "c", "d")
+        entry, _ = merge_base("a", "c", "d", "b")  # from the merged head, without a reset
+        self.assertEqual(entry["data"]["baseCommits"], [second])
+        self.assertEqual(entry["data"]["reviewed"], reviewed)
+        head = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
+        flow("push", "FX-2", cwd=wt)
+        flow("gate", "FX-2", cwd=wt)
+        flow("handoff", "FX-2", "--pr", url, cwd=wt)
+        hand = [e for e in self.shown(record)["journal"] if e["kind"] == "candidate.handed"][-1]
+        self.assertEqual((hand["data"]["head"], hand["data"]["carry"]["from"], hand["data"]["carry"]["baseCommits"]),
+                         (head, reviewed, [first, second]))
+        flow("lead-accept", "FX-2")
+        self.assertEqual(self.shown(record)["state"]["queue"][0]["head"], head)
+        refuses("lead-authorize-base-merge", "base-merge", "FX-2")
+        stored = record / "state.json"
+        for stage in ("checking", "merged"):
+            with self.subTest(stage=stage):
+                # The queue's own stages, written as its passes leave them: only base-merge's reading of them is tested.
+                saved = json.loads(stored.read_text())
+                saved["queue"] = [{**row, "stage": stage} if row["subject"] == "FX-2" else row for row in saved["queue"]]
+                stored.write_text(json.dumps(saved, indent=2) + "\n")
+                refuses(f"FX-2 is {stage}", "base-merge", "FX-2")
+        with self.subTest("a story the queue stopped merges the moved base itself"):
+            saved = json.loads(stored.read_text())
+            saved["queue"] = [{**row, "stage": "stopped", "assignedLane": "lane-1"} if row["subject"] == "FX-2" else row
+                              for row in saved["queue"]]
+            stored.write_text(json.dumps(saved, indent=2) + "\n")
+            third = base_appends("a", "c", "d", "e")
+            flow("base-merge", "FX-2", cwd=wt)
+            entry = [e for e in self.shown(record)["journal"] if e["kind"] == "base.merge.authorized"][-1]
+            self.assertEqual((entry["data"]["baseCommits"], entry["data"]["by"]), ([third], "lane"))
+
     def test_lane_and_lead_flow_end_to_end(self) -> None:
         fx = self.fixture()
         flow_run = fx.flow
@@ -3256,11 +3490,16 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
         expect("the operator gave lanes authority" in (m / "docs/lane-brief.md").read_text(),
                "the lead's checkout didn't read its own working tree")
         brief = " ".join((m / "docs/lane-brief.md").read_text().split())
-        self.assertIn("Before merging the base into your story branch, wait for the lead to record the authorization "
-                      "for your story, reviewed head and exact base commits with `lead-authorize-base-merge`.", brief)
-        self.assertIn("Use the lead's printed merge commands with their authorization trailer. If a merge stops on a "
-                      "conflict, resolve it, `git add` the files, and finish it with the printed `git commit` command, so "
-                      "its message keeps the trailer.", brief)
+        steps = ["Hand-off refuses a head that conflicts with the current base, naming the files: merge the base "
+                 "yourself, in this order. Run `", "base-merge <key>`, which records your authorization.",
+                 "Run the merge command it prints; if it stops on a conflict, resolve it, `git add` the files, and finish "
+                 "it with the printed `git commit` command, so its message keeps the trailer.",
+                 "Rerun the gates and any required in-app and PR checks at the new head.", "Push.", "Hand off."]
+        found = [brief.find(step) for step in steps]
+        self.assertNotIn(-1, found, list(zip(steps, found)))
+        self.assertEqual(found, sorted(found), "the brief doesn't say base-merge, merge, checks, push, hand off in order")
+        self.assertIn("Once the queue holds your story, a base merge is the lead's: wait for the lead to record it with "
+                      "`lead-authorize-base-merge`, and use the lead's printed commands the same way.", brief)
         self.assertIn("If the story's own change reads the same after each merge as before it, hand-off keeps the aligned "
                       "review and records the merge, whoever owns what the base changed.", brief)
         self.assertIn("A lane commit, an unauthorized merge or a merge that changes the story's own change needs a new "
