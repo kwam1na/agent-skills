@@ -4113,10 +4113,10 @@ def _apply_siblings(directory: Path, reads: list[dict], max_age: float) -> list[
 
     An entry counts for the sibling the record holds by that name and link: one
     removed or relinked since the read is passed over, as is an entry read before
-    the latest one applied. Only a read entry changes a sibling's stories and
-    journals anything about them. Any other outcome, or a read older than
-    ``max_age``, which counts as stale, updates lastOutcome and lastAttemptAt
-    alone.
+    the latest one applied, unless the freshness gate refuses it. Only a read
+    entry changes a sibling's stories and journals anything about them. Any
+    other outcome updates lastOutcome and lastAttemptAt alone; a read older than
+    ``max_age`` sets lastOutcome to stale, and lastAttemptAt when it is the later.
     """
     clock = datetime.datetime.now(datetime.timezone.utc)
     changes: list[dict] = []
@@ -4132,15 +4132,22 @@ def _apply_siblings(directory: Path, reads: list[dict], max_age: float) -> list[
                 row = rows.get(entry["name"])
                 if row is None or row["link"] != entry["link"]:
                     continue
-                if (row.get("lastAttemptAt") is not None
-                        and _parse_time(entry["readAt"], exact=True) < _parse_time(row["lastAttemptAt"], exact=True)):
+                earlier = (row.get("lastAttemptAt") is not None
+                           and _parse_time(entry["readAt"], exact=True) < _parse_time(row["lastAttemptAt"], exact=True))
+                before = copy.deepcopy(row)
+                if (clock - _parse_time(entry["readAt"])).total_seconds() > max_age:
+                    # The freshness gate refuses it: the sibling reads stale, whenever the refused read was taken.
+                    row["lastOutcome"] = "stale"
+                    if not earlier:
+                        row["lastAttemptAt"] = entry["readAt"]
+                    if row != before:
+                        changes.append({"subject": None, "change": f"sibling {row['name']} read stale", "recovery": False})
+                    continue
+                if earlier:
                     continue
                 outcome = entry["outcome"]
-                if (clock - _parse_time(entry["readAt"])).total_seconds() > max_age:
-                    outcome = "stale"
-                elif outcome == "read" and entry.get("trackerParent") != parent:
+                if outcome == "read" and entry.get("trackerParent") != parent:
                     outcome = "other-epic"
-                before = copy.deepcopy(row)
                 row["lastOutcome"], row["lastAttemptAt"] = outcome, entry["readAt"]
                 if outcome == "read":
                     row["readAt"] = entry["readAt"]

@@ -372,6 +372,21 @@ class SiblingTests(unittest.TestCase):
 
     # -- scenario 9 ------------------------------------------------------------------------------------------------
 
+    def test_a_read_too_old_to_take_is_stale_and_the_forge_snapshot_beside_it_still_applies(self) -> None:
+        """Scenario 9(b), from scenario 2's record: a read the service calls fresh, older than the record takes."""
+        self.first_read()
+        self.serve(body("merged"))
+        old = self.read()
+        old["takenAt"] = old["siblings"][0]["readAt"] = at(2000)
+        forge = {"takenAt": at(), "source": "forge",
+                 "items": [{"subject": "OWN-1", "state": "open", "changeRequest": "https://forge.test/pr/1"}]}
+        result = self.reconcile(old, forge)
+        self.assertTrue(result["ok"])
+        own = next(item for item in state_tool.read_state(self.record)["planned"] if item["subject"] == "OWN-1")
+        self.assertEqual(own.get("changeRequest"), "https://forge.test/pr/1")
+        self.assertEqual((self.stored_stage(), self.sibling()["lastOutcome"]), ("building", "stale"))
+        self.assertEqual(self.journal("sibling.landed"), [])
+
     def test_a_stale_read_frees_nothing_either_way_and_a_fresh_one_lands_the_story_once(self) -> None:
         self.first_read()
         # (a) The service says stale, and the body is not terminal.
