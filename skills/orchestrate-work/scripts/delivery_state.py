@@ -4113,10 +4113,12 @@ def _apply_siblings(directory: Path, reads: list[dict], max_age: float) -> list[
 
     An entry counts for the sibling the record holds by that name and link: one
     removed or relinked since the read is passed over, as is an entry read before
-    the latest one applied, unless the freshness gate refuses it. Only a read
-    entry changes a sibling's stories and journals anything about them. Any
-    other outcome updates lastOutcome and lastAttemptAt alone; a read older than
-    ``max_age`` sets lastOutcome to stale, and lastAttemptAt when it is the later.
+    the sibling's lastAttemptAt, unless the freshness gate refuses it. Only a
+    read entry changes a sibling's stories and journals anything about them;
+    one older than ``max_age`` counts as stale. An entry whose outcome differs
+    from lastOutcome sets it, and lastAttemptAt to that entry's time. An entry
+    that changes nothing but those times writes nothing, so readAt is the last
+    read that changed the sibling, and lastAttemptAt when its outcome began.
     """
     clock = datetime.datetime.now(datetime.timezone.utc)
     changes: list[dict] = []
@@ -5094,6 +5096,10 @@ def next_for_lane(state: dict, lane: str, snapshot: dict | None, hints: dict | N
     merged = {item["subject"] for item in state["queue"] if item["stage"] == "merged"}
     # Work settled with no change needed is done too, though it never entered the queue: it blocks nothing.
     merged |= {item["subject"] for item in state.get("planned", []) if item["stage"] == "settled"}
+    # A same-epic sibling's story its kept read shows landed: the plan's order on it is met, though the hints still
+    # name it. The tracker's own blockedBy on it still has to say done.
+    sibling_landed = {story["subject"] for row in state.get("siblings", []) if row.get("lastOutcome") != "other-epic"
+                      for story in row.get("stories", []) if story["stage"] in SIBLING_LANDED}
     queued = {item["subject"] for item in state["queue"]}
     open_lanes = {entry["id"] for entry in state["lanes"]
                   if entry["id"] != lane and entry["state"] not in RESTING_LANE_STATES}
@@ -5124,6 +5130,9 @@ def next_for_lane(state: dict, lane: str, snapshot: dict | None, hints: dict | N
         for blocker in dict.fromkeys([*waited, *blockers]):
             if blocker not in waited and (blocker in merged
                                           or tracker.get(blocker, {}).get("state") in ("completed", "canceled")):
+                continue
+            if (blocker not in waited and blocker in sibling_landed
+                    and blocker not in tracker.get(subject, {}).get("blockedBy", [])):
                 continue
             open_blockers.append(blocker if blocker in tracker or blocker in waited or snapshot is None
                                  else f"{blocker} (not in the snapshot)")
