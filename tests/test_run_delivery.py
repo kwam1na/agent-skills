@@ -8811,7 +8811,7 @@ class RunDeliveryDoctorTests(unittest.TestCase):
         out = self.doctor(fx, "--run-adapters", "--run-gates", expect_code=0)
         lines = doctor_lines(out)
         self.assertEqual(list(lines), DOCTOR_LABELS, out)
-        expected_skips = {"pipeline PR review", "gh", "forge write access", "plan chapter", "added stories' reasons",
+        expected_skips = {"pipeline PR review", "gh", "forge write access", "tracker snapshot scope", "plan chapter", "added stories' reasons",
                           "story summaries", "pull requests marked ready", "delivery supervisor", "hosted delivery"}
         expected_skips |= set() if self.ffmpeg else {"video evidence tools"}
         expected_skips |= set() if self.node22 else {"harness configuration"}
