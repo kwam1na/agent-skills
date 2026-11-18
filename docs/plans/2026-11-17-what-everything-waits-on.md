@@ -594,7 +594,7 @@ nothing itself.
 
 ### V26-3568. Draw a setback's thread by its state, and fold long check lists in the story
 
-Lane 2, tier 3, after V26-3554. Test-first. Files: `skills/delivery-views/assets/line-map.js`,
+Lane 3, tier 3, not blocked. Test-first. Files: `skills/delivery-views/assets/line-map.js`,
 `skills/delivery-views/assets/line-map.css`, `skills/orchestrate-work/references/journal-kinds.json`,
 `tests/fixtures/journal-kinds/vectors.json` and `tests/delivery_views_page/line-map-threads.test.mjs`.
 
