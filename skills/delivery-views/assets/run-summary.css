@@ -37,12 +37,12 @@
 /* A finding's weight is a mark: a filled square for critical, a hollow one for serious, a filled disc for moderate and a
    hollow disc for minor. Bands and counts carry the same mark, and their words stay quiet. */
 .run-band { display: flex; align-items: center; gap: 8px; margin-top: 12px; margin-bottom: 0; font-size: 12px; font-weight: 500; color: var(--faint, #646c71); }
-.run-band::before, .run-sev::before { content: ""; flex: none; display: inline-block; width: 8px; height: 8px; box-sizing: border-box; border-radius: 2px; }
+.run-band::before, .run-sev::before, .run-closure-sev::before { content: ""; flex: none; display: inline-block; width: 8px; height: 8px; box-sizing: border-box; border-radius: 2px; }
 .run-band:first-child { margin-top: 0; }
-.run-band.is-p0::before, .run-sev.is-p0::before { background: var(--held, #b93d22); }
-.run-band.is-p1::before, .run-sev.is-p1::before { border: 2px solid var(--held, #b93d22); }
-.run-band.is-p2::before, .run-sev.is-p2::before { border-radius: 50%; background: var(--wait, #946414); }
-.run-band.is-p3::before, .run-sev.is-p3::before { border-radius: 50%; border: 1.5px solid var(--edge, #878f93); }
+.run-band.is-p0::before, .run-sev.is-p0::before, .run-closure-sev.is-p0::before { background: var(--held, #b93d22); }
+.run-band.is-p1::before, .run-sev.is-p1::before, .run-closure-sev.is-p1::before { border: 2px solid var(--held, #b93d22); }
+.run-band.is-p2::before, .run-sev.is-p2::before, .run-closure-sev.is-p2::before { border-radius: 50%; background: var(--wait, #946414); }
+.run-band.is-p3::before, .run-sev.is-p3::before, .run-closure-sev.is-p3::before { border-radius: 50%; border: 1.5px solid var(--edge, #878f93); }
 .run-finding { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: baseline; font-size: 13px; line-height: 1.5; color: var(--ink, #161a1d); font-weight: 500; }
 .run-finding.is-p3 { color: var(--soft, #5f676d); font-weight: 400; }
 .run-record { margin: 4px 0 6px; }
@@ -105,6 +105,23 @@ a.run-commit { text-decoration: underline; text-decoration-color: color-mix(in s
 .run-closures:not([open]) .run-finding-text { -webkit-line-clamp: 1; }
 .run-closures[open] .run-finding-text { display: block; }
 .run-closures .run-closure { margin: 4px 0 6px; overflow-wrap: anywhere; font: 400 11px/16px var(--mono, ui-monospace, monospace); color: var(--faint, #868f94); }
+/* A confirmed note leads with what was found and how serious it was, its mark the band's own; a note with an ending
+   other than fixed names it after that. Opened, the fix reads beneath, then the commit that shows it, then the id. */
+.run-closure-sev { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font: 400 11px/16px var(--mono, ui-monospace, monospace); color: var(--faint, #868f94); }
+.run-closures.is-other > summary:has(.run-closure-sev) { grid-template-columns: minmax(0, 1fr) auto auto 10px; }
+.run-closure-resolution { margin: 4px 0 0; overflow-wrap: anywhere; color: var(--ink, #161a1d); }
+.run-closure-evidence { margin: 2px 0 0; font-size: 12px; color: var(--faint, #868f94); }
+/* A lens whose notes were all fixed is one line, its count faint beside its name; a lens with any other ending folds
+   only its fixed notes, beneath a count of their own. Both open with the chevron the notes use. */
+.run-closure-lens > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 8px; }
+.run-closure-lens > summary::-webkit-details-marker { display: none; }
+.run-closure-lens > summary:focus-visible { outline: 2px solid var(--ink, #161a1d); outline-offset: 3px; border-radius: 2px; }
+.run-closure-lens > summary::after { content: ""; width: 5px; height: 5px; border-right: 1.5px solid var(--faint, #868f94); border-bottom: 1.5px solid var(--faint, #868f94);
+  transform: translateY(-2px) rotate(45deg); transition: transform .15s ease; }
+.run-closure-lens[open] > summary::after { transform: translateY(1px) rotate(-135deg); }
+.run-closure-fixed { color: var(--faint, #646c71); font-weight: 400; }
+.run-closure-reviewer > .run-closure-lens > summary.run-closure-count:not(:has(.run-lens)) { margin-top: 4px; font-size: 12px; color: var(--faint, #868f94); }
+.run-closure-lens > .run-findings { margin-top: 6px; }
 /* A round in flight: the last finished round dated beneath the headline, its bead a ring in the lane's colour whose
    halo breathes on the page's one tempo, the lane's reason behind a thin margin rule, and a row per lens. */
 .run-last { margin: -10px 0 0; font-size: 13px; color: var(--soft, #5f676d); }

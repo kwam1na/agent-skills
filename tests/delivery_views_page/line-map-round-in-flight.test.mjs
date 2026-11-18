@@ -92,13 +92,13 @@ test("over finished rounds, the last is dated beneath with the commits since, an
   // The notes round 2 confirmed are one line while the round runs, and open as they do on the finished card.
   const fold = app.querySelector(".run-card.is-running .run-earlier");
   expect(fold.hasAttribute("open")).toBe(false);
-  expect(fold.querySelector("summary").textContent).toContain("Round 2 confirmed 1 earlier note fixed");
+  expect(fold.querySelector("summary").textContent).toContain("Round 2 confirmed 1 earlier note: 1 fixed");
   expect(opened.app.querySelector(".run-earlier").hasAttribute("open")).toBe(true);
-  expect(opened.app.querySelector(".run-earlier .run-closures .run-finding-text").textContent).toBe("The count is fixed.");
+  expect(opened.app.querySelector(".run-earlier .run-closures .run-finding-text").textContent).toBe("Fix the count.");
   // A finished round, picked, shows its card as it does today.
   expect(finished.app.querySelector(".run-card.is-running")).toBeNull();
   expect(finished.app.querySelector(".run-card-outcome").textContent).toBe("Approved");
-  expect(finished.app.querySelector(".run-closures .run-finding-text").textContent).toBe("The count is fixed.");
+  expect(finished.app.querySelector(".run-closures .run-finding-text").textContent).toBe("Fix the count.");
 });
 
 test("over earlier evidence that is stale, the round in flight still shows as under way, with a note", async () => {

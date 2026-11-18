@@ -17,19 +17,19 @@ const config={spec:'delivery-views-config/1',forges:[{name:'GitHub',repository:'
 test('closure explanations start collapsed and expand without hiding the settlement summary',async()=>{
   const page=pageWithRuns(document(),{}, {config});
   // Opened by its summary, a closure keeps its place through a pushed redraw.
-  const [,clicked,pushed]=await openPage(page,{store:{read:'pending'},steps:[{click:'.run-closures > summary'},{push:document()}]});
+  const [,,clicked,pushed]=await openPage(page,{store:{read:'pending'},steps:[{click:'.run-closure-lens > summary'},{click:'.run-closures > summary'},{push:document()}]});
   expect(clicked.app.querySelector('.run-closures').hasAttribute('open')).toBe(true);
   expect(pushed.app.querySelector('.run-closures').hasAttribute('open')).toBe(true);
-  const [closed,opened,first,last]=await openPage(page,{steps:[
-    {toggle:'.run-closures'}, {click:'.run-pick',index:0}, {click:'.run-pick',index:1}
+  const [closed,,opened,first,last]=await openPage(page,{steps:[
+    {toggle:'.run-closure-lens'}, {toggle:'.run-closures'}, {click:'.run-pick',index:0}, {click:'.run-pick',index:1}
   ]});
   expect(closed.app.querySelector('.run-closures').hasAttribute('open')).toBe(false);
-  expect(closed.app.querySelector('.run-closures > summary').textContent).toContain('Original reviewer confirmed');
+  expect(closed.app.querySelector('.run-closures > summary').textContent).toContain('</script><img');
   expect(closed.app.querySelector('.run-settled').closest('details')).toBeNull();
   expect(opened.app.querySelector('.run-closures').hasAttribute('open')).toBe(true);
-  // Opened, the note's id shows beneath its line, which stays whole in place rather than said twice.
+  // Opened, the fix and the note's id show beneath the finding, which stays whole in place rather than said twice.
   expect(opened.app.querySelector('.run-closure').textContent).toBe('F1');
-  expect(opened.app.querySelector('.run-closures > summary .run-finding-text').textContent).toBe('Original reviewer confirmed <b>the fix</b>.');
+  expect(opened.app.querySelector('.run-closure-resolution').textContent).toBe('Original reviewer confirmed <b>the fix</b>.');
   expect(first.app.querySelector('.run-closures')).toBeNull();
   expect(last.app.querySelector('.run-closures').hasAttribute('open')).toBe(false);
 });
@@ -43,7 +43,7 @@ test('runless actual rounds share cards, escaped findings and originating closur
   expect(last.app.querySelector('.run-card .run-quiet a')?.getAttribute('href')).toBe('https://github.com/acme/shop/commit/'+B);
   expect(first.app.querySelector('.run-card .run-quiet a')?.getAttribute('href')).toBe('https://github.com/acme/shop/commit/'+A);
   expect(last.app.querySelector('.run-card-outcome').textContent).toBe('Approved');
-  expect(last.app.querySelector('.run-closures .run-finding-text').textContent).toBe('Original reviewer confirmed <b>the fix</b>.');
+  expect(last.app.querySelector('.run-closures .run-closure-resolution').textContent).toBe('Original reviewer confirmed <b>the fix</b>.');
   expect(last.app.querySelector('.run-card .run-quiet').textContent).toBe('Reviewed at '+B.slice(0,7));
   expect(first.app.querySelector('.run-card-outcome').textContent).toBe('Changes requested');
   expect(first.app.querySelector('.run-finding-text').textContent).toContain('<img');
@@ -116,7 +116,7 @@ test('a runner sync onto a moved base keeps the reviewed head approval and its n
   const [shown]=await openPage(pageWithRuns(doc,{}, {config}));
   expect(shown.app.querySelector('.d-run-none')).toBeNull();
   expect(shown.app.querySelector('.run-card-outcome').textContent).toBe('Approved');
-  expect(shown.app.querySelector('.run-closures .run-finding-text').textContent).toContain('Original reviewer confirmed');
+  expect(shown.app.querySelector('.run-closures .run-closure-resolution').textContent).toContain('Original reviewer confirmed');
 });
 function plannedDocument() {
   const doc = document();
@@ -135,7 +135,7 @@ test('before hand-off, a planned story shows its round cards and notes from its 
   expect(shown.app.querySelector('.d-run-none')).toBeNull();
   expect(shown.app.querySelector('.run-card-outcome').textContent).toBe('Approved');
   expect(shown.app.querySelector('.run-card .run-quiet').textContent).toBe('Reviewed at '+B.slice(0,7));
-  expect(shown.app.querySelector('.run-closures .run-finding-text').textContent).toContain('Original reviewer confirmed');
+  expect(shown.app.querySelector('.run-closures .run-closure-resolution').textContent).toContain('Original reviewer confirmed');
   expect(first.app.querySelector('.run-card-outcome').textContent).toBe('Changes requested');
   expect(first.app.querySelector('.run-finding-text').textContent).toContain('<img');
 });

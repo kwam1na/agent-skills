@@ -74,8 +74,9 @@ test("the fold draws the track and each round's card, with the closing commit of
     ["Round 1, asked for changes, 4 serious notes", "Round 2, asked for changes, 1 serious note", "Round 3, approved, nothing raised"]);
   // The newest round is picked: it raised nothing and confirmed round 2's finding fixed in round 3's commit.
   expect(fold.querySelector(".run-card").textContent).toBe(
-    "Reviewed at 3333333Round 3ApprovedTestingCorrectnessNothing new raisedThis round confirmed 1 earlier note fixed in 3333333." +
-    "CorrectnessThe off-by-one is corrected: scenario 6 reads rounds 2 to 10.fixedc2-1");
+    "Reviewed at 3333333Round 3ApprovedTestingCorrectnessNothing new raisedThis round confirmed 1 earlier note: 1 fixed in 3333333." +
+    "Correctness · 1 fixedScenario 6 reads the wrong rounds.seriousfixedThe off-by-one is corrected: scenario 6 reads rounds 2 to 10." +
+    "Fixed in 3333333c2-1");
   const [, , first] = await openPage(render(document, plan), { now: NOW, store: false,
     steps: [{ toggle: FOLD }, { click: `${FOLD} .run-pick`, index: 0 }] });
   expect(first.app.querySelector(`${FOLD} .run-card`).textContent).toBe(

@@ -579,3 +579,384 @@ class TheLanesKeptWord(LaneRowCase):
         self.candidate(self.record)
         self.run_queue(self.record, "feature")
         self.assertNotIn("restedFrom", self.row("lane-2"))
+
+
+# ---------------------------------------------------------------------------
+# A lane waiting on another story: progress, not a question. In-process, on a copy of the waits fixture, through the
+# state tool's own writes and the rows the runner writes when it lands, stops or puts back a piece.
+
+import tempfile  # noqa: E402
+import unittest  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from tests.test_waits import record as waits_record, run_delivery, state_tool as tool  # noqa: E402
+
+HEAD = "c" * 40
+
+
+class WaitingRecord(unittest.TestCase):
+    """The waits fixture as a record on disk: lane 1 and lane 3 idle, lane 2 reviewing APP-1, which lane 3's APP-3
+    names files of. Hand-offs need no acceptance unless a case says so."""
+
+    accept = False
+
+    def setUp(self) -> None:
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.directory = Path(folder.name)
+        state = waits_record()["state"]
+        state["meta"]["handoffsNeedAcceptance"] = self.accept
+        (self.directory / tool.STATE_FILE).write_text(tool.dumps(state), encoding="utf-8")
+        (self.directory / tool.JOURNAL_FILE).touch()
+
+    def state(self) -> dict:
+        return tool.read_state(self.directory)
+
+    def row(self, lane: str) -> dict:
+        return next(entry for entry in self.state()["lanes"] if entry["id"] == lane)
+
+    def focus(self, lane: str, text: str, state: str | None = None, waiting_on: object = ...) -> dict:
+        tool.set_focus(self.directory, lane, text, state=state, waiting_on=waiting_on)
+        return self.row(lane)
+
+    def working_then_waiting(self, lane: str, on: str, text: str | None = None) -> dict:
+        self.focus(lane, "building", state="working")
+        return self.focus(lane, text or f"waiting for {on}", state="waiting", waiting_on=on)
+
+    def hand(self, lane: str, subject: str) -> None:
+        tool.handoff(self.directory, lane=lane, subject=subject, head=HEAD, change_request=f"cr-{subject}")
+
+    def runner(self, subject: str, stage: str, stopped: str | None = None) -> None:
+        """The runner's own write when it lands or stops a piece: the queue and the lanes, in one patch."""
+        state = self.state()
+        finished = tool.merged_item if stage == "merged" else (lambda item: {**item, "stage": stage})
+        queue = [finished(item) if item["subject"] == subject else item for item in state["queue"]]
+        tool.patch(self.directory, writer="runner", version=state["version"],
+                   changes={"queue": queue, "lanes": tool.lane_rows_after(self.directory, state, subject, stopped=stopped)})
+
+    def put_back(self, subject: str) -> None:
+        state = self.state()
+        queue = [{**item, "stage": "queued"} if item["subject"] == subject else item for item in state["queue"]]
+        tool.patch(self.directory, writer="runner", version=state["version"],
+                   changes={"queue": queue, "lanes": tool.lane_rows_put_back(state, subject)})
+
+    def event(self, kind: str, subject: str, data: dict | None = None) -> dict:
+        entry = {"id": 99, "at": "2026-11-17T13:00:00Z", "kind": kind, "lane": None, "subject": subject,
+                 "data": data or {"head": HEAD}}
+        [event] = tool.wait_events([entry], self.state())
+        return event
+
+    def wakes(self) -> dict:
+        reading = {"cores": 8, "load5": 0.0, "diskFreeBytes": 10 ** 15, "swapUsedBytes": 0}
+        code, result = tool.wait_for_lead(self.directory, after=None, timeout=0, poll=0, read_machine=lambda _: reading,
+                                 sleep=lambda _: None)
+        return result
+
+
+class ABlockedLaneToday(WaitingRecord):
+    """Characterization, pinned before `waiting` was added and kept after it: a `blocked` lane wakes `wait`, is in
+    "Needs you" and holds the close. It is not reported quiet: `wait` wakes on it instead, and only lanes assigned,
+    working or reviewing are counted quiet."""
+
+    def test_a_blocked_lane_wakes_wait_is_in_needs_you_and_holds_the_close(self) -> None:
+        self.focus("lane-3", "which API?", state="blocked", waiting_on="lead")
+        result = self.wakes()
+        self.assertEqual((result["woke"], [lane["id"] for lane in result["blockedLanes"]]), ("event", ["lane-3"]))
+        self.assertEqual([item["source"] for item in run_delivery.lane_needs(self.state())], ["lane-3's state"])
+        self.assertIn("lane-3", run_delivery.busy_lanes(self.state()))
+        self.assertNotIn("lane-3", [lane["id"] for lane in tool._quiet_lanes(self.state(), 0, 10 ** 12).values()])
+
+    def test_an_unmoved_working_lane_is_counted_quiet(self) -> None:
+        self.focus("lane-3", "building", state="working")
+        self.assertIn("lane-3", [lane["id"] for lane in tool._quiet_lanes(self.state(), 0, 10 ** 12).values()])
+
+
+class SettingWaiting(WaitingRecord):
+    def test_a_lane_waits_on_a_story_the_record_holds_and_keeps_the_state_it_left(self) -> None:
+        row = self.working_then_waiting("lane-3", "APP-1")
+        self.assertEqual((row["state"], row["waitingOn"], row["waitingFrom"]["state"]), ("waiting", "APP-1", "working"))
+        self.assertIn("at", row["waitingFrom"])
+
+    def test_an_unknown_key_is_refused_naming_the_field_and_so_is_no_key(self) -> None:
+        before = (self.directory / tool.STATE_FILE).read_bytes()
+        with self.assertRaises(tool.StateError) as unknown:
+            self.focus("lane-3", "waiting", state="waiting", waiting_on="APP-99")
+        self.assertIn("waitingOn", str(unknown.exception))
+        with self.assertRaises(tool.StateError) as missing:
+            self.focus("lane-3", "waiting", state="waiting")
+        self.assertIn("--waiting-on", str(missing.exception))
+        self.assertEqual((self.directory / tool.STATE_FILE).read_bytes(), before)
+
+    def test_waiting_on_a_story_that_has_already_landed_is_refused(self) -> None:
+        self.hand("lane-2", "APP-1")
+        self.runner("APP-1", "merged")
+        before = (self.directory / tool.STATE_FILE).read_bytes()
+        with self.assertRaises(tool.StateError) as landed:
+            self.focus("lane-3", "waiting for APP-1", state="waiting", waiting_on="APP-1")
+        self.assertIn("APP-1 has already landed", str(landed.exception))
+        self.assertEqual((self.directory / tool.STATE_FILE).read_bytes(), before)
+
+    def test_a_waiting_lane_wakes_no_wait_is_never_quiet_isnt_in_needs_you_and_holds_no_close(self) -> None:
+        self.working_then_waiting("lane-3", "APP-1")
+        result = self.wakes()
+        self.assertEqual((result["woke"], result["blockedLanes"]), ("expired", []))
+        self.assertNotIn("lane-3", [lane["id"] for lane in result["quietLanes"]])
+        self.assertNotIn("lane-3", [lane["id"] for lane in tool._quiet_lanes(self.state(), 0, 10 ** 12).values()])
+        self.assertEqual(run_delivery.lane_needs(self.state()), [])
+        self.assertNotIn("lane-3", run_delivery.busy_lanes(self.state()))
+
+    def test_its_wait_is_said_from_the_table_naming_the_story_it_will_finish(self) -> None:
+        self.working_then_waiting("lane-3", "APP-1")
+        [wait] = [wait for wait in tool.waits({"state": self.state()}) if wait["subject"] == "lane-3"]
+        self.assertEqual({key: wait[key] for key in ("on", "cause", "stage", "frees", "needsSomeone")},
+                         {"on": "APP-1", "cause": "lane", "stage": "review", "frees": "landed", "needsSomeone": False})
+        self.assertEqual(wait["words"], "Lane 3 waits for APP-1 to land before it finishes APP-3.")
+        self.assertEqual(wait["since"], self.row("lane-3")["waitingFrom"]["at"])
+
+
+class WaitingFromIsCarried(WaitingRecord):
+    def test_across_the_lanes_own_focus_the_runner_speaking_over_it_and_the_lead_writing_it(self) -> None:
+        self.working_then_waiting("lane-2", "APP-1")
+        self.focus("lane-2", "still waiting for APP-1")
+        self.assertEqual(self.row("lane-2")["waitingFrom"]["state"], "working")
+        state = self.state()
+        tool.patch(self.directory, writer="runner", version=state["version"], selector="lanes[id=lane-2]",
+                   changes={"focus": "the queue says something"})
+        self.assertEqual(self.row("lane-2")["waitingFrom"]["state"], "working")
+        state = self.state()
+        tool.patch(self.directory, writer="lead", version=state["version"], selector="lanes[id=lane-2]",
+                   changes={"focus": "the lead says something"})
+        self.assertEqual((self.row("lane-2")["state"], self.row("lane-2")["waitingFrom"]["state"]), ("waiting", "working"))
+        self.hand("lane-2", "APP-1")
+        # Its own hand-off took it out of waiting; set it again on the handed story, then it lands.
+        self.working_then_waiting("lane-2", "APP-1")
+        self.runner("APP-1", "merged")
+        row = self.row("lane-2")
+        self.assertEqual((row["state"], row["waitingOn"], "waitingFrom" in row), ("working", None, False))
+        merged = next(item for item in self.state()["queue"] if item["subject"] == "APP-1")
+        document = {"state": self.state(), "journal": [{"id": 1, "kind": "candidate.merged", "subject": "APP-1",
+                                                        "at": "2026-11-17T13:00:00Z", "lane": "lane-2", "data": {}}]}
+        self.assertFalse(run_delivery.lane_moved_off(document, merged), "the returned row still stands at work")
+
+
+class ALandingReturnsTheLanesItFrees(WaitingRecord):
+    def test_a_working_lane_returns_to_working_and_an_idle_one_to_idle_in_the_same_write(self) -> None:
+        self.working_then_waiting("lane-3", "APP-1")
+        self.focus("lane-1", "waiting for APP-1", state="waiting", waiting_on="APP-1")
+        self.hand("lane-2", "APP-1")
+        self.runner("APP-1", "merged")
+        for lane, back in (("lane-3", "working"), ("lane-1", "idle")):
+            row = self.row(lane)
+            self.assertEqual((row["state"], row["waitingOn"], "waitingFrom" in row), (back, None, False), lane)
+        self.assertEqual(self.event("candidate.merged", "APP-1")["freed"], ["lane-1", "lane-3"])
+
+    def test_the_real_wait_names_the_lanes_a_landing_freed(self) -> None:
+        self.working_then_waiting("lane-3", "APP-1")
+        self.focus("lane-1", "waiting for APP-1", state="waiting", waiting_on="APP-1")
+        self.hand("lane-2", "APP-1")
+        before = tool.read_journal(self.directory)[-1]["id"]
+        self.runner("APP-1", "merged")
+        tool.append_journal(self.directory, kind="candidate.merged", subject="APP-1", lane="lane-2",
+                            data={"head": HEAD}, writer="runner")
+        reading = {"cores": 8, "load5": 0.0, "diskFreeBytes": 10 ** 15, "swapUsedBytes": 0}
+        code, result = tool.wait_for_lead(self.directory, after=before, timeout=0, poll=0,
+                                          read_machine=lambda _: reading, sleep=lambda _: None)
+        [merged] = [event for event in result["events"] if event["kind"] == "candidate.merged"]
+        self.assertEqual((result["woke"], merged["freed"]), ("event", ["lane-1", "lane-3"]))
+
+    def test_freed_is_carried_across_other_writes_dropped_on_waiting_again_and_named_only_by_a_landing(self) -> None:
+        self.working_then_waiting("lane-3", "APP-1")
+        self.hand("lane-2", "APP-1")
+        self.runner("APP-1", "merged")
+        state = self.state()
+        # A fresh row, as lead-assign writes one: it carries no freed, and the tool keeps it.
+        fresh = {key: row[key] for row in state["lanes"] if row["id"] == "lane-3"
+                 for key in ("id", "focus", "state", "waitingOn", "since")}
+        rows = [{**fresh, "title": "Peers, renamed"} if row["id"] == "lane-3" else row for row in state["lanes"]]
+        tool.patch(self.directory, writer="lead", version=state["version"], changes={"lanes": rows})
+        self.assertEqual(self.event("candidate.merged", "APP-1")["freed"], ["lane-3"])
+        self.assertNotIn("freed", self.event("candidate.stopped", "APP-1", {"reason": "check_failed", "detail": "x"}))
+        # Its earlier hand-off with a change freed nothing, though the same story landed later.
+        self.assertNotIn("freed", self.event("candidate.handed", "APP-1", {"head": HEAD, "checks": []}))
+        self.assertNotIn("freed", self.event("handoff.accepted", "APP-1", {"settled": False}))
+        self.focus("lane-3", "waiting again", state="waiting", waiting_on="APP-3")
+        self.assertNotIn("freed", self.row("lane-3"))
+        self.assertNotIn("freed", self.event("candidate.merged", "APP-1"))
+
+    def test_a_lane_that_waited_from_handing_its_own_story_off_rests_when_it_lands(self) -> None:
+        # Lane 2 has APP-4 still open, so it rests assigned, and that work holds the close; lane 3, with nothing else,
+        # rests idle and holds nothing.
+        for lane, own, rests, landed in (("lane-2", "APP-1", "assigned", None), ("lane-3", "APP-3", "idle", None),
+                                         ("lane-2", "APP-4", "idle", "APP-1")):
+            with self.subTest(lane=lane, own=own):
+                self.setUp()
+                if landed:
+                    # The lane's other story has already merged: it is no open work, so the lane rests idle.
+                    self.hand(lane, landed)
+                    self.runner(landed, "merged")
+                self.hand(lane, own)
+                row = self.focus(lane, f"waiting for {own} to land", state="waiting", waiting_on=own)
+                self.assertEqual(row["waitingFrom"]["state"], "handed")
+                self.runner(own, "merged")
+                row = self.row(lane)
+                self.assertEqual((row["state"], row["waitingOn"], row["focus"], "waitingFrom" in row),
+                                 (rests, None, f"{own} merged", False))
+                self.assertEqual(lane in run_delivery.busy_lanes(self.state()), rests == "assigned")
+
+    def test_a_row_whose_last_focus_doesnt_name_the_story_returns_too(self) -> None:
+        self.working_then_waiting("lane-3", "APP-1", text="reading the guide")
+        self.hand("lane-2", "APP-1")
+        self.runner("APP-1", "merged")
+        self.assertEqual(self.row("lane-3")["state"], "working")
+
+
+class ASettlementReturnsThemToo(WaitingRecord):
+    def test_a_no_change_hand_off_that_settles_at_once_frees_the_waiting_lane(self) -> None:
+        self.working_then_waiting("lane-3", "APP-1")
+        tool.no_change_handoff(self.directory, lane="lane-2", subject="APP-1", base_head=HEAD, evidence="criteria hold")
+        row = self.row("lane-3")
+        self.assertEqual((row["state"], row["waitingOn"], "waitingFrom" in row), ("working", None, False))
+        self.assertEqual(self.event("candidate.handed", "APP-1", {"head": HEAD, "checks": [], "noChange": True})["freed"],
+                         ["lane-3"])
+
+    def test_a_lane_waiting_on_its_own_story_with_nothing_else_open_ends_idle(self) -> None:
+        self.working_then_waiting("lane-3", "APP-3")
+        tool.no_change_handoff(self.directory, lane="lane-3", subject="APP-3", base_head=HEAD, evidence="criteria hold")
+        row = self.row("lane-3")
+        self.assertEqual((row["state"], row["waitingOn"], "waitingFrom" in row), ("idle", None, False))
+
+
+class ASettlementTheLeadAccepts(WaitingRecord):
+    accept = True
+
+    def test_accepting_a_no_change_hand_off_frees_the_waiting_lane(self) -> None:
+        self.working_then_waiting("lane-3", "APP-1")
+        tool.no_change_handoff(self.directory, lane="lane-2", subject="APP-1", base_head=HEAD, evidence="criteria hold")
+        self.assertEqual(self.row("lane-3")["state"], "waiting", "the hand-off alone settles nothing")
+        tool.accept_handoff(self.directory, "APP-1")
+        row = self.row("lane-3")
+        self.assertEqual((row["state"], row["waitingOn"], "waitingFrom" in row), ("working", None, False))
+        self.assertEqual(self.event("handoff.accepted", "APP-1", {"settled": True})["freed"], ["lane-3"])
+
+    def test_a_lane_waiting_on_its_own_accepted_no_change_story_ends_idle(self) -> None:
+        self.working_then_waiting("lane-3", "APP-3")
+        tool.no_change_handoff(self.directory, lane="lane-3", subject="APP-3", base_head=HEAD, evidence="criteria hold")
+        tool.accept_handoff(self.directory, "APP-3")
+        row = self.row("lane-3")
+        self.assertEqual((row["state"], row["waitingOn"], "waitingFrom" in row), ("idle", None, False))
+
+    def test_after_an_acceptance_the_lane_is_idle_waiting_on_the_accepted_story_until_it_lands(self) -> None:
+        self.hand("lane-2", "APP-1")
+        self.assertEqual(self.row("lane-2")["state"], "handed")
+        tool.accept_handoff(self.directory, "APP-1")
+        row = self.row("lane-2")
+        self.assertEqual((row["state"], row["waitingOn"]), ("idle", "APP-1"))
+        self.assertEqual(run_delivery.lane_needs(self.state()), [])
+        self.runner("APP-1", "merged")
+        self.assertEqual(self.row("lane-2")["waitingOn"], None)
+
+    def test_a_lane_blocked_on_another_question_keeps_it_when_the_lead_accepts(self) -> None:
+        for focus in ("which API should the card use?", "which API for APP-10?"):
+            with self.subTest(focus=focus):
+                self.setUp()
+                self.hand("lane-2", "APP-1")
+                self.focus("lane-2", focus, state="blocked", waiting_on="lead")
+                tool.accept_handoff(self.directory, "APP-1")
+                row = self.row("lane-2")
+                self.assertEqual((row["state"], row["waitingOn"]), ("blocked", "lead"))
+                self.assertEqual([item["source"] for item in run_delivery.lane_needs(self.state())], ["lane-2's state"])
+
+    def test_a_lane_blocked_asking_the_lead_about_its_hand_off_is_settled_too(self) -> None:
+        self.hand("lane-2", "APP-1")
+        self.focus("lane-2", "APP-1 is handed: please accept it", state="blocked", waiting_on="lead")
+        tool.accept_handoff(self.directory, "APP-1")
+        row = self.row("lane-2")
+        self.assertEqual((row["state"], row["waitingOn"]), ("idle", "APP-1"))
+
+
+class AStop(WaitingRecord):
+    def test_another_lane_waiting_on_the_stopped_piece_still_waits_and_is_counted(self) -> None:
+        self.working_then_waiting("lane-3", "APP-1")
+        before = self.row("lane-3")
+        self.hand("lane-2", "APP-1")
+        self.runner("APP-1", "stopped", stopped="check_failed")
+        row = self.row("lane-3")
+        self.assertEqual((row["state"], row["waitingOn"], row["waitingFrom"]), ("waiting", "APP-1", before["waitingFrom"]))
+        added = run_delivery.waits_needing(SimpleNamespace(release=run_delivery_root()), {"state": self.state(), "journal": []},
+                                           [])
+        [stopped] = [item for item in added if item["source"] == "APP-1's waits"]
+        # APP-2 by order, APP-3 by files, and lane 3 itself.
+        self.assertTrue(stopped["text"].endswith("3 pieces wait on it."), stopped)
+        self.put_back("APP-1")
+        self.runner("APP-1", "merged")
+        self.assertEqual(self.row("lane-3")["state"], "working")
+        self.assertEqual(self.event("candidate.merged", "APP-1")["freed"], ["lane-3"])
+
+    def test_a_lane_that_waited_from_handing_it_off_rests_assigned_when_its_story_stops(self) -> None:
+        self.hand("lane-2", "APP-1")
+        self.focus("lane-2", "waiting for APP-1 to land", state="waiting", waiting_on="APP-1")
+        self.runner("APP-1", "stopped", stopped="check_failed")
+        row = self.row("lane-2")
+        self.assertEqual((row["state"], row["waitingOn"], "waitingFrom" in row), ("assigned", "lead", False))
+
+    def test_a_lane_waiting_on_its_own_stopped_story_returns_to_work_waiting_on_the_lead(self) -> None:
+        for text in ("waiting for APP-1", "reading the guide"):
+            with self.subTest(text=text):
+                self.setUp()
+                self.hand("lane-2", "APP-1")
+                self.working_then_waiting("lane-2", "APP-1", text=text)
+                self.runner("APP-1", "stopped", stopped="check_failed")
+                row = self.row("lane-2")
+                self.assertEqual((row["state"], row["waitingOn"], "waitingFrom" in row), ("working", "lead", False))
+                self.put_back("APP-1")
+                self.assertEqual(self.row("lane-2")["state"], "handed")
+
+
+class AFreeStoryCountsTheLanesWaitingOnIt(WaitingRecord):
+    def test_a_waiting_lane_counts_on_the_free_storys_item(self) -> None:
+        # APP-4 is planned in lane 2, which is idle, and nothing holds it: free to start. Lane 3 waits on it.
+        self.focus("lane-2", "", state="idle")
+        self.working_then_waiting("lane-3", "APP-4")
+        document = {"state": self.state(), "journal": []}
+        added = run_delivery.waits_needing(SimpleNamespace(release=run_delivery_root()), document, [])
+        [free] = [item for item in added if item["source"] == "APP-4's waits"]
+        self.assertEqual(free["text"], "APP-4 is free to start. Lane 2 is idle. 1 piece waits on it.")
+
+
+class LeavingWaitingAnotherWay(WaitingRecord):
+    """Any other write that takes a row out of `waiting` drops waitingFrom and a waitingOn naming what it waited on."""
+
+    def assertLeft(self, row: dict, state: str) -> None:
+        self.assertEqual((row["state"], "waitingFrom" in row), (state, False))
+        self.assertNotEqual(row["waitingOn"], "APP-1")
+
+    def test_the_lanes_own_focus_to_working(self) -> None:
+        self.working_then_waiting("lane-3", "APP-1")
+        self.assertLeft(self.focus("lane-3", "back at it", state="working"), "working")
+
+    def test_handing_its_own_story_with_a_change(self) -> None:
+        self.working_then_waiting("lane-3", "APP-1")
+        self.hand("lane-3", "APP-3")
+        self.assertLeft(self.row("lane-3"), "handed")
+
+    def test_handing_its_own_story_with_no_change(self) -> None:
+        self.__class__.accept = True
+        self.addCleanup(setattr, self.__class__, "accept", False)
+        self.setUp()
+        self.working_then_waiting("lane-3", "APP-1")
+        tool.no_change_handoff(self.directory, lane="lane-3", subject="APP-3", base_head=HEAD, evidence="criteria hold")
+        self.assertLeft(self.row("lane-3"), "handed")
+
+    def test_waiting_again_starts_afresh(self) -> None:
+        first = self.working_then_waiting("lane-3", "APP-1")["waitingFrom"]
+        self.focus("lane-3", "reviewing now", state="reviewing")
+        again = self.focus("lane-3", "waiting again", state="waiting", waiting_on="APP-1")["waitingFrom"]
+        self.assertEqual(again["state"], "reviewing")
+        self.assertGreaterEqual(again["at"], first["at"])
+
+
+def run_delivery_root() -> Path:
+    return Path(run_delivery.__file__).resolve().parents[3]
+
+
+from types import SimpleNamespace  # noqa: E402
