@@ -2475,8 +2475,7 @@ class SupervisorBlockerTests(unittest.TestCase):
                       "it, it is detached and it holds no change; otherwise it is recorded as a blocker naming it, why it "
                       "stays and the command that removes it, resolved once it is gone.", config)
         skill = normal("skills/run-delivery/SKILL.md")
-        self.assertIn("It journals a `blocker.recorded`, which wakes the lead's `lead-wait`, when a child first won't stay "
-                      "up", skill)
+        self.assertIn("It journals a blocker, which wakes the lead's `lead-wait`, when a child first won't stay up", skill)
         self.assertIn("Its folder names its pid, so a checkout an interrupted run leaves is the supervisor's to remove once "
                       "that run has ended", skill)
         self.assertIn("are journalled as blockers, so your `lead-wait` wakes on them",
