@@ -111,11 +111,13 @@ test("opens with only what the engineer acts on, and folds the rest behind count
     ["All units20", "Changes since approval7", "Waived proofs1", "Approvals ahead1", "Out of scope3", "The full outcome"]);
   expect(folds.every((fold) => fold.tagName === "DETAILS" && !fold.open)).toBe(true);
   expect(app.querySelectorAll("#plan details").length).toBe(6);
-  // Now names what is being built under its headline, and how much is proven in its Plan fact, which links to the chapter.
-  expect(app.querySelector("#now .plan-now").textContent).toBe("Shoppers can pay again after a dropped connection.");
-  const now = app.querySelector("#now .facts .plan-now-link").closest(".fact");
-  expect(now.textContent).toBe("Plan28 of 29 criteria provenchanged 7 times");
-  expect(now.querySelector("a").getAttribute("href")).toBe("#plan");
+  // Now names what is being built under its headline, and under it how much is proven and how often the plan changed,
+  // linked to the chapter; the facts row holds no plan fact.
+  expect(app.querySelector("#now .plan-now").firstChild.textContent).toBe("Shoppers can pay again after a dropped connection.");
+  const now = app.querySelector("#now .plan-now .plan-now-link");
+  expect(now.textContent).toBe("28 of 29 criteria proven · plan changed 7 times");
+  expect(now.getAttribute("href")).toBe("#plan");
+  expect(app.querySelector("#now .facts .plan-now-link")).toBeNull();
   // What's left shows the meters in place of its list.
   expect(app.querySelector("#left .after")).toBeNull();
   expect(app.querySelectorAll("#left .plan-meter")).toHaveLength(2);
@@ -465,7 +467,7 @@ test("a live page redraws the chapter from each pushed record, and says when the
   expect(before.querySelector(".plan-reload")).toBeNull();
   expect(title(merged)).toBe("Every criterion is proven.");
   expect(merged.querySelector("#plan .plan-open")).toBeNull();
-  expect(merged.querySelector("#now .facts .plan-now-link").textContent).toBe("6 of 6 criteria proven");
+  expect(merged.querySelector("#now .plan-now .plan-now-link").textContent).toMatch(/^6 of 6 criteria proven · plan changed /);
   expect(merged.querySelector(".plan-reload")).toBeNull();
   expect(notice.querySelector("#plan .plan-title + .plan-reload").textContent).toBe("The plan has changed since this page was made.Reload the page");
   // A page rendered after that entry, from the plan it names, shows no notice.

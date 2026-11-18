@@ -598,7 +598,9 @@
     if (text(meta.trackerParent)) { add(kicker, kicker.firstChild ? " · " : null, issue(text(meta.trackerParent))); }
     else if (!kicker.firstChild) { add(kicker, el("span", "headline", pageTitle())); }
     var nodes = [kicker, title];
-    if (outcome) { nodes.push(el("p", "plan-now", outcome)); }
+    // The outcome, then how much of the plan is proven and how often it changed, linked to the plan chapter.
+    var planLink = planNow(doc);
+    if (outcome || planLink) { nodes.push(add(el("p", "plan-now"), outcome || null, planLink)); }
     var status = sayLine(doc, all);
     if (status) { nodes.push(el("p", "say", status)); }
     var panel = closed ? null : checkingPanel(doc, all);
@@ -610,8 +612,8 @@
     var partway = closeStoppedPartway(doc, closed);
     if (partway) { nodes.push(partway); }
     nodes.push(journey(doc, all, closed ? tally.landed : landed));
-    // Under the line, the same three facts in one shape: what landed last, how much of the plan is proven, and the record's state.
-    nodes.push(add(el("div", "facts"), lastLanded(doc, all), planNow(doc), since(doc, meta, closed)));
+    // Under the line, three facts in one shape: how many stories have landed, what landed last, and the record's state.
+    nodes.push(add(el("div", "facts"), storiesFact(all, closed ? tally : null), lastLanded(doc, all), since(doc, meta, closed)));
     var was = prev.checkingHeight;
     inner.replaceChildren.apply(inner, nodes);
     // A live update that changes the sheet's height, a check starting or a failure listed, eases it there instead of jumping.
@@ -640,13 +642,50 @@
     return add(el("div", "fact" + (cls ? " " + cls : "")), add(el("div", "fact-label"), label), add(el("div", "fact-value"), value),
       detail ? add(el("div", "fact-detail"), detail) : null);
   }
-  /** The piece that landed last, by its title, with its ticket and when. */
+  /**
+   * How far the delivery has come, from the record: the stories landed out of its total in the display face, a track in
+   * tones of the landed colour (landed, in the queue, being built), and a line counting the queue and the build. A
+   * closed delivery shows its final count.
+   */
+  function storiesFact(all, tally) {
+    var landed = tally ? tally.landed : all.filter(isLanded).length;
+    var total = tally ? tally.total : all.length;
+    var queued = tally ? 0 : all.filter(function (piece) { return !piece.planned && !isLanded(piece); }).length;
+    var building = tally ? 0 : all.filter(function (piece) { return piece.planned && !isLanded(piece); }).length;
+    var value = add(el("span", "fact-count"), String(landed), el("span", "fact-of", " of " + total + " landed"));
+    var track = el("span", "fact-track");
+    track.setAttribute("aria-hidden", "true");
+    [["landed", landed], ["queued", queued], ["building", building]].forEach(function (part) {
+      if (!part[1] || !total) { return; }
+      var span = el("i", "is-" + part[0]);
+      span.style.width = (part[1] / total * 100) + "%";
+      track.appendChild(span);
+    });
+    var said = [queued ? queued + " in the queue" : "", building ? building + " being built" : ""].filter(Boolean).join(" · ");
+    return fact("stories", "Stories", value, add(el("span", "fact-progress"), track, said ? el("span", "fact-said", said) : null));
+  }
+  /** A pull request as a fact's quiet reference: its number, linked to the forge when the renderer gave its address. */
+  function pullRef(changeRequest) {
+    var target = changeTarget(changeRequest);
+    if (!target) { return el("span", "fact-ref", text(changeRequest)); }
+    var link = el("a", "fact-ref", target.label);
+    link.setAttribute("href", target.href);
+    link.setAttribute("target", "_blank");
+    link.setAttribute("rel", "noopener noreferrer");
+    link.setAttribute("aria-label", "Open pull request " + (typeof target.repository === "string" && target.repository ? target.repository + " " : "") + target.label);
+    return link;
+  }
+  /** The piece that landed last, by its title, with its ticket, its pull request when the forge snapshot knows it, and when. */
   function lastLanded(doc, all) {
     var landed = latestMerge(doc);
     if (!landed) { return null; }
     var item = all.filter(function (piece) { return piece.item.subject === landed.subject; })[0];
     var when = spoken(eventTime(landed));
-    var detail = text(landed.subject) ? add(el("span"), issue(text(landed.subject)), when ? " · " + when : null) : when;
+    var request = item && changeTarget(item.item.changeRequest) ? pullRef(item.item.changeRequest) : null;
+    var ticket = text(landed.subject) ? issue(text(landed.subject)) : null;
+    if (ticket) { ticket.classList.add("fact-ref"); }
+    var parts = [ticket, request, when].filter(Boolean);
+    var detail = parts.length ? add.apply(null, [el("span")].concat(parts.reduce(function (made, part, i) { return made.concat(i ? [" · ", part] : [part]); }, []))) : null;
     return fact("", "Last landed", item ? titleOf(doc, item.item) : text(landed.subject), detail);
   }
 
@@ -2185,9 +2224,9 @@
   function planNow(doc) {
     if (!plan) { return null; }
     var counts = planCounts(doc);
-    var link = el("a", "plan-now-link", counts.proven + " of " + counts.total + " criteria proven");
+    var link = el("a", "plan-now-link", counts.proven + " of " + counts.total + " criteria proven · " + timesChanged(list(plan.changes).length));
     link.setAttribute("href", "#plan");
-    return fact("", "Plan", link, timesChanged(list(plan.changes).length).replace(/^plan /, ""));
+    return link;
   }
 
   /** The criteria a finish line covers, or null when it covers proofs only, over every unit. */
