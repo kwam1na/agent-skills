@@ -198,7 +198,7 @@
       "outputs": [
         {
           "path": "skills/delivery-views/SKILL.md",
-          "sha256": "4bf26dec07c628fd25947e83cbbcd54e706232e941c0f9760da8b26d2301c988"
+          "sha256": "79f022f995c71827afd4788e9cd7e8754ab5cd36ce4faf7ba7f98a21a3b00e25"
         },
         {
           "path": "skills/delivery-views/assets/history.css",
@@ -234,7 +234,7 @@
         },
         {
           "path": "skills/delivery-views/scripts/hosted.py",
-          "sha256": "3987c576eab78df7fd33dd498bc61f207109b57128fb6930d25d289952f107ff"
+          "sha256": "07d1a464655465e717b77abde24c970bd9eaa61404efcc6f788c86c0391b547b"
         },
         {
           "path": "skills/delivery-views/scripts/public_projection.py",
@@ -510,19 +510,19 @@
       "outputs": [
         {
           "path": "skills/orchestrate-work/SKILL.md",
-          "sha256": "1efc043d93c3053cc2e9f6320a68fd37970d9a3b2db7dc93c710d5126bd829b9"
+          "sha256": "e2f20eab9512d399d4f30a7d633f374877af836811278593924ba448629efd67"
         },
         {
           "path": "skills/orchestrate-work/references/journal-kinds.json",
-          "sha256": "1ab59b5791e56f50abbf1d6701962e29454f686fbfadc7196392d8a19357c71b"
+          "sha256": "c76e1d45e487564b899eb489dc21a66226b48c6d3c6dda16c95a91085f58b326"
         },
         {
           "path": "skills/orchestrate-work/references/orchestration-guide.md",
-          "sha256": "2b92487ab5d05f2bed738b2c92d42d58bf52d91c5df68c33b6d93545e24c8816"
+          "sha256": "cf41d2296f9843d03b1b7fa9bdf88a530b81c99ddc7d67f3cdb6ca712f171ff2"
         },
         {
           "path": "skills/orchestrate-work/references/schemas.json",
-          "sha256": "88643e39e60ead54a27edd012c7ac62003fc82fd0aeb52f93acf156c6b5c0616"
+          "sha256": "8429066460c63001f0f1e28af9af24dd223190e23d7eaeb8dd7bebcffe1512d2"
         },
         {
           "path": "skills/orchestrate-work/references/story.schema.json",
@@ -534,7 +534,7 @@
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
-          "sha256": "3da07ec40f6c78a37f72679fa283820f46828127c9fa70e3f11c1b2676af8357"
+          "sha256": "e4d2d7e9b821b3827000aa32fa56fb5dd7e50db6b60b0f0209ede59924864b82"
         },
         {
           "path": "skills/orchestrate-work/scripts/journal_words.py",
@@ -1083,7 +1083,7 @@
       "outputs": [
         {
           "path": "skills/run-delivery/SKILL.md",
-          "sha256": "f3ddb2e8b76c6ba447d134fba0b1485393b8b66b3eee23c13496cb830b9fbdc2"
+          "sha256": "f613be33d72882eea562a940707628576b23dcf95512de62a3b46a72877dbfe8"
         },
         {
           "path": "skills/run-delivery/adapters/forge_bitbucket.py",
@@ -1111,7 +1111,7 @@
         },
         {
           "path": "skills/run-delivery/references/adopting.md",
-          "sha256": "e5140356c9c9db17e7946c638d01c71b2f1d283f6cc0b32b703200fa78122522"
+          "sha256": "89f33ac76ab587427658d97c3ec4fc54f21d449c1e33a1006747a38ec1afe2fe"
         },
         {
           "path": "skills/run-delivery/references/config.md",
@@ -1123,7 +1123,7 @@
         },
         {
           "path": "skills/run-delivery/scripts/run_delivery.py",
-          "sha256": "805e1676c2e4258ca228097b230e0055a5ac3e18fd8b123c4dbf675db7325ec0"
+          "sha256": "d8cbd5092e40864060ba00e477d7c784ba8571b165190b9426f75a2a5f7f5061"
         },
         {
           "path": "skills/run-delivery/scripts/tracker_publisher.py",

@@ -241,6 +241,10 @@ the lead and the lanes make them instead, as the commands print them.
 | `work.cleared` | None: the work belongs to another delivery, and its ticket is that delivery's to update. | nowhere | - |
 | `snapshot.stale` | None: the last snapshot stands, and the views say how old it is. | nowhere | - |
 | `snapshot.retaken` | None: the views read the fresh snapshot. | nowhere | - |
+| `sibling.added` | None: the views show the sibling's stories once it is read. | nowhere | - |
+| `sibling.removed` | None: the views stop showing the sibling. | nowhere | - |
+| `sibling.mismatched` | None: the lead removes the sibling or fixes its link. | nowhere | - |
+| `sibling.landed` | None: the views draw the sibling's story as landed. | nowhere | - |
 | `evidence.published` | On the epic: where the recordings of the work running are, and what each shows. | the epic | Evidence published |
 | `flake.declared` | On the epic: the check declared flaky, its known failure, the reference that tracks it, and the base head it applies to. | the epic | Flake declared |
 | `fullhealth.skipped` | On the epic: the full run was skipped at the base head, under the delivery's posture, and why. | the epic | Full run skipped |
@@ -1314,14 +1318,49 @@ it is not a freshness proof or permission to skip any admission check.
 | `fullHealth` | The argv for the post-merge tier: run by the supervisor after each merge or batch, and at close-out only when no run at the final head has happened. Required, and not run while the base declares the `focused` posture. |
 | `fullHealthTimeoutSeconds` | Optional. The seconds one `fullHealth` run may take, a positive integer of at most 2147483; `checkTimeoutSeconds` when absent. `checkTimeoutCeiling` doesn't bound it, since it bounds the queue's checks and the post-merge tier is not one of them. |
 | `leases` | Each lease's `id`, `description` and `defaultHolder`, plus optional `materialize` and `withdraw` argv. |
-| `state` | `{directory, renderers, publishers, snapshotMaxAgeSeconds?, trackerSnapshot?, forgeSnapshot?, refreshSeconds?, workHints?, liveHome?}`. `liveHome` is the id of a declared argv renderer whose HTML view the live server serves at its front page, with the live store injected as at `/view/<output>`; the view must carry `<meta name="delivery-state-live">`. Without it the front page is the built-in static page. A `liveHome` that names a built-in renderer, an unknown id, or a view whose output is not an HTML file is refused. `trackerSnapshot`, `{argv, timeoutSeconds?}`, is the repository's command that prints the delivery's `work-snapshot/1` tracker snapshot; `{parent}` in its argv is the record's `meta.trackerParent`, and `{stateDirectory}` in it, or in a renderer's, a publisher's or `workHints` argv, is the resolved state directory the command runs for, so a repository that keeps several records reads the one being served rather than the one its binding names; the command owns whatever access it needs. `forgeSnapshot`, the same shape, prints the forge snapshot of the delivery's change requests; this workflow ships no forge or tracker client, so both are the repository's own, or the ready-made commands described below. `serve` runs them from the repository's checkout every `refreshSeconds`, 180 when absent and at most 86400, and 0 turns that off; it does not start on a block or interval it cannot use. Each command's stdout is read until it exits, plus a two-second drain: output that a process it leaves behind writes later is not read, and output written during the drain can spoil the snapshot. Each runs in its own process group with a per-run marker in its environment; afterwards, interrupted or not, the state tool stops what is left in that group or carries the marker, never the caller or its parents, pid 1, another user's process or one that started before the run, and stops nothing when it cannot read the process table. A child that clears its environment, or whose environment the system hides, such as some system binaries on macOS, survives. On Windows only the command itself is stopped, and only when it overran or was interrupted. `directory` is relative to the repository root unless absolute. Each renderer is `{id, builtin, output}` or `{id, argv, output}`, never both, with an optional `timeoutSeconds`; `output` is a relative path inside the state directory. Each publisher is `{id, argv}`, with an optional `timeoutSeconds`; one with a `kind` and no `argv` runs nothing, and the binding is refused, naming the fix: name the tracker publisher instead. `workHints`, `{argv, timeoutSeconds?}`, is the repository's command that prints a `work-hints/1` document of each item's files, priority and `blockers` (the subjects it comes after in the plan's order, read beside the tracker's `blockedBy`) for `next`, run the same way; run-delivery's `lead-hints` is one. `snapshotMaxAgeSeconds`, a whole number of seconds, is how old a forge or tracker snapshot may be before `reconcile` refuses it, 900 when absent. After each of its state writes the runner passes this member to the render wrapper; when it is valid and declares no renderer and no publisher, the runner starts no wrapper, and reads the record itself instead, noting a failure as the wrapper would. |
+| `state` | `{directory, renderers, publishers, snapshotMaxAgeSeconds?, trackerSnapshot?, forgeSnapshot?, siblingSnapshot?, refreshSeconds?, workHints?, liveHome?}`. `liveHome` is the id of a declared argv renderer whose HTML view the live server serves at its front page, with the live store injected as at `/view/<output>`; the view must carry `<meta name="delivery-state-live">`. Without it the front page is the built-in static page. A `liveHome` that names a built-in renderer, an unknown id, or a view whose output is not an HTML file is refused. `trackerSnapshot`, `{argv, timeoutSeconds?}`, is the repository's command that prints the delivery's `work-snapshot/1` tracker snapshot; `{parent}` in its argv is the record's `meta.trackerParent`, and `{stateDirectory}` in it, or in a renderer's, a publisher's or `workHints` argv, is the resolved state directory the command runs for, so a repository that keeps several records reads the one being served rather than the one its binding names; the command owns whatever access it needs. `forgeSnapshot`, the same shape, prints the forge snapshot of the delivery's change requests; this workflow ships no forge or tracker client, so both are the repository's own, or the ready-made commands described below. `siblingSnapshot`, the same shape, prints a `sibling-snapshot/1` read of each sibling delivery the record names, as described under sibling deliveries below. `serve` runs them from the repository's checkout every `refreshSeconds`, 180 when absent and at most 86400, and 0 turns that off; it does not start on a block or interval it cannot use. Each command's stdout is read until it exits, plus a two-second drain: output that a process it leaves behind writes later is not read, and output written during the drain can spoil the snapshot. Each runs in its own process group with a per-run marker in its environment; afterwards, interrupted or not, the state tool stops what is left in that group or carries the marker, never the caller or its parents, pid 1, another user's process or one that started before the run, and stops nothing when it cannot read the process table. A child that clears its environment, or whose environment the system hides, such as some system binaries on macOS, survives. On Windows only the command itself is stopped, and only when it overran or was interrupted. `directory` is relative to the repository root unless absolute. Each renderer is `{id, builtin, output}` or `{id, argv, output}`, never both, with an optional `timeoutSeconds`; `output` is a relative path inside the state directory. Each publisher is `{id, argv}`, with an optional `timeoutSeconds`; one with a `kind` and no `argv` runs nothing, and the binding is refused, naming the fix: name the tracker publisher instead. `workHints`, `{argv, timeoutSeconds?}`, is the repository's command that prints a `work-hints/1` document of each item's files, priority and `blockers` (the subjects it comes after in the plan's order, read beside the tracker's `blockedBy`) for `next`, run the same way; run-delivery's `lead-hints` is one. `snapshotMaxAgeSeconds`, a whole number of seconds, is how old a forge or tracker snapshot may be before `reconcile` refuses it, 900 when absent. After each of its state writes the runner passes this member to the render wrapper; when it is valid and declares no renderer and no publisher, the runner starts no wrapper, and reads the record itself instead, noting a failure as the wrapper would. |
 
 Ready-made views and snapshot commands ship in the separate `delivery-views`
 skill, for a profile that includes it: a live line map and a delivery history
-page, declared as argv renderers, and tracker and forge snapshot commands for
-`trackerSnapshot` and `forgeSnapshot`. The repository configures them rather
-than writing its own, and this workflow runs them like any other renderer or
-snapshot command. That skill's guide describes their configuration.
+page, declared as argv renderers, tracker and forge snapshot commands for
+`trackerSnapshot` and `forgeSnapshot`, and the sibling reader for
+`siblingSnapshot`. The repository configures them rather than writing its own,
+and this workflow runs them like any other renderer or snapshot command. That
+skill's guide describes their configuration.
+
+### Sibling deliveries
+
+An epic whose children are split by repository is delivered as one delivery
+per repository. Each names the others as siblings, so its record sees the
+whole epic; no lead, queue or lane spans repositories.
+
+- The lead names a sibling by its hosted live view, `<origin>/d/<64 hex>`, with
+  run-delivery's `lead-sibling add --link <link> --name <label>`, and removes
+  one with `lead-sibling remove --name <label>`. The record keeps
+  `siblings: [{name, link, addedAt, ...}]` beside `meta`, and each change is
+  journaled as `sibling.added` or `sibling.removed`. A record with no
+  `meta.trackerParent` names none, since a sibling's epic could not be checked.
+- Siblings are a third snapshot source, `siblings`. The binding's
+  `state.siblingSnapshot` prints `sibling-snapshot/1`: one entry per sibling,
+  `{name, link, readAt, outcome, trackerParent?, updatedAt?, closing?, stale?,
+  terminal?, stories?}`, whose `outcome` is `read`, `stale`, `unavailable`,
+  `incompatible` or `other-epic`, and whose `stories`, present only for `read`
+  and `stale`, are `{subject, title, stage, changeRequest?}`.
+- Reconcile applies each entry for the sibling the record holds by that name
+  and link, and passes over one read before the latest it applied. Only a
+  `read` entry changes the sibling's `stories`, `readAt`, `trackerParent`,
+  `updatedAt`, `closing` and `terminal`; every entry sets `lastOutcome` and
+  `lastAttemptAt`. An entry read longer ago than `snapshotMaxAgeSeconds` counts
+  as `stale`, and the tracker and forge snapshots in the same call still apply.
+  A sibling is fresh while its `lastOutcome` is `read`: nothing downstream
+  compares times with a clock.
+- A sibling story has landed at `merged`, or `settled` for planned work. The
+  first `read` showing it landed journals `sibling.landed` once, with
+  `firstSeenAt` the read's time: when it was seen, never when it merged. A
+  `read` naming another tracker parent counts as `other-epic`, contributes no
+  stories and journals `sibling.mismatched` once for each sibling and parent.
+- The hosted projection carries no `siblings`, and publishes the sibling
+  kinds' identities and kinds without their facts.
 
 ### Git hooks
 

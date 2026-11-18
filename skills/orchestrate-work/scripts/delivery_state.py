@@ -3928,17 +3928,47 @@ def reconcile(
     max_age: float = SNAPSHOT_MAX_AGE_SECONDS,
     between_read_and_write: Callable[[], None] | None = None,
 ) -> dict:
-    """Bring the record up to date with forge and tracker snapshots.
+    """Bring the record up to date with forge, tracker and sibling snapshots.
 
     Lead fields are written as the lead. A merge the runner never recorded is
     written as the runner, with a journal entry saying so: a recovery path, since
     the runner records its own merges. Pinned to the version it read; when the
     record moves under it, the plan is made again from the new record.
+
+    A forge or tracker snapshot the freshness gate refuses raises, and nothing is
+    written. A sibling snapshot is applied entry by entry once the others have
+    been: a read too old to take counts as stale for that sibling, and the
+    forge and tracker snapshots beside it still apply.
     """
     if not snapshot_paths:
         raise StateError("snapshot_invalid", "give at least one --snapshot")
     parent = read_state(directory)["meta"].get("trackerParent")
-    snapshots = [read_snapshot(Path(path), max_age, parent=parent) for path in snapshot_paths]
+    loaded = [(Path(path), _load_snapshot(Path(path))) for path in snapshot_paths]
+    sibling_reads = [check_sibling_snapshot(value, path.name) for path, value in loaded if _is_sibling_snapshot(value)]
+    work = [(path, check_snapshot(value, path.name, max_age, parent=parent))
+            for path, value in loaded if not _is_sibling_snapshot(value)]
+    named: dict[str, str] = {}
+    for path, value in zip([path for path, value in loaded if _is_sibling_snapshot(value)], sibling_reads):
+        for entry in value["siblings"]:
+            if entry["name"] in named:
+                raise StateError("snapshot_invalid", f"{entry['name']} is in two sibling snapshots, {named[entry['name']]} "
+                                                     f"and {path.name}: give one read of each")
+            named[entry["name"]] = path.name
+    result = (_reconcile_work(directory, [path for path, _ in work], [snapshot for _, snapshot in work], parent,
+                              between_read_and_write) if work
+              else {"ok": True, "drift": False, "changes": [], "reports": [], "summary": "no drift"})
+    if sibling_reads:
+        applied = _apply_siblings(directory, sibling_reads, max_age)
+        if applied:
+            changes = result["changes"] + applied
+            result = {**result, "drift": True, "changes": changes,
+                      "summary": f"{len(changes)} change{'s' if len(changes) != 1 else ''}"}
+    return result
+
+
+def _reconcile_work(directory: Path, snapshot_paths: list[Path], snapshots: list[dict], parent: str | None,
+                    between_read_and_write: Callable[[], None] | None) -> dict:
+    """Apply checked forge and tracker snapshots, as reconcile does."""
     seen: dict[tuple[str, str], str] = {}
     for path, snapshot in zip(snapshot_paths, snapshots):
         for item in snapshot["items"]:
@@ -3983,6 +4013,221 @@ def reconcile(
         return {"ok": True, "drift": False, "changes": [], "reports": reports, "summary": "no drift"}
     return {"ok": True, "drift": True, "changes": changes, "reports": reports,
             "summary": f"{len(changes)} change{'s' if len(changes) != 1 else ''}"}
+
+
+# ---------------------------------------------------------------------------
+# Sibling deliveries: the same epic delivered from other repositories, read from their hosted snapshots
+
+SIBLING_SNAPSHOT = "sibling-snapshot/1"
+SIBLING_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+# A hosted live view's shape: <scheme>://<host>[:port]/d/<64 hex>. Which schemes may serve it is the reader's to say,
+# and lead-sibling's; the record holds the address it was given.
+SIBLING_LINK = re.compile(r"^[a-z][a-z0-9+.-]*://[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]{1,5})?/d/[a-f0-9]{64}$")
+# A sibling's story has landed at these stages, the test _landed_subjects makes: merged, or settled with no change.
+SIBLING_LANDED = ("merged", "settled")
+SIBLING_KEPT = ("trackerParent", "updatedAt", "closing", "terminal")
+
+
+def _load_snapshot(path: Path) -> object:
+    """A snapshot file's JSON, of any source, or a refusal naming it."""
+    try:
+        return json.loads(Path(path).read_bytes().decode("utf-8-sig"))
+    except (OSError, UnicodeDecodeError, ValueError, RecursionError) as error:
+        raise StateError("snapshot_invalid", f"cannot read the snapshot {Path(path).name}: {error}") from None
+
+
+def _is_sibling_snapshot(value: object) -> bool:
+    return isinstance(value, dict) and value.get("schemaVersion") == SIBLING_SNAPSHOT
+
+
+def check_sibling_snapshot(snapshot: object, name: str) -> dict:
+    """``snapshot`` as a valid ``sibling-snapshot/1``, or a refusal naming it ``name``.
+
+    Its age is not checked here: reconcile takes each entry's own read time to
+    the freshness gate, so one too old reads as stale for that sibling alone.
+    """
+    errors = validate(snapshot, load_schema(SIBLING_SNAPSHOT))
+    if not errors:
+        try:
+            _require_unicode(snapshot, "snapshot_invalid")
+        except StateError as error:
+            errors.append(str(error))
+    if not errors:
+        for index, entry in enumerate(snapshot["siblings"]):
+            try:
+                read = _parse_time(entry["readAt"], exact=True)
+            except ValueError:
+                errors.append(f"/siblings/{index}/readAt: not a real time")
+                continue
+            if (read - datetime.datetime.now(datetime.timezone.utc)).total_seconds() > SNAPSHOT_CLOCK_SKEW_SECONDS:
+                errors.append(f"/siblings/{index}/readAt: read in the future: check its clock")
+            if ("stories" in entry) != (entry["outcome"] in ("read", "stale")):
+                errors.append(f"/siblings/{index}/stories: a read or stale entry carries its stories, and no other does")
+            subjects = [story["subject"] for story in entry.get("stories", [])]
+            if len(subjects) != len(set(subjects)):
+                errors.append(f"/siblings/{index}/stories: each subject appears once")
+    if not errors:
+        try:
+            _parse_time(snapshot["takenAt"], exact=True)
+        except ValueError:
+            errors.append("/takenAt: not a real time")
+    if errors:
+        raise StateError("snapshot_invalid", f"{name}: " + "; ".join(errors))
+    return snapshot
+
+
+def _sibling_landed(journal: list[dict], sibling: str, subject: str) -> bool:
+    return any(entry["kind"] == "sibling.landed" and entry["data"].get("sibling") == sibling
+               and entry["data"].get("subject") == subject for entry in journal)
+
+
+def _sibling_mismatched(journal: list[dict], sibling: str, parent: str | None) -> bool:
+    return any(entry["kind"] == "sibling.mismatched" and entry["data"].get("sibling") == sibling
+               and entry["data"].get("parent") == parent for entry in journal)
+
+
+def _journal_locked(directory: Path, current: dict, journal: list[dict], kind: str, data: dict) -> dict:
+    """Append one tool entry while the caller holds the state lock, keeping ``journal`` in step."""
+    entry = {"id": len(journal) + 1, "at": now(), "kind": kind, "lane": None, "subject": None, "data": data}
+    written = _append_journal_locked(directory, current, journal, entry)
+    journal.append(written)
+    return written
+
+
+def _write_locked(directory: Path, state: dict, updated: dict) -> dict:
+    """Write ``updated`` as the next version while the caller holds the state lock, with the record's own checks."""
+    updated["version"] = state["version"] + 1
+    updated["meta"]["updatedAt"] = now()
+    errors = state_errors(updated)
+    if errors:
+        raise StateError("patch_invalid", "; ".join(errors))
+    _require_unicode(updated, "patch_invalid")
+    _write_atomically(directory / STATE_FILE, dumps(updated))
+    _note_change(directory, "patch", version=updated["version"])
+    return updated
+
+
+@writer_operation
+def _apply_siblings(directory: Path, reads: list[dict], max_age: float) -> list[dict]:
+    """Apply checked sibling reads to the record, entry by entry, and return what changed.
+
+    An entry counts for the sibling the record holds by that name and link: one
+    removed or relinked since the read is passed over, as is an entry read before
+    the latest one applied, unless the freshness gate refuses it. Only a read
+    entry changes a sibling's stories and journals anything about them. Any
+    other outcome updates lastOutcome and lastAttemptAt alone; a read older than
+    ``max_age`` sets lastOutcome to stale, and lastAttemptAt when it is the later.
+    """
+    clock = datetime.datetime.now(datetime.timezone.utc)
+    changes: list[dict] = []
+    with file_lock(directory / STATE_LOCK):
+        state = read_state(directory, for_write=True)
+        journal = read_journal(directory)
+        updated = copy.deepcopy(state)
+        rows = {row["name"]: row for row in updated.get("siblings", [])}
+        parent = state["meta"].get("trackerParent")
+        pending: list[tuple[str, dict]] = []
+        for snapshot in reads:
+            for entry in snapshot["siblings"]:
+                row = rows.get(entry["name"])
+                if row is None or row["link"] != entry["link"]:
+                    continue
+                earlier = (row.get("lastAttemptAt") is not None
+                           and _parse_time(entry["readAt"], exact=True) < _parse_time(row["lastAttemptAt"], exact=True))
+                before = copy.deepcopy(row)
+                if (clock - _parse_time(entry["readAt"])).total_seconds() > max_age:
+                    # The freshness gate refuses it: the sibling reads stale, whenever the refused read was taken.
+                    row["lastOutcome"] = "stale"
+                    if not earlier:
+                        row["lastAttemptAt"] = entry["readAt"]
+                    if row != before:
+                        changes.append({"subject": None, "change": f"sibling {row['name']} read stale", "recovery": False})
+                    continue
+                if earlier:
+                    continue
+                outcome = entry["outcome"]
+                if outcome == "read" and entry.get("trackerParent") != parent:
+                    outcome = "other-epic"
+                row["lastOutcome"], row["lastAttemptAt"] = outcome, entry["readAt"]
+                if outcome == "read":
+                    row["readAt"] = entry["readAt"]
+                    row["stories"] = copy.deepcopy(entry["stories"])
+                    for field in SIBLING_KEPT:
+                        if field in entry:
+                            row[field] = copy.deepcopy(entry[field])
+                        else:
+                            row.pop(field, None)
+                    for story in row["stories"]:
+                        if (story["stage"] in SIBLING_LANDED and not _sibling_landed(journal, row["name"], story["subject"])
+                                and not any(kind == "sibling.landed" and data["sibling"] == row["name"]
+                                            and data["subject"] == story["subject"] for kind, data in pending)):
+                            pending.append(("sibling.landed", {"sibling": row["name"], "subject": story["subject"],
+                                                               "firstSeenAt": entry["readAt"]}))
+                elif outcome == "other-epic":
+                    seen = entry.get("trackerParent")
+                    if not _sibling_mismatched(journal, row["name"], seen) and not any(
+                            kind == "sibling.mismatched" and data["sibling"] == row["name"] and data.get("parent") == seen
+                            for kind, data in pending):
+                        pending.append(("sibling.mismatched", {"sibling": row["name"],
+                                                               **({"parent": seen} if seen else {})}))
+                if row != before:
+                    changes.append({"subject": None, "change": f"sibling {row['name']} read {outcome}", "recovery": False})
+        current = _write_locked(directory, state, updated) if updated != state else state
+        for kind, data in pending:
+            if kind == "sibling.landed":
+                _journal_locked(directory, current, journal, "sibling.landed", data)
+            else:
+                _journal_locked(directory, current, journal, "sibling.mismatched", data)
+            changes.append({"subject": None, "recovery": False,
+                            "change": (f"{data['subject']} landed in sibling {data['sibling']}" if kind == "sibling.landed"
+                                       else f"sibling {data['sibling']} belongs to another epic")})
+    return changes
+
+
+def sibling_link_problem(link: object) -> str | None:
+    """Why ``link`` can't name a sibling, or None: a hosted live view, <origin>/d/<64 hex>."""
+    if not isinstance(link, str) or not SIBLING_LINK.fullmatch(link):
+        return ("a sibling is named by its hosted live view, <origin>/d/<64 hex>, with no user, query or fragment")
+    return None
+
+
+@writer_operation
+def set_sibling(directory: Path, *, name: str, link: str | None = None, remove: bool = False) -> dict:
+    """Name a sibling delivery by its hosted link, journaled as sibling.added, or remove one, as sibling.removed.
+
+    Refused, with nothing written, for a record with no meta.trackerParent (a
+    sibling's epic could not be checked), a link that is not a hosted live view,
+    a name or link the record already holds, or a removal of a name it doesn't.
+    """
+    if not isinstance(name, str) or not SIBLING_NAME.fullmatch(name):
+        raise StateError("sibling_invalid", "a sibling's name is 1 to 64 letters, digits, dots, dashes and underscores")
+    with file_lock(directory / STATE_LOCK):
+        state = read_state(directory, for_write=True)
+        journal = read_journal(directory)
+        updated = copy.deepcopy(state)
+        rows = updated.setdefault("siblings", [])
+        held = next((row for row in rows if row["name"] == name), None)
+        if remove:
+            if held is None:
+                raise StateError("sibling_invalid", f"the record names no sibling {name}: there is nothing to remove")
+            rows.remove(held)
+            current = _write_locked(directory, state, updated)
+            entry = _journal_locked(directory, current, journal, "sibling.removed", {"sibling": name})
+            return {"ok": True, "removed": name, "entry": entry["id"]}
+        if not state["meta"].get("trackerParent"):
+            raise StateError("sibling_invalid", "the record names no meta.trackerParent, so a sibling's epic can't be "
+                                                "checked: set the tracker parent first")
+        problem = sibling_link_problem(link)
+        if problem:
+            raise StateError("sibling_invalid", problem)
+        if held is not None:
+            raise StateError("sibling_invalid", f"the record already names a sibling {name}: remove it first")
+        if any(row["link"] == link for row in rows):
+            raise StateError("sibling_invalid", "the record already names a sibling with that link")
+        rows.append({"name": name, "link": link, "addedAt": now()})
+        current = _write_locked(directory, state, updated)
+        entry = _journal_locked(directory, current, journal, "sibling.added", {"sibling": name, "link": link})
+        return {"ok": True, "added": name, "entry": entry["id"]}
 
 
 def _current_merge(journal: list[dict], item: dict) -> bool:
@@ -4906,7 +5151,7 @@ def suggest_next(directory: Path, lane: str, snapshot_path: Path, hints_path: Pa
 # ---------------------------------------------------------------------------
 # Forge and tracker snapshots from the repository's own commands, for a lead with no agent
 
-SNAPSHOT_SOURCES = ("tracker", "forge")
+SNAPSHOT_SOURCES = ("tracker", "forge", "siblings")
 TRACKER_SNAPSHOT_TIMEOUT = 60
 TRACKER_SNAPSHOT_TIMEOUT_CEILING = 600
 TRACKER_SNAPSHOT_OUTPUT_BYTES = 16 * 1024 * 1024
@@ -4928,8 +5173,11 @@ SNAPSHOTS_DIRECTORY = "snapshots"
 
 
 def snapshot_config(member: dict, source: str) -> dict | None:
-    """The binding's ``state.<source>Snapshot`` block, checked, or None when it has none."""
-    key = f"{source}Snapshot"
+    """The binding's ``state.<source>Snapshot`` block, checked, or None when it has none.
+
+    The siblings source's block is ``state.siblingSnapshot``.
+    """
+    key = "siblingSnapshot" if source == "siblings" else f"{source}Snapshot"
     config = member.get(key)
     if config is None:
         return None
@@ -5431,10 +5679,16 @@ def take_snapshot(directory: Path, member: dict, output: Path, *, source: str, m
             cause = {"cause": "exited", "exitCode": code}
         else:
             try:
-                snapshot = check_snapshot(json.loads(out.decode("utf-8-sig")), "the command's snapshot", max_age,
-                                          parent=parent)
-                if snapshot["source"] != source:
-                    raise StateError("snapshot_invalid", f"the command's snapshot is not from the {source}")
+                printed = json.loads(out.decode("utf-8-sig"))
+                if source == "siblings":
+                    snapshot = check_sibling_snapshot(printed, "the command's snapshot")
+                    _sibling_snapshot_age(snapshot, max_age)
+                    items = snapshot["siblings"]
+                else:
+                    snapshot = check_snapshot(printed, "the command's snapshot", max_age, parent=parent)
+                    items = snapshot["items"]
+                    if snapshot["source"] != source:
+                        raise StateError("snapshot_invalid", f"the command's snapshot is not from the {source}")
             except (UnicodeDecodeError, ValueError, RecursionError):
                 reason = "the command printed no JSON"
                 cause = {"cause": "no_json"}
@@ -5453,7 +5707,7 @@ def take_snapshot(directory: Path, member: dict, output: Path, *, source: str, m
             # Say the outage ended, so the next failure is noted again; it answers the note of the outage.
             append_journal(directory, kind="snapshot.retaken", data={"source": source},
                            answers=[last["id"]] if last["kind"] == "snapshot.stale" else None)
-        return {"ok": True, "taken": True, "output": str(output), "items": len(snapshot["items"]),
+        return {"ok": True, "taken": True, "output": str(output), "items": len(items),
                 "takenAt": snapshot["takenAt"], **_cleanup_note(cleanup)}
     facts = {"source": source, **cause}
     if last is None or not (last["kind"] == "snapshot.stale" and last["data"] == facts):
@@ -5462,6 +5716,15 @@ def take_snapshot(directory: Path, member: dict, output: Path, *, source: str, m
     if detail and detail != reason:
         result["detail"] = detail
     return result
+
+
+def _sibling_snapshot_age(snapshot: dict, max_age: float) -> None:
+    """Refuse a sibling snapshot taken longer ago than ``max_age``, as the freshness gate refuses any other."""
+    age = (datetime.datetime.now(datetime.timezone.utc) - _parse_time(snapshot["takenAt"])).total_seconds()
+    if age < -SNAPSHOT_CLOCK_SKEW_SECONDS:
+        raise StateError("snapshot_invalid", f"the command's snapshot was taken {int(-age)}s in the future: check its clock")
+    if age > max_age:
+        raise StateError("snapshot_stale", f"the command's snapshot was taken {int(age)}s ago, more than {max_age:g}s")
 
 
 def tracker_snapshot(directory: Path, member: dict, output: Path, *, max_age: float) -> dict:
@@ -5512,7 +5775,9 @@ def refresh_sources(directory: Path, member: dict, *, cwd: Path | None = None) -
             kept += _still_fresh(folder / f"{source}.json", max_age)
             continue
         if not declared:
-            statuses[source] = {"status": "not_observed"}
+            # Siblings are read only where the binding asks: a record that reads none says nothing about them.
+            if source != "siblings":
+                statuses[source] = {"status": "not_observed"}
             continue
         folder.mkdir(exist_ok=True)
         applied, fresh = folder / f"{source}.json", folder / f"{source}.next.json"
