@@ -1545,9 +1545,11 @@ a listed path the runner reads the outputs each of the three versions lists:
 the merge base's, the base's and the candidate's.
 
 - The candidate lists what the merge base did: it takes the base side.
-- Only the candidate changed the listing, and the base changed digests at
-  most: it takes the candidate's side. The regenerators then refresh its
-  digests, so the merged file lists both sides' outputs with current digests.
+- Only the candidate changed the listing, and the base left it as the merge
+  base had it: it takes the candidate's whole file. The regenerators then
+  refresh its digests, so the merged file lists the candidate's outputs with
+  the digests of the merged tree. Any other edit the base made to that file is
+  dropped without a stop.
 - Both sides changed the listing, even to the same outputs: it stops with
   `source_conflict`, saying what each side added or removed. Resolve it by hand,
   keeping both sides' outputs, and hand off again.
