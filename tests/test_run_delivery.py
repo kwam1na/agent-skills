@@ -2307,7 +2307,9 @@ class RunDeliveryCharacterizationTests(unittest.TestCase):
             self.assertNotIn("--amend", out)
         with self.subTest("finished with the printed command, the review carries through the hand-off"):
             conflicted(merge)
-            sh(*finish, cwd=wt)
+            # Another trailer beside the authorization's, as `-s` or a commit-msg hook adds: only its key is read.
+            sh(*finish, "--trailer", "Signed-off-by: Lane <lane@example.test>", cwd=wt)
+            self.assertIn("\nSigned-off-by: Lane", sh("git", "show", "-s", "--format=%B", cwd=wt).stdout)
             sh(*merge_second, cwd=wt)
             head = sh("git", "rev-parse", "HEAD", cwd=wt).stdout.strip()
             carries("a merge finished with the printed command didn't carry")
