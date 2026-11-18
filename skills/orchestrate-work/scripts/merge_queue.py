@@ -1431,9 +1431,11 @@ class Runner:
             return [self.last_break]
         return []
 
-    def checking(self, subject: str | None, title: str = "", steps: list[dict] | None = None) -> None:
+    def checking(self, subject: str | None, title: str = "", steps: list[dict] | None = None,
+                 base: dict | None = None) -> None:
         value = None if subject is None else {
             "subject": subject, "title": title, "startedAt": now(), "steps": steps or [],
+            **({"base": base} if base else {}),
         }
         self.write(assignments={"/meta/checking/now": value})
 
@@ -2069,9 +2071,10 @@ class Runner:
             raise Stop("base_moved", f"{self.base} moved since {subject} was synced")
         context = context.with_values(branch=branch, head=synced, expectedHead=synced)
         self.set_item(subject, stage="checking", checks=[])
-        self.checking(subject, item["title"], [{"label": "selecting checks", "state": "running"}])
-        self.started[subject] = self.journal("check.started", subject,
-                                             data={"base": {"ref": self.base, "head": base_head}})
+        # A lone candidate's panel names the base it is checked against, which a check.superseded that ends it repeats.
+        self.checking(subject, item["title"], [{"label": "selecting checks", "state": "running"}],
+                      base={"ref": self.base, "head": base_head})
+        self.started[subject] = self.journal("check.started", subject, data={})
         self.failed[subject] = {}
         # Once a check fails, a new hand-off the lead accepts may end the rest of this run (check.superseded).
         with self.watching(subject, item["head"]):

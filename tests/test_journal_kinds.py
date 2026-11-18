@@ -68,7 +68,7 @@ TABLE = {
     "check.selected": ("S", "note", "head checks *why* added", "", "-"),
     "check.selection.cleared": ("S", "note", "", "", "-"),
     "selection.refused": ("H", "problem", "*detail*", "", "-"),
-    "check.started": ("S", "note", "batch? base?", "", "-"),
+    "check.started": ("S", "note", "batch?", "", "-"),
     "check.finished": ("S", "note", "batch?", "cause", "-"),
     "check.failed": ("S", "problem", "check timedOut failing more log", "cause", "-"),
     "check.superseded": ("S", "decision", "base head by phase", "cause", "-"),

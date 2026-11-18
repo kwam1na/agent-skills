@@ -3892,8 +3892,7 @@ class CheckVisibilityTests(MergeQueueTestCase):
         [started] = self.journal(adopter, "check.started")
         failed = self.journal(adopter, "check.failed")
         [stopped] = self.journal(adopter, "candidate.stopped")
-        # A lone candidate's run names the base it checks against, which a check.superseded that ends it repeats.
-        self.assertFacts(started, "check.started", {"base": {"ref": "main", "head": adopter.tip("main")}})
+        self.assertFacts(started, "check.started", {})
         # The stop names every failure, in order, and each failure the run it belongs to.
         self.assertEqual([entry["data"]["check"] for entry in failed], ["suite", "other"])
         self.assertTrue(all(entry["because"] == [started["id"]] for entry in failed), failed)

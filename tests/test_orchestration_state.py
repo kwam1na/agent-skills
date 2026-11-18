@@ -7646,14 +7646,15 @@ class SupersedingHandoffTests(unittest.TestCase):
             assignments={"/meta/handoffsNeedAcceptance": True})
         self.write("runner", selector="queue[subject=work-a]", assignments={"/stage": "checking", "/checks": checks})
         self.checking("work-a")
-        self.started = self.runner("check.started", "work-a", {"base": self.BASE})["id"]
+        self.started = self.runner("check.started", "work-a", {})["id"]
 
     def write(self, writer: str, **patch: object) -> None:
         version = state_tool.show(self.directory)["state"]["version"]
         state_tool.patch(self.directory, writer=writer, version=version, **patch)  # type: ignore[arg-type]
 
     def checking(self, subject: str, rerun: bool = False) -> None:
-        now = {"subject": subject, "title": f"Candidate {subject}", "startedAt": "2026-11-17T10:00:00Z", "steps": []}
+        now = {"subject": subject, "title": f"Candidate {subject}", "startedAt": "2026-11-17T10:00:00Z", "steps": [],
+               "base": self.BASE}
         if rerun:
             now["baseRerun"] = {"startedAt": "2026-11-17T10:05:00Z", "checks": ["unit"]}
         self.write("runner", assignments={"/meta/checking/now": now})
@@ -7712,6 +7713,11 @@ class SupersedingHandoffTests(unittest.TestCase):
 
     def test_a_run_that_is_not_the_subjects_or_is_a_batch_takes_no_new_head(self) -> None:
         self.failed()
+        # A panel that names no base is a run that can't say what check.superseded would end.
+        now = state_tool.show(self.directory)["state"]["meta"]["checking"]["now"]
+        self.write("runner", assignments={"/meta/checking/now": {key: value for key, value in now.items() if key != "base"}})
+        self.assertRefused("no check of its run has failed")
+        self.checking("work-a")
         # The checking panel names another subject's base re-run.
         self.checking("work-b", rerun=True)
         self.assertRefused("no check of its run has failed")
@@ -7800,10 +7806,10 @@ class LeadBaseBrokenTests(unittest.TestCase):
         self.write("runner", selector="queue[subject=work-a]",
                    assignments={"/stage": "checking", "/checks": [{"id": "unit", "state": "failed"}]})
         now = {"subject": "work-a", "title": "Candidate work-a", "startedAt": "2026-11-17T10:00:00Z", "steps": [],
-               "baseRerun": {"startedAt": "2026-11-17T10:05:00Z", "checks": ["unit"]}}
+               "base": self.BASE, "baseRerun": {"startedAt": "2026-11-17T10:05:00Z", "checks": ["unit"]}}
         self.write("runner", assignments={"/meta/checking/now": now})
         started = state_tool.append_journal(self.directory, kind="check.started", subject="work-a", writer="runner",
-                                            data={"base": self.BASE})
+                                            data={})
         state_tool.append_journal(self.directory, kind="check.failed", subject="work-a", writer="runner",
                                   data={"check": "unit", "timedOut": False, "failing": [], "more": 0, "log": "logs/u.log"},
                                   because=[started["id"]])

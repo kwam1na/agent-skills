@@ -6230,12 +6230,12 @@ class LeadEndsAFailedRunTests(unittest.TestCase):
         base = sh("git", "rev-parse", "origin/feature/FX-1", cwd=fx.main).stdout.strip()
         self.runner(fx, "queue[subject=FX-2]", {"/stage": "checking", "/checks": [{"id": "unit", "state": "failed"},
                                                                                  {"id": "slow", "state": "running"}]})
-        now = {"subject": "FX-2", "title": "FX-2", "startedAt": "2026-11-17T10:00:00Z", "steps": []}
+        now = {"subject": "FX-2", "title": "FX-2", "startedAt": "2026-11-17T10:00:00Z", "steps": [],
+               "base": {"ref": "feature/FX-1", "head": base}}
         if rerun:
             now["baseRerun"] = {"startedAt": "2026-11-17T10:05:00Z", "checks": ["unit"]}
         self.runner(fx, None, {"/meta/checking/now": now})
-        state_tool(fx, "journal", "--kind", "check.started", "--subject", "FX-2",
-                   "--data", json.dumps({"base": {"ref": "feature/FX-1", "head": base}}))
+        state_tool(fx, "journal", "--kind", "check.started", "--subject", "FX-2", "--data", "{}")
         started = str(kinds(fx, "check.started")[-1]["id"])
         state_tool(fx, "journal", "--kind", "check.failed", "--subject", "FX-2", "--because", started, "--data",
                    json.dumps({"check": "unit", "timedOut": False, "failing": ["t"], "more": 0, "log": "logs/u.log"}))

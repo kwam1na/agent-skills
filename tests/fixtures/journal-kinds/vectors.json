@@ -570,19 +570,6 @@
       "line": ""
     },
     {
-      "kind": "check.started",
-      "lane": "lane-1",
-      "subject": "APP-12",
-      "data": {
-        "base": {
-          "ref": "main",
-          "head": "cccccccccccccccccccccccccccccccccccccccc"
-        }
-      },
-      "head": "Checks started on APP-12",
-      "line": ""
-    },
-    {
       "kind": "check.finished",
       "lane": "lane-1",
       "subject": "APP-12",

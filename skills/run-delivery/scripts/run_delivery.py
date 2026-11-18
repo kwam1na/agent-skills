@@ -8017,9 +8017,9 @@ def accept_story(c, args) -> None:
     if not item:
         raise Stop(f"{key} is not in the queue; the lane has not handed it off")
     merged = item["stage"] == "merged"
-    if not merged:
+    if not merged and item.get("pending"):
         # A hand-off that ends a failed run waits beside the row the queue still checks: what it claims is its own.
-        item = _validator().handed_item(doc["state"], doc["journal"], key) or item
+        item = _validator().handed_item(doc["state"], doc.get("journal", []), key) or item
     added = handed_additions(c, key, item["head"]) if not merged and lead_selects(c) and not args.full_suite else {}
     chosen = check_ids(c, args.checks, "--checks", added) if args.checks is not None else None
     problems, decisions = [], []

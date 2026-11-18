@@ -1490,9 +1490,9 @@ def handoff(
 def superseding_phase(state: dict, journal: list[dict], subject: str) -> str | None:
     """The phase of a failed candidate's run that a new hand-off may end now: ``checks`` or ``base-rerun``, or None.
 
-    Only a lone candidate's run that is checking, that the checking panel names, and of which a check has failed since
-    it started: then the verdict is already that it won't merge, and the rest only diagnoses. A batch run is never
-    ended this way, and nor is a run whose start names no base.
+    Only a lone candidate's run that is checking, that the checking panel names with its base, and of which a check has
+    failed since it started: then the verdict is already that it won't merge, and the rest only diagnoses. A batch run
+    is never ended this way, and nor is a run whose panel names no base.
     """
     item = next((entry for entry in state["queue"] if entry["subject"] == subject), None)
     checking = state["meta"]["checking"]["now"]
@@ -1500,7 +1500,7 @@ def superseding_phase(state: dict, journal: list[dict], subject: str) -> str | N
         return None
     started = next((entry for entry in reversed(journal)
                     if entry["kind"] == "check.started" and entry["subject"] == subject), None)
-    if started is None or "batch" in started["data"] or "base" not in started["data"]:
+    if started is None or "batch" in started["data"] or "base" not in checking:
         return None
     if not any(entry["kind"] == "check.failed" and entry["subject"] == subject and entry["id"] > started["id"]
                for entry in journal):
@@ -1508,10 +1508,11 @@ def superseding_phase(state: dict, journal: list[dict], subject: str) -> str | N
     return "base-rerun" if "baseRerun" in checking else "checks"
 
 
-def _superseded_base(journal: list[dict], subject: str, phase: str) -> dict:
-    """The base the ended phase ran against: the re-run's, or the run's own."""
-    kind = "base.rerun.started" if phase == "base-rerun" else "check.started"
-    entry = next(entry for entry in reversed(journal) if entry["kind"] == kind and entry["subject"] == subject)
+def _superseded_base(state: dict, journal: list[dict], subject: str, phase: str) -> dict:
+    """The base the ended phase ran against: the re-run's, or the run's own, as its checking panel names it."""
+    if phase == "checks":
+        return dict(state["meta"]["checking"]["now"]["base"])
+    entry = next(entry for entry in reversed(journal) if entry["kind"] == "base.rerun.started" and entry["subject"] == subject)
     return dict(entry["data"]["base"])
 
 
@@ -1610,6 +1611,7 @@ def _take_handed(directory: Path, subject: str, *, by: int | None = None, author
             view = _handed_row(item, handed) if handed and handed["id"] == by and handed["data"]["head"] != item["head"] \
                 else item
         phase = superseding_phase(state, journal, subject) if view["head"] != item["head"] else None
+        base = _superseded_base(state, journal, subject, phase) if phase else None
         old_head = item["head"]
         if view is not item:
             item.clear()
@@ -1630,7 +1632,7 @@ def _take_handed(directory: Path, subject: str, *, by: int | None = None, author
                             "because": [checked["id"]] if checked else None})
         if phase is not None:
             entries.append({"kind": "check.superseded", "subject": subject, "lane": item["lane"],
-                            "data": {"base": _superseded_base(journal, subject, phase), "head": old_head, "by": ender,
+                            "data": {"base": base, "head": old_head, "by": ender,
                                      "phase": phase},
                             "because": [ender]})
         return copy.deepcopy(item), entries

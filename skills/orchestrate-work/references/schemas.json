@@ -79,6 +79,23 @@
                       "startedAt": {
                         "$ref": "#/$defs/timestamp"
                       },
+                      "base": {
+                        "description": "For a lone candidate's run: the base it is checked against, by branch and head. A check.superseded that ends the run names it.",
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "ref",
+                          "head"
+                        ],
+                        "properties": {
+                          "ref": {
+                            "$ref": "#/$defs/name"
+                          },
+                          "head": {
+                            "$ref": "#/$defs/commit"
+                          }
+                        }
+                      },
                       "steps": {
                         "type": "array",
                         "items": {

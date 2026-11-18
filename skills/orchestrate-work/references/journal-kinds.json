@@ -983,10 +983,6 @@
         "batch": {
           "type": "names",
           "optional": true
-        },
-        "base": {
-          "type": "base",
-          "optional": true
         }
       },
       "because": {
