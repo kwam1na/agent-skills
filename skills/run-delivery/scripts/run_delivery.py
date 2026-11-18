@@ -8262,13 +8262,10 @@ def settle_landings(c) -> str:
             if not fetched:
                 git("fetch", "-q", c.remote, c.base_branch)
                 fetched = True
-            if not doc["state"].get("laneRegions"):
-                landed = None
-            else:
+            try:
                 landed = helper.merge_commit(c.root, c.base_ref, merge["data"]["head"])
-                if landed is None:
-                    said.append(f"{merge['subject']}'s merge isn't on {c.base_ref} yet")
-                    break
+            except helper.RegionError as error:
+                raise Stop(f"can't find where {merge['subject']} landed on {c.base_ref}: {error}") from error
             outcome: dict = {}
 
             def compute(fresh: dict) -> dict | None:
@@ -8279,6 +8276,8 @@ def settle_landings(c) -> str:
                 regions = state.get("laneRegions", [])
                 if not regions:
                     return {"regionsSettled": merge["id"]}
+                if landed is None:
+                    return None  # a pass after the base holds it settles it
                 lane = c.lane_of(merge["subject"], state)
                 result = helper.settle(c.root, regions, merge["subject"], lane, landed)
                 outcome.update(result, lane=lane, inFlight={
@@ -8286,7 +8285,13 @@ def settle_landings(c) -> str:
                     for _, new in result["carried"]})
                 return {"laneRegions": result["regions"], "regionsSettled": merge["id"]}
 
-            patch_from(compute, f"the claims {merge['subject']}'s landing settles")
+            try:
+                written = patch_from(compute, f"the claims {merge['subject']}'s landing settles")
+            except helper.RegionError as error:
+                raise Stop(f"settling {merge['subject']}'s landing: {error}") from error
+            if written is None and landed is None:
+                said.append(f"{merge['subject']}'s merge isn't on {c.base_ref} yet")
+                break
             subject = merge["subject"]
             for claim in outcome.get("released", []):
                 state_tool("journal", "--kind", "ownership.released", "--lane", claim["lane"], "--subject", subject,
