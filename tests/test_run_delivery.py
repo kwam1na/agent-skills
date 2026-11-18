@@ -12513,9 +12513,13 @@ class StoryLensSelectionTests(unittest.TestCase):
         self.assertEqual((restart["previousLenses"], restart["previousLensesReason"]), ([OC, AT, "lens.x"], "r" * 600))
         self.assertEqual(set(restart["discardedResults"]), {OC, AT, "lens.x"})
         self.assertFalse((review / "result-r1-x.json").exists())
+        # A late result for lens.x, saved while the set lacks it, is discarded by the restart that takes it back.
+        (review / "result-r1-x.json").write_text("{}")
         code, out = fx.flow("review-prepare", "FX-3", "--round", 1, "--restart", "--lenses", f"{OC},{AT},lens.x",
                             "--lenses-reason", "X again", cwd=wt)
         self.assertEqual(code, 0, out)
+        self.assertIn("lens.x", json.loads((review / "round-1.meta.json").read_text())["restarts"][-1]["discardedResults"])
+        self.assertFalse((review / "result-r1-x.json").exists())
         self.results(fx, wt, 1, [OC, AT])
         code, out = fx.flow("review-reduce", "FX-3", "--round", 1, cwd=wt)
         self.assertEqual(code, 2, out)
@@ -12525,6 +12529,51 @@ class StoryLensSelectionTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertEqual(json.loads((review / "round-1.json").read_text())["acquisitionEnvelope"]["requestedLenses"],
                          [OC, AT, "lens.x"])
+
+    def test_the_story_lens_selection_is_pinned_where_adopters_and_lanes_read_it(self) -> None:
+        def normal(path: str) -> str:
+            return " ".join((ROOT / path).read_text(encoding="utf-8").split())
+        config = normal("skills/run-delivery/references/config.md")
+        self.assertIn("Declared means available, not run: a lens whose use includes `story` is available to a story's "
+                      "review, and one whose use includes `plan` to the plan's.", config)
+        self.assertIn("A story's review runs the mandated pair plus the story lenses its lane chooses, at round 1: "
+                      "`review-prepare <key> --round 1 --lenses <ids> --lenses-reason \"<why>\"`.", config)
+        self.assertIn("The set and its reason are fixed at round 1, in its meta: later rounds copy them, take "
+                      "`--lenses` only when it names the same set, and refuse any other.", config)
+        self.assertIn("a story-only lens is refused, naming the declared plan lenses.", config)
+        self.assertIn("so a lens meant for plan review never reviews a story's code; the lane then picks the story "
+                      "lenses that fit what it changes", normal("skills/run-delivery/references/adopting.md"))
+        skill = normal("skills/run-delivery/SKILL.md")
+        self.assertIn("`review-prepare <key> --round N [--grace] [--restart] [--lenses IDS --lenses-reason T]` | The "
+                      "story's lenses are the mandated pair plus the declared story lenses the lane chooses at round 1",
+                      skill)
+        self.assertIn("the last round must carry every lens of the story's set, which the message names with its reason",
+                      skill)
+        self.assertIn("Otherwise prints the story's review lenses and their reason (`reason not found`", skill)
+        self.assertIn("The set and its reason are fixed at round 1: later rounds keep them, a different `--lenses` is "
+                      "refused, and the lead sees both at hand-off and at acceptance.",
+                      normal("skills/run-delivery/templates/lane-brief.md"))
+
+    def test_a_chosen_lens_no_longer_declared_is_refused_by_name(self) -> None:
+        fx, wt, node = self.lensed()
+        m, review = fx.main, wt / ".orchestration/review/FX-3"
+        code, out = fx.flow("review-prepare", "FX-3", "--round", 1, "--lenses", f"{OC},{AT},lens.x",
+                            "--lenses-reason", "x", cwd=wt)
+        self.assertEqual(code, 0, out)
+        conf_path = m / ".agents/run-delivery.json"
+        conf = json.loads(conf_path.read_text())
+        del conf["review"]["lenses"]["lens.x"]
+        conf_path.write_text(json.dumps(conf, indent=2))
+        commit(m, "FX-1: lens.x withdrawn")
+        sh("git", "push", "-q", "origin", "feature/FX-1", cwd=m)
+        sh("git", "-c", "user.email=t@t", "-c", "user.name=t", "merge", "-q", "origin/feature/FX-1", cwd=wt)
+        self.results(fx, wt, 1, [OC, AT])
+        before = sorted(p.name for p in review.iterdir())
+        code, out = fx.flow("review-reduce", "FX-3", "--round", 1, cwd=wt)
+        self.assertEqual(code, 2, out)
+        self.assertIn("the story's review lenses include lens.x, which this repository no longer declares", out)
+        self.assertIn("--restart", out)
+        self.assertEqual(sorted(p.name for p in review.iterdir()), before, "the refusal wrote something")
 
     def test_without_lenses_every_story_lens_runs_and_with_no_use_every_declared_lens(self) -> None:
         fx, wt, node = self.lensed()
@@ -12629,6 +12678,11 @@ class StoryLensSelectionTests(unittest.TestCase):
              "review.lenses.lens.x.use must list plan, story or both"),
             ("an undeclared lens", {"use": {"lens.nowhere": ["plan"]}}, "review.use names lens.nowhere, which isn't a declared lens"),
             ("a narrowed mandated lens", {"use": {OC: ["story"]}}, f"review.use.{OC} narrows {OC}, a mandated lens"),
+            ("a repeated use", {"lenses": {**conf["review"]["lenses"], "lens.x": {**x, "use": ["story", "story"]}}},
+             "review.lenses.lens.x.use must list plan, story or both"),
+            ("review.use against review.lenses", {"use": {"lens.x": ["plan"]}},
+             "review.use gives lens.x the use ['plan'], but review.lenses gives it ['story']"),
+            ("a review.use that isn't a map", {"use": ["lens.x"]}, "review.use must map lens ids to their use"),
         ]
         for what, review_part, said in bad:
             with self.subTest(what=what):

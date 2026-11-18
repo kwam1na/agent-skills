@@ -469,7 +469,20 @@ class PlanReviewCommandTests(PlanReviewCase):
         commit(m, "FX-1: plan lenses")
         code, out = self.flow(fx, "prepare")
         self.assertEqual(code, 0, out)
-        self.assertEqual(json.loads((store(fx) / "round-1.meta.json").read_text())["lenses"], taken)
+        meta = json.loads((store(fx) / "round-1.meta.json").read_text())
+        self.assertEqual(meta["lenses"], taken)
+        # Aligned and frozen, the plan requires only the mandated pair of a story's round, which every story's set
+        # carries, rather than every declared lens.
+        for lens in taken:
+            (store(fx) / f"result-r1-{lens.split('.', 1)[1]}.json").write_text(json.dumps({
+                "schemaVersion": "review-lens-result/1", "lensId": lens, "subjectRef": "FX-1.plan",
+                "candidateRef": meta["candidate"], "round": 1, "outcome": "aligned", "findings": [],
+                "evidence": [f"tree {meta['tree']} checked at start and end"]}))
+        code, out = self.flow(fx, "reduce")
+        self.assertEqual(code, 0, out)
+        code, out = fx.flow("lead-init", cwd=m)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads((fx.tmp / "record/plan.json").read_text())["requiredLenses"], [OC, AT])
 
     def test_an_unchanged_candidate_is_refused(self) -> None:
         fx = self.fixture()

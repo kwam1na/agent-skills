@@ -5603,7 +5603,8 @@ def build_plan(c, log: list[dict]) -> dict:
                       if words)
     plan = {
         "schemaVersion": "delivery-plan/1", "updated": now(), "outcome": outcome,
-        "requiredLenses": c.raw.get("requiredLenses", list(c.lenses)), "proofKinds": kinds, "units": units,
+        # The mandated pair, which every story's set carries: a story need not run a lens its lane didn't choose.
+        "requiredLenses": c.raw.get("requiredLenses", list(MANDATED_LENSES)), "proofKinds": kinds, "units": units,
         "finish": plan_finish(c, snapshot["at"]),
         "approved": {"at": snapshot["at"], **({"review": said} if said else {}),
                      "snapshot": {"units": snapshot["units"], "finish": snapshot["finish"]}},
