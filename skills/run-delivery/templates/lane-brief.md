@@ -32,7 +32,7 @@ assemble briefs, round files or records by hand, and don't edit what they write.
   merge or a merge that changes the story diff or owned content needs a new review.
 - Branch: `{{branch}}`. Commit subjects start with the story key.
 - Never touch: {{never_touch}}. Change only the files your lane owns (below, and `lanes.<lane>.owns` in
-  the delivery file). The lead refuses a hand-off that changes anything else.
+  the delivery file). The lead refuses a hand-off that changes anything else.{{listings}}
 - Long commands (gates, builds, in-app checks) can take minutes: run them in the background or with a long timeout,
   never under a short tool timeout.
 
