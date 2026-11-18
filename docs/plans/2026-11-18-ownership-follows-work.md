@@ -69,8 +69,14 @@ Checked against `main` at `a904245` on 2026-11-18:
      merges the base.
    - Any other claim that does not map is left in place, and "Needs you" names it as needing a regrant, with its
      reason. The item does not hold the close, and clears when the claim is regranted or revoked.
-   Each merge is settled once: the record keeps the id of the last `candidate.merged` it settled, so a restarted
-   supervisor neither skips nor repeats one.
+   - A claim whose `baseHead` is not a strict ancestor of M is left untouched when settling M: it was granted at or
+     after the merge, so the merge is already in its history.
+   Each merge is settled once, in journal order: the record keeps the id of the last `candidate.merged` it settled, in
+   the same patch as the claims, so a restarted supervisor neither skips nor repeats one. A record with no settled id
+   yet, such as one written by an earlier release, is seeded by the first pass with the latest `candidate.merged` id,
+   and no earlier merge is settled. The pass journals its `ownership.released` and `ownership.carried` entries after
+   that patch, so a supervisor stopped between the two loses the entries, never the change. The settle takes the
+   ownership lock, as `lead-own` and `lead-accept` do.
 3. **A claim that no longer maps doesn't block a grant on its file.** `lead-own --region` checks overlap against the
    claims that map at the current base. It grants past one that doesn't, and prints it as needing a regrant, rather
    than refusing. The state tool's same-base overlap check is unchanged.
@@ -145,8 +151,10 @@ Checked against `main` at `a904245` on 2026-11-18:
 16. **"Needs you" names a change outside a lane's ground.** V26-3564 scope 2. For each changed file its lane doesn't
     hold, by the same ownership acceptance uses, the list gains a shown item that doesn't hold the close: "Lane 1
     changed `foo.py`, which it doesn't hold." A declared shared output, such as `provenance.lock.json`, raises
-    nothing. The item clears when a pass no longer sees the change, or the lead grants the file. A branch that can't
-    be read raises a shown item saying so, in place of the lane's items.
+    nothing. The item clears when a pass no longer sees the change, or the lead grants the file. On a file the lane
+    holds only by span, each change outside its spans raises the same item, naming the lines: "Lane 1 changed lines
+    40-44 of `foo.py`, outside its span." A change inside a span raises nothing. A branch that can't be read raises a
+    shown item saying so, in place of the lane's items.
 17. **The page shows who holds which files when lanes share files by lines.** V26-3564 scope 3. When the record has
     region claims, the "Who's doing what" chapter offers a "Who holds which files" view, closed by default. It shows the
     delivery's claimed files grouped by area, the folder under the repository root they sit in, each solid where its
@@ -158,6 +166,11 @@ Checked against `main` at `a904245` on 2026-11-18:
     `catalog.json` and the one-line `description` of each `profiles/*.json`, so the lanes would conflict there. The
     lead writes each story's sentence in one commit on `main`, pushed with `lead-push` right after the story lands.
     `provenance.lock.json` stays regenerable: each lane runs the writer.
+19. **The lead enters the new test modules before lanes start.** `tests/test_own_deliveries.py` pins
+    `CATALOGUE_MODULES` against the test modules on disk both ways, and `.agents/orchestration.json`'s
+    `selection.catalogue` must match it. Before the first assignment, the lead commits the four new modules on `main`
+    as stubs, each with only its module docstring, and enters them in both lists in the same commit. Each lane then
+    owns its modules whole, and no lane touches either list.
 
 ## Out of scope
 
@@ -182,14 +195,17 @@ Test-first for every story. Sensors:
 - `tests/test_region_claims.py`, new, for Decisions 1 to 8: release and carry on landing, the carve, merging touching
   claims, the all-at-once report, `claims-check` and `lead-claims`.
 - `tests/test_region_grants.py`, new, for Decisions 9 to 13: printed lines, anchors, the statement check and widening.
-- `tests/test_merge_queue.py`'s `RegionDiffTests`, unchanged, for the queue's check after it moves.
+- `tests/test_merge_queue.py`'s `RegionDiffTests`, unchanged, and `tests/test_run_delivery_supervisor.py`'s
+  `RegionOwnershipTests`, which runs the real queue, for the queue's check after it moves.
+- `tests/test_journal_shape.py`'s inventory for the new journal calls, and `tests/test_orchestration_state.py`'s guide
+  tracker table check for the new kinds' rows in the orchestration guide.
+- `tests/test_own_deliveries.py`'s catalogue guard for the new modules (Decision 19).
 - `tests/test_ownership_lock_race.py`, new, for Decision 14.
 - `tests/test_lane_changes.py`, new, for Decisions 15 and 16.
 - `tests/delivery_views_page/line-map-files.test.mjs`, new, for Decision 17.
 - `tests/test_journal_kinds.py` and `tests/fixtures/journal-kinds/vectors.json` for `ownership.released`,
   `ownership.carried` and `ownership.carved`.
-- `tests/test_run_delivery_supervisor.py`'s `RegionOwnershipTests`, unchanged, as the regression for grants,
-  overlaps, trespass and revocation.
+- `RegionOwnershipTests`, unchanged, also as the regression for grants, overlaps, trespass and revocation.
 - `scripts/validate-registry.py` and `scripts/update-provenance.py --check` for provenance.
 
 Most of Decisions 2 to 13 is `region_ownership` logic, tested on small repositories built with `tests/quiet_git.py`,
@@ -204,36 +220,72 @@ V26-3591, in `tests/test_region_claims.py`:
 - A story with a claim of its own and its lane's claim on the same file lands. The story's claim is gone, with
   `ownership.released`. The lane's claim, whose lines the story changed inside it, is carried to the merge commit
   over the same lines, with `ownership.carried`. A later grant on that file to another lane succeeds.
-- A lane claim that a landed hunk crosses at an edge is not carried. "Needs you" names it as needing a regrant, and
-  the item clears once it is regranted.
-- Another lane's claim the landing doesn't touch stays as it was, anchored where it was granted.
+- The carried claim belongs to another story of the lane, S2, still in flight. The record then holds exactly
+  `{lane, path, baseHead: M, start, end, story: S2}`, and when S2 lands that claim is released.
+- A lane claim that a landed hunk crosses at an edge is not carried. "Needs you" names it as needing a regrant. The
+  item does not hold the close, and clears once the claim is regranted, and in a second case once it is revoked.
+- Lane K's claim starts where lane L's span ends, and L's landed hunk replaces L's last line. K's claim is not
+  carried, keeps its coordinates and `baseHead`, and is named as needing a regrant.
+- Another lane's claim on the same path the merge changed, which the landing doesn't touch, keeps its `baseHead` and
+  coordinates.
 - A carry when another story of the same lane is in flight on an older branch names that story.
-- A supervisor restarted after a merge settles it once: no second `ownership.released`, and no merge skipped.
-- A grant on a file where another lane's claim no longer maps succeeds and prints that claim as needing a regrant.
-- A carve that gives lines out of two lanes' claims applies whole: remnants kept, gives added, one `ownership.carved`.
+- Two merges land before one pass, and the lead grants a claim at the second merge on a file the first changed. The
+  pass settles both merges in order, and leaves that claim untouched, with no regrant item.
+- After a settle, the lead grants a claim on the landed path anchored after the merge. A restarted supervisor's pass
+  leaves it unchanged with no regrant item, and the record's settled id is that merge's `candidate.merged` id.
+- Two stories land, and the supervisor stops after settling the first. After the restart, the second is settled,
+  with its own `ownership.released`.
+- A record with no settled id and two past merges is seeded with the latest merge's id on the first pass, and settles
+  neither.
+- A grant on a file where another lane's claim no longer maps succeeds and prints that claim as needing a regrant. On
+  the same fixture, with the record unchanged each time, a grant whose own span doesn't map to the current base is
+  refused, and so is a grant that overlaps a third claim that does map, naming it.
+- `lead-own --region --story` with a key the record doesn't hold is refused, and the state tool refuses a record
+  carrying one. A record whose claims have no `story` still validates.
+- A carve gives lines out of two lanes' claims, one of them a claim with a story, and one give uses `@KEY`. The record
+  then holds exactly the expected claims, each with its lane, story, start, end and `baseHead` B, and one
+  `ownership.carved`.
 - A carve with one give that would overlap after mapping changes nothing. So does one where an existing claim doesn't
-  map to `--base`.
-- A carve whose first write meets `version_stale` from a concurrent record write retries and applies whole, and never
-  leaves the record with the revoked lines and without the gives.
+  map to `--base`, one with a give to a lane the record doesn't hold, and one with a `--base` older than the current
+  base whose result doesn't map at the current base.
+- A carve whose first write meets `version_stale`, because a concurrent write changed a claim on the carved path. The
+  final record holds that write with the carve computed over it, and `ownership.carved` lists the second compute's
+  removed and added claims.
 - Granting a span that touches the same lane's span leaves one claim, and an edit replacing lines across the old
-  boundary is then accepted. Touching spans of different lanes, or of different stories, stay two.
-- A diff with three hunks outside the lane's claims on two files is refused at review preparation, naming all three.
-- `claims-check` on a clean branch exits 0. On a branch with a hunk outside its span, a new file and a whole-file
-  change it doesn't hold, it lists all three with the request for each, and exits 1.
-- `lead-claims` says the queue would refuse a candidate whose merged tree trespasses after the base moved, and accept
-  one that doesn't, agreeing with the queue's own check on the same inputs. A head that conflicts is reported as
-  conflicting.
+  boundary is then accepted. Touching spans of different lanes, or of different stories, stay two. Spans of one lane
+  and one story with one unclaimed line between them stay two, and that line can be granted to another lane.
+- A diff that changes lines outside the lane's span and creates a file it doesn't hold is refused at review
+  preparation, at hand-off and at acceptance, each naming both.
+- `claims-check` on a clean branch exits 0, writes nothing and journals nothing. Its branch then gains a hunk outside
+  its span, a new file, a deletion, a mode change and a whole-file change it doesn't hold, after the base has moved
+  with another lane's landed change. It lists all five and not the base's change, and exits 1. The lead runs every
+  request it printed, then `claims-check` exits 0 and `lead-claims` says the queue would accept the candidate.
+- `lead-claims` says the queue would refuse a candidate whose merged tree trespasses after the base moved, and the
+  same candidate is then stopped by a real queue run for the same reason. It says the queue would accept one that
+  doesn't trespass. A head that conflicts is reported as conflicting. With a handed head and a newer pushed branch, it
+  checks the handed head. With no keys, it covers every story with a hand-off or a pushed branch.
 
 V26-3570, in `tests/test_region_grants.py`:
 
-- A grant prints its span's first and last line text.
-- `--around "def waited_on"` grants the function with its decorators. On a line inside a function body, it grants the
-  smallest statement around it. A Markdown heading grants its section, and a JSON key's line grants its block.
+- A grant, a carve and a carry each print every span's first and last line text, a line over 100 characters cut to
+  100.
+- Each anchor row asserts the exact `[start, end)` on a fixture with neighbours on both sides:
+  - `--around "def waited_on"` grants the decorated function, which is followed by another function, with its
+    decorators and without the next one.
+  - On a line inside a function body, it grants the smallest statement around it.
+  - A Markdown heading grants its section, which holds a deeper subheading and is followed by a heading of the same
+    level, up to that heading. A Markdown paragraph's line grants the paragraph.
+  - A JSON key's line grants its block, ending with its `}` line and not the sibling key after it.
+- A carve with `--give LANE:around=TEXT@KEY` leaves the anchor's block claimed by that lane, with the story.
 - An anchor with no match is refused. One with three matches is refused, listing all three lines.
-- A Python span starting in the middle of a multi-line call is refused, naming the call and its lines. The same span
-  in a text file is granted.
-- `--insert after` widens a span by one line and prints it. A widening into another lane's claim, or past the end of
-  the file, is refused.
+- A Python span starting in the middle of a multi-line call is refused, naming the call and its lines, and so is one
+  ending in the middle of one. A Python span ending at the file's end is granted. The same mid-call span in a text
+  file is granted. A carve whose give cuts a Python statement is refused, with the record unchanged.
+- `--insert after` widens a span by one line and prints it, and an insertion committed at the original edge is then
+  accepted at review preparation. `--insert before` widens by one line before the span. A widening into another
+  lane's claim, or past the end of the file, is refused.
+- After V26-3570, `claims-check`'s requests use `--around` or a quoted line, and `--insert` for an insertion at an
+  edge, never bare line numbers.
 - The rendered lane brief tells lanes to ask by anchor or quoted line, and to run `claims-check` before review.
 
 V26-3476, in `tests/test_ownership_lock_race.py`:
@@ -246,11 +298,17 @@ V26-3564, in `tests/test_lane_changes.py` and `tests/delivery_views_page/line-ma
 
 - A pushed change to a file the lane doesn't hold appears in "Needs you", naming the lane and file. It clears when the
   change is reverted on the branch, and when the lead grants the file.
-- A change to `provenance.lock.json` raises nothing.
+- After the lane's branch began, another lane's change to a file this lane doesn't hold lands on the base. This lane
+  gets no item, and its `lane-changes.json` entry has no such file.
+- A lane holding a span on a shared file pushes two hunks there. The one inside the span raises nothing, and the one
+  outside it raises an item naming its lines.
+- A change to a declared shared output raises nothing, in a fixture whose shared output is not `provenance.lock.json`.
+- A story with no pushed branch has no entry in `lane-changes.json`.
+- Enclosing names are read for a Python function, a JavaScript `function` and `const NAME =`, and a Markdown heading.
 - A branch that can't be read leaves an item saying so, and the page shows the lane as unreadable, not with the last
   pass's changes.
-- `lane-changes.json` names each change's first line, size and enclosing function, and an unchanged branch is not read
-  again on the next pass.
+- `lane-changes.json` names each change's first line, size and enclosing function. On the next pass with the branch
+  unchanged, the entry records the same read as before, by its recorded read time, rather than a new one.
 - With region claims, the page's files view shows the shelf, solid and hollow files, the shared splits and a file's
   reading, matching the record and the fixture's branches. With none, the page has no files view.
 
@@ -258,17 +316,29 @@ V26-3564, in `tests/test_lane_changes.py` and `tests/delivery_views_page/line-ma
 
 | Tier | Lane | Items, in order | Owns |
 | --- | --- | --- | --- |
-| 1 | 1 | V26-3591, V26-3570 | `skills/orchestrate-work/scripts/region_ownership.py`, `skills/orchestrate-work/scripts/merge_queue.py`, `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/references/schemas.json`, `skills/orchestrate-work/references/journal-kinds.json`, `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/SKILL.md`, `skills/run-delivery/templates/lane-brief.md`, `tests/test_region_claims.py`, `tests/test_region_grants.py`, `tests/test_journal_kinds.py`, `tests/fixtures/journal-kinds/` |
+| 1 | 1 | V26-3591, V26-3570 | `skills/orchestrate-work/scripts/region_ownership.py`, `skills/orchestrate-work/scripts/merge_queue.py`, `skills/orchestrate-work/scripts/delivery_state.py`, `skills/orchestrate-work/references/schemas.json`, `skills/orchestrate-work/references/journal-kinds.json`, `skills/orchestrate-work/references/orchestration-guide.md`, `skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/SKILL.md`, `skills/run-delivery/templates/lane-brief.md`, `tests/test_region_claims.py`, `tests/test_region_grants.py`, `tests/test_journal_kinds.py`, `tests/test_journal_shape.py`, `tests/fixtures/journal-kinds/` |
 | 1 | 2 | V26-3476, V26-3564 | `skills/delivery-views/scripts/render.py`, `skills/delivery-views/assets/line-map.js`, `skills/delivery-views/assets/line-map.css`, `skills/delivery-views/SKILL.md`, `skills/run-delivery/references/config.md`, `tests/test_ownership_lock_race.py`, `tests/test_lane_changes.py`, `tests/delivery_views_page/` |
 
-`run_delivery.py` is shared by lines. Before assigning V26-3564, the lead turns lane 1's whole-file claim on it into
-spans with one carve against the current base: lane 2 gets `needs_you`, `write_needs` and the functions beside them,
-and lane 1 keeps the rest. Both lanes call their new pass step from the supervisor's `one_pass`, so the carve splits it
-at a statement boundary: lane 1 adds the landing step (Decision 2) above it, lane 2 adds the branch read
-(Decision 15) below it. V26-3476 needs no `run_delivery.py` lines under Decision 14. If it does after all, the lead
-decides before granting any. The assignment message names every span.
+`run_delivery.py` is shared by lines. The installed generation has no carve, so before assigning V26-3564 the lead
+revokes lane 1's whole-file claim and grants spans with `lead-own --region`, against the current base, in one run
+while neither lane has a candidate under review. If a grant is refused, the lead regrants lane 1 the whole file and
+decides again before assigning. The spans:
 
-`catalog.json` and `profiles/*` are the lead's (Decision 18). `provenance.lock.json` is regenerable.
+- Lane 2 gets `needs_you`, `write_needs` and `lane_needs` and the functions between them, except for one lane 1 span
+  inside `needs_you`: the `items += lane_needs(doc["state"])` statement and the statement after it, where lane 1 adds
+  Decision 2's regrant items strictly inside its span. Lane 2's insertion point for Decision 16's items is strictly
+  inside its own span, before `items += record_needs(doc, items)`.
+- The `steps = (...)` statement in the supervisor's `one_pass` is one statement, so it goes to one lane: lane 1, which
+  adds the landing step there for V26-3591. Once V26-3591 lands, the lead moves that span to lane 2, which then adds
+  the branch read (Decision 15) there. Lane 2 builds and tests the branch read before then, and hands off V26-3564
+  only after the move.
+- Lane 1 keeps the rest.
+
+Every insertion point the assignment message names falls strictly inside the receiving lane's span. V26-3476 needs no
+`run_delivery.py` lines under Decision 14. If it does after all, the lead decides before granting any.
+
+`catalog.json` and `profiles/*` are the lead's (Decision 18), and so are `tests/test_own_deliveries.py` and
+`.agents/orchestration.json`'s catalogue (Decision 19). `provenance.lock.json` is regenerable.
 
 V26-3570 changes `change_regions` and the carve after V26-3591 reshapes them, so lane 1 runs them in order. V26-3476
 is small and stands alone, so lane 2 starts with it. V26-3564 depends on nothing here: it judges a file held by the
@@ -281,11 +351,13 @@ ownership acceptance already uses. If V26-3591's report (Decision 6) has landed 
 Lane 1, tier 1, not blocked. Test-first. Files: `skills/orchestrate-work/scripts/region_ownership.py`,
 `skills/orchestrate-work/scripts/merge_queue.py`, `skills/orchestrate-work/scripts/delivery_state.py`,
 `skills/orchestrate-work/references/schemas.json`, `skills/orchestrate-work/references/journal-kinds.json`,
-`skills/run-delivery/scripts/run_delivery.py`, `skills/run-delivery/SKILL.md`, `tests/test_region_claims.py`,
-`tests/test_journal_kinds.py` and `tests/fixtures/journal-kinds/`.
+`skills/orchestrate-work/references/orchestration-guide.md`, `skills/run-delivery/scripts/run_delivery.py`,
+`skills/run-delivery/SKILL.md`, `tests/test_region_claims.py`, `tests/test_journal_kinds.py`,
+`tests/test_journal_shape.py` and `tests/fixtures/journal-kinds/`.
 
 Implement Decisions 1 to 8. Add `ownership.released`, `ownership.carried` and `ownership.carved` to the kind registry
-with their vectors. Add `claims-check`, `lead-claims` and the carve to `SKILL.md`'s command table and its Lane
+with their vectors, their rows in the orchestration guide's tracker table, and the new journal calls in
+`tests/test_journal_shape.py`'s inventory. Add `claims-check`, `lead-claims` and the carve to `SKILL.md`'s command table and its Lane
 ownership section.
 
 ### V26-3570. Make region grants show and resolve their lines, so a wrong span can't pass unnoticed
