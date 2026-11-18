@@ -212,6 +212,7 @@ It exits 0 when no check is `missing` or `wrong`, 1 when one is, and 2 on a usag
 | The delivery file: every story has a lane, and lanes own disjoint files | `--delivery` |
 | The delivery supervisor is running, with the Node its lock records beside its pid and address (`wrong` below the runtime's `nodeMinimum`, `warn` when an older generation's supervisor recorded none), or the delivery is closed. A close with its `started` mark and no `finished` mark, and no supervisor running, is `wrong`: it stopped partway, and the row names what finishes it | `--delivery` |
 | Story files: each file a story's plan section names is its lane's. A file outside the lane is reported as `warn`, which doesn't fail the check, since a plan may move files between lanes as stories merge | `--delivery` |
+| Story summaries: each story the kept tracker snapshot lists carries a summary, which the live view's card reads from the ticket's `## Summary`. A story without one is reported as `warn`, which doesn't fail the check, naming the story and the fix; `lead-setup` notes the same | `--delivery`, with a tracker snapshot kept |
 | The gates pass on the base, in a fresh prepared checkout that is removed afterwards | `--run-gates` |
 
 What it changes: it fetches the delivery base (not with `--offline`, which reads the local remote-tracking refs), runs
