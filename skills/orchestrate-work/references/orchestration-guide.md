@@ -325,6 +325,21 @@ decision. Lanes post on their own tickets at the points the lane brief names.
   an unlanded story of another lane whose whole-file grant covers a file both
   stories' `files` name. An idle lane says what its next story waits on. Each
   wait goes away when what frees it happens, with no action from anyone.
+- An `after` key may name a story of a sibling delivery: another repository's
+  delivery of the same epic, which the record reads (see Sibling deliveries).
+  In a record with siblings, a key no story of its own holds raises a `sibling`
+  wait, after `order` among the causes. While a same-epic sibling's last kept
+  read holds the story unlanded, the story waits for it to land there, and the
+  sentence says how far it has got, or, when the sibling isn't fresh, when it
+  was last read. The wait goes when a fresh read shows the story `merged` or
+  `settled`, which journals `sibling.landed`; that wakes `wait`, and no lead
+  command is needed, even after the sibling's delivery has closed. A key that no
+  story and no sibling holds is held too: it needs the lead, to add the sibling
+  or fix the key, only when every same-epic sibling's `lastOutcome` is `read`,
+  and otherwise says which sibling hasn't been read yet. In a record with no
+  siblings such a key is ignored, as it always was. `next` counts a `sibling`
+  wait as an open blocker, and, beside the tracker's `blockedBy`, offers the
+  story only once both say the blocker is done.
 - A lane whose work waits for another story to land says so with `focus --state waiting --waiting-on KEY`, which
   must name a story the record holds; a `waiting` state without one is refused. The tool keeps the state the row left
   as `waitingFrom`, across every write while it waits. When KEY lands, or settles with no change, the row returns to
@@ -1103,8 +1118,9 @@ this generation doesn't install, the printed command, the status line and "Needs
 file, and reads no CI or forge. It returns on the first thing needing the lead:
 
 - a journal entry after `--after` of kind `candidate.handed`, `check.failed`,
-  `candidate.merged`, `candidate.stopped`, `base.broken`, `blocker.recorded` or
-  `serving.held`;
+  `candidate.merged`, `candidate.stopped`, `base.broken`, `blocker.recorded`,
+  `serving.held` or `sibling.landed`; the last frees a story that waits on a sibling
+  delivery's story;
 - a lane in the `blocked` state. A lane in the `waiting` state waits on a story, which goes on by itself when it
   lands: it wakes no wait, is never reported quiet, isn't in "Needs you" and doesn't hold the close;
 - machine pressure: five-minute load above `--load-multiple` times the cores
@@ -1347,13 +1363,20 @@ whole epic; no lead, queue or lane spans repositories.
   `incompatible` or `other-epic`, and whose `stories`, present only for `read`
   and `stale`, are `{subject, title, stage, changeRequest?}`.
 - Reconcile applies each entry for the sibling the record holds by that name
-  and link, and passes over one read before the latest it applied. Only a
+  and link, and passes over one read before its `lastAttemptAt`. Only a
   `read` entry changes the sibling's `stories`, `readAt`, `trackerParent`,
-  `updatedAt`, `closing` and `terminal`; every entry sets `lastOutcome` and
-  `lastAttemptAt`. An entry read longer ago than `snapshotMaxAgeSeconds` counts
+  `updatedAt`, `closing` and `terminal`; an entry whose outcome differs from
+  the sibling's `lastOutcome` sets it and `lastAttemptAt`. An entry read longer ago than `snapshotMaxAgeSeconds` counts
   as `stale`, and the tracker and forge snapshots in the same call still apply.
   A sibling is fresh while its `lastOutcome` is `read`: nothing downstream
   compares times with a clock.
+- A read that changes nothing about a sibling but its own times writes
+  nothing, so an idle refresh leaves the record, its version and
+  `meta.updatedAt` as they were. So `readAt` is the time of the last read that
+  changed the sibling's stories or fields, not of the latest read, and
+  `lastAttemptAt` is when its current `lastOutcome` began: a read whose
+  outcome differs is a change, and later reads with the same outcome leave it
+  as it was.
 - A sibling story has landed at `merged`, or `settled` for planned work. The
   first `read` showing it landed journals `sibling.landed` once, with
   `firstSeenAt` the read's time: when it was seen, never when it merged. A

@@ -20,6 +20,23 @@
           "stopped": "It was stopped."
         },
         "otherwise": "It is {stage}."
+      },
+      "sibling": {
+        "by": "stage",
+        "cases": {
+          "unread": "Last read {at}.",
+          "planned": "Not started.",
+          "building": "Building.",
+          "review": "In review.",
+          "queued": "Queued.",
+          "syncing": "Being checked.",
+          "synced": "Being checked.",
+          "checking": "Being checked.",
+          "checked": "About to merge.",
+          "merging": "Merging.",
+          "stopped": "Stopped."
+        },
+        "otherwise": "{stage}."
       }
     }
   },
@@ -43,7 +60,15 @@
         },
         "otherwise": "{waiter:ticket} waits for delivery {holder}, which is {doing}[, since {at}]."
       },
-      "held": "Held by the lead: {text}"
+      "held": "Held by the lead: {text}",
+      "sibling": {
+        "by": "case",
+        "cases": {
+          "held": "Waits for {on:ticket} to land in {sibling}. {where}",
+          "unread": "Waits for {on:ticket}, which no story here holds; {sibling} hasn't been read yet."
+        },
+        "otherwise": "Waits for {on:ticket}, which no story here or sibling lists: add the sibling, or fix the key."
+      }
     }
   },
   "lanes": {
@@ -59,7 +84,15 @@
       },
       "files": "{subject:lane} is next on {next:ticket}, which waits for {on:ticket} to land. {onLane:lane} holds {files:list} for it.",
       "held": "{subject:lane} is next on {next:ticket}, which the lead holds: {text}",
-      "waiting": "{subject:lane} waits for {on:ticket} to land[ before it finishes {own:ticket}]."
+      "waiting": "{subject:lane} waits for {on:ticket} to land[ before it finishes {own:ticket}].",
+      "sibling": {
+        "by": "case",
+        "cases": {
+          "held": "{subject:lane} is next on {next:ticket}, which waits for {on:ticket} to land in {sibling}.",
+          "unread": "{subject:lane} is next on {next:ticket}, which waits for {on:ticket}; {sibling} hasn't been read yet."
+        },
+        "otherwise": "{subject:lane} is next on {next:ticket}, which waits for {on:ticket}, which no story here or sibling lists."
+      }
     }
   },
   "holding": {
@@ -132,7 +165,8 @@
           "free": "{subject:ticket} is free to start",
           "paused": "Serving is paused",
           "report": "A report for the lead[ on {about}]",
-          "stale": "The {name} is not answering"
+          "stale": "The {name} is not answering",
+          "sibling": "{subject:ticket} comes after {on:ticket}, which no sibling lists"
         },
         "otherwise": "Something needs {whom}"
       },
@@ -159,7 +193,8 @@
           "free": "{lane:lane} is idle.",
           "paused": "[{reason}]",
           "report": "[{detail}]",
-          "stale": "[{reason}]"
+          "stale": "[{reason}]",
+          "sibling": "Add the sibling delivery that holds {on:ticket}, or fix the key."
         },
         "otherwise": ""
       },
@@ -186,7 +221,8 @@
           "free": "Clears when {subject:ticket} is assigned, held, or waits again.",
           "paused": "Clears when the lead lifts the hold.",
           "report": "Clears when the report leaves the record.",
-          "stale": "Clears when the {name} answers again."
+          "stale": "Clears when the {name} answers again.",
+          "sibling": "Clears when a sibling's read lists it, or the after key changes."
         },
         "otherwise": ""
       },

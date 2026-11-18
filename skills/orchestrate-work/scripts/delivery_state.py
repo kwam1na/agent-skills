@@ -4126,13 +4126,22 @@ def _apply_siblings(directory: Path, reads: list[dict], max_age: float) -> list[
 
     An entry counts for the sibling the record holds by that name and link: one
     removed or relinked since the read is passed over, as is an entry read before
-    the latest one applied, unless the freshness gate refuses it. Only a read
-    entry changes a sibling's stories and journals anything about them. Any
-    other outcome updates lastOutcome and lastAttemptAt alone; a read older than
-    ``max_age`` sets lastOutcome to stale, and lastAttemptAt when it is the later.
+    the sibling's lastAttemptAt, unless the freshness gate refuses it. Only a
+    read entry changes a sibling's stories and journals anything about them;
+    one older than ``max_age`` counts as stale. An entry whose outcome differs
+    from lastOutcome sets it, and lastAttemptAt to that entry's time. An entry
+    that changes nothing but those times writes nothing, so readAt is the last
+    read that changed the sibling, and lastAttemptAt when its outcome began.
     """
     clock = datetime.datetime.now(datetime.timezone.utc)
     changes: list[dict] = []
+
+    def _sibling_unchanged(row: dict, before: dict) -> bool:
+        """Whether a read changed nothing but its own times: then it writes nothing. readAt stays the last read that
+        changed the sibling's stories or fields, and lastAttemptAt when its lastOutcome began."""
+        timeless = lambda value: {key: item for key, item in value.items() if key not in ("readAt", "lastAttemptAt")}
+        return timeless(row) == timeless(before)
+
     with file_lock(directory / STATE_LOCK):
         state = read_state(directory, for_write=True)
         journal = read_journal(directory)
@@ -4153,7 +4162,10 @@ def _apply_siblings(directory: Path, reads: list[dict], max_age: float) -> list[
                     row["lastOutcome"] = "stale"
                     if not earlier:
                         row["lastAttemptAt"] = entry["readAt"]
-                    if row != before:
+                    if _sibling_unchanged(row, before):
+                        row.clear()
+                        row.update(before)
+                    else:
                         changes.append({"subject": None, "change": f"sibling {row['name']} read stale", "recovery": False})
                     continue
                 if earlier:
@@ -4183,7 +4195,11 @@ def _apply_siblings(directory: Path, reads: list[dict], max_age: float) -> list[
                             for kind, data in pending):
                         pending.append(("sibling.mismatched", {"sibling": row["name"],
                                                                **({"parent": seen} if seen else {})}))
-                if row != before:
+                if _sibling_unchanged(row, before):
+                    # Read again, and nothing to say: the record isn't written, so an idle refresh leaves it as it was.
+                    row.clear()
+                    row.update(before)
+                else:
                     changes.append({"subject": None, "change": f"sibling {row['name']} read {outcome}", "recovery": False})
         current = _write_locked(directory, state, updated) if updated != state else state
         for kind, data in pending:
@@ -4695,7 +4711,7 @@ def _files(hint: dict, *, queued: bool) -> tuple[list[str], str]:
 # Every sentence a wait is said in: read through WAIT_WORDS_FILE, which a test may point at a copy.
 WAIT_WORDS_FILE = Path(__file__).resolve().parent.parent / "references" / "wait-words.json"
 # The causes, in the order a story's waits are shown.
-WAIT_CAUSES = ("order", "files", "lane", "claim", "slot", "review", "held")
+WAIT_CAUSES = ("order", "sibling", "files", "lane", "claim", "slot", "review", "held")
 
 
 def load_wait_words(path: Path | None = None) -> dict:
@@ -4754,7 +4770,10 @@ def waits(document: dict, *, needing: frozenset[str] | set[str] = frozenset(), w
     """Every wait the record holds, each ``{subject, on, cause, stage, frees, since?, needsSomeone, words}``.
 
     A planned story that has not started waits, in this order, for each of its
-    ``after`` keys that has not landed (``order``); for each unlanded story of
+    ``after`` keys that has not landed (``order``), or, in a record with
+    siblings, for an ``after`` key no story of its own holds (``sibling``): one a
+    same-epic sibling's last kept read holds unlanded, or one no sibling lists;
+    for each unlanded story of
     another lane whose whole-file grant covers a file both stories name
     (``files``); and for the lead, while the lead's ``story.held`` stands
     (``held``). A story in review waits on the round its lane is running
@@ -4793,6 +4812,32 @@ def waits(document: dict, *, needing: frozenset[str] | set[str] = frozenset(), w
         return (item["stage"] == "stopped" or item["subject"] in needing
                 or row.get("state") == "blocked" or row.get("waitingOn") == "lead")
 
+    # Siblings of the same epic, as the record keeps them: their stories are their last kept read's, and only a read
+    # applied as such changes a stage, so nothing here needs a clock.
+    siblings = [row for row in state.get("siblings", []) if row.get("lastOutcome") != "other-epic"]
+
+    def sibling_wait(subject: str, key: str) -> tuple[dict, dict] | None:
+        """The wait an after key outside the record makes, or None when a sibling's story has landed."""
+        for row in siblings:
+            story = next((story for story in row.get("stories", []) if story["subject"] == key), None)
+            if story is None:
+                continue
+            if story["stage"] in SIBLING_LANDED:
+                return None
+            fresh = row.get("lastOutcome") == "read"
+            fields = {"on": key, "sibling": row["name"], "case": "held",
+                      "where": wait_said(table, "stages", "sibling",
+                                         {"stage": story["stage"] if fresh else "unread", "at": row.get("readAt")})}
+            return ({"subject": subject, "on": key, "cause": "sibling", "stage": story["stage"], "frees": "landed",
+                     "needsSomeone": False}, fields)
+        # Held by no story and no sibling: the lead has to add the sibling or fix the key, unless a sibling that
+        # hasn't been read fresh may yet list it.
+        unread = next((row for row in siblings if row.get("lastOutcome") != "read"), None)
+        fields = {"on": key, "case": "unread" if unread else "unlisted",
+                  "sibling": unread["name"] if unread else None}
+        return ({"subject": subject, "on": key, "cause": "sibling", "stage": "planned", "frees": "landed",
+                 "needsSomeone": unread is None}, fields)
+
     told: dict[str, list[tuple[dict, dict]]] = {}
     for entry in planned:
         if entry["stage"] != "planned":
@@ -4805,6 +4850,11 @@ def waits(document: dict, *, needing: frozenset[str] | set[str] = frozenset(), w
                                                         {"stage": where(other), "round": rounds.get(key)})}
                 found.append(({"subject": subject, "on": key, "cause": "order", "stage": other["stage"],
                                "frees": "landed", "needsSomeone": needs_someone(other)}, fields))
+            elif key not in items and "siblings" in state and state["siblings"]:
+                # A record without siblings ignores a key it doesn't hold, as it always has.
+                made = sibling_wait(subject, key)
+                if made is not None:
+                    found.append(made)
         named = entry.get("files", [])
         for other in [*planned, *queue]:
             holder = lane_of(other)
@@ -5054,11 +5104,15 @@ def next_for_lane(state: dict, lane: str, snapshot: dict | None, hints: dict | N
     # The plan's order and the files other lanes hold are the record's own waits, as every view shows them.
     derived: dict[str, list[dict]] = {}
     for wait in waits({"state": state}):
-        if wait["cause"] in ("order", "files"):
+        if wait["cause"] in ("order", "sibling", "files"):
             derived.setdefault(wait["subject"], []).append({"cause": wait["cause"], "on": wait["on"]})
     merged = {item["subject"] for item in state["queue"] if item["stage"] == "merged"}
     # Work settled with no change needed is done too, though it never entered the queue: it blocks nothing.
     merged |= {item["subject"] for item in state.get("planned", []) if item["stage"] == "settled"}
+    # A same-epic sibling's story its kept read shows landed: the plan's order on it is met, though the hints still
+    # name it. The tracker's own blockedBy on it still has to say done.
+    sibling_landed = {story["subject"] for row in state.get("siblings", []) if row.get("lastOutcome") != "other-epic"
+                      for story in row.get("stories", []) if story["stage"] in SIBLING_LANDED}
     queued = {item["subject"] for item in state["queue"]}
     open_lanes = {entry["id"] for entry in state["lanes"]
                   if entry["id"] != lane and entry["state"] not in RESTING_LANE_STATES}
@@ -5089,6 +5143,9 @@ def next_for_lane(state: dict, lane: str, snapshot: dict | None, hints: dict | N
         for blocker in dict.fromkeys([*waited, *blockers]):
             if blocker not in waited and (blocker in merged
                                           or tracker.get(blocker, {}).get("state") in ("completed", "canceled")):
+                continue
+            if (blocker not in waited and blocker in sibling_landed
+                    and blocker not in tracker.get(subject, {}).get("blockedBy", [])):
                 continue
             open_blockers.append(blocker if blocker in tracker or blocker in waited or snapshot is None
                                  else f"{blocker} (not in the snapshot)")
@@ -6006,7 +6063,7 @@ def _checks_argument(value: str) -> object:
 # What a running `wait` returns on: the journal kinds that need the lead. A blocked lane and machine pressure also end it.
 # A held runner wakes the lead as a blocker does: the queue writes its hold as serving.held.
 WAIT_KINDS = frozenset({"candidate.handed", "check.failed", "candidate.merged", "candidate.stopped", "base.broken", "blocker.recorded",
-                        "serving.held"})
+                        "serving.held", "sibling.landed"})
 # 0 is a wake and 1 an error, so a lead can tell what ended a wait left running in the background.
 WAIT_EXPIRED_EXIT = 3
 WAIT_TIMEOUT_SECONDS = 1800.0

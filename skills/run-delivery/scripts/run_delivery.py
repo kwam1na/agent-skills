@@ -1233,6 +1233,20 @@ def load_state() -> dict:
     return shown_record(cfg().release, cfg().state)
 
 
+def sibling_story_keys(state: Path | None) -> set[str]:
+    """The stories a same-epic sibling delivery holds in the last kept read of it by the record in ``state``: an `after`
+    key may name one. Empty without a record, or one that names no sibling."""
+    try:
+        record = json.loads((Path(state) / "state.json").read_text(encoding="utf-8")) if state else {}
+    except (OSError, ValueError):
+        return set()
+    rows = record.get("siblings") if isinstance(record, dict) else None
+    return {story["subject"] for row in (rows if isinstance(rows, list) else [])
+            if isinstance(row, dict) and row.get("lastOutcome") != "other-epic"
+            for story in (row.get("stories") if isinstance(row.get("stories"), list) else [])
+            if isinstance(story, dict) and isinstance(story.get("subject"), str)}
+
+
 def journal_entries(kind: str, subject: str) -> list[dict]:
     return [e for e in load_state()["journal"] if e.get("kind") == kind and e.get("subject") == subject]
 
@@ -5674,9 +5688,11 @@ def lead_plan(args) -> None:
         if args.lane not in c.lanes:
             raise Stop(f"--lane {args.lane} isn't a lane of {c.delivery}: {', '.join(c.lanes)}")
         after = args.after or []
-        strangers = [other for other in after if other not in stories]
+        held = sibling_story_keys(getattr(c, "state", None))
+        strangers = [other for other in after if other not in stories and other not in held]
         if strangers:
-            raise Stop(f"--after {', '.join(strangers)} isn't a story of {c.delivery}")
+            raise Stop(f"--after {', '.join(strangers)} isn't a story of {c.delivery} or of a sibling delivery it has "
+                       "read")
         problem = why_problem(c, args.why)
         if problem:
             raise Stop(f"{key} {problem}: --why is one line saying why it joins the delivery")
@@ -6525,10 +6541,16 @@ def draft_delivery(c, args, integration_target: str | None = None) -> None:
         stories[g["key"]] = story
     if not stories:
         raise Stop(f"the pattern matched no heading in {args.plan}")
+    try:
+        # A delivery drafted again may already keep a record that has read its siblings; a new one has none.
+        sibling_keys = sibling_story_keys(c.state_of(args.key, json.loads(path.read_text()) if path.exists() else {}))
+    except (OSError, ValueError, Stop):
+        sibling_keys = set()
     for subject, found in read.items():
-        unknown = [after for after in found["after"] if after not in stories]
+        unknown = [after for after in found["after"] if after not in stories and after not in sibling_keys]
         if unknown:
-            notes.append(f"plan story {subject} comes after {', '.join(unknown)}, which the plan has no story for")
+            notes.append(f"plan story {subject} comes after {', '.join(unknown)}, which neither the plan nor a known "
+                         "sibling delivery has a story for")
     lanes, missing = units_owns(text)
     if missing:
         notes.append(missing)
@@ -10399,6 +10421,14 @@ def waits_needing(c, doc: dict, items: list[dict]) -> list[dict]:
             added.append({"holding": False, "source": f"{on}'s waits", "clears": f"{on} put back, landing or settling",
                           "text": delivery_state.wait_said(table, "needsYou", "stopped", {"subject": on}) + " " + count,
                           "kind": "stopped", "who": "lead", "subject": on, "waiting": len(waiting), "fields": {"detail": ""}})
+    for wait in found:
+        # An after key that neither a story here nor any sibling holds, with every sibling read fresh: the lead adds the
+        # sibling or fixes the key. It names no piece of this record, so no other item can carry it.
+        if (wait["cause"] == "sibling" and wait["needsSomeone"] and wait["subject"] not in lanes
+                and wait["on"] not in pieces):
+            added.append({"holding": False, "source": f"{wait['subject']}'s waits", "text": wait["words"],
+                          "clears": f"a sibling listing {wait['on']}, or {wait['subject']}'s after key changing",
+                          "kind": "sibling", "who": "lead", "subject": wait["subject"], "fields": {"on": wait["on"]}})
     for free in delivery_state.free_to_start(doc, [*found, *peer_waits_said(c)], words=table):
         # A story free to start is in "Needs you" itself, so what waits on it is counted on its item.
         waiting = list(dict.fromkeys(wait["subject"] for wait in found

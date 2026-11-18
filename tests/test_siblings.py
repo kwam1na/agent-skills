@@ -480,6 +480,63 @@ class SiblingTests(unittest.TestCase):
         self.assertNotIn("stories", self.sibling())
         self.assertEqual(self.journal("sibling.landed"), [])
 
+    def test_an_unchanged_read_writes_nothing_and_an_outcome_change_starts_its_time(self) -> None:
+        first = self.first_read()["siblings"][0]
+        before = ((self.record / "state.json").read_bytes(), (self.record / "journal.jsonl").read_bytes())
+        # Read again, and nothing about the sibling changed: an idle refresh leaves the record as it was.
+        again = self.read()
+        again["siblings"][0]["readAt"] = again["takenAt"] = at()
+        result = self.reconcile(again)
+        self.assertEqual((result["drift"], result["changes"]), (False, []))
+        self.assertEqual(((self.record / "state.json").read_bytes(), (self.record / "journal.jsonl").read_bytes()), before)
+        self.assertEqual((self.sibling()["readAt"], self.sibling()["lastAttemptAt"]), (first["readAt"], first["readAt"]))
+        # read -> unavailable is a change: lastAttemptAt is when the new outcome began, and a second unavailable read
+        # leaves it there.
+        self.receiver.answer(f"/d/{self.public_id}/current", (500, {}, b"{}", 0))
+        down = self.read()
+        began = down["siblings"][0]["readAt"]
+        self.reconcile(down)
+        self.assertEqual((self.sibling()["lastOutcome"], self.sibling()["lastAttemptAt"], self.sibling()["readAt"]),
+                         ("unavailable", began, first["readAt"]))
+        version = state_tool.read_state(self.record)["version"]
+        later = self.read()
+        later["siblings"][0]["readAt"] = later["takenAt"] = (datetime.datetime.now(datetime.timezone.utc)
+                                                             + datetime.timedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.reconcile(later)
+        self.assertEqual((self.sibling()["lastOutcome"], self.sibling()["lastAttemptAt"]), ("unavailable", began))
+        self.assertEqual(state_tool.read_state(self.record)["version"], version)
+
+    def test_a_later_read_the_freshness_gate_refuses_leaves_a_stale_sibling_as_it_was(self) -> None:
+        """Refused as too old, but later than when the sibling's stale outcome began: nothing changes but times."""
+        self.serve(body("building"))
+        snapshot = self.read()
+
+        def taken(seconds_ago: float) -> dict:
+            copied = copy.deepcopy(snapshot)
+            copied["siblings"][0]["readAt"] = copied["takenAt"] = at(seconds_ago)
+            return copied
+
+        self.reconcile(taken(30), max_age=5)
+        began = self.sibling()["lastAttemptAt"]
+        self.assertEqual((self.sibling()["lastOutcome"], began), ("stale", taken(30)["siblings"][0]["readAt"]))
+        held = ((self.record / "state.json").read_bytes(), (self.record / "journal.jsonl").read_bytes())
+        result = self.reconcile(taken(15), max_age=5)
+        self.assertEqual((result["drift"], result["changes"]), (False, []))
+        self.assertEqual(((self.record / "state.json").read_bytes(), (self.record / "journal.jsonl").read_bytes()), held)
+
+    def test_a_field_kept_from_an_earlier_read_clears_when_a_later_read_lacks_it(self) -> None:
+        """Round 1's deferred finding: a closing the sibling no longer carries leaves the record."""
+        self.first_read()
+        closing = body("building")
+        closing["document"]["state"]["meta"]["closing"] = {"started": {"entry": 1, "at": "2026-11-18T10:00:00Z"}}
+        public.validate(closing)
+        self.serve(closing)
+        self.reconcile(self.read())
+        self.assertEqual(self.sibling()["closing"], {"started": {"entry": 1, "at": "2026-11-18T10:00:00Z"}})
+        self.serve(body("building"))
+        self.reconcile(self.read())
+        self.assertNotIn("closing", self.sibling())
+
     def test_a_settled_story_lands_and_a_queued_stage_wins_over_a_planned_one(self) -> None:
         self.first_read()
         self.serve(body("settled"))

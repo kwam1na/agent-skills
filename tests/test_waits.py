@@ -617,6 +617,7 @@ class NeedsYouRowTests(unittest.TestCase):
             "laneAsks": ({"focus": "which API"}, {"lane": "lane-2"}, "Lane 2 waits on the lead"),
             "stopped": ({"detail": "e2e failed"}, {"subject": "APP-1"}, "APP-1 was stopped"),
             "free": ({}, {"subject": "APP-2", "lane": "lane-1"}, "APP-2 is free to start"),
+            "sibling": ({"on": "ZZZ-1"}, {"subject": "APP-4"}, "APP-4 comes after ZZZ-1, which no sibling lists"),
             "paused": ({"reason": "a break"}, {}, "Serving is paused"),
             "report": ({"about": "APP-3", "detail": "moved"}, {}, "A report for the lead on APP-3"),
             "stale": ({"name": "tracker", "reason": "timed out"}, {}, "The tracker is not answering"),
@@ -707,6 +708,197 @@ class NextTests(unittest.TestCase):
         self.assertIn("blocked by APP-9", entry["reason"])
 
 
+class SiblingWaitTests(unittest.TestCase):
+    """An `after` key that names another repository's story: a sibling delivery's, or, in a record with no siblings,
+    nothing this record can see."""
+
+    def ranked(self, document: dict, lane: str, snapshot: dict | None = None) -> dict:
+        return {entry["subject"]: entry for entry in state_tool.next_for_lane(document["state"], lane, snapshot, None)}
+
+    def test_without_siblings_an_after_key_outside_the_record_raises_no_wait_and_next_offers_the_story(self) -> None:
+        """Scenario 18, pinned before any change: today's behaviour for every record without siblings."""
+        document = record()
+        planned(document, "APP-4")["lane"] = None
+        planned(document, "APP-4")["after"] = ["MOB-7"]
+        self.assertNotIn("siblings", document["state"])
+        self.assertEqual(of(document, "APP-4"), [])
+        entry = self.ranked(document, "lane-1")["APP-4"]
+        self.assertEqual((entry["blocked"], entry["waits"]), (False, []))
+        # A record whose last sibling was removed keeps an empty list, and behaves as one that never had any.
+        document["state"]["siblings"] = []
+        self.assertEqual(state_tool.state_errors(document["state"]), [])
+        self.assertEqual(of(document, "APP-4"), [])
+        self.assertFalse(self.ranked(document, "lane-1")["APP-4"]["blocked"])
+
+    # -- a record with siblings ------------------------------------------------------------------------------------
+
+    LINK = "https://views.example.com/d/" + "a" * 64
+    READ_AT = "2026-11-18T10:05:00Z"
+
+    def sibling(self, name: str = "mobile", outcome: str | None = "read", stage: str = "building",
+                subject: str = "MOB-7") -> dict:
+        row = {"name": name, "link": f"https://{name}.example.com/d/{'a' * 64}", "addedAt": "2026-11-18T10:00:00Z"}
+        if outcome is not None:
+            row.update(lastOutcome=outcome, lastAttemptAt="2026-11-18T10:20:00Z", readAt=self.READ_AT,
+                       stories=[{"subject": subject, "title": "The mobile story", "stage": stage}])
+        return row
+
+    def after_sibling(self, *rows: dict, key: str = "MOB-7") -> dict:
+        """The fixture record with APP-4, unassigned, after ``key``, and these siblings."""
+        document = record()
+        planned(document, "APP-4")["lane"] = None
+        planned(document, "APP-4")["after"] = [key]
+        document["state"]["meta"]["trackerParent"] = "EPIC-1"
+        document["state"]["siblings"] = list(rows)
+        self.assertEqual(state_tool.state_errors(document["state"]), [])
+        return document
+
+    def needs(self, document: dict) -> list[dict]:
+        return run_delivery.waits_needing(SimpleNamespace(release=PRODUCT_ROOT), document, [])
+
+    def test_a_story_after_a_siblings_unlanded_story_waits_and_next_doesnt_offer_it(self) -> None:
+        """Scenario 19."""
+        [wait] = of(self.after_sibling(self.sibling()), "APP-4")
+        self.assertEqual({key: wait[key] for key in ("on", "cause", "stage", "frees", "needsSomeone", "words")},
+                         {"on": "MOB-7", "cause": "sibling", "stage": "building", "frees": "landed",
+                          "needsSomeone": False, "words": "Waits for MOB-7 to land in mobile. Building."})
+        entry = self.ranked(self.after_sibling(self.sibling()), "lane-1")["APP-4"]
+        self.assertEqual((entry["blocked"], shape(entry["waits"])), (True, [("sibling", "MOB-7")]))
+        self.assertIn("blocked by MOB-7", entry["reason"])
+        self.assertEqual(self.needs(self.after_sibling(self.sibling())), [])
+
+    def test_a_fresh_read_showing_it_landed_frees_the_story_and_wakes_the_lead_with_no_lead_command(self) -> None:
+        """Scenarios 20 and 21, through reconcile on a record on disk: two stale reads keep the wait, saying when the
+        sibling was last read; a fresh read lands it, and the lead's wait returns on sibling.landed."""
+        with tempfile.TemporaryDirectory(prefix="sibling-wait-") as folder:
+            directory = Path(folder) / "record"
+            document = self.after_sibling()
+            directory.mkdir()
+            (directory / "state.json").write_text(json.dumps(document["state"]))
+            # The fixture's journal is a reader's sketch, not a writer's: the record on disk starts with none.
+            (directory / "journal.jsonl").write_text("")
+            state_tool.set_sibling(directory, name="mobile", link=self.LINK)
+
+            def apply(stage: str, outcome: str = "read", age: float = 0) -> None:
+                read_at = (datetime.datetime.now(datetime.timezone.utc)
+                           - datetime.timedelta(seconds=age)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                entry = {"name": "mobile", "link": self.LINK, "readAt": read_at, "outcome": outcome,
+                         "trackerParent": "EPIC-1", "stale": outcome == "stale", "terminal": False,
+                         "stories": [{"subject": "MOB-7", "title": "The mobile story", "stage": stage}]}
+                path = Path(folder) / "siblings.json"
+                path.write_text(json.dumps({"schemaVersion": "sibling-snapshot/1", "takenAt": read_at, "siblings": [entry]}))
+                state_tool.reconcile(directory, [path])
+
+            def shown() -> dict:
+                return {"state": state_tool.read_state(directory), "journal": state_tool.read_journal(directory)}
+
+            apply("building")
+            first = shown()["state"]["siblings"][0]["readAt"]
+            for stale in (dict(outcome="stale"), dict(age=2000)):
+                with self.subTest(stale=stale):
+                    apply("merged", **stale)
+                    [wait] = of(shown(), "APP-4")
+                    self.assertEqual(wait["words"], f"Waits for MOB-7 to land in mobile. Last read {first}.")
+                    self.assertTrue(self.ranked(shown(), "lane-1")["APP-4"]["blocked"])
+            after = shown()["journal"][-1]["id"]
+            apply("merged")
+            self.assertEqual(of(shown(), "APP-4"), [])
+            entry = self.ranked(shown(), "lane-1")["APP-4"]
+            self.assertEqual((entry["blocked"], entry["waits"]), (False, []))
+            code, woke = state_tool.wait_for_lead(directory, after=after, timeout=5, poll=0.01,
+                                                   read_machine=lambda _: {"cores": 16, "load5": 1.0, "diskFreeBytes": 500 * 2**30, "swapUsedBytes": 2**30},
+                                                   sleep=lambda _: None)
+            self.assertEqual(code, 0, woke)
+            self.assertIn("sibling.landed", [event["kind"] for event in woke["events"]])
+            # No lead command ran: the journal holds no entry of the lead's since the sibling was named.
+            self.assertEqual([entry["kind"] for entry in shown()["journal"][-1:]], ["sibling.landed"])
+
+    def test_a_key_no_sibling_holds_needs_the_lead_only_when_every_same_epic_sibling_is_read(self) -> None:
+        """Scenario 22."""
+        cases = {
+            "read": ((self.sibling(),), True, "Waits for ZZZ-1, which no story here or sibling lists: add the sibling, "
+                                              "or fix the key."),
+            "unavailable": ((self.sibling(outcome="unavailable"),), False,
+                            "Waits for ZZZ-1, which no story here holds; mobile hasn't been read yet."),
+            "never read": ((self.sibling(outcome=None),), False,
+                           "Waits for ZZZ-1, which no story here holds; mobile hasn't been read yet."),
+            "read, beside one not fresh": ((self.sibling(), self.sibling("web", outcome="unavailable", subject="WEB-1")),
+                                           False, "Waits for ZZZ-1, which no story here holds; web hasn't been read yet."),
+            "read, beside another epic's": ((self.sibling(), self.sibling("web", outcome="other-epic", subject="ZZZ-1")),
+                                            True, "Waits for ZZZ-1, which no story here or sibling lists: add the "
+                                                  "sibling, or fix the key."),
+        }
+        for name, (rows, needed, words) in cases.items():
+            with self.subTest(case=name):
+                document = self.after_sibling(*rows, key="ZZZ-1")
+                [wait] = of(document, "APP-4")
+                self.assertEqual((wait["cause"], wait["on"], wait["needsSomeone"], wait["words"]),
+                                 ("sibling", "ZZZ-1", needed, words))
+                self.assertTrue(self.ranked(document, "lane-1")["APP-4"]["blocked"])
+                listed = [item for item in self.needs(document) if item.get("kind") == "sibling"]
+                self.assertEqual([(item["subject"], item["text"]) for item in listed],
+                                 [("APP-4", words)] if needed else [])
+        said = run_delivery.say_needs(SimpleNamespace(release=PRODUCT_ROOT), self.after_sibling(self.sibling(), key="ZZZ-1"),
+                                      [item for item in self.needs(self.after_sibling(self.sibling(), key="ZZZ-1"))
+                                       if item.get("kind") == "sibling"])
+        self.assertEqual(said[0]["said"]["headline"], "APP-4 comes after ZZZ-1, which no sibling lists")
+
+    def test_the_trackers_blocker_and_the_siblings_read_must_both_say_done(self) -> None:
+        """Scenario 23."""
+        for stage in ("merged", "settled"):
+            with self.subTest(stage=stage):
+                done = self.after_sibling(self.sibling(stage=stage))
+                self.assertEqual(of(done, "APP-4"), [])
+                self.assertFalse(self.ranked(done, "lane-1")["APP-4"]["blocked"])
+        landed = self.after_sibling(self.sibling(stage="merged"))
+        snapshot = {"items": [{"subject": "APP-4", "state": "backlog", "blockedBy": ["MOB-7"]},
+                              {"subject": "MOB-7", "state": "started"}]}
+        self.assertTrue(self.ranked(landed, "lane-1", snapshot)["APP-4"]["blocked"])
+        snapshot["items"][1]["state"] = "completed"
+        self.assertFalse(self.ranked(landed, "lane-1", snapshot)["APP-4"]["blocked"])
+        # The tracker done, the sibling not: still blocked.
+        self.assertTrue(self.ranked(self.after_sibling(self.sibling()), "lane-1", snapshot)["APP-4"]["blocked"])
+
+    def test_the_plans_order_in_the_hints_is_met_once_the_siblings_story_reads_landed(self) -> None:
+        """Scenario 20 with lead-hints' shape: the hints name every after key as a blocker."""
+        hints = {"items": {"APP-4": {"blockers": ["MOB-7"]}}}
+        ranked = lambda document, snapshot: {entry["subject"]: entry for entry in
+                                             state_tool.next_for_lane(document["state"], "lane-1", snapshot, hints)}
+        landed, building = self.after_sibling(self.sibling(stage="merged")), self.after_sibling(self.sibling())
+        for stage in ("merged", "settled"):
+            done = self.after_sibling(self.sibling(stage=stage))
+            for snapshot in (None, {"items": [{"subject": "APP-4", "state": "backlog"}]},
+                             {"items": [{"subject": "APP-4", "state": "backlog"}, {"subject": "MOB-7", "state": "started"}]}):
+                with self.subTest(stage=stage, snapshot=snapshot):
+                    self.assertFalse(ranked(done, snapshot)["APP-4"]["blocked"], ranked(done, snapshot)["APP-4"]["reason"])
+                    self.assertTrue(ranked(building, snapshot)["APP-4"]["blocked"])
+        # The tracker's blockedBy still has to say done itself (Decision 13).
+        blocked_by = {"items": [{"subject": "APP-4", "state": "backlog", "blockedBy": ["MOB-7"]},
+                                {"subject": "MOB-7", "state": "started"}]}
+        self.assertTrue(ranked(landed, blocked_by)["APP-4"]["blocked"])
+        # Another epic's sibling frees nothing, though it shows the story landed: here the unlisted wait holds it.
+        self.assertTrue(ranked(self.after_sibling(dict(self.sibling(stage="merged"), lastOutcome="other-epic")),
+                               None)["APP-4"]["blocked"])
+
+    def test_a_hints_blocker_only_another_epics_sibling_shows_landed_stays_open(self) -> None:
+        """No after key names it, so no wait does: next alone decides, and another epic's read frees nothing."""
+        document = self.after_sibling(dict(self.sibling(stage="merged"), lastOutcome="other-epic"))
+        planned(document, "APP-4").pop("after")
+        self.assertEqual(of(document, "APP-4"), [])
+        [entry] = [entry for entry in state_tool.next_for_lane(document["state"], "lane-1", None,
+                                                              {"items": {"APP-4": {"blockers": ["MOB-7"]}}})
+                   if entry["subject"] == "APP-4"]
+        self.assertTrue(entry["blocked"], entry["reason"])
+
+    def test_an_idle_lane_next_on_the_story_says_it_waits_on_the_sibling(self) -> None:
+        document = self.after_sibling(self.sibling())
+        planned(document, "APP-4")["lane"] = "lane-1"
+        planned(document, "APP-2")["lane"] = "lane-3"
+        lane = [wait for wait in state_tool.waits(document) if wait["subject"] == "lane-1"]
+        self.assertEqual([(wait["cause"], wait["words"]) for wait in lane],
+                         [("sibling", "Lane 1 is next on APP-4, which waits for MOB-7 to land in mobile.")])
+
+
 class PurityTests(unittest.TestCase):
     """The same record and table always give the same waits: no clock, no network, no other file."""
 
@@ -750,8 +942,8 @@ class TableTests(unittest.TestCase):
         self.assertEqual(table["schemaVersion"], "wait-words/1")
         for group in ("stages", "waits", "lanes", "holding", "needsYou", "listening"):
             self.assertIn("templates", table[group])
-        self.assertEqual(set(table["waits"]["templates"]), {"order", "files", "claim", "slot", "review", "held"})
-        self.assertEqual(set(table["lanes"]["templates"]), {"order", "files", "claim", "held", "waiting"})
+        self.assertEqual(set(table["waits"]["templates"]), {"order", "sibling", "files", "claim", "slot", "review", "held"})
+        self.assertEqual(set(table["lanes"]["templates"]), {"order", "sibling", "files", "claim", "held", "waiting"})
         self.assertEqual(set(table["needsYou"]["templates"]), {"count", "free", "stopped", "headline", "why", "clears", "who",
                                                                "whom", "part", "summary", "heading", "holding", "age",
                                                                "leftOpen"})
@@ -759,7 +951,7 @@ class TableTests(unittest.TestCase):
         self.assertEqual(state_tool.wait_said(table, "needsYou", "count", {"count": 3}), "3 pieces wait on it.")
 
     def test_every_cause_a_wait_gives_is_one_the_table_orders(self) -> None:
-        self.assertEqual(state_tool.WAIT_CAUSES, ("order", "files", "lane", "claim", "slot", "review", "held"))
+        self.assertEqual(state_tool.WAIT_CAUSES, ("order", "sibling", "files", "lane", "claim", "slot", "review", "held"))
 
 
 def marked(table: dict) -> dict:
