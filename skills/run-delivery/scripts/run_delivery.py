@@ -10231,6 +10231,13 @@ def tracker_item(item: dict) -> dict:
             "kind": "trackerLag", "who": "lead", "fields": {"detail": item["text"]}}
 
 
+def flapping_blockers(c, flapping: tuple[str, ...]) -> set[int]:
+    """The blockers the supervisor journalled for children that flap now: each one's "won't stay up" item stands for it.
+    Every other blocker, a suite checkout's or a child's that no longer flaps, shows as any unresolved blocker does."""
+    return {number for key, number in json_object(lead_file(c, "supervisor.blockers.json")).items()
+            if key.startswith("child:") and key.split(":", 1)[1] in flapping}
+
+
 def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = False) -> list[dict]:
     """What waits on the lead or the operator, each {holding, source, text, clears}: holding items hold the close;
     shown ones are listed in the friction note. The close condition, the supervisor's pass log and the line map read
@@ -10295,9 +10302,7 @@ def needs_you(c, doc: dict, flapping: tuple[str, ...] = (), closing: bool = Fals
                           f"--subject {item['subject']} if lead-accept can't take it", "kind": "unaccepted",
                           "who": "lead", "subject": item["subject"], "since": merge.get("at")})
     resolutions = {entry.get("journal") for entry in read_log("resolutions", c.delivery)}
-    # While a child flaps, its "won't stay up" item below stands for the blocker the supervisor journalled for it.
-    shown = {number for key, number in json_object(lead_file(c, "supervisor.blockers.json")).items()
-             if key.startswith("child:") and key.split(":", 1)[1] in flapping}
+    shown = flapping_blockers(c, flapping)
     for entry in doc["journal"]:
         if entry["kind"] in HOLDING_KINDS and entry["id"] not in shown and not blocker_resolved(c, doc, entry, resolutions):
             runners = runner_held(entry)
@@ -11627,6 +11632,7 @@ class Supervisor:
         if live and pid_runs(live["pid"]) and listens(live["pid"], live["port"]):
             if live.get("renderState") == script:
                 self.view_pid, self.view = live["pid"], None
+                self.started_at["live"] = time.monotonic()
                 self.address = live_address(live["port"])
                 self.write_lock()
                 self.say(f"adopted the live view (pid {live['pid']}) on {self.address}")
@@ -11653,6 +11659,7 @@ class Supervisor:
             started = self.spawn_view(0)
         proc, bound = started
         self.view, self.view_pid, self.address = proc, proc.pid, live_address(bound)
+        self.started_at["live"] = time.monotonic()
         record = {"port": bound, "pid": proc.pid, "renderState": script, "startedAt": now(), "address": self.address}
         if fallback:
             record["fallback"] = {"wanted": fallback[0],
@@ -11729,8 +11736,11 @@ class Supervisor:
                 continue
             if key.startswith("child:"):
                 name = key.split(":", 1)[1]
+                # The live view is held apart from the children, adopted or started; every other child is one of them.
                 proc = self.children.get(name)
-                up = proc is not None and proc.poll() is None and \
+                running = (self.view_pid is not None and not self.view_down()) if name == "live" else \
+                    proc is not None and proc.poll() is None
+                up = running and \
                     time.monotonic() - self.started_at.get(name, time.monotonic()) >= supervisor_pass_seconds(c)
                 if not up:
                     holding[key] = ""  # still down, or not up long enough: kept open, not recorded again
