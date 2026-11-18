@@ -1556,6 +1556,28 @@ def scoped_checks(span: str) -> str:
             "tests that cover the rest: " + (", ".join(f"`{path}`" for path in changed) or "none") + ".")
 
 
+def finding_ledger(prior: list[dict], closed: tuple[str, ...], legacy: bool) -> dict[str, list[str]]:
+    """One lens's earlier findings by where its rounds left them, each in the order first raised: `open` is exactly
+    what the next reduce carries and requires in `resolvedFindings`, `closed` what a state in `closed` closed, and
+    `deferred` what was deferred and not since found fixed. `legacy` reads a story's older `resolutions` key, which a
+    plan review's reduce never reads."""
+    status: dict[str, str] = {}
+    for entry in prior:
+        result = entry.get("result") or {}
+        for f in result.get("findings", []):
+            status[f["id"]] = "deferred" if f.get("state") == "deferred" else "open"
+        for x in result.get("resolvedFindings", result.get("resolutions", []) if legacy else []):
+            if x.get("id") in status and x.get("state") == "deferred":
+                status[x["id"]] = "deferred"
+            elif x.get("id") in status and x.get("state") in closed:
+                status[x["id"]] = "closed"
+    return {kind: [i for i, s in status.items() if s == kind] for kind in ("open", "closed", "deferred")}
+
+
+def id_list(ids: list[str]) -> str:
+    return ", ".join(f"`{i}`" for i in ids) or "none"
+
+
 def brief(key: str, round_no: int, lens: str, candidate: str, tree: str, merge_base: str,
           checkout: Path, prior: list[dict], prior_candidate: str | None) -> str:
     c = cfg()
@@ -1589,6 +1611,11 @@ def brief(key: str, round_no: int, lens: str, candidate: str, tree: str, merge_b
                  "one you find fixed as `closed`, `fixed` or `withdrawn`: only that listing records a deferral as fixed, "
                  "and one listed as `deferred` or `open`, or not listed, stays deferred and is filed as a follow-up at "
                  "close. A deferral (P2/P3 only) also carries `deferredIssue`.")
+        ledger = finding_ledger(prior, tuple(s for s in CLOSED if s != "deferred"), legacy=True)
+        later += ("\n- Still open for this lens, so each listed in `resolvedFindings` exactly once: "
+                  f"{id_list(ledger['open'])}.\n"
+                  f"- Closed in an earlier round, so `resolvedFindings` may leave them out: {id_list(ledger['closed'])}.\n"
+                  f"- Deferred in an earlier round, to re-check as above: {id_list(ledger['deferred'])}.")
     if getattr(c, "no_deferrals", False):
         later += f"\n- {NO_DEFERRALS_EVIDENCE}"
     span = f"{merge_base}..{candidate}" if round_no == 1 else f"{prior_candidate}..{candidate}"
@@ -2297,6 +2324,11 @@ def plan_brief(c, n: int, lens: str, candidate: str, tree: str, checkout: Path, 
                  "- `resolvedFindings`: required. One entry for every finding this lens raised in an earlier round and "
                  'has not closed, `{"id", "state": "closed|fixed|withdrawn|open", "resolution": "..."}`. Every carried '
                  "finding must appear; a plan review defers none.")
+        ledger = finding_ledger(prior, PLAN_REVIEW_CLOSED, legacy=False)
+        later += ("\n- Still open for this lens, so each listed in `resolvedFindings` exactly once: "
+                  f"{id_list(ledger['open'])}.\n"
+                  f"- Closed in an earlier round, so never listed in `resolvedFindings`: {id_list(ledger['closed'])}. "
+                  "The reduce refuses a result that lists one, or that leaves out one still open.")
     whose = "" if getattr(c, "plan_store", None) else f", the plan of delivery {c.delivery}"
     context = (f"The plan under review is `{c.plan}` in your checkout{whose}. Judge whether it is ready to approve: its outcome, scope, contract decisions, units, sensors and finish line. The plan "
                "is the whole subject; there is no ticket or code diff to review beyond it.")
@@ -6520,6 +6552,8 @@ def draft_delivery(c, args, integration_target: str | None = None) -> None:
             else:
                 notes.append(f"plan story {subject}'s tracker item has no Acceptance Criteria section: drafted no "
                              "criteria for it")
+            if subject in tracked and not tracked[subject].get("summary"):
+                notes.append(no_summary(subject))
     drafted = {}
     for field, name, noun in (("approvals", args.approvals_section, "approvals"),
                             ("outOfScope", args.out_of_scope_section, "out-of-scope items")):
@@ -7192,6 +7226,12 @@ def tracker_snapshot_items(c) -> dict | None:
     if newest is None:
         return None
     return {item["subject"]: item for item in newest["items"] if isinstance(item, dict) and "subject" in item}
+
+
+def no_summary(key: str) -> str:
+    """The note for a story whose tracker item carries no summary: the live view's card reads one only from the
+    first paragraph under the ticket's `## Summary` heading, so it would show none."""
+    return f"{key}'s ticket has no `## Summary`; its card will show none"
 
 
 def story_readiness(c, key: str) -> tuple[str, str | None]:
@@ -12382,6 +12422,7 @@ class Doctor:
             ("plan-sections", "plan sections", ("delivery",), self.stories_planned),
             ("story-files", "story files", ("plan-sections",), self.story_files),
             ("readiness", "story readiness", ("delivery",), self.story_readiness),
+            ("summaries", "story summaries", ("delivery",), self.story_summaries),
             ("context-sections", "context sections", ("delivery",), self.context_planned),
             ("finish-lines", "finish lines", ("delivery",), self.finish_lines),
             ("remote-base", "configuration on the remote base", ("delivery",), self.remote_base),
@@ -12950,6 +12991,19 @@ class Doctor:
             return self.not_applicable("; ".join(unchecked))
         return "ok", (f"each of the {len(found)} stories still planned is offered its first start move"
                       if found else "no story is still waiting to start")
+
+    def story_summaries(self):
+        d = self.delivery
+        items = tracker_snapshot_items(d)
+        if items is None:
+            return self.not_applicable("there is no tracker snapshot")
+        bare = [key for key in d.stories if key in items and not items[key].get("summary")]
+        if bare:
+            # A warning, not a failure: a story with no summary still delivers; only its card shows none.
+            return "warn", ("; ".join(no_summary(key) for key in bare)
+                            + "; fix: add a one-paragraph `## Summary` to each ticket")
+        listed = sum(1 for key in d.stories if key in items)
+        return "ok", f"each of the {listed} stories the tracker snapshot lists has a summary"
 
     def context_planned(self):
         d = self.delivery

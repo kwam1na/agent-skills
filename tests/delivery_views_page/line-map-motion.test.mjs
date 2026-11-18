@@ -145,9 +145,9 @@ test("a newly picked piece's panel eases to its height, a live redraw of the sam
   redrawn.state.tickets = { ...(redrawn.state.tickets || {}), "PAY-2363": { title: "Queued work", summary: "Now with a summary." } };
   const opened = await openPage(page, { now: NOW, motion: {}, steps: [pick("PAY-2358"), pick("PAY-2363"), { push: redrawn }] });
   const eased = moved(opened.animations).filter((animation) => animation.target === "detail");
-  // The first view eases in its own pick, then each new pick eases once; the push of the same piece adds nothing.
+  // The first view opens at its pick's height, still; each new pick eases once; the push of the same piece adds nothing.
   const afterPicks = eased.length;
-  expect(afterPicks).toBe(3);
+  expect(afterPicks).toBe(2);
   const last = eased[eased.length - 1];
   const [from, to] = last.keyframes.map((frame) => frame.height);
   expect(from === to).toBe(false);
