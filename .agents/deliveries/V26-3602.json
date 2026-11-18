@@ -178,6 +178,10 @@
         {
           "id": "v26-3622-2",
           "text": "A sibling that read fresh and unchanged for hours and then turned unavailable shows the time it turned unavailable, never the time of its last changing read."
+        },
+        {
+          "id": "v26-3622-3",
+          "text": "schemas.json describes readAt as the last read that changed the sibling, and lastAttemptAt as when its current outcome began."
         }
       ],
       "after": [
