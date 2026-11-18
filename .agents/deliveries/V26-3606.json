@@ -58,6 +58,28 @@
           "text": "The config reference, the adoption guide and the lane brief describe the selection."
         }
       ]
+    },
+    "V26-3618": {
+      "title": "Wake the lead when the supervisor holds the finish, and clear a stale suite checkout before serve refuses on it",
+      "lane": "lane-1",
+      "why": "The operator added it to this delivery after the delivery's own merge queue was refused for about 12 minutes on another delivery's stale lead-suite checkout, and no wake reached the lead.",
+      "criteria": [
+        {
+          "id": "v26-3618-1",
+          "text": "A flapping child that holds the finish wakes a running lead-wait, and its clearing is journalled too."
+        },
+        {
+          "id": "v26-3618-2",
+          "text": "A stale lead-suite checkout in the work root doesn't leave the queue silently stopped: it is cleaned up when that's safe, and otherwise the refusal names it and its fix in the lead's wake."
+        },
+        {
+          "id": "v26-3618-3",
+          "text": "Tests cover both, including a checkout that is still in use, which is never removed."
+        }
+      ],
+      "after": [
+        "V26-3606"
+      ]
     }
   },
   "finish": [

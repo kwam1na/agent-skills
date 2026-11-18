@@ -209,3 +209,7 @@ Acceptance criteria:
 - `c4` Without `--lenses` and without any default set, behaviour is unchanged: every declared lens runs.
 - `c5` `doctor` lists each declared lens with its use (plan, story, or both).
 - `c6` The config reference, the adoption guide and the lane brief describe the selection.
+
+### V26-3618. Wake the lead when the supervisor holds the finish, and clear a stale suite checkout before serve refuses on it
+
+Lane 1, tier 1, after V26-3606. Added mid-delivery: The operator added it to this delivery after the delivery's own merge queue was refused for about 12 minutes on another delivery's stale lead-suite checkout, and no wake reached the lead.

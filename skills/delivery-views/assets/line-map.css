@@ -210,7 +210,7 @@ body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(
    values and the details line up across the columns, and every value sits on one baseline with the stories count. */
 .facts { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.4fr) minmax(0, 1fr); grid-template-rows: auto auto auto;
   column-gap: 56px; row-gap: 10px; margin-right: 10px; }
-.chapter-now .journey + .facts { margin-top: -4px; padding-top: 28px; border-top: 1px solid var(--hair); }
+.chapter-now .journey + .facts { margin-top: -4px; padding-top: 28px; }
 .fact { display: grid; grid-row: span 3; grid-template-rows: subgrid; row-gap: 10px; align-content: start; min-width: 0; }
 .fact-label { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--faint); letter-spacing: 0.01em; }
 .fact-label > span { display: inline-flex; gap: 8px; align-items: center; }
