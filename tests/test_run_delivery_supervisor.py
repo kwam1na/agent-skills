@@ -6190,8 +6190,6 @@ class LeadSuiteTests(unittest.TestCase):
         self.assertEqual(self.suite_checkouts(fx), [])
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class LeadEndsAFailedRunTests(unittest.TestCase):
@@ -6326,3 +6324,7 @@ class LeadEndsAFailedRunTests(unittest.TestCase):
                             cwd=fx.main)
         self.assertNotEqual(code, 0, out)
         self.assertEqual(len(kinds(fx, "base.broken")), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

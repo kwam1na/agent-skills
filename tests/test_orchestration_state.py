@@ -7621,10 +7621,6 @@ class MergeSlotTests(unittest.TestCase):
         self.assertEqual(list(waiting.iterdir()), [])
 
 
-if __name__ == "__main__":
-    # Run as a script, the repository root is not on the path, and a row imports the tests package from it.
-    sys.path.insert(0, str(ROOT))
-    unittest.main()
 
 
 class SupersedingHandoffTests(unittest.TestCase):
@@ -7689,6 +7685,25 @@ class SupersedingHandoffTests(unittest.TestCase):
         self.assertRefused("no check of its run has failed")
         self.failed()
         self.assertRefused("is checking at", head=HEAD_A)
+
+    def test_only_a_failure_of_the_current_run_takes_a_new_head(self) -> None:
+        # A failure of an earlier run of the subject, before the run checking now started, ends nothing.
+        self.failed()
+        self.started = self.runner("check.started", "work-a", {})["id"]
+        self.assertRefused("no check of its run has failed")
+        self.failed()
+        self.hand()
+        self.assertTrue(self.row()["pending"])
+
+    def test_a_hand_off_that_ends_a_failed_run_keeps_the_run_that_built_it(self) -> None:
+        self.failed()
+        before = state_tool.show(self.directory)
+        with self.assertRaises(state_tool.StateError) as raised:
+            state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head=HEAD_B, change_request="cr 2",
+                               run="another-run")
+        self.assertEqual(raised.exception.code, "handoff_invalid")
+        self.assertIn("keeps the run it was built by", str(raised.exception))
+        self.assertEqual(state_tool.show(self.directory), before)
 
     def test_a_new_head_is_taken_in_either_phase_once_a_check_failed_and_waits_beside_the_checked_row(self) -> None:
         for rerun in (False, True):
@@ -7875,6 +7890,15 @@ class LeadBaseBrokenTests(unittest.TestCase):
         self.assertEqual((self.row()["head"], self.row()["stage"]), (HEAD_B, "queued"))
         self.assertIn("repair", self.row())
 
+    def test_a_self_repairing_hand_off_is_not_marked_while_another_row_is_the_named_repair(self) -> None:
+        self.broken(self_repair=True)
+        state_tool.name_repair(self.directory, "work-b")
+        self.write("lead", assignments={"/meta/handoffsNeedAcceptance": True})
+        state_tool.handoff(self.directory, lane="lane-1", subject="work-a", head=HEAD_B, change_request="cr")
+        state_tool.accept_handoff(self.directory, "work-a")
+        self.assertEqual([item["subject"] for item in state_tool.show(self.directory)["state"]["queue"] if "repair" in item],
+                         ["work-b"])
+
     def test_repaired_state_requeues_a_self_repairing_row_only_once_its_head_moved(self) -> None:
         self.broken(self_repair=True)
         state = state_tool.show(self.directory)["state"]
@@ -7898,3 +7922,9 @@ class LeadBaseBrokenTests(unittest.TestCase):
                                   data={"source": "queue", "head": HEAD_D})
         self.assertEqual((self.row()["stage"], self.row()["head"]), ("queued", HEAD_A))
         self.assertNotIn("repair", self.row("work-b"))
+
+
+if __name__ == "__main__":
+    # Run as a script, the repository root is not on the path, and a row imports the tests package from it.
+    sys.path.insert(0, str(ROOT))
+    unittest.main()

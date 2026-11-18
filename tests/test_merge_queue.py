@@ -4840,6 +4840,42 @@ class StoppedBaseRerunTests(MergeQueueTestCase):
         self.assertEqual(stopped["data"]["head"], superseded["data"]["head"])
         self.assertEqual(state_tool.read_state(adopter.state)["meta"].get("baseReruns") or [], [])
 
+    def two_check_rerun(self, armed: int = 1) -> Adopter:
+        """A lone candidate failing two checks; on the base, `first` passes at once and `stop` blocks while armed."""
+        first = check_entry("first", "--fail-with", "test_first")
+        stop = check_entry("stop", "--stoppable", "die")
+        adopter = self.adopter({"alwaysRun": [first, stop], "checkOutput": FAILURE_OUTPUT})
+        self.candidate(adopter, {"src/app.txt": "app two\n", "src/candidate.txt": "candidate\n"})
+        self.arm(adopter, armed)
+        return adopter
+
+    def test_a_re_run_stopped_after_judging_a_check_still_records_that_check(self) -> None:
+        adopter = self.two_check_rerun()
+        with self.stopping(adopter):
+            document = self.run_queue(adopter, "feature")[-1].document()
+        self.assertEqual(document["stop"]["reason"], "base_rerun_stopped", document["stop"])
+        judged = state_tool.read_state(adopter.state)["meta"].get("baseReruns") or []
+        self.assertEqual([(entry["check"], entry["result"], entry["baseHead"]) for entry in judged],
+                         [("first", "passed", adopter.tip("main"))])
+
+    def test_a_superseded_re_run_starts_no_further_base_check(self) -> None:
+        # `stop` reruns first, as its candidate run ended first; `first` waits behind it and never starts on the base.
+        first = check_entry("first", "--fail-with", "test_first")
+        stop = check_entry("stop", "--stoppable", "die")
+        adopter = self.adopter({"alwaysRun": [stop, first], "checkOutput": FAILURE_OUTPUT})
+        self.candidate(adopter, {"src/app.txt": "app two\n", "src/candidate.txt": "candidate\n"})
+        self.arm(adopter, 1)
+        self.lanes(adopter)
+        heads: list[str] = []
+        self.when(lambda: bool(list(adopter.log.parent.glob(adopter.log.name + ".pid-1"))),
+                  lambda: heads.append(self.supersede(adopter)))
+        document = self.run_queue(adopter, "feature")[-1].document()
+        self.assertSuperseded(adopter, document, heads[0], "base-rerun")
+        # Each check ran once on the candidate; only `stop` ran on the base.
+        lines = adopter.log.read_text().splitlines()
+        self.assertEqual(len([line for line in lines if line.startswith("check first ")]), 1, lines)
+        self.assertEqual(len([line for line in lines if line.startswith("check stop ")]), 2, lines)
+
     def test_an_acceptance_between_the_verdicts_read_and_its_stop_write_leaves_the_row_queued(self) -> None:
         adopter = self.stoppable("die", armed=0)
         self.lanes(adopter)

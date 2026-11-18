@@ -474,6 +474,17 @@ test("says what a lone piece's rerun is for, when it should end by the failed ch
   const [unknown] = await open(document);
   expect(unknown.app.querySelector(".checking .ck-rerun-why")?.textContent).toBe("storefront build failed on PAY-2361; the " +
     "rerun decides whether the main line or the piece broke it");
+  // Two rerun checks end after both their last times; one of them without history leaves the end out.
+  document.state.meta.checkHistory.checks["storefront build"] = { seconds: [300], flakes: 0 };
+  document.state.meta.checkHistory.checks["payments unit"] = { seconds: [120], flakes: 0 };
+  document.state.meta.checking.now.baseRerun.checks = ["storefront build", "payments unit"];
+  const [both] = await open(document);
+  expect(both.app.querySelector(".checking .ck-rerun-why")?.textContent).toBe("storefront build and payments unit failed on " +
+    "PAY-2361; the rerun decides whether the main line or the piece broke it · expected to end in 4 minutes");
+  delete document.state.meta.checkHistory.checks["payments unit"];
+  const [partly] = await open(document);
+  expect(partly.app.querySelector(".checking .ck-rerun-why")?.textContent).toBe("storefront build and payments unit failed " +
+    "on PAY-2361; the rerun decides whether the main line or the piece broke it");
   // Without a running rerun nothing of it shows.
   delete document.state.meta.checking.now.baseRerun;
   const [none] = await open(document);
