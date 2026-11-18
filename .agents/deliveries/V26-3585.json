@@ -1,0 +1,246 @@
+{
+  "schemaVersion": "delivery-flow-delivery/1",
+  "delivery": "V26-3585",
+  "headline": "Settle a story with its base before the queue has to",
+  "baseBranch": "integrate/settle-with-base",
+  "integrationTarget": "main",
+  "plan": "docs/plans/2026-11-17-settle-with-base.md",
+  "laneBrief": "docs/plans/2026-11-17-settle-with-base.lane-brief.md",
+  "brief": {
+    "notes": "docs/plans/2026-11-17-settle-with-base.lane-notes.md"
+  },
+  "context": {
+    "sections": [
+      "Decisions"
+    ]
+  },
+  "lanes": {
+    "lane-1": {
+      "owns": [
+        "skills/run-delivery/scripts/run_delivery.py",
+        "skills/run-delivery/templates/lane-brief.md",
+        "skills/run-delivery/SKILL.md",
+        "tests/test_run_delivery.py"
+      ]
+    },
+    "lane-2": {
+      "owns": [
+        "skills/orchestrate-work/scripts/merge_queue.py",
+        "skills/orchestrate-work/scripts/delivery_state.py",
+        "skills/orchestrate-work/scripts/render_state.py",
+        "skills/orchestrate-work/references/journal-kinds.json",
+        "skills/orchestrate-work/references/orchestration-guide.md",
+        "skills/orchestrate-work/SKILL.md",
+        "skills/delivery-views/assets/line-map.js",
+        "tests/test_merge_queue.py",
+        "tests/test_orchestration_state.py",
+        "tests/test_run_delivery_supervisor.py",
+        "tests/test_journal_kinds.py",
+        "tests/test_journal_shape.py",
+        "tests/fixtures/journal-kinds/*",
+        "tests/delivery_views_page/*"
+      ]
+    }
+  },
+  "stories": {
+    "V26-3577": {
+      "title": "Print how to finish a conflicted authorized base merge, so its message stays exact",
+      "lane": "lane-1",
+      "criteria": [
+        {
+          "id": "v26-3577-1",
+          "text": "c1: The authorization's output says how to finish the merge when it conflicts, with the exact message."
+        },
+        {
+          "id": "v26-3577-2",
+          "text": "c2: A conflicted authorized merge finished as printed carries the review at hand-off."
+        },
+        {
+          "id": "v26-3577-3",
+          "text": "c3: A message that differs only by git's conflict comment lines is either accepted or refused with the exact amend command."
+        }
+      ]
+    },
+    "V26-3576": {
+      "title": "Carry a review across a base merge whose only change to a lane-owned file is the base's own addition",
+      "lane": "lane-1",
+      "after": [
+        "V26-3577"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3576-1",
+          "text": "c1: After an authorized base merge whose resolution keeps both sides' additions in a lane-owned file, and leaves the story delta unchanged, handoff carries the last aligned review."
+        },
+        {
+          "id": "v26-3576-2",
+          "text": "c2: A merge whose resolution changes the story delta still needs a new round."
+        },
+        {
+          "id": "v26-3576-3",
+          "text": "c3: The refusal, when it happens, names the lines of the story delta that changed."
+        }
+      ]
+    },
+    "V26-3572": {
+      "title": "Have a lane merge the base before it hands off, so the queue doesn't find the conflict",
+      "lane": "lane-1",
+      "after": [
+        "V26-3576"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3572-1",
+          "text": "c1: handoff refuses a candidate that conflicts with the current base outside the regenerable paths, naming the files and printing the merge command."
+        },
+        {
+          "id": "v26-3572-2",
+          "text": "c2: A lane can merge the base itself before hand-off, and its last aligned review carries when the story delta is unchanged."
+        },
+        {
+          "id": "v26-3572-3",
+          "text": "c3: The lane brief says to merge the base, rerun gates and checks, and hand off, in that order."
+        },
+        {
+          "id": "v26-3572-4",
+          "text": "c4: A conflict-free candidate on an unmoved base hands off as today."
+        }
+      ]
+    },
+    "V26-3549": {
+      "title": "Let the merge queue merge a candidate's new provenance outputs when the base only changed digests",
+      "lane": "lane-2",
+      "criteria": [
+        {
+          "id": "v26-3549-1",
+          "text": "A candidate that adds outputs syncs over a base whose lock changed only in digests, with no stop, and the merged lock lists both sides' outputs with current digests."
+        },
+        {
+          "id": "v26-3549-2",
+          "text": "A candidate and base that both changed the listing still stop with source_conflict."
+        }
+      ]
+    },
+    "V26-3557": {
+      "title": "Let the lead replace a failing candidate's head, and end a base re-run nobody needs",
+      "lane": "lane-2",
+      "after": [
+        "V26-3549"
+      ],
+      "criteria": [
+        {
+          "id": "v26-3557-1",
+          "text": "c1: A hand-off at a new head for a story whose check failed is accepted once any of its checks has failed, while the rest of its check run or its base re-run is still running, and the lead can accept it."
+        },
+        {
+          "id": "v26-3557-2",
+          "text": "c2: Accepting it ends the old head's remaining checks and any base re-run, journalled as superseded with no verdict; the old head is never checked again."
+        },
+        {
+          "id": "v26-3557-3",
+          "text": "c3: The lead can record the base broken at a named head, check and test, with a reason, before a re-run's verdict, and name the repairing candidate in the same step."
+        },
+        {
+          "id": "v26-3557-4",
+          "text": "c4: A re-run ended by the lead leaves no candidate re-queued at the failed head."
+        },
+        {
+          "id": "v26-3557-5",
+          "text": "c5: A re-run that finishes after it was superseded writes no verdict that contradicts the lead's entry."
+        },
+        {
+          "id": "v26-3557-6",
+          "text": "c6: With no lead decision and no new hand-off, a failed check re-runs on the base exactly as today."
+        },
+        {
+          "id": "v26-3557-7",
+          "text": "c7: The live view shows a running base re-run with its purpose and expected end, and names the lead's alternatives."
+        },
+        {
+          "id": "v26-3557-8",
+          "text": "c8: The guide says when ending a re-run early is sound, and that the lead's entry is then the evidence for the base's state."
+        }
+      ]
+    }
+  },
+  "finish": [
+    {
+      "id": "stories",
+      "label": "The stories",
+      "text": "All five stories land on integrate/settle-with-base through its merge queue",
+      "covers": {
+        "criteria": "all",
+        "proofs": [
+          "review",
+          "merged"
+        ]
+      }
+    },
+    {
+      "id": "integration-review",
+      "label": "Into main",
+      "text": "The integration base is reviewed for main, as the orchestrate-work guide's integration review says, and merged into main",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "local-suite",
+      "label": "Local suite",
+      "text": "The full local suite passes on macOS with Python 3.11 at main's head after the integration merge, inside tests/suite-budget.json",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    },
+    {
+      "id": "bound-ruling",
+      "label": "V26-1654",
+      "text": "V26-1654 is closed by Decision 4: a round forced by a base merge counts against the bound",
+      "covers": {
+        "criteria": [],
+        "proofs": []
+      }
+    }
+  ],
+  "authority": {
+    "push": true,
+    "draftPullRequests": true,
+    "readyPullRequests": true,
+    "grantedBy": "kwamina",
+    "grantedOn": "2026-11-17"
+  },
+  "approvals": [
+    {
+      "id": "approval-1",
+      "text": "The operator approves this plan before `lead-setup`.",
+      "state": "waiting"
+    },
+    {
+      "id": "approval-2",
+      "text": "The operator grants lanes `push` and `draftPullRequests`, and the lead `readyPullRequests` (granted 2026-11-17).",
+      "state": "waiting"
+    },
+    {
+      "id": "approval-3",
+      "text": "The operator approves merging `integrate/settle-with-base` into `main` after its review.",
+      "state": "waiting"
+    }
+  ],
+  "outOfScope": [
+    "Skipping the base re-run by default. With no lead decision and no new hand-off, a failed check re-runs on the base exactly as today.",
+    "Letting a lane end a re-run without a hand-off the lead accepts.",
+    "Requiring a base merge when the base moved without a conflict (Decision 2).",
+    "Test flakes that make the queue journal `base.broken` (V26-3573, V26-3478).",
+    "V26-3553's gap \"the queue's sync merge blocks a lane's next push\". After V26-3572, a candidate that merged the current base gets no sync commit unless the base moves again, so that gap arises less often. It is not closed here.",
+    "V26-3564, which tells a lane about a change outside its ground before hand-off. V26-3572's conflict check runs before the ownership check at hand-off, and does not replace it.",
+    "A release tag."
+  ],
+  "planReview": {
+    "lenses": [
+      "lens.outcome-correctness",
+      "lens.adversarial-testing"
+    ]
+  }
+}

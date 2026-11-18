@@ -216,6 +216,7 @@ the lead and the lanes make them instead, as the commands print them.
 | `check.started` | None: checking is transient, and its outcome posts with `candidate.merged` or `candidate.stopped`. | nowhere | - |
 | `check.finished` | None: its outcome posts with `candidate.merged` or `candidate.stopped`. | nowhere | - |
 | `check.failed` | None: its outcome posts with `candidate.stopped` once the failure is classified. | nowhere | - |
+| `check.superseded` | None: the acceptance or the broken main line that ended the run posts on its own. | nowhere | - |
 | `check.retried` | On the flake's tracking reference: one more retry, naming the candidate and the failing tests, as evidence for fixing the flake. | the ticket, or the epic | Check retried |
 | `check.reused` | None: the candidate's work item already says it was handed off and is being checked; the reused check shows in the record and the views. | nowhere | - |
 | `check.carried` | None: the candidate's work item already says it was handed off and is being checked; the carried checks and the base commits they were not run on show in the record and the views. | nowhere | - |
@@ -756,6 +757,9 @@ from the plan and the repository's own instructions, and keep everything else.
    unit, and tell them not to spawn subagents. Resume the same reviewers each
    round until both approve, within `$review-work`'s round bound. At the
    bound, stop and report the blocker to the lead.
+   A round forced by a base merge counts against that bound: a merge forces
+   one only when the story's own change reads differently after it, so that
+   round is about the story.
 4. Run the repository's compounding check: `<compounding check>`.
 5. Open a draft change request: `<change request command>`, titled
    `<title pattern>`, with a body of Summary, Why, Validation, then the
@@ -1219,6 +1223,25 @@ an `environmentProfile` or the binding's `environment`, and don't run a
 lane's full suite on the machine while the queue checks. Confirm a break on a
 quiet machine before you fix forward.
 
+The lead may name the base broken before a re-run's verdict, with
+run-delivery's `lead-base-broken --head H --check ID --test T --why W
+[--repair KEY | --self-repair]`, which runs the state tool's `base-broken`. It
+journals `base.broken` with source `lead`, the check, the test and the reason.
+When the re-run the checking panel shows runs at H for a lone candidate whose
+check failed, the same write journals `check.superseded`, phase `base-rerun`,
+naming the break, and stops that candidate as `base_broken`, and the queue ends
+the re-run (see "Ending a failed run early"). A re-run at another head goes on.
+Ending a re-run early is sound only when the lead knows the cause or holds the
+fix: the same test fails on the base in the lead's own run, say, or the fix is
+already written. The lead's entry is then the evidence for the base's state, in
+place of the re-run's verdict, so its `--why` says how the lead knows.
+`--repair KEY` names another queued candidate the repair, as `repair
+--subject` does. `--self-repair` says the candidate under the re-run holds its
+own fix: its row keeps its failed head as `supersededAt`, `base.repaired` never
+queues that head again, and the lead's acceptance of its next hand-off at
+another head names it the repair, so `serve` takes it alone and its merge
+journals `base.repaired`. With neither, the repair step above applies.
+
 ## Binding guide
 
 A repository adopts this workflow with one binding file,
@@ -1268,7 +1291,7 @@ it is not a freshness proof or permission to skip any admission check.
 | `candidate` | An argv that resolves a candidate reference to `{branch, head}` as JSON. |
 | `prepare` | An argv list run in every fresh checkout, such as installing dependencies or creating a ref the checks need from `{baseHead}`. |
 | `hooks` | `bypass` or `run`. See "Git hooks" below. |
-| `regenerable` | `{paths, regenerators}`: the generated-only paths, which may use `*` and `**` globs, and the regenerator argv list. |
+| `regenerable` | `{paths, regenerators, listings?}`: the generated-only paths, which may use `*` and `**` globs, the regenerator argv list, and optional `listings`, each `{path, argv}`: one regenerable file and the argv that reads a version of it on stdin and prints the outputs it lists as a JSON array of strings. See "A conflicted listed path". |
 | `postSync` | Entries of `{argv, paths}`; each declares the paths it may change. |
 | `leadInputs` | Each input's `id`, `argv` and `paths`, plus an optional `lease` it needs and an optional `timeoutSeconds`. |
 | `profiles` | `{name: {environment}}`, with placeholder values. A check names one profile; an unknown profile is refused. |
@@ -1542,6 +1565,33 @@ its hand-off; the runner runs exactly those, during sync.
   `lease_withdraw_failed` and nothing is pushed.
 - No other checkout ever receives lease material.
 
+### A conflicted listed path
+
+A sync merges the base in, and a batch merges each member into the tree it has
+built so far. Only `regenerable` paths may conflict; a conflict anywhere else
+stops the candidate with `source_conflict`, naming the paths. A conflicted
+regenerable path takes the base side and the regenerators refresh it, unless
+the binding lists it under `regenerable.listings`. A regenerator such as a
+provenance writer refreshes digests but never adds or removes an output, so for
+a listed path the runner reads the outputs each of the three versions lists:
+the merge base's, the base's and the candidate's.
+
+- The candidate lists what the merge base did: it takes the base side.
+- Only the candidate changed the listing, and the base left it as the merge
+  base had it: it takes the candidate's whole file. The regenerators then
+  refresh its digests, so the merged file lists the candidate's outputs with
+  the digests of the merged tree. Any other edit the base made to that file is
+  dropped without a stop.
+- Both sides changed the listing, even to the same outputs: it stops with
+  `source_conflict`, saying what each side added or removed. Resolve it by hand,
+  keeping both sides' outputs, and hand off again.
+
+A listing that fails, prints anything but a JSON array of strings, or reads a
+version without the path stops the candidate with `source_conflict` too, and
+nothing is regenerated. Before merging, a lane that is not the only owner of a
+listed path it changed is checked the stricter way: its listing must match the
+merge base's, whatever the base did.
+
 ### What sync proves
 
 After merging the base in and running the lead inputs, the regenerators and
@@ -1649,6 +1699,35 @@ binding declares may change.
   for each pair of candidate head and base head, and the lead's wait does not
   wake for it. A second stopped re-run at the same pair stops the candidate as
   `base_rerun_stopped`, journaled as `candidate.stopped`.
+  A re-run that a new hand-off or the lead's broken base ended is not one of
+  these: it journals `base.rerun.stopped` naming the `check.superseded` entry,
+  and the old head is never queued again (see "Ending a failed run early").
+- **Ending a failed run early.** Once a check of a lone candidate's run has
+  failed (`check.failed`), the run won't merge, and what is left of it, the rest
+  of its checks and any base re-run, only diagnoses. A lane may then hand off a
+  new head while the row is still `checking`. The state tool takes it as
+  pending, beside the row, which stays at the checked head until the lead
+  accepts it, and `carry-review`, `select` and `lead-accept` read the hand-off's
+  own head. Rejecting it only drops the wait: the row stays as the queue checks
+  it, and the run goes on to its verdict.
+  Before any check of the run has failed, and for a batch's member, a new head
+  is refused with `handoff_invalid`, as before. Accepting it moves the row to
+  the new head as `queued` and journals `check.superseded` in one write: the
+  base, the old head, the acceptance's entry as `by`, and the phase, `checks` or
+  `base-rerun`. The queue reads the journal every 2 seconds while the run is
+  checking. On that entry it stops every check process group it started, by the
+  pid it recorded, and journals no `check.failed`, `check.finished` or verdict;
+  it starts no base re-run, and in the `base-rerun` phase it journals
+  `base.rerun.stopped` naming the entry. The checks the run was still running or
+  had yet to start read `superseded` on the row, and the result's stop is
+  `superseded`. A verdict reached after that write is dropped: the verdict, its
+  `base.rerun.finished` and its stop go through one write that re-reads the row,
+  and write nothing once the row has left the checked head or a
+  `check.superseded` names it. With no new hand-off, the run completes and
+  reports every failure, as before. The line map's checking panel says, while a
+  lone candidate's re-run runs, which check failed, that the re-run decides
+  whether the base or the candidate broke it, when it should end by that check's
+  last recorded time, and both ways to end it sooner.
 - **Queue estimates.** The state tool's `show` adds a position and an expected
   start for each candidate waiting at `queued`. The start counts what remains
   of the run in progress once (a batch is one run), then one median run for
@@ -1712,8 +1791,9 @@ when the batch's combined tree is that member's checked tree.
 ### What a batch proves
 
 `batch` builds one tree from the base tip, adding each member in queue order
-with the same steps a sync runs: it merges the member in, takes the base side
-of a conflict confined to `regenerable` paths and regenerates, runs the
+with the same steps a sync runs: it merges the member in, resolves a conflict
+confined to `regenerable` paths as "A conflicted listed path" says, with the
+tree built so far as the base, and regenerates, runs the
 member's lead inputs and the post-sync steps, and proves the same two things
 a sync proves, against the tree built so far. A member that stops on any of
 these drops out of the batch with that code; the rest continue. The runner

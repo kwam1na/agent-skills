@@ -79,6 +79,23 @@
                       "startedAt": {
                         "$ref": "#/$defs/timestamp"
                       },
+                      "base": {
+                        "description": "For a lone candidate's run: the base it is checked against, by branch and head. A check.superseded that ends the run names it.",
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "ref",
+                          "head"
+                        ],
+                        "properties": {
+                          "ref": {
+                            "$ref": "#/$defs/name"
+                          },
+                          "head": {
+                            "$ref": "#/$defs/commit"
+                          }
+                        }
+                      },
                       "steps": {
                         "type": "array",
                         "items": {
@@ -698,6 +715,10 @@
             "syncedHead": {
               "$ref": "#/$defs/optionalCommit"
             },
+            "supersededAt": {
+              "description": "The candidate's failed head, set when the lead named the base broken with --self-repair: the candidate holds its own fix, so base.repaired never queues this head again, and its next hand-off accepted at another head becomes the named repair.",
+              "$ref": "#/$defs/commit"
+            },
             "leadInputs": {
               "type": "array",
               "items": {
@@ -1256,7 +1277,8 @@
           "failed",
           "skipped",
           "timed_out",
-          "reused"
+          "reused",
+          "superseded"
         ]
       },
       "argv": {
@@ -2351,6 +2373,7 @@
           "check_failed",
           "base_broken",
           "base_rerun_stopped",
+          "superseded",
           "base_moved",
           "ready_refused",
           "review_not_current",
