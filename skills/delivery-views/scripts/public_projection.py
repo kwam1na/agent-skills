@@ -267,7 +267,12 @@ def project(document: dict, runs: dict, config: dict, *, source_fingerprint: str
     data = render.line_map_data(document, selected, config, theme_key='hosted-delivery', history=None,
                                 plan=plan, needs=needs, story=False)
     # The links come from what is published: an entry's facts are not, so no commit or change request they name is.
-    published = {**data['document'], 'journal': [
+    # The links are worked out from what is published, so no sibling, nor the words the views give siblings, adds one:
+    # the hosted page draws no sibling (whether it may is a separate decision).
+    shown = {key: value for key, value in data['document'].items() if key != 'across'}
+    if isinstance(shown.get('state'), dict):
+        shown['state'] = {key: value for key, value in shown['state'].items() if key != 'siblings'}
+    published = {**shown, 'journal': [
         {key: entry[key] for key in JOURNAL_MEMBERS if key in entry} if isinstance(entry, dict) else entry
         for entry in data['document'].get('journal', [])]}
     data['links'] = render.page_links(published, data['runs'], config, data['reviews'])

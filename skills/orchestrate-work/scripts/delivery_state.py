@@ -3728,8 +3728,19 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
                 and not any(name in entry for name in ("after", "files", "changeRequest", "runId"))
                 and entry["subject"] not in added_by)
 
+    # A sibling delivery's last kept read lists the children it holds, even while it can't be read. With or without a
+    # scope, the tracker sweep leaves them to it: by the first sibling in name order that lists each. A sibling now
+    # read as another epic's holds nothing here, as the views draw it.
+    sibling_of: dict[str, str] = {}
+    if any(snapshot["source"] == "tracker" for snapshot in snapshots):
+        for row in sorted(state.get("siblings", []), key=lambda row: row["name"]):
+            if row.get("lastOutcome") == "other-epic":
+                continue
+            for story in row.get("stories", []):
+                sibling_of.setdefault(story["subject"], row["name"])
+
     # Decided once, on the record as read: what this sweep then does to the work never changes whose it is.
-    owned = {subject for subject in outside if queued(subject) is not None
+    owned = {subject for subject in {*outside, *sibling_of} if queued(subject) is not None
              or (planned(subject) is not None and not tracker_added(planned(subject)))}
     # Lane-less work of this delivery that the tracker files elsewhere keeps its shape: the tracker's start doesn't
     # move it, so a later sweep never takes it for work the sweep added.
@@ -3738,10 +3749,10 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
     def own(subject: str) -> bool:
         return subject in owned
 
-    for subject in sorted(outside):  # In subject order, whatever order the snapshots list them in.
+    for subject in sorted({*outside, *sibling_of}):  # In subject order, whatever order the snapshots list them in.
         if own(subject):
             continue
-        why = "outside this delivery's scope"
+        why = f"held by sibling {sibling_of[subject]}" if subject in sibling_of else "outside this delivery's scope"
         if planned(subject) is not None:
             lead["planned"] = [entry for entry in lead["planned"] if entry["subject"] != subject]
             changes.append({"subject": subject, "change": f"{why}: cleared from the planned work", "recovery": False,
@@ -3764,6 +3775,8 @@ def _plan(state: dict, snapshots: list[dict], journal: list[dict]) -> tuple[dict
             subject, word = item["subject"], item["state"]
             title = item.get("title") or subject
             if snapshot["source"] == "tracker":
+                if subject in sibling_of and not own(subject):
+                    continue  # A sibling's: never taken in, never reported on.
                 listed[subject] = item
                 known = queued(subject) or planned(subject)
                 if not known and not followed(subject):
