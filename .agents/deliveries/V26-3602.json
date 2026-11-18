@@ -174,6 +174,10 @@
         {
           "id": "v26-3622-1",
           "text": "A wait on a sibling story whose sibling isn't fresh says \"<reason> since <lastAttemptAt>\", in the same words the views use. A wait on a fresh sibling says nothing about time."
+        },
+        {
+          "id": "v26-3622-2",
+          "text": "A sibling that read fresh and unchanged for hours and then turned unavailable shows the time it turned unavailable, never the time of its last changing read."
         }
       ],
       "after": [
