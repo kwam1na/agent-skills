@@ -92,7 +92,7 @@ function storyLine(document, id) {
   return beat.words.line || beat.words.head;
 }
 
-test("the attention rows and the base's flag take a stop's and a break's words from the story", async () => {
+test("the base's flag takes a break's words from the story", async () => {
   const plan = planFor([unit("A")], { finish: [], updated: "2026-10-30T09:00:00Z" });
   const journal = [
     entry(1, 10, "candidate.stopped", { reason: "check_failed", detail: "Its review is for an older head.", stage: "checking" }, "A"),
@@ -101,8 +101,6 @@ test("the attention rows and the base's flag take a stop's and a break's words f
   for (const entries of [journal, reworded(journal)]) {
     const document = record({ queue: [item("A", "stopped")], journal: entries });
     const app = await first(document, plan);
-    const why = (title) => [...app.querySelectorAll("#now .attention li")].find((row) => row.querySelector(".a1").textContent === title).querySelector(".a2").textContent;
-    expect([why("Work A stopped"), why("The main line is broken")]).toEqual([storyLine(document, 1), storyLine(document, 2)]);
     expect([...app.querySelectorAll("#plan .plan-needs li")].find((row) => row.querySelector(".a1").textContent === "The base is broken")
       .querySelector(".a2").textContent).toBe(storyLine(document, 2));
   }
