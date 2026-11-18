@@ -17,7 +17,9 @@ Seen on release `linear-v3.0.0` (generation `7ff4b0e5`), the installed workflow 
 ### The plan record
 
 - **Plan review refused lens results that re-listed closed findings.** Rounds 3 and 6 needed fresh reviewers, because the
-  brief didn't name which findings were still open. Fix: PR #379 (open).
+  brief didn't name which findings were still open. Fix: PR #379 (open). Story review does the same: on V26-3567's
+  round 3, two fresh adversarial reviewers in a row listed a carried P3 under its round-2 id, and the reduce refused
+  both. PR #379 covers only the plan-review brief.
 - **`lead-plan change --kind removed` ignored `--criterion`.** It removed V26-3565 whole (c13), which then had to be
   restored (c14 to c16). Fix: V26-3566 (lane 3, this delivery).
 - **No command adds a lane.** Lane 3 needed a hand edit to the delivery file and a state-tool patch to `laneOwnership`
