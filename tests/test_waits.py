@@ -902,6 +902,11 @@ class SiblingWaitTests(unittest.TestCase):
             with self.subTest(outcome=outcome):
                 [wait] = of(self.after_sibling(dict(row, lastOutcome=outcome)), "APP-4")
                 self.assertEqual(wait["words"], f"Waits for MOB-7 to land in mobile. {said} 2026-11-18T12:05:00Z.")
+        # A row edited by hand, with stories but no outcome or attempt: the sentence falls back to readAt.
+        bare = self.sibling()
+        del bare["lastOutcome"], bare["lastAttemptAt"]
+        [wait] = of(self.after_sibling(bare), "APP-4")
+        self.assertEqual(wait["words"], f"Waits for MOB-7 to land in mobile. Not read fresh since {self.READ_AT}.")
         [fresh] = of(self.after_sibling(self.sibling()), "APP-4")
         self.assertEqual(fresh["words"], "Waits for MOB-7 to land in mobile. Building.")
         self.assertNotRegex(fresh["words"], r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
