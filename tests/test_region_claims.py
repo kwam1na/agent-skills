@@ -338,6 +338,9 @@ class LandingTests(CommandCase):
         regrants = [item for item in last["needsYou"] if item["kind"] == "regrant"]
         self.assertEqual(sorted(item["text"].split(" on ")[1].split(" ")[0] for item in regrants), ["lib/a.txt", "lib/b.txt"])
         self.assertTrue(all(item["holding"] is False for item in regrants))
+        self.assertEqual(sorted(item["said"]["headline"] for item in regrants),
+                         ["Lane 2's lines in lib/a.txt need a regrant", "Lane 2's lines in lib/b.txt need a regrant"])
+        self.assertTrue(all(item["said"]["clears"] and item["said"]["why"] for item in regrants))
         # A grant to another lane on the file succeeds past the flagged claim, and names it.
         out = self.grant("lib/a.txt", "lane-3", merge, 26, 30)
         self.assertIn("lane-2's [20, 25)", out)

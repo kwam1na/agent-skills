@@ -530,7 +530,7 @@
         },
         {
           "path": "skills/orchestrate-work/references/wait-words.json",
-          "sha256": "17d9077c44884be42373689eb371729902ccd8a6e70bf305315446562294634e"
+          "sha256": "d7e4577cf9c1cec62ed1a5506d7b4cd05373f5fde0f1a88db8512cd88ef7e8a7"
         },
         {
           "path": "skills/orchestrate-work/scripts/delivery_state.py",
